@@ -51,7 +51,11 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000
+      reconnectionDelayMax: 5000,
+      // 添加额外的调试信息
+      extraHeaders: {
+        'X-Client-Type': 'web'
+      }
     });
 
 

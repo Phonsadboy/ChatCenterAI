@@ -28,6 +28,12 @@ export const getSocketUrl = () => {
     return 'http://localhost:3001';
   }
   
-  // 生产环境使用环境变量或默认值
-  return import.meta.env.VITE_SOCKET_URL || '/socket.io';
+  // 生产环境使用环境变量或当前域名
+  const socketUrl = import.meta.env.VITE_SOCKET_URL;
+  if (socketUrl) {
+    return socketUrl;
+  }
+  
+  // 如果没有设置环境变量，使用当前域名
+  return window.location.origin;
 };
