@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 
 import { connectDB } from './config/database';
+import path from 'path';
 import { errorHandler } from './middleware/errorHandler';
 import { authRoutes } from './routes/auth';
 import { chatRoutes } from './routes/chat';
@@ -69,6 +70,19 @@ app.get('/api/health', (req, res) => {
 
 // Error handling middleware
 app.use(errorHandler);
+
+// Serve frontend in production
+if (process.env.NODE_ENV === 'production') {
+  const frontendDistPath = path.join(__dirname, '..', '..', 'frontend', 'dist');
+  app.use(express.static(frontendDistPath));
+  app.get('*', (req, res) => {
+    // Avoid catching API routes
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ success: false, error: 'Not Found' });
+    }
+    res.sendFile(path.join(frontendDistPath, 'index.html'));
+  });
+}
 
 // Socket.io setup
 setupSocketHandlers(io);
