@@ -20,6 +20,7 @@ export interface LineEvent {
   type: 'message' | 'follow' | 'unfollow' | 'join' | 'leave' | 'postback' | 'beacon';
   mode: 'active' | 'standby';
   timestamp: number;
+  replyToken?: string;
   source: {
     type: 'user' | 'group' | 'room';
     userId?: string;
