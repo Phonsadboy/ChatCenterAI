@@ -99,6 +99,14 @@ const Settings: React.FC = () => {
                   พร้อมใช้งาน
                 </span>
               </div>
+              <div className="pt-2">
+                <button 
+                  onClick={() => window.location.href = '/platforms'}
+                  className="btn btn-primary w-full"
+                >
+                  จัดการแพลตฟอร์ม
+                </button>
+              </div>
             </div>
           </div>
         </div>

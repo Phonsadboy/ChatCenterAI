@@ -269,19 +269,40 @@ router.post('/:id/test', async (req, res) => {
       });
     }
 
-    // Simulate connection test
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // ทดสอบการเชื่อมต่อตามประเภทแพลตฟอร์ม
+    let testResult;
+    
+    if (platform.platformType === 'line') {
+      testResult = await PlatformService.testLineConnection(
+        platform.credentials.channelAccessToken || ''
+      );
+    } else {
+      // Simulate connection test for other platforms
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      testResult = {
+        success: true,
+        message: `ทดสอบการเชื่อมต่อ ${platform.name} สำเร็จ`
+      };
+    }
 
-    res.status(200).json({
-      success: true,
-      message: `ทดสอบการเชื่อมต่อ ${platform.name} สำเร็จ`,
-      data: {
-        platform: platform.platformType,
-        name: platform.name,
-        status: 'connected',
-        timestamp: new Date().toISOString()
-      }
-    });
+    if (testResult.success) {
+      res.status(200).json({
+        success: true,
+        message: testResult.message,
+        data: {
+          platform: platform.platformType,
+          name: platform.name,
+          status: 'connected',
+          timestamp: new Date().toISOString(),
+          profile: testResult.profile
+        }
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: testResult.message
+      });
+    }
   } catch (error) {
     console.error('Test platform connection error:', error);
     res.status(500).json({

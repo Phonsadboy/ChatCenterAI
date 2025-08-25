@@ -1,4 +1,5 @@
 import express from 'express';
+import { LineService, LineWebhookBody } from '../services/lineService';
 import { PlatformService } from '../services/platformService';
 import { Platform } from '../models/Platform';
 
@@ -33,130 +34,104 @@ router.get('/facebook', async (req, res) => {
   }
 });
 
-router.post('/facebook', async (req, res) => {
-  try {
-    const { body } = req;
-    
-    if (body.object === 'page') {
-      for (const entry of body.entry) {
-        const pageId = entry.id;
-        
-        // หา platform ที่มี page ID นี้
-        const platform = await Platform.findOne({
-          'credentials.appId': pageId,
-          platformType: 'facebook',
-          isActive: true
-        });
-
-        if (platform) {
-          // ประมวลผลข้อความ
-          for (const event of entry.messaging) {
-            await processFacebookMessage(platform, event);
-          }
-        }
-      }
-    }
-
-    res.status(200).send('EVENT_RECEIVED');
-  } catch (error) {
-    console.error('Facebook webhook processing error:', error);
-    res.status(500).send('Internal Server Error');
-  }
-});
-
-// LINE Webhook
+// @desc    LINE webhook endpoint
+// @route   POST /api/webhooks/line
+// @access  Public
 router.post('/line', async (req, res) => {
   try {
-    const { body } = req;
     const signature = req.headers['x-line-signature'] as string;
-
+    const body = JSON.stringify(req.body);
+    
     if (!signature) {
-      return res.status(400).send('Missing signature');
+      return res.status(400).json({
+        success: false,
+        error: 'Missing LINE signature'
+      });
     }
 
-    // หา platform ที่มี channel secret นี้
-    const platform = await Platform.findOne({
-      platformType: 'line',
-      isActive: true
-    });
-
-    if (!platform) {
-      return res.status(404).send('Platform not found');
+    // ดึง Line platform configuration
+    const userId = 'system';
+    const linePlatform = await PlatformService.getPlatformByType(userId, 'line');
+    
+    if (!linePlatform || !linePlatform.isActive) {
+      console.log('LINE platform not configured or inactive');
+      return res.status(200).json({ success: true }); // Return 200 to LINE
     }
 
-    // ตรวจสอบ signature (ในที่จริงควรใช้ crypto.verify)
-    // const isValid = verifyLineSignature(body, platform.credentials.channelSecret, signature);
-    // if (!isValid) {
-    //   return res.status(401).send('Invalid signature');
-    // }
+    // ตรวจสอบ signature
+    const isValidSignature = LineService.verifySignature(
+      body,
+      signature,
+      linePlatform.credentials.channelSecret || ''
+    );
 
-    // ประมวลผลข้อความ
-    for (const event of body.events) {
-      await processLineMessage(platform, event);
+    if (!isValidSignature) {
+      console.error('Invalid LINE signature');
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid signature'
+      });
     }
 
-    res.status(200).send('OK');
+    const webhookBody: LineWebhookBody = req.body;
+    
+    if (webhookBody.events && webhookBody.events.length > 0) {
+      // จัดการ events จาก Line
+      await LineService.handleWebhookEvents(webhookBody.events, linePlatform);
+    }
+
+    // ตอบกลับ 200 OK ให้ Line
+    res.status(200).json({ success: true });
+    
   } catch (error) {
-    console.error('LINE webhook processing error:', error);
-    res.status(500).send('Internal Server Error');
+    console.error('LINE webhook error:', error);
+    // ยังคงตอบกลับ 200 เพื่อไม่ให้ Line ส่ง event ซ้ำ
+    res.status(200).json({ success: true });
   }
 });
 
-// Telegram Webhook
+// @desc    Facebook webhook endpoint
+// @route   POST /api/webhooks/facebook
+// @access  Public
+router.post('/facebook', async (req, res) => {
+  try {
+    // TODO: Implement Facebook webhook handling
+    console.log('Facebook webhook received:', req.body);
+    
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Facebook webhook error:', error);
+    res.status(200).json({ success: true });
+  }
+});
+
+// @desc    Telegram webhook endpoint
+// @route   POST /api/webhooks/telegram
+// @access  Public
 router.post('/telegram', async (req, res) => {
   try {
-    const { body } = req;
+    // TODO: Implement Telegram webhook handling
+    console.log('Telegram webhook received:', req.body);
     
-    if (body.message) {
-      const botToken = body.message.from?.id;
-      
-      // หา platform ที่มี bot token นี้
-      const platform = await Platform.findOne({
-        'credentials.botToken': botToken,
-        platformType: 'telegram',
-        isActive: true
-      });
-
-      if (platform) {
-        await processTelegramMessage(platform, body.message);
-      }
-    }
-
-    res.status(200).send('OK');
+    res.status(200).json({ success: true });
   } catch (error) {
-    console.error('Telegram webhook processing error:', error);
-    res.status(500).send('Internal Server Error');
+    console.error('Telegram webhook error:', error);
+    res.status(200).json({ success: true });
   }
 });
 
-// Instagram Webhook
+// @desc    Instagram webhook endpoint
+// @route   POST /api/webhooks/instagram
+// @access  Public
 router.post('/instagram', async (req, res) => {
   try {
-    const { body } = req;
+    // TODO: Implement Instagram webhook handling
+    console.log('Instagram webhook received:', req.body);
     
-    if (body.object === 'instagram') {
-      for (const entry of body.entry) {
-        const pageId = entry.id;
-        
-        // หา platform ที่มี page ID นี้
-        const platform = await Platform.findOne({
-          'credentials.appId': pageId,
-          platformType: 'instagram',
-          isActive: true
-        });
-
-        if (platform) {
-          for (const event of entry.messaging) {
-            await processInstagramMessage(platform, event);
-          }
-        }
-      }
-    }
-
-    res.status(200).send('EVENT_RECEIVED');
+    res.status(200).json({ success: true });
   } catch (error) {
-    console.error('Instagram webhook processing error:', error);
-    res.status(500).send('Internal Server Error');
+    console.error('Instagram webhook error:', error);
+    res.status(200).json({ success: true });
   }
 });
 

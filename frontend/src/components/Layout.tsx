@@ -7,7 +7,8 @@ import {
   Menu, 
   X,
   BarChart3,
-  FileText
+  FileText,
+  Globe
 } from 'lucide-react';
 
 import { useSocket } from '../contexts/SocketContext';
@@ -23,6 +24,7 @@ const Layout: React.FC = () => {
     { name: 'แชท', href: '/chat', icon: MessageSquare },
     { name: 'คำแนะนำ AI', href: '/instructions', icon: FileText },
     { name: 'สถิติ', href: '/stats', icon: BarChart3 },
+    { name: 'แพลตฟอร์ม', href: '/platforms', icon: Globe },
     { name: 'ตั้งค่า', href: '/settings', icon: Settings },
   ];
 

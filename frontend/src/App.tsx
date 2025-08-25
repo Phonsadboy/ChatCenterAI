@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import Instructions from './pages/Instructions';
 import Settings from './pages/Settings';
+import PlatformManagement from './pages/PlatformManagement';
 import Layout from './components/Layout';
 
 const queryClient = new QueryClient({
@@ -37,6 +38,7 @@ const App: React.FC = () => {
                 <Route path="chat/:chatId" element={<Chat />} />
                 <Route path="instructions" element={<Instructions />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="platforms" element={<PlatformManagement />} />
               </Route>
             </Routes>
           </div>

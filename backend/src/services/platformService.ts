@@ -154,4 +154,34 @@ export class PlatformService {
         return {};
     }
   }
+
+  // ดึง platform ตามประเภท
+  static async getPlatformByType(
+    userId: string, 
+    platformType: 'facebook' | 'line' | 'telegram' | 'instagram'
+  ): Promise<IPlatform | null> {
+    return await Platform.findOne({
+      userId: new mongoose.Types.ObjectId(userId),
+      platformType,
+      isActive: true
+    });
+  }
+
+  // ทดสอบการเชื่อมต่อ Line
+  static async testLineConnection(channelAccessToken: string): Promise<{
+    success: boolean;
+    message: string;
+    profile?: any;
+  }> {
+    try {
+      const { LineService } = await import('./lineService');
+      return await LineService.testConnection(channelAccessToken);
+    } catch (error) {
+      console.error('Error testing LINE connection:', error);
+      return {
+        success: false,
+        message: 'เกิดข้อผิดพลาดในการทดสอบการเชื่อมต่อ'
+      };
+    }
+  }
 }
