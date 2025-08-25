@@ -36,7 +36,23 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
   useEffect(() => {
     const socketUrl = getSocketUrl();
     
-    const newSocket = io(socketUrl, socketConfig.options);
+    console.log('Connecting to Socket.io at:', socketUrl);
+    
+    const newSocket = io(socketUrl, {
+      ...socketConfig.options,
+      // 确保连接选项正确
+      path: '/socket.io/',
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      rememberUpgrade: true,
+      timeout: 20000,
+      forceNew: true,
+      autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000
+    });
 
 
 

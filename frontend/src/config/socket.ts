@@ -13,7 +13,11 @@ export const socketConfig = {
     reconnection: true,
     reconnectionAttempts: 5,
     reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000
+    reconnectionDelayMax: 5000,
+    // 确保不使用命名空间
+    path: '/socket.io/',
+    // 添加额外的连接选项
+    withCredentials: true
   }
 };
 

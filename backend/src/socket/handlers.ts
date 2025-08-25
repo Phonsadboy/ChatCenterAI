@@ -13,6 +13,16 @@ export const setupSocketHandlers = (io: Server) => {
     // Join agent room for all users
     socket.join('agents');
 
+    // 添加测试事件处理
+    socket.on('test-event', (data) => {
+      console.log('Received test event:', data);
+      socket.emit('test-response', { 
+        message: 'Hello from server!', 
+        timestamp: new Date().toISOString(),
+        clientData: data 
+      });
+    });
+
     // Handle joining specific chat room
     socket.on('join-chat', (chatId: string) => {
       socket.join(`chat:${chatId}`);
