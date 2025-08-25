@@ -1,57 +1,67 @@
 import express from 'express';
 import { protect, authorize, AuthRequest } from '../middleware/auth';
+import { PlatformService } from '../services/platformService';
 
 const router = express.Router();
 
 // @desc    Get all supported platforms
 // @route   GET /api/platforms
 // @access  Private
-router.get('/', protect, async (req, res) => {
+router.get('/', protect, async (req: AuthRequest, res) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'ไม่พบข้อมูลผู้ใช้'
+      });
+    }
+
+    // ดึง platforms ที่ผู้ใช้มี
+    const userPlatforms = await PlatformService.getPlatformsByUserId(userId);
+    
+    // สร้าง map ของ platforms ที่มีอยู่
+    const userPlatformsMap = new Map();
+    userPlatforms.forEach(platform => {
+      userPlatformsMap.set(platform.platformType, platform);
+    });
+
     const platforms = [
       {
         id: 'facebook',
         name: 'Facebook Messenger',
         icon: 'facebook',
         color: '#1877F2',
-        isActive: !!process.env.FACEBOOK_APP_ID,
-        config: {
-          appId: process.env.FACEBOOK_APP_ID,
-          hasWebhook: true
-        }
+        isActive: userPlatformsMap.has('facebook') && userPlatformsMap.get('facebook').isActive,
+        hasConfig: userPlatformsMap.has('facebook'),
+        config: userPlatformsMap.get('facebook') || null
       },
       {
         id: 'line',
         name: 'LINE',
         icon: 'line',
         color: '#00B900',
-        isActive: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
-        config: {
-          channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-          hasWebhook: true
-        }
+        isActive: userPlatformsMap.has('line') && userPlatformsMap.get('line').isActive,
+        hasConfig: userPlatformsMap.has('line'),
+        config: userPlatformsMap.get('line') || null
       },
       {
         id: 'telegram',
         name: 'Telegram',
         icon: 'telegram',
         color: '#0088CC',
-        isActive: !!process.env.TELEGRAM_BOT_TOKEN,
-        config: {
-          botToken: process.env.TELEGRAM_BOT_TOKEN,
-          hasWebhook: true
-        }
+        isActive: userPlatformsMap.has('telegram') && userPlatformsMap.get('telegram').isActive,
+        hasConfig: userPlatformsMap.has('telegram'),
+        config: userPlatformsMap.get('telegram') || null
       },
       {
         id: 'instagram',
         name: 'Instagram',
         icon: 'instagram',
         color: '#E4405F',
-        isActive: !!process.env.INSTAGRAM_ACCESS_TOKEN,
-        config: {
-          accessToken: process.env.INSTAGRAM_ACCESS_TOKEN,
-          hasWebhook: true
-        }
+        isActive: userPlatformsMap.has('instagram') && userPlatformsMap.get('instagram').isActive,
+        hasConfig: userPlatformsMap.has('instagram'),
+        config: userPlatformsMap.get('instagram') || null
       },
       {
         id: 'whatsapp',
@@ -59,9 +69,8 @@ router.get('/', protect, async (req, res) => {
         icon: 'whatsapp',
         color: '#25D366',
         isActive: false,
-        config: {
-          hasWebhook: false
-        }
+        hasConfig: false,
+        config: null
       },
       {
         id: 'web',
@@ -69,9 +78,8 @@ router.get('/', protect, async (req, res) => {
         icon: 'web',
         color: '#6366F1',
         isActive: true,
-        config: {
-          hasWebhook: false
-        }
+        hasConfig: false,
+        config: null
       }
     ];
 
@@ -88,101 +96,235 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// @desc    Get platform configuration
-// @route   GET /api/platforms/:platform/config
-// @access  Private/Admin
-router.get('/:platform/config', protect, authorize('admin'), async (req, res) => {
+// @desc    Create new platform
+// @route   POST /api/platforms
+// @access  Private
+router.post('/', protect, async (req: AuthRequest, res) => {
   try {
-    const { platform } = req.params;
-    let config = {};
-
-    switch (platform) {
-      case 'facebook':
-        config = {
-          appId: process.env.FACEBOOK_APP_ID,
-          appSecret: process.env.FACEBOOK_APP_SECRET,
-          verifyToken: process.env.FACEBOOK_VERIFY_TOKEN,
-          webhookUrl: `${process.env.BASE_URL}/api/webhooks/facebook`
-        };
-        break;
-      case 'line':
-        config = {
-          channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-          channelSecret: process.env.LINE_CHANNEL_SECRET,
-          webhookUrl: `${process.env.BASE_URL}/api/webhooks/line`
-        };
-        break;
-      case 'telegram':
-        config = {
-          botToken: process.env.TELEGRAM_BOT_TOKEN,
-          webhookUrl: `${process.env.BASE_URL}/api/webhooks/telegram`
-        };
-        break;
-      case 'instagram':
-        config = {
-          accessToken: process.env.INSTAGRAM_ACCESS_TOKEN,
-          webhookUrl: `${process.env.BASE_URL}/api/webhooks/instagram`
-        };
-        break;
-      default:
-        return res.status(400).json({
-          success: false,
-          error: 'แพลตฟอร์มไม่รองรับ'
-        });
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'ไม่พบข้อมูลผู้ใช้'
+      });
     }
 
-    res.status(200).json({
+    const { platformType, name, credentials, webhookUrl } = req.body;
+
+    if (!platformType || !name || !credentials) {
+      return res.status(400).json({
+        success: false,
+        error: 'กรุณาระบุ platformType, name และ credentials'
+      });
+    }
+
+    const platform = await PlatformService.createPlatform({
+      userId,
+      platformType,
+      name,
+      credentials,
+      webhookUrl
+    });
+
+    res.status(201).json({
       success: true,
-      data: config
+      data: platform
     });
   } catch (error) {
-    console.error('Get platform config error:', error);
+    console.error('Create platform error:', error);
     res.status(500).json({
       success: false,
-      error: 'เกิดข้อผิดพลาดในการดึงข้อมูลการตั้งค่าแพลตฟอร์ม'
+      error: 'เกิดข้อผิดพลาดในการสร้างแพลตฟอร์ม'
     });
   }
 });
 
-// @desc    Update platform configuration
-// @route   PUT /api/platforms/:platform/config
-// @access  Private/Admin
-router.put('/:platform/config', protect, authorize('admin'), async (req: AuthRequest, res) => {
+// @desc    Get platform by ID
+// @route   GET /api/platforms/:id
+// @access  Private
+router.get('/:id', protect, async (req: AuthRequest, res) => {
   try {
-    const { platform } = req.params;
-    const config = req.body;
+    const userId = req.user?.id;
+    const { id } = req.params;
 
-    // In a real application, you would save this to a database
-    // For now, we'll just return success
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'ไม่พบข้อมูลผู้ใช้'
+      });
+    }
+
+    const platform = await PlatformService.getPlatformById(id, userId);
+    if (!platform) {
+      return res.status(404).json({
+        success: false,
+        error: 'ไม่พบแพลตฟอร์ม'
+      });
+    }
+
     res.status(200).json({
       success: true,
-      message: `อัปเดตการตั้งค่า ${platform} สำเร็จ`,
-      data: config
+      data: platform
     });
   } catch (error) {
-    console.error('Update platform config error:', error);
+    console.error('Get platform error:', error);
     res.status(500).json({
       success: false,
-      error: 'เกิดข้อผิดพลาดในการอัปเดตการตั้งค่าแพลตฟอร์ม'
+      error: 'เกิดข้อผิดพลาดในการดึงข้อมูลแพลตฟอร์ม'
+    });
+  }
+});
+
+// @desc    Update platform
+// @route   PUT /api/platforms/:id
+// @access  Private
+router.put('/:id', protect, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+    const updateData = req.body;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'ไม่พบข้อมูลผู้ใช้'
+      });
+    }
+
+    const platform = await PlatformService.updatePlatform(id, userId, updateData);
+    if (!platform) {
+      return res.status(404).json({
+        success: false,
+        error: 'ไม่พบแพลตฟอร์ม'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: platform
+    });
+  } catch (error) {
+    console.error('Update platform error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'เกิดข้อผิดพลาดในการอัปเดตแพลตฟอร์ม'
+    });
+  }
+});
+
+// @desc    Delete platform
+// @route   DELETE /api/platforms/:id
+// @access  Private
+router.delete('/:id', protect, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'ไม่พบข้อมูลผู้ใช้'
+      });
+    }
+
+    const deleted = await PlatformService.deletePlatform(id, userId);
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        error: 'ไม่พบแพลตฟอร์ม'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'ลบแพลตฟอร์มสำเร็จ'
+    });
+  } catch (error) {
+    console.error('Delete platform error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'เกิดข้อผิดพลาดในการลบแพลตฟอร์ม'
+    });
+  }
+});
+
+// @desc    Toggle platform status
+// @route   PATCH /api/platforms/:id/toggle
+// @access  Private
+router.patch('/:id/toggle', protect, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'ไม่พบข้อมูลผู้ใช้'
+      });
+    }
+
+    const platform = await PlatformService.togglePlatform(id, userId);
+    if (!platform) {
+      return res.status(404).json({
+        success: false,
+        error: 'ไม่พบแพลตฟอร์ม'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: platform
+    });
+  } catch (error) {
+    console.error('Toggle platform error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'เกิดข้อผิดพลาดในการเปลี่ยนสถานะแพลตฟอร์ม'
     });
   }
 });
 
 // @desc    Test platform connection
-// @route   POST /api/platforms/:platform/test
-// @access  Private/Admin
-router.post('/:platform/test', protect, authorize('admin'), async (req, res) => {
+// @route   POST /api/platforms/:id/test
+// @access  Private
+router.post('/:id/test', protect, async (req: AuthRequest, res) => {
   try {
-    const { platform } = req.params;
+    const userId = req.user?.id;
+    const { id } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'ไม่พบข้อมูลผู้ใช้'
+      });
+    }
+
+    const platform = await PlatformService.getPlatformById(id, userId);
+    if (!platform) {
+      return res.status(404).json({
+        success: false,
+        error: 'ไม่พบแพลตฟอร์ม'
+      });
+    }
+
+    // ตรวจสอบว่า platform มี credentials ที่ครบถ้วนหรือไม่
+    const isValid = PlatformService.isPlatformValid(platform);
+    if (!isValid) {
+      return res.status(400).json({
+        success: false,
+        error: 'ข้อมูล credentials ไม่ครบถ้วน'
+      });
+    }
 
     // Simulate connection test
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     res.status(200).json({
       success: true,
-      message: `ทดสอบการเชื่อมต่อ ${platform} สำเร็จ`,
+      message: `ทดสอบการเชื่อมต่อ ${platform.name} สำเร็จ`,
       data: {
-        platform,
+        platform: platform.platformType,
+        name: platform.name,
         status: 'connected',
         timestamp: new Date().toISOString()
       }
@@ -197,12 +339,28 @@ router.post('/:platform/test', protect, authorize('admin'), async (req, res) => 
 });
 
 // @desc    Get platform statistics
-// @route   GET /api/platforms/:platform/stats
+// @route   GET /api/platforms/:id/stats
 // @access  Private
-router.get('/:platform/stats', protect, async (req, res) => {
+router.get('/:id/stats', protect, async (req: AuthRequest, res) => {
   try {
-    const { platform } = req.params;
+    const userId = req.user?.id;
+    const { id } = req.params;
     const { period = '7d' } = req.query;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'ไม่พบข้อมูลผู้ใช้'
+      });
+    }
+
+    const platform = await PlatformService.getPlatformById(id, userId);
+    if (!platform) {
+      return res.status(404).json({
+        success: false,
+        error: 'ไม่พบแพลตฟอร์ม'
+      });
+    }
 
     // In a real application, you would query the database for actual stats
     // For now, we'll return mock data

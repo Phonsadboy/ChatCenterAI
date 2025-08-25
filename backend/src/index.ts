@@ -13,6 +13,7 @@ import { authRoutes } from './routes/auth';
 import { chatRoutes } from './routes/chat';
 import { instructionRoutes } from './routes/instructions';
 import { platformRoutes } from './routes/platforms';
+import { webhookRoutes } from './routes/webhooks';
 import { setupSocketHandlers } from './socket/handlers';
 
 dotenv.config();
@@ -54,6 +55,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/instructions', instructionRoutes);
 app.use('/api/platforms', platformRoutes);
+app.use('/api/webhooks', webhookRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
