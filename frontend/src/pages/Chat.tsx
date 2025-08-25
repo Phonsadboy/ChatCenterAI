@@ -43,7 +43,7 @@ const Chat: React.FC = () => {
   const [message, setMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const queryClient = useQueryClient();
-  const { socket, joinChat, leaveChat, sendMessage, isConnected } = useSocket();
+  const { socket, joinChat, leaveChat, isConnected } = useSocket();
 
   const { data: chat, isLoading } = useQuery<Chat>(
     ['chat', chatId],
@@ -143,20 +143,20 @@ const Chat: React.FC = () => {
     }
   };
 
-  const getStatusName = (status: string) => {
-    switch (status) {
-      case 'active':
-        return 'กำลังดำเนินการ';
-      case 'resolved':
-        return 'เสร็จสิ้น';
-      case 'pending':
-        return 'รอดำเนินการ';
-      case 'closed':
-        return 'ปิด';
-      default:
-        return status;
-    }
-  };
+  // const getStatusName = (status: string) => {
+  //   switch (status) {
+  //     case 'active':
+  //       return 'กำลังดำเนินการ';
+  //     case 'resolved':
+  //       return 'เสร็จสิ้น';
+  //     case 'pending':
+  //       return 'รอดำเนินการ';
+  //     case 'closed':
+  //       return 'ปิด';
+  //     default:
+  //       return status;
+  //   }
+  // };
 
   const getPlatformName = (platform: string) => {
     const platforms: Record<string, string> = {

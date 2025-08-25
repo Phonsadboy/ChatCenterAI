@@ -87,7 +87,7 @@ const Dashboard: React.FC = () => {
   };
 
   const getPlatformIcon = (platform: string) => {
-    const icons: Record<string, React.ComponentType> = {
+    const icons: Record<string, any> = {
       facebook: Facebook,
       line: MessageCircle,
       telegram: MessageCircle,
@@ -98,18 +98,18 @@ const Dashboard: React.FC = () => {
     return icons[platform] || MessageSquare;
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active':
-        return 'text-green-600 bg-green-100';
-      case 'resolved':
-        return 'text-blue-600 bg-blue-100';
-      case 'pending':
-        return 'text-yellow-600 bg-yellow-100';
-      default:
-        return 'text-gray-600 bg-gray-100';
-    }
-  };
+  // const getStatusColor = (status: string) => {
+  //   switch (status) {
+  //     case 'active':
+  //       return 'text-green-600 bg-green-100';
+  //     case 'resolved':
+  //       return 'text-blue-600 bg-blue-100';
+  //     case 'pending':
+  //       return 'text-yellow-600 bg-yellow-100';
+  //     default:
+  //       return 'text-gray-600 bg-gray-100';
+  //   }
+  // };
 
   if (statsLoading || platformLoading) {
     return (

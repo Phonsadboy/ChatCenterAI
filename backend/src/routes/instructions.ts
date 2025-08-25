@@ -1,6 +1,7 @@
 import express from 'express';
 import { Instruction } from '../models/Instruction';
-import { protect, authorize, AuthRequest } from '../middleware/auth';
+import { AuthRequest } from '../middleware/auth';
+import { protect, authorize } from '../middleware/auth';
 
 const router = express.Router();
 
@@ -236,7 +237,7 @@ router.get('/platform/:platform', protect, async (req, res) => {
 // @desc    Bulk update instruction status
 // @route   PUT /api/instructions/bulk/status
 // @access  Private/Admin
-router.put('/bulk/status', protect, authorize('admin'), async (req, res) => {
+router.put('/bulk/status', protect, authorize('admin'), async (req: AuthRequest, res) => {
   try {
     const { ids, isActive } = req.body;
 

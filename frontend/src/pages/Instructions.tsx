@@ -6,7 +6,7 @@ import {
   Edit, 
   Trash2, 
   Search, 
-  Filter,
+  // Filter,
   Save,
   X,
   Eye,
@@ -60,11 +60,11 @@ const Instructions: React.FC = () => {
     register,
     handleSubmit,
     reset,
-    watch,
+    // watch,
     formState: { errors }
   } = useForm<InstructionFormData>();
 
-  const platforms = watch('platforms') || [];
+  // const platforms = watch('platforms') || [];
 
   const { data: instructions, isLoading } = useQuery<{ data: Instruction[]; total: number }>(
     ['instructions', searchTerm, selectedCategory, selectedPlatform, showActiveOnly],

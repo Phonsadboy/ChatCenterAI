@@ -1,7 +1,8 @@
 import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
-import { Chat } from '../models/Chat';
+import { Chat, IMessage } from '../models/Chat';
+import mongoose from 'mongoose';
 
 interface AuthenticatedSocket extends Socket {
   user?: any;
@@ -83,10 +84,10 @@ export const setupSocketHandlers = (io: Server) => {
         }
 
         // Add message to chat
-        const newMessage = {
+        const newMessage: IMessage = {
           id: Date.now().toString(),
           content: data.content,
-          type: data.type || 'text',
+          type: (data.type || 'text') as 'text' | 'image' | 'file' | 'audio' | 'video',
           sender: 'agent',
           senderId: socket.user?.id,
           senderName: socket.user?.name,
@@ -120,7 +121,7 @@ export const setupSocketHandlers = (io: Server) => {
     // Handle chat status update
     socket.on('update-chat-status', async (data: {
       chatId: string;
-      status: string;
+      status: 'active' | 'resolved' | 'pending' | 'closed';
     }) => {
       try {
         const chat = await Chat.findById(data.chatId);
@@ -164,7 +165,7 @@ export const setupSocketHandlers = (io: Server) => {
           return;
         }
 
-        chat.assignedAgent = data.assignedAgent;
+        chat.assignedAgent = new mongoose.Types.ObjectId(data.assignedAgent);
         await chat.save();
 
         // Emit assignment to all users in the chat room
@@ -213,29 +214,29 @@ export const setupSocketHandlers = (io: Server) => {
       });
     });
   });
+};
 
-  // Function to emit new chat to agents
-  export const emitNewChat = (chat: any) => {
-    io.to('agents').emit('new-chat', {
-      chat: chat
-    });
-  };
+// Function to emit new chat to agents
+export const emitNewChat = (io: Server, chat: any) => {
+  io.to('agents').emit('new-chat', {
+    chat: chat
+  });
+};
 
-  // Function to emit chat update to agents
-  export const emitChatUpdate = (chatId: string, update: any) => {
-    io.to('agents').emit('chat-updated', {
-      chatId,
-      ...update
-    });
-  };
+// Function to emit chat update to agents
+export const emitChatUpdate = (io: Server, chatId: string, update: any) => {
+  io.to('agents').emit('chat-updated', {
+    chatId,
+    ...update
+  });
+};
 
-  // Function to emit message to specific user
-  export const emitToUser = (userId: string, event: string, data: any) => {
-    io.to(`user:${userId}`).emit(event, data);
-  };
+// Function to emit message to specific user
+export const emitToUser = (io: Server, userId: string, event: string, data: any) => {
+  io.to(`user:${userId}`).emit(event, data);
+};
 
-  // Function to emit to all agents
-  export const emitToAgents = (event: string, data: any) => {
-    io.to('agents').emit(event, data);
-  };
+// Function to emit to all agents
+export const emitToAgents = (io: Server, event: string, data: any) => {
+  io.to('agents').emit(event, data);
 };
