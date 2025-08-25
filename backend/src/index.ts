@@ -75,11 +75,9 @@ app.use(errorHandler);
 if (process.env.NODE_ENV === 'production') {
   const frontendDistPath = path.join(__dirname, '..', '..', 'frontend', 'dist');
   app.use(express.static(frontendDistPath));
-  app.get('*', (req, res) => {
-    // Avoid catching API routes
-    if (req.path.startsWith('/api/')) {
-      return res.status(404).json({ success: false, error: 'Not Found' });
-    }
+  // Use middleware to avoid path-to-regexp issues with Express v5
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
     res.sendFile(path.join(frontendDistPath, 'index.html'));
   });
 }
