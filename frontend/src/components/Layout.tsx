@@ -4,19 +4,16 @@ import {
   LayoutDashboard, 
   MessageSquare, 
   Settings, 
-  LogOut, 
   Menu, 
   X,
-  Users,
   BarChart3,
   FileText
 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+
 import { useSocket } from '../contexts/SocketContext';
 
 const Layout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, logout } = useAuth();
   const { isConnected } = useSocket();
   const navigate = useNavigate();
   const location = useLocation();
@@ -25,15 +22,9 @@ const Layout: React.FC = () => {
     { name: 'แดชบอร์ด', href: '/dashboard', icon: LayoutDashboard },
     { name: 'แชท', href: '/chat', icon: MessageSquare },
     { name: 'คำแนะนำ AI', href: '/instructions', icon: FileText },
-    { name: 'ผู้ใช้', href: '/users', icon: Users },
     { name: 'สถิติ', href: '/stats', icon: BarChart3 },
     { name: 'ตั้งค่า', href: '/settings', icon: Settings },
   ];
-
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
 
   const isActive = (href: string) => {
     return location.pathname === href || location.pathname.startsWith(href + '/');
@@ -83,22 +74,15 @@ const Layout: React.FC = () => {
               <div className="flex-shrink-0">
                 <div className="h-8 w-8 rounded-full bg-primary-600 flex items-center justify-center">
                   <span className="text-sm font-medium text-white">
-                    {user?.name?.charAt(0).toUpperCase()}
+                    A
                   </span>
                 </div>
               </div>
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-700">{user?.name}</p>
-                <p className="text-xs text-gray-500">{user?.email}</p>
+                <p className="text-sm font-medium text-gray-700">Agent</p>
+                <p className="text-xs text-gray-500">chatcenterai@system.com</p>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              className="mt-4 w-full flex items-center px-2 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 rounded-md"
-            >
-              <LogOut className="mr-3 h-5 w-5" />
-              ออกจากระบบ
-            </button>
           </div>
         </div>
       </div>
@@ -137,22 +121,16 @@ const Layout: React.FC = () => {
               <div className="flex-shrink-0">
                 <div className="h-8 w-8 rounded-full bg-primary-600 flex items-center justify-center">
                   <span className="text-sm font-medium text-white">
-                    {user?.name?.charAt(0).toUpperCase()}
+                    A
                   </span>
                 </div>
               </div>
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-700">{user?.name}</p>
-                <p className="text-xs text-gray-500">{user?.email}</p>
+                <p className="text-sm font-medium text-gray-700">Agent</p>
+                <p className="text-xs text-gray-500">chatcenterai@system.com</p>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              className="mt-4 w-full flex items-center px-2 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 rounded-md"
-            >
-              <LogOut className="mr-3 h-5 w-5" />
-              ออกจากระบบ
-            </button>
+
           </div>
         </div>
       </div>
@@ -183,7 +161,7 @@ const Layout: React.FC = () => {
               {/* User menu */}
               <div className="hidden lg:block lg:h-6 lg:w-px lg:bg-gray-200" />
               <div className="flex items-center gap-x-4">
-                <span className="text-sm text-gray-700">{user?.role}</span>
+                <span className="text-sm text-gray-700">Agent</span>
               </div>
             </div>
           </div>

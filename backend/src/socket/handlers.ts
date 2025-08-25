@@ -1,6 +1,4 @@
 import { Server, Socket } from 'socket.io';
-import jwt from 'jsonwebtoken';
-import { User } from '../models/User';
 import { Chat, IMessage } from '../models/Chat';
 import mongoose from 'mongoose';
 
@@ -9,44 +7,11 @@ interface AuthenticatedSocket extends Socket {
 }
 
 export const setupSocketHandlers = (io: Server) => {
-  // Authentication middleware
-  io.use(async (socket: AuthenticatedSocket, next) => {
-    try {
-      const token = socket.handshake.auth.token;
-      
-      if (!token) {
-        return next(new Error('Authentication error'));
-      }
-
-      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
-      const user = await User.findById(decoded.id).select('-password');
-      
-      if (!user) {
-        return next(new Error('User not found'));
-      }
-
-      socket.user = user;
-      next();
-    } catch (error) {
-      next(new Error('Authentication error'));
-    }
-  });
-
   io.on('connection', (socket: AuthenticatedSocket) => {
-    console.log(`User connected: ${socket.user?.name} (${socket.user?.id})`);
+    console.log(`User connected: ${socket.id}`);
 
-    // Join user to their personal room
-    socket.join(`user:${socket.user?.id}`);
-
-    // Join admin room if user is admin
-    if (socket.user?.role === 'admin') {
-      socket.join('admin');
-    }
-
-    // Join agent room if user is agent or admin
-    if (socket.user?.role === 'agent' || socket.user?.role === 'admin') {
-      socket.join('agents');
-    }
+    // Join agent room for all users
+    socket.join('agents');
 
     // Handle joining specific chat room
     socket.on('join-chat', (chatId: string) => {
@@ -63,8 +28,8 @@ export const setupSocketHandlers = (io: Server) => {
     // Handle typing indicator
     socket.on('typing', (data: { chatId: string; isTyping: boolean }) => {
       socket.to(`chat:${data.chatId}`).emit('user-typing', {
-        userId: socket.user?.id,
-        userName: socket.user?.name,
+        userId: socket.id,
+        userName: 'Agent',
         isTyping: data.isTyping
       });
     });
@@ -89,8 +54,8 @@ export const setupSocketHandlers = (io: Server) => {
           content: data.content,
           type: (data.type || 'text') as 'text' | 'image' | 'file' | 'audio' | 'video',
           sender: 'agent',
-          senderId: socket.user?.id,
-          senderName: socket.user?.name,
+          senderId: socket.id,
+          senderName: 'Agent',
           timestamp: new Date()
         };
 
@@ -194,22 +159,22 @@ export const setupSocketHandlers = (io: Server) => {
 
     // Handle user online status
     socket.on('set-online-status', (isOnline: boolean) => {
-      // Emit to agents and admins
+      // Emit to agents
       io.to('agents').emit('user-status-changed', {
-        userId: socket.user?.id,
-        userName: socket.user?.name,
+        userId: socket.id,
+        userName: 'Agent',
         isOnline
       });
     });
 
     // Handle disconnect
     socket.on('disconnect', () => {
-      console.log(`User disconnected: ${socket.user?.name} (${socket.user?.id})`);
+      console.log(`User disconnected: ${socket.id}`);
       
-      // Emit offline status to agents and admins
+      // Emit offline status to agents
       io.to('agents').emit('user-status-changed', {
-        userId: socket.user?.id,
-        userName: socket.user?.name,
+        userId: socket.id,
+        userName: 'Agent',
         isOnline: false
       });
     });

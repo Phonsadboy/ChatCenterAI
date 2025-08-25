@@ -1,14 +1,12 @@
 import express from 'express';
 import { Instruction } from '../models/Instruction';
-import { AuthRequest } from '../middleware/auth';
-import { protect, authorize } from '../middleware/auth';
 
 const router = express.Router();
 
 // @desc    Get all instructions
 // @route   GET /api/instructions
 // @access  Private
-router.get('/', protect, async (req: AuthRequest, res) => {
+router.get('/', async (req, res) => {
   try {
     const { platform, category, isActive, page = 1, limit = 10 } = req.query;
     
@@ -60,7 +58,7 @@ router.get('/', protect, async (req: AuthRequest, res) => {
 // @desc    Get single instruction
 // @route   GET /api/instructions/:id
 // @access  Private
-router.get('/:id', protect, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const instruction = await Instruction.findById(req.params.id)
       .populate('createdBy', 'name email')
@@ -89,7 +87,7 @@ router.get('/:id', protect, async (req, res) => {
 // @desc    Create new instruction
 // @route   POST /api/instructions
 // @access  Private
-router.post('/', protect, authorize('admin', 'agent'), async (req: AuthRequest, res) => {
+router.post('/', async (req, res) => {
   try {
     const { name, description, content, category, platforms, priority, tags } = req.body;
 
@@ -101,8 +99,8 @@ router.post('/', protect, authorize('admin', 'agent'), async (req: AuthRequest, 
       platforms,
       priority: priority || 1,
       tags: tags || [],
-      createdBy: req.user!.id,
-      updatedBy: req.user!.id
+      createdBy: 'system',
+      updatedBy: 'system'
     });
 
     const populatedInstruction = await instruction.populate([
@@ -126,7 +124,7 @@ router.post('/', protect, authorize('admin', 'agent'), async (req: AuthRequest, 
 // @desc    Update instruction
 // @route   PUT /api/instructions/:id
 // @access  Private
-router.put('/:id', protect, authorize('admin', 'agent'), async (req: AuthRequest, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { name, description, content, category, platforms, priority, tags, isActive } = req.body;
 
@@ -149,7 +147,7 @@ router.put('/:id', protect, authorize('admin', 'agent'), async (req: AuthRequest
     if (tags !== undefined) instruction.tags = tags;
     if (isActive !== undefined) instruction.isActive = isActive;
     
-    instruction.updatedBy = req.user!.id;
+    instruction.updatedBy = 'system';
 
     await instruction.save();
 
@@ -174,7 +172,7 @@ router.put('/:id', protect, authorize('admin', 'agent'), async (req: AuthRequest
 // @desc    Delete instruction
 // @route   DELETE /api/instructions/:id
 // @access  Private/Admin
-router.delete('/:id', protect, authorize('admin'), async (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const instruction = await Instruction.findById(req.params.id);
 
@@ -203,7 +201,7 @@ router.delete('/:id', protect, authorize('admin'), async (req, res) => {
 // @desc    Get instructions by platform
 // @route   GET /api/instructions/platform/:platform
 // @access  Private
-router.get('/platform/:platform', protect, async (req, res) => {
+router.get('/platform/:platform', async (req, res) => {
   try {
     const { platform } = req.params;
     const { category } = req.query;
@@ -237,7 +235,7 @@ router.get('/platform/:platform', protect, async (req, res) => {
 // @desc    Bulk update instruction status
 // @route   PUT /api/instructions/bulk/status
 // @access  Private/Admin
-router.put('/bulk/status', protect, authorize('admin'), async (req: AuthRequest, res) => {
+router.put('/bulk/status', async (req, res) => {
   try {
     const { ids, isActive } = req.body;
 
@@ -252,7 +250,7 @@ router.put('/bulk/status', protect, authorize('admin'), async (req: AuthRequest,
       { _id: { $in: ids } },
       { 
         isActive,
-        updatedBy: req.user!.id,
+        updatedBy: 'system',
         updatedAt: new Date()
       }
     );

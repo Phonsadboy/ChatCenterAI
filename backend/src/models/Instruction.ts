@@ -9,8 +9,8 @@ export interface IInstruction extends Document {
   isActive: boolean;
   priority: number;
   tags: string[];
-  createdBy: mongoose.Types.ObjectId;
-  updatedBy: mongoose.Types.ObjectId;
+  createdBy: string;
+  updatedBy: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -59,13 +59,11 @@ const InstructionSchema = new Schema<IInstruction>({
     trim: true
   }],
   createdBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
+    type: String,
     required: true
   },
   updatedBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
+    type: String,
     required: true
   }
 }, {

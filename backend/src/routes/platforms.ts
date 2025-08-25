@@ -1,5 +1,5 @@
 import express from 'express';
-import { protect, authorize, AuthRequest } from '../middleware/auth';
+
 import { PlatformService } from '../services/platformService';
 
 const router = express.Router();
@@ -7,15 +7,9 @@ const router = express.Router();
 // @desc    Get all supported platforms
 // @route   GET /api/platforms
 // @access  Private
-router.get('/', protect, async (req: AuthRequest, res) => {
+router.get('/', async (req, res) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'ไม่พบข้อมูลผู้ใช้'
-      });
-    }
+    const userId = 'system';
 
     // ดึง platforms ที่ผู้ใช้มี
     const userPlatforms = await PlatformService.getPlatformsByUserId(userId);
@@ -99,15 +93,9 @@ router.get('/', protect, async (req: AuthRequest, res) => {
 // @desc    Create new platform
 // @route   POST /api/platforms
 // @access  Private
-router.post('/', protect, async (req: AuthRequest, res) => {
+router.post('/', async (req, res) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'ไม่พบข้อมูลผู้ใช้'
-      });
-    }
+    const userId = 'system';
 
     const { platformType, name, credentials, webhookUrl } = req.body;
 
@@ -142,17 +130,10 @@ router.post('/', protect, async (req: AuthRequest, res) => {
 // @desc    Get platform by ID
 // @route   GET /api/platforms/:id
 // @access  Private
-router.get('/:id', protect, async (req: AuthRequest, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = 'system';
     const { id } = req.params;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'ไม่พบข้อมูลผู้ใช้'
-      });
-    }
 
     const platform = await PlatformService.getPlatformById(id, userId);
     if (!platform) {
@@ -178,18 +159,11 @@ router.get('/:id', protect, async (req: AuthRequest, res) => {
 // @desc    Update platform
 // @route   PUT /api/platforms/:id
 // @access  Private
-router.put('/:id', protect, async (req: AuthRequest, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = 'system';
     const { id } = req.params;
     const updateData = req.body;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'ไม่พบข้อมูลผู้ใช้'
-      });
-    }
 
     const platform = await PlatformService.updatePlatform(id, userId, updateData);
     if (!platform) {
@@ -215,17 +189,10 @@ router.put('/:id', protect, async (req: AuthRequest, res) => {
 // @desc    Delete platform
 // @route   DELETE /api/platforms/:id
 // @access  Private
-router.delete('/:id', protect, async (req: AuthRequest, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = 'system';
     const { id } = req.params;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'ไม่พบข้อมูลผู้ใช้'
-      });
-    }
 
     const deleted = await PlatformService.deletePlatform(id, userId);
     if (!deleted) {
@@ -251,17 +218,10 @@ router.delete('/:id', protect, async (req: AuthRequest, res) => {
 // @desc    Toggle platform status
 // @route   PATCH /api/platforms/:id/toggle
 // @access  Private
-router.patch('/:id/toggle', protect, async (req: AuthRequest, res) => {
+router.patch('/:id/toggle', async (req, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = 'system';
     const { id } = req.params;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'ไม่พบข้อมูลผู้ใช้'
-      });
-    }
 
     const platform = await PlatformService.togglePlatform(id, userId);
     if (!platform) {
@@ -287,17 +247,10 @@ router.patch('/:id/toggle', protect, async (req: AuthRequest, res) => {
 // @desc    Test platform connection
 // @route   POST /api/platforms/:id/test
 // @access  Private
-router.post('/:id/test', protect, async (req: AuthRequest, res) => {
+router.post('/:id/test', async (req, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = 'system';
     const { id } = req.params;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'ไม่พบข้อมูลผู้ใช้'
-      });
-    }
 
     const platform = await PlatformService.getPlatformById(id, userId);
     if (!platform) {
@@ -341,18 +294,11 @@ router.post('/:id/test', protect, async (req: AuthRequest, res) => {
 // @desc    Get platform statistics
 // @route   GET /api/platforms/:id/stats
 // @access  Private
-router.get('/:id/stats', protect, async (req: AuthRequest, res) => {
+router.get('/:id/stats', async (req, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = 'system';
     const { id } = req.params;
     const { period = '7d' } = req.query;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'ไม่พบข้อมูลผู้ใช้'
-      });
-    }
 
     const platform = await PlatformService.getPlatformById(id, userId);
     if (!platform) {

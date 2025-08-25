@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { useAuth } from './AuthContext';
 import toast from 'react-hot-toast';
 
 interface SocketContextType {
@@ -30,31 +29,17 @@ interface SocketProviderProps {
 }
 
 export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
-  const { user } = useAuth();
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    if (!user) {
-      if (socket) {
-        socket.disconnect();
-        setSocket(null);
-        setIsConnected(false);
-      }
-      return;
-    }
-
-    const token = localStorage.getItem('token');
-    if (!token) return;
-
     const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
     
     const newSocket = io(socketUrl, {
-      auth: {
-        token
-      },
       transports: ['websocket', 'polling']
     });
+
+
 
     newSocket.on('connect', () => {
       console.log('Socket connected');
@@ -91,7 +76,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     return () => {
       newSocket.disconnect();
     };
-  }, [user]);
+  }, []);
 
   const joinChat = (chatId: string) => {
     if (socket && isConnected) {

@@ -1,8 +1,7 @@
 import React from 'react';
-import { useAuth } from '../contexts/AuthContext';
+
 
 const Settings: React.FC = () => {
-  const { user } = useAuth();
 
   return (
     <div className="space-y-6">
@@ -22,16 +21,16 @@ const Settings: React.FC = () => {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">ชื่อ</label>
-                <p className="text-gray-900">{user?.name}</p>
+                <p className="text-gray-900">Agent</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">อีเมล</label>
-                <p className="text-gray-900">{user?.email}</p>
+                <p className="text-gray-900">chatcenterai@system.com</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">บทบาท</label>
                 <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-primary-100 text-primary-800">
-                  {user?.role === 'admin' ? 'ผู้ดูแลระบบ' : user?.role === 'agent' ? 'เจ้าหน้าที่' : 'ผู้ดู'}
+                  เจ้าหน้าที่
                 </span>
               </div>
             </div>

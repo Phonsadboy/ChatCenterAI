@@ -1,14 +1,13 @@
 import express from 'express';
 import { Chat, IMessage } from '../models/Chat';
-import { protect, authorize, AuthRequest } from '../middleware/auth';
 import { aiService } from '../services/aiService';
 
 const router = express.Router();
 
 // @desc    Get all chats
 // @route   GET /api/chat
-// @access  Private
-router.get('/', protect, async (req: AuthRequest, res) => {
+// @access  Public
+router.get('/', async (req, res) => {
   try {
     const { 
       platform, 
@@ -81,8 +80,8 @@ router.get('/', protect, async (req: AuthRequest, res) => {
 
 // @desc    Get single chat
 // @route   GET /api/chat/:id
-// @access  Private
-router.get('/:id', protect, async (req, res) => {
+// @access  Public
+router.get('/:id', async (req, res) => {
   try {
     const chat = await Chat.findById(req.params.id)
       .populate('assignedAgent', 'name email avatar');
@@ -110,7 +109,7 @@ router.get('/:id', protect, async (req, res) => {
 // @desc    Create new chat
 // @route   POST /api/chat
 // @access  Private
-router.post('/', protect, async (req: AuthRequest, res) => {
+router.post('/', async (req, res) => {
   try {
     const { customerId, customerName, platform, platformId, message } = req.body;
 
@@ -214,7 +213,7 @@ router.post('/', protect, async (req: AuthRequest, res) => {
 // @desc    Send message to chat
 // @route   POST /api/chat/:id/messages
 // @access  Private
-router.post('/:id/messages', protect, async (req: AuthRequest, res) => {
+router.post('/:id/messages', async (req, res) => {
   try {
     const { content, type = 'text' } = req.body;
     const chat = await Chat.findById(req.params.id);
@@ -231,8 +230,8 @@ router.post('/:id/messages', protect, async (req: AuthRequest, res) => {
       content,
       type,
       sender: 'agent',
-      senderId: req.user!.id,
-      senderName: req.user!.name,
+      senderId: 'system',
+      senderName: 'Agent',
       timestamp: new Date()
     };
 
@@ -259,7 +258,7 @@ router.post('/:id/messages', protect, async (req: AuthRequest, res) => {
 // @desc    Update chat status
 // @route   PUT /api/chat/:id/status
 // @access  Private
-router.put('/:id/status', protect, async (req: AuthRequest, res) => {
+router.put('/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
     const chat = await Chat.findById(req.params.id);
@@ -292,7 +291,7 @@ router.put('/:id/status', protect, async (req: AuthRequest, res) => {
 // @desc    Assign chat to agent
 // @route   PUT /api/chat/:id/assign
 // @access  Private
-router.put('/:id/assign', protect, authorize('admin', 'agent'), async (req: AuthRequest, res) => {
+router.put('/:id/assign', async (req, res) => {
   try {
     const { assignedAgent } = req.body;
     const chat = await Chat.findById(req.params.id);
@@ -325,7 +324,7 @@ router.put('/:id/assign', protect, authorize('admin', 'agent'), async (req: Auth
 // @desc    Get chat statistics
 // @route   GET /api/chat/stats/overview
 // @access  Private
-router.get('/stats/overview', protect, async (req: AuthRequest, res) => {
+router.get('/stats/overview', async (req, res) => {
   try {
     const totalChats = await Chat.countDocuments();
     const activeChats = await Chat.countDocuments({ status: 'active' });
