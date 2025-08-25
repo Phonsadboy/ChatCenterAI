@@ -69,5 +69,6 @@ railway service restart
 
 - Railway จะใช้ `PORT` environment variable อัตโนมัติ
 - ระบบจะ restart อัตโนมัติเมื่อเกิดข้อผิดพลาด
-- Health check จะตรวจสอบที่ path `/`
+- Health check จะตรวจสอบที่ path `/health`
+- หน้าแรกรีไปแดชบอร์ดโดยตรง (ไม่ต้องล็อกอิน)
 - ใช้ Node.js version 18 หรือสูงกว่า
