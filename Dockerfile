@@ -53,6 +53,9 @@ COPY --from=builder /app/frontend/dist ./frontend/dist
 COPY backend/src/config ./backend/src/config
 COPY backend/env.example ./backend/.env
 
+# Create uploads directory
+RUN mkdir -p /app/backend/uploads
+
 # Expose port
 EXPOSE 3001
 
@@ -60,5 +63,6 @@ EXPOSE 3001
 ENV NODE_ENV=production
 ENV PORT=3001
 
-# Start the application
-CMD ["cd", "backend", "&&", "npm", "start"]
+# Change to backend directory and start
+WORKDIR /app/backend
+CMD ["npm", "start"]

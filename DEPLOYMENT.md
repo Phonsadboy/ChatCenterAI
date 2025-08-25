@@ -1,175 +1,136 @@
-# 🚀 การ Deploy ChatCenterAI บน Railway
+# การ Deploy ChatCenterAI บน Railway
 
-## 📋 ขั้นตอนการ Deploy
+## ข้อกำหนดเบื้องต้น
 
-### 1. เตรียม Repository
-```bash
-# Fork หรือ clone repository
-git clone https://github.com/your-username/chatcenterai.git
-cd chatcenterai
+- GitHub repository ที่มีโค้ดโปรเจค
+- บัญชี Railway (https://railway.app)
+- MongoDB database (สามารถใช้ MongoDB Atlas หรือ Railway MongoDB)
 
-# Push ไปยัง GitHub repository ของคุณ
-git add .
-git commit -m "Initial commit for Railway deployment"
-git push origin main
-```
+## ขั้นตอนการ Deploy
 
-### 2. สร้าง Railway Account
-1. ไปที่ [Railway.app](https://railway.app)
-2. สร้างบัญชีใหม่ (ใช้ GitHub login)
-3. สร้างโปรเจคใหม่
+### 1. เตรียม Environment Variables
 
-### 3. Deploy บน Railway
-1. ใน Railway Dashboard คลิก "New Project"
-2. เลือก "Deploy from GitHub repo"
-3. เลือก repository `chatcenterai`
-4. Railway จะ detect เป็น Node.js project อัตโนมัติ
-5. คลิก "Deploy Now"
+สร้างไฟล์ `.env` ใน backend directory หรือตั้งค่าใน Railway dashboard:
 
-### 4. ตั้งค่า Environment Variables
+```env
+# Database
+MONGODB_URI=your_mongodb_connection_string
 
-ใน Railway Dashboard > Your Project > Variables tab:
+# JWT
+JWT_SECRET=your_jwt_secret_key
 
-#### 🔐 Required Variables (ต้องตั้งค่า)
-```
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/chatcenterai
-JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-OPENAI_API_KEY=sk-your-openai-api-key-here
-```
+# OpenAI
+OPENAI_API_KEY=your_openai_api_key
 
-#### 🌐 Optional Variables (เลือกตั้งค่า)
-```
-# Facebook Integration
-FACEBOOK_APP_ID=your-facebook-app-id
-FACEBOOK_APP_SECRET=your-facebook-app-secret
-FACEBOOK_PAGE_ACCESS_TOKEN=your-facebook-page-access-token
+# Frontend URL (สำหรับ CORS)
+FRONTEND_URL=https://your-frontend-domain.com
 
-# LINE Integration
-LINE_CHANNEL_ID=your-line-channel-id
-LINE_CHANNEL_SECRET=your-line-channel-secret
-LINE_CHANNEL_ACCESS_TOKEN=your-line-channel-access-token
-
-# Telegram Integration
-TELEGRAM_BOT_TOKEN=your-telegram-bot-token
-
-# Instagram Integration
-INSTAGRAM_APP_ID=your-instagram-app-id
-INSTAGRAM_APP_SECRET=your-instagram-app-secret
-INSTAGRAM_ACCESS_TOKEN=your-instagram-access-token
-```
-
-### 5. ตั้งค่าฐานข้อมูล MongoDB
-
-#### วิธีที่ 1: ใช้ MongoDB Atlas (แนะนำ)
-1. ไปที่ [MongoDB Atlas](https://cloud.mongodb.com)
-2. สร้าง cluster ใหม่
-3. สร้าง database user
-4. ตั้งค่า Network Access (0.0.0.0/0)
-5. Copy connection string
-6. ใส่ใน `MONGODB_URI` variable
-
-#### วิธีที่ 2: ใช้ Railway MongoDB
-1. ใน Railway Dashboard คลิก "New Service"
-2. เลือก "Database" > "MongoDB"
-3. Railway จะสร้าง MongoDB service
-4. Copy connection string จาก Variables
-5. ใส่ใน `MONGODB_URI` variable
-
-### 6. ตรวจสอบการ Deploy
-1. ไปที่ "Deployments" tab
-2. ตรวจสอบว่า build สำเร็จ
-3. ตรวจสอบ logs หากมีปัญหา
-4. ไปที่ "Settings" tab เพื่อดู domain URL
-
-## 🔧 การตั้งค่าเพิ่มเติม
-
-### Custom Domain (Optional)
-1. ไปที่ "Settings" tab
-2. คลิก "Custom Domains"
-3. เพิ่ม domain ของคุณ
-4. ตั้งค่า DNS records ตามที่ Railway บอก
-
-### Environment Variables สำหรับ Production
-```
+# Environment
 NODE_ENV=production
-PORT=3000
+PORT=3001
 ```
 
-### Monitoring และ Logs
-- ดู logs ได้ใน "Deployments" tab
-- ตั้งค่า alerts ใน "Settings" tab
-- ใช้ Railway CLI สำหรับ local development
+### 2. Deploy บน Railway
 
-## 🚨 การแก้ไขปัญหา
-
-### Build Failed
-- ตรวจสอบ `package.json` scripts
-- ตรวจสอบ dependencies
-- ดู build logs ใน Railway
-
-### Database Connection Error
-- ตรวจสอบ `MONGODB_URI` format
-- ตรวจสอบ MongoDB Atlas Network Access
-- ตรวจสอบ database user permissions
-
-### JWT Error
-- ตรวจสอบ `JWT_SECRET` ว่าตั้งค่าแล้ว
-- ตรวจสอบ JWT token format
-
-### OpenAI API Error
-- ตรวจสอบ `OPENAI_API_KEY` ว่าถูกต้อง
-- ตรวจสอบ API key permissions
-- ตรวจสอบ billing status
-
-## 📊 การ Monitor
-
-### Health Check
-- URL: `https://your-app.railway.app/api/health`
-- ควร return: `{"status":"OK","timestamp":"...","uptime":...}`
-
-### Logs
-- ดู logs ได้ใน Railway Dashboard
-- ใช้ `railway logs` command
-
-### Metrics
-- Railway จะแสดง CPU, Memory usage
-- ตรวจสอบใน "Metrics" tab
-
-## 🔄 การ Update
-
-### Automatic Deploy
-- Railway จะ auto-deploy เมื่อ push ไป GitHub
-- ตรวจสอบ "Deployments" tab
-
-### Manual Deploy
+#### วิธีที่ 1: ใช้ Railway CLI
 ```bash
-# ใช้ Railway CLI
+# ติดตั้ง Railway CLI
+npm install -g @railway/cli
+
+# Login
 railway login
-railway link
+
+# Deploy
 railway up
 ```
 
-## 💰 Pricing
+#### วิธีที่ 2: ใช้ Railway Dashboard
+1. ไปที่ https://railway.app
+2. คลิก "New Project"
+3. เลือก "Deploy from GitHub repo"
+4. เลือก repository ของคุณ
+5. Railway จะ detect Dockerfile และ build อัตโนมัติ
 
-- Railway มี free tier สำหรับ development
-- Production ใช้ pay-as-you-go pricing
-- ตรวจสอบ pricing ใน Railway Dashboard
+### 3. ตั้งค่า Environment Variables
 
-## 📞 Support
+ใน Railway dashboard:
+1. ไปที่ "Variables" tab
+2. เพิ่ม environment variables ที่จำเป็น
+3. คลิก "Deploy" เพื่อ restart application
 
-- Railway Documentation: https://docs.railway.app
-- MongoDB Atlas Documentation: https://docs.atlas.mongodb.com
-- OpenAI API Documentation: https://platform.openai.com/docs
+### 4. ตรวจสอบ Deployment
 
-## ✅ Checklist
+1. ไปที่ "Deployments" tab
+2. ตรวจสอบ build logs
+3. ตรวจสอบ application logs
+4. ทดสอบ health check endpoint: `https://your-app.railway.app/api/health`
 
-- [ ] Repository pushed to GitHub
-- [ ] Railway project created
-- [ ] Environment variables set
-- [ ] MongoDB connected
-- [ ] Build successful
-- [ ] Health check passing
-- [ ] Frontend accessible
-- [ ] API endpoints working
-- [ ] Socket.IO connected
-- [ ] Custom domain configured (optional)
+## โครงสร้างไฟล์ที่สำคัญ
+
+```
+ChatCenterAI-1/
+├── Dockerfile              # Docker configuration
+├── railway.json            # Railway configuration
+├── .dockerignore           # Docker ignore files
+├── backend/
+│   ├── dist/               # Compiled JavaScript
+│   ├── src/                # TypeScript source
+│   ├── package.json        # Backend dependencies
+│   └── railway.json        # Backend Railway config
+└── frontend/
+    ├── dist/               # Built frontend
+    ├── src/                # React source
+    └── package.json        # Frontend dependencies
+```
+
+## การแก้ไขปัญหา
+
+### Build Errors
+- ตรวจสอบ TypeScript compilation: `npm run build`
+- ตรวจสอบ Docker build: `docker build -t test .`
+
+### Runtime Errors
+- ตรวจสอบ application logs ใน Railway dashboard
+- ตรวจสอบ environment variables
+- ตรวจสอบ database connection
+
+### CORS Errors
+- ตั้งค่า `FRONTEND_URL` ให้ถูกต้อง
+- ตรวจสอบ CORS configuration ใน backend
+
+## การ Monitor และ Maintenance
+
+### Health Check
+- Endpoint: `/api/health`
+- ตรวจสอบ uptime และ environment
+
+### Logs
+- ใช้ Railway dashboard เพื่อดู logs
+- ตั้งค่า log retention ตามความเหมาะสม
+
+### Database
+- ใช้ MongoDB Atlas หรือ Railway MongoDB
+- ตั้งค่า backup และ monitoring
+
+## การ Update Application
+
+1. Push changes ไป GitHub
+2. Railway จะ auto-deploy
+3. ตรวจสอบ deployment logs
+4. ทดสอบ application
+
+## Security Considerations
+
+- ใช้ strong JWT secret
+- ตั้งค่า CORS ให้เหมาะสม
+- ใช้ environment variables สำหรับ sensitive data
+- เปิดใช้ rate limiting
+- ใช้ HTTPS (Railway จัดการให้)
+
+## Performance Optimization
+
+- ใช้ CDN สำหรับ static files
+- ตั้งค่า caching headers
+- Optimize database queries
+- ใช้ connection pooling
+- Monitor memory usage
