@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import toast from 'react-hot-toast';
+import { socketConfig, getSocketUrl } from '../config/socket';
 
 interface SocketContextType {
   socket: Socket | null;
@@ -33,11 +34,9 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+    const socketUrl = getSocketUrl();
     
-    const newSocket = io(socketUrl, {
-      transports: ['websocket', 'polling']
-    });
+    const newSocket = io(socketUrl, socketConfig.options);
 
 
 
