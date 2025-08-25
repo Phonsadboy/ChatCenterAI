@@ -16,6 +16,7 @@ Refused to load the stylesheet 'https://fonts.googleapis.com/css2?family=Inter:w
 2. **端口不匹配**：前端和后端的端口配置不一致
 3. **CORS配置问题**：WebSocket的CORS设置不正确
 4. **Socket命名空间错误**：连接到了错误的Socket端点
+5. **代理配置问题**：Vite代理可能导致WebSocket连接问题
 
 ## 解决方案
 
@@ -25,26 +26,22 @@ Refused to load the stylesheet 'https://fonts.googleapis.com/css2?family=Inter:w
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: http: https:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https:;" />
 ```
 
-### 2. Vite代理配置
-在 `frontend/vite.config.ts` 中添加了WebSocket代理：
+### 2. 直接连接后端（推荐方案）
+移除了Vite代理配置，前端直接连接到后端：
 ```typescript
-server: {
-  port: 3000,
-  cors: true,
-  proxy: {
-    '/socket.io': {
-      target: 'http://localhost:3001',
-      ws: true,
-      changeOrigin: true,
-      secure: false
-    }
+// frontend/src/config/socket.ts
+export const getSocketUrl = () => {
+  if (import.meta.env.DEV) {
+    // 开发环境直接连接后端
+    return 'http://localhost:3001';
   }
-}
+  return import.meta.env.VITE_SOCKET_URL || '/socket.io';
+};
 ```
 
 ### 3. Socket连接配置优化
 创建了 `frontend/src/config/socket.ts` 来集中管理Socket配置：
-- 开发环境使用相对路径 `/socket.io`
+- 开发环境直接连接到 `http://localhost:3001`
 - 生产环境使用环境变量 `VITE_SOCKET_URL`
 - 添加了重连和错误处理选项
 - 确保使用正确的Socket路径和传输方式
@@ -52,8 +49,9 @@ server: {
 ### 4. 后端CORS和CSP配置
 在 `backend/src/index.ts` 中：
 - 修复了CORS origin配置，支持多个端口
-- 添加了Helmet CSP配置，允许WebSocket连接
+- 添加了Helmet CSP配置，允许WebSocket连接和Google Fonts
 - 改进了WebSocket CORS设置
+- 添加了必要的HTTP方法和头部支持
 
 ### 5. Socket连接调试
 - 在 `frontend/src/contexts/SocketContext.tsx` 中添加了详细的连接日志
@@ -65,7 +63,7 @@ server: {
 ### 开发环境
 1. 启动后端服务器（端口3001）
 2. 启动前端开发服务器（端口3000）
-3. Vite代理会自动处理WebSocket连接
+3. 前端直接连接到后端，不使用代理
 4. 使用SocketTest组件测试连接状态
 
 ### 生产环境
@@ -75,8 +73,8 @@ server: {
 ## 环境变量
 ```bash
 # 前端
-VITE_SOCKET_URL=/socket.io  # 开发环境
-VITE_SOCKET_URL=https://your-domain.com/socket.io  # 生产环境
+VITE_SOCKET_URL=http://localhost:3001  # 开发环境
+VITE_SOCKET_URL=https://your-domain.com  # 生产环境
 
 # 后端
 FRONTEND_URL=https://your-domain.com
@@ -96,9 +94,23 @@ NODE_ENV=production
 - 提供测试连接按钮
 - 显示最后收到的事件
 
+## 故障排除
+
+### 如果仍然出现CSP错误：
+1. 清除浏览器缓存和Cookie
+2. 检查是否有其他CSP策略（如服务器端设置）
+3. 确保HTML文件中的CSP meta标签正确
+
+### 如果Socket连接失败：
+1. 确认后端服务器正在运行
+2. 检查端口3001是否被占用
+3. 查看浏览器控制台的详细错误信息
+4. 使用SocketTest组件诊断连接问题
+
 ## 注意事项
-- 开发环境使用代理可以避免CSP问题
+- 开发环境直接连接可以避免代理问题
 - 生产环境需要正确配置CSP和CORS
 - 确保前后端端口配置一致
 - 定期检查安全策略设置
 - 使用测试组件验证连接状态
+- 清除浏览器缓存以应用新的CSP策略

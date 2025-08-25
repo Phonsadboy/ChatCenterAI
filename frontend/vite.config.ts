@@ -6,15 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
-    cors: true,
-    proxy: {
-      '/socket.io': {
-        target: 'http://localhost:3001',
-        ws: true,
-        changeOrigin: true,
-        secure: false
-      }
-    }
+    cors: true
   },
   define: {
     'process.env': {}

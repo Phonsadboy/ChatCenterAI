@@ -14,7 +14,7 @@ export const socketConfig = {
     reconnectionAttempts: 5,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
-    // 确保不使用命名空间
+    // 确保不使用命名空间，使用默认路径
     path: '/socket.io/',
     // 添加额外的连接选项
     withCredentials: true
@@ -24,7 +24,8 @@ export const socketConfig = {
 export const getSocketUrl = () => {
   // 根据环境返回适当的Socket URL
   if (import.meta.env.DEV) {
-    return '/socket.io'; // 开发环境使用代理
+    // 开发环境使用完整的本地URL，避免代理问题
+    return 'http://localhost:3001';
   }
   
   // 生产环境使用环境变量或默认值
