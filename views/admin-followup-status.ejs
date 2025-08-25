@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สถานะการติดตามลูกค้า</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link href="/css/style.css" rel="stylesheet">
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-light">
+    <div class="container">
+      <a class="navbar-brand" href="/admin/dashboard">
+        <i class="fas fa-robot"></i> จัดการ AI
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav ms-auto">
+          <li class="nav-item">
+            <a class="nav-link" href="/admin/dashboard">
+              <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="/admin/broadcast">
+              <i class="fas fa-bullhorn"></i> บรอดแคสต์
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="/admin/followup">
+              <i class="fas fa-user-clock"></i> ติดตามลูกค้า
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link active" href="/admin/followup/status">
+              <i class="fas fa-chart-line"></i> สถานะติดตาม
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="/admin">
+              <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container mt-4">
+    <div class="row">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header">
+            <i class="fas fa-chart-line"></i> สถานะการติดตามลูกค้า
+          </div>
+          <div class="card-body">
+            <% if (typeof error !== 'undefined') { %>
+              <div class="alert alert-danger"><%= error %></div>
+            <% } %>
+
+            <div class="table-responsive">
+              <table class="table table-hover">
+                <thead>
+                  <tr>
+                    <th>ผู้ใช้</th>
+                    <th>สถานะ</th>
+                    <th>รอบปัจจุบัน</th>
+                    <th>ข้อความล่าสุด</th>
+                    <th>ติดตามถัดไป</th>
+                    <th>รอบที่ส่งแล้ว</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% if (statuses && statuses.length > 0) { %>
+                    <% statuses.forEach(status => { %>
+                      <tr>
+                        <td>
+                          <span class="badge bg-info">
+                            <i class="fas fa-user"></i> <%= status.userId %>
+                          </span>
+                        </td>
+                        <td>
+                          <% if (status.completed) { %>
+                            <% if (status.purchased) { %>
+                              <span class="badge bg-success">
+                                <i class="fas fa-check-circle"></i> ซื้อแล้ว
+                              </span>
+                            <% } else { %>
+                              <span class="badge bg-secondary">
+                                <i class="fas fa-check"></i> ครบรอบแล้ว
+                              </span>
+                            <% } %>
+                          <% } else { %>
+                            <span class="badge bg-warning">
+                              <i class="fas fa-sync"></i> กำลังติดตาม
+                            </span>
+                          <% } %>
+                        </td>
+                        <td>
+                          <% if (status.completed) { %>
+                            -
+                          <% } else { %>
+                            <span class="fw-bold"><%= status.currentRound + 1 %></span>/<%= status.totalRounds %>
+                          <% } %>
+                        </td>
+                        <td>
+                          <% 
+                            let lastMsg = status.lastMessageAt ? new Date(status.lastMessageAt) : null;
+                            if (lastMsg) {
+                              lastMsg = new Intl.DateTimeFormat('th-TH', { 
+                                dateStyle: 'medium',
+                                timeStyle: 'short'
+                              }).format(lastMsg);
+                            }
+                          %>
+                          <%= lastMsg || '-' %>
+                        </td>
+                        <td>
+                          <% 
+                            let nextMsg = status.nextFollowUpAt ? new Date(status.nextFollowUpAt) : null;
+                            if (nextMsg && !status.completed) {
+                              nextMsg = new Intl.DateTimeFormat('th-TH', { 
+                                dateStyle: 'medium',
+                                timeStyle: 'short'
+                              }).format(nextMsg);
+                            }
+                          %>
+                          <%= !status.completed ? (nextMsg || '-') : '-' %>
+                        </td>
+                        <td>
+                          <% if (status.sentRounds && status.sentRounds.length > 0) { %>
+                            <% status.sentRounds.forEach((round, i) => { %>
+                              <span class="badge bg-light-info text-info">
+                                <%= round + 1 %><%= i < status.sentRounds.length - 1 ? ', ' : '' %>
+                              </span>
+                            <% }) %>
+                          <% } else { %>
+                            -
+                          <% } %>
+                        </td>
+                      </tr>
+                    <% }) %>
+                  <% } else { %>
+                    <tr>
+                      <td colspan="6" class="text-center py-4 text-muted">
+                        <i class="fas fa-info-circle me-2"></i> ยังไม่มีข้อมูลการติดตามลูกค้า
+                      </td>
+                    </tr>
+                  <% } %>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="d-flex justify-content-end mt-3">
+              <a href="/admin/followup" class="btn btn-primary">
+                <i class="fas fa-cog"></i> จัดการการตั้งค่าติดตาม
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html> 

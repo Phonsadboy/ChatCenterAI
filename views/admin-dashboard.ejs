@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>แดชบอร์ด | จัดการ AI</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/css/style.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light">
+        <div class="container">
+            <a class="navbar-brand" href="/admin/dashboard">
+                <i class="fas fa-robot"></i> จัดการ AI
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/admin/dashboard">
+                            <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/admin/broadcast">
+                            <i class="fas fa-bullhorn"></i> บรอดแคสต์
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/admin/chat">
+                            <i class="fas fa-comments"></i> แชท <span class="badge bg-danger" id="chatNotificationBadge" style="display: none;">0</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/admin/followup">
+                            <i class="fas fa-user-clock"></i> ติดตามลูกค้า
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/admin/settings">
+                            <i class="fas fa-cogs"></i> ตั้งค่า
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/admin">
+                            <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <% if (typeof error !== 'undefined') { %>
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-circle me-2"></i> <%= error %>
+            </div>
+        <% } %>
+        
+        <div class="row mb-4">
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-book"></i> ข้อมูล
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <div class="d-flex justify-content-between mb-3">
+                                <h5 class="mb-0">สถานะ AI</h5>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="toggleAI" <%= aiEnabled ? 'checked' : '' %>>
+                                    <label class="form-check-label" for="toggleAI">
+                                        <span id="statusLabel" class="<%= aiEnabled ? 'text-success' : 'text-danger' %>">
+                                            <%= aiEnabled ? 'เปิดใช้งาน' : 'ปิดใช้งาน' %>
+                                        </span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="bg-light-info rounded p-3">
+                                <p class="mb-0"><i class="fas fa-info-circle me-2"></i> สถานะนี้ควบคุมการทำงานของ AI ในระบบทั้งหมด คลิกสวิตช์เพื่อเปิด/ปิดการทำงาน</p>
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-between mt-4">
+                            <h5>จัดการ AI</h5>
+                            <div>
+                                <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#addInstructionModal">
+                                    <i class="fas fa-plus"></i> เพิ่มข้อมูล
+                                </button>
+                                <button class="btn btn-success btn-sm ms-2" type="button" data-bs-toggle="modal" data-bs-target="#uploadExcelModal">
+                                    <i class="fas fa-file-excel"></i> อัพโหลด Excel
+                                </button>
+                                <button class="btn btn-warning btn-sm ms-2" type="button" data-bs-toggle="modal" data-bs-target="#backupModal">
+                                    <i class="fas fa-history"></i> Backup
+                                </button>
+                                <button class="btn btn-outline-primary btn-sm ms-2" id="previewBtn">
+                                    <i class="fas fa-eye"></i> Preview
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div id="instructionsList" class="mt-3">
+                            <% if (instructions.length === 0) { %>
+                                <div class="text-center py-4 bg-light rounded">
+                                    <i class="fas fa-file-alt text-muted fs-3 mb-2"></i>
+                                    <p class="text-muted mb-0">ยังไม่มีข้อมูลคำแนะนำ</p>
+                                </div>
+                            <% } else { %>
+                                <% instructions.forEach(instruction => { %>
+                                    <div class="instruction-item">
+                                        <div class="d-flex justify-content-between align-items-start">
+                                            <div>
+                                                <span class="instruction-type <%= instruction.type === 'text' ? 'type-text' : 'type-table' %>">
+                                                    <%= instruction.type === 'text' ? 'ข้อความ' : 'ตาราง' %>
+                                                </span>
+                                                <h6 class="mt-2 mb-0"><%= instruction.title || 'ไม่มีหัวข้อ' %></h6>
+                                            </div>
+                                            <div class="btn-group">
+                                                <a href="/admin/instructions/<%= instruction._id %>/edit" class="btn btn-sm btn-outline-primary">
+                                                    <i class="fas fa-edit"></i>
+                                                </a>
+                                                <% if (instruction.type === 'table') { %>
+                                                    <button class="btn btn-sm btn-outline-info view-json" data-id="<%= instruction._id %>">
+                                                        <i class="fas fa-code"></i>
+                                                    </button>
+                                                <% } %>
+                                                <button class="btn btn-sm btn-outline-danger delete-instruction" data-id="<%= instruction._id %>">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-secondary move-instruction" data-id="<%= instruction._id %>" data-direction="up">
+                                                    <i class="fas fa-arrow-up"></i>
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-secondary move-instruction" data-id="<%= instruction._id %>" data-direction="down">
+                                                    <i class="fas fa-arrow-down"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <% if (instruction.type === 'text' && instruction.content) { %>
+                                            <div class="mt-2 text-muted small">
+                                                <%= instruction.content.length > 150 ? instruction.content.substring(0, 150) + '...' : instruction.content %>
+                                            </div>
+                                        <% } else if (instruction.type === 'table') { %>
+                                            <div class="mt-2 bg-light-info p-2 rounded">
+                                                <small class="text-info">
+                                                    <i class="fas fa-table me-1"></i> ข้อมูลตาราง - คลิกปุ่ม <i class="fas fa-code"></i> เพื่อดู JSON
+                                                </small>
+                                            </div>
+                                        <% } %>
+                                    </div>
+                                <% }) %>
+                            <% } %>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-tools"></i> เครื่องมือที่เกี่ยวข้อง
+                    </div>
+                    <div class="card-body">
+                        <div class="d-grid gap-3">
+                            <a href="/admin/followup" class="btn btn-outline-primary">
+                                <i class="fas fa-user-clock me-2"></i> จัดการระบบติดตาม
+                            </a>
+                            <a href="/admin/broadcast" class="btn btn-outline-primary">
+                                <i class="fas fa-bullhorn me-2"></i> ส่งข้อความบรอดแคสต์
+                            </a>
+                            <a href="/admin/followup/status" class="btn btn-outline-primary">
+                                <i class="fas fa-chart-line me-2"></i> สถานะติดตามลูกค้า
+                            </a>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <h6 class="mb-3">คำสั่งพิเศษสำหรับลูกค้า</h6>
+                            <div class="bg-light p-3 rounded">
+                                <div class="mb-2">
+                                    <code>#DELETEMANY</code> - ลบข้อมูลทั้งหมดของผู้ใช้
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- คำสั่งสำหรับแอดมิน (ยกเลิกการใช้งานจริง) -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Add Instruction -->
+    <div class="modal fade" id="addInstructionModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">เพิ่มข้อมูลคำแนะนำ</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="instructionForm" action="/admin/instructions" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label">ประเภทข้อมูล</label>
+                            <select id="typeSelect" name="type" class="form-select">
+                                <option value="text">ข้อความ</option>
+                                <option value="table">ตาราง</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">หัวข้อ (ถ้ามี)</label>
+                            <input type="text" name="title" class="form-control" placeholder="ระบุหัวข้อของข้อมูล">
+                        </div>
+                        
+                        <div id="textEditor">
+                            <div class="mb-3">
+                                <label class="form-label">เนื้อหา</label>
+                                <textarea name="content" rows="8" class="form-control" 
+                                    placeholder="ใส่เนื้อหาข้อความที่จะให้ AI รับรู้"></textarea>
+                            </div>
+                        </div>
+                        
+                        <div id="tableEditor" style="display: none;">
+                            <div class="mb-3">
+                                <label class="form-label">ข้อมูลตาราง (JSON)</label>
+                                <textarea name="tableData" rows="8" class="form-control" 
+                                    placeholder='{ "key1": "value1", "key2": "value2" }'></textarea>
+                                <div class="form-text">
+                                    รองรับทั้งรูปแบบ JSON Object, Array และรูปแบบ columns/rows
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="text-end">
+                            <button type="button" class="btn btn-light" data-bs-dismiss="modal">ยกเลิก</button>
+                            <button type="submit" class="btn btn-primary">บันทึก</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Preview -->
+    <div class="modal fade" id="previewModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-eye me-2"></i> ตัวอย่างคำแนะนำที่ AI จะได้รับ
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="previewContent" class="bg-light p-3 rounded">
+                        <div class="text-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">กำลังโหลดตัวอย่าง...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">ปิด</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal JSON View -->
+    <div class="modal fade" id="jsonModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-code me-2"></i> <span id="jsonTitle">ข้อมูลตาราง</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <pre id="jsonContent" class="bg-light p-3 rounded"></pre>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">ปิด</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Delete Confirmation -->
+    <div class="modal fade" id="deleteModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">ยืนยันการลบ</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>คุณต้องการลบข้อมูลนี้ใช่หรือไม่?</p>
+                    <p class="text-danger">การลบจะไม่สามารถกู้คืนได้</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">ยกเลิก</button>
+                    <form id="deleteForm" method="POST" action="">
+                        <button type="submit" class="btn btn-danger">ลบข้อมูล</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Upload Excel -->
+    <div class="modal fade" id="uploadExcelModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-file-excel me-2"></i> อัพโหลดไฟล์ Excel
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>คำแนะนำ:</strong> แต่ละแท็บในไฟล์ Excel จะกลายเป็น 1 instruction
+                        <ul class="mb-0 mt-2">
+                            <li>แท็บที่มีหลายแถว = ตาราง instruction</li>
+                            <li>แท็บที่มี 1 แถว = ข้อความ instruction</li>
+                            <li>ชื่อแท็บจะเป็นหัวข้อของ instruction</li>
+                        </ul>
+                    </div>
+
+                    <form id="excelUploadForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label class="form-label">เลือกไฟล์ Excel (.xlsx หรือ .xls)</label>
+                            <input type="file" id="excelFileInput" name="excelFile" class="form-control" 
+                                   accept=".xlsx,.xls" required>
+                            <div class="form-text">
+                                ขนาดไฟล์ไม่เกิน 10MB
+                            </div>
+                        </div>
+
+                        <div id="uploadProgress" class="mb-3" style="display: none;">
+                            <div class="progress">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <small class="text-muted">กำลังประมวลผล...</small>
+                        </div>
+
+                        <div id="previewSection" class="mb-3" style="display: none;">
+                            <h6>ตัวอย่างข้อมูลที่จะถูกสร้าง:</h6>
+                            <div id="previewContent" class="bg-light p-3 rounded max-height-300 overflow-auto">
+                                <!-- Preview content will be inserted here -->
+                            </div>
+                        </div>
+
+                        <div class="text-end">
+                            <button type="button" class="btn btn-outline-secondary" id="previewExcelBtn">
+                                <i class="fas fa-eye"></i> ดูตัวอย่าง
+                            </button>
+                            <button type="button" class="btn btn-light ms-2" data-bs-dismiss="modal">ยกเลิก</button>
+                            <button type="submit" class="btn btn-success ms-2" id="uploadExcelBtn" disabled>
+                                <i class="fas fa-upload"></i> อัพโหลดและบันทึก
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Backup & Restore -->
+    <div class="modal fade" id="backupModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-history me-2"></i> จัดการ Backup Instructions
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- สร้าง Backup ใหม่ -->
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h6 class="card-title">
+                                <i class="fas fa-save me-2"></i> สร้าง Backup ใหม่
+                            </h6>
+                            <p class="text-muted small">สำรองข้อมูล instructions ปัจจุบันทั้งหมด</p>
+                            <button class="btn btn-primary" id="createBackupBtn">
+                                <i class="fas fa-plus-circle me-2"></i> สร้าง Backup
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- รายการ Backup ที่มีอยู่ -->
+                    <div class="card">
+                        <div class="card-body">
+                            <h6 class="card-title">
+                                <i class="fas fa-list me-2"></i> รายการ Backup
+                            </h6>
+                            <div id="backupList" class="mt-3">
+                                <div class="text-center py-3">
+                                    <div class="spinner-border spinner-border-sm" role="status">
+                                        <span class="visually-hidden">กำลังโหลด...</span>
+                                    </div>
+                                    <p class="text-muted small mt-2">กำลังโหลดรายการ backup...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Restore Confirmation -->
+    <div class="modal fade" id="restoreConfirmModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title">
+                        <i class="fas fa-exclamation-triangle me-2"></i> ยืนยันการคืนค่า
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>คุณกำลังจะคืนค่า instructions จาก backup</strong></p>
+                    <p class="text-danger">การดำเนินการนี้จะ:</p>
+                    <ul class="text-danger">
+                        <li>ลบ instructions ปัจจุบันทั้งหมด</li>
+                        <li>นำเข้า instructions จาก backup ที่เลือก</li>
+                    </ul>
+                    <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" id="createBackupBeforeRestore">
+                        <label class="form-check-label" for="createBackupBeforeRestore">
+                            สำรองข้อมูลปัจจุบันก่อนคืนค่า
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                    <button type="button" class="btn btn-warning" id="confirmRestoreBtn">
+                        <i class="fas fa-undo me-2"></i> ยืนยันการคืนค่า
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ===== NOTIFICATION SYSTEM =====
+        function showNotification(message, type = 'info', duration = 5000) {
+            // ลบ notification เก่าก่อน
+            const existingNotification = document.querySelector('.notification-toast');
+            if (existingNotification) {
+                existingNotification.remove();
+            }
+
+            // สร้าง notification ใหม่
+            const notification = document.createElement('div');
+            notification.className = `notification-toast alert alert-${type === 'error' ? 'danger' : type === 'success' ? 'success' : 'info'} alert-dismissible fade show`;
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 9999;
+                max-width: 400px;
+                min-width: 300px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                animation: slideInRight 0.3s ease-out;
+            `;
+
+            const icon = type === 'error' ? 'fas fa-exclamation-circle' : 
+                        type === 'success' ? 'fas fa-check-circle' : 
+                        'fas fa-info-circle';
+
+            notification.innerHTML = `
+                <div class="d-flex align-items-center">
+                    <i class="${icon} me-2"></i>
+                    <span>${message}</span>
+                    <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            `;
+
+            document.body.appendChild(notification);
+
+            // Auto remove หลังจากเวลาที่กำหนด
+            if (duration > 0) {
+                setTimeout(() => {
+                    if (notification && notification.parentNode) {
+                        notification.classList.add('fade');
+                        setTimeout(() => {
+                            if (notification.parentNode) {
+                                notification.remove();
+                            }
+                        }, 300);
+                    }
+                }, duration);
+            }
+
+            return notification;
+        }
+
+        // ===== LOADING OVERLAY =====
+        function showLoadingOverlay(message = 'กำลังประมวลผล...') {
+            const existingOverlay = document.querySelector('.loading-overlay');
+            if (existingOverlay) {
+                existingOverlay.remove();
+            }
+
+            const overlay = document.createElement('div');
+            overlay.className = 'loading-overlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.5);
+                z-index: 10000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                backdrop-filter: blur(2px);
+            `;
+
+            overlay.innerHTML = `
+                <div class="bg-white rounded p-4 text-center" style="min-width: 200px;">
+                    <div class="spinner-border text-primary mb-3" role="status">
+                        <span class="visually-hidden">กำลังโหลด...</span>
+                    </div>
+                    <div class="text-muted">${message}</div>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+            return overlay;
+        }
+
+        function hideLoadingOverlay() {
+            const overlay = document.querySelector('.loading-overlay');
+            if (overlay) {
+                overlay.style.opacity = '0';
+                setTimeout(() => {
+                    if (overlay.parentNode) {
+                        overlay.remove();
+                    }
+                }, 300);
+            }
+        }
+
+        // ===== DYNAMIC CONTENT UPDATES =====
+        async function refreshInstructionsList() {
+            try {
+                const response = await fetch('/admin/instructions/list');
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateInstructionsListHTML(data.instructions);
+                    showNotification('รายการ Instructions อัพเดตแล้ว', 'success', 2000);
+                }
+            } catch (error) {
+                console.error('Error refreshing instructions list:', error);
+                showNotification('ไม่สามารถรีเฟรชรายการได้', 'error');
+            }
+        }
+
+        function updateInstructionsListHTML(instructions) {
+            const container = document.getElementById('instructionsList');
+            if (!container) return;
+
+            if (instructions.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-4 bg-light rounded">
+                        <i class="fas fa-file-alt text-muted fs-3 mb-2"></i>
+                        <p class="text-muted mb-0">ยังไม่มีข้อมูลคำแนะนำ</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            instructions.forEach(instruction => {
+                html += `
+                    <div class="instruction-item" data-id="${instruction._id}">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <span class="instruction-type ${instruction.type === 'text' ? 'type-text' : 'type-table'}">
+                                    ${instruction.type === 'text' ? 'ข้อความ' : 'ตาราง'}
+                                </span>
+                                <h6 class="mt-2 mb-0">${instruction.title || 'ไม่มีหัวข้อ'}</h6>
+                            </div>
+                            <div class="btn-group">
+                                <a href="/admin/instructions/${instruction._id}/edit" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                                ${instruction.type === 'table' ? `
+                                    <button class="btn btn-sm btn-outline-info view-json" data-id="${instruction._id}">
+                                        <i class="fas fa-code"></i>
+                                    </button>
+                                ` : ''}
+                                <button class="btn btn-sm btn-outline-danger delete-instruction" data-id="${instruction._id}">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary move-instruction" data-id="${instruction._id}" data-direction="up">
+                                    <i class="fas fa-arrow-up"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary move-instruction" data-id="${instruction._id}" data-direction="down">
+                                    <i class="fas fa-arrow-down"></i>
+                                </button>
+                            </div>
+                        </div>
+                        ${instruction.type === 'text' && instruction.content ? `
+                            <div class="mt-2 text-muted small">
+                                ${instruction.content.length > 150 ? instruction.content.substring(0, 150) + '...' : instruction.content}
+                            </div>
+                        ` : ''}
+                        ${instruction.type === 'table' ? `
+                            <div class="mt-2 bg-light-info p-2 rounded">
+                                <small class="text-info">
+                                    <i class="fas fa-table me-1"></i> ข้อมูลตาราง - คลิกปุ่ม <i class="fas fa-code"></i> เพื่อดู JSON
+                                </small>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+            setupInstructionEventListeners();
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Dashboard loaded - Setting up enhanced functionality...');
+            
+            // เพิ่ม CSS animations
+            addDashboardStyles();
+            
+            // Setup enhanced event listeners
+            setupInstructionEventListeners();
+            
+            // Toggle type selector
+            const typeSelect = document.getElementById('typeSelect');
+            const textEditor = document.getElementById('textEditor');
+            const tableEditor = document.getElementById('tableEditor');
+
+            if (typeSelect) {
+                typeSelect.addEventListener('change', function() {
+                    if (this.value === 'text') {
+                        textEditor.style.display = 'block';
+                        tableEditor.style.display = 'none';
+                    } else {
+                        textEditor.style.display = 'none';
+                        tableEditor.style.display = 'block';
+                    }
+                });
+            }
+
+            // Enhanced Preview button
+            const previewBtn = document.getElementById('previewBtn');
+            if (previewBtn) {
+                previewBtn.addEventListener('click', async function() {
+                    const loadingOverlay = showLoadingOverlay('กำลังเตรียมตัวอย่าง...');
+                    
+                    try {
+                        const response = await fetch('/admin/instructions/preview');
+                        const data = await response.json();
+                        
+                        hideLoadingOverlay();
+                        
+                        if (data.success) {
+                            const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
+                            previewModal.show();
+                            document.getElementById('previewContent').innerHTML = `<pre style="white-space: pre-wrap;">${data.instructions}</pre>`;
+                            showNotification('แสดงตัวอย่างเรียบร้อย', 'success', 2000);
+                        } else {
+                            document.getElementById('previewContent').innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+                            showNotification('ไม่สามารถสร้างตัวอย่างได้', 'error');
+                        }
+                    } catch (err) {
+                        hideLoadingOverlay();
+                        document.getElementById('previewContent').innerHTML = `<div class="alert alert-danger">เกิดข้อผิดพลาดในการโหลดข้อมูล</div>`;
+                        showNotification('เกิดข้อผิดพลาดในการสร้างตัวอย่าง', 'error');
+                    }
+                });
+            }
+
+            // Enhanced AI Toggle
+            const toggleAI = document.getElementById('toggleAI');
+            if (toggleAI) {
+                toggleAI.addEventListener('change', async function() {
+                    const enabled = this.checked;
+                    const statusLabel = document.getElementById('statusLabel');
+                    
+                    // แสดง loading state
+                    const originalText = statusLabel.textContent;
+                    statusLabel.textContent = 'กำลังอัพเดต...';
+                    this.disabled = true;
+                    
+                    try {
+                        const response = await fetch('/admin/ai-toggle', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ enabled })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            statusLabel.textContent = enabled ? 'ใช้งาน' : 'ปิดใช้งาน';
+                            statusLabel.className = `badge ${enabled ? 'bg-success' : 'bg-danger'}`;
+                            showNotification(`AI ${enabled ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}เรียบร้อยแล้ว`, 'success');
+                        } else {
+                            // Revert toggle state
+                            this.checked = !enabled;
+                            statusLabel.textContent = originalText;
+                            showNotification('ไม่สามารถเปลี่ยนสถานะ AI ได้', 'error');
+                        }
+                    } catch (error) {
+                        // Revert toggle state
+                        this.checked = !enabled;
+                        statusLabel.textContent = originalText;
+                        showNotification('เกิดข้อผิดพลาดในการเปลี่ยนสถานะ AI', 'error');
+                    } finally {
+                        this.disabled = false;
+                    }
+                });
+            }
+
+            // Setup initial notification
+            showNotification('ระบบพร้อมใช้งาน', 'success', 3000);
+        });
+
+        // ===== ENHANCED CONFIRM DIALOG =====
+        function showConfirmDialog(title, message) {
+            return new Promise((resolve) => {
+                // สร้าง modal dialog
+                const confirmModal = document.createElement('div');
+                confirmModal.className = 'modal fade';
+                confirmModal.id = 'dynamicConfirmModal';
+                confirmModal.innerHTML = `
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header bg-warning text-dark">
+                                <h5 class="modal-title">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>${title}
+                                </h5>
+                            </div>
+                            <div class="modal-body">
+                                <p class="mb-2">${message}</p>
+                                <div class="text-danger">
+                                    <small><i class="fas fa-info-circle me-1"></i>การดำเนินการนี้ไม่สามารถยกเลิกได้</small>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                                <button type="button" class="btn btn-warning" id="confirmButton">
+                                    <i class="fas fa-check me-2"></i>ยืนยัน
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(confirmModal);
+                const modal = new bootstrap.Modal(confirmModal);
+                
+                // Event listeners
+                document.getElementById('confirmButton').addEventListener('click', () => {
+                    modal.hide();
+                    resolve(true);
+                });
+
+                confirmModal.addEventListener('hidden.bs.modal', () => {
+                    confirmModal.remove();
+                    resolve(false);
+                });
+
+                modal.show();
+            });
+        }
+
+        // ===== CSS STYLES =====
+        function addDashboardStyles() {
+            if (document.querySelector('#dashboard-styles')) {
+                return;
+            }
+
+            const styles = document.createElement('style');
+            styles.id = 'dashboard-styles';
+            styles.textContent = `
+                @keyframes slideInRight {
+                    from {
+                        transform: translateX(100%);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: translateX(0);
+                        opacity: 1;
+                    }
+                }
+
+                @keyframes fadeOut {
+                    from {
+                        opacity: 1;
+                        transform: scale(1);
+                    }
+                    to {
+                        opacity: 0;
+                        transform: scale(0.95);
+                    }
+                }
+
+                .notification-toast {
+                    animation: slideInRight 0.3s ease-out;
+                }
+
+                .instruction-item {
+                    transition: all 0.3s ease;
+                }
+
+                .instruction-item:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                }
+
+                .btn:hover {
+                    transform: translateY(-1px);
+                    transition: all 0.2s ease;
+                }
+
+                .btn:active {
+                    transform: translateY(0);
+                }
+
+                .btn:disabled {
+                    transform: none;
+                }
+
+                .loading-overlay {
+                    animation: fadeIn 0.3s ease-out;
+                }
+
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+
+                .spinner-border {
+                    animation: spin 1s linear infinite;
+                }
+            `;
+
+            document.head.appendChild(styles);
+        }
+
+        // ===== ENHANCED EVENT LISTENERS =====
+        function setupInstructionEventListeners() {
+            // Enhanced Delete functionality
+            document.querySelectorAll('.delete-instruction').forEach(btn => {
+                btn.addEventListener('click', async function(e) {
+                    e.preventDefault();
+                    const instructionId = this.getAttribute('data-id');
+                    
+                    if (await showConfirmDialog('คุณต้องการลบข้อมูลนี้ใช่หรือไม่?', 'การลบจะไม่สามารถกู้คืนได้')) {
+                        const loadingOverlay = showLoadingOverlay('กำลังลบข้อมูล...');
+                        
+                        try {
+                            const response = await fetch(`/admin/instructions/${instructionId}/delete`, {
+                                method: 'POST'
+                            });
+                            
+                            hideLoadingOverlay();
+                            
+                            if (response.ok) {
+                                // Remove from DOM with animation
+                                const instructionItem = document.querySelector(`[data-id="${instructionId}"]`);
+                                if (instructionItem) {
+                                    instructionItem.style.animation = 'fadeOut 0.3s ease-out';
+                                    setTimeout(() => {
+                                        instructionItem.remove();
+                                    }, 300);
+                                }
+                                showNotification('ลบข้อมูลเรียบร้อยแล้ว', 'success');
+                            } else {
+                                showNotification('ไม่สามารถลบข้อมูลได้', 'error');
+                            }
+                        } catch (error) {
+                            hideLoadingOverlay();
+                            showNotification('เกิดข้อผิดพลาดในการลบข้อมูล', 'error');
+                        }
+                    }
+                });
+            });
+
+            // Enhanced Move functionality  
+            document.querySelectorAll('.move-instruction').forEach(btn => {
+                btn.addEventListener('click', async function(e) {
+                    e.preventDefault();
+                    const instructionId = this.getAttribute('data-id');
+                    const direction = this.getAttribute('data-direction');
+                    
+                    const originalText = this.innerHTML;
+                    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                    this.disabled = true;
+                    
+                    try {
+                        const response = await fetch('/admin/instructions/reorder', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ instructionId, direction })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            await refreshInstructionsList();
+                            showNotification(`เลื่อน${direction === 'up' ? 'ขึ้น' : 'ลง'}เรียบร้อยแล้ว`, 'success', 2000);
+                        } else {
+                            showNotification(data.error || 'ไม่สามารถเลื่อนตำแหน่งได้', 'warning');
+                        }
+                    } catch (error) {
+                        showNotification('เกิดข้อผิดพลาดในการเลื่อนตำแหน่ง', 'error');
+                    } finally {
+                        this.innerHTML = originalText;
+                        this.disabled = false;
+                    }
+                });
+            });
+
+            // Enhanced JSON View
+            document.querySelectorAll('.view-json').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    const instructionId = this.getAttribute('data-id');
+                    const loadingOverlay = showLoadingOverlay('กำลังโหลดข้อมูล JSON...');
+                    
+                    try {
+                        const response = await fetch(`/admin/instructions/${instructionId}/json`);
+                        const data = await response.json();
+                        
+                        hideLoadingOverlay();
+                        
+                        if (data.success) {
+                            document.getElementById('jsonTitle').textContent = data.title || 'ข้อมูลตาราง';
+                            document.getElementById('jsonContent').textContent = JSON.stringify(data.tableData, null, 2);
+                            const jsonModal = new bootstrap.Modal(document.getElementById('jsonModal'));
+                            jsonModal.show();
+                            showNotification('แสดงข้อมูล JSON เรียบร้อย', 'success', 2000);
+                        } else {
+                            showNotification(data.error || 'ไม่สามารถโหลดข้อมูล JSON ได้', 'error');
+                        }
+                    } catch (error) {
+                        hideLoadingOverlay();
+                        showNotification('เกิดข้อผิดพลาดในการโหลดข้อมูล JSON', 'error');
+                    }
+                });
+            });
+        }
+
+        // ===== BACKUP SYSTEM =====
+        let currentRestoreBackupDate = null;
+
+        // ฟังก์ชันโหลดรายการ backup
+        async function loadBackupList() {
+            const backupListContainer = document.getElementById('backupList');
+            
+            // แสดง loading state
+            backupListContainer.innerHTML = `
+                <div class="text-center py-3">
+                    <div class="spinner-border spinner-border-sm" role="status">
+                        <span class="visually-hidden">กำลังโหลด...</span>
+                    </div>
+                    <p class="text-muted small mt-2">กำลังโหลดรายการ backup...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch('/admin/instructions/backups');
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayBackupList(data.backups);
+                } else {
+                    backupListContainer.innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            ไม่สามารถโหลดรายการ backup ได้: ${data.error}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading backup list:', error);
+                backupListContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        เกิดข้อผิดพลาดในการโหลดรายการ backup
+                    </div>
+                `;
+            }
+        }
+
+        // ฟังก์ชันแสดงรายการ backup
+        function displayBackupList(backups) {
+            const backupListContainer = document.getElementById('backupList');
+            
+            if (backups.length === 0) {
+                backupListContainer.innerHTML = `
+                    <div class="text-center py-4 bg-light rounded">
+                        <i class="fas fa-history text-muted fs-3 mb-2"></i>
+                        <p class="text-muted mb-0">ยังไม่มี backup</p>
+                        <small class="text-muted">กดปุ่มด้านบนเพื่อสร้าง backup ใหม่</small>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<div class="list-group">';
+            
+            backups.forEach(backup => {
+                const backupDate = new Date(backup.backedUpAt);
+                const isManual = backup.type === 'manual';
+                const isBeforeRestore = backup.type === 'before_restore';
+                
+                let typeIcon = 'fas fa-clock';
+                let typeText = 'อัตโนมัติ';
+                let typeClass = 'text-info';
+                
+                if (isManual) {
+                    typeIcon = 'fas fa-user';
+                    typeText = 'ด้วยตนเอง';
+                    typeClass = 'text-primary';
+                } else if (isBeforeRestore) {
+                    typeIcon = 'fas fa-shield-alt';
+                    typeText = 'ก่อนคืนค่า';
+                    typeClass = 'text-warning';
+                }
+
+                html += `
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">
+                                    <i class="${typeIcon} ${typeClass} me-2"></i>
+                                    ${backup.displayDate || backup.date}
+                                    <small class="text-muted">${backup.displayTime || ''}</small>
+                                </h6>
+                                <p class="mb-1 small text-muted">
+                                    ประเภท: <span class="${typeClass}">${typeText}</span>
+                                </p>
+                                <small class="text-muted">
+                                    สร้างเมื่อ: ${backupDate.toLocaleString('th-TH')}
+                                </small>
+                            </div>
+                            <div>
+                                <button class="btn btn-outline-warning btn-sm restore-backup" 
+                                        data-date="${backup.date}" 
+                                        data-display="${backup.displayDate || backup.date}"
+                                        title="คืนค่า backup นี้">
+                                    <i class="fas fa-undo me-1"></i> คืนค่า
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            backupListContainer.innerHTML = html;
+
+            // Setup event listeners for restore buttons
+            setupRestoreEventListeners();
+        }
+
+        // ฟังก์ชันจัดการปุ่มคืนค่า
+        function setupRestoreEventListeners() {
+            document.querySelectorAll('.restore-backup').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    currentRestoreBackupDate = this.getAttribute('data-date');
+                    const displayDate = this.getAttribute('data-display');
+                    
+                    // อัพเดตข้อความใน confirmation modal
+                    const modalBody = document.querySelector('#restoreConfirmModal .modal-body');
+                    modalBody.querySelector('p').innerHTML = `<strong>คุณกำลังจะคืนค่า instructions จาก backup วันที่ ${displayDate}</strong>`;
+                    
+                    // เปิด confirmation modal
+                    const restoreModal = new bootstrap.Modal(document.getElementById('restoreConfirmModal'));
+                    restoreModal.show();
+                });
+            });
+        }
+
+        // ฟังก์ชันสร้าง backup ใหม่
+        async function createNewBackup() {
+            const createBtn = document.getElementById('createBackupBtn');
+            const originalText = createBtn.innerHTML;
+            
+            createBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> กำลังสร้าง...';
+            createBtn.disabled = true;
+
+            try {
+                const response = await fetch('/admin/instructions/backup-now', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(data.message, 'success');
+                    // รีโหลดรายการ backup
+                    await loadBackupList();
+                } else {
+                    showNotification('ไม่สามารถสร้าง backup ได้: ' + data.error, 'error');
+                }
+            } catch (error) {
+                console.error('Error creating backup:', error);
+                showNotification('เกิดข้อผิดพลาดในการสร้าง backup', 'error');
+            } finally {
+                createBtn.innerHTML = originalText;
+                createBtn.disabled = false;
+            }
+        }
+
+        // ฟังก์ชันคืนค่า backup
+        async function confirmRestoreBackup() {
+            if (!currentRestoreBackupDate) return;
+
+            const confirmBtn = document.getElementById('confirmRestoreBtn');
+            const originalText = confirmBtn.innerHTML;
+            const createBackupBefore = document.getElementById('createBackupBeforeRestore').checked;
+            
+            confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> กำลังคืนค่า...';
+            confirmBtn.disabled = true;
+
+            try {
+                const response = await fetch(`/admin/instructions/restore/${currentRestoreBackupDate}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ createBackupBefore })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(data.message, 'success');
+                    
+                    // ปิด modal และรีโหลดหน้า
+                    const restoreModal = bootstrap.Modal.getInstance(document.getElementById('restoreConfirmModal'));
+                    restoreModal.hide();
+                    
+                    const backupModal = bootstrap.Modal.getInstance(document.getElementById('backupModal'));
+                    backupModal.hide();
+                    
+                    // รีโหลดหน้าหลังจาก 2 วินาที
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } else {
+                    showNotification('ไม่สามารถคืนค่า backup ได้: ' + data.error, 'error');
+                }
+            } catch (error) {
+                console.error('Error restoring backup:', error);
+                showNotification('เกิดข้อผิดพลาดในการคืนค่า backup', 'error');
+            } finally {
+                confirmBtn.innerHTML = originalText;
+                confirmBtn.disabled = false;
+                currentRestoreBackupDate = null;
+            }
+        }
+
+        // Setup backup event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            // โหลดรายการ backup เมื่อเปิด modal
+            const backupModal = document.getElementById('backupModal');
+            if (backupModal) {
+                backupModal.addEventListener('shown.bs.modal', function() {
+                    loadBackupList();
+                });
+            }
+
+            // Setup ปุ่มสร้าง backup
+            const createBackupBtn = document.getElementById('createBackupBtn');
+            if (createBackupBtn) {
+                createBackupBtn.addEventListener('click', createNewBackup);
+            }
+
+            // Setup ปุ่มยืนยันการคืนค่า
+            const confirmRestoreBtn = document.getElementById('confirmRestoreBtn');
+            if (confirmRestoreBtn) {
+                confirmRestoreBtn.addEventListener('click', confirmRestoreBackup);
+            }
+
+            // อัปเดตจำนวนข้อความที่ยังไม่ได้อ่านครั้งแรก
+            updateUnreadCount();
+        });
+
+        // ฟังก์ชันสำหรับอัปเดตจำนวนข้อความที่ยังไม่ได้อ่าน
+        async function updateUnreadCount() {
+            try {
+                const response = await fetch('/admin/chat/unread-count');
+                const data = await response.json();
+                
+                if (data.success && data.totalUnread > 0) {
+                    const badge = document.getElementById('chatNotificationBadge');
+                    badge.textContent = data.totalUnread;
+                    badge.style.display = 'inline';
+                } else {
+                    const badge = document.getElementById('chatNotificationBadge');
+                    badge.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('ไม่สามารถอัปเดต unread count ได้:', error);
+            }
+        }
+
+        // อัปเดตจำนวนข้อความที่ยังไม่ได้อ่านทุก 30 วินาที
+        setInterval(updateUnreadCount, 30000);
+    </script>
+</body>
+</html> 
