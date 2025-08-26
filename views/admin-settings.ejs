@@ -96,337 +96,6 @@
             transform: translateX(-2px);
         }
         
-        /* Minimal Design Styles */
-        .nav-tabs-minimal {
-            display: flex;
-            gap: 1px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 4px;
-        }
-        
-        .nav-tab-minimal {
-            flex: 1;
-            border: none;
-            background: transparent;
-            padding: 12px 16px;
-            border-radius: 6px;
-            font-weight: 500;
-            color: #6c757d;
-            transition: all 0.2s ease;
-        }
-        
-        .nav-tab-minimal.active {
-            background: white;
-            color: #495057;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .nav-tab-minimal:hover:not(.active) {
-            background: rgba(255,255,255,0.5);
-            color: #495057;
-        }
-        
-        .overview-minimal {
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 20px;
-            margin-bottom: 40px;
-        }
-        
-        .stat-item {
-            text-align: center;
-            padding: 20px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }
-        
-        .stat-number {
-            display: block;
-            font-size: 2rem;
-            font-weight: 700;
-            color: #495057;
-            margin-bottom: 8px;
-        }
-        
-        .stat-label {
-            color: #6c757d;
-            font-size: 0.9rem;
-        }
-        
-        .quick-actions h3 {
-            color: #495057;
-            margin-bottom: 20px;
-            font-weight: 600;
-        }
-        
-        .action-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 16px;
-        }
-        
-        .action-item {
-            display: block;
-            padding: 20px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            text-decoration: none;
-            color: inherit;
-            transition: all 0.2s ease;
-        }
-        
-        .action-item:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-            text-decoration: none;
-            color: inherit;
-        }
-        
-        .action-title {
-            display: block;
-            font-weight: 600;
-            color: #495057;
-            margin-bottom: 8px;
-        }
-        
-        .action-desc {
-            color: #6c757d;
-            font-size: 0.9rem;
-        }
-        
-        .stats-minimal {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-        }
-        
-        .stat-minimal {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 16px;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-            min-width: 100px;
-        }
-        
-        .action-buttons {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-        }
-        
-        .btn-minimal {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 6px;
-            font-weight: 500;
-            text-decoration: none;
-            transition: all 0.2s ease;
-            cursor: pointer;
-        }
-        
-        .btn-minimal.primary {
-            background: #007bff;
-            color: white;
-        }
-        
-        .btn-minimal.primary:hover {
-            background: #0056b3;
-            transform: translateY(-1px);
-        }
-        
-        .btn-minimal.secondary {
-            background: #f8f9fa;
-            color: #495057;
-            border: 1px solid #dee2e6;
-        }
-        
-        .btn-minimal.secondary:hover {
-            background: #e9ecef;
-            transform: translateY(-1px);
-        }
-        
-        .ai-settings-minimal {
-            background: white;
-            padding: 24px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }
-        
-        .ai-settings-minimal h4 {
-            color: #495057;
-            margin-bottom: 20px;
-            font-weight: 600;
-        }
-        
-        .form-row-minimal {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        
-        .form-group-minimal {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .form-group-minimal label {
-            font-weight: 500;
-            color: #495057;
-            margin-bottom: 8px;
-        }
-        
-        .form-control-minimal {
-            padding: 10px 12px;
-            border: 1px solid #dee2e6;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            transition: border-color 0.2s ease;
-        }
-        
-        .form-control-minimal:focus {
-            outline: none;
-            border-color: #007bff;
-            box-shadow: 0 0 0 2px rgba(0,123,255,0.1);
-        }
-        
-        .chat-settings-minimal {
-            max-width: 600px;
-            margin: 0 auto;
-        }
-        
-        .chat-settings-minimal h3 {
-            color: #495057;
-            margin-bottom: 8px;
-            font-weight: 600;
-        }
-        
-        .chat-settings-minimal p {
-            margin-bottom: 30px;
-        }
-        
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            cursor: pointer;
-            font-weight: 500;
-            color: #495057;
-        }
-        
-        .checkbox-label input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            accent-color: #007bff;
-        }
-        
-        .info-box {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            margin-top: 30px;
-        }
-        
-        .info-box h4 {
-            color: #495057;
-            margin-bottom: 16px;
-            font-weight: 600;
-        }
-        
-        .info-box ul {
-            margin: 0;
-            padding-left: 20px;
-        }
-        
-        .info-box li {
-            color: #6c757d;
-            margin-bottom: 8px;
-        }
-        
-        .system-settings-minimal {
-            max-width: 500px;
-            margin: 0 auto;
-        }
-        
-        .system-settings-minimal h3 {
-            color: #495057;
-            margin-bottom: 8px;
-            font-weight: 600;
-        }
-        
-        .system-settings-minimal p {
-            margin-bottom: 30px;
-        }
-        
-        .system-settings-minimal .form-group-minimal {
-            margin-bottom: 20px;
-        }
-        
-        .security-settings-minimal {
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        
-        .security-settings-minimal h3 {
-            color: #495057;
-            margin-bottom: 8px;
-            font-weight: 600;
-        }
-        
-        .security-settings-minimal p {
-            margin-bottom: 30px;
-        }
-        
-        .security-overview {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-        }
-        
-        .security-item {
-            flex: 1;
-            min-width: 150px;
-            padding: 16px;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        
-        .security-count {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #495057;
-        }
-        
-        .test-filter {
-            display: flex;
-            gap: 12px;
-            align-items: flex-end;
-        }
-        
-        .test-filter .form-control-minimal {
-            flex: 1;
-        }
-        
-        .test-filter .btn-minimal {
-            white-space: nowrap;
-        }
-        
         /* Additional UI improvements */
         .card {
             transition: all 0.3s ease;
@@ -494,23 +163,33 @@
         <div id="alertContainer"></div>
 
         <!-- Settings Tabs -->
-        <div class="nav-tabs-minimal mb-4" id="settingsTabs" role="tablist">
-            <button class="nav-tab-minimal active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview-settings" type="button" role="tab">
-                ภาพรวม
-            </button>
-            <button class="nav-tab-minimal" id="line-ai-tab" data-bs-toggle="tab" data-bs-target="#line-ai-settings" type="button" role="tab">
-                Line Bot & AI
-            </button>
-            <button class="nav-tab-minimal" id="chat-tab" data-bs-toggle="tab" data-bs-target="#chat-settings" type="button" role="tab">
-                แชท
-            </button>
-            <button class="nav-tab-minimal" id="system-tab" data-bs-toggle="tab" data-bs-target="#system-settings" type="button" role="tab">
-                ระบบ
-            </button>
-            <button class="nav-tab-minimal" id="filter-tab" data-bs-toggle="tab" data-bs-target="#filter-settings" type="button" role="tab">
-                ความปลอดภัย
-            </button>
-        </div>
+        <ul class="nav nav-tabs mb-4" id="settingsTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview-settings" type="button" role="tab">
+                    <i class="fas fa-tachometer-alt me-2"></i>ภาพรวมระบบ
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="line-ai-tab" data-bs-toggle="tab" data-bs-target="#line-ai-settings" type="button" role="tab">
+                    <i class="fab fa-line me-2"></i>Line Bot & AI
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="chat-tab" data-bs-toggle="tab" data-bs-target="#chat-settings" type="button" role="tab">
+                    <i class="fas fa-comments me-2"></i>การแชท
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="system-tab" data-bs-toggle="tab" data-bs-target="#system-settings" type="button" role="tab">
+                    <i class="fas fa-cog me-2"></i>ระบบ
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="filter-tab" data-bs-toggle="tab" data-bs-target="#filter-settings" type="button" role="tab">
+                    <i class="fas fa-shield-alt me-2"></i>ความปลอดภัย
+                </button>
+            </li>
+        </ul>
 
         <!-- Tab Content -->
         <div class="tab-content" id="settingsTabContent">
@@ -529,47 +208,61 @@
                                 </p>
                             </div>
                             <div class="settings-body">
-                                <!-- System Statistics -->
-                                <div class="stats-grid">
-                                    <div class="stat-item">
-                                        <div class="stat-number" id="aiModelsCount">7</div>
-                                        <div class="stat-label">AI Models</div>
+                                <div class="row">
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-robot fa-3x text-primary mb-3"></i>
+                                                <h5>AI Models ที่ใช้งาน</h5>
+                                                <div id="aiModelOverview">
+                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="stat-item">
-                                        <div class="stat-number" id="lineBotsCount">0</div>
-                                        <div class="stat-label">Line Bots</div>
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-body text-center">
+                                                <i class="fab fa-line fa-3x text-success mb-3"></i>
+                                                <h5>Line Bot ที่ใช้งาน</h5>
+                                                <div id="lineBotOverview">
+                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="stat-item">
-                                        <div class="stat-number" id="instructionsCount">0</div>
-                                        <div class="stat-label">Instructions</div>
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-book fa-3x text-info mb-3"></i>
+                                                <h5>Instructions ในคลัง</h5>
+                                                <div id="instructionsOverview">
+                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="stat-item">
-                                        <div class="stat-number" id="securityStatus">เปิด</div>
-                                        <div class="stat-label">ความปลอดภัย</div>
+                                    <div class="col-md-6 mb-4">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-shield-alt fa-3x text-warning mb-3"></i>
+                                                <h5>การตั้งค่าความปลอดภัย</h5>
+                                                <div id="securityOverview">
+                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-
-                                <!-- Quick Actions -->
-                                <div class="quick-actions">
-                                    <h3>การทำงานหลัก</h3>
-                                    <div class="action-grid">
-                                        <a href="#line-ai-settings" class="action-item" data-bs-toggle="tab">
-                                            <span class="action-title">Line Bot & AI</span>
-                                            <span class="action-desc">จัดการ Line Bot และ AI Models</span>
-                                        </a>
-                                        <a href="#chat-settings" class="action-item" data-bs-toggle="tab">
-                                            <span class="action-title">การแชท</span>
-                                            <span class="action-desc">ตั้งค่าการทำงานของระบบแชท</span>
-                                        </a>
-                                        <a href="#system-settings" class="action-item" data-bs-toggle="tab">
-                                            <span class="action-title">ระบบ</span>
-                                            <span class="action-desc">ตั้งค่าระบบทั่วไปและการแจ้งเตือน</span>
-                                        </a>
-                                        <a href="#filter-settings" class="action-item" data-bs-toggle="tab">
-                                            <span class="action-title">ความปลอดภัย</span>
-                                            <span class="action-desc">ตั้งค่าการกรองข้อความและความปลอดภัย</span>
-                                        </a>
-                                    </div>
+                                
+                                <div class="alert alert-info">
+                                    <h6><i class="fas fa-info-circle me-2"></i>คำแนะนำการใช้งาน:</h6>
+                                    <ul class="mb-0">
+                                        <li><strong>Line Bot & AI:</strong> จัดการ Line Bot, ตั้งค่า AI Models และ Instructions</li>
+                                        <li><strong>การแชท:</strong> ตั้งค่าการทำงานของระบบแชท</li>
+                                        <li><strong>ระบบ:</strong> ตั้งค่าระบบทั่วไปและการแจ้งเตือน</li>
+                                        <li><strong>ความปลอดภัย:</strong> ตั้งค่าการกรองข้อความและความปลอดภัย</li>
+                                    </ul>
                                 </div>
                             </div>
                         </div>
@@ -579,46 +272,76 @@
 
             <!-- Chat Settings Tab -->
             <div class="tab-pane fade" id="chat-settings" role="tabpanel">
-                <div class="chat-settings-minimal">
-                    <h3>การตั้งค่าแชท</h3>
-                    <p class="text-muted">ตั้งค่าการทำงานของระบบแชทและคิวข้อความ</p>
-                    
-                    <form id="chatSettingsForm">
-                        <div class="form-row-minimal">
-                            <div class="form-group-minimal">
-                                <label>ระยะเวลาดีเลย์ (วินาที)</label>
-                                <input type="number" class="form-control-minimal" id="chatDelaySeconds" 
-                                       min="1" max="60" step="1" value="5">
-                                <small>แนะนำ: 3-10 วินาที</small>
+                <div class="row">
+                    <div class="col-12">
+                        <div class="settings-card">
+                            <div class="settings-header">
+                                <h4 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>
+                                    การตั้งค่าแชทและคิวข้อความ
+                                </h4>
+                                <p class="text-muted mb-0">
+                                    ระบบจะรอข้อความจากผู้ใช้ตามเวลาที่กำหนด เพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนส่งให้ AI ประมวลผล
+                                </p>
                             </div>
-                            <div class="form-group-minimal">
-                                <label>ข้อความสูงสุดในคิว</label>
-                                <input type="number" class="form-control-minimal" id="maxQueueMessages" 
-                                       min="1" max="20" step="1" value="10">
-                                <small>แนะนำ: 5-15 ข้อความ</small>
+                            <div class="settings-body">
+                                <form id="chatSettingsForm">
+                                    <div class="setting-item">
+                                        <div class="setting-label">ระยะเวลาดีเลย์ก่อนตอบผู้ใช้ (วินาที)</div>
+                                        <div class="setting-description">
+                                            ระยะเวลารอเพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนตอบกลับ
+                                            <br><strong>การทำงาน:</strong> เมื่อผู้ใช้ส่งข้อความ ระบบจะรอตามเวลาที่กำหนดนี้ 
+                                            หากมีข้อความใหม่เข้ามาในระหว่างนี้ ระบบจะรีเซ็ตตัวจับเวลาและรอใหม่
+                                        </div>
+                                        <input type="number" class="form-control" id="chatDelaySeconds" 
+                                               min="1" max="60" step="1" placeholder="5" value="5">
+                                        <small class="text-muted">แนะนำ: 3-10 วินาที | ค่าปัจจุบัน: <span id="currentChatDelay">5</span> วินาที</small>
+                                    </div>
+
+                                    <div class="setting-item">
+                                        <div class="setting-label">จำนวนข้อความสูงสุดในคิว</div>
+                                        <div class="setting-description">
+                                            จำนวนข้อความสูงสุดที่จะรอรวมก่อนตอบกลับ
+                                            <br><strong>การทำงาน:</strong> หากจำนวนข้อความในคิวถึงขีดจำกัดนี้ ระบบจะประมวลผลทันทีโดยไม่รอเวลา delay
+                                        </div>
+                                        <input type="number" class="form-control" id="maxQueueMessages" 
+                                               min="1" max="20" step="1" placeholder="10" value="10">
+                                        <small class="text-muted">แนะนำ: 5-15 ข้อความ | ค่าปัจจุบัน: <span id="currentMaxQueue">10</span> ข้อความ</small>
+                                    </div>
+
+                                    <div class="setting-item">
+                                        <div class="setting-label">เปิดใช้งานการรวมข้อความ</div>
+                                        <div class="setting-description">
+                                            รวมข้อความหลายข้อความเข้าด้วยกันก่อนส่งให้ AI ประมวลผล
+                                            <br><strong>การทำงาน:</strong> เมื่อเปิดใช้งาน ระบบจะรวมข้อความหลายข้อความเข้าด้วยกันด้วยเครื่องหมายขึ้นบรรทัดใหม่
+                                            หากปิดใช้งาน ระบบจะประมวลผลทีละข้อความ
+                                        </div>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="enableMessageMerging" checked>
+                                            <label class="form-check-label" for="enableMessageMerging">
+                                                เปิดใช้งาน
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <button type="submit" class="btn btn-save text-white">
+                                        <i class="fas fa-save me-2"></i>
+                                        บันทึกการตั้งค่าแชท
+                                    </button>
+                                </form>
+                                
+                                <!-- ข้อความสรุปการทำงานของระบบคิว -->
+                                <div class="alert alert-info mt-3">
+                                    <h6><i class="fas fa-info-circle me-2"></i>สรุปการทำงานของระบบคิว:</h6>
+                                    <ul class="mb-0">
+                                        <li><strong>ข้อความแรก:</strong> ระบบจะเริ่มนับเวลา delay ตามที่ตั้งไว้</li>
+                                        <li><strong>ข้อความเพิ่ม:</strong> หากมีข้อความใหม่เข้ามา ระบบจะรีเซ็ตตัวจับเวลาและรอใหม่</li>
+                                        <li><strong>ครบเวลา delay:</strong> ระบบจะประมวลผลข้อความทั้งหมดในคิว</li>
+                                        <li><strong>ครบจำนวนข้อความ:</strong> หากจำนวนข้อความถึงขีดจำกัด ระบบจะประมวลผลทันที</li>
+                                    </ul>
+                                </div>
                             </div>
                         </div>
-                        
-                        <div class="form-group-minimal">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="enableMessageMerging" checked>
-                                <span>เปิดใช้งานการรวมข้อความ</span>
-                            </label>
-                        </div>
-                        
-                        <button type="submit" class="btn-minimal primary">
-                            บันทึก
-                        </button>
-                    </form>
-                    
-                    <div class="info-box">
-                        <h4>การทำงานของระบบคิว</h4>
-                        <ul>
-                            <li>ข้อความแรก: เริ่มนับเวลา delay</li>
-                            <li>ข้อความเพิ่ม: รีเซ็ตตัวจับเวลา</li>
-                            <li>ครบเวลา: ประมวลผลข้อความทั้งหมด</li>
-                            <li>ครบจำนวน: ประมวลผลทันที</li>
-                        </ul>
                     </div>
                 </div>
             </div>
@@ -627,45 +350,76 @@
 
             <!-- System Settings Tab -->
             <div class="tab-pane fade" id="system-settings" role="tabpanel">
-                <div class="system-settings-minimal">
-                    <h3>การตั้งค่าระบบ</h3>
-                    <p class="text-muted">ตั้งค่าระบบทั่วไปและการแจ้งเตือน</p>
-                    
-                    <form id="systemSettingsForm">
-                        <div class="form-group-minimal">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="aiEnabled" checked>
-                                <span>เปิดใช้งาน AI</span>
-                            </label>
+                <div class="row">
+                    <div class="col-12">
+                        <div class="settings-card">
+                            <div class="settings-header">
+                                <h4 class="mb-0">
+                                    <i class="fas fa-server me-2"></i>
+                                    การตั้งค่าระบบทั่วไป
+                                </h4>
+                            </div>
+                            <div class="settings-body">
+                                <form id="systemSettingsForm">
+                                    <div class="setting-item">
+                                        <div class="setting-label">สถานะการใช้งาน AI</div>
+                                        <div class="setting-description">
+                                            เปิด/ปิดการใช้งาน AI ในระบบทั้งหมด
+                                        </div>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="aiEnabled" checked>
+                                            <label class="form-check-label" for="aiEnabled">
+                                                เปิดใช้งาน AI
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="setting-item">
+                                        <div class="setting-label">การบันทึกประวัติแชท</div>
+                                        <div class="setting-description">
+                                            เปิด/ปิดการบันทึกประวัติการสนทนาของผู้ใช้
+                                        </div>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="enableChatHistory" checked>
+                                            <label class="form-check-label" for="enableChatHistory">
+                                                บันทึกประวัติแชท
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="setting-item">
+                                        <div class="setting-label">การแจ้งเตือนแอดมิน</div>
+                                        <div class="setting-description">
+                                            แจ้งเตือนแอดมินเมื่อมีข้อความใหม่จากผู้ใช้
+                                        </div>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="enableAdminNotifications" checked>
+                                            <label class="form-check-label" for="enableAdminNotifications">
+                                                แจ้งเตือนแอดมิน
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div class="setting-item">
+                                        <div class="setting-label">โหมดการทำงาน</div>
+                                        <div class="setting-description">
+                                            เลือกโหมดการทำงานของระบบ
+                                        </div>
+                                        <select class="form-select" id="systemMode">
+                                            <option value="production">Production (ใช้งานจริง)</option>
+                                            <option value="development">Development (พัฒนา)</option>
+                                            <option value="maintenance">Maintenance (บำรุงรักษา)</option>
+                                        </select>
+                                    </div>
+
+                                    <button type="submit" class="btn btn-save text-white">
+                                        <i class="fas fa-save me-2"></i>
+                                        บันทึกการตั้งค่าระบบ
+                                    </button>
+                                </form>
+                            </div>
                         </div>
-                        
-                        <div class="form-group-minimal">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="enableChatHistory" checked>
-                                <span>บันทึกประวัติแชท</span>
-                            </label>
-                        </div>
-                        
-                        <div class="form-group-minimal">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="enableAdminNotifications" checked>
-                                <span>แจ้งเตือนแอดมิน</span>
-                            </label>
-                        </div>
-                        
-                        <div class="form-group-minimal">
-                            <label>โหมดการทำงาน</label>
-                            <select class="form-control-minimal" id="systemMode">
-                                <option value="production">Production (ใช้งานจริง)</option>
-                                <option value="development">Development (พัฒนา)</option>
-                                <option value="maintenance">Maintenance (บำรุงรักษา)</option>
-                            </select>
-                        </div>
-                        
-                        <button type="submit" class="btn-minimal primary">
-                            บันทึก
-                        </button>
-                    </form>
+                    </div>
                 </div>
             </div>
 
@@ -684,37 +438,135 @@
                                 </p>
                             </div>
                             <div class="settings-body">
-                                <!-- Quick Stats -->
-                                <div class="stats-minimal">
-                                    <div class="stat-minimal">
-                                        <span class="stat-number" id="totalBots">0</span>
-                                        <span class="stat-label">Line Bots</span>
+                                <!-- AI Models & Instructions Overview -->
+                                <div class="row mb-4">
+                                    <div class="col-md-6">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-header bg-primary text-white">
+                                                <h6 class="mb-0">
+                                                    <i class="fas fa-robot me-2"></i>
+                                                    AI Models ที่รองรับ
+                                                </h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="row">
+                                                    <div class="col-6 mb-3">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="fas fa-circle text-success me-2"></i>
+                                                            <div>
+                                                                <strong>GPT-5</strong>
+                                                                <br><small class="text-muted">มาตรฐาน</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-6 mb-3">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="fas fa-circle text-info me-2"></i>
+                                                            <div>
+                                                                <strong>GPT-5 Mini</strong>
+                                                                <br><small class="text-muted">ประหยัด</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-6 mb-3">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="fas fa-circle text-warning me-2"></i>
+                                                            <div>
+                                                                <strong>GPT-5 Nano</strong>
+                                                                <br><small class="text-muted">เร็วที่สุด</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-6 mb-3">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="fas fa-circle text-danger me-2"></i>
+                                                            <div>
+                                                                <strong>O3</strong>
+                                                                <br><small class="text-muted">ทางเลือก</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="stat-minimal">
-                                        <span class="stat-number" id="activeBots">0</span>
-                                        <span class="stat-label">ใช้งาน</span>
+                                    <div class="col-md-6">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-header bg-info text-white">
+                                                <h6 class="mb-0">
+                                                    <i class="fas fa-book me-2"></i>
+                                                    Instructions
+                                                </h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <p class="text-muted mb-3">แต่ละ Line Bot สามารถเลือก Instructions จากคลังเพื่อกำหนด personality เฉพาะ</p>
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <div>
+                                                        <h5 class="mb-0" id="instructionsCount">0</h5>
+                                                        <small>คลัง Instructions</small>
+                                                    </div>
+                                                    <a href="/admin/instructions" class="btn btn-sm btn-outline-info">
+                                                        <i class="fas fa-external-link-alt me-1"></i>
+                                                        จัดการคลัง
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="stat-minimal">
-                                        <span class="stat-number" id="configuredBots">0</span>
-                                        <span class="stat-label">ตั้งค่าแล้ว</span>
+                                </div>
+
+                                <!-- Line Bot Statistics -->
+                                <div class="row mb-4">
+                                    <div class="col-md-3">
+                                        <div class="card border-0 bg-primary text-white">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-robot fa-2x mb-2"></i>
+                                                <h5 id="totalBots">0</h5>
+                                                <small>Line Bot ทั้งหมด</small>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="stat-minimal">
-                                        <span class="stat-number" id="instructionsCount">0</span>
-                                        <span class="stat-label">Instructions</span>
+                                    <div class="col-md-3">
+                                        <div class="card border-0 bg-success text-white">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-check-circle fa-2x mb-2"></i>
+                                                <h5 id="activeBots">0</h5>
+                                                <small>Bot ที่ใช้งาน</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="card border-0 bg-info text-white">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-cog fa-2x mb-2"></i>
+                                                <h5 id="configuredBots">0</h5>
+                                                <small>Bot ที่ตั้งค่าแล้ว</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="card border-0 bg-warning text-white">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                                                <h5 id="inactiveBots">0</h5>
+                                                <small>Bot ที่ปิดใช้งาน</small>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
                                 <!-- Action Buttons -->
-                                <div class="action-buttons">
-                                    <button type="button" class="btn-minimal primary" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
-                                        เพิ่ม Line Bot
+                                <div class="row mb-4">
+                                    <div class="col-md-6">
+                                        <button type="button" class="btn btn-success btn-lg w-100" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
+                                        <i class="fas fa-plus me-2"></i>เพิ่ม Line Bot ใหม่
                                     </button>
-                                    <button type="button" class="btn-minimal secondary" onclick="refreshLineBotList()">
-                                        รีเฟรช
-                                    </button>
-                                    <a href="/admin/instructions" class="btn-minimal secondary">
-                                        จัดการ Instructions
-                                    </a>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <button type="button" class="btn btn-outline-primary btn-lg w-100" onclick="refreshLineBotList()">
+                                            <i class="fas fa-sync-alt me-2"></i>รีเฟรชข้อมูล
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <!-- Line Bot List -->
@@ -723,44 +575,70 @@
                                 </div>
 
                                 <!-- Global AI Settings -->
-                                <div class="ai-settings-minimal">
-                                    <h4>การตั้งค่า AI หลัก</h4>
-                                    <form id="aiSettingsForm">
-                                        <div class="form-row-minimal">
-                                            <div class="form-group-minimal">
-                                                <label>โมเดลข้อความ</label>
-                                                <select class="form-control-minimal" id="textModel">
-                                                    <option value="gpt-5">GPT-5</option>
-                                                    <option value="gpt-5-mini">GPT-5 Mini</option>
-                                                    <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
-                                                    <option value="gpt-5-nano">GPT-5 Nano</option>
-                                                    <option value="gpt-4.1">GPT-4.1</option>
-                                                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-                                                    <option value="o3">O3</option>
-                                                </select>
-                                            </div>
-                                            <div class="form-group-minimal">
-                                                <label>โมเดลรูปภาพ</label>
-                                                <select class="form-control-minimal" id="visionModel">
-                                                    <option value="gpt-5">GPT-5</option>
-                                                    <option value="gpt-5-mini">GPT-5 Mini</option>
-                                                    <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
-                                                    <option value="gpt-5-nano">GPT-5 Nano</option>
-                                                    <option value="gpt-4.1">GPT-4.1</option>
-                                                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-                                                    <option value="o3">O3</option>
-                                                </select>
-                                            </div>
-                                            <div class="form-group-minimal">
-                                                <label>รูปภาพสูงสุด</label>
-                                                <input type="number" class="form-control-minimal" id="maxImagesPerMessage" 
-                                                       min="1" max="10" step="1" value="3">
-                                            </div>
+                                <div class="mt-4">
+                                    <div class="card border-0 shadow-sm">
+                                        <div class="card-header bg-secondary text-white">
+                                            <h6 class="mb-0">
+                                                <i class="fas fa-cog me-2"></i>
+                                                การตั้งค่า AI หลัก (Global Fallback)
+                                            </h6>
+                            </div>
+                                        <div class="card-body">
+                                            <form id="aiSettingsForm">
+                                                <div class="row">
+                                                    <div class="col-md-6">
+                                                        <div class="setting-item">
+                                                            <div class="setting-label">โมเดลสำหรับข้อความ</div>
+                                                            <div class="setting-description">
+                                                                โมเดล AI ที่ใช้สำหรับข้อความธรรมดา (fallback)
+                        </div>
+                                                            <select class="form-select" id="textModel">
+                                                                <option value="gpt-5">GPT-5</option>
+                                                                <option value="gpt-5-mini">GPT-5 Mini</option>
+                                                                <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
+                                                                <option value="gpt-5-nano">GPT-5 Nano</option>
+                                                                <option value="gpt-4.1">GPT-4.1</option>
+                                                                <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                                                <option value="o3">O3</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="setting-item">
+                                                            <div class="setting-label">โมเดลสำหรับรูปภาพ</div>
+                                                            <div class="setting-description">
+                                                                โมเดล AI ที่ใช้สำหรับรูปภาพ (fallback)
+                                                            </div>
+                                                            <select class="form-select" id="visionModel">
+                                                                <option value="gpt-5">GPT-5</option>
+                                                                <option value="gpt-5-mini">GPT-5 Mini</option>
+                                                                <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
+                                                                <option value="gpt-5-nano">GPT-5 Nano</option>
+                                                                <option value="gpt-4.1">GPT-4.1</option>
+                                                                <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                                                <option value="o3">O3</option>
+                                                            </select>
+                    </div>
+                </div>
+            </div>
+
+                                                <div class="setting-item">
+                                                    <div class="setting-label">จำนวนรูปภาพสูงสุดต่อข้อความ</div>
+                                                    <div class="setting-description">
+                                                        จำกัดจำนวนรูปภาพที่ AI จะประมวลผลในครั้งเดียวเพื่อควบคุมต้นทุน
+                                                    </div>
+                                                    <input type="number" class="form-control" id="maxImagesPerMessage" 
+                                                           min="1" max="10" step="1" placeholder="3" value="3">
+                                                    <small class="text-muted">แนะนำ: 2-5 รูปภาพ</small>
+                                                </div>
+
+                                                <button type="submit" class="btn btn-save text-white">
+                                                    <i class="fas fa-save me-2"></i>
+                                                    บันทึกการตั้งค่า AI
+                                                </button>
+                                            </form>
                                         </div>
-                                        <button type="submit" class="btn-minimal primary">
-                                            บันทึก
-                                        </button>
-                                    </form>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -770,68 +648,78 @@
 
             <!-- Security Settings Tab -->
             <div class="tab-pane fade" id="filter-settings" role="tabpanel">
-                <div class="security-settings-minimal">
-                    <h3>ความปลอดภัย</h3>
-                    <p class="text-muted">ตั้งค่าการกรองข้อความและระบบความปลอดภัย</p>
-                    
-                    <!-- Security Overview -->
-                    <div class="security-overview">
-                        <div class="security-item">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="enableMessageFiltering" checked>
-                                <span>การกรองข้อความ</span>
-                            </label>
-                        </div>
-                        <div class="security-item">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="enableStrictFiltering" checked>
-                                <span>การกรองแบบละเอียด</span>
-                            </label>
-                        </div>
-                        <div class="security-item">
-                            <span class="security-count">
-                                <span id="hiddenWordsCount">0</span> คำที่ซ่อน
-                            </span>
-                        </div>
-                    </div>
-
-                    <form id="filterSettingsForm">
-                        <div class="form-row-minimal">
-                            <div class="form-group-minimal">
-                                <label>คำที่ต้องการซ่อน</label>
-                                <textarea class="form-control-minimal" id="hiddenWords" rows="8" 
-                                          placeholder="ตัวอย่าง:&#10;คำหยาบ&#10;ข้อมูลส่วนตัว&#10;ลิงก์ที่ไม่เหมาะสม"></textarea>
-                                <small>หนึ่งคำต่อบรรทัด</small>
+                <div class="row">
+                    <div class="col-12">
+                        <div class="settings-card">
+                            <div class="settings-header">
+                                <h4 class="mb-0">
+                                    <i class="fas fa-shield-alt me-2"></i>
+                                    ความปลอดภัยและการกรองข้อความ
+                                </h4>
+                                <p class="text-muted mb-0">
+                                    ตั้งค่าการกรองข้อความและระบบความปลอดภัยเพื่อป้องกันเนื้อหาที่ไม่เหมาะสม
+                                </p>
                             </div>
-                            <div class="form-group-minimal">
-                                <label>คำที่ต้องการแทนที่</label>
-                                <textarea class="form-control-minimal" id="replacementWords" rows="8" 
-                                          placeholder="ตัวอย่าง:&#10;***&#10;[ข้อมูลส่วนตัว]&#10;[ลิงก์]"></textarea>
-                                <small>คำที่ใช้แทนที่คำที่ซ่อน</small>
-                            </div>
-                        </div>
-                        
-                        <div class="form-group-minimal">
-                            <label>ทดสอบการกรอง</label>
-                            <div class="test-filter">
-                                <input type="text" class="form-control-minimal" id="testFilterInput" 
-                                       placeholder="ใส่ข้อความเพื่อทดสอบการกรอง">
-                                <button type="button" class="btn-minimal secondary" onclick="testFilter()">
-                                    ทดสอบ
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <button type="submit" class="btn-minimal primary">
-                            บันทึก
-                        </button>
-                    </form>
-                </div>
-            </div>
-                                                <input type="text" class="form-control" id="replacementText" 
-                                                       placeholder="[ข้อความถูกซ่อน]">
-                                                <small class="text-muted">ถ้าไม่ใส่จะใช้ "[ข้อความถูกซ่อน]" เป็นค่าเริ่มต้น</small>
+                            <div class="settings-body">
+                                <!-- Security Overview -->
+                                <div class="row mb-4">
+                                    <div class="col-md-4">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-shield-alt fa-2x text-success mb-3"></i>
+                                                <h6>การกรองข้อความ</h6>
+                                                <div class="form-check form-switch d-flex justify-content-center">
+                                            <input class="form-check-input" type="checkbox" id="enableMessageFiltering" checked>
+                                                </div>
                                             </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-search fa-2x text-info mb-3"></i>
+                                                <h6>การกรองแบบละเอียด</h6>
+                                                <div class="form-check form-switch d-flex justify-content-center">
+                                                    <input class="form-check-input" type="checkbox" id="enableStrictFiltering" checked>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-body text-center">
+                                                <i class="fas fa-eye-slash fa-2x text-warning mb-3"></i>
+                                                <h6>คำที่ถูกซ่อน</h6>
+                                                <h5 id="hiddenWordsCount">0</h5>
+                                                <small>คำ</small>
+                                            </div>
+                                        </div>
+                                        </div>
+                                    </div>
+
+                                <form id="filterSettingsForm">
+                                    <div class="row">
+                                        <div class="col-md-8">
+                                    <div class="setting-item">
+                                        <div class="setting-label">คำที่ต้องการซ่อน (หนึ่งคำต่อบรรทัด)</div>
+                                        <div class="setting-description">
+                                            ใส่คำหรือวลีที่ต้องการซ่อนจากข้อความของ Assistant (ไม่คำนึงถึงตัวพิมพ์เล็ก-ใหญ่)
+                                        </div>
+                                                <textarea class="form-control" id="hiddenWords" rows="8" 
+                                                          placeholder="ตัวอย่าง:&#10;คำหยาบ&#10;ข้อมูลส่วนตัว&#10;ลิงก์ที่ไม่เหมาะสม&#10;ข้อมูลลับ"></textarea>
+                                        <small class="text-muted">แต่ละคำหรือวลีให้ใส่ในบรรทัดใหม่</small>
+                                    </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                    <div class="setting-item">
+                                        <div class="setting-label">คำที่ต้องการแทนที่</div>
+                                        <div class="setting-description">
+                                                    ใส่คำหรือวลีที่ต้องการใช้แทนที่คำที่ซ่อน
+                                        </div>
+                                        <input type="text" class="form-control" id="replacementText" 
+                                               placeholder="[ข้อความถูกซ่อน]">
+                                        <small class="text-muted">ถ้าไม่ใส่จะใช้ "[ข้อความถูกซ่อน]" เป็นค่าเริ่มต้น</small>
+                                    </div>
                                         </div>
                                     </div>
 
@@ -842,13 +730,13 @@
                                         </div>
                                         <div class="row">
                                             <div class="col-md-8">
-                                                <textarea class="form-control" id="testMessage" rows="3" 
-                                                          placeholder="ใส่ข้อความที่ต้องการทดสอบการกรอง"></textarea>
+                                        <textarea class="form-control" id="testMessage" rows="3" 
+                                                  placeholder="ใส่ข้อความที่ต้องการทดสอบการกรอง"></textarea>
                                             </div>
                                             <div class="col-md-4">
                                                 <button type="button" class="btn btn-outline-primary w-100 h-100" onclick="testFiltering()">
-                                                    <i class="fas fa-eye me-2"></i>ทดสอบการกรอง
-                                                </button>
+                                            <i class="fas fa-eye me-2"></i>ทดสอบการกรอง
+                                        </button>
                                             </div>
                                         </div>
                                         <div id="testResult" class="mt-3 p-3 bg-light rounded" style="display: none;"></div>
@@ -949,14 +837,14 @@
                                 </div>
                             </div>
                             <div class="col-md-6">
-                                <div class="mb-3">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" id="lineBotDefault" name="isDefault">
-                                        <label class="form-check-label" for="lineBotDefault">
-                                            ตั้งเป็น Line Bot หลัก (Default)
-                                        </label>
-                                    </div>
-                                    <div class="form-text">Line Bot หลักจะถูกใช้เมื่อไม่ระบุ Line Bot เฉพาะ</div>
+                        <div class="mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="lineBotDefault" name="isDefault">
+                                <label class="form-check-label" for="lineBotDefault">
+                                    ตั้งเป็น Line Bot หลัก (Default)
+                                </label>
+                            </div>
+                            <div class="form-text">Line Bot หลักจะถูกใช้เมื่อไม่ระบุ Line Bot เฉพาะ</div>
                                 </div>
                             </div>
                         </div>
@@ -1440,14 +1328,14 @@
                         <div class="card-header bg-white border-bottom">
                             <div class="d-flex justify-content-between align-items-center">
                                 <div>
-                                    <h6 class="mb-0">
+                            <h6 class="mb-0">
                                         <i class="fab fa-line me-2 text-success"></i>
-                                        ${bot.name} ${defaultBadge}
-                                    </h6>
+                                ${bot.name} ${defaultBadge}
+                            </h6>
                                     <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
                                 </div>
                                 <div class="d-flex align-items-center gap-2">
-                                    <span class="badge bg-${statusClass}">${statusText}</span>
+                                <span class="badge bg-${statusClass}">${statusText}</span>
                                     <div class="dropdown">
                                         <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
                                             <i class="fas fa-ellipsis-v"></i>
@@ -1479,7 +1367,7 @@
                                         <div>
                                             <small class="text-muted d-block">AI Model</small>
                                             <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
-                                        </div>
+                                </div>
                                     </div>
                                 </div>
                                 <div class="col-md-3">
@@ -1498,10 +1386,10 @@
                                             <small class="text-muted d-block">Webhook</small>
                                             <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.webhookUrl || 'ไม่ระบุ'}">
                                                 ${bot.webhookUrl ? bot.webhookUrl.split('/').pop() : 'ไม่ระบุ'}
-                                            </small>
-                                        </div>
-                                    </div>
+                                    </small>
                                 </div>
+                            </div>
+                        </div>
                                 <div class="col-md-3">
                                     <div class="d-flex align-items-center mb-2">
                                         <i class="fas fa-clock text-muted me-2"></i>
