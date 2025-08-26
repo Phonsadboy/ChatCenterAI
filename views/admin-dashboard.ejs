@@ -103,7 +103,7 @@
                                     <i class="fas fa-file-excel"></i> อัพโหลด Excel
                                 </button>
                                 <button class="btn btn-warning btn-sm ms-2" type="button" data-bs-toggle="modal" data-bs-target="#backupModal">
-                                    <i class="fas fa-history"></i> Backup
+                                    <i class="fas fa-book"></i> Instruction Library
                                 </button>
                                 <button class="btn btn-outline-primary btn-sm ms-2" id="previewBtn">
                                     <i class="fas fa-eye"></i> Preview
@@ -388,7 +388,7 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-history me-2"></i> จัดการ Backup Instructions
+                        <i class="fas fa-book me-2"></i> จัดการ Instruction Library
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -397,11 +397,11 @@
                     <div class="card mb-3">
                         <div class="card-body">
                             <h6 class="card-title">
-                                <i class="fas fa-save me-2"></i> สร้าง Backup ใหม่
+                                <i class="fas fa-save me-2"></i> สร้าง Instruction Library ใหม่
                             </h6>
-                            <p class="text-muted small">สำรองข้อมูล instructions ปัจจุบันทั้งหมด</p>
-                            <button class="btn btn-primary" id="createBackupBtn">
-                                <i class="fas fa-plus-circle me-2"></i> สร้าง Backup
+                            <p class="text-muted small">บันทึก instructions ปัจจุบันทั้งหมดลงคลัง</p>
+                            <button class="btn btn-primary" id="createLibraryBtn">
+                                <i class="fas fa-plus-circle me-2"></i> สร้าง Library
                             </button>
                         </div>
                     </div>
@@ -410,14 +410,14 @@
                     <div class="card">
                         <div class="card-body">
                             <h6 class="card-title">
-                                <i class="fas fa-list me-2"></i> รายการ Backup
+                                <i class="fas fa-list me-2"></i> รายการ Instruction Library
                             </h6>
-                            <div id="backupList" class="mt-3">
+                            <div id="libraryList" class="mt-3">
                                 <div class="text-center py-3">
                                     <div class="spinner-border spinner-border-sm" role="status">
                                         <span class="visually-hidden">กำลังโหลด...</span>
                                     </div>
-                                    <p class="text-muted small mt-2">กำลังโหลดรายการ backup...</p>
+                                    <p class="text-muted small mt-2">กำลังโหลดรายการ library...</p>
                                 </div>
                             </div>
                         </div>
@@ -438,16 +438,16 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p><strong>คุณกำลังจะคืนค่า instructions จาก backup</strong></p>
+                    <p><strong>คุณกำลังจะคืนค่า instructions จาก library</strong></p>
                     <p class="text-danger">การดำเนินการนี้จะ:</p>
                     <ul class="text-danger">
                         <li>ลบ instructions ปัจจุบันทั้งหมด</li>
-                        <li>นำเข้า instructions จาก backup ที่เลือก</li>
+                        <li>นำเข้า instructions จาก library ที่เลือก</li>
                     </ul>
                     <div class="form-check mt-3">
                         <input class="form-check-input" type="checkbox" id="createBackupBeforeRestore">
                         <label class="form-check-label" for="createBackupBeforeRestore">
-                            สำรองข้อมูลปัจจุบันก่อนคืนค่า
+                            บันทึกข้อมูลปัจจุบันลงคลังก่อนคืนค่า
                         </label>
                     </div>
                 </div>
@@ -972,58 +972,58 @@
             });
         }
 
-        // ===== BACKUP SYSTEM =====
-        let currentRestoreBackupDate = null;
+        // ===== INSTRUCTION LIBRARY SYSTEM =====
+        let currentRestoreLibraryDate = null;
 
-        // ฟังก์ชันโหลดรายการ backup
-        async function loadBackupList() {
-            const backupListContainer = document.getElementById('backupList');
+        // ฟังก์ชันโหลดรายการ instruction library
+        async function loadLibraryList() {
+            const libraryListContainer = document.getElementById('libraryList');
             
             // แสดง loading state
-            backupListContainer.innerHTML = `
+            libraryListContainer.innerHTML = `
                 <div class="text-center py-3">
                     <div class="spinner-border spinner-border-sm" role="status">
                         <span class="visually-hidden">กำลังโหลด...</span>
                     </div>
-                    <p class="text-muted small mt-2">กำลังโหลดรายการ backup...</p>
+                    <p class="text-muted small mt-2">กำลังโหลดรายการ library...</p>
                 </div>
             `;
 
             try {
-                const response = await fetch('/admin/instructions/backups');
+                const response = await fetch('/admin/instructions/library');
                 const data = await response.json();
                 
                 if (data.success) {
-                    displayBackupList(data.backups);
+                    displayLibraryList(data.libraries);
                 } else {
-                    backupListContainer.innerHTML = `
+                    libraryListContainer.innerHTML = `
                         <div class="alert alert-warning">
                             <i class="fas fa-exclamation-triangle me-2"></i>
-                            ไม่สามารถโหลดรายการ backup ได้: ${data.error}
+                            ไม่สามารถโหลดรายการ library ได้: ${data.error}
                         </div>
                     `;
                 }
             } catch (error) {
-                console.error('Error loading backup list:', error);
-                backupListContainer.innerHTML = `
+                console.error('Error loading library list:', error);
+                libraryListContainer.innerHTML = `
                     <div class="alert alert-danger">
                         <i class="fas fa-exclamation-circle me-2"></i>
-                        เกิดข้อผิดพลาดในการโหลดรายการ backup
+                        เกิดข้อผิดพลาดในการโหลดรายการ library
                     </div>
                 `;
             }
         }
 
-        // ฟังก์ชันแสดงรายการ backup
-        function displayBackupList(backups) {
-            const backupListContainer = document.getElementById('backupList');
+        // ฟังก์ชันแสดงรายการ instruction library
+        function displayLibraryList(libraries) {
+            const libraryListContainer = document.getElementById('libraryList');
             
-            if (backups.length === 0) {
-                backupListContainer.innerHTML = `
+            if (libraries.length === 0) {
+                libraryListContainer.innerHTML = `
                     <div class="text-center py-4 bg-light rounded">
-                        <i class="fas fa-history text-muted fs-3 mb-2"></i>
-                        <p class="text-muted mb-0">ยังไม่มี backup</p>
-                        <small class="text-muted">กดปุ่มด้านบนเพื่อสร้าง backup ใหม่</small>
+                        <i class="fas fa-book text-muted fs-3 mb-2"></i>
+                        <p class="text-muted mb-0">ยังไม่มี instruction library</p>
+                        <small class="text-muted">กดปุ่มด้านบนเพื่อสร้าง library ใหม่</small>
                     </div>
                 `;
                 return;
@@ -1031,10 +1031,10 @@
 
             let html = '<div class="list-group">';
             
-            backups.forEach(backup => {
-                const backupDate = new Date(backup.backedUpAt);
-                const isManual = backup.type === 'manual';
-                const isBeforeRestore = backup.type === 'before_restore';
+            libraries.forEach(library => {
+                const libraryDate = new Date(library.savedAt);
+                const isManual = library.type === 'manual';
+                const isBeforeRestore = library.type === 'before_restore';
                 
                 let typeIcon = 'fas fa-clock';
                 let typeText = 'อัตโนมัติ';
@@ -1056,21 +1056,24 @@
                             <div>
                                 <h6 class="mb-1">
                                     <i class="${typeIcon} ${typeClass} me-2"></i>
-                                    ${backup.displayDate || backup.date}
-                                    <small class="text-muted">${backup.displayTime || ''}</small>
+                                    ${library.name || library.displayDate || library.date}
+                                    <small class="text-muted">${library.displayTime || ''}</small>
                                 </h6>
+                                <p class="mb-1 small text-muted">
+                                    ${library.description || 'ไม่มีคำอธิบาย'}
+                                </p>
                                 <p class="mb-1 small text-muted">
                                     ประเภท: <span class="${typeClass}">${typeText}</span>
                                 </p>
                                 <small class="text-muted">
-                                    สร้างเมื่อ: ${backupDate.toLocaleString('th-TH')}
+                                    บันทึกเมื่อ: ${libraryDate.toLocaleString('th-TH')}
                                 </small>
                             </div>
                             <div>
-                                <button class="btn btn-outline-warning btn-sm restore-backup" 
-                                        data-date="${backup.date}" 
-                                        data-display="${backup.displayDate || backup.date}"
-                                        title="คืนค่า backup นี้">
+                                <button class="btn btn-outline-warning btn-sm restore-library" 
+                                        data-date="${library.date}" 
+                                        data-display="${library.name || library.displayDate || library.date}"
+                                        title="คืนค่า library นี้">
                                     <i class="fas fa-undo me-1"></i> คืนค่า
                                 </button>
                             </div>
@@ -1080,7 +1083,7 @@
             });
             
             html += '</div>';
-            backupListContainer.innerHTML = html;
+            libraryListContainer.innerHTML = html;
 
             // Setup event listeners for restore buttons
             setupRestoreEventListeners();
@@ -1088,14 +1091,14 @@
 
         // ฟังก์ชันจัดการปุ่มคืนค่า
         function setupRestoreEventListeners() {
-            document.querySelectorAll('.restore-backup').forEach(btn => {
+            document.querySelectorAll('.restore-library').forEach(btn => {
                 btn.addEventListener('click', function() {
-                    currentRestoreBackupDate = this.getAttribute('data-date');
+                    currentRestoreLibraryDate = this.getAttribute('data-date');
                     const displayDate = this.getAttribute('data-display');
                     
                     // อัพเดตข้อความใน confirmation modal
                     const modalBody = document.querySelector('#restoreConfirmModal .modal-body');
-                    modalBody.querySelector('p').innerHTML = `<strong>คุณกำลังจะคืนค่า instructions จาก backup วันที่ ${displayDate}</strong>`;
+                    modalBody.querySelector('p').innerHTML = `<strong>คุณกำลังจะคืนค่า instructions จาก library: ${displayDate}</strong>`;
                     
                     // เปิด confirmation modal
                     const restoreModal = new bootstrap.Modal(document.getElementById('restoreConfirmModal'));
@@ -1104,54 +1107,58 @@
             });
         }
 
-        // ฟังก์ชันสร้าง backup ใหม่
-        async function createNewBackup() {
-            const createBtn = document.getElementById('createBackupBtn');
+        // ฟังก์ชันสร้าง instruction library ใหม่
+        async function createNewLibrary() {
+            const createBtn = document.getElementById('createLibraryBtn');
             const originalText = createBtn.innerHTML;
             
             createBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> กำลังสร้าง...';
             createBtn.disabled = true;
 
             try {
-                const response = await fetch('/admin/instructions/backup-now', {
+                const response = await fetch('/admin/instructions/library-now', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: `คลัง ${new Date().toLocaleDateString('th-TH')}`,
+                        description: `คลัง instruction ที่สร้างด้วยตนเองเมื่อวันที่ ${new Date().toLocaleDateString('th-TH')}`
+                    })
                 });
                 
                 const data = await response.json();
                 
                 if (data.success) {
                     showNotification(data.message, 'success');
-                    // รีโหลดรายการ backup
-                    await loadBackupList();
+                    // รีโหลดรายการ library
+                    await loadLibraryList();
                 } else {
-                    showNotification('ไม่สามารถสร้าง backup ได้: ' + data.error, 'error');
+                    showNotification('ไม่สามารถสร้าง library ได้: ' + data.error, 'error');
                 }
             } catch (error) {
-                console.error('Error creating backup:', error);
-                showNotification('เกิดข้อผิดพลาดในการสร้าง backup', 'error');
+                console.error('Error creating library:', error);
+                showNotification('เกิดข้อผิดพลาดในการสร้าง library', 'error');
             } finally {
                 createBtn.innerHTML = originalText;
                 createBtn.disabled = false;
             }
         }
 
-        // ฟังก์ชันคืนค่า backup
-        async function confirmRestoreBackup() {
-            if (!currentRestoreBackupDate) return;
+        // ฟังก์ชันคืนค่า instruction library
+        async function confirmRestoreLibrary() {
+            if (!currentRestoreLibraryDate) return;
 
             const confirmBtn = document.getElementById('confirmRestoreBtn');
             const originalText = confirmBtn.innerHTML;
-            const createBackupBefore = document.getElementById('createBackupBeforeRestore').checked;
+            const createLibraryBefore = document.getElementById('createBackupBeforeRestore').checked;
             
             confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> กำลังคืนค่า...';
             confirmBtn.disabled = true;
 
             try {
-                const response = await fetch(`/admin/instructions/restore/${currentRestoreBackupDate}`, {
+                const response = await fetch(`/admin/instructions/restore/${currentRestoreLibraryDate}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ createBackupBefore })
+                    body: JSON.stringify({ createLibraryBefore })
                 });
                 
                 const data = await response.json();
@@ -1171,32 +1178,32 @@
                         window.location.reload();
                     }, 2000);
                 } else {
-                    showNotification('ไม่สามารถคืนค่า backup ได้: ' + data.error, 'error');
+                    showNotification('ไม่สามารถคืนค่า library ได้: ' + data.error, 'error');
                 }
             } catch (error) {
-                console.error('Error restoring backup:', error);
-                showNotification('เกิดข้อผิดพลาดในการคืนค่า backup', 'error');
+                console.error('Error restoring library:', error);
+                showNotification('เกิดข้อผิดพลาดในการคืนค่า library', 'error');
             } finally {
                 confirmBtn.innerHTML = originalText;
                 confirmBtn.disabled = false;
-                currentRestoreBackupDate = null;
+                currentRestoreLibraryDate = null;
             }
         }
 
-        // Setup backup event listeners
+        // Setup library event listeners
         document.addEventListener('DOMContentLoaded', function() {
-            // โหลดรายการ backup เมื่อเปิด modal
+            // โหลดรายการ library เมื่อเปิด modal
             const backupModal = document.getElementById('backupModal');
             if (backupModal) {
                 backupModal.addEventListener('shown.bs.modal', function() {
-                    loadBackupList();
+                    loadLibraryList();
                 });
             }
 
-            // Setup ปุ่มสร้าง backup
-            const createBackupBtn = document.getElementById('createBackupBtn');
-            if (createBackupBtn) {
-                createBackupBtn.addEventListener('click', createNewBackup);
+            // Setup ปุ่มสร้าง library
+            const createLibraryBtn = document.getElementById('createLibraryBtn');
+            if (createLibraryBtn) {
+                createLibraryBtn.addEventListener('click', createNewLibrary);
             }
 
             // Setup ปุ่มยืนยันการคืนค่า

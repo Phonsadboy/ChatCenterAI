@@ -45,10 +45,10 @@ function createLineClient(channelAccessToken, channelSecret) {
     throw new Error('Channel Access Token และ Channel Secret จำเป็นสำหรับการใช้งาน Line Bot');
   }
   
-  const lineConfig = {
+const lineConfig = {
     channelAccessToken,
     channelSecret
-  };
+};
   
   return new line.Client(lineConfig);
 }
@@ -933,7 +933,7 @@ server.listen(PORT, async () => {
     
     // เริ่มระบบ backup อัตโนมัติประจำวัน
     console.log(`[LOG] เริ่มระบบ backup อัตโนมัติประจำวัน...`);
-    scheduleDailyInstructionBackup();
+    scheduleDailyInstructionLibrary();
 
     // ทำให้แน่ใจว่ามีการตั้งค่าเริ่มต้นใน collection settings
     await ensureSettings();
@@ -1432,44 +1432,46 @@ async function getInstructions() {
   return coll.find({}).sort({ order: 1, createdAt: 1 }).toArray();
 }
 
-// ============================ Instruction Backup ============================
-async function backupInstructionsForDate(dateStr) {
+// ============================ Instruction Library ============================
+async function saveInstructionsToLibrary(dateStr) {
   const client = await connectDB();
   const db = client.db("chatbot");
   const instrColl = db.collection("instructions");
-  const backupColl = db.collection("instruction_backups");
+  const libraryColl = db.collection("instruction_library");
 
   const instructions = await instrColl.find({}).toArray();
   const now = new Date();
   const thaiNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
   
-  await backupColl.updateOne(
+  await libraryColl.updateOne(
     { date: dateStr },
     { 
       $set: { 
         date: dateStr, 
         instructions, 
-        backedUpAt: new Date(),
+        savedAt: new Date(),
         type: 'auto',
         displayDate: dateStr,
-        displayTime: thaiNow.toLocaleTimeString('th-TH')
+        displayTime: thaiNow.toLocaleTimeString('th-TH'),
+        name: `คลัง ${dateStr}`,
+        description: `คลัง instruction ที่บันทึกอัตโนมัติเมื่อวันที่ ${dateStr}`
       } 
     },
     { upsert: true }
   );
-  console.log(`[Backup] สำรองข้อมูล instructions สำหรับวันที่ ${dateStr} แล้ว`);
+  console.log(`[Library] บันทึก instructions ลงคลังสำหรับวันที่ ${dateStr} แล้ว`);
 }
 
-function scheduleDailyInstructionBackup() {
-  console.log('[Backup] ตั้งเวลาสำรองข้อมูล instructions ทุกวันเวลา 00:00 น.');
-  let lastBackupDate = '';
+function scheduleDailyInstructionLibrary() {
+  console.log('[Library] ตั้งเวลาบันทึก instructions ลงคลังทุกวันเวลา 00:00 น.');
+  let lastLibraryDate = '';
   setInterval(async () => {
     const now = new Date();
     const thaiNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
     const dateStr = thaiNow.toISOString().split('T')[0];
-    if (thaiNow.getHours() === 0 && thaiNow.getMinutes() === 0 && lastBackupDate !== dateStr) {
-      await backupInstructionsForDate(dateStr);
-      lastBackupDate = dateStr;
+    if (thaiNow.getHours() === 0 && thaiNow.getMinutes() === 0 && lastLibraryDate !== dateStr) {
+      await saveInstructionsToLibrary(dateStr);
+      lastLibraryDate = dateStr;
     }
   }, 60 * 1000);
 }
@@ -1489,67 +1491,72 @@ app.get('/', (req, res) => {
   res.redirect('/admin/dashboard');
 });
 
-// Route: list all backups
-app.get('/admin/instructions/backups', async (req, res) => {
+// Route: list all instruction libraries
+app.get('/admin/instructions/library', async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    const backupColl = db.collection("instruction_backups");
-    const backups = await backupColl.find({}, { 
+    const libraryColl = db.collection("instruction_library");
+    const libraries = await libraryColl.find({}, { 
       projection: { 
         date: 1, 
-        backedUpAt: 1, 
+        savedAt: 1, 
         type: 1, 
         displayDate: 1, 
-        displayTime: 1 
+        displayTime: 1,
+        name: 1,
+        description: 1
       } 
     }).sort({ date: -1 }).toArray();
-    res.json({ success: true, backups });
+    res.json({ success: true, libraries });
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
 });
 
-// Route: get backup by date (YYYY-MM-DD)
-app.get('/admin/instructions/backup/:date', async (req, res) => {
+// Route: get instruction library by date (YYYY-MM-DD)
+app.get('/admin/instructions/library/:date', async (req, res) => {
   try {
     const { date } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
-    const backupColl = db.collection("instruction_backups");
-    const doc = await backupColl.findOne({ date });
-    if (!doc) return res.json({ success: false, error: 'ไม่พบข้อมูลสำรองของวันที่ระบุ' });
-    res.json({ success: true, instructions: doc.instructions, backedUpAt: doc.backedUpAt });
+    const libraryColl = db.collection("instruction_library");
+    const doc = await libraryColl.findOne({ date });
+    if (!doc) return res.json({ success: false, error: 'ไม่พบคลัง instruction ของวันที่ระบุ' });
+    res.json({ success: true, instructions: doc.instructions, savedAt: doc.savedAt, name: doc.name, description: doc.description });
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
 });
 
-// Route: สร้าง backup ด้วยตนเอง
-app.post('/admin/instructions/backup-now', async (req, res) => {
+// Route: สร้าง instruction library ด้วยตนเอง
+app.post('/admin/instructions/library-now', async (req, res) => {
   try {
+    const { name, description } = req.body;
     const now = new Date();
     const thaiNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
     const dateStr = thaiNow.toISOString().split('T')[0];
     const timeStr = thaiNow.toTimeString().split(' ')[0].replace(/:/g, '-');
-    const backupKey = `${dateStr}_manual_${timeStr}`;
+    const libraryKey = `${dateStr}_manual_${timeStr}`;
     
     const client = await connectDB();
     const db = client.db("chatbot");
     const instrColl = db.collection("instructions");
-    const backupColl = db.collection("instruction_backups");
+    const libraryColl = db.collection("instruction_library");
 
     const instructions = await instrColl.find({}).toArray();
-    await backupColl.updateOne(
-      { date: backupKey },
+    await libraryColl.updateOne(
+      { date: libraryKey },
       { 
         $set: { 
-          date: backupKey, 
+          date: libraryKey, 
           instructions, 
-          backedUpAt: new Date(),
+          savedAt: new Date(),
           type: 'manual',
           displayDate: dateStr,
-          displayTime: thaiNow.toLocaleTimeString('th-TH')
+          displayTime: thaiNow.toLocaleTimeString('th-TH'),
+          name: name || `คลัง ${dateStr} ${timeStr}`,
+          description: description || `คลัง instruction ที่สร้างด้วยตนเองเมื่อวันที่ ${dateStr} เวลา ${timeStr}`
         } 
       },
       { upsert: true }
@@ -1557,8 +1564,8 @@ app.post('/admin/instructions/backup-now', async (req, res) => {
     
     res.json({ 
       success: true, 
-      message: `สำรองข้อมูลเรียบร้อยแล้ว (${instructions.length} instructions)`,
-      backupKey: backupKey,
+      message: `บันทึก instructions ลงคลังเรียบร้อยแล้ว (${instructions.length} instructions)`,
+      libraryKey: libraryKey,
       instructionCount: instructions.length
     });
   } catch (err) {
@@ -1566,25 +1573,25 @@ app.post('/admin/instructions/backup-now', async (req, res) => {
   }
 });
 
-// Route: คืนค่า backup
+// Route: คืนค่า instruction library
 app.post('/admin/instructions/restore/:date', async (req, res) => {
   try {
     const { date } = req.params;
-    const { createBackupBefore } = req.body;
+    const { createLibraryBefore } = req.body;
     
     const client = await connectDB();
     const db = client.db("chatbot");
     const instrColl = db.collection("instructions");
-    const backupColl = db.collection("instruction_backups");
+    const libraryColl = db.collection("instruction_library");
     
-    // ดึงข้อมูล backup ที่ต้องการ restore
-    const backup = await backupColl.findOne({ date });
-    if (!backup) {
-      return res.json({ success: false, error: 'ไม่พบข้อมูลสำรองของวันที่ระบุ' });
+    // ดึงข้อมูล library ที่ต้องการ restore
+    const library = await libraryColl.findOne({ date });
+    if (!library) {
+      return res.json({ success: false, error: 'ไม่พบคลัง instruction ของวันที่ระบุ' });
     }
     
-    // สำรองข้อมูลปัจจุบันก่อน restore (ถ้าต้องการ)
-    if (createBackupBefore) {
+    // บันทึกข้อมูลปัจจุบันลงคลังก่อน restore (ถ้าต้องการ)
+    if (createLibraryBefore) {
       const currentInstructions = await instrColl.find({}).toArray();
       const now = new Date();
       const thaiNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
@@ -1592,16 +1599,18 @@ app.post('/admin/instructions/restore/:date', async (req, res) => {
       const timeStr = thaiNow.toTimeString().split(' ')[0].replace(/:/g, '-');
       const beforeRestoreKey = `${dateStr}_before_restore_${timeStr}`;
       
-      await backupColl.updateOne(
+      await libraryColl.updateOne(
         { date: beforeRestoreKey },
         { 
           $set: { 
             date: beforeRestoreKey, 
             instructions: currentInstructions, 
-            backedUpAt: new Date(),
+            savedAt: new Date(),
             type: 'before_restore',
             displayDate: dateStr,
-            displayTime: thaiNow.toLocaleTimeString('th-TH')
+            displayTime: thaiNow.toLocaleTimeString('th-TH'),
+            name: `คลังก่อนคืนค่า ${dateStr}`,
+            description: `คลัง instruction ที่บันทึกก่อนคืนค่าข้อมูลเมื่อวันที่ ${dateStr}`
           } 
         },
         { upsert: true }
@@ -1611,10 +1620,10 @@ app.post('/admin/instructions/restore/:date', async (req, res) => {
     // ลบข้อมูลปัจจุบันทั้งหมด
     await instrColl.deleteMany({});
     
-    // นำเข้าข้อมูลจาก backup
-    if (backup.instructions && backup.instructions.length > 0) {
+    // นำเข้าข้อมูลจาก library
+    if (library.instructions && library.instructions.length > 0) {
       // ลบ _id เก่าและปรับปรุง timestamps
-      const instructionsToInsert = backup.instructions.map(instr => {
+      const instructionsToInsert = library.instructions.map(instr => {
         const { _id, ...instructionData } = instr;
         return {
           ...instructionData,
@@ -1628,8 +1637,8 @@ app.post('/admin/instructions/restore/:date', async (req, res) => {
     
     res.json({ 
       success: true, 
-      message: `คืนค่าข้อมูลจาก ${backup.displayDate || date} เรียบร้อยแล้ว (${backup.instructions.length} instructions)`,
-      restoredCount: backup.instructions.length
+      message: `คืนค่าข้อมูลจาก ${library.name || library.displayDate || date} เรียบร้อยแล้ว (${library.instructions.length} instructions)`,
+      restoredCount: library.instructions.length
     });
   } catch (err) {
     console.error('Restore error:', err);
@@ -1876,6 +1885,7 @@ app.post('/api/line-bots', async (req, res) => {
       webhookUrl: finalWebhookUrl,
       status: status || 'active',
       isDefault: isDefault || false,
+      selectedInstructions: [], // รายการ instruction ที่เลือกจากคลัง
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -1993,6 +2003,98 @@ app.post('/api/line-bots/:id/test', async (req, res) => {
   } catch (err) {
     console.error('Error testing line bot:', err);
     res.status(500).json({ error: 'ไม่สามารถทดสอบ Line Bot ได้' });
+  }
+});
+
+// Route: อัปเดต instruction ที่เลือกใช้ใน Line Bot
+app.put('/api/line-bots/:id/instructions', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { selectedInstructions } = req.body;
+    
+    if (!Array.isArray(selectedInstructions)) {
+      return res.status(400).json({ error: 'selectedInstructions ต้องเป็น array' });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+    
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { 
+        $set: { 
+          selectedInstructions,
+          updatedAt: new Date()
+        } 
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'ไม่พบ Line Bot ที่ระบุ' });
+    }
+
+    res.json({ message: 'อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว' });
+  } catch (err) {
+    console.error('Error updating line bot instructions:', err);
+    res.status(500).json({ error: 'ไม่สามารถอัปเดต instruction ที่เลือกใช้ได้' });
+  }
+});
+
+// Route: ดึงรายการ instruction library ทั้งหมด
+app.get('/api/instructions/library', async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const libraryColl = db.collection("instruction_library");
+    const libraries = await libraryColl.find({}, {
+      projection: {
+        date: 1,
+        name: 1,
+        description: 1,
+        displayDate: 1,
+        displayTime: 1,
+        type: 1,
+        savedAt: 1
+      }
+    }).sort({ date: -1 }).toArray();
+    
+    res.json({ success: true, libraries });
+  } catch (err) {
+    console.error('Error fetching instruction libraries:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงรายการ instruction library ได้' });
+  }
+});
+
+// Route: ดึงรายละเอียด instruction library พร้อม instructions
+app.get('/api/instructions/library/:date/details', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const libraryColl = db.collection("instruction_library");
+    
+    const library = await libraryColl.findOne({ date });
+    if (!library) {
+      return res.status(404).json({ error: 'ไม่พบคลัง instruction ที่ระบุ' });
+    }
+    
+    res.json({ 
+      success: true, 
+      library: {
+        date: library.date,
+        name: library.name,
+        description: library.description,
+        displayDate: library.displayDate,
+        displayTime: library.displayTime,
+        type: library.type,
+        savedAt: library.savedAt,
+        instructions: library.instructions || []
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching library details:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงรายละเอียดคลัง instruction ได้' });
   }
 });
 

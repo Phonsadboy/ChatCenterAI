@@ -568,6 +568,52 @@
         </div>
     </div>
 
+    <!-- Manage Instructions Modal -->
+    <div class="modal fade" id="manageInstructionsModal" tabindex="-1" aria-labelledby="manageInstructionsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="manageInstructionsModalLabel">
+                        <i class="fas fa-book me-2"></i>จัดการ Instructions สำหรับ Line Bot
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-list me-2"></i>คลัง Instructions ที่มีอยู่</h6>
+                            <div id="instructionLibraries" class="border rounded p-3" style="max-height: 400px; overflow-y: auto;">
+                                <!-- รายการคลัง instructions จะถูกโหลดที่นี่ -->
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-check-circle me-2"></i>Instructions ที่เลือกใช้</h6>
+                            <div id="selectedInstructions" class="border rounded p-3" style="max-height: 400px; overflow-y: auto;">
+                                <!-- รายการ instructions ที่เลือกจะแสดงที่นี่ -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <h6><i class="fas fa-info-circle me-2"></i>คำแนะนำ</h6>
+                        <ul class="text-muted small">
+                            <li>คลิกที่คลัง instruction เพื่อดูรายละเอียด</li>
+                            <li>เลือก instruction ที่ต้องการใช้ใน Line Bot นี้</li>
+                            <li>สามารถเปลี่ยนการเลือกใช้ได้ตลอดเวลา</li>
+                            <li>การเปลี่ยนแปลงจะมีผลทันทีหลังจากบันทึก</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                    <button type="button" class="btn btn-primary" id="saveInstructionsBtn">
+                        <i class="fas fa-save me-2"></i>บันทึกการเลือกใช้
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Global variables
@@ -585,6 +631,7 @@
             // Line Bot management
             document.querySelector('[data-bs-target="#addLineBotModal"]').addEventListener('click', addNewLineBot);
             document.getElementById('saveLineBotBtn').addEventListener('click', saveLineBot);
+            document.getElementById('saveInstructionsBtn').addEventListener('click', saveSelectedInstructions);
 
             // Chat settings form
             document.getElementById('chatSettingsForm').addEventListener('submit', function(e) {
@@ -951,6 +998,9 @@
                             <button class="btn btn-sm btn-outline-primary me-2" onclick="editLineBot('${bot._id}')">
                                 <i class="fas fa-edit me-1"></i>แก้ไข
                             </button>
+                            <button class="btn btn-sm btn-outline-success me-2" onclick="manageInstructions('${bot._id}')">
+                                <i class="fas fa-book me-1"></i>จัดการ Instructions
+                            </button>
                             <button class="btn btn-sm btn-outline-danger me-2" onclick="deleteLineBot('${bot._id}')">
                                 <i class="fas fa-trash me-1"></i>ลบ
                             </button>
@@ -1088,6 +1138,203 @@
             } catch (error) {
                 console.error('Error saving line bot:', error);
                 showAlert('เกิดข้อผิดพลาดในการบันทึก Line Bot', 'danger');
+            }
+        }
+
+        // Global variables for instruction management
+        let currentLineBotId = null;
+        let currentLineBotInstructions = [];
+        let availableLibraries = [];
+
+        // Manage Instructions for Line Bot
+        async function manageInstructions(botId) {
+            currentLineBotId = botId;
+            currentLineBotInstructions = [];
+            
+            try {
+                // Load Line Bot details
+                const botResponse = await fetch(`/api/line-bots/${botId}`);
+                if (botResponse.ok) {
+                    const bot = await botResponse.json();
+                    currentLineBotInstructions = bot.selectedInstructions || [];
+                }
+                
+                // Load available instruction libraries
+                const libraryResponse = await fetch('/api/instructions/library');
+                if (libraryResponse.ok) {
+                    const result = await libraryResponse.json();
+                    availableLibraries = result.libraries || [];
+                }
+                
+                // Display data
+                displayInstructionLibraries();
+                displaySelectedInstructions();
+                
+                // Show modal
+                const modal = new bootstrap.Modal(document.getElementById('manageInstructionsModal'));
+                modal.show();
+                
+            } catch (error) {
+                console.error('Error loading instruction data:', error);
+                showAlert('เกิดข้อผิดพลาดในการโหลดข้อมูล instructions', 'danger');
+            }
+        }
+
+        // Display available instruction libraries
+        function displayInstructionLibraries() {
+            const container = document.getElementById('instructionLibraries');
+            
+            if (!availableLibraries || availableLibraries.length === 0) {
+                container.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        ยังไม่มีคลัง instructions ในระบบ
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            availableLibraries.forEach(library => {
+                const isSelected = currentLineBotInstructions.includes(library.date);
+                const selectedClass = isSelected ? 'border-success bg-light' : 'border-secondary';
+                const selectedIcon = isSelected ? '<i class="fas fa-check-circle text-success me-2"></i>' : '<i class="fas fa-circle text-muted me-2"></i>';
+                
+                html += `
+                    <div class="card mb-2 ${selectedClass} library-item" data-date="${library.date}" style="cursor: pointer;">
+                        <div class="card-body p-2">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    ${selectedIcon}
+                                    <strong>${library.name || library.displayDate}</strong>
+                                    <br>
+                                    <small class="text-muted">${library.description || 'ไม่มีคำอธิบาย'}</small>
+                                    <br>
+                                    <small class="text-muted">
+                                        <i class="fas fa-calendar me-1"></i>${library.displayDate} 
+                                        <i class="fas fa-clock me-1 ms-2"></i>${library.displayTime}
+                                    </small>
+                                </div>
+                                <div class="text-end">
+                                    <small class="badge bg-${library.type === 'auto' ? 'primary' : 'success'}">${library.type === 'auto' ? 'อัตโนมัติ' : 'ด้วยตนเอง'}</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+            
+            // Add click events
+            document.querySelectorAll('.library-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    const date = this.dataset.date;
+                    toggleLibrarySelection(date);
+                });
+            });
+        }
+
+        // Display selected instructions
+        function displaySelectedInstructions() {
+            const container = document.getElementById('selectedInstructions');
+            
+            if (currentLineBotInstructions.length === 0) {
+                container.innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        ยังไม่ได้เลือก instructions จากคลัง
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<div class="mb-2"><strong>คลังที่เลือกใช้:</strong></div>';
+            currentLineBotInstructions.forEach(date => {
+                const library = availableLibraries.find(lib => lib.date === date);
+                if (library) {
+                    html += `
+                        <div class="card mb-2 border-success bg-light">
+                            <div class="card-body p-2">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <i class="fas fa-check-circle text-success me-2"></i>
+                                        <strong>${library.name || library.displayDate}</strong>
+                                        <br>
+                                        <small class="text-muted">${library.description || 'ไม่มีคำอธิบาย'}</small>
+                                    </div>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="removeLibrarySelection('${date}')">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+            
+            container.innerHTML = html;
+        }
+
+        // Toggle library selection
+        function toggleLibrarySelection(date) {
+            const index = currentLineBotInstructions.indexOf(date);
+            if (index > -1) {
+                // Remove if already selected
+                currentLineBotInstructions.splice(index, 1);
+            } else {
+                // Add if not selected
+                currentLineBotInstructions.push(date);
+            }
+            
+            // Refresh display
+            displayInstructionLibraries();
+            displaySelectedInstructions();
+        }
+
+        // Remove library selection
+        function removeLibrarySelection(date) {
+            const index = currentLineBotInstructions.indexOf(date);
+            if (index > -1) {
+                currentLineBotInstructions.splice(index, 1);
+                displayInstructionLibraries();
+                displaySelectedInstructions();
+            }
+        }
+
+        // Save selected instructions
+        async function saveSelectedInstructions() {
+            if (!currentLineBotId) {
+                showAlert('ไม่พบ Line Bot ID', 'danger');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/line-bots/${currentLineBotId}/instructions`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        selectedInstructions: currentLineBotInstructions
+                    })
+                });
+
+                if (response.ok) {
+                    showAlert('บันทึกการเลือกใช้ instructions เรียบร้อยแล้ว', 'success');
+                    
+                    // Refresh Line Bot list
+                    await loadLineBotSettings();
+                    
+                    // Close modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('manageInstructionsModal'));
+                    modal.hide();
+                } else {
+                    showAlert('ไม่สามารถบันทึกการเลือกใช้ instructions ได้', 'danger');
+                }
+            } catch (error) {
+                console.error('Error saving instructions:', error);
+                showAlert('เกิดข้อผิดพลาดในการบันทึกการเลือกใช้ instructions', 'danger');
             }
         }
 
