@@ -1202,7 +1202,7 @@ async function buildSystemInstructions(history) {
 }
 
 // ฟังก์ชันสำหรับจัดการข้อความอย่างเดียว (ไม่มีรูปภาพ)
-async function getAssistantResponseTextOnly(systemInstructions, history, userText) {
+async function getAssistantResponseTextOnly(systemInstructions, history, userText, aiModel = null) {
   try {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     
@@ -1216,8 +1216,8 @@ async function getAssistantResponseTextOnly(systemInstructions, history, userTex
 
     console.log(`[LOG] ส่งคำขอไปยัง OpenAI API (ข้อความ)...`);
     
-    // ใช้โมเดลที่ตั้งไว้ในฐานข้อมูล
-    const textModel = await getSettingValue('textModel', 'gpt-5');
+    // ใช้โมเดลที่ส่งมา หรือ fallback ไปใช้ global setting
+    const textModel = aiModel || await getSettingValue('textModel', 'gpt-5');
     
     const response = await openai.chat.completions.create({
       model: textModel,
@@ -1253,7 +1253,7 @@ async function getAssistantResponseTextOnly(systemInstructions, history, userTex
 }
 
 // ฟังก์ชันสำหรับจัดการเนื้อหาแบบ multimodal (ข้อความ + รูปภาพ)
-async function getAssistantResponseMultimodal(systemInstructions, history, contentSequence) {
+async function getAssistantResponseMultimodal(systemInstructions, history, contentSequence, aiModel = null) {
   try {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     
@@ -1330,8 +1330,8 @@ async function getAssistantResponseMultimodal(systemInstructions, history, conte
 
     console.log(`[LOG] ส่งคำขอไปยัง OpenAI API (multimodal) พร้อมรูปภาพ ${imageCount} รูป...`);
     
-    // ใช้โมเดลที่ตั้งไว้ในฐานข้อมูล
-    const visionModel = await getSettingValue('visionModel', 'gpt-5');
+    // ใช้โมเดลที่ส่งมา หรือ fallback ไปใช้ global setting
+    const visionModel = aiModel || await getSettingValue('visionModel', 'gpt-5');
     
     const response = await openai.chat.completions.create({
       model: visionModel,
@@ -1380,7 +1380,6 @@ async function ensureSettings() {
     { key: "enableMessageMerging", value: true },
     { key: "textModel", value: "gpt-5" },
     { key: "visionModel", value: "gpt-5" },
-
     { key: "maxImagesPerMessage", value: 3 },
     { key: "enableChatHistory", value: true },
     { key: "enableAdminNotifications", value: true },
@@ -1808,9 +1807,58 @@ app.post('/webhook/line/:botId', async (req, res) => {
 // Helper function to process message with AI
 async function processMessageWithAI(message, userId, botName) {
   try {
-    // You can customize this function based on your AI logic
-    const response = `[${botName}] ขอบคุณสำหรับข้อความ: "${message}"\n\nระบบกำลังประมวลผลด้วย AI...`;
-    return response;
+    // ดึงข้อมูล Line Bot และ instructions
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const lineBotColl = db.collection("line_bots");
+    const lineBot = await lineBotColl.findOne({ name: botName });
+    
+    if (!lineBot) {
+      return 'ขออภัย ไม่พบข้อมูล Line Bot';
+    }
+    
+    // ใช้ AI Model เฉพาะของ Line Bot นี้
+    const aiModel = lineBot.aiModel || 'gpt-5';
+    
+    // ดึง system prompt จาก instructions ที่เลือก
+    let systemPrompt = 'คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้';
+    if (lineBot.selectedInstructions && lineBot.selectedInstructions.length > 0) {
+      const instructionColl = db.collection("instruction_library");
+      const instructions = await instructionColl.find({
+        _id: { $in: lineBot.selectedInstructions.map(id => new ObjectId(id)) }
+      }).toArray();
+      
+      if (instructions.length > 0) {
+        systemPrompt = instructions.map(inst => inst.instructions).join('\n\n');
+      }
+    }
+    
+    // สร้าง OpenAI client และเรียก API
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: message }
+    ];
+    
+    const response = await openai.chat.completions.create({
+      model: aiModel,
+      messages
+    });
+    
+    let assistantReply = response.choices[0].message.content;
+    if (typeof assistantReply !== "string") {
+      assistantReply = JSON.stringify(assistantReply);
+    }
+    
+    // เพิ่มข้อมูล token usage
+    if (response.usage) {
+      const usage = response.usage;
+      const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens`;
+      assistantReply += tokenInfo;
+    }
+    
+    return assistantReply.trim();
   } catch (error) {
     console.error('Error processing message with AI:', error);
     return 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ';
@@ -1885,6 +1933,7 @@ app.post('/api/line-bots', async (req, res) => {
       webhookUrl: finalWebhookUrl,
       status: status || 'active',
       isDefault: isDefault || false,
+      aiModel: 'gpt-5', // AI Model เฉพาะสำหรับ Line Bot นี้
       selectedInstructions: [], // รายการ instruction ที่เลือกจากคลัง
       createdAt: new Date(),
       updatedAt: new Date()
@@ -1927,6 +1976,7 @@ app.put('/api/line-bots/:id', async (req, res) => {
       webhookUrl: webhookUrl || '',
       status: status || 'active',
       isDefault: isDefault || false,
+      aiModel: req.body.aiModel || 'gpt-5', // AI Model เฉพาะสำหรับ Line Bot นี้
       updatedAt: new Date()
     };
 
@@ -2693,7 +2743,7 @@ app.post('/api/settings/ai', async (req, res) => {
     const coll = db.collection("settings");
     
     // Validate input
-    const validModels = ["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-4.1", "o3"];
+    const validModels = ["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "o3"];
     
     if (!validModels.includes(textModel)) {
       return res.status(400).json({ success: false, error: 'โมเดลข้อความไม่ถูกต้อง' });
