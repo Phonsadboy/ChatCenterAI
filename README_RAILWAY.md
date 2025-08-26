@@ -23,9 +23,11 @@ railway init
 #### จำเป็น:
 - `PORT` - Railway จะตั้งให้อัตโนมัติ
 - `MONGO_URI` - MongoDB connection string
-- `LINE_CHANNEL_ACCESS_TOKEN` - Line Bot access token
-- `LINE_CHANNEL_SECRET` - Line Bot secret
 - `OPENAI_API_KEY` - OpenAI API key
+
+#### ไม่บังคับ:
+- `LINE_CHANNEL_ACCESS_TOKEN` - Line Bot access token (ตั้งค่าผ่านเว็บได้)
+- `LINE_CHANNEL_SECRET` - Line Bot secret (ตั้งค่าผ่านเว็บได้)
 
 #### ไม่บังคับ (มีค่าเริ่มต้น):
 - `ADMIN_PASSWORD` - รหัสผ่าน admin (default: admin123)
@@ -45,10 +47,10 @@ railway open
 ### ผ่าน Railway CLI:
 ```bash
 railway variables set MONGO_URI="your_mongodb_connection_string"
-railway variables set LINE_CHANNEL_ACCESS_TOKEN="your_line_token"
-railway variables set LINE_CHANNEL_SECRET="your_line_secret"
 railway variables set OPENAI_API_KEY="your_openai_key"
 ```
+
+**หมายเหตุ:** Line Bot สามารถตั้งค่าผ่านเว็บได้ ไม่จำเป็นต้องตั้งค่าใน environment variables
 
 ### ผ่าน Railway Dashboard:
 1. ไปที่โปรเจคใน Railway Dashboard
@@ -71,4 +73,7 @@ railway service restart
 - ระบบจะ restart อัตโนมัติเมื่อเกิดข้อผิดพลาด
 - Health check จะตรวจสอบที่ path `/health`
 - หน้าแรกรีไปแดชบอร์ดโดยตรง (ไม่ต้องล็อกอิน)
+- **Line Bot สามารถตั้งค่าได้หลายตัวผ่านเว็บ** - ไม่ต้องตั้งค่าใน environment variables
+- รองรับการตั้งชื่อและคำอธิบายสำหรับแต่ละ Line Bot
+- มีระบบ webhook แยกสำหรับแต่ละ Line Bot
 - ใช้ Node.js version 18 หรือสูงกว่า

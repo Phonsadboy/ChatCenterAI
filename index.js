@@ -1703,6 +1703,269 @@ app.get('/admin', (req, res) => {
   res.redirect('/admin/dashboard');
 });
 
+// ============================ Line Bot Management API ============================
+
+// Dynamic Line Bot webhook handler
+app.post('/webhook/line/:botId', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+    
+    // Find the Line Bot by webhook URL or ID
+    const lineBot = await coll.findOne({
+      $or: [
+        { webhookUrl: { $regex: botId, $options: 'i' } },
+        { _id: new ObjectId(botId) }
+      ]
+    });
+
+    if (!lineBot || lineBot.status !== 'active') {
+      return res.status(404).json({ error: 'Line Bot ไม่พบหรือไม่เปิดใช้งาน' });
+    }
+
+    // Create Line client for this bot
+    const lineConfig = {
+      channelAccessToken: lineBot.channelAccessToken,
+      channelSecret: lineBot.channelSecret
+    };
+    const lineClient = new line.Client(lineConfig);
+
+    // Handle Line webhook events
+    const events = req.body.events;
+    for (let event of events) {
+      if (event.type === 'message' && event.message.type === 'text') {
+        const userId = event.source.userId;
+        const message = event.message.text;
+        const replyToken = event.replyToken;
+
+        console.log(`[Line Bot: ${lineBot.name}] ข้อความจาก ${userId}: ${message}`);
+
+        // Process message with AI (you can customize this part)
+        try {
+          const aiResponse = await processMessageWithAI(message, userId, lineBot.name);
+          await lineClient.replyMessage(replyToken, {
+            type: 'text',
+            text: aiResponse
+          });
+        } catch (error) {
+          console.error(`[Line Bot: ${lineBot.name}] Error processing message:`, error);
+          await lineClient.replyMessage(replyToken, {
+            type: 'text',
+            text: 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ'
+          });
+        }
+      }
+    }
+
+    res.json({ status: 'OK' });
+  } catch (err) {
+    console.error('Error handling Line webhook:', err);
+    res.status(500).json({ error: 'เกิดข้อผิดพลาดในการประมวลผล webhook' });
+  }
+});
+
+// Helper function to process message with AI
+async function processMessageWithAI(message, userId, botName) {
+  try {
+    // You can customize this function based on your AI logic
+    const response = `[${botName}] ขอบคุณสำหรับข้อความ: "${message}"\n\nระบบกำลังประมวลผลด้วย AI...`;
+    return response;
+  } catch (error) {
+    console.error('Error processing message with AI:', error);
+    return 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ';
+  }
+}
+
+// Get all Line Bots
+app.get('/api/line-bots', async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+    const lineBots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    res.json(lineBots);
+  } catch (err) {
+    console.error('Error fetching line bots:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูล Line Bot ได้' });
+  }
+});
+
+// Get single Line Bot
+app.get('/api/line-bots/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+    const lineBot = await coll.findOne({ _id: new ObjectId(id) });
+    
+    if (!lineBot) {
+      return res.status(404).json({ error: 'ไม่พบ Line Bot ที่ระบุ' });
+    }
+    
+    res.json(lineBot);
+  } catch (err) {
+    console.error('Error fetching line bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูล Line Bot ได้' });
+  }
+});
+
+// Create new Line Bot
+app.post('/api/line-bots', async (req, res) => {
+  try {
+    const { name, description, channelAccessToken, channelSecret, webhookUrl, status, isDefault } = req.body;
+    
+    if (!name || !channelAccessToken || !channelSecret) {
+      return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+
+    // If this is default, unset other defaults
+    if (isDefault) {
+      await coll.updateMany({}, { $set: { isDefault: false } });
+    }
+
+    // Generate unique webhook URL if not provided
+    let finalWebhookUrl = webhookUrl;
+    if (!finalWebhookUrl) {
+      const baseUrl = req.protocol + '://' + req.get('host');
+      const uniqueId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+      finalWebhookUrl = `${baseUrl}/webhook/line/${uniqueId}`;
+    }
+
+    const lineBot = {
+      name,
+      description: description || '',
+      channelAccessToken,
+      channelSecret,
+      webhookUrl: finalWebhookUrl,
+      status: status || 'active',
+      isDefault: isDefault || false,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const result = await coll.insertOne(lineBot);
+    lineBot._id = result.insertedId;
+    
+    res.status(201).json(lineBot);
+  } catch (err) {
+    console.error('Error creating line bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถสร้าง Line Bot ได้' });
+  }
+});
+
+// Update Line Bot
+app.put('/api/line-bots/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, channelAccessToken, channelSecret, webhookUrl, status, isDefault } = req.body;
+    
+    if (!name || !channelAccessToken || !channelSecret) {
+      return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+
+    // If this is default, unset other defaults
+    if (isDefault) {
+      await coll.updateMany({ _id: { $ne: new ObjectId(id) } }, { $set: { isDefault: false } });
+    }
+
+    const updateData = {
+      name,
+      description: description || '',
+      channelAccessToken,
+      channelSecret,
+      webhookUrl: webhookUrl || '',
+      status: status || 'active',
+      isDefault: isDefault || false,
+      updatedAt: new Date()
+    };
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'ไม่พบ Line Bot ที่ระบุ' });
+    }
+
+    res.json({ message: 'อัปเดต Line Bot เรียบร้อยแล้ว' });
+  } catch (err) {
+    console.error('Error updating line bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถอัปเดต Line Bot ได้' });
+  }
+});
+
+// Delete Line Bot
+app.delete('/api/line-bots/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+    
+    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'ไม่พบ Line Bot ที่ระบุ' });
+    }
+
+    res.json({ message: 'ลบ Line Bot เรียบร้อยแล้ว' });
+  } catch (err) {
+    console.error('Error deleting line bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถลบ Line Bot ได้' });
+  }
+});
+
+// Test Line Bot
+app.post('/api/line-bots/:id/test', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+    
+    const lineBot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!lineBot) {
+      return res.status(404).json({ error: 'ไม่พบ Line Bot ที่ระบุ' });
+    }
+
+    // Test Line Bot connection
+    try {
+      const lineConfig = {
+        channelAccessToken: lineBot.channelAccessToken,
+        channelSecret: lineBot.channelSecret
+      };
+      const testClient = new line.Client(lineConfig);
+      
+      // Try to get bot profile (simple test)
+      const profile = await testClient.getProfile();
+      
+      res.json({ 
+        message: `ทดสอบ Line Bot สำเร็จ: ${profile.displayName}`,
+        profile: profile
+      });
+    } catch (lineError) {
+      res.status(400).json({ 
+        error: 'ไม่สามารถเชื่อมต่อ Line Bot ได้: ' + lineError.message 
+      });
+    }
+  } catch (err) {
+    console.error('Error testing line bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถทดสอบ Line Bot ได้' });
+  }
+});
+
 // Dashboard
 app.get('/admin/dashboard', async (req, res) => {
   try {
