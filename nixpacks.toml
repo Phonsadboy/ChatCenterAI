@@ -2,7 +2,7 @@
 nixPkgs = ["nodejs_18", "python3"]
 
 [phases.install]
-cmds = ["npm install --omit=dev"]
+cmds = ["npm ci --only=production"]
 
 [phases.build]
 cmds = ["echo 'Build completed'"]
