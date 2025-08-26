@@ -106,6 +106,53 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         }
         
+        /* Compact Statistics */
+        .stats-compact {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 12px;
+            padding: 1rem;
+        }
+        
+        .stats-compact .col-3 {
+            position: relative;
+        }
+        
+        .stats-compact .col-3:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            height: 60%;
+            width: 1px;
+            background: linear-gradient(to bottom, transparent, #dee2e6, transparent);
+        }
+        
+        .stats-compact .stat-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 0.5rem;
+        }
+        
+        .stats-compact .stat-icon {
+            font-size: 1.2rem;
+            margin-bottom: 0.25rem;
+        }
+        
+        .stats-compact .stat-number {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+        
+        .stats-compact .stat-label {
+            font-size: 0.75rem;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
         .dropdown-menu {
             border-radius: 8px;
             border: none;
@@ -517,39 +564,37 @@
 
                                 <!-- Line Bot Statistics -->
                                 <div class="row mb-4">
-                                    <div class="col-md-3">
-                                        <div class="card border-0 bg-primary text-white">
-                                            <div class="card-body text-center">
-                                                <i class="fas fa-robot fa-2x mb-2"></i>
-                                                <h5 id="totalBots">0</h5>
-                                                <small>Line Bot ทั้งหมด</small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="card border-0 bg-success text-white">
-                                            <div class="card-body text-center">
-                                                <i class="fas fa-check-circle fa-2x mb-2"></i>
-                                                <h5 id="activeBots">0</h5>
-                                                <small>Bot ที่ใช้งาน</small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="card border-0 bg-info text-white">
-                                            <div class="card-body text-center">
-                                                <i class="fas fa-cog fa-2x mb-2"></i>
-                                                <h5 id="configuredBots">0</h5>
-                                                <small>Bot ที่ตั้งค่าแล้ว</small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <div class="card border-0 bg-warning text-white">
-                                            <div class="card-body text-center">
-                                                <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
-                                                <h5 id="inactiveBots">0</h5>
-                                                <small>Bot ที่ปิดใช้งาน</small>
+                                    <div class="col-12">
+                                        <div class="stats-compact">
+                                            <div class="row text-center">
+                                                <div class="col-3">
+                                                    <div class="stat-item">
+                                                        <i class="fas fa-robot text-primary stat-icon"></i>
+                                                        <div class="stat-number" id="totalBots">0</div>
+                                                        <div class="stat-label">ทั้งหมด</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-3">
+                                                    <div class="stat-item">
+                                                        <i class="fas fa-check-circle text-success stat-icon"></i>
+                                                        <div class="stat-number" id="activeBots">0</div>
+                                                        <div class="stat-label">ใช้งาน</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-3">
+                                                    <div class="stat-item">
+                                                        <i class="fas fa-cog text-info stat-icon"></i>
+                                                        <div class="stat-number" id="configuredBots">0</div>
+                                                        <div class="stat-label">ตั้งค่าแล้ว</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-3">
+                                                    <div class="stat-item">
+                                                        <i class="fas fa-exclamation-triangle text-warning stat-icon"></i>
+                                                        <div class="stat-number" id="inactiveBots">0</div>
+                                                        <div class="stat-label">ปิดใช้งาน</div>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
