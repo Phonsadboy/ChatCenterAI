@@ -36,11 +36,22 @@ const GOOGLE_DOC_ID = "1U-2OPVVI_Gz0-uFonrRNrcFopDqmPGUcJ4qJ1RdAqxY";
 const SPREADSHEET_ID = "15nU46XyAh0zLAyD_5DJPfZ2Gog6IOsoedSCCMpnjEJo";
 // FLOW_TEXT และรายละเอียด flow ต่าง ๆ ถูกลบออก เนื่องจากไม่ได้ใช้งานแล้ว
 
-const lineConfig = {
-  channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: LINE_CHANNEL_SECRET
-};
-const lineClient = new line.Client(lineConfig);
+// Line Client จะถูกสร้างเมื่อต้องการใช้งานจริง (ไม่สร้างตั้งแต่เริ่มต้น)
+let lineClient = null;
+
+// ฟังก์ชันสำหรับสร้าง Line Client เมื่อต้องการใช้งาน
+function createLineClient(channelAccessToken, channelSecret) {
+  if (!channelAccessToken || !channelSecret) {
+    throw new Error('Channel Access Token และ Channel Secret จำเป็นสำหรับการใช้งาน Line Bot');
+  }
+  
+  const lineConfig = {
+    channelAccessToken,
+    channelSecret
+  };
+  
+  return new line.Client(lineConfig);
+}
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
@@ -690,7 +701,9 @@ async function processFlushedMessages(userId, mergedContent) {
     const filteredMessage = await filterMessage(assistantMsg);
     console.log(`[LOG] ข้อความหลังกรอง: ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? '...' : ''}`);
     
-    await sendMessage(replyToken, filteredMessage, userId, true);
+    // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการส่งข้อความ
+    console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ต้องตั้งค่า Line Bot ก่อน`);
+    // await sendMessage(replyToken, filteredMessage, userId, true);
     console.log(`[LOG] ส่งข้อความตอบกลับเรียบร้อยแล้ว`);
   }
 }
@@ -698,16 +711,8 @@ async function processFlushedMessages(userId, mergedContent) {
 // ------------------------
 // webhook
 // ------------------------
-app.post('/webhook', (req, res) => {
-  const signature = req.get('x-line-signature');
-  if (!line.validateSignature(JSON.stringify(req.body), lineConfig.channelSecret, signature)) {
-    return res.status(403).send('Invalid signature.');
-  }
-  const events = req.body.events;
-  Promise.all(events.map(handleLineEvent))
-    .then(() => res.status(200).end())
-    .catch(() => res.status(500).end());
-});
+// Webhook handler จะถูกจัดการผ่าน dynamic webhook routes ที่สร้างขึ้นใหม่
+// app.post('/webhook', ...) ถูกลบออกแล้ว
 
 async function handleLineEvent(event) {
   let uniqueId = event.eventId || "";
@@ -736,7 +741,9 @@ async function handleLineEvent(event) {
       // เรียกฟังก์ชันล้างประวัติ
       await clearUserChatHistory(userId);
       // แจ้งผู้ใช้ว่าเราลบประวัติเรียบร้อยแล้ว
-      await sendMessage(event.replyToken, "ลบประวัติสนทนาเรียบร้อยแล้ว!", userId, true);
+      // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการส่งข้อความ
+      console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ต้องตั้งค่า Line Bot ก่อน`);
+      // await sendMessage(event.replyToken, "ลบประวัติสนทนาเรียบร้อยแล้ว!", userId, true);
       console.log(`[LOG] ลบประวัติสนทนาของผู้ใช้ ${userId} เรียบร้อยแล้ว`);
       // ไม่ต้องบันทึกข้อความใหม่ หรือเข้าคิวใด ๆ ทั้งสิ้น -> return ออกได้เลย
       return;
@@ -746,14 +753,18 @@ async function handleLineEvent(event) {
     if (userMsg === "สวัสดีค่า แอดมิน Venus นะคะ จะมาดำเนินเรื่องต่อ") {
       console.log(`[LOG] พบคำสั่งเปลี่ยนเป็นโหมดแอดมินสำหรับผู้ใช้: ${userId}`);
       await setUserStatus(userId, false);
-      await sendMessage(event.replyToken, "แอดมิน Venus สวัสดีค่ะ", userId, true);
+      // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการส่งข้อความ
+      console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ต้องตั้งค่า Line Bot ก่อน`);
+      // await sendMessage(event.replyToken, "แอดมิน Venus สวัสดีค่ะ", userId, true);
       await saveChatHistory(userId, userMsg, "แอดมิน Venus สวัสดีค่ะ");
       console.log(`[LOG] เปลี่ยนเป็นโหมดแอดมินเรียบร้อยแล้ว`);
       return;
     } else if (userMsg === "ขอนุญาตส่งต่อให้ทางแอดมินประจำสนทนาต่อนะคะ") {
       console.log(`[LOG] พบคำสั่งเปลี่ยนเป็นโหมด AI สำหรับผู้ใช้: ${userId}`);
       await setUserStatus(userId, true);
-      await sendMessage(event.replyToken, "แอดมิน Venus ขอตัวก่อนนะคะ", userId, true);
+      // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการส่งข้อความ
+      console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ต้องตั้งค่า Line Bot ก่อน`);
+      // await sendMessage(event.replyToken, "แอดมิน Venus ขอตัวก่อนนะคะ", userId, true);
       await saveChatHistory(userId, userMsg, "แอดมิน Venus ขอตัวก่อนนะคะ");
       console.log(`[LOG] เปลี่ยนเป็นโหมด AI เรียบร้อยแล้ว`);
       return;
@@ -774,8 +785,18 @@ async function handleLineEvent(event) {
       console.log(`[LOG] ได้รับรูปภาพจากผู้ใช้: ${userId}, กำลังประมวลผล...`);
       
       try {
-        // ดึง stream ของภาพจาก LINE
-        const stream = await lineClient.getMessageContent(message.id);
+        // ดึง stream ของภาพจาก LINE (ต้องมี Line Client ที่ถูกต้อง)
+        // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการประมวลผลรูปภาพ
+        console.log(`[LOG] ไม่สามารถประมวลผลรูปภาพได้ - ต้องตั้งค่า Line Bot ก่อน`);
+        itemToQueue.data = {
+          type: "text",
+          text: "ขออภัย ระบบยังไม่พร้อมประมวลผลรูปภาพ กรุณาตั้งค่า Line Bot ก่อน"
+        };
+        addToQueue(userId, itemToQueue);
+        return;
+        
+        // โค้ดเดิม (ถูก comment ออก):
+        // const stream = await lineClient.getMessageContent(message.id);
         const buffers = [];
         for await (const chunk of stream) {
           buffers.push(chunk);
@@ -948,10 +969,19 @@ async function getUserFlowHistory(userId) {
  * @param {string} userId - ID ของผู้ใช้
  * @param {boolean} splitLongMessage - ควรแบ่งข้อความยาวหรือไม่
  */
-async function sendMessage(replyToken, message, userId, splitLongMessage = false) {
+async function sendMessage(replyToken, message, userId, splitLongMessage = false, channelAccessToken = null, channelSecret = null) {
   try {
     if (!message || message.trim() === "") {
       console.log("[DEBUG] Empty message, no reply needed");
+      return;
+    }
+
+    // สร้าง Line Client ถ้าไม่มี หรือถ้ามี token ใหม่
+    let client = lineClient;
+    if (channelAccessToken && channelSecret) {
+      client = createLineClient(channelAccessToken, channelSecret);
+    } else if (!client) {
+      console.error("[ERROR] ไม่มี Line Client และไม่มีการระบุ token");
       return;
     }
 
@@ -967,13 +997,13 @@ async function sendMessage(replyToken, message, userId, splitLongMessage = false
       }
       
       // ส่งข้อความที่แบ่งเป็นชุด
-      await lineClient.replyMessage(replyToken, parts.map(part => ({
+      await client.replyMessage(replyToken, parts.map(part => ({
         type: "text",
         text: part
       })));
     } else {
       // ส่งข้อความปกติ
-      await lineClient.replyMessage(replyToken, {
+      await client.replyMessage(replyToken, {
         type: "text",
         text: message.substring(0, MAX_LENGTH) // ตัดข้อความให้ไม่เกินขีดจำกัด
       });
