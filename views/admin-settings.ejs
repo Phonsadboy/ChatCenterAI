@@ -113,11 +113,11 @@
             padding: 1rem;
         }
         
-        .stats-compact .col-3 {
+        .stats-compact .col-2 {
             position: relative;
         }
         
-        .stats-compact .col-3:not(:last-child)::after {
+        .stats-compact .col-2:not(:last-child)::after {
             content: '';
             position: absolute;
             right: 0;
@@ -218,7 +218,7 @@
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="line-ai-tab" data-bs-toggle="tab" data-bs-target="#line-ai-settings" type="button" role="tab">
-                    <i class="fab fa-line me-2"></i>Line Bot & AI
+                    <i class="fas fa-robot me-2"></i>Bot & AI
                 </button>
             </li>
             <li class="nav-item" role="presentation">
@@ -305,7 +305,7 @@
                                 <div class="alert alert-info">
                                     <h6><i class="fas fa-info-circle me-2"></i>คำแนะนำการใช้งาน:</h6>
                                     <ul class="mb-0">
-                                        <li><strong>Line Bot & AI:</strong> จัดการ Line Bot, ตั้งค่า AI Models และ Instructions</li>
+                                        <li><strong>Bot & AI:</strong> จัดการ Line Bot, Facebook Bot, ตั้งค่า AI Models และ Instructions</li>
                                         <li><strong>การแชท:</strong> ตั้งค่าการทำงานของระบบแชท</li>
                                         <li><strong>ระบบ:</strong> ตั้งค่าระบบทั่วไปและการแจ้งเตือน</li>
                                         <li><strong>ความปลอดภัย:</strong> ตั้งค่าการกรองข้อความและความปลอดภัย</li>
@@ -477,17 +477,17 @@
                         <div class="settings-card">
                             <div class="settings-header">
                                 <h4 class="mb-0">
-                                    <i class="fab fa-line me-2"></i>
-                                    Line Bot & AI Management
+                                    <i class="fas fa-robot me-2"></i>
+                                    Bot & AI Management
                                 </h4>
                                 <p class="text-muted mb-0">
-                                    จัดการ Line Bot และตั้งค่า AI Models พร้อม Instructions สำหรับแต่ละ Bot
+                                    จัดการ Line Bot, Facebook Bot และตั้งค่า AI Models พร้อม Instructions สำหรับแต่ละ Bot
                                 </p>
                             </div>
                             <div class="settings-body">
                                 <!-- AI Models & Instructions Overview -->
                                 <div class="row mb-4">
-                                    <div class="col-md-6">
+                                    <div class="col-md-4">
                                         <div class="card border-0 shadow-sm">
                                             <div class="card-header bg-primary text-white">
                                                 <h6 class="mb-0">
@@ -537,7 +537,7 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="col-md-6">
+                                    <div class="col-md-4">
                                         <div class="card border-0 shadow-sm">
                                             <div class="card-header bg-info text-white">
                                                 <h6 class="mb-0">
@@ -546,7 +546,7 @@
                                                 </h6>
                                             </div>
                                             <div class="card-body">
-                                                <p class="text-muted mb-3">แต่ละ Line Bot สามารถเลือก Instructions จากคลังเพื่อกำหนด personality เฉพาะ</p>
+                                                <p class="text-muted mb-3">แต่ละ Bot สามารถเลือก Instructions จากคลังเพื่อกำหนด personality เฉพาะ</p>
                                                 <div class="d-flex justify-content-between align-items-center">
                                                     <div>
                                                         <h5 class="mb-0" id="instructionsCount">0</h5>
@@ -560,35 +560,83 @@
                                             </div>
                                         </div>
                                     </div>
+                                    <div class="col-md-4">
+                                        <div class="card border-0 shadow-sm">
+                                            <div class="card-header bg-success text-white">
+                                                <h6 class="mb-0">
+                                                    <i class="fas fa-plug me-2"></i>
+                                                    ช่องทางการเชื่อมต่อ
+                                                </h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="mb-3">
+                                                    <div class="d-flex align-items-center mb-2">
+                                                        <i class="fab fa-line text-success me-2"></i>
+                                                        <strong>Line</strong>
+                                                        <span class="badge bg-success ms-auto">พร้อมใช้งาน</span>
+                                                    </div>
+                                                    <small class="text-muted">เชื่อมต่อผ่าน Line Messaging API</small>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <div class="d-flex align-items-center mb-2">
+                                                        <i class="fab fa-facebook text-primary me-2"></i>
+                                                        <strong>Facebook</strong>
+                                                        <span class="badge bg-secondary ms-auto">เร็วๆ นี้</span>
+                                                    </div>
+                                                    <small class="text-muted">เชื่อมต่อผ่าน Facebook Messenger API</small>
+                                                </div>
+                                                <div class="text-center">
+                                                    <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                                                        <i class="fas fa-plus me-1"></i>
+                                                        เพิ่ม Facebook Bot
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                <!-- Line Bot Statistics -->
+                                <!-- Bot Statistics -->
                                 <div class="row mb-4">
                                     <div class="col-12">
                                         <div class="stats-compact">
                                             <div class="row text-center">
-                                                <div class="col-3">
+                                                <div class="col-2">
                                                     <div class="stat-item">
                                                         <i class="fas fa-robot text-primary stat-icon"></i>
                                                         <div class="stat-number" id="totalBots">0</div>
                                                         <div class="stat-label">ทั้งหมด</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-3">
+                                                <div class="col-2">
+                                                    <div class="stat-item">
+                                                        <i class="fab fa-line text-success stat-icon"></i>
+                                                        <div class="stat-number" id="lineBots">0</div>
+                                                        <div class="stat-label">Line</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-2">
+                                                    <div class="stat-item">
+                                                        <i class="fab fa-facebook text-primary stat-icon"></i>
+                                                        <div class="stat-number" id="facebookBots">0</div>
+                                                        <div class="stat-label">Facebook</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-2">
                                                     <div class="stat-item">
                                                         <i class="fas fa-check-circle text-success stat-icon"></i>
                                                         <div class="stat-number" id="activeBots">0</div>
                                                         <div class="stat-label">ใช้งาน</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-3">
+                                                <div class="col-2">
                                                     <div class="stat-item">
                                                         <i class="fas fa-cog text-info stat-icon"></i>
                                                         <div class="stat-number" id="configuredBots">0</div>
                                                         <div class="stat-label">ตั้งค่าแล้ว</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-3">
+                                                <div class="col-2">
                                                     <div class="stat-item">
                                                         <i class="fas fa-exclamation-triangle text-warning stat-icon"></i>
                                                         <div class="stat-number" id="inactiveBots">0</div>
@@ -600,15 +648,20 @@
                                     </div>
                                 </div>
 
-                                <!-- Action Buttons -->
+                                                                <!-- Action Buttons -->
                                 <div class="row mb-4">
-                                    <div class="col-md-6">
+                                    <div class="col-md-4">
                                         <button type="button" class="btn btn-success btn-lg w-100" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
-                                        <i class="fas fa-plus me-2"></i>เพิ่ม Line Bot ใหม่
-                                    </button>
+                                            <i class="fab fa-line me-2"></i>เพิ่ม Line Bot
+                                        </button>
                                     </div>
-                                    <div class="col-md-6">
-                                        <button type="button" class="btn btn-outline-primary btn-lg w-100" onclick="refreshLineBotList()">
+                                    <div class="col-md-4">
+                                        <button type="button" class="btn btn-primary btn-lg w-100" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                                            <i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot
+                                        </button>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <button type="button" class="btn btn-outline-secondary btn-lg w-100" onclick="refreshLineBotList()">
                                             <i class="fas fa-sync-alt me-2"></i>รีเฟรชข้อมูล
                                         </button>
                                     </div>
@@ -899,6 +952,113 @@
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
                     <button type="button" class="btn btn-primary" id="saveLineBotBtn">
                         <i class="fas fa-save me-2"></i>บันทึก
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Facebook Bot Modal -->
+    <div class="modal fade" id="addFacebookBotModal" tabindex="-1" aria-labelledby="addFacebookBotModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addFacebookBotModalLabel">
+                        <i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <h6><i class="fas fa-info-circle me-2"></i>ข้อมูล Facebook Bot</h6>
+                        <p class="mb-0">ฟีเจอร์ Facebook Bot กำลังอยู่ในขั้นตอนการพัฒนา และจะพร้อมใช้งานเร็วๆ นี้</p>
+                    </div>
+                    <form id="facebookBotForm">
+                        <input type="hidden" id="facebookBotId" name="id">
+                        
+                        <div class="mb-3">
+                            <label for="facebookBotName" class="form-label">ชื่อ Facebook Bot <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="facebookBotName" name="name" 
+                                   placeholder="เช่น: ฝ่ายขาย, ฝ่ายบริการลูกค้า, ฝ่ายเทคนิค" required disabled>
+                            <div class="form-text">ชื่อที่แสดงในระบบและใช้เรียก Facebook Bot นี้</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="facebookBotDescription" class="form-label">คำอธิบาย</label>
+                            <textarea class="form-control" id="facebookBotDescription" name="description" rows="2"
+                                      placeholder="อธิบายหน้าที่หรือวัตถุประสงค์ของ Facebook Bot นี้" disabled></textarea>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="facebookPageId" class="form-label">Facebook Page ID <span class="text-danger">*</span></label>
+                                    <input type="text" class="form-control" id="facebookPageId" name="pageId" 
+                                           placeholder="123456789012345" required disabled>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="facebookAccessToken" class="form-label">Page Access Token <span class="text-danger">*</span></label>
+                                    <input type="text" class="form-control" id="facebookAccessToken" name="accessToken" 
+                                           placeholder="EAABwzLixnjYBO..." required disabled>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="facebookWebhookUrl" class="form-label">Webhook URL</label>
+                                    <input type="text" class="form-control" id="facebookWebhookUrl" name="webhookUrl" 
+                                           placeholder="https://yourdomain.com/webhook/facebook1" readonly disabled>
+                                    <div class="form-text">URL ที่จะใช้เป็น Webhook สำหรับ Facebook Bot นี้</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="facebookVerifyToken" class="form-label">Verify Token</label>
+                                    <input type="text" class="form-control" id="facebookVerifyToken" name="verifyToken" 
+                                           placeholder="your_verify_token" disabled>
+                                    <div class="form-text">Token สำหรับยืนยัน Webhook</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="facebookBotAiModel" class="form-label">AI Model <span class="text-danger">*</span></label>
+                                    <select class="form-select" id="facebookBotAiModel" name="aiModel" required disabled>
+                                        <option value="gpt-5">GPT-5</option>
+                                        <option value="gpt-5-mini">GPT-5 Mini</option>
+                                        <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
+                                        <option value="gpt-5-nano">GPT-5 Nano</option>
+                                        <option value="gpt-4.1">GPT-4.1</option>
+                                        <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                        <option value="o3">O3</option>
+                                    </select>
+                                    <div class="form-text">เลือก AI Model ที่จะใช้สำหรับ Facebook Bot นี้</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="facebookBotDefault" name="isDefault" disabled>
+                                        <label class="form-check-label" for="facebookBotDefault">
+                                            ตั้งเป็น Facebook Bot หลัก (Default)
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Facebook Bot หลักจะถูกใช้เมื่อไม่ระบุ Facebook Bot เฉพาะ</div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
+                    <button type="button" class="btn btn-primary" disabled>
+                        <i class="fas fa-clock me-2"></i>เร็วๆ นี้
                     </button>
                 </div>
             </div>
