@@ -1871,20 +1871,41 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
             continue;
           }
 
-          if (messagingEvent.message && messagingEvent.message.text) {
+          if (messagingEvent.message) {
             const senderId = messagingEvent.sender.id;
-            const message = messagingEvent.message.text;
+            const contentSequence = [];
+            const messageText = messagingEvent.message.text;
 
-            console.log(`[Facebook Bot: ${facebookBot.name}] ข้อความจาก ${senderId}: ${message}`);
+            if (messageText) {
+              contentSequence.push({ type: 'text', content: messageText });
+            }
 
-            // Process message with AI
+            if (messagingEvent.message.attachments) {
+              for (const attachment of messagingEvent.message.attachments) {
+                if (attachment.type === 'image' && attachment.payload?.url) {
+                  try {
+                    const base64 = await fetchFacebookImageAsBase64(attachment.payload.url);
+                    contentSequence.push({ type: 'image', content: base64, description: 'ผู้ใช้ส่งรูปภาพมา' });
+                  } catch (imgErr) {
+                    console.error(`[Facebook Bot: ${facebookBot.name}] Error fetching image:`, imgErr.message);
+                  }
+                }
+              }
+            }
+
+            if (contentSequence.length === 0) {
+              await sendFacebookMessage(senderId, 'ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้', facebookBot.accessToken);
+              continue;
+            }
+
+            console.log(`[Facebook Bot: ${facebookBot.name}] ข้อความจาก ${senderId}: ${messageText || '[มีรูปภาพ]'}`);
+
             try {
-              const aiResponse = await processFacebookMessageWithAI(message, senderId, facebookBot);
+              const aiResponse = await processFacebookMessageWithAI(contentSequence, senderId, facebookBot);
               await sendFacebookMessage(senderId, aiResponse, facebookBot.accessToken);
 
-              // Notify admins of new user message
               await notifyAdminsNewMessage(senderId, {
-                content: message,
+                content: messageText || 'ไฟล์แนบ',
                 role: 'user',
                 timestamp: new Date(),
                 platform: 'facebook'
@@ -1907,23 +1928,46 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
 
 // Helper function to send Facebook message
 async function sendFacebookMessage(recipientId, message, accessToken) {
-  try {
-    const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
-      recipient: { id: recipientId },
-      message: { text: message }
-    }, {
-      params: { access_token: accessToken },
-      headers: { 'Content-Type': 'application/json' }
-    });
-    
-    console.log('Facebook message sent successfully:', response.data);
-  } catch (error) {
-    const status = error.response?.status;
-    const fbMessage = error.response?.data?.error?.message || error.message;
-    const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
-    console.error('Error sending Facebook message:', conciseError);
-    throw new Error(conciseError);
+  const maxLength = 2000;
+  const chunks = [];
+  for (let i = 0; i < message.length; i += maxLength) {
+    chunks.push(message.slice(i, i + maxLength));
   }
+
+  for (const chunk of chunks) {
+    try {
+      const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+        recipient: { id: recipientId },
+        message: { text: chunk }
+      }, {
+        params: { access_token: accessToken },
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      console.log('Facebook message sent successfully:', response.data);
+    } catch (error) {
+      const status = error.response?.status;
+      const fbMessage = error.response?.data?.error?.message || error.message;
+      const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
+      console.error('Error sending Facebook message:', conciseError);
+      throw new Error(conciseError);
+    }
+  }
+}
+
+// Helper to download and optimize Facebook image to base64
+async function fetchFacebookImageAsBase64(url) {
+  const response = await axios.get(url, { responseType: 'arraybuffer' });
+  let buffer = Buffer.from(response.data, 'binary');
+  try {
+    buffer = await sharp(buffer)
+      .resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 85, progressive: true })
+      .toBuffer();
+  } catch (err) {
+    console.error('Error processing Facebook image:', err.message);
+  }
+  return buffer.toString('base64');
 }
 
 // Convert table instruction data to a JSON string
@@ -1950,16 +1994,13 @@ function buildSystemPromptFromLibraries(libraries) {
 }
 
 // Helper function to process Facebook message with AI
-async function processFacebookMessageWithAI(message, userId, facebookBot) {
+async function processFacebookMessageWithAI(contentSequence, userId, facebookBot) {
   try {
-    // ดึงข้อมูล instructions ที่เลือก
     const client = await connectDB();
     const db = client.db("chatbot");
-    
-    // ใช้ AI Model เฉพาะของ Facebook Bot นี้
+
     const aiModel = facebookBot.aiModel || 'gpt-5';
-    
-    // ดึง system prompt จาก instructions ที่เลือก
+
     let systemPrompt = 'คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้';
     if (facebookBot.selectedInstructions && facebookBot.selectedInstructions.length > 0) {
       const instructionColl = db.collection("instruction_library");
@@ -1972,31 +2013,21 @@ async function processFacebookMessageWithAI(message, userId, facebookBot) {
         systemPrompt = prompt;
       }
     }
-    
-    // ดึงประวัติการสนทนาก่อนหน้า
+
     const history = await getChatHistory(userId);
 
-    // สร้าง OpenAI client และเรียก API
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    let assistantReply = '';
+    const hasImages = contentSequence.some(item => item.type === 'image');
+    if (hasImages) {
+      assistantReply = await getAssistantResponseMultimodal(systemPrompt, history, contentSequence, aiModel);
+    } else {
+      const text = contentSequence.map(item => item.content).join('\n\n');
+      assistantReply = await getAssistantResponseTextOnly(systemPrompt, history, text, aiModel);
+    }
 
-    const messages = [
-      { role: "system", content: systemPrompt },
-      ...history,
-      { role: "user", content: message }
-    ];
-    
-    const response = await openai.chat.completions.create({
-      model: aiModel,
-      messages
-    });
-    
-    let assistantReply = response.choices[0].message.content;
-
-    // Apply message filtering if enabled
     assistantReply = await filterMessage(assistantReply);
 
-    // บันทึกประวัติการสนทนา
-    await saveChatHistory(userId, message, assistantReply, 'facebook', facebookBot._id.toString());
+    await saveChatHistory(userId, contentSequence, assistantReply, 'facebook', facebookBot._id.toString());
 
     return assistantReply.trim();
   } catch (error) {
