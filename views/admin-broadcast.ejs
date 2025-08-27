@@ -105,6 +105,38 @@
                 </div>
               </div>
 
+              <div class="mb-4">
+                <label class="form-label">เลือกช่องทาง</label>
+                <div class="card bg-light-info rounded p-3">
+                  <% if ((lineBots && lineBots.length) || (facebookBots && facebookBots.length)) { %>
+                    <% if (lineBots && lineBots.length) { %>
+                      <h6>LINE Bots</h6>
+                      <% lineBots.forEach(bot => { %>
+                        <div class="form-check">
+                          <input class="form-check-input" type="checkbox" name="channels" id="line-<%= bot._id %>" value="line:<%= bot._id %>">
+                          <label class="form-check-label" for="line-<%= bot._id %>">
+                            <i class="fab fa-line text-success me-1"></i> <%= bot.name %>
+                          </label>
+                        </div>
+                      <% }) %>
+                    <% } %>
+                    <% if (facebookBots && facebookBots.length) { %>
+                      <h6 class="mt-3">Facebook Pages</h6>
+                      <% facebookBots.forEach(bot => { %>
+                        <div class="form-check">
+                          <input class="form-check-input" type="checkbox" name="channels" id="fb-<%= bot._id %>" value="facebook:<%= bot._id %>">
+                          <label class="form-check-label" for="fb-<%= bot._id %>">
+                            <i class="fab fa-facebook text-primary me-1"></i> <%= bot.name %>
+                          </label>
+                        </div>
+                      <% }) %>
+                    <% } %>
+                  <% } else { %>
+                    <p class="text-muted mb-0">ยังไม่มีบอทที่เพิ่มไว้</p>
+                  <% } %>
+                </div>
+              </div>
+
               <div class="d-grid gap-2 d-md-flex justify-content-md-end">
                 <a href="/admin/dashboard" class="btn btn-light">
                   <i class="fas fa-arrow-left"></i> กลับ

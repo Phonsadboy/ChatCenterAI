@@ -2926,9 +2926,80 @@ app.get('/admin/instructions/:id/json', async (req, res) => {
   }
 });
 
-// Broadcast page (stub)
-app.get('/admin/broadcast', (req, res) => {
-  res.render('admin-broadcast');
+// Broadcast page
+app.get('/admin/broadcast', async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const lineBots = await db.collection('line_bots').find({}).toArray();
+    const facebookBots = await db.collection('facebook_bots').find({}).toArray();
+    res.render('admin-broadcast', { lineBots, facebookBots });
+  } catch (err) {
+    console.error('Error loading broadcast page:', err);
+    res.render('admin-broadcast', { lineBots: [], facebookBots: [], error: 'ไม่สามารถโหลดข้อมูลบอทได้' });
+  }
+});
+
+// Broadcast action
+app.post('/admin/broadcast', async (req, res) => {
+  const { message, audience } = req.body;
+  let { channels } = req.body;
+
+  if (!Array.isArray(channels)) {
+    channels = channels ? [channels] : [];
+  }
+
+  try {
+    if (!message || channels.length === 0) {
+      throw new Error('กรุณากรอกข้อความและเลือกช่องทาง');
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const chatColl = db.collection("chat_history");
+
+    for (const ch of channels) {
+      const [type, botId] = ch.split(':');
+      const userIds = await chatColl.distinct('senderId', { platform: type, botId });
+
+      if (type === 'facebook') {
+        const fbBot = await db.collection('facebook_bots').findOne({ _id: new ObjectId(botId) });
+        if (!fbBot) continue;
+        for (const userId of userIds) {
+          try {
+            await sendFacebookMessage(userId, message, fbBot.accessToken);
+          } catch (e) {
+            console.log(`[Broadcast] Failed to send to Facebook user ${userId}: ${e.message}`);
+          }
+        }
+      } else if (type === 'line') {
+        const lineBot = await db.collection('line_bots').findOne({ _id: new ObjectId(botId) });
+        if (!lineBot) continue;
+        const clientLine = createLineClient(lineBot.channelAccessToken, lineBot.channelSecret);
+        for (const userId of userIds) {
+          try {
+            await clientLine.pushMessage(userId, { type: 'text', text: message });
+          } catch (e) {
+            console.log(`[Broadcast] Failed to send to LINE user ${userId}: ${e.message}`);
+          }
+        }
+      }
+    }
+
+    const lineBots = await db.collection('line_bots').find({}).toArray();
+    const facebookBots = await db.collection('facebook_bots').find({}).toArray();
+    res.render('admin-broadcast', { lineBots, facebookBots, success: 'ส่งข้อความเรียบร้อยแล้ว' });
+  } catch (err) {
+    console.error('Broadcast error:', err);
+    let lineBots = [], facebookBots = [];
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      lineBots = await db.collection('line_bots').find({}).toArray();
+      facebookBots = await db.collection('facebook_bots').find({}).toArray();
+    } catch (e) {}
+    res.render('admin-broadcast', { lineBots, facebookBots, error: err.message });
+  }
 });
 
 // Follow-up page (stub)
