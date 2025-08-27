@@ -679,7 +679,7 @@
                                 </div>
 
                                 <!-- Line Bot List -->
-                                <div id="lineBotList">
+                                <div id="lineBotList" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
                                     <!-- Line Bot items will be loaded here -->
                                 </div>
 
@@ -1564,80 +1564,73 @@
                 const statusText = bot.status === 'active' ? 'เปิดใช้งาน' : bot.status === 'maintenance' ? 'บำรุงรักษา' : 'ปิดใช้งาน';
                 const defaultBadge = bot.isDefault ? '<span class="badge bg-primary ms-2">หลัก</span>' : '';
                 const instructionsCount = bot.selectedInstructions ? bot.selectedInstructions.length : 0;
-                
+
                 html += `
-                    <div class="card mb-3 border-0 shadow-sm">
-                        <div class="card-header bg-white border-bottom">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                            <h6 class="mb-0">
-                                        <i class="fab fa-line me-2 text-success"></i>
-                                ${bot.name} ${defaultBadge}
-                            </h6>
-                                    <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
-                                </div>
-                                <div class="d-flex align-items-center gap-2">
-                                <span class="badge bg-${statusClass}">${statusText}</span>
-                                    <div class="dropdown">
-                                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                                            <i class="fas fa-ellipsis-v"></i>
+                    <div class="col">
+                        <div class="card h-100 border-0 shadow-sm">
+                            <div class="card-header bg-white border-bottom">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-0">
+                                            <i class="fab fa-line me-2 text-success"></i>${bot.name} ${defaultBadge}
+                                        </h6>
+                                        <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="badge bg-${statusClass}">${statusText}</span>
+                                        <button class="btn btn-sm btn-outline-info" title="จัดการ Instructions" onclick="manageInstructions('${bot._id}')">
+                                            <i class="fas fa-book"></i>
                                         </button>
-                                        <ul class="dropdown-menu">
-                                            <li><a class="dropdown-item" href="#" onclick="editLineBot('${bot._id}')">
-                                                <i class="fas fa-edit me-2"></i>แก้ไข
-                                            </a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="manageInstructions('${bot._id}')">
-                                                <i class="fas fa-book me-2"></i>จัดการ Instructions
-                                            </a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="testLineBot('${bot._id}')">
-                                                <i class="fas fa-test-tube me-2"></i>ทดสอบ
-                                            </a></li>
-                                            <li><hr class="dropdown-divider"></li>
-                                            <li><a class="dropdown-item text-danger" href="#" onclick="deleteLineBot('${bot._id}')">
-                                                <i class="fas fa-trash me-2"></i>ลบ
-                                            </a></li>
-                                        </ul>
+                                        <button class="btn btn-sm btn-outline-secondary" title="แก้ไข" onclick="editLineBot('${bot._id}')">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary" title="ทดสอบ" onclick="testLineBot('${bot._id}')">
+                                            <i class="fas fa-vial"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" title="ลบ" onclick="deleteLineBot('${bot._id}')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-3">
-                                    <div class="d-flex align-items-center mb-2">
-                                        <i class="fas fa-robot text-primary me-2"></i>
-                                        <div>
-                                            <small class="text-muted d-block">AI Model</small>
-                                            <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
-                                </div>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="d-flex align-items-center mb-2">
-                                        <i class="fas fa-book text-info me-2"></i>
-                                        <div>
-                                            <small class="text-muted d-block">Instructions</small>
-                                            <span class="badge bg-secondary">${instructionsCount} รายการ</span>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-robot text-primary me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">AI Model</small>
+                                                <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="d-flex align-items-center mb-2">
-                                        <i class="fas fa-link text-warning me-2"></i>
-                                        <div>
-                                            <small class="text-muted d-block">Webhook</small>
-                                            <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.webhookUrl || 'ไม่ระบุ'}">
-                                                ${bot.webhookUrl ? bot.webhookUrl.split('/').pop() : 'ไม่ระบุ'}
-                                    </small>
-                                </div>
-                            </div>
-                        </div>
-                                <div class="col-md-3">
-                                    <div class="d-flex align-items-center mb-2">
-                                        <i class="fas fa-clock text-muted me-2"></i>
-                                        <div>
-                                            <small class="text-muted d-block">อัปเดตล่าสุด</small>
-                                            <small>${new Date(bot.updatedAt).toLocaleDateString('th-TH')}</small>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-book text-info me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">Instructions</small>
+                                                <span class="badge bg-secondary">${instructionsCount} รายการ</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-link text-warning me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">Webhook</small>
+                                                <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.webhookUrl || 'ไม่ระบุ'}">
+                                                    ${bot.webhookUrl ? bot.webhookUrl.split('/').pop() : 'ไม่ระบุ'}
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-clock text-muted me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">อัปเดตล่าสุด</small>
+                                                <small>${new Date(bot.updatedAt).toLocaleDateString('th-TH')}</small>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
