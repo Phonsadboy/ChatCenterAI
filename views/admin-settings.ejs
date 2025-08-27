@@ -1083,6 +1083,9 @@
                     </form>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-danger me-auto" id="deleteFacebookBotBtn" style="display: none;">
+                        <i class="fas fa-trash me-2"></i>ลบ
+                    </button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
                     <button type="button" class="btn btn-primary" id="saveFacebookBotBtn">
                         <i class="fas fa-save me-2"></i>บันทึก
@@ -1853,6 +1856,13 @@
             const facebookBotForm = document.getElementById('facebookBotForm');
             if (facebookBotForm) {
                 document.getElementById('saveFacebookBotBtn').addEventListener('click', saveFacebookBot);
+                const deleteFacebookBotBtn = document.getElementById('deleteFacebookBotBtn');
+                if (deleteFacebookBotBtn) {
+                    deleteFacebookBotBtn.addEventListener('click', () => {
+                        const botId = document.getElementById('facebookBotId').value;
+                        if (botId) deleteFacebookBot(botId);
+                    });
+                }
             }
 
             // Add new Line Bot button
@@ -2175,6 +2185,8 @@
             document.getElementById('facebookBotForm').reset();
             document.getElementById('facebookBotId').value = '';
             document.getElementById('addFacebookBotModalLabel').innerHTML = '<i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่';
+            const deleteBtn = document.getElementById('deleteFacebookBotBtn');
+            if (deleteBtn) deleteBtn.style.display = 'none';
 
             // Request server to create a stub and return real webhook URL + verify token
             (async () => {
@@ -2218,9 +2230,11 @@
                     document.getElementById('facebookVerifyToken').value = bot.verifyToken || '';
                     document.getElementById('facebookBotAiModel').value = bot.aiModel || 'gpt-5';
                     document.getElementById('facebookBotDefault').checked = bot.isDefault || false;
-                    
+
                     document.getElementById('addFacebookBotModalLabel').innerHTML = '<i class="fab fa-facebook me-2"></i>แก้ไข Facebook Bot';
-                    
+                    const deleteBtn = document.getElementById('deleteFacebookBotBtn');
+                    if (deleteBtn) deleteBtn.style.display = 'inline-block';
+
                     const modal = new bootstrap.Modal(document.getElementById('addFacebookBotModal'));
                     modal.show();
                 } else {
@@ -2246,6 +2260,9 @@
                 if (response.ok) {
                     showAlert('ลบ Facebook Bot เรียบร้อยแล้ว', 'success');
                     await loadFacebookBotSettings();
+                    const modalEl = document.getElementById('addFacebookBotModal');
+                    const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                    if (modalInstance) modalInstance.hide();
                 } else {
                     showAlert('ไม่สามารถลบ Facebook Bot ได้', 'danger');
                 }
