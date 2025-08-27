@@ -30,10 +30,16 @@
 - สามารถเปลี่ยนการเลือกใช้ได้ตลอดเวลา
 - รองรับการเลือกหลายคลังพร้อมกัน
 
+### การจัดการ Instruction Library
+- สามารถเปลี่ยนชื่อและคำอธิบายของคลังได้
+- สามารถลบคลังที่ไม่ต้องการออกจากระบบได้
+
 ### API ใหม่
 - `PUT /api/line-bots/:id/instructions` - อัปเดต instructions ที่เลือกใช้
 - `GET /api/instructions/library` - ดึงรายการคลัง instructions
 - `GET /api/instructions/library/:date/details` - ดึงรายละเอียดคลังพร้อม instructions
+- `PUT /admin/instructions/library/:date` - เปลี่ยนชื่อหรือคำอธิบายของคลัง
+- `DELETE /admin/instructions/library/:date` - ลบคลัง instruction
 
 ## การใช้งาน
 
@@ -48,6 +54,19 @@ POST /admin/instructions/library-now
 
 // สร้างอัตโนมัติ (ทุกวันเวลา 00:00 น.)
 // ระบบจะสร้างคลังอัตโนมัติทุกวัน
+```
+
+### 1.1 แก้ไข/ลบ Instruction Library
+```javascript
+// เปลี่ยนชื่อหรือคำอธิบายของคลัง
+PUT /admin/instructions/library/:date
+{
+  "name": "ชื่อใหม่",
+  "description": "คำอธิบายใหม่"
+}
+
+// ลบคลังที่ไม่ต้องการ
+DELETE /admin/instructions/library/:date
 ```
 
 ### 2. จัดการ Instructions ใน Line Bot
