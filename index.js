@@ -1866,6 +1866,10 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
     if (req.body.object === 'page') {
       for (let entry of req.body.entry) {
         for (let messagingEvent of entry.messaging) {
+          if (messagingEvent.message?.is_echo) {
+            continue;
+          }
+
           if (messagingEvent.message && messagingEvent.message.text) {
             const senderId = messagingEvent.sender.id;
             const message = messagingEvent.message.text;
@@ -2080,7 +2084,7 @@ app.get('/api/line-bots/:id', async (req, res) => {
 // Create new Line Bot
 app.post('/api/line-bots', async (req, res) => {
   try {
-    const { name, description, channelAccessToken, channelSecret, webhookUrl, status, isDefault } = req.body;
+    const { name, description, channelAccessToken, channelSecret, webhookUrl, status, isDefault, selectedInstructions } = req.body;
     
     if (!name || !channelAccessToken || !channelSecret) {
       return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
@@ -2112,7 +2116,7 @@ app.post('/api/line-bots', async (req, res) => {
       status: status || 'active',
       isDefault: isDefault || false,
       aiModel: 'gpt-5', // AI Model เฉพาะสำหรับ Line Bot นี้
-      selectedInstructions: [], // รายการ instruction ที่เลือกจากคลัง
+      selectedInstructions: Array.isArray(selectedInstructions) ? selectedInstructions : [],
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -2350,7 +2354,7 @@ app.get('/api/facebook-bots/:id', async (req, res) => {
 // Create new Facebook Bot
 app.post('/api/facebook-bots', async (req, res) => {
   try {
-    const { name, description, pageId, accessToken, webhookUrl, verifyToken, status, isDefault, aiModel } = req.body;
+    const { name, description, pageId, accessToken, webhookUrl, verifyToken, status, isDefault, aiModel, selectedInstructions } = req.body;
     
     if (!name || !pageId || !accessToken) {
       return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
@@ -2383,7 +2387,7 @@ app.post('/api/facebook-bots', async (req, res) => {
       status: status || 'active',
       isDefault: isDefault || false,
       aiModel: aiModel || 'gpt-5',
-      selectedInstructions: [],
+      selectedInstructions: Array.isArray(selectedInstructions) ? selectedInstructions : [],
       createdAt: new Date(),
       updatedAt: new Date()
     };

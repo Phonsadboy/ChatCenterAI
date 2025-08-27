@@ -59,6 +59,35 @@ PUT /api/line-bots/:id/instructions
 }
 ```
 
+```javascript
+// สร้าง Line Bot พร้อมกำหนด instructions จากคลังทันที
+POST /api/line-bots
+{
+  "name": "My Bot",
+  "channelAccessToken": "...",
+  "channelSecret": "...",
+  "selectedInstructions": ["2024-01-15"]
+}
+```
+
+### 2.1 จัดการ Instructions ใน Facebook Bot
+```javascript
+// อัปเดต instructions ที่เลือกใช้
+PUT /api/facebook-bots/:id/instructions
+{
+  "selectedInstructions": ["2024-01-15"]
+}
+
+// สร้าง Facebook Bot พร้อมเลือก instructions จากคลัง
+POST /api/facebook-bots
+{
+  "name": "My FB Bot",
+  "pageId": "...",
+  "accessToken": "...",
+  "selectedInstructions": ["2024-01-15"]
+}
+```
+
 ### 3. คืนค่า Instructions จากคลัง
 ```javascript
 POST /admin/instructions/restore/:date
