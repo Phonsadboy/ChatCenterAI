@@ -1788,7 +1788,7 @@ app.post('/webhook/line/:botId', async (req, res) => {
 
         // Process message with AI (you can customize this part)
         try {
-          const aiResponse = await processMessageWithAI(message, userId, lineBot.name);
+          const aiResponse = await processMessageWithAI(message, userId, lineBot);
           await lineClient.replyMessage(replyToken, {
             type: 'text',
             text: aiResponse
@@ -1879,7 +1879,7 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
 
             // Process message with AI
             try {
-              const aiResponse = await processFacebookMessageWithAI(message, senderId, facebookBot.name);
+              const aiResponse = await processFacebookMessageWithAI(message, senderId, facebookBot);
               await sendFacebookMessage(senderId, aiResponse, facebookBot.accessToken);
 
               // Notify admins of new user message
@@ -1926,18 +1926,37 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
   }
 }
 
+// Convert table instruction data to a readable Markdown string
+function tableInstructionToMarkdown(instruction) {
+  const columns = instruction?.data?.columns || [];
+  const rows = instruction?.data?.rows || [];
+  if (columns.length === 0 || rows.length === 0) return instruction.content || '';
+
+  const headerRow = `| ${columns.join(' | ')} |`;
+  const separatorRow = `| ${columns.map(() => '---').join(' | ')} |`;
+  const bodyRows = rows.map(row => `| ${columns.map(col => row[col] || '').join(' | ')} |`).join('\n');
+  const titleLine = instruction.title ? `${instruction.title}\n` : '';
+  return `${titleLine}${headerRow}\n${separatorRow}\n${bodyRows}`;
+}
+
+// Build system prompt text from selected instruction libraries
+function buildSystemPromptFromLibraries(libraries) {
+  const allInstructions = libraries.flatMap(lib => lib.instructions || []);
+  const parts = allInstructions.map(inst => {
+    if (inst.type === 'table') {
+      return tableInstructionToMarkdown(inst);
+    }
+    return inst.content || '';
+  }).filter(text => text && text.trim() !== '');
+  return parts.join('\n\n');
+}
+
 // Helper function to process Facebook message with AI
-async function processFacebookMessageWithAI(message, userId, botName) {
+async function processFacebookMessageWithAI(message, userId, facebookBot) {
   try {
-    // ดึงข้อมูล Facebook Bot และ instructions
+    // ดึงข้อมูล instructions ที่เลือก
     const client = await connectDB();
     const db = client.db("chatbot");
-    const facebookBotColl = db.collection("facebook_bots");
-    const facebookBot = await facebookBotColl.findOne({ name: botName });
-    
-    if (!facebookBot) {
-      return 'ขออภัย ไม่พบข้อมูล Facebook Bot';
-    }
     
     // ใช้ AI Model เฉพาะของ Facebook Bot นี้
     const aiModel = facebookBot.aiModel || 'gpt-5';
@@ -1946,12 +1965,13 @@ async function processFacebookMessageWithAI(message, userId, botName) {
     let systemPrompt = 'คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้';
     if (facebookBot.selectedInstructions && facebookBot.selectedInstructions.length > 0) {
       const instructionColl = db.collection("instruction_library");
-      const instructions = await instructionColl.find({
+      const instructionDocs = await instructionColl.find({
         date: { $in: facebookBot.selectedInstructions }
       }).toArray();
 
-      if (instructions.length > 0) {
-        systemPrompt = instructions.map(inst => inst.instructions).join('\n\n');
+      const prompt = buildSystemPromptFromLibraries(instructionDocs);
+      if (prompt.trim()) {
+        systemPrompt = prompt;
       }
     }
     
@@ -1988,31 +2008,26 @@ async function processFacebookMessageWithAI(message, userId, botName) {
 }
 
 // Helper function to process message with AI
-async function processMessageWithAI(message, userId, botName) {
+async function processMessageWithAI(message, userId, lineBot) {
   try {
-    // ดึงข้อมูล Line Bot และ instructions
+    // ดึงข้อมูล instructions ที่เลือก
     const client = await connectDB();
     const db = client.db("chatbot");
-    const lineBotColl = db.collection("line_bots");
-    const lineBot = await lineBotColl.findOne({ name: botName });
-    
-    if (!lineBot) {
-      return 'ขออภัย ไม่พบข้อมูล Line Bot';
-    }
-    
+
     // ใช้ AI Model เฉพาะของ Line Bot นี้
     const aiModel = lineBot.aiModel || 'gpt-5';
-    
+
     // ดึง system prompt จาก instructions ที่เลือก
     let systemPrompt = 'คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้';
     if (lineBot.selectedInstructions && lineBot.selectedInstructions.length > 0) {
       const instructionColl = db.collection("instruction_library");
-      const instructions = await instructionColl.find({
+      const instructionDocs = await instructionColl.find({
         date: { $in: lineBot.selectedInstructions }
       }).toArray();
 
-      if (instructions.length > 0) {
-        systemPrompt = instructions.map(inst => inst.instructions).join('\n\n');
+      const prompt = buildSystemPromptFromLibraries(instructionDocs);
+      if (prompt.trim()) {
+        systemPrompt = prompt;
       }
     }
     
