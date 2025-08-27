@@ -10,6 +10,7 @@ const { ObjectId } = require('mongodb');
 const { OpenAI } = require('openai');
 const line = require('@line/bot-sdk');
 const sharp = require('sharp'); // <--- เพิ่มตรงนี้ ตามต้นฉบับ
+const axios = require('axios');
 const path = require('path');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -1804,6 +1805,138 @@ app.post('/webhook/line/:botId', async (req, res) => {
   }
 });
 
+// ============================ Facebook Bot Webhook Handler ============================
+
+// Dynamic Facebook Bot webhook handler
+app.post('/webhook/facebook/:botId', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+    
+    // Find the Facebook Bot by webhook URL or ID
+    const facebookBot = await coll.findOne({
+      $or: [
+        { webhookUrl: { $regex: botId, $options: 'i' } },
+        { _id: new ObjectId(botId) }
+      ]
+    });
+
+    if (!facebookBot || facebookBot.status !== 'active') {
+      return res.status(404).json({ error: 'Facebook Bot ไม่พบหรือไม่เปิดใช้งาน' });
+    }
+
+    // Handle Facebook webhook verification
+    if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === facebookBot.verifyToken) {
+      return res.status(200).send(req.query['hub.challenge']);
+    }
+
+    // Handle Facebook webhook events
+    if (req.body.object === 'page') {
+      for (let entry of req.body.entry) {
+        for (let messagingEvent of entry.messaging) {
+          if (messagingEvent.message && messagingEvent.message.text) {
+            const senderId = messagingEvent.sender.id;
+            const message = messagingEvent.message.text;
+
+            console.log(`[Facebook Bot: ${facebookBot.name}] ข้อความจาก ${senderId}: ${message}`);
+
+            // Process message with AI
+            try {
+              const aiResponse = await processFacebookMessageWithAI(message, senderId, facebookBot.name);
+              await sendFacebookMessage(senderId, aiResponse, facebookBot.accessToken);
+            } catch (error) {
+              console.error(`[Facebook Bot: ${facebookBot.name}] Error processing message:`, error);
+              await sendFacebookMessage(senderId, 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ', facebookBot.accessToken);
+            }
+          }
+        }
+      }
+    }
+
+    res.json({ status: 'OK' });
+  } catch (err) {
+    console.error('Error handling Facebook webhook:', err);
+    res.status(500).json({ error: 'เกิดข้อผิดพลาดในการประมวลผล webhook' });
+  }
+});
+
+// Helper function to send Facebook message
+async function sendFacebookMessage(recipientId, message, accessToken) {
+  try {
+    const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+      recipient: { id: recipientId },
+      message: { text: message }
+    }, {
+      params: { access_token: accessToken },
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    console.log('Facebook message sent successfully:', response.data);
+  } catch (error) {
+    console.error('Error sending Facebook message:', error);
+    throw error;
+  }
+}
+
+// Helper function to process Facebook message with AI
+async function processFacebookMessageWithAI(message, userId, botName) {
+  try {
+    // ดึงข้อมูล Facebook Bot และ instructions
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const facebookBotColl = db.collection("facebook_bots");
+    const facebookBot = await facebookBotColl.findOne({ name: botName });
+    
+    if (!facebookBot) {
+      return 'ขออภัย ไม่พบข้อมูล Facebook Bot';
+    }
+    
+    // ใช้ AI Model เฉพาะของ Facebook Bot นี้
+    const aiModel = facebookBot.aiModel || 'gpt-5';
+    
+    // ดึง system prompt จาก instructions ที่เลือก
+    let systemPrompt = 'คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้';
+    if (facebookBot.selectedInstructions && facebookBot.selectedInstructions.length > 0) {
+      const instructionColl = db.collection("instruction_library");
+      const instructions = await instructionColl.find({
+        _id: { $in: facebookBot.selectedInstructions.map(id => new ObjectId(id)) }
+      }).toArray();
+      
+      if (instructions.length > 0) {
+        systemPrompt = instructions.map(inst => inst.instructions).join('\n\n');
+      }
+    }
+    
+    // สร้าง OpenAI client และเรียก API
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: message }
+    ];
+    
+    const response = await openai.chat.completions.create({
+      model: aiModel,
+      messages
+    });
+    
+    let assistantReply = response.choices[0].message.content;
+    
+    // Apply message filtering if enabled
+    const settings = await getSettings();
+    if (settings.enableMessageFiltering) {
+      assistantReply = filterMessage(assistantReply, settings);
+    }
+    
+    return assistantReply.trim();
+  } catch (error) {
+    console.error('Error processing Facebook message with AI:', error);
+    return 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ';
+  }
+}
+
 // Helper function to process message with AI
 async function processMessageWithAI(message, userId, botName) {
   try {
@@ -2087,6 +2220,235 @@ app.put('/api/line-bots/:id/instructions', async (req, res) => {
     res.json({ message: 'อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว' });
   } catch (err) {
     console.error('Error updating line bot instructions:', err);
+    res.status(500).json({ error: 'ไม่สามารถอัปเดต instruction ที่เลือกใช้ได้' });
+  }
+});
+
+// ============================ Facebook Bot API Endpoints ============================
+
+// Get all Facebook Bots
+app.get('/api/facebook-bots', async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+    const facebookBots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    res.json(facebookBots);
+  } catch (err) {
+    console.error('Error fetching facebook bots:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูล Facebook Bot ได้' });
+  }
+});
+
+// Get single Facebook Bot
+app.get('/api/facebook-bots/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+    const facebookBot = await coll.findOne({ _id: new ObjectId(id) });
+    
+    if (!facebookBot) {
+      return res.status(404).json({ error: 'ไม่พบ Facebook Bot ที่ระบุ' });
+    }
+    
+    res.json(facebookBot);
+  } catch (err) {
+    console.error('Error fetching facebook bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูล Facebook Bot ได้' });
+  }
+});
+
+// Create new Facebook Bot
+app.post('/api/facebook-bots', async (req, res) => {
+  try {
+    const { name, description, pageId, accessToken, webhookUrl, verifyToken, status, isDefault, aiModel } = req.body;
+    
+    if (!name || !pageId || !accessToken) {
+      return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+
+    // If this is default, unset other defaults
+    if (isDefault) {
+      await coll.updateMany({}, { $set: { isDefault: false } });
+    }
+
+    // Generate unique webhook URL if not provided
+    let finalWebhookUrl = webhookUrl;
+    if (!finalWebhookUrl) {
+      const baseUrl = req.protocol + '://' + req.get('host');
+      const uniqueId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+      finalWebhookUrl = `${baseUrl}/webhook/facebook/${uniqueId}`;
+    }
+
+    const facebookBot = {
+      name,
+      description: description || '',
+      pageId,
+      accessToken,
+      webhookUrl: finalWebhookUrl,
+      verifyToken: verifyToken || 'your_verify_token',
+      status: status || 'active',
+      isDefault: isDefault || false,
+      aiModel: aiModel || 'gpt-5',
+      selectedInstructions: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const result = await coll.insertOne(facebookBot);
+    facebookBot._id = result.insertedId;
+    
+    res.status(201).json(facebookBot);
+  } catch (err) {
+    console.error('Error creating facebook bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถสร้าง Facebook Bot ได้' });
+  }
+});
+
+// Update Facebook Bot
+app.put('/api/facebook-bots/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, pageId, accessToken, webhookUrl, verifyToken, status, isDefault, aiModel } = req.body;
+    
+    if (!name || !pageId || !accessToken) {
+      return res.status(400).json({ error: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน' });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+
+    // If this is default, unset other defaults
+    if (isDefault) {
+      await coll.updateMany({}, { $set: { isDefault: false } });
+    }
+
+    const updateData = {
+      name,
+      description: description || '',
+      pageId,
+      accessToken,
+      webhookUrl: webhookUrl || '',
+      verifyToken: verifyToken || 'your_verify_token',
+      status: status || 'active',
+      isDefault: isDefault || false,
+      aiModel: aiModel || 'gpt-5',
+      updatedAt: new Date()
+    };
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'ไม่พบ Facebook Bot ที่ระบุ' });
+    }
+
+    res.json({ message: 'อัปเดต Facebook Bot เรียบร้อยแล้ว' });
+  } catch (err) {
+    console.error('Error updating facebook bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถอัปเดต Facebook Bot ได้' });
+  }
+});
+
+// Delete Facebook Bot
+app.delete('/api/facebook-bots/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+    
+    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'ไม่พบ Facebook Bot ที่ระบุ' });
+    }
+
+    res.json({ message: 'ลบ Facebook Bot เรียบร้อยแล้ว' });
+  } catch (err) {
+    console.error('Error deleting facebook bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถลบ Facebook Bot ได้' });
+  }
+});
+
+// Test Facebook Bot
+app.post('/api/facebook-bots/:id/test', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+    
+    const facebookBot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!facebookBot) {
+      return res.status(404).json({ error: 'ไม่พบ Facebook Bot ที่ระบุ' });
+    }
+
+    // Test Facebook Bot connection
+    try {
+      // Test Facebook Graph API connection
+      const response = await axios.get(`https://graph.facebook.com/v18.0/${facebookBot.pageId}`, {
+        params: {
+          access_token: facebookBot.accessToken,
+          fields: 'name,id'
+        }
+      });
+      
+      res.json({ 
+        message: `ทดสอบ Facebook Bot สำเร็จ: ${response.data.name}`,
+        profile: response.data
+      });
+    } catch (fbError) {
+      res.status(400).json({ 
+        error: 'ไม่สามารถเชื่อมต่อ Facebook Bot ได้: ' + fbError.message 
+      });
+    }
+  } catch (err) {
+    console.error('Error testing facebook bot:', err);
+    res.status(500).json({ error: 'ไม่สามารถทดสอบ Facebook Bot ได้' });
+  }
+});
+
+// Route: อัปเดต instruction ที่เลือกใช้ใน Facebook Bot
+app.put('/api/facebook-bots/:id/instructions', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { selectedInstructions } = req.body;
+    
+    if (!Array.isArray(selectedInstructions)) {
+      return res.status(400).json({ error: 'selectedInstructions ต้องเป็น array' });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+    
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { 
+        $set: { 
+          selectedInstructions,
+          updatedAt: new Date()
+        } 
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'ไม่พบ Facebook Bot ที่ระบุ' });
+    }
+
+    res.json({ message: 'อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว' });
+  } catch (err) {
+    console.error('Error updating facebook bot instructions:', err);
     res.status(500).json({ error: 'ไม่สามารถอัปเดต instruction ที่เลือกใช้ได้' });
   }
 });

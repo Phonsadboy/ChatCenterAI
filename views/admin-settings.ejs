@@ -581,7 +581,7 @@
                                                     <div class="d-flex align-items-center mb-2">
                                                         <i class="fab fa-facebook text-primary me-2"></i>
                                                         <strong>Facebook</strong>
-                                                        <span class="badge bg-secondary ms-auto">เร็วๆ นี้</span>
+                                                        <span class="badge bg-success ms-auto">พร้อมใช้งาน</span>
                                                     </div>
                                                     <small class="text-muted">เชื่อมต่อผ่าน Facebook Messenger API</small>
                                                 </div>
@@ -969,9 +969,9 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="alert alert-info">
-                        <h6><i class="fas fa-info-circle me-2"></i>ข้อมูล Facebook Bot</h6>
-                        <p class="mb-0">ฟีเจอร์ Facebook Bot กำลังอยู่ในขั้นตอนการพัฒนา และจะพร้อมใช้งานเร็วๆ นี้</p>
+                    <div class="alert alert-success">
+                        <h6><i class="fas fa-check-circle me-2"></i>Facebook Bot พร้อมใช้งาน</h6>
+                        <p class="mb-0">Facebook Bot สามารถใช้งานได้แล้วเหมือนกับ Line Bot</p>
                     </div>
                     <form id="facebookBotForm">
                         <input type="hidden" id="facebookBotId" name="id">
@@ -979,14 +979,14 @@
                         <div class="mb-3">
                             <label for="facebookBotName" class="form-label">ชื่อ Facebook Bot <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="facebookBotName" name="name" 
-                                   placeholder="เช่น: ฝ่ายขาย, ฝ่ายบริการลูกค้า, ฝ่ายเทคนิค" required disabled>
+                                   placeholder="เช่น: ฝ่ายขาย, ฝ่ายบริการลูกค้า, ฝ่ายเทคนิค" required>
                             <div class="form-text">ชื่อที่แสดงในระบบและใช้เรียก Facebook Bot นี้</div>
                         </div>
 
                         <div class="mb-3">
                             <label for="facebookBotDescription" class="form-label">คำอธิบาย</label>
                             <textarea class="form-control" id="facebookBotDescription" name="description" rows="2"
-                                      placeholder="อธิบายหน้าที่หรือวัตถุประสงค์ของ Facebook Bot นี้" disabled></textarea>
+                                      placeholder="อธิบายหน้าที่หรือวัตถุประสงค์ของ Facebook Bot นี้"></textarea>
                         </div>
 
                         <div class="row">
@@ -994,14 +994,14 @@
                                 <div class="mb-3">
                                     <label for="facebookPageId" class="form-label">Facebook Page ID <span class="text-danger">*</span></label>
                                     <input type="text" class="form-control" id="facebookPageId" name="pageId" 
-                                           placeholder="123456789012345" required disabled>
+                                           placeholder="123456789012345" required>
                                 </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="facebookAccessToken" class="form-label">Page Access Token <span class="text-danger">*</span></label>
                                     <input type="text" class="form-control" id="facebookAccessToken" name="accessToken" 
-                                           placeholder="EAABwzLixnjYBO..." required disabled>
+                                           placeholder="EAABwzLixnjYBO..." required>
                                 </div>
                             </div>
                         </div>
@@ -1011,7 +1011,7 @@
                                 <div class="mb-3">
                                     <label for="facebookWebhookUrl" class="form-label">Webhook URL</label>
                                     <input type="text" class="form-control" id="facebookWebhookUrl" name="webhookUrl" 
-                                           placeholder="https://yourdomain.com/webhook/facebook1" readonly disabled>
+                                           placeholder="https://yourdomain.com/webhook/facebook1" readonly>
                                     <div class="form-text">URL ที่จะใช้เป็น Webhook สำหรับ Facebook Bot นี้</div>
                                 </div>
                             </div>
@@ -1019,7 +1019,7 @@
                                 <div class="mb-3">
                                     <label for="facebookVerifyToken" class="form-label">Verify Token</label>
                                     <input type="text" class="form-control" id="facebookVerifyToken" name="verifyToken" 
-                                           placeholder="your_verify_token" disabled>
+                                           placeholder="your_verify_token">
                                     <div class="form-text">Token สำหรับยืนยัน Webhook</div>
                                 </div>
                             </div>
@@ -1029,7 +1029,7 @@
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="facebookBotAiModel" class="form-label">AI Model <span class="text-danger">*</span></label>
-                                    <select class="form-select" id="facebookBotAiModel" name="aiModel" required disabled>
+                                    <select class="form-select" id="facebookBotAiModel" name="aiModel" required>
                                         <option value="gpt-5">GPT-5</option>
                                         <option value="gpt-5-mini">GPT-5 Mini</option>
                                         <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
@@ -1044,7 +1044,7 @@
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" id="facebookBotDefault" name="isDefault" disabled>
+                                        <input class="form-check-input" type="checkbox" id="facebookBotDefault" name="isDefault">
                                         <label class="form-check-label" for="facebookBotDefault">
                                             ตั้งเป็น Facebook Bot หลัก (Default)
                                         </label>
@@ -1057,8 +1057,8 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
-                    <button type="button" class="btn btn-primary" disabled>
-                        <i class="fas fa-clock me-2"></i>เร็วๆ นี้
+                    <button type="button" class="btn btn-primary" id="saveFacebookBotBtn">
+                        <i class="fas fa-save me-2"></i>บันทึก
                     </button>
                 </div>
             </div>
@@ -1185,6 +1185,9 @@
                 
                 // โหลดข้อมูล AI Model ของ Line Bot
                 await loadLineBotAiModelInfo();
+                
+                // โหลดข้อมูล Facebook Bot
+                await loadFacebookBotSettings();
                 
                 // โหลดข้อมูลภาพรวมระบบ
                 await loadOverviewData();
@@ -1625,9 +1628,10 @@
             document.getElementById('inactiveBots').textContent = inactive;
         }
         
-        // Refresh Line Bot list
+        // Refresh Bot list
         function refreshLineBotList() {
             loadLineBotSettings();
+            loadFacebookBotSettings();
             showAlert('รีเฟรชข้อมูลเรียบร้อยแล้ว', 'success');
         }
         
@@ -1639,6 +1643,13 @@
                 if (lineBotResponse.ok) {
                     const lineBots = await lineBotResponse.json();
                     displayLineBotOverview(lineBots);
+                }
+                
+                // โหลดข้อมูล Facebook Bot
+                const facebookBotResponse = await fetch('/api/facebook-bots');
+                if (facebookBotResponse.ok) {
+                    const facebookBots = await facebookBotResponse.json();
+                    displayFacebookBotOverview(facebookBots);
                 }
                 
                 // โหลดข้อมูล AI Models
@@ -1755,11 +1766,36 @@
             document.getElementById('hiddenWordsCount').textContent = words.length;
         }
         
-        // Add event listener for hidden words textarea
+        // Add event listeners
         document.addEventListener('DOMContentLoaded', function() {
+            // Hidden words textarea
             const hiddenWordsTextarea = document.getElementById('hiddenWords');
             if (hiddenWordsTextarea) {
                 hiddenWordsTextarea.addEventListener('input', updateHiddenWordsCount);
+            }
+
+            // Line Bot form
+            const lineBotForm = document.getElementById('lineBotForm');
+            if (lineBotForm) {
+                document.getElementById('saveLineBotBtn').addEventListener('click', saveLineBot);
+            }
+
+            // Facebook Bot form
+            const facebookBotForm = document.getElementById('facebookBotForm');
+            if (facebookBotForm) {
+                document.getElementById('saveFacebookBotBtn').addEventListener('click', saveFacebookBot);
+            }
+
+            // Add new Line Bot button
+            const addLineBotBtn = document.querySelector('[data-bs-target="#addLineBotModal"]');
+            if (addLineBotBtn) {
+                addLineBotBtn.addEventListener('click', addNewLineBot);
+            }
+
+            // Add new Facebook Bot button
+            const addFacebookBotBtn = document.querySelector('[data-bs-target="#addFacebookBotModal"]');
+            if (addFacebookBotBtn) {
+                addFacebookBotBtn.addEventListener('click', addNewFacebookBot);
             }
         });
 
@@ -1889,6 +1925,285 @@
             } catch (error) {
                 console.error('Error saving line bot:', error);
                 showAlert('เกิดข้อผิดพลาดในการบันทึก Line Bot', 'danger');
+            }
+        }
+
+        // ============================ Facebook Bot Management Functions ============================
+
+        // Load Facebook Bot settings
+        async function loadFacebookBotSettings() {
+            try {
+                const response = await fetch('/api/facebook-bots');
+                if (response.ok) {
+                    const facebookBots = await response.json();
+                    displayFacebookBotList(facebookBots);
+                } else {
+                    showAlert('ไม่สามารถโหลดข้อมูล Facebook Bot ได้', 'danger');
+                }
+            } catch (error) {
+                console.error('Error loading facebook bot settings:', error);
+                showAlert('เกิดข้อผิดพลาดในการโหลดข้อมูล Facebook Bot', 'danger');
+            }
+        }
+
+        // Display Facebook Bot list
+        function displayFacebookBotList(facebookBots) {
+            const container = document.getElementById('facebookBotList');
+            
+            if (!facebookBots || facebookBots.length === 0) {
+                container.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        ยังไม่มี Facebook Bot ในระบบ
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            facebookBots.forEach(bot => {
+                const statusClass = bot.status === 'active' ? 'success' : 
+                                  bot.status === 'inactive' ? 'warning' : 'secondary';
+                const statusText = bot.status === 'active' ? 'ใช้งาน' : 
+                                 bot.status === 'inactive' ? 'ปิดใช้งาน' : 'บำรุงรักษา';
+                const defaultBadge = bot.isDefault ? ' <span class="badge bg-primary">Default</span>' : '';
+
+                html += `
+                    <div class="card mb-3 shadow-sm">
+                        <div class="card-body">
+                            <div class="row align-items-center">
+                                <div class="col-md-6">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h6 class="mb-0">
+                                                <i class="fab fa-facebook me-2 text-primary"></i>
+                                                ${bot.name} ${defaultBadge}
+                                            </h6>
+                                            <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="badge bg-${statusClass}">${statusText}</span>
+                                            <div class="dropdown">
+                                                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                                    <i class="fas fa-ellipsis-v"></i>
+                                                </button>
+                                                <ul class="dropdown-menu">
+                                                    <li><a class="dropdown-item" href="#" onclick="editFacebookBot('${bot._id}')">
+                                                        <i class="fas fa-edit me-2"></i>แก้ไข
+                                                    </a></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="manageFacebookInstructions('${bot._id}')">
+                                                        <i class="fas fa-book me-2"></i>จัดการ Instructions
+                                                    </a></li>
+                                                    <li><a class="dropdown-item" href="#" onclick="testFacebookBot('${bot._id}')">
+                                                        <i class="fas fa-play me-2"></i>ทดสอบ
+                                                    </a></li>
+                                                    <li><hr class="dropdown-divider"></li>
+                                                    <li><a class="dropdown-item text-danger" href="#" onclick="deleteFacebookBot('${bot._id}')">
+                                                        <i class="fas fa-trash me-2"></i>ลบ
+                                                    </a></li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <small class="text-muted d-block">AI Model</small>
+                                                <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <small class="text-muted d-block">Page ID</small>
+                                                <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.pageId || 'ไม่ระบุ'}">
+                                                    ${bot.pageId ? bot.pageId.substring(0, 10) + '...' : 'ไม่ระบุ'}
+                                                </small>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <small class="text-muted d-block">Instructions</small>
+                                                <span class="badge bg-secondary">${bot.selectedInstructions ? bot.selectedInstructions.length : 0}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+
+        // Update Facebook Bot statistics
+        function updateFacebookBotStats(facebookBots) {
+            const totalBots = facebookBots.length;
+            const activeBots = facebookBots.filter(bot => bot.status === 'active').length;
+            const configuredBots = facebookBots.filter(bot => bot.aiModel && bot.selectedInstructions && bot.selectedInstructions.length > 0).length;
+            const inactiveBots = facebookBots.filter(bot => bot.status === 'inactive').length;
+
+            document.getElementById('facebookBots').textContent = totalBots;
+            document.getElementById('activeBots').textContent = activeBots;
+            document.getElementById('configuredBots').textContent = configuredBots;
+            document.getElementById('inactiveBots').textContent = inactiveBots;
+        }
+
+        // Refresh Facebook Bot list
+        async function refreshFacebookBotList() {
+            await loadFacebookBotSettings();
+        }
+
+        // Display Facebook Bot overview
+        function displayFacebookBotOverview(facebookBots) {
+            const container = document.getElementById('facebookBotOverview');
+            
+            if (!facebookBots || facebookBots.length === 0) {
+                container.innerHTML = '<p class="text-muted">ยังไม่มี Facebook Bot</p>';
+                return;
+            }
+
+            const activeBots = facebookBots.filter(bot => bot.status === 'active').length;
+            const totalBots = facebookBots.length;
+
+            container.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h4 class="mb-0">${totalBots}</h4>
+                        <small class="text-muted">Facebook Bot ทั้งหมด</small>
+                    </div>
+                    <div class="text-end">
+                        <h5 class="mb-0 text-success">${activeBots}</h5>
+                        <small class="text-muted">ใช้งาน</small>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Add new Facebook Bot
+        function addNewFacebookBot() {
+            document.getElementById('facebookBotForm').reset();
+            document.getElementById('facebookBotId').value = '';
+            document.getElementById('addFacebookBotModalLabel').innerHTML = '<i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่';
+        }
+
+        // Edit Facebook Bot
+        async function editFacebookBot(botId) {
+            try {
+                const response = await fetch(`/api/facebook-bots/${botId}`);
+                if (response.ok) {
+                    const bot = await response.json();
+                    
+                    document.getElementById('facebookBotId').value = bot._id;
+                    document.getElementById('facebookBotName').value = bot.name;
+                    document.getElementById('facebookBotDescription').value = bot.description || '';
+                    document.getElementById('facebookPageId').value = bot.pageId;
+                    document.getElementById('facebookAccessToken').value = bot.accessToken;
+                    document.getElementById('facebookWebhookUrl').value = bot.webhookUrl || '';
+                    document.getElementById('facebookVerifyToken').value = bot.verifyToken || '';
+                    document.getElementById('facebookBotAiModel').value = bot.aiModel || 'gpt-5';
+                    document.getElementById('facebookBotDefault').checked = bot.isDefault || false;
+                    
+                    document.getElementById('addFacebookBotModalLabel').innerHTML = '<i class="fab fa-facebook me-2"></i>แก้ไข Facebook Bot';
+                    
+                    const modal = new bootstrap.Modal(document.getElementById('addFacebookBotModal'));
+                    modal.show();
+                } else {
+                    showAlert('ไม่สามารถโหลดข้อมูล Facebook Bot ได้', 'danger');
+                }
+            } catch (error) {
+                console.error('Error loading facebook bot:', error);
+                showAlert('เกิดข้อผิดพลาดในการโหลดข้อมูล Facebook Bot', 'danger');
+            }
+        }
+
+        // Delete Facebook Bot
+        async function deleteFacebookBot(botId) {
+            if (!confirm('คุณแน่ใจหรือไม่ที่จะลบ Facebook Bot นี้?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/facebook-bots/${botId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    showAlert('ลบ Facebook Bot เรียบร้อยแล้ว', 'success');
+                    await loadFacebookBotSettings();
+                } else {
+                    showAlert('ไม่สามารถลบ Facebook Bot ได้', 'danger');
+                }
+            } catch (error) {
+                console.error('Error deleting facebook bot:', error);
+                showAlert('เกิดข้อผิดพลาดในการลบ Facebook Bot', 'danger');
+            }
+        }
+
+        // Test Facebook Bot
+        async function testFacebookBot(botId) {
+            try {
+                const response = await fetch(`/api/facebook-bots/${botId}/test`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showAlert(result.message, 'success');
+                } else {
+                    const error = await response.json();
+                    showAlert(error.error, 'danger');
+                }
+            } catch (error) {
+                console.error('Error testing facebook bot:', error);
+                showAlert('เกิดข้อผิดพลาดในการทดสอบ Facebook Bot', 'danger');
+            }
+        }
+
+        // Save Facebook Bot
+        async function saveFacebookBot() {
+            const form = document.getElementById('facebookBotForm');
+            const formData = new FormData(form);
+            
+            const botData = {
+                name: formData.get('name'),
+                description: formData.get('description'),
+                pageId: formData.get('pageId'),
+                accessToken: formData.get('accessToken'),
+                webhookUrl: formData.get('webhookUrl'),
+                verifyToken: formData.get('verifyToken'),
+                aiModel: formData.get('aiModel'),
+                isDefault: formData.get('isDefault') === 'on'
+            };
+
+            const botId = formData.get('id');
+            const url = botId ? `/api/facebook-bots/${botId}` : '/api/facebook-bots';
+            const method = botId ? 'PUT' : 'POST';
+
+            try {
+                const response = await fetch(url, {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(botData)
+                });
+
+                if (response.ok) {
+                    showAlert(botId ? 'อัปเดต Facebook Bot เรียบร้อยแล้ว' : 'เพิ่ม Facebook Bot เรียบร้อยแล้ว', 'success');
+                    await loadFacebookBotSettings();
+                    
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('addFacebookBotModal'));
+                    modal.hide();
+                } else {
+                    showAlert('ไม่สามารถบันทึก Facebook Bot ได้', 'danger');
+                }
+            } catch (error) {
+                console.error('Error saving facebook bot:', error);
+                showAlert('เกิดข้อผิดพลาดในการบันทึก Facebook Bot', 'danger');
             }
         }
 
