@@ -1926,17 +1926,15 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
   }
 }
 
-// Convert table instruction data to a readable Markdown string
-function tableInstructionToMarkdown(instruction) {
-  const columns = instruction?.data?.columns || [];
+// Convert table instruction data to a JSON string
+function tableInstructionToJSON(instruction) {
   const rows = instruction?.data?.rows || [];
-  if (columns.length === 0 || rows.length === 0) return instruction.content || '';
+  if (rows.length === 0) return instruction.content || '';
 
-  const headerRow = `| ${columns.join(' | ')} |`;
-  const separatorRow = `| ${columns.map(() => '---').join(' | ')} |`;
-  const bodyRows = rows.map(row => `| ${columns.map(col => row[col] || '').join(' | ')} |`).join('\n');
   const titleLine = instruction.title ? `${instruction.title}\n` : '';
-  return `${titleLine}${headerRow}\n${separatorRow}\n${bodyRows}`;
+  const contentLine = instruction.content ? `${instruction.content}\n` : '';
+  const jsonRows = JSON.stringify(rows, null, 2);
+  return `${titleLine}${contentLine}${jsonRows}`;
 }
 
 // Build system prompt text from selected instruction libraries
@@ -1944,7 +1942,7 @@ function buildSystemPromptFromLibraries(libraries) {
   const allInstructions = libraries.flatMap(lib => lib.instructions || []);
   const parts = allInstructions.map(inst => {
     if (inst.type === 'table') {
-      return tableInstructionToMarkdown(inst);
+      return tableInstructionToJSON(inst);
     }
     return inst.content || '';
   }).filter(text => text && text.trim() !== '');

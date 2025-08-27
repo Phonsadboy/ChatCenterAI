@@ -60,7 +60,7 @@ if (lineBot.selectedInstructions && lineBot.selectedInstructions.length > 0) {
 
   const allInstr = libraries.flatMap(lib => lib.instructions || []);
   const instrTexts = allInstr
-    .map(i => i.type === 'table' ? tableInstructionToMarkdown(i) : i.content)
+    .map(i => i.type === 'table' ? tableInstructionToJSON(i) : i.content)
     .filter(Boolean);
   if (instrTexts.length > 0) {
     systemPrompt = instrTexts.join('\n\n');
