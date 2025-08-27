@@ -1578,6 +1578,53 @@ app.post('/admin/instructions/library-now', async (req, res) => {
   }
 });
 
+// Route: อัปเดตชื่อหรือคำอธิบายของ instruction library
+app.put('/admin/instructions/library/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { name, description } = req.body;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const libraryColl = db.collection("instruction_library");
+
+    const updateFields = {};
+    if (name !== undefined) updateFields.name = name;
+    if (description !== undefined) updateFields.description = description;
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.json({ success: false, error: 'ไม่มีข้อมูลที่ต้องการอัปเดต' });
+    }
+
+    const result = await libraryColl.updateOne({ date }, { $set: updateFields });
+    if (result.matchedCount === 0) {
+      return res.json({ success: false, error: 'ไม่พบคลัง instruction ของวันที่ระบุ' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Route: ลบ instruction library ตามวันที่ระบุ
+app.delete('/admin/instructions/library/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const libraryColl = db.collection("instruction_library");
+
+    const result = await libraryColl.deleteOne({ date });
+    if (result.deletedCount === 0) {
+      return res.json({ success: false, error: 'ไม่พบคลัง instruction ของวันที่ระบุ' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // Route: คืนค่า instruction library
 app.post('/admin/instructions/restore/:date', async (req, res) => {
   try {

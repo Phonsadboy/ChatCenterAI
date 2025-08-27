@@ -1096,16 +1096,16 @@
             }
 
             let html = '<div class="list-group">';
-            
+
             libraries.forEach(library => {
                 const libraryDate = new Date(library.savedAt);
                 const isManual = library.type === 'manual';
                 const isBeforeRestore = library.type === 'before_restore';
-                
+
                 let typeIcon = 'fas fa-clock';
                 let typeText = 'อัตโนมัติ';
                 let typeClass = 'text-info';
-                
+
                 if (isManual) {
                     typeIcon = 'fas fa-user';
                     typeText = 'ด้วยตนเอง';
@@ -1135,9 +1135,21 @@
                                     บันทึกเมื่อ: ${libraryDate.toLocaleString('th-TH')}
                                 </small>
                             </div>
-                            <div>
-                                <button class="btn btn-outline-warning btn-sm restore-library" 
-                                        data-date="${library.date}" 
+                            <div class="text-end">
+                                <button class="btn btn-outline-secondary btn-sm edit-library"
+                                        data-date="${library.date}"
+                                        data-name="${library.name || ''}"
+                                        data-description="${library.description || ''}"
+                                        title="แก้ไขชื่อ/คำอธิบาย">
+                                    <i class="fas fa-edit me-1"></i> แก้ไข
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm delete-library"
+                                        data-date="${library.date}"
+                                        title="ลบ library นี้">
+                                    <i class="fas fa-trash me-1"></i> ลบ
+                                </button>
+                                <button class="btn btn-outline-warning btn-sm restore-library"
+                                        data-date="${library.date}"
                                         data-display="${library.name || library.displayDate || library.date}"
                                         title="คืนค่า library นี้">
                                     <i class="fas fa-undo me-1"></i> คืนค่า
@@ -1147,28 +1159,85 @@
                     </div>
                 `;
             });
-            
+
             html += '</div>';
             libraryListContainer.innerHTML = html;
 
-            // Setup event listeners for restore buttons
-            setupRestoreEventListeners();
+            // Setup event listeners for library actions
+            setupLibraryEventListeners();
         }
 
-        // ฟังก์ชันจัดการปุ่มคืนค่า
-        function setupRestoreEventListeners() {
+        // ฟังก์ชันจัดการปุ่ม library (คืนค่า/แก้ไข/ลบ)
+        function setupLibraryEventListeners() {
+            // Restore
             document.querySelectorAll('.restore-library').forEach(btn => {
                 btn.addEventListener('click', function() {
                     currentRestoreLibraryDate = this.getAttribute('data-date');
                     const displayDate = this.getAttribute('data-display');
-                    
+
                     // อัพเดตข้อความใน confirmation modal
                     const modalBody = document.querySelector('#restoreConfirmModal .modal-body');
                     modalBody.querySelector('p').innerHTML = `<strong>คุณกำลังจะคืนค่า instructions จาก library: ${displayDate}</strong>`;
-                    
+
                     // เปิด confirmation modal
                     const restoreModal = new bootstrap.Modal(document.getElementById('restoreConfirmModal'));
                     restoreModal.show();
+                });
+            });
+
+            // Edit name/description
+            document.querySelectorAll('.edit-library').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    const date = this.getAttribute('data-date');
+                    const currentName = this.getAttribute('data-name') || '';
+                    const currentDesc = this.getAttribute('data-description') || '';
+
+                    const newName = prompt('ชื่อคลังใหม่:', currentName);
+                    if (newName === null) return;
+                    const newDesc = prompt('คำอธิบายใหม่:', currentDesc);
+                    if (newDesc === null) return;
+
+                    try {
+                        const response = await fetch(`/admin/instructions/library/${date}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: newName, description: newDesc })
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            showNotification('อัพเดตข้อมูลคลังเรียบร้อยแล้ว', 'success');
+                            await loadLibraryList();
+                        } else {
+                            showNotification('ไม่สามารถอัพเดตคลังได้: ' + data.error, 'error');
+                        }
+                    } catch (error) {
+                        console.error('Error updating library:', error);
+                        showNotification('เกิดข้อผิดพลาดในการอัพเดตคลัง', 'error');
+                    }
+                });
+            });
+
+            // Delete library
+            document.querySelectorAll('.delete-library').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    const date = this.getAttribute('data-date');
+                    if (!confirm('ต้องการลบคลังนี้หรือไม่?')) return;
+
+                    try {
+                        const response = await fetch(`/admin/instructions/library/${date}`, {
+                            method: 'DELETE'
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            showNotification('ลบคลังเรียบร้อยแล้ว', 'success');
+                            await loadLibraryList();
+                        } else {
+                            showNotification('ไม่สามารถลบคลังได้: ' + data.error, 'error');
+                        }
+                    } catch (error) {
+                        console.error('Error deleting library:', error);
+                        showNotification('เกิดข้อผิดพลาดในการลบคลัง', 'error');
+                    }
                 });
             });
         }
