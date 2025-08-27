@@ -1386,6 +1386,7 @@ async function ensureSettings() {
     { key: "textModel", value: "gpt-5" },
     { key: "visionModel", value: "gpt-5" },
     { key: "maxImagesPerMessage", value: 3 },
+    { key: "defaultInstruction", value: "" },
     { key: "enableChatHistory", value: true },
     { key: "enableAdminNotifications", value: true },
     { key: "systemMode", value: "production" }
@@ -3149,6 +3150,7 @@ app.get('/api/settings', async (req, res) => {
       textModel: "gpt-5",
       visionModel: "gpt-5",
       maxImagesPerMessage: 3,
+      defaultInstruction: '',
       aiEnabled: true,
       enableChatHistory: true,
       enableAdminNotifications: true,
@@ -3217,7 +3219,7 @@ app.post('/api/settings/chat', async (req, res) => {
 // Save AI settings
 app.post('/api/settings/ai', async (req, res) => {
   try {
-    const { textModel, visionModel, maxImagesPerMessage } = req.body;
+    const { textModel, visionModel, maxImagesPerMessage, defaultInstruction } = req.body;
     
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -3254,6 +3256,12 @@ app.post('/api/settings/ai', async (req, res) => {
     await coll.updateOne(
       { key: "maxImagesPerMessage" },
       { $set: { value: maxImagesPerMessage } },
+      { upsert: true }
+    );
+
+    await coll.updateOne(
+      { key: "defaultInstruction" },
+      { $set: { value: defaultInstruction || "" } },
       { upsert: true }
     );
     
