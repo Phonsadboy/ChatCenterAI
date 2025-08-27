@@ -1910,7 +1910,10 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
       return res.status(404).json({ error: 'Facebook Bot ไม่พบหรือไม่เปิดใช้งาน' });
     }
 
-    // Handle Facebook webhook events
+    // Respond immediately to avoid Facebook retries
+    res.status(200).json({ status: 'EVENT_RECEIVED' });
+
+    // Process webhook events asynchronously
     if (req.body.object === 'page') {
       for (let entry of req.body.entry) {
         for (let messagingEvent of entry.messaging) {
@@ -1965,11 +1968,11 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
         }
       }
     }
-
-    res.json({ status: 'OK' });
   } catch (err) {
     console.error('Error handling Facebook webhook:', err);
-    res.status(500).json({ error: 'เกิดข้อผิดพลาดในการประมวลผล webhook' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'เกิดข้อผิดพลาดในการประมวลผล webhook' });
+    }
   }
 });
 
