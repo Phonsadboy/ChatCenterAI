@@ -76,6 +76,9 @@ app.use(cors());
 // Static assets (CSS/JS/img)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Avoid favicon 404s in environments without a favicon
+app.get('/favicon.ico', (req, res) => res.sendStatus(204));
+
 // View engine setup
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
