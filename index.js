@@ -1953,10 +1953,7 @@ async function processFacebookMessageWithAI(message, userId, botName) {
     let assistantReply = response.choices[0].message.content;
     
     // Apply message filtering if enabled
-    const settings = await getSettings();
-    if (settings.enableMessageFiltering) {
-      assistantReply = filterMessage(assistantReply, settings);
-    }
+    assistantReply = await filterMessage(assistantReply);
     
     return assistantReply.trim();
   } catch (error) {
