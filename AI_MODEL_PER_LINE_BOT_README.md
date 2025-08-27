@@ -53,13 +53,17 @@ const aiModel = lineBot.aiModel || 'gpt-5';
 // ดึง system prompt จาก instructions ที่เลือก
 let systemPrompt = 'คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้';
 if (lineBot.selectedInstructions && lineBot.selectedInstructions.length > 0) {
-  // ดึง instructions จากคลัง
-  const instructions = await instructionColl.find({
+  // ดึง instructions จากคลังและแปลงเป็นข้อความ
+  const libraries = await instructionColl.find({
     _id: { $in: lineBot.selectedInstructions.map(id => new ObjectId(id)) }
   }).toArray();
-  
-  if (instructions.length > 0) {
-    systemPrompt = instructions.map(inst => inst.instructions).join('\n\n');
+
+  const allInstr = libraries.flatMap(lib => lib.instructions || []);
+  const instrTexts = allInstr
+    .map(i => i.type === 'table' ? tableInstructionToMarkdown(i) : i.content)
+    .filter(Boolean);
+  if (instrTexts.length > 0) {
+    systemPrompt = instrTexts.join('\n\n');
   }
 }
 
