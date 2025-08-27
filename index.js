@@ -1978,29 +1978,38 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
 
 // Helper function to send Facebook message
 async function sendFacebookMessage(recipientId, message, accessToken) {
+  // แยกข้อความตามตัวแบ่ง [cut] เพื่อส่งเป็นหลายข้อความ
+  const parts = String(message)
+    .split("[cut]")
+    .map(part => part.trim())
+    .filter(part => part.length > 0);
+
   const maxLength = 2000;
-  const chunks = [];
-  for (let i = 0; i < message.length; i += maxLength) {
-    chunks.push(message.slice(i, i + maxLength));
-  }
 
-  for (const chunk of chunks) {
-    try {
-      const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
-        recipient: { id: recipientId },
-        message: { text: chunk }
-      }, {
-        params: { access_token: accessToken },
-        headers: { 'Content-Type': 'application/json' }
-      });
+  for (const part of parts) {
+    const chunks = [];
+    for (let i = 0; i < part.length; i += maxLength) {
+      chunks.push(part.slice(i, i + maxLength));
+    }
 
-      console.log('Facebook message sent successfully:', response.data);
-    } catch (error) {
-      const status = error.response?.status;
-      const fbMessage = error.response?.data?.error?.message || error.message;
-      const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
-      console.error('Error sending Facebook message:', conciseError);
-      throw new Error(conciseError);
+    for (const chunk of chunks) {
+      try {
+        const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+          recipient: { id: recipientId },
+          message: { text: chunk }
+        }, {
+          params: { access_token: accessToken },
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        console.log('Facebook message sent successfully:', response.data);
+      } catch (error) {
+        const status = error.response?.status;
+        const fbMessage = error.response?.data?.error?.message || error.message;
+        const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
+        console.error('Error sending Facebook message:', conciseError);
+        throw new Error(conciseError);
+      }
     }
   }
 }
