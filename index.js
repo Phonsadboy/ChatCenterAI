@@ -2081,7 +2081,7 @@ app.post('/api/line-bots', async (req, res) => {
     // Generate unique webhook URL if not provided
     let finalWebhookUrl = webhookUrl;
     if (!finalWebhookUrl) {
-      const baseUrl = req.protocol + '://' + req.get('host');
+      const baseUrl = process.env.PUBLIC_BASE_URL || ('https://' + req.get('host'));
       const uniqueId = Date.now().toString(36) + Math.random().toString(36).substr(2);
       finalWebhookUrl = `${baseUrl}/webhook/line/${uniqueId}`;
     }
@@ -2284,7 +2284,7 @@ app.post('/api/facebook-bots/init', async (req, res) => {
     const id = insert.insertedId;
 
     // Build webhook URL using bot id
-    const baseUrl = req.protocol + '://' + req.get('host');
+    const baseUrl = process.env.PUBLIC_BASE_URL || ('https://' + req.get('host'));
     const webhookUrl = `${baseUrl}/webhook/facebook/${id.toString()}`;
 
     await coll.updateOne({ _id: id }, { $set: { webhookUrl } });
@@ -2351,7 +2351,7 @@ app.post('/api/facebook-bots', async (req, res) => {
     // Generate unique webhook URL if not provided
     let finalWebhookUrl = webhookUrl;
     if (!finalWebhookUrl) {
-      const baseUrl = req.protocol + '://' + req.get('host');
+      const baseUrl = process.env.PUBLIC_BASE_URL || ('https://' + req.get('host'));
       const uniqueId = Date.now().toString(36) + Math.random().toString(36).substr(2);
       finalWebhookUrl = `${baseUrl}/webhook/facebook/${uniqueId}`;
     }

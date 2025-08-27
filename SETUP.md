@@ -21,6 +21,9 @@ ADMIN_PASSWORD=admin123
 
 # Port Configuration
 PORT=3000
+
+# Public Base URL (โดเมนที่ Facebook เข้าถึงได้)
+PUBLIC_BASE_URL=https://your.domain.com
 ```
 
 ### 2. แก้ไขค่าตัวแปร
@@ -33,6 +36,7 @@ OPENAI_API_KEY=dummy_key
 MONGO_URI=mongodb://localhost:27017/chatbot
 ADMIN_PASSWORD=admin123
 PORT=3000
+PUBLIC_BASE_URL=http://localhost:3000
 ```
 
 **สำหรับการใช้งานจริง:**
@@ -42,6 +46,7 @@ PORT=3000
 - `MONGO_URI` - Connection string ของ MongoDB
 - `ADMIN_PASSWORD` - รหัสผ่านสำหรับเข้าระบบ Admin
 - `PORT` - Port ที่ต้องการให้แอปรัน (default: 3000)
+- `PUBLIC_BASE_URL` - โดเมน https ที่ Facebook เข้าถึงได้ (เช่น https://your.domain.com)
 
 ### 3. ติดตั้ง Dependencies
 ```bash
