@@ -646,23 +646,19 @@
                     });
                 }
 
-                // จัดการข้อความรูปภาพสำหรับผู้ใช้
+                // จัดการข้อความสำหรับผู้ใช้
                 if (message.role === 'user') {
                     const processed = processQueueMessage(message.content);
-                    
+
                     if (processed.type === 'queue' || processed.type === 'single_image' || processed.type === 'single_text') {
                         displayContent = createCompactMessageHTML(processed);
-                    } else if (processed.type === 'error') {
-                        // กรณีแปลง JSON ไม่ได้ ให้แสดงเป็นข้อความปกติ
-                        console.log('ไม่สามารถแปลง JSON ได้:', processed.error);
-                        displayContent = escapeHtml(message.content);
                     } else {
-                        // กรณีอื่นๆ ให้แสดงเป็นข้อความปกติ
-                        displayContent = escapeHtml(message.content);
+                        // กรณีอื่นๆ ให้แสดงข้อความธรรมดา และรองรับการเว้นบรรทัด
+                        displayContent = `<div class="message-text">${escapeHtml(message.content)}</div>`;
                     }
                 } else {
-                    // สำหรับข้อความที่ไม่ใช่ผู้ใช้ ให้ escape HTML
-                    displayContent = escapeHtml(displayContent);
+                    // สำหรับข้อความที่ไม่ใช่ผู้ใช้ ให้ escape HTML และรองรับการเว้นบรรทัด
+                    displayContent = `<div class="message-text">${escapeHtml(displayContent)}</div>`;
                 }
                 
                 return `
@@ -953,20 +949,35 @@
                 } else if (parsed && parsed.data) {
                     // กรณีเป็นข้อความเดี่ยวที่มี data
                     if (parsed.data.type === 'image') {
-                        return { 
-                            textParts: [], 
-                            imageParts: [parsed.data], 
-                            type: 'single_image' 
+                        return {
+                            textParts: [],
+                            imageParts: [parsed.data],
+                            type: 'single_image'
                         };
                     } else if (parsed.data.type === 'text') {
-                        return { 
-                            textParts: [parsed.data.text], 
-                            imageParts: [], 
-                            type: 'single_text' 
+                        return {
+                            textParts: [parsed.data.text],
+                            imageParts: [],
+                            type: 'single_text'
+                        };
+                    }
+                } else if (parsed && parsed.type) {
+                    // รองรับโครงสร้างแบบไม่มี data wrapper
+                    if (parsed.type === 'image' && parsed.base64) {
+                        return {
+                            textParts: [],
+                            imageParts: [parsed],
+                            type: 'single_image'
+                        };
+                    } else if (parsed.type === 'text' && parsed.text) {
+                        return {
+                            textParts: [parsed.text],
+                            imageParts: [],
+                            type: 'single_text'
                         };
                     }
                 }
-                
+
                 return { textParts: [], imageParts: [], type: 'unknown' };
             } catch (e) {
                 return { textParts: [], imageParts: [], type: 'error', error: e.message };
