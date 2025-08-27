@@ -23,6 +23,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const XLSX = require('xlsx');
 const multer = require('multer');
+const chatHistory = require('./utils/chatHistory');
 
 const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -276,25 +277,66 @@ async function getLineUserProfile(userId) {
   }
 }
 
-// ฟังก์ชันสำหรับบันทึกหรืออัปเดตข้อมูลผู้ใช้
-async function saveOrUpdateUserProfile(userId) {
+// ฟังก์ชันสำหรับดึงข้อมูลโปรไฟล์จาก Facebook API
+async function getFacebookUserProfile(userId, accessToken) {
   try {
-    const profile = await getLineUserProfile(userId);
+    const res = await axios.get(`https://graph.facebook.com/${userId}`, {
+      params: {
+        access_token: accessToken,
+        fields: 'first_name,last_name,profile_pic'
+      }
+    });
+
+    const data = res.data || {};
+    const displayName = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+
+    return {
+      userId,
+      displayName: displayName || userId.substring(0, 8) + '...',
+      pictureUrl: data.profile_pic || null,
+      statusMessage: null
+    };
+  } catch (error) {
+    console.error(`[ERROR] ไม่สามารถดึงข้อมูลโปรไฟล์จาก Facebook API สำหรับผู้ใช้ ${userId}:`, error.message);
+    return {
+      userId,
+      displayName: userId.substring(0, 8) + '...',
+      pictureUrl: null,
+      statusMessage: null
+    };
+  }
+}
+
+// ฟังก์ชันสำหรับบันทึกหรืออัปเดตข้อมูลผู้ใช้
+async function saveOrUpdateUserProfile(userId, platform = 'line', extra = {}) {
+  try {
+    let profile;
+    if (platform === 'facebook') {
+      profile = await getFacebookUserProfile(userId, extra.accessToken);
+    } else {
+      profile = await getLineUserProfile(userId);
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("user_profiles");
-    
+
+    const updateData = {
+      ...profile,
+      platform,
+      updatedAt: new Date()
+    };
+
+    if (extra.facebookBotId) {
+      updateData.facebookBotId = extra.facebookBotId;
+    }
+
     await coll.updateOne(
       { userId: profile.userId },
-      { 
-        $set: { 
-          ...profile,
-          updatedAt: new Date()
-        }
-      },
+      { $set: updateData },
       { upsert: true }
     );
-    
+
     return profile;
   } catch (error) {
     console.error(`[ERROR] ไม่สามารถบันทึกข้อมูลผู้ใช้ ${userId}:`, error.message);
@@ -302,24 +344,24 @@ async function saveOrUpdateUserProfile(userId) {
   }
 }
 
-async function saveChatHistory(userId, userMsg, assistantMsg) {
+async function saveChatHistory(userId, userMsg, assistantMsg, platform = 'line', extra = {}) {
   // ตรวจสอบการตั้งค่าการบันทึกประวัติ
   const enableChatHistory = await getSettingValue('enableChatHistory', true);
-  
+
   if (!enableChatHistory) {
     console.log(`[LOG] การบันทึกประวัติแชทถูกปิดใช้งานสำหรับผู้ใช้: ${userId}`);
     return;
   }
-  
+
   // บันทึกหรืออัปเดตข้อมูลผู้ใช้ก่อน
-  await saveOrUpdateUserProfile(userId);
-  
+  await saveOrUpdateUserProfile(userId, platform, extra);
+
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection("chat_history");
   let userMsgToSave = typeof userMsg === "string" ? userMsg : JSON.stringify(userMsg);
-  await coll.insertOne({ senderId: userId, role: "user", content: userMsgToSave, timestamp: new Date() });
-  await coll.insertOne({ senderId: userId, role: "assistant", content: assistantMsg, timestamp: new Date() });
+  await coll.insertOne({ senderId: userId, role: "user", content: userMsgToSave, timestamp: new Date(), platform });
+  await coll.insertOne({ senderId: userId, role: "assistant", content: assistantMsg, timestamp: new Date(), platform });
 }
 
 async function getUserStatus(userId) {
@@ -1874,6 +1916,12 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
             try {
               const aiResponse = await processFacebookMessageWithAI(message, senderId, facebookBot.name);
               await sendFacebookMessage(senderId, aiResponse, facebookBot.accessToken);
+
+              // บันทึกประวัติการสนทนาและแจ้งเตือนแอดมิน
+              await saveChatHistory(senderId, message, aiResponse, 'facebook', { accessToken: facebookBot.accessToken, facebookBotId: facebookBot._id });
+              chatHistory.addMessage(senderId, 'user', message);
+              chatHistory.addMessage(senderId, 'assistant', aiResponse);
+              await notifyAdminsNewMessage(senderId, { content: message, role: 'user', timestamp: new Date() });
             } catch (error) {
               console.error(`[Facebook Bot: ${facebookBot.name}] Error processing message:`, error);
               await sendFacebookMessage(senderId, 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ', facebookBot.accessToken);
@@ -1900,10 +1948,17 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
       params: { access_token: accessToken },
       headers: { 'Content-Type': 'application/json' }
     });
-    
+
     console.log('Facebook message sent successfully:', response.data);
   } catch (error) {
-    console.error('Error sending Facebook message:', error);
+    if (error.response) {
+      console.error('Error sending Facebook message:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else {
+      console.error('Error sending Facebook message:', error.message);
+    }
     throw error;
   }
 }
@@ -1940,8 +1995,10 @@ async function processFacebookMessageWithAI(message, userId, botName) {
     // สร้าง OpenAI client และเรียก API
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     
+    const history = chatHistory.getHistory(userId);
     const messages = [
       { role: "system", content: systemPrompt },
+      ...history,
       { role: "user", content: message }
     ];
     
@@ -2982,36 +3039,55 @@ app.post('/admin/chat/send', async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("chat_history");
-    
+    const profileColl = db.collection("user_profiles");
+
+    const userProfile = await profileColl.findOne({ userId });
+    const platform = userProfile?.platform || 'line';
+
     const messageDoc = {
       senderId: userId,
       role: "assistant",
       content: message,
       timestamp: new Date(),
-      source: "admin_chat" // ระบุว่ามาจากแอดมิน
+      source: "admin_chat", // ระบุว่ามาจากแอดมิน
+      platform
     };
-    
+
     await coll.insertOne(messageDoc);
-    
+
     // รีเซ็ต unread count เมื่อแอดมินตอบกลับ
     await resetUserUnreadCount(userId);
-    
-    // Send message via LINE if possible
-    try {
-      // ตรวจสอบว่าผู้ใช้มี LINE ID หรือไม่
-      const userStatus = await getUserStatus(userId);
-      if (userStatus) {
-        // ส่งข้อความไปยัง LINE (ไม่ใช้ replyToken เพราะไม่มี)
-        // ใช้ push message แทน
-        await lineClient.pushMessage(userId, {
-          type: 'text',
-          text: message
-        });
-        console.log(`[Admin Chat] ส่งข้อความไปยัง LINE user ${userId}: ${message.substring(0, 50)}...`);
+
+    // เก็บประวัติในหน่วยความจำ
+    chatHistory.addMessage(userId, 'assistant', message);
+
+    if (platform === 'facebook') {
+      try {
+        const fbColl = db.collection("facebook_bots");
+        let fbBot = null;
+        if (userProfile && userProfile.facebookBotId) {
+          fbBot = await fbColl.findOne({ _id: new ObjectId(userProfile.facebookBotId) });
+        }
+        if (fbBot) {
+          await sendFacebookMessage(userId, message, fbBot.accessToken);
+          console.log(`[Admin Chat] ส่งข้อความไปยัง Facebook user ${userId}: ${message.substring(0, 50)}...`);
+        }
+      } catch (fbError) {
+        console.log(`[Admin Chat] ไม่สามารถส่งไปยัง Facebook ได้: ${fbError.message}`);
       }
-    } catch (lineError) {
-      console.log(`[Admin Chat] ไม่สามารถส่งไปยัง LINE ได้: ${lineError.message}`);
-      // ไม่ return error เพราะข้อความยังบันทึกลง database ได้
+    } else {
+      try {
+        const userStatus = await getUserStatus(userId);
+        if (userStatus) {
+          await lineClient.pushMessage(userId, {
+            type: 'text',
+            text: message
+          });
+          console.log(`[Admin Chat] ส่งข้อความไปยัง LINE user ${userId}: ${message.substring(0, 50)}...`);
+        }
+      } catch (lineError) {
+        console.log(`[Admin Chat] ไม่สามารถส่งไปยัง LINE ได้: ${lineError.message}`);
+      }
     }
     
     // Emit to socket clients
@@ -3034,6 +3110,7 @@ app.delete('/admin/chat/clear/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     await clearUserChatHistory(userId);
+    chatHistory.clearHistory(userId);
     
     // รีเซ็ต unread count เมื่อล้างประวัติ
     await resetUserUnreadCount(userId);
