@@ -1903,8 +1903,11 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
     
     console.log('Facebook message sent successfully:', response.data);
   } catch (error) {
-    console.error('Error sending Facebook message:', error);
-    throw error;
+    const status = error.response?.status;
+    const fbMessage = error.response?.data?.error?.message || error.message;
+    const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
+    console.error('Error sending Facebook message:', conciseError);
+    throw new Error(conciseError);
   }
 }
 
