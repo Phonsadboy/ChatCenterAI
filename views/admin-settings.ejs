@@ -684,7 +684,7 @@
                                 </div>
 
                                 <!-- Facebook Bot List -->
-                                <div id="facebookBotList">
+                                <div id="facebookBotList" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
                                     <!-- Facebook Bot items will be loaded here -->
                                 </div>
 
@@ -2066,12 +2066,16 @@
                 console.log('Facebook Bot List container not found');
                 return;
             }
-            
+
             if (!facebookBots || facebookBots.length === 0) {
                 container.innerHTML = `
-                    <div class="alert alert-info">
-                        <i class="fas fa-info-circle me-2"></i>
-                        ยังไม่มี Facebook Bot ในระบบ
+                    <div class="text-center py-5">
+                        <i class="fab fa-facebook fa-4x text-muted mb-3"></i>
+                        <h5 class="text-muted">ยังไม่มี Facebook Bot ในระบบ</h5>
+                        <p class="text-muted">เริ่มต้นด้วยการเพิ่ม Facebook Bot ใหม่</p>
+                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                            <i class="fas fa-plus me-2"></i>เพิ่ม Facebook Bot ใหม่
+                        </button>
                     </div>
                 `;
                 return;
@@ -2079,71 +2083,61 @@
 
             let html = '';
             facebookBots.forEach(bot => {
-                const statusClass = bot.status === 'active' ? 'success' : 
-                                  bot.status === 'inactive' ? 'warning' : 'secondary';
-                const statusText = bot.status === 'active' ? 'ใช้งาน' : 
-                                 bot.status === 'inactive' ? 'ปิดใช้งาน' : 'บำรุงรักษา';
-                const defaultBadge = bot.isDefault ? ' <span class="badge bg-primary">Default</span>' : '';
+                const statusClass = bot.status === 'active' ? 'success' :
+                                    bot.status === 'inactive' ? 'warning' : 'secondary';
+                const statusText = bot.status === 'active' ? 'ใช้งาน' :
+                                   bot.status === 'inactive' ? 'ปิดใช้งาน' : 'บำรุงรักษา';
+                const defaultBadge = bot.isDefault ? '<span class="badge bg-primary ms-2">Default</span>' : '';
+                const instructionsCount = bot.selectedInstructions ? bot.selectedInstructions.length : 0;
 
                 html += `
-                    <div class="card mb-3 shadow-sm">
-                        <div class="card-body">
-                            <div class="row align-items-center">
-                                <div class="col-md-6">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <h6 class="mb-0">
-                                                <i class="fab fa-facebook me-2 text-primary"></i>
-                                                ${bot.name} ${defaultBadge}
-                                            </h6>
-                                            <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
-                                        </div>
-                                        <div class="d-flex align-items-center gap-2">
-                                            <span class="badge bg-${statusClass}">${statusText}</span>
-                                            <div class="dropdown">
-                                                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                                                    <i class="fas fa-ellipsis-v"></i>
-                                                </button>
-                                                <ul class="dropdown-menu">
-                                                    <li><a class="dropdown-item" href="#" onclick="editFacebookBot('${bot._id}')">
-                                                        <i class="fas fa-edit me-2"></i>แก้ไข
-                                                    </a></li>
-                                                    <li><a class="dropdown-item" href="#" onclick="manageFacebookInstructions('${bot._id}')">
-                                                        <i class="fas fa-book me-2"></i>จัดการ Instructions
-                                                    </a></li>
-                                                    <li><a class="dropdown-item" href="#" onclick="testFacebookBot('${bot._id}')">
-                                                        <i class="fas fa-play me-2"></i>ทดสอบ
-                                                    </a></li>
-                                                    <li><hr class="dropdown-divider"></li>
-                                                    <li><a class="dropdown-item text-danger" href="#" onclick="deleteFacebookBot('${bot._id}')">
-                                                        <i class="fas fa-trash me-2"></i>ลบ
-                                                    </a></li>
-                                                </ul>
-                                            </div>
-                                        </div>
+                    <div class="col">
+                        <div class="card h-100 border-0 shadow-sm">
+                            <div class="card-header bg-white border-bottom">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-0">
+                                            <i class="fab fa-facebook me-2 text-primary"></i>${bot.name} ${defaultBadge}
+                                        </h6>
+                                        <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="badge bg-${statusClass}">${statusText}</span>
+                                        <button class="btn btn-sm btn-outline-info" title="จัดการ Instructions" onclick="manageFacebookInstructions('${bot._id}')">
+                                            <i class="fas fa-book me-1"></i>Instructions
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" title="แก้ไข" onclick="editFacebookBot('${bot._id}')">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary" title="ทดสอบ" onclick="testFacebookBot('${bot._id}')">
+                                            <i class="fas fa-vial"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" title="ลบ" onclick="deleteFacebookBot('${bot._id}')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
                                     </div>
                                 </div>
-                                <div class="col-md-6">
-                                    <div class="row">
-                                        <div class="col-md-4">
-                                            <div class="d-flex align-items-center mb-2">
-                                                <small class="text-muted d-block">AI Model</small>
-                                                <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
-                                            </div>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-6 col-md-4">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <small class="text-muted d-block me-2">AI Model</small>
+                                            <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
                                         </div>
-                                        <div class="col-md-4">
-                                            <div class="d-flex align-items-center mb-2">
-                                                <small class="text-muted d-block">Page ID</small>
-                                                <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.pageId || 'ไม่ระบุ'}">
-                                                    ${bot.pageId ? bot.pageId.substring(0, 10) + '...' : 'ไม่ระบุ'}
-                                                </small>
-                                            </div>
+                                    </div>
+                                    <div class="col-6 col-md-4">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <small class="text-muted d-block me-2">Page ID</small>
+                                            <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.pageId || 'ไม่ระบุ'}">
+                                                ${bot.pageId ? bot.pageId.substring(0, 10) + '...' : 'ไม่ระบุ'}
+                                            </small>
                                         </div>
-                                        <div class="col-md-4">
-                                            <div class="d-flex align-items-center mb-2">
-                                                <small class="text-muted d-block">Instructions</small>
-                                                <span class="badge bg-secondary">${bot.selectedInstructions ? bot.selectedInstructions.length : 0}</span>
-                                            </div>
+                                    </div>
+                                    <div class="col-6 col-md-4">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <small class="text-muted d-block me-2">Instructions</small>
+                                            <span class="badge bg-secondary">${instructionsCount}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -2152,7 +2146,6 @@
                     </div>
                 `;
             });
-            
             container.innerHTML = html;
         }
 
