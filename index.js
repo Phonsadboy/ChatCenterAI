@@ -1806,7 +1806,37 @@ app.post('/webhook/line/:botId', async (req, res) => {
 
 // ============================ Facebook Bot Webhook Handler ============================
 
-// Dynamic Facebook Bot webhook handler
+// Facebook Webhook verification (GET) and events (POST)
+app.get('/webhook/facebook/:botId', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+    
+    // Find the Facebook Bot by ID
+    const facebookBot = ObjectId.isValid(botId) ? await coll.findOne({ _id: new ObjectId(botId) }) : null;
+
+    if (!facebookBot || facebookBot.status !== 'active') {
+      // สำหรับขั้นตอน verify อนุญาต status อื่น ๆ ได้
+      if (!facebookBot) {
+        return res.status(404).send('Facebook Bot not found');
+      }
+    }
+
+    // Handle Facebook webhook verification
+    if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === facebookBot.verifyToken) {
+      return res.status(200).send(req.query['hub.challenge']);
+    }
+
+    return res.status(400).send('Invalid verification request');
+  } catch (err) {
+    console.error('Error handling Facebook webhook verification:', err);
+    res.status(500).send('Server error');
+  }
+});
+
+// Dynamic Facebook Bot webhook handler (POST events)
 app.post('/webhook/facebook/:botId', async (req, res) => {
   try {
     const { botId } = req.params;
@@ -1814,21 +1844,11 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
     
-    // Find the Facebook Bot by webhook URL or ID
-    const facebookBot = await coll.findOne({
-      $or: [
-        { webhookUrl: { $regex: botId, $options: 'i' } },
-        { _id: new ObjectId(botId) }
-      ]
-    });
+    // Find the Facebook Bot by ID
+    const facebookBot = ObjectId.isValid(botId) ? await coll.findOne({ _id: new ObjectId(botId) }) : null;
 
     if (!facebookBot || facebookBot.status !== 'active') {
       return res.status(404).json({ error: 'Facebook Bot ไม่พบหรือไม่เปิดใช้งาน' });
-    }
-
-    // Handle Facebook webhook verification
-    if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === facebookBot.verifyToken) {
-      return res.status(200).send(req.query['hub.challenge']);
     }
 
     // Handle Facebook webhook events
@@ -2224,6 +2244,48 @@ app.put('/api/line-bots/:id/instructions', async (req, res) => {
 });
 
 // ============================ Facebook Bot API Endpoints ============================
+
+// Initialize a Facebook Bot stub for webhook verification
+app.post('/api/facebook-bots/init', async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+
+    const providedVerifyToken = (req.body && req.body.verifyToken) || null;
+    const verifyToken = providedVerifyToken || ('vt_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10));
+
+    // Create minimal bot stub
+    const stub = {
+      name: '',
+      description: '',
+      pageId: '',
+      accessToken: '',
+      webhookUrl: '', // set after _id known
+      verifyToken,
+      status: 'setup',
+      isDefault: false,
+      aiModel: 'gpt-5',
+      selectedInstructions: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const insert = await coll.insertOne(stub);
+    const id = insert.insertedId;
+
+    // Build webhook URL using bot id
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const webhookUrl = `${baseUrl}/webhook/facebook/${id.toString()}`;
+
+    await coll.updateOne({ _id: id }, { $set: { webhookUrl } });
+
+    return res.json({ id: id.toString(), webhookUrl, verifyToken });
+  } catch (err) {
+    console.error('Error initializing facebook bot stub:', err);
+    res.status(500).json({ error: 'ไม่สามารถเตรียมข้อมูลสำหรับยืนยัน Webhook ได้' });
+  }
+});
 
 // Get all Facebook Bots
 app.get('/api/facebook-bots', async (req, res) => {

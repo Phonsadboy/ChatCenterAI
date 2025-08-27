@@ -2149,19 +2149,30 @@
             document.getElementById('facebookBotId').value = '';
             document.getElementById('addFacebookBotModalLabel').innerHTML = '<i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่';
 
-            // Generate real, ready-to-use Webhook URL and Verify Token
-            const baseUrl = window.location.origin;
-            const uniqueId = 'fb-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-            const verifyToken = 'vt_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-
-            const webhookInput = document.getElementById('facebookWebhookUrl');
-            const verifyTokenInput = document.getElementById('facebookVerifyToken');
-            if (webhookInput) {
-                webhookInput.value = `${baseUrl}/webhook/facebook/${uniqueId}`;
-            }
-            if (verifyTokenInput) {
-                verifyTokenInput.value = verifyToken;
-            }
+            // Request server to create a stub and return real webhook URL + verify token
+            (async () => {
+                try {
+                    const res = await fetch('/api/facebook-bots/init', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({})
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        document.getElementById('facebookBotId').value = data.id;
+                        const webhookInput = document.getElementById('facebookWebhookUrl');
+                        const verifyTokenInput = document.getElementById('facebookVerifyToken');
+                        if (webhookInput) webhookInput.value = data.webhookUrl;
+                        if (verifyTokenInput) verifyTokenInput.value = data.verifyToken;
+                        showAlert('สร้าง Webhook URL และ Verify Token สำเร็จ นำไปยืนยันใน Facebook App ได้เลย', 'success');
+                    } else {
+                        showAlert('ไม่สามารถสร้าง Webhook URL / Verify Token ได้', 'danger');
+                    }
+                } catch (e) {
+                    console.error('init facebook bot error', e);
+                    showAlert('เกิดข้อผิดพลาดในการเตรียมข้อมูลยืนยัน Webhook', 'danger');
+                }
+            })();
         }
 
         // Edit Facebook Bot
@@ -2254,6 +2265,12 @@
             };
 
             const botId = formData.get('id');
+            // enforce required after verification
+            if (!botData.pageId || !botData.accessToken) {
+                showAlert('กรุณากรอก Facebook Page ID และ Page Access Token (หลังยืนยัน Webhook สำเร็จ)', 'warning');
+                return;
+            }
+
             const url = botId ? `/api/facebook-bots/${botId}` : '/api/facebook-bots';
             const method = botId ? 'PUT' : 'POST';
 
