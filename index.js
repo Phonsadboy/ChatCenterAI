@@ -1828,8 +1828,14 @@ app.get('/webhook/facebook/:botId', async (req, res) => {
     }
 
     // Handle Facebook webhook verification
-    if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === facebookBot.verifyToken) {
-      return res.status(200).send(req.query['hub.challenge']);
+    if (req.query['hub.mode'] === 'subscribe') {
+      if (req.query['hub.verify_token'] === facebookBot.verifyToken) {
+        return res.status(200).send(req.query['hub.challenge']);
+      } else {
+        console.warn(
+          `[Facebook Bot: ${facebookBot.name}] Invalid verify token received: ${req.query['hub.verify_token']}`
+        );
+      }
     }
 
     return res.status(400).send('Invalid verification request');
