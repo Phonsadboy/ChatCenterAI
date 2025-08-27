@@ -1866,6 +1866,10 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
     if (req.body.object === 'page') {
       for (let entry of req.body.entry) {
         for (let messagingEvent of entry.messaging) {
+          if (messagingEvent.message?.is_echo) {
+            continue;
+          }
+
           if (messagingEvent.message && messagingEvent.message.text) {
             const senderId = messagingEvent.sender.id;
             const message = messagingEvent.message.text;
