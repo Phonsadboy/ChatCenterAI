@@ -18,7 +18,6 @@ const socketIo = require('socket.io');
 const helmet = require('helmet');
 const cors = require('cors');
 const moment = require('moment-timezone');
-const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
 const crypto = require('crypto');
