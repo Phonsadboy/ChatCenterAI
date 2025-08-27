@@ -589,7 +589,7 @@
                                                     <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
                                                         <i class="fas fa-plus me-1"></i>
                                                         เพิ่ม Facebook Bot
-                                                    </button>
+                                    </button>
                                                 </div>
                                             </div>
                                         </div>
@@ -1301,6 +1301,10 @@
         // Display Line Bot AI Model information
         function displayLineBotAiModelInfo(lineBots) {
             const container = document.getElementById('lineBotAiModelInfo');
+            if (!container) {
+                console.log('Line Bot AI Model Info container not found');
+                return;
+            }
             
             if (!lineBots || lineBots.length === 0) {
                 container.innerHTML = '<p class="text-muted mb-0">ยังไม่มี Line Bot ในระบบ</p>';
@@ -1617,15 +1621,25 @@
         
         // Update Line Bot statistics
         function updateLineBotStats(lineBots) {
+            const totalBotsElement = document.getElementById('totalBots');
+            const activeBotsElement = document.getElementById('activeBots');
+            const configuredBotsElement = document.getElementById('configuredBots');
+            const inactiveBotsElement = document.getElementById('inactiveBots');
+            
+            if (!totalBotsElement || !activeBotsElement || !configuredBotsElement || !inactiveBotsElement) {
+                console.log('Line Bot statistics elements not found');
+                return;
+            }
+            
             const total = lineBots.length;
             const active = lineBots.filter(bot => bot.status === 'active').length;
             const configured = lineBots.filter(bot => bot.aiModel && bot.selectedInstructions && bot.selectedInstructions.length > 0).length;
             const inactive = total - active;
             
-            document.getElementById('totalBots').textContent = total;
-            document.getElementById('activeBots').textContent = active;
-            document.getElementById('configuredBots').textContent = configured;
-            document.getElementById('inactiveBots').textContent = inactive;
+            totalBotsElement.textContent = total;
+            activeBotsElement.textContent = active;
+            configuredBotsElement.textContent = configured;
+            inactiveBotsElement.textContent = inactive;
         }
         
         // Refresh Bot list
@@ -1673,6 +1687,11 @@
         // Display Line Bot overview
         function displayLineBotOverview(lineBots) {
             const container = document.getElementById('lineBotOverview');
+            if (!container) {
+                console.log('Line Bot Overview container not found');
+                return;
+            }
+            
             const total = lineBots.length;
             const active = lineBots.filter(bot => bot.status === 'active').length;
             
@@ -1698,6 +1717,11 @@
         // Display AI Model overview
         function displayAiModelOverview() {
             const container = document.getElementById('aiModelOverview');
+            if (!container) {
+                console.log('AI Model Overview container not found');
+                return;
+            }
+            
             container.innerHTML = `
                 <div class="d-flex justify-content-between align-items-center">
                     <div>
@@ -1715,6 +1739,11 @@
         // Display Instructions overview
         function displayInstructionsOverview(libraries) {
             const container = document.getElementById('instructionsOverview');
+            if (!container) {
+                console.log('Instructions Overview container not found');
+                return;
+            }
+            
             const total = libraries.length;
             
             if (total === 0) {
@@ -1745,6 +1774,11 @@
         // Display Security overview
         function displaySecurityOverview() {
             const container = document.getElementById('securityOverview');
+            if (!container) {
+                console.log('Security Overview container not found');
+                return;
+            }
+            
             container.innerHTML = `
                 <div class="d-flex justify-content-between align-items-center">
                     <div>
@@ -1761,9 +1795,17 @@
         
         // Update hidden words count
         function updateHiddenWordsCount() {
-            const hiddenWordsText = document.getElementById('hiddenWords').value;
+            const hiddenWordsElement = document.getElementById('hiddenWords');
+            const hiddenWordsCountElement = document.getElementById('hiddenWordsCount');
+            
+            if (!hiddenWordsElement || !hiddenWordsCountElement) {
+                console.log('Hidden words elements not found');
+                return;
+            }
+            
+            const hiddenWordsText = hiddenWordsElement.value;
             const words = hiddenWordsText.split('\n').filter(word => word.trim() !== '');
-            document.getElementById('hiddenWordsCount').textContent = words.length;
+            hiddenWordsCountElement.textContent = words.length;
         }
         
         // Add event listeners
@@ -1949,6 +1991,10 @@
         // Display Facebook Bot list
         function displayFacebookBotList(facebookBots) {
             const container = document.getElementById('facebookBotList');
+            if (!container) {
+                console.log('Facebook Bot List container not found');
+                return;
+            }
             
             if (!facebookBots || facebookBots.length === 0) {
                 container.innerHTML = `
@@ -2041,15 +2087,25 @@
 
         // Update Facebook Bot statistics
         function updateFacebookBotStats(facebookBots) {
+            const facebookBotsElement = document.getElementById('facebookBots');
+            const activeBotsElement = document.getElementById('activeBots');
+            const configuredBotsElement = document.getElementById('configuredBots');
+            const inactiveBotsElement = document.getElementById('inactiveBots');
+            
+            if (!facebookBotsElement || !activeBotsElement || !configuredBotsElement || !inactiveBotsElement) {
+                console.log('Statistics elements not found');
+                return;
+            }
+            
             const totalBots = facebookBots.length;
             const activeBots = facebookBots.filter(bot => bot.status === 'active').length;
             const configuredBots = facebookBots.filter(bot => bot.aiModel && bot.selectedInstructions && bot.selectedInstructions.length > 0).length;
             const inactiveBots = facebookBots.filter(bot => bot.status === 'inactive').length;
 
-            document.getElementById('facebookBots').textContent = totalBots;
-            document.getElementById('activeBots').textContent = activeBots;
-            document.getElementById('configuredBots').textContent = configuredBots;
-            document.getElementById('inactiveBots').textContent = inactiveBots;
+            facebookBotsElement.textContent = totalBots;
+            activeBotsElement.textContent = activeBots;
+            configuredBotsElement.textContent = configuredBots;
+            inactiveBotsElement.textContent = inactiveBots;
         }
 
         // Refresh Facebook Bot list
@@ -2060,6 +2116,10 @@
         // Display Facebook Bot overview
         function displayFacebookBotOverview(facebookBots) {
             const container = document.getElementById('facebookBotOverview');
+            if (!container) {
+                console.log('Facebook Bot Overview container not found');
+                return;
+            }
             
             if (!facebookBots || facebookBots.length === 0) {
                 container.innerHTML = '<p class="text-muted">ยังไม่มี Facebook Bot</p>';
@@ -2088,6 +2148,20 @@
             document.getElementById('facebookBotForm').reset();
             document.getElementById('facebookBotId').value = '';
             document.getElementById('addFacebookBotModalLabel').innerHTML = '<i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่';
+
+            // Generate real, ready-to-use Webhook URL and Verify Token
+            const baseUrl = window.location.origin;
+            const uniqueId = 'fb-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+            const verifyToken = 'vt_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+
+            const webhookInput = document.getElementById('facebookWebhookUrl');
+            const verifyTokenInput = document.getElementById('facebookVerifyToken');
+            if (webhookInput) {
+                webhookInput.value = `${baseUrl}/webhook/facebook/${uniqueId}`;
+            }
+            if (verifyTokenInput) {
+                verifyTokenInput.value = verifyToken;
+            }
         }
 
         // Edit Facebook Bot
