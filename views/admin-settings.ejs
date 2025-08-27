@@ -2375,40 +2375,79 @@
         }
 
         // Global variables for instruction management
-        let currentLineBotId = null;
-        let currentLineBotInstructions = [];
+        let currentBotId = null;
+        let currentBotType = null; // 'line' or 'facebook'
+        let currentBotInstructions = [];
         let availableLibraries = [];
 
         // Manage Instructions for Line Bot
         async function manageInstructions(botId) {
-            currentLineBotId = botId;
-            currentLineBotInstructions = [];
-            
+            currentBotType = 'line';
+            currentBotId = botId;
+            currentBotInstructions = [];
+
             try {
                 // Load Line Bot details
                 const botResponse = await fetch(`/api/line-bots/${botId}`);
                 if (botResponse.ok) {
                     const bot = await botResponse.json();
-                    currentLineBotInstructions = bot.selectedInstructions || [];
+                    currentBotInstructions = bot.selectedInstructions || [];
                 }
-                
+
                 // Load available instruction libraries
                 const libraryResponse = await fetch('/api/instructions/library');
                 if (libraryResponse.ok) {
                     const result = await libraryResponse.json();
                     availableLibraries = result.libraries || [];
                 }
-                
+
                 // Display data
                 displayInstructionLibraries();
                 displaySelectedInstructions();
-                
+
                 // Show modal
+                document.getElementById('manageInstructionsModalLabel').innerHTML = '<i class="fas fa-book me-2"></i>จัดการ Instructions สำหรับ Line Bot';
                 const modal = new bootstrap.Modal(document.getElementById('manageInstructionsModal'));
                 modal.show();
-                
+
             } catch (error) {
                 console.error('Error loading instruction data:', error);
+                showAlert('เกิดข้อผิดพลาดในการโหลดข้อมูล instructions', 'danger');
+            }
+        }
+
+        // Manage Instructions for Facebook Bot
+        async function manageFacebookInstructions(botId) {
+            currentBotType = 'facebook';
+            currentBotId = botId;
+            currentBotInstructions = [];
+
+            try {
+                // Load Facebook Bot details
+                const botResponse = await fetch(`/api/facebook-bots/${botId}`);
+                if (botResponse.ok) {
+                    const bot = await botResponse.json();
+                    currentBotInstructions = bot.selectedInstructions || [];
+                }
+
+                // Load available instruction libraries
+                const libraryResponse = await fetch('/api/instructions/library');
+                if (libraryResponse.ok) {
+                    const result = await libraryResponse.json();
+                    availableLibraries = result.libraries || [];
+                }
+
+                // Display data
+                displayInstructionLibraries();
+                displaySelectedInstructions();
+
+                // Show modal
+                document.getElementById('manageInstructionsModalLabel').innerHTML = '<i class="fas fa-book me-2"></i>จัดการ Instructions สำหรับ Facebook Bot';
+                const modal = new bootstrap.Modal(document.getElementById('manageInstructionsModal'));
+                modal.show();
+
+            } catch (error) {
+                console.error('Error loading facebook instruction data:', error);
                 showAlert('เกิดข้อผิดพลาดในการโหลดข้อมูล instructions', 'danger');
             }
         }
@@ -2429,7 +2468,7 @@
 
             let html = '';
             availableLibraries.forEach(library => {
-                const isSelected = currentLineBotInstructions.includes(library.date);
+                const isSelected = currentBotInstructions.includes(library.date);
                 const selectedClass = isSelected ? 'border-success bg-light' : 'border-secondary';
                 const selectedIcon = isSelected ? '<i class="fas fa-check-circle text-success me-2"></i>' : '<i class="fas fa-circle text-muted me-2"></i>';
                 
@@ -2472,7 +2511,7 @@
         function displaySelectedInstructions() {
             const container = document.getElementById('selectedInstructions');
             
-            if (currentLineBotInstructions.length === 0) {
+            if (currentBotInstructions.length === 0) {
                 container.innerHTML = `
                     <div class="alert alert-warning">
                         <i class="fas fa-exclamation-triangle me-2"></i>
@@ -2483,7 +2522,7 @@
             }
 
             let html = '<div class="mb-2"><strong>คลังที่เลือกใช้:</strong></div>';
-            currentLineBotInstructions.forEach(date => {
+            currentBotInstructions.forEach(date => {
                 const library = availableLibraries.find(lib => lib.date === date);
                 if (library) {
                     html += `
@@ -2511,13 +2550,13 @@
 
         // Toggle library selection
         function toggleLibrarySelection(date) {
-            const index = currentLineBotInstructions.indexOf(date);
+            const index = currentBotInstructions.indexOf(date);
             if (index > -1) {
                 // Remove if already selected
-                currentLineBotInstructions.splice(index, 1);
+                currentBotInstructions.splice(index, 1);
             } else {
                 // Add if not selected
-                currentLineBotInstructions.push(date);
+                currentBotInstructions.push(date);
             }
             
             // Refresh display
@@ -2527,9 +2566,9 @@
 
         // Remove library selection
         function removeLibrarySelection(date) {
-            const index = currentLineBotInstructions.indexOf(date);
+            const index = currentBotInstructions.indexOf(date);
             if (index > -1) {
-                currentLineBotInstructions.splice(index, 1);
+                currentBotInstructions.splice(index, 1);
                 displayInstructionLibraries();
                 displaySelectedInstructions();
             }
@@ -2537,28 +2576,36 @@
 
         // Save selected instructions
         async function saveSelectedInstructions() {
-            if (!currentLineBotId) {
-                showAlert('ไม่พบ Line Bot ID', 'danger');
+            if (!currentBotId || !currentBotType) {
+                showAlert('ไม่พบ Bot ID', 'danger');
                 return;
             }
 
             try {
-                const response = await fetch(`/api/line-bots/${currentLineBotId}/instructions`, {
+                const url = currentBotType === 'facebook'
+                    ? `/api/facebook-bots/${currentBotId}/instructions`
+                    : `/api/line-bots/${currentBotId}/instructions`;
+
+                const response = await fetch(url, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        selectedInstructions: currentLineBotInstructions
+                        selectedInstructions: currentBotInstructions
                     })
                 });
 
                 if (response.ok) {
                     showAlert('บันทึกการเลือกใช้ instructions เรียบร้อยแล้ว', 'success');
-                    
-                    // Refresh Line Bot list
-                    await loadLineBotSettings();
-                    
+
+                    // Refresh bot list
+                    if (currentBotType === 'facebook') {
+                        await loadFacebookBotSettings();
+                    } else {
+                        await loadLineBotSettings();
+                    }
+
                     // Close modal
                     const modal = bootstrap.Modal.getInstance(document.getElementById('manageInstructionsModal'));
                     modal.hide();
