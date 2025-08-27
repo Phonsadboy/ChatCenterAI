@@ -679,12 +679,12 @@
                                 </div>
 
                                 <!-- Line Bot List -->
-                                <div id="lineBotList">
+                                <div id="lineBotList" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
                                     <!-- Line Bot items will be loaded here -->
                                 </div>
 
                                 <!-- Facebook Bot List -->
-                                <div id="facebookBotList">
+                                <div id="facebookBotList" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
                                     <!-- Facebook Bot items will be loaded here -->
                                 </div>
 
@@ -1101,7 +1101,7 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="manageInstructionsModalLabel">
-                        <i class="fas fa-book me-2"></i>จัดการ Instructions สำหรับ Line Bot
+                        <i class="fas fa-book me-2"></i>จัดการ Instructions
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -1564,80 +1564,73 @@
                 const statusText = bot.status === 'active' ? 'เปิดใช้งาน' : bot.status === 'maintenance' ? 'บำรุงรักษา' : 'ปิดใช้งาน';
                 const defaultBadge = bot.isDefault ? '<span class="badge bg-primary ms-2">หลัก</span>' : '';
                 const instructionsCount = bot.selectedInstructions ? bot.selectedInstructions.length : 0;
-                
+
                 html += `
-                    <div class="card mb-3 border-0 shadow-sm">
-                        <div class="card-header bg-white border-bottom">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                            <h6 class="mb-0">
-                                        <i class="fab fa-line me-2 text-success"></i>
-                                ${bot.name} ${defaultBadge}
-                            </h6>
-                                    <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
-                                </div>
-                                <div class="d-flex align-items-center gap-2">
-                                <span class="badge bg-${statusClass}">${statusText}</span>
-                                    <div class="dropdown">
-                                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                                            <i class="fas fa-ellipsis-v"></i>
+                    <div class="col">
+                        <div class="card h-100 border-0 shadow-sm">
+                            <div class="card-header bg-white border-bottom">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-0">
+                                            <i class="fab fa-line me-2 text-success"></i>${bot.name} ${defaultBadge}
+                                        </h6>
+                                        <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="badge bg-${statusClass}">${statusText}</span>
+                                        <button class="btn btn-sm btn-outline-info" title="จัดการ Instructions" onclick="manageInstructions('${bot._id}', 'line')">
+                                            <i class="fas fa-book"></i>
                                         </button>
-                                        <ul class="dropdown-menu">
-                                            <li><a class="dropdown-item" href="#" onclick="editLineBot('${bot._id}')">
-                                                <i class="fas fa-edit me-2"></i>แก้ไข
-                                            </a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="manageInstructions('${bot._id}')">
-                                                <i class="fas fa-book me-2"></i>จัดการ Instructions
-                                            </a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="testLineBot('${bot._id}')">
-                                                <i class="fas fa-test-tube me-2"></i>ทดสอบ
-                                            </a></li>
-                                            <li><hr class="dropdown-divider"></li>
-                                            <li><a class="dropdown-item text-danger" href="#" onclick="deleteLineBot('${bot._id}')">
-                                                <i class="fas fa-trash me-2"></i>ลบ
-                                            </a></li>
-                                        </ul>
+                                        <button class="btn btn-sm btn-outline-secondary" title="แก้ไข" onclick="editLineBot('${bot._id}')">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary" title="ทดสอบ" onclick="testLineBot('${bot._id}')">
+                                            <i class="fas fa-vial"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" title="ลบ" onclick="deleteLineBot('${bot._id}')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-3">
-                                    <div class="d-flex align-items-center mb-2">
-                                        <i class="fas fa-robot text-primary me-2"></i>
-                                        <div>
-                                            <small class="text-muted d-block">AI Model</small>
-                                            <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
-                                </div>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="d-flex align-items-center mb-2">
-                                        <i class="fas fa-book text-info me-2"></i>
-                                        <div>
-                                            <small class="text-muted d-block">Instructions</small>
-                                            <span class="badge bg-secondary">${instructionsCount} รายการ</span>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-robot text-primary me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">AI Model</small>
+                                                <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="d-flex align-items-center mb-2">
-                                        <i class="fas fa-link text-warning me-2"></i>
-                                        <div>
-                                            <small class="text-muted d-block">Webhook</small>
-                                            <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.webhookUrl || 'ไม่ระบุ'}">
-                                                ${bot.webhookUrl ? bot.webhookUrl.split('/').pop() : 'ไม่ระบุ'}
-                                    </small>
-                                </div>
-                            </div>
-                        </div>
-                                <div class="col-md-3">
-                                    <div class="d-flex align-items-center mb-2">
-                                        <i class="fas fa-clock text-muted me-2"></i>
-                                        <div>
-                                            <small class="text-muted d-block">อัปเดตล่าสุด</small>
-                                            <small>${new Date(bot.updatedAt).toLocaleDateString('th-TH')}</small>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-book text-info me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">Instructions</small>
+                                                <span class="badge bg-secondary">${instructionsCount} รายการ</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-link text-warning me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">Webhook</small>
+                                                <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.webhookUrl || 'ไม่ระบุ'}">
+                                                    ${bot.webhookUrl ? bot.webhookUrl.split('/').pop() : 'ไม่ระบุ'}
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-clock text-muted me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">อัปเดตล่าสุด</small>
+                                                <small>${new Date(bot.updatedAt).toLocaleDateString('th-TH')}</small>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -2032,7 +2025,7 @@
                 console.log('Facebook Bot List container not found');
                 return;
             }
-            
+
             if (!facebookBots || facebookBots.length === 0) {
                 container.innerHTML = `
                     <div class="alert alert-info">
@@ -2045,70 +2038,76 @@
 
             let html = '';
             facebookBots.forEach(bot => {
-                const statusClass = bot.status === 'active' ? 'success' : 
-                                  bot.status === 'inactive' ? 'warning' : 'secondary';
-                const statusText = bot.status === 'active' ? 'ใช้งาน' : 
-                                 bot.status === 'inactive' ? 'ปิดใช้งาน' : 'บำรุงรักษา';
-                const defaultBadge = bot.isDefault ? ' <span class="badge bg-primary">Default</span>' : '';
+                const statusClass = bot.status === 'active' ? 'success' : bot.status === 'inactive' ? 'warning' : 'secondary';
+                const statusText = bot.status === 'active' ? 'ใช้งาน' : bot.status === 'inactive' ? 'ปิดใช้งาน' : 'บำรุงรักษา';
+                const defaultBadge = bot.isDefault ? '<span class="badge bg-primary ms-2">หลัก</span>' : '';
+                const instructionsCount = bot.selectedInstructions ? bot.selectedInstructions.length : 0;
 
                 html += `
-                    <div class="card mb-3 shadow-sm">
-                        <div class="card-body">
-                            <div class="row align-items-center">
-                                <div class="col-md-6">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <h6 class="mb-0">
-                                                <i class="fab fa-facebook me-2 text-primary"></i>
-                                                ${bot.name} ${defaultBadge}
-                                            </h6>
-                                            <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
-                                        </div>
-                                        <div class="d-flex align-items-center gap-2">
-                                            <span class="badge bg-${statusClass}">${statusText}</span>
-                                            <div class="dropdown">
-                                                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                                                    <i class="fas fa-ellipsis-v"></i>
-                                                </button>
-                                                <ul class="dropdown-menu">
-                                                    <li><a class="dropdown-item" href="#" onclick="editFacebookBot('${bot._id}')">
-                                                        <i class="fas fa-edit me-2"></i>แก้ไข
-                                                    </a></li>
-                                                    <li><a class="dropdown-item" href="#" onclick="manageFacebookInstructions('${bot._id}')">
-                                                        <i class="fas fa-book me-2"></i>จัดการ Instructions
-                                                    </a></li>
-                                                    <li><a class="dropdown-item" href="#" onclick="testFacebookBot('${bot._id}')">
-                                                        <i class="fas fa-play me-2"></i>ทดสอบ
-                                                    </a></li>
-                                                    <li><hr class="dropdown-divider"></li>
-                                                    <li><a class="dropdown-item text-danger" href="#" onclick="deleteFacebookBot('${bot._id}')">
-                                                        <i class="fas fa-trash me-2"></i>ลบ
-                                                    </a></li>
-                                                </ul>
-                                            </div>
-                                        </div>
+                    <div class="col">
+                        <div class="card h-100 border-0 shadow-sm">
+                            <div class="card-header bg-white border-bottom">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h6 class="mb-0">
+                                            <i class="fab fa-facebook me-2 text-primary"></i>${bot.name} ${defaultBadge}
+                                        </h6>
+                                        <small class="text-muted">${bot.description || 'ไม่มีคำอธิบาย'}</small>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="badge bg-${statusClass}">${statusText}</span>
+                                        <button class="btn btn-sm btn-outline-info" title="จัดการ Instructions" onclick="manageInstructions('${bot._id}', 'facebook')">
+                                            <i class="fas fa-book"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" title="แก้ไข" onclick="editFacebookBot('${bot._id}')">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary" title="ทดสอบ" onclick="testFacebookBot('${bot._id}')">
+                                            <i class="fas fa-vial"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" title="ลบ" onclick="deleteFacebookBot('${bot._id}')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
                                     </div>
                                 </div>
-                                <div class="col-md-6">
-                                    <div class="row">
-                                        <div class="col-md-4">
-                                            <div class="d-flex align-items-center mb-2">
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-robot text-primary me-2"></i>
+                                            <div>
                                                 <small class="text-muted d-block">AI Model</small>
                                                 <span class="badge bg-info">${bot.aiModel || 'gpt-5'}</span>
                                             </div>
                                         </div>
-                                        <div class="col-md-4">
-                                            <div class="d-flex align-items-center mb-2">
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-id-badge text-info me-2"></i>
+                                            <div>
                                                 <small class="text-muted d-block">Page ID</small>
                                                 <small class="text-truncate d-block" style="max-width: 150px;" title="${bot.pageId || 'ไม่ระบุ'}">
-                                                    ${bot.pageId ? bot.pageId.substring(0, 10) + '...' : 'ไม่ระบุ'}
+                                                    ${bot.pageId ? bot.pageId : 'ไม่ระบุ'}
                                                 </small>
                                             </div>
                                         </div>
-                                        <div class="col-md-4">
-                                            <div class="d-flex align-items-center mb-2">
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-book text-info me-2"></i>
+                                            <div>
                                                 <small class="text-muted d-block">Instructions</small>
-                                                <span class="badge bg-secondary">${bot.selectedInstructions ? bot.selectedInstructions.length : 0}</span>
+                                                <span class="badge bg-secondary">${instructionsCount}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fas fa-clock text-muted me-2"></i>
+                                            <div>
+                                                <small class="text-muted d-block">อัปเดตล่าสุด</small>
+                                                <small>${new Date(bot.updatedAt).toLocaleDateString('th-TH')}</small>
                                             </div>
                                         </div>
                                     </div>
@@ -2118,7 +2117,7 @@
                     </div>
                 `;
             });
-            
+
             container.innerHTML = html;
         }
 
@@ -2348,38 +2347,47 @@
         }
 
         // Global variables for instruction management
-        let currentLineBotId = null;
-        let currentLineBotInstructions = [];
+        let currentBotId = null;
+        let currentBotPlatform = null; // 'line' or 'facebook'
+        let currentBotInstructions = [];
         let availableLibraries = [];
 
-        // Manage Instructions for Line Bot
-        async function manageInstructions(botId) {
-            currentLineBotId = botId;
-            currentLineBotInstructions = [];
-            
+        // Manage Instructions for Line or Facebook Bot
+        async function manageInstructions(botId, platform) {
+            currentBotId = botId;
+            currentBotPlatform = platform;
+            currentBotInstructions = [];
+
             try {
-                // Load Line Bot details
-                const botResponse = await fetch(`/api/line-bots/${botId}`);
+                // Load Bot details
+                const botResponse = await fetch(`/api/${platform}-bots/${botId}`);
                 if (botResponse.ok) {
                     const bot = await botResponse.json();
-                    currentLineBotInstructions = bot.selectedInstructions || [];
+                    currentBotInstructions = bot.selectedInstructions || [];
                 }
-                
+
                 // Load available instruction libraries
                 const libraryResponse = await fetch('/api/instructions/library');
                 if (libraryResponse.ok) {
                     const result = await libraryResponse.json();
                     availableLibraries = result.libraries || [];
                 }
-                
+
+                // Update modal title
+                const modalLabel = document.getElementById('manageInstructionsModalLabel');
+                if (modalLabel) {
+                    const platformName = platform === 'line' ? 'Line Bot' : 'Facebook Bot';
+                    modalLabel.innerHTML = `<i class="fas fa-book me-2"></i>จัดการ Instructions สำหรับ ${platformName}`;
+                }
+
                 // Display data
                 displayInstructionLibraries();
                 displaySelectedInstructions();
-                
+
                 // Show modal
                 const modal = new bootstrap.Modal(document.getElementById('manageInstructionsModal'));
                 modal.show();
-                
+
             } catch (error) {
                 console.error('Error loading instruction data:', error);
                 showAlert('เกิดข้อผิดพลาดในการโหลดข้อมูล instructions', 'danger');
@@ -2402,7 +2410,7 @@
 
             let html = '';
             availableLibraries.forEach(library => {
-                const isSelected = currentLineBotInstructions.includes(library.date);
+                const isSelected = currentBotInstructions.includes(library.date);
                 const selectedClass = isSelected ? 'border-success bg-light' : 'border-secondary';
                 const selectedIcon = isSelected ? '<i class="fas fa-check-circle text-success me-2"></i>' : '<i class="fas fa-circle text-muted me-2"></i>';
                 
@@ -2444,8 +2452,8 @@
         // Display selected instructions
         function displaySelectedInstructions() {
             const container = document.getElementById('selectedInstructions');
-            
-            if (currentLineBotInstructions.length === 0) {
+
+            if (currentBotInstructions.length === 0) {
                 container.innerHTML = `
                     <div class="alert alert-warning">
                         <i class="fas fa-exclamation-triangle me-2"></i>
@@ -2456,7 +2464,7 @@
             }
 
             let html = '<div class="mb-2"><strong>คลังที่เลือกใช้:</strong></div>';
-            currentLineBotInstructions.forEach(date => {
+            currentBotInstructions.forEach(date => {
                 const library = availableLibraries.find(lib => lib.date === date);
                 if (library) {
                     html += `
@@ -2484,13 +2492,13 @@
 
         // Toggle library selection
         function toggleLibrarySelection(date) {
-            const index = currentLineBotInstructions.indexOf(date);
+            const index = currentBotInstructions.indexOf(date);
             if (index > -1) {
                 // Remove if already selected
-                currentLineBotInstructions.splice(index, 1);
+                currentBotInstructions.splice(index, 1);
             } else {
                 // Add if not selected
-                currentLineBotInstructions.push(date);
+                currentBotInstructions.push(date);
             }
             
             // Refresh display
@@ -2500,9 +2508,9 @@
 
         // Remove library selection
         function removeLibrarySelection(date) {
-            const index = currentLineBotInstructions.indexOf(date);
+            const index = currentBotInstructions.indexOf(date);
             if (index > -1) {
-                currentLineBotInstructions.splice(index, 1);
+                currentBotInstructions.splice(index, 1);
                 displayInstructionLibraries();
                 displaySelectedInstructions();
             }
@@ -2510,28 +2518,32 @@
 
         // Save selected instructions
         async function saveSelectedInstructions() {
-            if (!currentLineBotId) {
-                showAlert('ไม่พบ Line Bot ID', 'danger');
+            if (!currentBotId) {
+                showAlert('ไม่พบ Bot ID', 'danger');
                 return;
             }
 
             try {
-                const response = await fetch(`/api/line-bots/${currentLineBotId}/instructions`, {
+                const response = await fetch(`/api/${currentBotPlatform}-bots/${currentBotId}/instructions`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        selectedInstructions: currentLineBotInstructions
+                        selectedInstructions: currentBotInstructions
                     })
                 });
 
                 if (response.ok) {
                     showAlert('บันทึกการเลือกใช้ instructions เรียบร้อยแล้ว', 'success');
-                    
-                    // Refresh Line Bot list
-                    await loadLineBotSettings();
-                    
+
+                    // Refresh relevant bot list
+                    if (currentBotPlatform === 'line') {
+                        await loadLineBotSettings();
+                    } else if (currentBotPlatform === 'facebook') {
+                        await loadFacebookBotSettings();
+                    }
+
                     // Close modal
                     const modal = bootstrap.Modal.getInstance(document.getElementById('manageInstructionsModal'));
                     modal.hide();
