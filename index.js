@@ -1947,9 +1947,9 @@ async function processFacebookMessageWithAI(message, userId, botName) {
     if (facebookBot.selectedInstructions && facebookBot.selectedInstructions.length > 0) {
       const instructionColl = db.collection("instruction_library");
       const instructions = await instructionColl.find({
-        _id: { $in: facebookBot.selectedInstructions.map(id => new ObjectId(id)) }
+        date: { $in: facebookBot.selectedInstructions }
       }).toArray();
-      
+
       if (instructions.length > 0) {
         systemPrompt = instructions.map(inst => inst.instructions).join('\n\n');
       }
@@ -2008,9 +2008,9 @@ async function processMessageWithAI(message, userId, botName) {
     if (lineBot.selectedInstructions && lineBot.selectedInstructions.length > 0) {
       const instructionColl = db.collection("instruction_library");
       const instructions = await instructionColl.find({
-        _id: { $in: lineBot.selectedInstructions.map(id => new ObjectId(id)) }
+        date: { $in: lineBot.selectedInstructions }
       }).toArray();
-      
+
       if (instructions.length > 0) {
         systemPrompt = instructions.map(inst => inst.instructions).join('\n\n');
       }
