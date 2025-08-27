@@ -742,6 +742,67 @@
                 });
             }
 
+            // Excel file preview and upload
+            const previewExcelBtn = document.getElementById('previewExcelBtn');
+            const excelUploadForm = document.getElementById('excelUploadForm');
+            const uploadExcelBtn = document.getElementById('uploadExcelBtn');
+            const previewSection = document.getElementById('previewSection');
+            const excelPreviewContent = document.querySelector('#previewSection #previewContent');
+
+            if (previewExcelBtn && excelUploadForm) {
+                // ดูตัวอย่างไฟล์ Excel
+                previewExcelBtn.addEventListener('click', async function() {
+                    const formData = new FormData(excelUploadForm);
+                    try {
+                        const response = await fetch('/admin/instructions/preview-excel', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const data = await response.json();
+
+                        if (data.success) {
+                            previewSection.style.display = 'block';
+                            excelPreviewContent.innerHTML = data.preview.map(item => `
+                                <div class="mb-2">
+                                    <strong>${item.title || item.sheetName || 'ไม่ระบุชื่อ'}</strong>
+                                    <span class="badge bg-secondary ms-1">${item.type}</span>
+                                    <div class="small text-muted">${item.contentPreview}</div>
+                                </div>
+                            `).join('');
+                            uploadExcelBtn.disabled = false;
+                        } else {
+                            excelPreviewContent.innerHTML = `<div class="alert alert-danger">${data.error || 'ไม่สามารถดูตัวอย่างได้'}</div>`;
+                            uploadExcelBtn.disabled = true;
+                        }
+                    } catch (err) {
+                        excelPreviewContent.innerHTML = '<div class="alert alert-danger">เกิดข้อผิดพลาดในการดูตัวอย่าง</div>';
+                        uploadExcelBtn.disabled = true;
+                    }
+                });
+
+                // อัปโหลดไฟล์ Excel
+                excelUploadForm.addEventListener('submit', async function(event) {
+                    event.preventDefault();
+                    const formData = new FormData(excelUploadForm);
+                    try {
+                        const response = await fetch('/admin/instructions/upload-excel', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const data = await response.json();
+
+                        if (data.success) {
+                            showNotification(data.message || 'อัพโหลดไฟล์สำเร็จ', 'success');
+                            setTimeout(() => window.location.reload(), 1500);
+                        } else {
+                            showNotification(data.error || 'อัพโหลดล้มเหลว', 'error');
+                        }
+                    } catch (err) {
+                        showNotification('เกิดข้อผิดพลาดในการอัพโหลดไฟล์', 'error');
+                    }
+                });
+            }
+
             // Setup initial notification
             showNotification('ระบบพร้อมใช้งาน', 'success', 3000);
         });
