@@ -320,7 +320,34 @@ async function saveChatHistory(userId, userMsg, assistantMsg, platform = 'line',
   const db = client.db("chatbot");
   const coll = db.collection("chat_history");
   let userMsgToSave = typeof userMsg === "string" ? userMsg : JSON.stringify(userMsg);
-  await coll.insertOne({ senderId: userId, role: "user", content: userMsgToSave, timestamp: new Date(), platform, botId });
+
+  // Insert user message and emit to admin chat in realtime
+  const userTimestamp = new Date();
+  const userMessageDoc = {
+    senderId: userId,
+    role: "user",
+    content: userMsgToSave,
+    timestamp: userTimestamp,
+    platform,
+    botId,
+    source: "user"
+  };
+  await coll.insertOne(userMessageDoc);
+
+  try {
+    if (typeof io !== "undefined" && io) {
+      io.emit('newMessage', {
+        userId: userId,
+        message: userMessageDoc,
+        sender: 'user',
+        timestamp: userTimestamp
+      });
+    }
+  } catch (_) {
+    // non-fatal: socket emit failure should not block saving history
+  }
+
+  // Insert assistant message
   await coll.insertOne({ senderId: userId, role: "assistant", content: assistantMsg, timestamp: new Date(), platform, botId });
 }
 
