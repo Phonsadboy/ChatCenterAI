@@ -137,6 +137,10 @@ class ChatManager {
         const userHtml = this.users.map(user => {
             const isActive = user.userId === this.currentUserId;
             const hasUnread = user.unreadCount > 0;
+            const lastMsgRaw = user.lastMessage;
+            const lastMsg = typeof lastMsgRaw === 'string'
+                ? lastMsgRaw
+                : (lastMsgRaw == null ? '' : (Array.isArray(lastMsgRaw) ? JSON.stringify(lastMsgRaw) : String(lastMsgRaw)));
             
             return `
                 <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" 
@@ -147,7 +151,7 @@ class ChatManager {
                         </div>
                         <div class="user-details">
                             <div class="user-name">${this.escapeHtml(user.displayName)}</div>
-                            <div class="user-last-message">${this.escapeHtml(user.lastMessage.substring(0, 50))}${user.lastMessage.length > 50 ? '...' : ''}</div>
+                            <div class="user-last-message">${this.escapeHtml(lastMsg.substring(0, 50))}${lastMsg.length > 50 ? '...' : ''}</div>
                             <div class="user-timestamp">${this.formatTimestamp(user.lastTimestamp)}</div>
                         </div>
                         ${hasUnread ? `<div class="unread-badge">${user.unreadCount}</div>` : ''}
@@ -360,8 +364,8 @@ class ChatManager {
         const user = this.users.find(u => u.userId === data.userId);
         if (user) {
             user.unreadCount = (user.unreadCount || 0) + 1;
-            user.lastMessage = data.message.content;
-            user.lastTimestamp = data.timestamp;
+            user.lastMessage = this.normalizeContentToPreview(data.message?.content);
+            user.lastTimestamp = data.timestamp || data.message?.timestamp || new Date().toISOString();
             
             // Update display
             this.renderUserList();
@@ -441,7 +445,9 @@ class ChatManager {
     }
 
     formatTimestamp(timestamp) {
+        if (!timestamp) return '';
         const date = new Date(timestamp);
+        if (isNaN(date.getTime())) return '';
         const now = new Date();
         const diffMs = now - date;
         const diffMins = Math.floor(diffMs / 60000);
@@ -511,6 +517,35 @@ class ChatManager {
     }
 
     // Message processing methods
+    normalizeContentToPreview(content) {
+        try {
+            // If string, try to parse JSON; otherwise return trimmed string
+            if (typeof content === 'string') {
+                const trimmed = content.trim();
+                if ((trimmed.startsWith('{') || trimmed.startsWith('['))) {
+                    const parsed = JSON.parse(trimmed);
+                    const processed = this.processQueueMessage(parsed);
+                    const text = (processed.textParts || []).join(' ').trim();
+                    if (text) return text;
+                    if (processed.imageParts && processed.imageParts.length > 0) {
+                        return 'ส่งรูปภาพ';
+                    }
+                    return trimmed;
+                }
+                return trimmed;
+            }
+            // If array/object, reuse processor
+            const processed = this.processQueueMessage(content);
+            const text = (processed.textParts || []).join(' ').trim();
+            if (text) return text;
+            if (processed.imageParts && processed.imageParts.length > 0) {
+                return 'ส่งรูปภาพ';
+            }
+            return '';
+        } catch (_) {
+            try { return JSON.stringify(content).substring(0, 100); } catch { return ''; }
+        }
+    }
     processQueueMessage(content) {
         // Accept string, object, or array
         let payload = content;
