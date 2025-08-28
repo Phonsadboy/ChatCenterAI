@@ -51,6 +51,21 @@
                             </div>
                         </div>
 
+                        <div class="setting-item">
+                            <div class="setting-label">แสดงข้อมูล Token Usage</div>
+                            <div class="setting-description">
+                                แสดงข้อมูลการใช้ token ของ OpenAI ต่อท้ายคำตอบของ AI
+                                <br><strong>การทำงาน:</strong> เมื่อเปิดใช้งาน ระบบจะแสดงข้อมูล token usage ต่อท้ายคำตอบ เช่น "📊 Token Usage: 150 input + 50 output = 200 total tokens"
+                                หากปิดใช้งาน จะไม่แสดงข้อมูลนี้
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="showTokenUsage">
+                                <label class="form-check-label" for="showTokenUsage">
+                                    เปิดใช้งาน
+                                </label>
+                            </div>
+                        </div>
+
                         <button type="submit" class="btn btn-save text-white">
                             <i class="fas fa-save me-2"></i>
                             บันทึกการตั้งค่าแชท

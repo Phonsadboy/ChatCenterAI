@@ -299,6 +299,7 @@ class ChatManager {
                 } else {
                     const raw = typeof displayContent === 'string' ? displayContent : '';
                     const safe = (raw || '').trim();
+                    // ใช้ escapeHtml ที่รองรับการเว้นบรรทัด
                     displayContent = safe ? `<div class="message-text">${this.escapeHtml(safe)}</div>` : '';
                 }
             }
@@ -484,9 +485,17 @@ class ChatManager {
     }
 
     escapeHtml(text) {
+        if (!text) return '';
+        
+        // แปลงการเว้นบรรทัดเป็น <br> และ <p>
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        let html = div.innerHTML;
+        
+        // แปลง \n เป็น <br> สำหรับการเว้นบรรทัด
+        html = html.replace(/\n/g, '<br>');
+        
+        return html;
     }
 
     // Image handling methods
@@ -540,7 +549,7 @@ class ChatManager {
                 if ((trimmed.startsWith('{') || trimmed.startsWith('['))) {
                     const parsed = JSON.parse(trimmed);
                     const processed = this.processQueueMessage(parsed);
-                    const text = (processed.textParts || []).join(' ').trim();
+                    const text = (processed.textParts || []).join(' ').trim(); // ใช้ space สำหรับ preview
                     if (text) return text;
                     if (processed.imageParts && processed.imageParts.length > 0) {
                         return 'ส่งรูปภาพ';
@@ -551,7 +560,7 @@ class ChatManager {
             }
             // If array/object, reuse processor
             const processed = this.processQueueMessage(content);
-            const text = (processed.textParts || []).join(' ').trim();
+            const text = (processed.textParts || []).join(' ').trim(); // ใช้ space สำหรับ preview
             if (text) return text;
             if (processed.imageParts && processed.imageParts.length > 0) {
                 return 'ส่งรูปภาพ';
@@ -638,7 +647,7 @@ class ChatManager {
         
         // Show text
         if (processed.textParts.length > 0) {
-            const textContent = processed.textParts.join(' ');
+            const textContent = processed.textParts.join('\n'); // ใช้ \n แทน space เพื่อรักษาการเว้นบรรทัด
             if (textContent.trim()) {
                 contentHtml += `<div class="message-text">${this.escapeHtml(textContent)}</div>`;
             }

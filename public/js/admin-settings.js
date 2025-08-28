@@ -210,6 +210,14 @@ function populateSettings() {
         if (enableMessageMerging) enableMessageMerging.checked = true;
     }
 
+    if (currentSettings.showTokenUsage !== undefined) {
+        const showTokenUsage = document.getElementById('showTokenUsage');
+        if (showTokenUsage) showTokenUsage.checked = currentSettings.showTokenUsage;
+    } else {
+        const showTokenUsage = document.getElementById('showTokenUsage');
+        if (showTokenUsage) showTokenUsage.checked = false;
+    }
+
     // AI settings
     if (currentSettings.textModel) {
         const textModel = document.getElementById('textModel');
@@ -318,8 +326,9 @@ async function saveChatSettings() {
     const chatDelaySeconds = document.getElementById('chatDelaySeconds');
     const maxQueueMessages = document.getElementById('maxQueueMessages');
     const enableMessageMerging = document.getElementById('enableMessageMerging');
+    const showTokenUsage = document.getElementById('showTokenUsage');
     
-    if (!chatDelaySeconds || !maxQueueMessages || !enableMessageMerging) {
+    if (!chatDelaySeconds || !maxQueueMessages || !enableMessageMerging || !showTokenUsage) {
         showAlert('ไม่พบฟอร์มการตั้งค่าแชท', 'danger');
         return;
     }
@@ -327,7 +336,8 @@ async function saveChatSettings() {
     const settings = {
         chatDelaySeconds: parseInt(chatDelaySeconds.value),
         maxQueueMessages: parseInt(maxQueueMessages.value),
-        enableMessageMerging: enableMessageMerging.checked
+        enableMessageMerging: enableMessageMerging.checked,
+        showTokenUsage: showTokenUsage.checked
     };
 
     try {

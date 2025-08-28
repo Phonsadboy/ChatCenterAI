@@ -1269,11 +1269,16 @@ async function getAssistantResponseTextOnly(systemInstructions, history, userTex
       assistantReply = cutList.slice(0, 10).join("[cut]");
     }
 
-    // เพิ่มข้อมูล token usage ต่อท้ายคำตอบ
+    // เพิ่มข้อมูล token usage ต่อท้ายคำตอบ (ถ้าเปิดใช้งาน)
     if (response.usage) {
       const usage = response.usage;
-      const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens`;
-      assistantReply += tokenInfo;
+      const showTokenUsage = await getSettingValue('showTokenUsage', false);
+      
+      if (showTokenUsage) {
+        const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens`;
+        assistantReply += tokenInfo;
+      }
+      
       console.log(`[LOG] Token usage (text): ${usage.total_tokens} total (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion)`);
     }
 
@@ -1383,11 +1388,16 @@ async function getAssistantResponseMultimodal(systemInstructions, history, conte
       assistantReply = cutList.slice(0, 10).join("[cut]");
     }
 
-    // เพิ่มข้อมูล token usage ต่อท้ายคำตอบ
+    // เพิ่มข้อมูล token usage ต่อท้ายคำตอบ (ถ้าเปิดใช้งาน)
     if (response.usage) {
       const usage = response.usage;
-      const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens (มีรูปภาพ ${imageCount} รูป)`;
-      assistantReply += tokenInfo;
+      const showTokenUsage = await getSettingValue('showTokenUsage', false);
+      
+      if (showTokenUsage) {
+        const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens (มีรูปภาพ ${imageCount} รูป)`;
+        assistantReply += tokenInfo;
+      }
+      
       console.log(`[LOG] Token usage (multimodal): ${usage.total_tokens} total (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion) with ${imageCount} images`);
     }
 
@@ -1416,7 +1426,8 @@ async function ensureSettings() {
     { key: "defaultInstruction", value: "" },
     { key: "enableChatHistory", value: true },
     { key: "enableAdminNotifications", value: true },
-    { key: "systemMode", value: "production" }
+    { key: "systemMode", value: "production" },
+    { key: "showTokenUsage", value: false }
   ];
   
   for (const setting of defaultSettings) {
@@ -3282,6 +3293,7 @@ app.get('/api/settings', async (req, res) => {
       chatDelaySeconds: 5,
       maxQueueMessages: 10,
       enableMessageMerging: true,
+      showTokenUsage: false,
       textModel: "gpt-5",
       visionModel: "gpt-5",
       maxImagesPerMessage: 3,
@@ -3310,7 +3322,7 @@ app.get('/api/settings', async (req, res) => {
 // Save chat settings
 app.post('/api/settings/chat', async (req, res) => {
   try {
-    const { chatDelaySeconds, maxQueueMessages, enableMessageMerging } = req.body;
+    const { chatDelaySeconds, maxQueueMessages, enableMessageMerging, showTokenUsage } = req.body;
     
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -3341,6 +3353,12 @@ app.post('/api/settings/chat', async (req, res) => {
     await coll.updateOne(
       { key: "enableMessageMerging" },
       { $set: { value: enableMessageMerging } },
+      { upsert: true }
+    );
+
+    await coll.updateOne(
+      { key: "showTokenUsage" },
+      { $set: { value: showTokenUsage } },
       { upsert: true }
     );
     
