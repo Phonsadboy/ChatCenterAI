@@ -137,10 +137,19 @@ class ChatManager {
         const userHtml = this.users.map(user => {
             const isActive = user.userId === this.currentUserId;
             const hasUnread = user.unreadCount > 0;
-            const lastMsgRaw = user.lastMessage;
-            const lastMsg = typeof lastMsgRaw === 'string'
-                ? lastMsgRaw
-                : (lastMsgRaw == null ? '' : (Array.isArray(lastMsgRaw) ? JSON.stringify(lastMsgRaw) : String(lastMsgRaw)));
+            
+            // ใช้ข้อมูลที่แปลงแล้วจาก backend
+            let lastMsg = '';
+            if (user.lastMessage) {
+                // ถ้าเป็น HTML ให้แปลงเป็นข้อความธรรมดา
+                if (user.lastMessage.includes('<')) {
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = user.lastMessage;
+                    lastMsg = tempDiv.textContent || tempDiv.innerText || '';
+                } else {
+                    lastMsg = user.lastMessage;
+                }
+            }
             
             return `
                 <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" 
@@ -272,20 +281,26 @@ class ChatManager {
                 }
             }
 
-            // Handle user messages with images and robust fallbacks
-            if (message.role === 'user') {
-                const processed = this.processQueueMessage(baseContent);
-                if (processed.type === 'queue' || processed.type === 'single_image' || processed.type === 'single_text') {
-                    displayContent = this.createCompactMessageHTML(processed);
+            // ใช้ข้อมูลที่แปลงแล้วจาก backend
+            if (message.displayContent) {
+                // ถ้ามี displayContent ที่แปลงแล้ว ให้ใช้เลย
+                displayContent = message.displayContent;
+            } else {
+                // fallback สำหรับข้อความเก่า
+                if (message.role === 'user') {
+                    const processed = this.processQueueMessage(baseContent);
+                    if (processed.type === 'queue' || processed.type === 'single_image' || processed.type === 'single_text') {
+                        displayContent = this.createCompactMessageHTML(processed);
+                    } else {
+                        const raw = typeof baseContent === 'string' ? baseContent : JSON.stringify(baseContent);
+                        const safe = (raw || '').trim();
+                        displayContent = safe ? `<div class="message-text">${this.escapeHtml(safe)}</div>` : '';
+                    }
                 } else {
-                    const raw = typeof baseContent === 'string' ? baseContent : JSON.stringify(baseContent);
+                    const raw = typeof displayContent === 'string' ? displayContent : '';
                     const safe = (raw || '').trim();
                     displayContent = safe ? `<div class="message-text">${this.escapeHtml(safe)}</div>` : '';
                 }
-            } else {
-                const raw = typeof displayContent === 'string' ? displayContent : JSON.stringify(displayContent);
-                const safe = (raw || '').trim();
-                displayContent = safe ? `<div class="message-text">${this.escapeHtml(safe)}</div>` : '';
             }
             
             return `
@@ -704,3 +719,10 @@ function openImageModal(imageSrc) {
         chatManager.openImageModal(imageSrc);
     }
 }
+
+// Global function for image modal (can be called from HTML)
+window.openImageModal = function(imageSrc) {
+    if (chatManager) {
+        chatManager.openImageModal(imageSrc);
+    }
+};

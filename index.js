@@ -620,7 +620,7 @@ async function processFlushedMessages(userId, mergedContent) {
     try {
       await lineClient.replyMessage(mergedContent[0].replyToken, {
         type: 'text',
-        text: 'ขออภัยค่ะ ระบบกำลังอยู่ในโหมดบำรุงรักษา กรุณาลองใหม่อีกครั้งในภายหลัง'
+        text: 'ขออภัยค่ะ ระบบกำลังอยู่ในโหมดบำรุงรักษา กรุณาลองใหม่อีกครั้ง'
       });
     } catch (error) {
       console.error('[LOG] ไม่สามารถส่งข้อความแจ้งเตือนได้:', error);
@@ -3108,64 +3108,10 @@ app.get('/admin/chat', (req, res) => {
 // Get users who have chatted
 app.get('/admin/chat/users', async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const chatColl = db.collection("chat_history");
-    const profileColl = db.collection("user_profiles");
+    // ใช้ฟังก์ชันตัวกรองข้อมูลใหม่
+    const users = await getNormalizedChatUsers();
     
-    // Get unique users with their last message
-    const pipeline = [
-      {
-        $group: {
-          _id: "$senderId",
-          lastMessage: { $last: "$content" },
-          lastTimestamp: { $last: "$timestamp" },
-          messageCount: { $sum: 1 },
-          platform: { $last: "$platform" },
-          botId: { $last: "$botId" }
-        }
-      },
-      {
-        $sort: { lastTimestamp: -1 }
-      },
-      {
-        $limit: 50 // Limit to recent 50 users
-      }
-    ];
-    
-    const users = await chatColl.aggregate(pipeline).toArray();
-    
-    // ดึงข้อมูลโปรไฟล์และ unread count สำหรับแต่ละผู้ใช้
-    const formattedUsers = await Promise.all(users.map(async (user) => {
-      const unreadCount = await getUserUnreadCount(user._id);
-
-      const platform = user.platform || 'line';
-
-      // ดึงข้อมูลโปรไฟล์จากฐานข้อมูล (เฉพาะ LINE)
-      let userProfile = null;
-      if (platform === 'line') {
-        userProfile = await profileColl.findOne({ userId: user._id });
-        if (!userProfile) {
-          userProfile = await saveOrUpdateUserProfile(user._id);
-        }
-      }
-
-      return {
-        userId: user._id,
-        displayName: userProfile ? userProfile.displayName : user._id.substring(0, 8) + '...',
-        pictureUrl: userProfile ? userProfile.pictureUrl : null,
-        statusMessage: userProfile ? userProfile.statusMessage : null,
-        lastMessage: typeof user.lastMessage === 'string' ? user.lastMessage :
-                     (user.lastMessage ? JSON.stringify(user.lastMessage) : ''),
-        lastTimestamp: user.lastTimestamp,
-        messageCount: user.messageCount,
-        unreadCount: unreadCount,
-        platform,
-        botId: user.botId || null
-      };
-    }));
-    
-    res.json({ success: true, users: formattedUsers });
+    res.json({ success: true, users: users });
   } catch (err) {
     console.error('Error getting chat users:', err);
     res.json({ success: false, error: err.message });
@@ -3176,26 +3122,14 @@ app.get('/admin/chat/users', async (req, res) => {
 app.get('/admin/chat/history/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("chat_history");
     
-    const messages = await coll.find({ senderId: userId })
-                               .sort({ timestamp: 1 })
-                               .limit(200) // Limit to recent 200 messages
-                               .toArray();
-    
-    const formattedMessages = messages.map(msg => ({
-      content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-      role: msg.role,
-      timestamp: msg.timestamp,
-      source: msg.source || 'ai' // เพิ่ม source เพื่อแยกแยะว่ามาจากแอดมินหรือ AI
-    }));
+    // ใช้ฟังก์ชันตัวกรองข้อมูลใหม่
+    const messages = await getNormalizedChatHistory(userId);
     
     // รีเซ็ต unread count เมื่อแอดมินดูประวัติการสนทนา
     await resetUserUnreadCount(userId);
     
-    res.json({ success: true, messages: formattedMessages });
+    res.json({ success: true, messages: messages });
   } catch (err) {
     console.error('Error getting chat history:', err);
     res.json({ success: false, error: err.message });
@@ -3744,5 +3678,336 @@ async function testMessageFiltering(message) {
   } catch (error) {
     console.error('[Filter] ข้อผิดพลาดในการทดสอบการกรอง:', error);
     throw error;
+  }
+}
+
+// ============================ Message Content Normalization Functions ============================
+
+/**
+ * ฟังก์ชันสำหรับแปลงข้อมูลข้อความจากฐานข้อมูลให้อยู่ในรูปแบบที่ frontend สามารถแสดงผลได้
+ * @param {Object} message - ข้อความจากฐานข้อมูล
+ * @returns {Object} ข้อความที่แปลงแล้วพร้อมข้อมูลที่จำเป็น
+ */
+function normalizeMessageForFrontend(message) {
+  try {
+    // ตรวจสอบว่า message มีโครงสร้างที่ถูกต้องหรือไม่
+    if (!message || typeof message !== 'object') {
+      return {
+        content: 'ข้อความไม่ถูกต้อง',
+        role: 'system',
+        timestamp: new Date(),
+        source: 'system',
+        displayContent: 'ข้อความไม่ถูกต้อง',
+        contentType: 'text'
+      };
+    }
+
+    // แปลง timestamp
+    let timestamp = message.timestamp;
+    if (timestamp && typeof timestamp === 'string') {
+      timestamp = new Date(timestamp);
+    } else if (!timestamp) {
+      timestamp = new Date();
+    }
+
+    // แปลง content
+    let content = message.content;
+    let displayContent = '';
+    let contentType = 'text';
+
+    // ตรวจสอบประเภทของ content และแปลงให้เหมาะสม
+    if (typeof content === 'string') {
+      // ถ้าเป็น string ที่เป็น JSON
+      if (content.trim().startsWith('{') || content.trim().startsWith('[')) {
+        try {
+          const parsed = JSON.parse(content);
+          const processed = processQueueMessageForDisplay(parsed);
+          displayContent = processed.displayContent;
+          contentType = processed.contentType;
+        } catch (parseError) {
+          // ถ้า parse JSON ไม่ได้ ให้ใช้เป็นข้อความธรรมดา
+          displayContent = content;
+          contentType = 'text';
+        }
+      } else {
+        // ข้อความธรรมดา
+        displayContent = content;
+        contentType = 'text';
+      }
+    } else if (Array.isArray(content)) {
+      // ถ้าเป็น array (เช่น ข้อความจากคิว)
+      const processed = processQueueMessageForDisplay(content);
+      displayContent = processed.displayContent;
+      contentType = processed.contentType;
+    } else if (content && typeof content === 'object') {
+      // ถ้าเป็น object
+      const processed = processQueueMessageForDisplay(content);
+      displayContent = processed.displayContent;
+      contentType = processed.contentType;
+    } else {
+      // กรณีอื่น ๆ
+      displayContent = 'ข้อความไม่สามารถแสดงผลได้';
+      contentType = 'error';
+    }
+
+    return {
+      content: content,
+      role: message.role || 'user',
+      timestamp: timestamp,
+      source: message.source || 'ai',
+      displayContent: displayContent,
+      contentType: contentType,
+      platform: message.platform || 'line',
+      botId: message.botId || null
+    };
+  } catch (error) {
+    console.error('[Normalize] ข้อผิดพลาดในการแปลงข้อความ:', error);
+    return {
+      content: 'ข้อความไม่ถูกต้อง',
+      role: 'system',
+      timestamp: new Date(),
+      source: 'system',
+      displayContent: 'เกิดข้อผิดพลาดในการประมวลผลข้อความ',
+      contentType: 'error'
+    };
+  }
+}
+
+/**
+ * ฟังก์ชันสำหรับประมวลผลข้อความจากคิวเพื่อแสดงผลในหน้าแชท
+ * @param {Array|Object} content - เนื้อหาข้อความจากคิว
+ * @returns {Object} ข้อมูลที่ประมวลผลแล้วพร้อม HTML สำหรับแสดงผล
+ */
+function processQueueMessageForDisplay(content) {
+  try {
+    let displayContent = '';
+    let contentType = 'text';
+
+    // ถ้าเป็น array (ข้อความจากคิว)
+    if (Array.isArray(content)) {
+      const textParts = [];
+      const imageParts = [];
+
+      content.forEach(item => {
+        if (item && item.data) {
+          const data = item.data;
+          if (data.type === 'text' && data.text) {
+            textParts.push(data.text);
+          } else if (data.type === 'image' && data.base64) {
+            imageParts.push(data);
+          }
+        }
+      });
+
+      // สร้าง HTML สำหรับแสดงผล
+      if (textParts.length > 0) {
+        displayContent += `<div class="message-text">${textParts.join('<br>')}</div>`;
+      }
+
+      if (imageParts.length > 0) {
+        if (imageParts.length === 1) {
+          displayContent += createImageHTML(imageParts[0]);
+        } else {
+          displayContent += '<div class="image-grid">';
+          imageParts.forEach((image, index) => {
+            displayContent += createImageHTML(image, index);
+          });
+          displayContent += '</div>';
+        }
+        contentType = 'multimodal';
+      }
+
+      if (textParts.length === 0 && imageParts.length === 0) {
+        displayContent = '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+        contentType = 'error';
+      }
+    }
+    // ถ้าเป็น object เดี่ยว
+    else if (content && typeof content === 'object') {
+      if (content.data) {
+        const data = content.data;
+        if (data.type === 'text' && data.text) {
+          displayContent = `<div class="message-text">${data.text}</div>`;
+          contentType = 'text';
+        } else if (data.type === 'image' && data.base64) {
+          displayContent = createImageHTML(data);
+          contentType = 'image';
+        } else {
+          displayContent = '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+          contentType = 'error';
+        }
+      } else {
+        // ถ้าไม่มี data field ให้ลองแปลงเป็น string
+        try {
+          const contentStr = JSON.stringify(content);
+          displayContent = `<div class="message-text">${contentStr}</div>`;
+          contentType = 'text';
+        } catch {
+          displayContent = '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+          contentType = 'error';
+        }
+      }
+    }
+    // กรณีอื่น ๆ
+    else {
+      displayContent = '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+      contentType = 'error';
+    }
+
+    return {
+      displayContent: displayContent,
+      contentType: contentType
+    };
+  } catch (error) {
+    console.error('[ProcessQueue] ข้อผิดพลาดในการประมวลผลข้อความจากคิว:', error);
+    return {
+      displayContent: '<div class="message-text text-danger">เกิดข้อผิดพลาดในการประมวลผลข้อความ</div>',
+      contentType: 'error'
+    };
+  }
+}
+
+/**
+ * ฟังก์ชันสำหรับสร้าง HTML สำหรับรูปภาพ
+ * @param {Object} imageData - ข้อมูลรูปภาพ
+ * @param {number} index - ดัชนีของรูปภาพ
+ * @returns {string} HTML สำหรับแสดงรูปภาพ
+ */
+function createImageHTML(imageData, index = 0) {
+  try {
+    if (!imageData || !imageData.base64) {
+      return '<div class="message-text text-muted">รูปภาพไม่ถูกต้อง</div>';
+    }
+
+    const base64Size = Math.ceil((imageData.base64.length * 3) / 4);
+    const sizeKB = (base64Size / 1024).toFixed(1);
+    
+    return `
+      <div class="message-image">
+        <img src="data:image/jpeg;base64,${imageData.base64}" 
+             alt="รูปภาพจากผู้ใช้ ${index + 1}" 
+             class="img-fluid rounded"
+             style="max-width: 200px; max-height: 200px; cursor: pointer;"
+             onclick="openImageModal(this.src)"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+        <div class="image-error-fallback" style="display: none;">
+          <i class="fas fa-image text-muted"></i>
+          <div class="text-muted small">ไม่สามารถแสดงรูปภาพได้</div>
+        </div>
+        <div class="image-info">
+          <small class="text-muted">
+            <i class="fas fa-image me-1"></i>
+            รูปภาพ JPEG (${sizeKB} KB)
+          </small>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('[ImageHTML] ข้อผิดพลาดในการสร้าง HTML สำหรับรูปภาพ:', error);
+    return '<div class="message-text text-muted">ไม่สามารถแสดงรูปภาพได้</div>';
+  }
+}
+
+// ============================ Enhanced Chat History Functions ============================
+
+/**
+ * ฟังก์ชันสำหรับดึงประวัติการสนทนาที่แปลงแล้วสำหรับ frontend
+ * @param {string} userId - ID ของผู้ใช้
+ * @returns {Array} รายการข้อความที่แปลงแล้ว
+ */
+async function getNormalizedChatHistory(userId) {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("chat_history");
+    
+    const messages = await coll.find({ senderId: userId })
+                               .sort({ timestamp: 1 })
+                               .limit(200)
+                               .toArray();
+    
+    // แปลงข้อความแต่ละข้อความ
+    const normalizedMessages = messages.map(message => normalizeMessageForFrontend(message));
+    
+    return normalizedMessages;
+  } catch (error) {
+    console.error('[NormalizedHistory] ข้อผิดพลาดในการดึงประวัติการสนทนา:', error);
+    return [];
+  }
+}
+
+/**
+ * ฟังก์ชันสำหรับดึงรายชื่อผู้ใช้พร้อมข้อความล่าสุดที่แปลงแล้ว
+ * @returns {Array} รายการผู้ใช้พร้อมข้อมูลที่แปลงแล้ว
+ */
+async function getNormalizedChatUsers() {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const chatColl = db.collection("chat_history");
+    const profileColl = db.collection("user_profiles");
+    
+    // ดึงข้อมูลผู้ใช้ด้วย aggregation
+    const pipeline = [
+      {
+        $group: {
+          _id: "$senderId",
+          lastMessage: { $last: "$content" },
+          lastTimestamp: { $last: "$timestamp" },
+          messageCount: { $sum: 1 },
+          platform: { $last: "$platform" },
+          botId: { $last: "$botId" }
+        }
+      },
+      {
+        $sort: { lastTimestamp: -1 }
+      },
+      {
+        $limit: 50
+      }
+    ];
+    
+    const users = await chatColl.aggregate(pipeline).toArray();
+    
+    // แปลงข้อมูลผู้ใช้แต่ละคน
+    const normalizedUsers = await Promise.all(users.map(async (user) => {
+      const unreadCount = await getUserUnreadCount(user._id);
+      const platform = user.platform || 'line';
+
+      // ดึงข้อมูลโปรไฟล์
+      let userProfile = null;
+      if (platform === 'line') {
+        userProfile = await profileColl.findOne({ userId: user._id });
+        if (!userProfile) {
+          userProfile = await saveOrUpdateUserProfile(user._id);
+        }
+      }
+
+      // แปลงข้อความล่าสุด
+      const normalizedLastMessage = normalizeMessageForFrontend({
+        content: user.lastMessage,
+        role: 'user',
+        timestamp: user.lastTimestamp
+      });
+
+      return {
+        userId: user._id,
+        displayName: userProfile ? userProfile.displayName : user._id.substring(0, 8) + '...',
+        pictureUrl: userProfile ? userProfile.pictureUrl : null,
+        statusMessage: userProfile ? userProfile.statusMessage : null,
+        lastMessage: normalizedLastMessage.displayContent,
+        lastMessageRaw: user.lastMessage,
+        lastTimestamp: user.lastTimestamp,
+        messageCount: user.messageCount,
+        unreadCount: unreadCount,
+        platform,
+        botId: user.botId || null
+      };
+    }));
+    
+    return normalizedUsers;
+  } catch (error) {
+    console.error('[NormalizedUsers] ข้อผิดพลาดในการดึงรายชื่อผู้ใช้:', error);
+    return [];
   }
 }
