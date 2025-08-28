@@ -3721,7 +3721,7 @@ function normalizeMessageForFrontend(message) {
       if (content.trim().startsWith('{') || content.trim().startsWith('[')) {
         try {
           const parsed = JSON.parse(content);
-          const processed = processQueueMessageForDisplay(parsed);
+          const processed = processQueueMessageForDisplayV2(parsed);
           displayContent = processed.displayContent;
           contentType = processed.contentType;
         } catch (parseError) {
@@ -3736,12 +3736,12 @@ function normalizeMessageForFrontend(message) {
       }
     } else if (Array.isArray(content)) {
       // ถ้าเป็น array (เช่น ข้อความจากคิว)
-      const processed = processQueueMessageForDisplay(content);
+      const processed = processQueueMessageForDisplayV2(content);
       displayContent = processed.displayContent;
       contentType = processed.contentType;
     } else if (content && typeof content === 'object') {
       // ถ้าเป็น object
-      const processed = processQueueMessageForDisplay(content);
+      const processed = processQueueMessageForDisplayV2(content);
       displayContent = processed.displayContent;
       contentType = processed.contentType;
     } else {
@@ -3860,6 +3860,123 @@ function processQueueMessageForDisplay(content) {
     };
   } catch (error) {
     console.error('[ProcessQueue] ข้อผิดพลาดในการประมวลผลข้อความจากคิว:', error);
+    return {
+      displayContent: '<div class="message-text text-danger">เกิดข้อผิดพลาดในการประมวลผลข้อความ</div>',
+      contentType: 'error'
+    };
+  }
+}
+
+/**
+ * ฟังก์ชันสำหรับประมวลผลข้อความจากคิวเพื่อแสดงผลในหน้าแชท (เวอร์ชันใหม่)
+ * @param {Array|Object} content - เนื้อหาข้อความจากคิว
+ * @returns {Object} ข้อมูลที่ประมวลผลแล้วพร้อม HTML สำหรับแสดงผล
+ */
+function processQueueMessageForDisplayV2(content) {
+  try {
+    let displayContent = '';
+    let contentType = 'text';
+
+    // ถ้าเป็น array (ข้อความจากคิว)
+    if (Array.isArray(content)) {
+      const textParts = [];
+      const imageParts = [];
+
+      content.forEach(item => {
+        // รองรับรูปแบบใหม่: item มี type และ content โดยตรง
+        if (item && item.type === 'text' && item.content) {
+          textParts.push(item.content);
+        } else if (item && item.type === 'image' && item.content) {
+          // รูปภาพในรูปแบบใหม่
+          imageParts.push({
+            base64: item.content,
+            description: item.description || 'ผู้ใช้ส่งรูปภาพมา'
+          });
+        }
+        // รองรับรูปแบบเก่า: item.data
+        else if (item && item.data) {
+          const data = item.data;
+          if (data.type === 'text' && data.text) {
+            textParts.push(data.text);
+          } else if (data.type === 'image' && data.base64) {
+            imageParts.push(data);
+          }
+        }
+      });
+
+      // สร้าง HTML สำหรับแสดงผล
+      if (textParts.length > 0) {
+        displayContent += `<div class="message-text">${textParts.join('<br>')}</div>`;
+      }
+
+      if (imageParts.length > 0) {
+        if (imageParts.length === 1) {
+          displayContent += createImageHTML(imageParts[0]);
+        } else {
+          displayContent += '<div class="image-grid">';
+          imageParts.forEach((image, index) => {
+            displayContent += createImageHTML(image, index);
+          });
+          displayContent += '</div>';
+        }
+        contentType = 'multimodal';
+      }
+
+      if (textParts.length === 0 && imageParts.length === 0) {
+        displayContent = '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+        contentType = 'error';
+      }
+    }
+    // ถ้าเป็น object เดี่ยว
+    else if (content && typeof content === 'object') {
+      // รองรับรูปแบบใหม่
+      if (content.type === 'text' && content.content) {
+        displayContent = `<div class="message-text">${content.content}</div>`;
+        contentType = 'text';
+      } else if (content.type === 'image' && content.content) {
+        displayContent = createImageHTML({
+          base64: content.content,
+          description: content.description || 'ผู้ใช้ส่งรูปภาพมา'
+        });
+        contentType = 'image';
+      }
+      // รองรับรูปแบบเก่า
+      else if (content.data) {
+        const data = content.data;
+        if (data.type === 'text' && data.text) {
+          displayContent = `<div class="message-text">${data.text}</div>`;
+          contentType = 'text';
+        } else if (data.type === 'image' && data.base64) {
+          displayContent = createImageHTML(data);
+          contentType = 'image';
+        } else {
+          displayContent = '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+          contentType = 'error';
+        }
+      } else {
+        // ถ้าไม่มี data field ให้ลองแปลงเป็น string
+        try {
+          const contentStr = JSON.stringify(content);
+          displayContent = `<div class="message-text">${contentStr}</div>`;
+          contentType = 'text';
+        } catch {
+          displayContent = '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+          contentType = 'error';
+        }
+      }
+    }
+    // กรณีอื่น ๆ
+    else {
+      displayContent = '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+      contentType = 'error';
+    }
+
+    return {
+      displayContent: displayContent,
+      contentType: contentType
+    };
+  } catch (error) {
+    console.error('[ProcessQueueV2] ข้อผิดพลาดในการประมวลผลข้อความจากคิว:', error);
     return {
       displayContent: '<div class="message-text text-danger">เกิดข้อผิดพลาดในการประมวลผลข้อความ</div>',
       contentType: 'error'
