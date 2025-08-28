@@ -1,0 +1,120 @@
+<!-- Add Facebook Bot Modal -->
+<div class="modal fade" id="addFacebookBotModal" tabindex="-1" aria-labelledby="addFacebookBotModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addFacebookBotModalLabel">
+                    <i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-success">
+                    <h6><i class="fas fa-check-circle me-2"></i>Facebook Bot พร้อมใช้งาน</h6>
+                    <p class="mb-0">Facebook Bot สามารถใช้งานได้แล้วเหมือนกับ Line Bot</p>
+                </div>
+                <form id="facebookBotForm">
+                    <input type="hidden" id="facebookBotId" name="id">
+                    
+                    <div class="mb-3">
+                        <label for="facebookBotName" class="form-label">ชื่อ Facebook Bot <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="facebookBotName" name="name" 
+                               placeholder="เช่น: ฝ่ายขาย, ฝ่ายบริการลูกค้า, ฝ่ายเทคนิค" required>
+                        <div class="form-text">ชื่อที่แสดงในระบบและใช้เรียก Facebook Bot นี้</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="facebookBotDescription" class="form-label">คำอธิบาย</label>
+                        <textarea class="form-control" id="facebookBotDescription" name="description" rows="2"
+                                  placeholder="อธิบายหน้าที่หรือวัตถุประสงค์ของ Facebook Bot นี้"></textarea>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="facebookPageId" class="form-label">Facebook Page ID <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="facebookPageId" name="pageId" 
+                                       placeholder="123456789012345" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="facebookAccessToken" class="form-label">Page Access Token <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="facebookAccessToken" name="accessToken" 
+                                       placeholder="EAABwzLixnjYBO..." required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="facebookWebhookUrl" class="form-label">Webhook URL</label>
+                                <input type="text" class="form-control" id="facebookWebhookUrl" name="webhookUrl" 
+                                       placeholder="https://yourdomain.com/webhook/facebook1" readonly>
+                                <div class="form-text">URL ที่จะใช้เป็น Webhook สำหรับ Facebook Bot นี้</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="facebookVerifyToken" class="form-label">Verify Token</label>
+                                <input type="text" class="form-control" id="facebookVerifyToken" name="verifyToken" 
+                                       placeholder="your_verify_token">
+                                <div class="form-text">Token สำหรับยืนยัน Webhook</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning d-flex align-items-start">
+                        <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
+                        <div>
+                            <div class="mb-1"><strong>ขั้นตอน:</strong> 1) นำ Webhook URL และ Verify Token ไปยืนยันใน Facebook App → Messenger Webhooks 2) เมื่อยืนยันสำเร็จแล้ว จึงกรอก Page ID และ Page Access Token</div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="fbVerifiedToggle">
+                                <label class="form-check-label" for="fbVerifiedToggle">ฉันยืนยัน Webhook สำเร็จแล้ว</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="facebookBotAiModel" class="form-label">AI Model <span class="text-danger">*</span></label>
+                                <select class="form-select" id="facebookBotAiModel" name="aiModel" required>
+                                    <option value="gpt-5">GPT-5</option>
+                                    <option value="gpt-5-mini">GPT-5 Mini</option>
+                                    <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
+                                    <option value="gpt-5-nano">GPT-5 Nano</option>
+                                    <option value="gpt-4.1">GPT-4.1</option>
+                                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                    <option value="o3">O3</option>
+                                </select>
+                                <div class="form-text">เลือก AI Model ที่จะใช้สำหรับ Facebook Bot นี้</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="facebookBotDefault" name="isDefault">
+                                    <label class="form-check-label" for="facebookBotDefault">
+                                        ตั้งเป็น Facebook Bot หลัก (Default)
+                                    </label>
+                                </div>
+                                <div class="form-text">Facebook Bot หลักจะถูกใช้เมื่อไม่ระบุ Facebook Bot เฉพาะ</div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-danger me-auto" id="deleteFacebookBotBtn" style="display: none;">
+                    <i class="fas fa-trash me-2"></i>ลบ
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
+                <button type="button" class="btn btn-primary" id="saveFacebookBotBtn">
+                    <i class="fas fa-save me-2"></i>บันทึก
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

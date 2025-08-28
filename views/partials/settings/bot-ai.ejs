@@ -1,0 +1,287 @@
+<div class="tab-pane fade" id="line-ai-settings" role="tabpanel">
+    <div class="row">
+        <div class="col-12">
+            <div class="settings-card">
+                <div class="settings-header">
+                    <h4 class="mb-0">
+                        <i class="fas fa-robot me-2"></i>
+                        Bot & AI Management
+                    </h4>
+                    <p class="text-muted mb-0">
+                        จัดการ Line Bot, Facebook Bot และตั้งค่า AI Models พร้อม Instructions สำหรับแต่ละ Bot
+                    </p>
+                </div>
+                <div class="settings-body">
+                    <!-- AI Models & Instructions Overview -->
+                    <div class="row mb-4">
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-robot me-2"></i>
+                                        AI Models ที่รองรับ
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-6 mb-3">
+                                            <div class="d-flex align-items-center">
+                                                <i class="fas fa-circle text-success me-2"></i>
+                                                <div>
+                                                    <strong>GPT-5</strong>
+                                                    <br><small class="text-muted">มาตรฐาน</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6 mb-3">
+                                            <div class="d-flex align-items-center">
+                                                <i class="fas fa-circle text-info me-2"></i>
+                                                <div>
+                                                    <strong>GPT-5 Mini</strong>
+                                                    <br><small class="text-muted">ประหยัด</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6 mb-3">
+                                            <div class="d-flex align-items-center">
+                                                <i class="fas fa-circle text-warning me-2"></i>
+                                                <div>
+                                                    <strong>GPT-5 Nano</strong>
+                                                    <br><small class="text-muted">เร็วที่สุด</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6 mb-3">
+                                            <div class="d-flex align-items-center">
+                                                <i class="fas fa-circle text-danger me-2"></i>
+                                                <div>
+                                                    <strong>O3</strong>
+                                                    <br><small class="text-muted">ทางเลือก</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-header bg-info text-white">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-book me-2"></i>
+                                        Instructions
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted mb-3">แต่ละ Bot สามารถเลือก Instructions จากคลังเพื่อกำหนด personality เฉพาะ</p>
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h5 class="mb-0" id="instructionsCount">0</h5>
+                                            <small>คลัง Instructions</small>
+                                        </div>
+                                        <a href="/admin/instructions" class="btn btn-sm btn-outline-info">
+                                            <i class="fas fa-external-link-alt me-1"></i>
+                                            จัดการคลัง
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-header bg-success text-white">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-plug me-2"></i>
+                                        ช่องทางการเชื่อมต่อ
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fab fa-line text-success me-2"></i>
+                                            <strong>Line</strong>
+                                            <span class="badge bg-success ms-auto">พร้อมใช้งาน</span>
+                                        </div>
+                                        <small class="text-muted">เชื่อมต่อผ่าน Line Messaging API</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <i class="fab fa-facebook text-primary me-2"></i>
+                                            <strong>Facebook</strong>
+                                            <span class="badge bg-success ms-auto">พร้อมใช้งาน</span>
+                                        </div>
+                                        <small class="text-muted">เชื่อมต่อผ่าน Facebook Messenger API</small>
+                                    </div>
+                                    <div class="text-center">
+                                        <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                                            <i class="fas fa-plus me-1"></i>
+                                            เพิ่ม Facebook Bot
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bot Statistics -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <div class="stats-compact">
+                                <div class="row text-center">
+                                    <div class="col-2">
+                                        <div class="stat-item">
+                                            <i class="fas fa-robot text-primary stat-icon"></i>
+                                            <div class="stat-number" id="totalBots">0</div>
+                                            <div class="stat-label">ทั้งหมด</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="stat-item">
+                                            <i class="fab fa-line text-success stat-icon"></i>
+                                            <div class="stat-number" id="lineBots">0</div>
+                                            <div class="stat-label">Line</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="stat-item">
+                                            <i class="fab fa-facebook text-primary stat-icon"></i>
+                                            <div class="stat-number" id="facebookBots">0</div>
+                                            <div class="stat-label">Facebook</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="stat-item">
+                                            <i class="fas fa-check-circle text-success stat-icon"></i>
+                                            <div class="stat-number" id="activeBots">0</div>
+                                            <div class="stat-label">ใช้งาน</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="stat-item">
+                                            <i class="fas fa-cog text-info stat-icon"></i>
+                                            <div class="stat-number" id="configuredBots">0</div>
+                                            <div class="stat-label">ตั้งค่าแล้ว</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="stat-item">
+                                            <i class="fas fa-exclamation-triangle text-warning stat-icon"></i>
+                                            <div class="stat-number" id="inactiveBots">0</div>
+                                            <div class="stat-label">ปิดใช้งาน</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="row mb-4">
+                        <div class="col-md-4">
+                            <button type="button" class="btn btn-success btn-lg w-100" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
+                                <i class="fab fa-line me-2"></i>เพิ่ม Line Bot
+                            </button>
+                        </div>
+                        <div class="col-md-4">
+                            <button type="button" class="btn btn-primary btn-lg w-100" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                                <i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot
+                            </button>
+                        </div>
+                        <div class="col-md-4">
+                            <button type="button" class="btn btn-outline-secondary btn-lg w-100" onclick="refreshLineBotList()">
+                                <i class="fas fa-sync-alt me-2"></i>รีเฟรชข้อมูล
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Line Bot List -->
+                    <div id="lineBotList" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+                        <!-- Line Bot items will be loaded here -->
+                    </div>
+
+                    <!-- Facebook Bot List -->
+                    <div id="facebookBotList" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+                        <!-- Facebook Bot items will be loaded here -->
+                    </div>
+
+                    <!-- Global AI Settings -->
+                    <div class="mt-4">
+                        <div class="card border-0 shadow-sm">
+                            <div class="card-header bg-secondary text-white">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-cog me-2"></i>
+                                    การตั้งค่า AI หลัก (Global Fallback)
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <form id="aiSettingsForm">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="setting-item">
+                                                <div class="setting-label">โมเดลสำหรับข้อความ</div>
+                                                <div class="setting-description">
+                                                    โมเดล AI ที่ใช้สำหรับข้อความธรรมดา (fallback)
+                                                </div>
+                                                <select class="form-select" id="textModel">
+                                                    <option value="gpt-5">GPT-5</option>
+                                                    <option value="gpt-5-mini">GPT-5 Mini</option>
+                                                    <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
+                                                    <option value="gpt-5-nano">GPT-5 Nano</option>
+                                                    <option value="gpt-4.1">GPT-4.1</option>
+                                                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                                    <option value="o3">O3</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="setting-item">
+                                                <div class="setting-label">โมเดลสำหรับรูปภาพ</div>
+                                                <div class="setting-description">
+                                                    โมเดล AI ที่ใช้สำหรับรูปภาพ (fallback)
+                                                </div>
+                                                <select class="form-select" id="visionModel">
+                                                    <option value="gpt-5">GPT-5</option>
+                                                    <option value="gpt-5-mini">GPT-5 Mini</option>
+                                                    <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
+                                                    <option value="gpt-5-nano">GPT-5 Nano</option>
+                                                    <option value="gpt-4.1">GPT-4.1</option>
+                                                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                                    <option value="o3">O3</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="setting-item">
+                                        <div class="setting-label">จำนวนรูปภาพสูงสุดต่อข้อความ</div>
+                                        <div class="setting-description">
+                                            จำกัดจำนวนรูปภาพที่ AI จะประมวลผลในครั้งเดียวเพื่อควบคุมต้นทุน
+                                        </div>
+                                        <input type="number" class="form-control" id="maxImagesPerMessage"
+                                               min="1" max="10" step="1" placeholder="3" value="3">
+                                        <small class="text-muted">แนะนำ: 2-5 รูปภาพ</small>
+                                    </div>
+
+                                    <div class="setting-item">
+                                        <div class="setting-label">Instruction เริ่มต้น</div>
+                                        <div class="setting-description">
+                                            เลือกคลัง instruction ที่จะใช้เป็นค่าเริ่มต้นเมื่อบอทไม่ได้เลือกไว้
+                                        </div>
+                                        <select class="form-select" id="defaultInstruction">
+                                            <option value="">ไม่เลือก</option>
+                                        </select>
+                                    </div>
+
+                                    <button type="submit" class="btn btn-save text-white">
+                                        <i class="fas fa-save me-2"></i>
+                                        บันทึกการตั้งค่า AI
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

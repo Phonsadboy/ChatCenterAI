@@ -1,0 +1,104 @@
+<!-- Add/Edit Line Bot Modal -->
+<div class="modal fade" id="addLineBotModal" tabindex="-1" aria-labelledby="addLineBotModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addLineBotModalLabel">
+                    <i class="fab fa-line me-2"></i>เพิ่ม Line Bot ใหม่
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="lineBotForm">
+                    <input type="hidden" id="lineBotId" name="id">
+                    
+                    <div class="mb-3">
+                        <label for="lineBotName" class="form-label">ชื่อ Line Bot <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="lineBotName" name="name" 
+                               placeholder="เช่น: ฝ่ายขาย, ฝ่ายบริการลูกค้า, ฝ่ายเทคนิค" required>
+                        <div class="form-text">ชื่อที่แสดงในระบบและใช้เรียก Line Bot นี้</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="lineBotDescription" class="form-label">คำอธิบาย</label>
+                        <textarea class="form-control" id="lineBotDescription" name="description" rows="2"
+                                  placeholder="อธิบายหน้าที่หรือวัตถุประสงค์ของ Line Bot นี้"></textarea>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="lineChannelAccessToken" class="form-label">Channel Access Token <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="lineChannelAccessToken" name="channelAccessToken" 
+                                       placeholder="U1234567890abcdef..." required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="lineChannelSecret" class="form-label">Channel Secret <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="lineChannelSecret" name="channelSecret" 
+                                       placeholder="abcdef123456..." required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="lineWebhookUrl" class="form-label">Webhook URL</label>
+                                <input type="text" class="form-control" id="lineWebhookUrl" name="webhookUrl" 
+                                       placeholder="https://yourdomain.com/webhook/line1" readonly>
+                                <div class="form-text">URL ที่จะใช้เป็น Webhook สำหรับ Line Bot นี้</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="lineBotStatus" class="form-label">สถานะ</label>
+                                <select class="form-select" id="lineBotStatus" name="status">
+                                    <option value="active">เปิดใช้งาน</option>
+                                    <option value="inactive">ปิดใช้งาน</option>
+                                    <option value="maintenance">บำรุงรักษา</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="lineBotAiModel" class="form-label">AI Model <span class="text-danger">*</span></label>
+                                <select class="form-select" id="lineBotAiModel" name="aiModel" required>
+                                    <option value="gpt-5">GPT-5</option>
+                                    <option value="gpt-5-mini">GPT-5 Mini</option>
+                                    <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
+                                    <option value="gpt-5-nano">GPT-5 Nano</option>
+                                    <option value="gpt-4.1">GPT-4.1</option>
+                                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                    <option value="o3">O3</option>
+                                </select>
+                                <div class="form-text">เลือก AI Model ที่จะใช้สำหรับ Line Bot นี้</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="lineBotDefault" name="isDefault">
+                                    <label class="form-check-label" for="lineBotDefault">
+                                        ตั้งเป็น Line Bot หลัก (Default)
+                                    </label>
+                                </div>
+                                <div class="form-text">Line Bot หลักจะถูกใช้เมื่อไม่ระบุ Line Bot เฉพาะ</div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                <button type="button" class="btn btn-primary" id="saveLineBotBtn">
+                    <i class="fas fa-save me-2"></i>บันทึก
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

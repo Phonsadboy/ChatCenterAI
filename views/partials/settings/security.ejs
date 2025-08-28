@@ -1,0 +1,105 @@
+<div class="tab-pane fade" id="filter-settings" role="tabpanel">
+    <div class="row">
+        <div class="col-12">
+            <div class="settings-card">
+                <div class="settings-header">
+                    <h4 class="mb-0">
+                        <i class="fas fa-shield-alt me-2"></i>
+                        ความปลอดภัยและการกรองข้อความ
+                    </h4>
+                    <p class="text-muted mb-0">
+                        ตั้งค่าการกรองข้อความและระบบความปลอดภัยเพื่อป้องกันเนื้อหาที่ไม่เหมาะสม
+                    </p>
+                </div>
+                <div class="settings-body">
+                    <!-- Security Overview -->
+                    <div class="row mb-4">
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-shield-alt fa-2x text-success mb-3"></i>
+                                    <h6>การกรองข้อความ</h6>
+                                    <div class="form-check form-switch d-flex justify-content-center">
+                                        <input class="form-check-input" type="checkbox" id="enableMessageFiltering" checked>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-search fa-2x text-info mb-3"></i>
+                                    <h6>การกรองแบบละเอียด</h6>
+                                    <div class="form-check form-switch d-flex justify-content-center">
+                                        <input class="form-check-input" type="checkbox" id="enableStrictFiltering" checked>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-eye-slash fa-2x text-warning mb-3"></i>
+                                    <h6>คำที่ถูกซ่อน</h6>
+                                    <h5 id="hiddenWordsCount">0</h5>
+                                    <small>คำ</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form id="filterSettingsForm">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="setting-item">
+                                    <div class="setting-label">คำที่ต้องการซ่อน (หนึ่งคำต่อบรรทัด)</div>
+                                    <div class="setting-description">
+                                        ใส่คำหรือวลีที่ต้องการซ่อนจากข้อความของ Assistant (ไม่คำนึงถึงตัวพิมพ์เล็ก-ใหญ่)
+                                    </div>
+                                    <textarea class="form-control" id="hiddenWords" rows="8" 
+                                              placeholder="ตัวอย่าง:&#10;คำหยาบ&#10;ข้อมูลส่วนตัว&#10;ลิงก์ที่ไม่เหมาะสม&#10;ข้อมูลลับ"></textarea>
+                                    <small class="text-muted">แต่ละคำหรือวลีให้ใส่ในบรรทัดใหม่</small>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="setting-item">
+                                    <div class="setting-label">คำที่ต้องการแทนที่</div>
+                                    <div class="setting-description">
+                                        ใส่คำหรือวลีที่ต้องการใช้แทนที่คำที่ซ่อน
+                                    </div>
+                                    <input type="text" class="form-control" id="replacementText" 
+                                           placeholder="[ข้อความถูกซ่อน]">
+                                    <small class="text-muted">ถ้าไม่ใส่จะใช้ "[ข้อความถูกซ่อน]" เป็นค่าเริ่มต้น</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-label">ทดสอบการกรองข้อความ</div>
+                            <div class="setting-description">
+                                ทดสอบการกรองข้อความกับข้อความตัวอย่าง
+                            </div>
+                            <div class="row">
+                                <div class="col-md-8">
+                                    <textarea class="form-control" id="testMessage" rows="3" 
+                                              placeholder="ใส่ข้อความที่ต้องการทดสอบการกรอง"></textarea>
+                                </div>
+                                <div class="col-md-4">
+                                    <button type="button" class="btn btn-outline-primary w-100 h-100" onclick="testFiltering()">
+                                        <i class="fas fa-eye me-2"></i>ทดสอบการกรอง
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="testResult" class="mt-3 p-3 bg-light rounded" style="display: none;"></div>
+                        </div>
+
+                        <button type="submit" class="btn btn-save text-white">
+                            <i class="fas fa-save me-2"></i>
+                            บันทึกการตั้งค่าการกรอง
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

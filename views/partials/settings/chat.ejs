@@ -1,0 +1,74 @@
+<div class="tab-pane fade" id="chat-settings" role="tabpanel">
+    <div class="row">
+        <div class="col-12">
+            <div class="settings-card">
+                <div class="settings-header">
+                    <h4 class="mb-0">
+                        <i class="fas fa-clock me-2"></i>
+                        การตั้งค่าแชทและคิวข้อความ
+                    </h4>
+                    <p class="text-muted mb-0">
+                        ระบบจะรอข้อความจากผู้ใช้ตามเวลาที่กำหนด เพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนส่งให้ AI ประมวลผล
+                    </p>
+                </div>
+                <div class="settings-body">
+                    <form id="chatSettingsForm">
+                        <div class="setting-item">
+                            <div class="setting-label">ระยะเวลาดีเลย์ก่อนตอบผู้ใช้ (วินาที)</div>
+                            <div class="setting-description">
+                                ระยะเวลารอเพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนตอบกลับ
+                                <br><strong>การทำงาน:</strong> เมื่อผู้ใช้ส่งข้อความ ระบบจะรอตามเวลาที่กำหนดนี้ 
+                                หากมีข้อความใหม่เข้ามาในระหว่างนี้ ระบบจะรีเซ็ตตัวจับเวลาและรอใหม่
+                            </div>
+                            <input type="number" class="form-control" id="chatDelaySeconds" 
+                                   min="1" max="60" step="1" placeholder="5" value="5">
+                            <small class="text-muted">แนะนำ: 3-10 วินาที | ค่าปัจจุบัน: <span id="currentChatDelay">5</span> วินาที</small>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-label">จำนวนข้อความสูงสุดในคิว</div>
+                            <div class="setting-description">
+                                จำนวนข้อความสูงสุดที่จะรอรวมก่อนตอบกลับ
+                                <br><strong>การทำงาน:</strong> หากจำนวนข้อความในคิวถึงขีดจำกัดนี้ ระบบจะประมวลผลทันทีโดยไม่รอเวลา delay
+                            </div>
+                            <input type="number" class="form-control" id="maxQueueMessages" 
+                                   min="1" max="20" step="1" placeholder="10" value="10">
+                            <small class="text-muted">แนะนำ: 5-15 ข้อความ | ค่าปัจจุบัน: <span id="currentMaxQueue">10</span> ข้อความ</small>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-label">เปิดใช้งานการรวมข้อความ</div>
+                            <div class="setting-description">
+                                รวมข้อความหลายข้อความเข้าด้วยกันก่อนส่งให้ AI ประมวลผล
+                                <br><strong>การทำงาน:</strong> เมื่อเปิดใช้งาน ระบบจะรวมข้อความหลายข้อความเข้าด้วยกันด้วยเครื่องหมายขึ้นบรรทัดใหม่
+                                หากปิดใช้งาน ระบบจะประมวลผลทีละข้อความ
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="enableMessageMerging" checked>
+                                <label class="form-check-label" for="enableMessageMerging">
+                                    เปิดใช้งาน
+                                </label>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-save text-white">
+                            <i class="fas fa-save me-2"></i>
+                            บันทึกการตั้งค่าแชท
+                        </button>
+                    </form>
+                    
+                    <!-- ข้อความสรุปการทำงานของระบบคิว -->
+                    <div class="alert alert-info mt-3">
+                        <h6><i class="fas fa-info-circle me-2"></i>สรุปการทำงานของระบบคิว:</h6>
+                        <ul class="mb-0">
+                            <li><strong>ข้อความแรก:</strong> ระบบจะเริ่มนับเวลา delay ตามที่ตั้งไว้</li>
+                            <li><strong>ข้อความเพิ่ม:</strong> หากมีข้อความใหม่เข้ามา ระบบจะรีเซ็ตตัวจับเวลาและรอใหม่</li>
+                            <li><strong>ครบเวลา delay:</strong> ระบบจะประมวลผลข้อความทั้งหมดในคิว</li>
+                            <li><strong>ครบจำนวนข้อความ:</strong> หากจำนวนข้อความถึงขีดจำกัด ระบบจะประมวลผลทันที</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
