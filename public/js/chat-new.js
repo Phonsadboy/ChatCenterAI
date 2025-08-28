@@ -169,11 +169,14 @@ class ChatManager {
         
         this.currentUserId = userId;
         
-        // Update UI
+        // Update UI: toggle active state using data attribute selector
         document.querySelectorAll('.user-item').forEach(item => {
             item.classList.remove('active');
         });
-        event.target.closest('.user-item').classList.add('active');
+        const currentItem = document.querySelector(`.user-item[onclick*="${userId}"]`);
+        if (currentItem) {
+            currentItem.classList.add('active');
+        }
         
         // Update chat header
         const user = this.users.find(u => u.userId === userId);
@@ -253,25 +256,32 @@ class ChatManager {
             const senderLabel = message.role === 'user' ? 'ผู้ใช้' : 
                               message.source === 'admin_chat' ? 'แอดมิน' : 'AI Assistant';
             
+            // Normalize base content
+            const baseContent = (message && (message.content ?? message.text ?? message.message)) || '';
+            
             // Process message content
-            let displayContent = message.content;
-            if (message.role !== 'user' && message.content.includes('<reply>')) {
-                const replyMatch = message.content.match(/<reply>(.*?)<\/reply>/s);
+            let displayContent = baseContent;
+            if (message.role !== 'user' && displayContent.includes('<reply>')) {
+                const replyMatch = displayContent.match(/<reply>(.*?)<\/reply>/s);
                 if (replyMatch) {
                     displayContent = replyMatch[1].trim();
                 }
             }
 
-            // Handle user messages with images
+            // Handle user messages with images and robust fallbacks
             if (message.role === 'user') {
-                const processed = this.processQueueMessage(message.content);
+                const processed = this.processQueueMessage(baseContent);
                 if (processed.type === 'queue' || processed.type === 'single_image' || processed.type === 'single_text') {
                     displayContent = this.createCompactMessageHTML(processed);
                 } else {
-                    displayContent = `<div class="message-text">${this.escapeHtml(message.content)}</div>`;
+                    const raw = typeof baseContent === 'string' ? baseContent : JSON.stringify(baseContent);
+                    const safe = (raw || '').trim();
+                    displayContent = safe ? `<div class="message-text">${this.escapeHtml(safe)}</div>` : '';
                 }
             } else {
-                displayContent = `<div class="message-text">${this.escapeHtml(displayContent)}</div>`;
+                const raw = typeof displayContent === 'string' ? displayContent : JSON.stringify(displayContent);
+                const safe = (raw || '').trim();
+                displayContent = safe ? `<div class="message-text">${this.escapeHtml(safe)}</div>` : '';
             }
             
             return `
@@ -502,58 +512,51 @@ class ChatManager {
 
     // Message processing methods
     processQueueMessage(content) {
+        // Accept string, object, or array
+        let payload = content;
         try {
-            const parsed = JSON.parse(content);
-            
-            if (Array.isArray(parsed)) {
-                const textParts = [];
-                const imageParts = [];
-                
-                parsed.forEach(item => {
-                    if (item.data) {
-                        if (item.data.type === 'text' && item.data.text) {
-                            textParts.push(item.data.text);
-                        } else if (item.data.type === 'image' && item.data.base64) {
-                            imageParts.push(item.data);
-                        }
-                    }
-                });
-                
-                return { textParts, imageParts, type: 'queue' };
-            } else if (parsed && parsed.data) {
-                if (parsed.data.type === 'image') {
-                    return {
-                        textParts: [],
-                        imageParts: [parsed.data],
-                        type: 'single_image'
-                    };
-                } else if (parsed.data.type === 'text') {
-                    return {
-                        textParts: [parsed.data.text],
-                        imageParts: [],
-                        type: 'single_text'
-                    };
-                }
-            } else if (parsed && parsed.type) {
-                if (parsed.type === 'image' && parsed.base64) {
-                    return {
-                        textParts: [],
-                        imageParts: [parsed],
-                        type: 'single_image'
-                    };
-                } else if (parsed.type === 'text' && parsed.text) {
-                    return {
-                        textParts: [parsed.text],
-                        imageParts: [],
-                        type: 'single_text'
-                    };
+            if (typeof payload === 'string') {
+                const trimmed = payload.trim();
+                if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                    payload = JSON.parse(trimmed);
+                } else {
+                    // Plain text string
+                    return { textParts: [payload], imageParts: [], type: 'single_text' };
                 }
             }
-
-            return { textParts: [], imageParts: [], type: 'unknown' };
         } catch (e) {
-            return { textParts: [], imageParts: [], type: 'error', error: e.message };
+            // Not JSON, treat as plain text
+            return { textParts: [String(content || '')], imageParts: [], type: 'single_text' };
         }
+
+        // If array, collect parts
+        if (Array.isArray(payload)) {
+            const textParts = [];
+            const imageParts = [];
+            payload.forEach(item => {
+                const data = item && item.data ? item.data : item;
+                if (!data) return;
+                if (data.type === 'text' && data.text) {
+                    textParts.push(data.text);
+                } else if (data.type === 'image' && data.base64) {
+                    imageParts.push(data);
+                }
+            });
+            return { textParts, imageParts, type: 'queue' };
+        }
+
+        // If object with data wrapper
+        if (payload && typeof payload === 'object') {
+            const data = payload.data || payload;
+            if (data.type === 'image' && data.base64) {
+                return { textParts: [], imageParts: [data], type: 'single_image' };
+            }
+            if (data.type === 'text' && data.text) {
+                return { textParts: [data.text], imageParts: [], type: 'single_text' };
+            }
+        }
+
+        return { textParts: [], imageParts: [], type: 'unknown' };
     }
 
     createImageMessageHTML(imageData, index = 0) {
