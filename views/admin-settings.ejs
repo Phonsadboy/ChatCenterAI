@@ -8,183 +8,415 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="/css/style.css" rel="stylesheet">
     <style>
-        .settings-card {
-            border: 1px solid #e0e0e0;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            margin-bottom: 15px;
+        /* Minimalist Design System */
+        :root {
+            --primary-color: #2563eb;
+            --primary-light: #3b82f6;
+            --secondary-color: #64748b;
+            --success-color: #059669;
+            --warning-color: #d97706;
+            --danger-color: #dc2626;
+            --light-color: #f8fafc;
+            --border-color: #e2e8f0;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+            --radius: 8px;
+            --spacing: 1.5rem;
         }
-        .settings-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 10px 10px 0 0;
+
+        body {
+            background-color: #fafafa;
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
         }
-        .settings-body {
-            padding: 20px;
+
+        /* Clean Navigation */
+        .navbar {
+            background: white;
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
         }
-        .form-control, .form-select {
-            border-radius: 8px;
-            border: 2px solid #e0e0e0;
-            transition: all 0.3s ease;
-        }
-        .form-control:focus, .form-select:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
-        }
-        .btn-save {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            border-radius: 8px;
-            padding: 12px 30px;
+
+        .navbar-brand {
             font-weight: 600;
-            transition: all 0.3s ease;
+            color: var(--primary-color) !important;
         }
+
+        .nav-link {
+            color: var(--text-secondary) !important;
+            font-weight: 500;
+            padding: 0.75rem 1rem !important;
+            border-radius: var(--radius);
+            transition: all 0.2s ease;
+        }
+
+        .nav-link:hover, .nav-link.active {
+            color: var(--primary-color) !important;
+            background-color: var(--light-color);
+        }
+
+        /* Clean Cards */
+        .settings-card {
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: var(--spacing);
+            overflow: hidden;
+        }
+
+        .settings-header {
+            background: var(--primary-color);
+            color: white;
+            padding: var(--spacing);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .settings-header h4 {
+            margin: 0;
+            font-weight: 600;
+            font-size: 1.25rem;
+        }
+
+        .settings-header p {
+            margin: 0.5rem 0 0 0;
+            opacity: 0.9;
+            font-size: 0.9rem;
+        }
+
+        .settings-body {
+            padding: var(--spacing);
+        }
+
+        /* Clean Forms */
+        .form-control, .form-select {
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 0.75rem;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+            background-color: white;
+        }
+
+        .form-control:focus, .form-select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+            outline: none;
+        }
+
+        .form-label {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        .form-text {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        /* Clean Buttons */
+        .btn {
+            border-radius: var(--radius);
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            transition: all 0.2s ease;
+            border: none;
+        }
+
+        .btn-save {
+            background: var(--primary-color);
+            color: white;
+        }
+
         .btn-save:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            background: var(--primary-light);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
         }
+
+        .btn-outline-primary {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+
+        .btn-outline-primary:hover {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+
+        /* Clean Setting Items */
         .setting-item {
-            margin-bottom: 15px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
+            background: var(--light-color);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: var(--spacing);
+            margin-bottom: 1rem;
+            border-left: 3px solid var(--primary-color);
         }
+
         .setting-label {
             font-weight: 600;
-            color: #495057;
-            margin-bottom: 8px;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
         }
+
         .setting-description {
-            color: #6c757d;
-            font-size: 0.9em;
-            margin-bottom: 15px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+            line-height: 1.5;
         }
-        .alert-custom {
-            border-radius: 8px;
-            border: none;
-            padding: 15px 20px;
+
+        /* Clean Tabs */
+        .nav-tabs {
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: var(--spacing);
         }
+
         .nav-tabs .nav-link {
-            border-radius: 8px 8px 0 0;
             border: none;
-            color: #6c757d;
+            color: var(--text-secondary);
+            font-weight: 500;
+            padding: 1rem 1.5rem;
+            border-radius: var(--radius) var(--radius) 0 0;
+            transition: all 0.2s ease;
+        }
+
+        .nav-tabs .nav-link.active {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+        }
+
+        .nav-tabs .nav-link:hover:not(.active) {
+            background: var(--light-color);
+            color: var(--primary-color);
+        }
+
+        /* Clean Alerts */
+        .alert {
+            border: none;
+            border-radius: var(--radius);
+            padding: 1rem 1.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .alert-custom {
+            border-radius: var(--radius);
+            border: none;
+            padding: 1rem 1.25rem;
+        }
+
+        /* Clean Statistics */
+        .stats-compact {
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 1rem 0.5rem;
+            border-right: 1px solid var(--border-color);
+        }
+
+        .stat-item:last-child {
+            border-right: none;
+        }
+
+        .stat-icon {
+            font-size: 1.5rem;
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-number {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             font-weight: 500;
         }
-        .nav-tabs .nav-link.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
+
+        @media (max-width: 768px) {
+            .stat-item {
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+                padding: 0.75rem 0.5rem;
+            }
+            
+            .stat-item:last-child {
+                border-bottom: none;
+            }
+            
+            .stat-number {
+                font-size: 1.5rem;
+            }
         }
+
+        /* Clean Cards */
+        .card {
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-sm);
+            transition: all 0.2s ease;
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+        }
+
+        .card-header {
+            background: white;
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 1.25rem;
+        }
+
+        .card-body {
+            padding: 1.25rem;
+        }
+
+        /* Clean Badges */
+        .badge {
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 0.35rem 0.65rem;
+            border-radius: 6px;
+        }
+
+        /* Clean Back Button */
         .back-button {
-            background: #6c757d;
-            border: none;
-            border-radius: 8px;
-            padding: 10px 20px;
+            background: var(--secondary-color);
             color: white;
+            border: none;
+            border-radius: var(--radius);
+            padding: 0.75rem 1.25rem;
             text-decoration: none;
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            transition: all 0.3s ease;
+            gap: 0.5rem;
+            transition: all 0.2s ease;
+            font-weight: 500;
         }
+
         .back-button:hover {
-            background: #5a6268;
+            background: #475569;
             color: white;
             text-decoration: none;
             transform: translateX(-2px);
         }
-        
-        /* Additional UI improvements */
-        .card {
-            transition: all 0.3s ease;
-        }
-        
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        
-        /* Compact Statistics */
-        .stats-compact {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border-radius: 12px;
-            padding: 1rem;
-        }
-        
-        .stats-compact .col-2 {
-            position: relative;
-        }
-        
-        .stats-compact .col-2:not(:last-child)::after {
-            content: '';
-            position: absolute;
-            right: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            height: 60%;
-            width: 1px;
-            background: linear-gradient(to bottom, transparent, #dee2e6, transparent);
-        }
-        
-        .stats-compact .stat-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 0.5rem;
-        }
-        
-        .stats-compact .stat-icon {
-            font-size: 1.2rem;
-            margin-bottom: 0.25rem;
-        }
-        
-        .stats-compact .stat-number {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-        }
-        
-        .stats-compact .stat-label {
-            font-size: 0.75rem;
-            color: #6c757d;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .dropdown-menu {
-            border-radius: 8px;
+
+        /* Clean Modals */
+        .modal-content {
             border: none;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-md);
         }
-        
+
+        .modal-header {
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.5rem;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .modal-footer {
+            border-top: 1px solid var(--border-color);
+            padding: 1.5rem;
+        }
+
+        /* Clean Form Switches */
+        .form-check-input:checked {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+
+        .form-check-input:focus {
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        /* Clean Dropdowns */
+        .dropdown-menu {
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-md);
+            padding: 0.5rem 0;
+        }
+
+        .dropdown-item {
+            padding: 0.5rem 1rem;
+            color: var(--text-primary);
+        }
+
         .dropdown-item:hover {
-            background-color: #f8f9fa;
+            background-color: var(--light-color);
+            color: var(--primary-color);
         }
+
+        /* Responsive Improvements */
+        @media (max-width: 768px) {
+            .settings-body {
+                padding: 1rem;
+            }
+            
+            .nav-tabs .nav-link {
+                padding: 0.75rem 1rem;
+                font-size: 0.9rem;
+            }
+            
+            .card-body {
+                padding: 1rem;
+            }
+            
+            .modal-body, .modal-header, .modal-footer {
+                padding: 1rem;
+            }
+            
+            .btn {
+                padding: 0.5rem 1rem;
+                font-size: 0.9rem;
+            }
+        }
+
+        /* Clean Spacing */
+        .mb-4 { margin-bottom: 1.5rem !important; }
+        .mb-3 { margin-bottom: 1rem !important; }
+        .mb-2 { margin-bottom: 0.75rem !important; }
+        .mb-1 { margin-bottom: 0.5rem !important; }
         
-        .badge {
-            font-size: 0.75em;
-        }
+        .mt-4 { margin-top: 1.5rem !important; }
+        .mt-3 { margin-top: 1rem !important; }
+        .mt-2 { margin-top: 0.75rem !important; }
+        .mt-1 { margin-top: 0.5rem !important; }
         
-        .text-truncate {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
+        .p-3 { padding: 1rem !important; }
+        .p-2 { padding: 0.75rem !important; }
         
-        .btn-lg {
-            padding: 12px 24px;
-            font-size: 1.1rem;
-        }
-        
-        .shadow-sm {
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-        }
-        
-        .gap-2 {
-            gap: 0.5rem !important;
-        }
+        /* Clean Text Colors */
+        .text-primary { color: var(--primary-color) !important; }
+        .text-secondary { color: var(--secondary-color) !important; }
+        .text-success { color: var(--success-color) !important; }
+        .text-warning { color: var(--warning-color) !important; }
+        .text-danger { color: var(--danger-color) !important; }
+        .text-muted { color: var(--text-muted) !important; }
     </style>
 </head>
 <body>
@@ -304,58 +536,58 @@
                                 </p>
                             </div>
                             <div class="settings-body">
-                                <div class="row">
-                                    <div class="col-md-6 mb-4">
-                                        <div class="card border-0 shadow-sm">
+                                <div class="row g-3">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="card">
                                             <div class="card-body text-center">
-                                                <i class="fas fa-robot fa-3x text-primary mb-3"></i>
-                                                <h5>AI Models ที่ใช้งาน</h5>
+                                                <i class="fas fa-robot fa-2x mb-3" style="color: var(--primary-color);"></i>
+                                                <h6 class="card-title">AI Models</h6>
                                                 <div id="aiModelOverview">
-                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                    <p class="text-muted small">กำลังโหลดข้อมูล...</p>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="col-md-6 mb-4">
-                                        <div class="card border-0 shadow-sm">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="card">
                                             <div class="card-body text-center">
-                                                <i class="fab fa-line fa-3x text-success mb-3"></i>
-                                                <h5>Line Bot ที่ใช้งาน</h5>
+                                                <i class="fab fa-line fa-2x mb-3" style="color: var(--success-color);"></i>
+                                                <h6 class="card-title">Line Bot</h6>
                                                 <div id="lineBotOverview">
-                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                    <p class="text-muted small">กำลังโหลดข้อมูล...</p>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="col-md-6 mb-4">
-                                        <div class="card border-0 shadow-sm">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="card">
                                             <div class="card-body text-center">
-                                                <i class="fab fa-facebook fa-3x text-primary mb-3"></i>
-                                                <h5>Facebook Bot ที่ใช้งาน</h5>
+                                                <i class="fab fa-facebook fa-2x mb-3" style="color: var(--primary-color);"></i>
+                                                <h6 class="card-title">Facebook Bot</h6>
                                                 <div id="facebookBotOverview">
-                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                    <p class="text-muted small">กำลังโหลดข้อมูล...</p>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="col-md-6 mb-4">
-                                        <div class="card border-0 shadow-sm">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="card">
                                             <div class="card-body text-center">
-                                                <i class="fas fa-book fa-3x text-info mb-3"></i>
-                                                <h5>Instructions ในคลัง</h5>
+                                                <i class="fas fa-book fa-2x mb-3" style="color: var(--secondary-color);"></i>
+                                                <h6 class="card-title">Instructions</h6>
                                                 <div id="instructionsOverview">
-                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                    <p class="text-muted small">กำลังโหลดข้อมูล...</p>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="col-md-6 mb-4">
-                                        <div class="card border-0 shadow-sm">
+                                    <div class="col-md-6 col-lg-4">
+                                        <div class="card">
                                             <div class="card-body text-center">
-                                                <i class="fas fa-shield-alt fa-3x text-warning mb-3"></i>
-                                                <h5>การตั้งค่าความปลอดภัย</h5>
+                                                <i class="fas fa-shield-alt fa-2x mb-3" style="color: var(--warning-color);"></i>
+                                                <h6 class="card-title">ความปลอดภัย</h6>
                                                 <div id="securityOverview">
-                                                    <p class="text-muted">กำลังโหลดข้อมูล...</p>
+                                                    <p class="text-muted small">กำลังโหลดข้อมูล...</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -363,8 +595,8 @@
                                 </div>
                                 
                                 <div class="alert alert-info">
-                                    <h6><i class="fas fa-info-circle me-2"></i>คำแนะนำการใช้งาน:</h6>
-                                    <ul class="mb-0">
+                                    <h6 class="mb-2"><i class="fas fa-info-circle me-2"></i>คำแนะนำการใช้งาน:</h6>
+                                    <ul class="mb-0 small">
                                         <li><strong>Bot & AI:</strong> จัดการ Line Bot, Facebook Bot, ตั้งค่า AI Models และ Instructions</li>
                                         <li><strong>การแชท:</strong> ตั้งค่าการทำงานของระบบแชท</li>
                                         <li><strong>ระบบ:</strong> ตั้งค่าระบบทั่วไปและการแจ้งเตือน</li>
@@ -439,8 +671,8 @@
                                 
                                 <!-- ข้อความสรุปการทำงานของระบบคิว -->
                                 <div class="alert alert-info mt-3">
-                                    <h6><i class="fas fa-info-circle me-2"></i>สรุปการทำงานของระบบคิว:</h6>
-                                    <ul class="mb-0">
+                                    <h6 class="mb-2"><i class="fas fa-info-circle me-2"></i>สรุปการทำงานของระบบคิว:</h6>
+                                    <ul class="mb-0 small">
                                         <li><strong>ข้อความแรก:</strong> ระบบจะเริ่มนับเวลา delay ตามที่ตั้งไว้</li>
                                         <li><strong>ข้อความเพิ่ม:</strong> หากมีข้อความใหม่เข้ามา ระบบจะรีเซ็ตตัวจับเวลาและรอใหม่</li>
                                         <li><strong>ครบเวลา delay:</strong> ระบบจะประมวลผลข้อความทั้งหมดในคิว</li>
@@ -546,47 +778,47 @@
                             </div>
                             <div class="settings-body">
                                 <!-- AI Models & Instructions Overview -->
-                                <div class="row mb-4">
+                                <div class="row g-3 mb-4">
                                     <div class="col-md-4">
-                                        <div class="card border-0 shadow-sm">
-                                            <div class="card-header bg-primary text-white">
+                                        <div class="card">
+                                            <div class="card-header">
                                                 <h6 class="mb-0">
                                                     <i class="fas fa-robot me-2"></i>
                                                     AI Models ที่รองรับ
                                                 </h6>
                                             </div>
                                             <div class="card-body">
-                                                <div class="row">
-                                                    <div class="col-6 mb-3">
+                                                <div class="row g-2">
+                                                    <div class="col-6">
                                                         <div class="d-flex align-items-center">
-                                                            <i class="fas fa-circle text-success me-2"></i>
+                                                            <i class="fas fa-circle me-2" style="color: var(--success-color);"></i>
                                                             <div>
                                                                 <strong>GPT-5</strong>
                                                                 <br><small class="text-muted">มาตรฐาน</small>
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    <div class="col-6 mb-3">
+                                                    <div class="col-6">
                                                         <div class="d-flex align-items-center">
-                                                            <i class="fas fa-circle text-info me-2"></i>
+                                                            <i class="fas fa-circle me-2" style="color: var(--primary-color);"></i>
                                                             <div>
                                                                 <strong>GPT-5 Mini</strong>
                                                                 <br><small class="text-muted">ประหยัด</small>
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    <div class="col-6 mb-3">
+                                                    <div class="col-6">
                                                         <div class="d-flex align-items-center">
-                                                            <i class="fas fa-circle text-warning me-2"></i>
+                                                            <i class="fas fa-circle me-2" style="color: var(--warning-color);"></i>
                                                             <div>
                                                                 <strong>GPT-5 Nano</strong>
                                                                 <br><small class="text-muted">เร็วที่สุด</small>
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    <div class="col-6 mb-3">
+                                                    <div class="col-6">
                                                         <div class="d-flex align-items-center">
-                                                            <i class="fas fa-circle text-danger me-2"></i>
+                                                            <i class="fas fa-circle me-2" style="color: var(--danger-color);"></i>
                                                             <div>
                                                                 <strong>O3</strong>
                                                                 <br><small class="text-muted">ทางเลือก</small>
@@ -598,21 +830,21 @@
                                         </div>
                                     </div>
                                     <div class="col-md-4">
-                                        <div class="card border-0 shadow-sm">
-                                            <div class="card-header bg-info text-white">
+                                        <div class="card">
+                                            <div class="card-header">
                                                 <h6 class="mb-0">
                                                     <i class="fas fa-book me-2"></i>
                                                     Instructions
                                                 </h6>
                                             </div>
                                             <div class="card-body">
-                                                <p class="text-muted mb-3">แต่ละ Bot สามารถเลือก Instructions จากคลังเพื่อกำหนด personality เฉพาะ</p>
+                                                <p class="text-muted small mb-3">แต่ละ Bot สามารถเลือก Instructions จากคลังเพื่อกำหนด personality เฉพาะ</p>
                                                 <div class="d-flex justify-content-between align-items-center">
                                                     <div>
                                                         <h5 class="mb-0" id="instructionsCount">0</h5>
-                                                        <small>คลัง Instructions</small>
+                                                        <small class="text-muted">คลัง Instructions</small>
                                                     </div>
-                                                    <a href="/admin/instructions" class="btn btn-sm btn-outline-info">
+                                                    <a href="/admin/instructions" class="btn btn-sm btn-outline-primary">
                                                         <i class="fas fa-external-link-alt me-1"></i>
                                                         จัดการคลัง
                                                     </a>
@@ -621,8 +853,8 @@
                                         </div>
                                     </div>
                                     <div class="col-md-4">
-                                        <div class="card border-0 shadow-sm">
-                                            <div class="card-header bg-success text-white">
+                                        <div class="card">
+                                            <div class="card-header">
                                                 <h6 class="mb-0">
                                                     <i class="fas fa-plug me-2"></i>
                                                     ช่องทางการเชื่อมต่อ
@@ -631,7 +863,7 @@
                                             <div class="card-body">
                                                 <div class="mb-3">
                                                     <div class="d-flex align-items-center mb-2">
-                                                        <i class="fab fa-line text-success me-2"></i>
+                                                        <i class="fab fa-line me-2" style="color: var(--success-color);"></i>
                                                         <strong>Line</strong>
                                                         <span class="badge bg-success ms-auto">พร้อมใช้งาน</span>
                                                     </div>
@@ -639,17 +871,17 @@
                                                 </div>
                                                 <div class="mb-3">
                                                     <div class="d-flex align-items-center mb-2">
-                                                        <i class="fab fa-facebook text-primary me-2"></i>
+                                                        <i class="fab fa-facebook me-2" style="color: var(--primary-color);"></i>
                                                         <strong>Facebook</strong>
                                                         <span class="badge bg-success ms-auto">พร้อมใช้งาน</span>
                                                     </div>
                                                     <small class="text-muted">เชื่อมต่อผ่าน Facebook Messenger API</small>
                                                 </div>
                                                 <div class="text-center">
-                                                    <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
                                                         <i class="fas fa-plus me-1"></i>
                                                         เพิ่ม Facebook Bot
-                                    </button>
+                                                    </button>
                                                 </div>
                                             </div>
                                         </div>
@@ -660,45 +892,45 @@
                                 <div class="row mb-4">
                                     <div class="col-12">
                                         <div class="stats-compact">
-                                            <div class="row text-center">
-                                                <div class="col-2">
+                                            <div class="row g-3">
+                                                <div class="col-6 col-md-2">
                                                     <div class="stat-item">
-                                                        <i class="fas fa-robot text-primary stat-icon"></i>
+                                                        <i class="fas fa-robot stat-icon"></i>
                                                         <div class="stat-number" id="totalBots">0</div>
                                                         <div class="stat-label">ทั้งหมด</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-2">
+                                                <div class="col-6 col-md-2">
                                                     <div class="stat-item">
-                                                        <i class="fab fa-line text-success stat-icon"></i>
+                                                        <i class="fab fa-line stat-icon"></i>
                                                         <div class="stat-number" id="lineBots">0</div>
                                                         <div class="stat-label">Line</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-2">
+                                                <div class="col-6 col-md-2">
                                                     <div class="stat-item">
-                                                        <i class="fab fa-facebook text-primary stat-icon"></i>
+                                                        <i class="fab fa-facebook stat-icon"></i>
                                                         <div class="stat-number" id="facebookBots">0</div>
                                                         <div class="stat-label">Facebook</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-2">
+                                                <div class="col-6 col-md-2">
                                                     <div class="stat-item">
-                                                        <i class="fas fa-check-circle text-success stat-icon"></i>
+                                                        <i class="fas fa-check-circle stat-icon"></i>
                                                         <div class="stat-number" id="activeBots">0</div>
                                                         <div class="stat-label">ใช้งาน</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-2">
+                                                <div class="col-6 col-md-2">
                                                     <div class="stat-item">
-                                                        <i class="fas fa-cog text-info stat-icon"></i>
+                                                        <i class="fas fa-cog stat-icon"></i>
                                                         <div class="stat-number" id="configuredBots">0</div>
                                                         <div class="stat-label">ตั้งค่าแล้ว</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-2">
+                                                <div class="col-6 col-md-2">
                                                     <div class="stat-item">
-                                                        <i class="fas fa-exclamation-triangle text-warning stat-icon"></i>
+                                                        <i class="fas fa-exclamation-triangle stat-icon"></i>
                                                         <div class="stat-number" id="inactiveBots">0</div>
                                                         <div class="stat-label">ปิดใช้งาน</div>
                                                     </div>
@@ -709,19 +941,19 @@
                                 </div>
 
                                                                 <!-- Action Buttons -->
-                                <div class="row mb-4">
+                                <div class="row g-3 mb-4">
                                     <div class="col-md-4">
-                                        <button type="button" class="btn btn-success btn-lg w-100" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
+                                        <button type="button" class="btn btn-success w-100" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
                                             <i class="fab fa-line me-2"></i>เพิ่ม Line Bot
                                         </button>
                                     </div>
                                     <div class="col-md-4">
-                                        <button type="button" class="btn btn-primary btn-lg w-100" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                                        <button type="button" class="btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
                                             <i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot
                                         </button>
                                     </div>
                                     <div class="col-md-4">
-                                        <button type="button" class="btn btn-outline-secondary btn-lg w-100" onclick="refreshLineBotList()">
+                                        <button type="button" class="btn btn-outline-secondary w-100" onclick="refreshLineBotList()">
                                             <i class="fas fa-sync-alt me-2"></i>รีเฟรชข้อมูล
                                         </button>
                                     </div>
@@ -739,22 +971,22 @@
 
                                 <!-- Global AI Settings -->
                                 <div class="mt-4">
-                                    <div class="card border-0 shadow-sm">
-                                        <div class="card-header bg-secondary text-white">
+                                    <div class="card">
+                                        <div class="card-header">
                                             <h6 class="mb-0">
                                                 <i class="fas fa-cog me-2"></i>
                                                 การตั้งค่า AI หลัก (Global Fallback)
                                             </h6>
-                            </div>
+                                        </div>
                                         <div class="card-body">
                                             <form id="aiSettingsForm">
-                                                <div class="row">
+                                                <div class="row g-3">
                                                     <div class="col-md-6">
                                                         <div class="setting-item">
                                                             <div class="setting-label">โมเดลสำหรับข้อความ</div>
                                                             <div class="setting-description">
                                                                 โมเดล AI ที่ใช้สำหรับข้อความธรรมดา (fallback)
-                        </div>
+                                                            </div>
                                                             <select class="form-select" id="textModel">
                                                                 <option value="gpt-5">GPT-5</option>
                                                                 <option value="gpt-5-mini">GPT-5 Mini</option>
@@ -779,11 +1011,12 @@
                                                                 <option value="gpt-5-nano">GPT-5 Nano</option>
                                                                 <option value="gpt-4.1">GPT-4.1</option>
                                                                 <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                                                                <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
                                                                 <option value="o3">O3</option>
                                                             </select>
-                    </div>
-                </div>
-            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
 
                                                 <div class="setting-item">
                                                     <div class="setting-label">จำนวนรูปภาพสูงสุดต่อข้อความ</div>
@@ -835,22 +1068,22 @@
                             </div>
                             <div class="settings-body">
                                 <!-- Security Overview -->
-                                <div class="row mb-4">
+                                <div class="row g-3 mb-4">
                                     <div class="col-md-4">
-                                        <div class="card border-0 shadow-sm">
+                                        <div class="card">
                                             <div class="card-body text-center">
-                                                <i class="fas fa-shield-alt fa-2x text-success mb-3"></i>
+                                                <i class="fas fa-shield-alt fa-2x mb-3" style="color: var(--success-color);"></i>
                                                 <h6>การกรองข้อความ</h6>
                                                 <div class="form-check form-switch d-flex justify-content-center">
-                                            <input class="form-check-input" type="checkbox" id="enableMessageFiltering" checked>
+                                                    <input class="form-check-input" type="checkbox" id="enableMessageFiltering" checked>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                     <div class="col-md-4">
-                                        <div class="card border-0 shadow-sm">
+                                        <div class="card">
                                             <div class="card-body text-center">
-                                                <i class="fas fa-search fa-2x text-info mb-3"></i>
+                                                <i class="fas fa-search fa-2x mb-3" style="color: var(--primary-color);"></i>
                                                 <h6>การกรองแบบละเอียด</h6>
                                                 <div class="form-check form-switch d-flex justify-content-center">
                                                     <input class="form-check-input" type="checkbox" id="enableStrictFiltering" checked>
@@ -859,16 +1092,16 @@
                                         </div>
                                     </div>
                                     <div class="col-md-4">
-                                        <div class="card border-0 shadow-sm">
+                                        <div class="card">
                                             <div class="card-body text-center">
-                                                <i class="fas fa-eye-slash fa-2x text-warning mb-3"></i>
+                                                <i class="fas fa-eye-slash fa-2x mb-3" style="color: var(--warning-color);"></i>
                                                 <h6>คำที่ถูกซ่อน</h6>
                                                 <h5 id="hiddenWordsCount">0</h5>
-                                                <small>คำ</small>
+                                                <small class="text-muted">คำ</small>
                                             </div>
                                         </div>
-                                        </div>
                                     </div>
+                                </div>
 
                                 <form id="filterSettingsForm">
                                     <div class="row">
@@ -1045,8 +1278,8 @@
                 </div>
                 <div class="modal-body">
                     <div class="alert alert-success">
-                        <h6><i class="fas fa-check-circle me-2"></i>Facebook Bot พร้อมใช้งาน</h6>
-                        <p class="mb-0">Facebook Bot สามารถใช้งานได้แล้วเหมือนกับ Line Bot</p>
+                        <h6 class="mb-2"><i class="fas fa-check-circle me-2"></i>Facebook Bot พร้อมใช้งาน</h6>
+                        <p class="mb-0 small">Facebook Bot สามารถใช้งานได้แล้วเหมือนกับ Line Bot</p>
                     </div>
                     <form id="facebookBotForm">
                         <input type="hidden" id="facebookBotId" name="id">
@@ -1100,14 +1333,15 @@
                             </div>
                         </div>
 
-                        <div class="alert alert-warning d-flex align-items-start">
-                            <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
-                            <div>
-                                <div class="mb-1"><strong>ขั้นตอน:</strong> 1) นำ Webhook URL และ Verify Token ไปยืนยันใน Facebook App → Messenger Webhooks 2) เมื่อยืนยันสำเร็จแล้ว จึงกรอก Page ID และ Page Access Token</div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="fbVerifiedToggle">
-                                    <label class="form-check-label" for="fbVerifiedToggle">ฉันยืนยัน Webhook สำเร็จแล้ว</label>
-                                </div>
+                        <div class="alert alert-warning">
+                            <h6 class="mb-2"><i class="fas fa-exclamation-triangle me-2"></i>ขั้นตอนการตั้งค่า:</h6>
+                            <ol class="mb-3 small">
+                                <li>นำ Webhook URL และ Verify Token ไปยืนยันใน Facebook App → Messenger Webhooks</li>
+                                <li>เมื่อยืนยันสำเร็จแล้ว จึงกรอก Page ID และ Page Access Token</li>
+                            </ol>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="fbVerifiedToggle">
+                                <label class="form-check-label" for="fbVerifiedToggle">ฉันยืนยัน Webhook สำเร็จแล้ว</label>
                             </div>
                         </div>
 
@@ -1165,23 +1399,23 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="row">
+                    <div class="row g-3">
                         <div class="col-md-6">
-                            <h6><i class="fas fa-list me-2"></i>คลัง Instructions ที่มีอยู่</h6>
+                            <h6 class="mb-3"><i class="fas fa-list me-2"></i>คลัง Instructions ที่มีอยู่</h6>
                             <div id="instructionLibraries" class="border rounded p-3" style="max-height: 400px; overflow-y: auto;">
                                 <!-- รายการคลัง instructions จะถูกโหลดที่นี่ -->
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <h6><i class="fas fa-check-circle me-2"></i>Instructions ที่เลือกใช้</h6>
+                            <h6 class="mb-3"><i class="fas fa-check-circle me-2"></i>Instructions ที่เลือกใช้</h6>
                             <div id="selectedInstructions" class="border rounded p-3" style="max-height: 400px; overflow-y: auto;">
                                 <!-- รายการ instructions ที่เลือกจะแสดงที่นี่ -->
                             </div>
                         </div>
                     </div>
                     
-                    <div class="mt-3">
-                        <h6><i class="fas fa-info-circle me-2"></i>คำแนะนำ</h6>
+                    <div class="mt-4">
+                        <h6 class="mb-2"><i class="fas fa-info-circle me-2"></i>คำแนะนำ</h6>
                         <ul class="text-muted small">
                             <li>คลิกที่คลัง instruction เพื่อดูรายละเอียด</li>
                             <li>เลือก instruction ที่ต้องการใช้ใน Line Bot นี้</li>
@@ -1420,10 +1654,7 @@
         // Display Line Bot AI Model information
         function displayLineBotAiModelInfo(lineBots) {
             const container = document.getElementById('lineBotAiModelInfo');
-            if (!container) {
-                console.log('Line Bot AI Model Info container not found');
-                return;
-            }
+            if (!container) return;
             
             if (!lineBots || lineBots.length === 0) {
                 container.innerHTML = '<p class="text-muted mb-0">ยังไม่มี Line Bot ในระบบ</p>';
@@ -1739,10 +1970,7 @@
             const configuredBotsElement = document.getElementById('configuredBots');
             const inactiveBotsElement = document.getElementById('inactiveBots');
             
-            if (!totalBotsElement || !activeBotsElement || !configuredBotsElement || !inactiveBotsElement) {
-                console.log('Line Bot statistics elements not found');
-                return;
-            }
+            if (!totalBotsElement || !activeBotsElement || !configuredBotsElement || !inactiveBotsElement) return;
             
             const total = lineBots.length;
             const active = lineBots.filter(bot => bot.status === 'active').length;
@@ -1800,10 +2028,7 @@
         // Display Line Bot overview
         function displayLineBotOverview(lineBots) {
             const container = document.getElementById('lineBotOverview');
-            if (!container) {
-                console.log('Line Bot Overview container not found');
-                return;
-            }
+            if (!container) return;
             
             const total = lineBots.length;
             const active = lineBots.filter(bot => bot.status === 'active').length;
@@ -1830,10 +2055,7 @@
         // Display AI Model overview
         function displayAiModelOverview() {
             const container = document.getElementById('aiModelOverview');
-            if (!container) {
-                console.log('AI Model Overview container not found');
-                return;
-            }
+            if (!container) return;
             
             container.innerHTML = `
                 <div class="d-flex justify-content-between align-items-center">
@@ -1852,10 +2074,7 @@
         // Display Instructions overview
         function displayInstructionsOverview(libraries) {
             const container = document.getElementById('instructionsOverview');
-            if (!container) {
-                console.log('Instructions Overview container not found');
-                return;
-            }
+            if (!container) return;
             
             const total = libraries.length;
             
@@ -1887,10 +2106,7 @@
         // Display Security overview
         function displaySecurityOverview() {
             const container = document.getElementById('securityOverview');
-            if (!container) {
-                console.log('Security Overview container not found');
-                return;
-            }
+            if (!container) return;
             
             container.innerHTML = `
                 <div class="d-flex justify-content-between align-items-center">
@@ -1911,10 +2127,7 @@
             const hiddenWordsElement = document.getElementById('hiddenWords');
             const hiddenWordsCountElement = document.getElementById('hiddenWordsCount');
             
-            if (!hiddenWordsElement || !hiddenWordsCountElement) {
-                console.log('Hidden words elements not found');
-                return;
-            }
+            if (!hiddenWordsElement || !hiddenWordsCountElement) return;
             
             const hiddenWordsText = hiddenWordsElement.value;
             const words = hiddenWordsText.split('\n').filter(word => word.trim() !== '');
@@ -2111,10 +2324,7 @@
         // Display Facebook Bot list
         function displayFacebookBotList(facebookBots) {
             const container = document.getElementById('facebookBotList');
-            if (!container) {
-                console.log('Facebook Bot List container not found');
-                return;
-            }
+            if (!container) return;
 
             if (!facebookBots || facebookBots.length === 0) {
                 container.innerHTML = `
@@ -2205,10 +2415,7 @@
             const configuredBotsElement = document.getElementById('configuredBots');
             const inactiveBotsElement = document.getElementById('inactiveBots');
             
-            if (!facebookBotsElement || !activeBotsElement || !configuredBotsElement || !inactiveBotsElement) {
-                console.log('Statistics elements not found');
-                return;
-            }
+            if (!facebookBotsElement || !activeBotsElement || !configuredBotsElement || !inactiveBotsElement) return;
             
             const totalBots = facebookBots.length;
             const activeBots = facebookBots.filter(bot => bot.status === 'active').length;
@@ -2229,10 +2436,7 @@
         // Display Facebook Bot overview
         function displayFacebookBotOverview(facebookBots) {
             const container = document.getElementById('facebookBotOverview');
-            if (!container) {
-                console.log('Facebook Bot Overview container not found');
-                return;
-            }
+            if (!container) return;
             
             if (!facebookBots || facebookBots.length === 0) {
                 container.innerHTML = '<p class="text-muted">ยังไม่มี Facebook Bot</p>';
