@@ -367,6 +367,15 @@ body {
 .message-text {
     white-space: pre-wrap;
     word-break: break-word;
+    line-height: 1.5;
+    margin-bottom: 0.5rem;
+}
+
+/* รองรับการเว้นบรรทัดในข้อความ */
+.message-text br {
+    display: block;
+    content: "";
+    margin-top: 0.25rem;
 }
 
 .message-timestamp {
@@ -432,6 +441,21 @@ body {
     font-size: 0.95rem;
     transition: var(--transition);
     background-color: var(--bg-white);
+    resize: none;
+    min-height: 48px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+/* สำหรับ textarea ใน input group */
+.input-group .form-control {
+    border-radius: 25px 0 0 25px;
+    border-right: none;
+}
+
+.input-group .btn {
+    border-radius: 0 25px 25px 0;
+    border-left: none;
 }
 
 .form-control:focus {

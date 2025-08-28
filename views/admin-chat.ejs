@@ -92,15 +92,16 @@
             <!-- Message Input -->
             <div class="message-input-container" id="messageInputContainer" style="display: none;">
                 <div class="input-group">
-                    <input type="text" class="form-control" id="messageInput" 
-                           placeholder="พิมพ์ข้อความ..." maxlength="1000" autocomplete="off">
+                    <textarea class="form-control" id="messageInput" 
+                              placeholder="พิมพ์ข้อความ... (กด Shift+Enter เพื่อขึ้นบรรทัดใหม่)" 
+                              maxlength="1000" autocomplete="off" rows="1"></textarea>
                     <button class="btn btn-primary" type="button" id="sendButton">
                         <i class="fas fa-paper-plane"></i>
                     </button>
                 </div>
                 <div class="input-footer">
                     <small class="text-muted">
-                        <span id="charCount">0</span>/1000 อักขระ
+                        <span id="charCount">0</span>/1000 อักขระ • กด Enter เพื่อส่ง • Shift+Enter เพื่อขึ้นบรรทัดใหม่
                     </small>
                 </div>
             </div>

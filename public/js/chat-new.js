@@ -59,9 +59,12 @@ class ChatManager {
             } else {
                 charCount.classList.remove('text-danger');
             }
+            
+            // ปรับขนาด textarea อัตโนมัติ
+            this.autoResizeTextarea(e.target);
         });
 
-        messageInput.addEventListener('keypress', (e) => {
+        messageInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 this.sendMessage();
@@ -80,6 +83,20 @@ class ChatManager {
         document.getElementById('copyImage').addEventListener('click', () => {
             this.copyImage();
         });
+    }
+
+    autoResizeTextarea(textarea) {
+        // รีเซ็ตความสูงก่อน
+        textarea.style.height = 'auto';
+        
+        // คำนวณความสูงที่เหมาะสม
+        const scrollHeight = textarea.scrollHeight;
+        const minHeight = 48; // min-height จาก CSS
+        const maxHeight = 120; // max-height จาก CSS
+        
+        // กำหนดความสูงใหม่
+        const newHeight = Math.min(Math.max(scrollHeight, minHeight), maxHeight);
+        textarea.style.height = newHeight + 'px';
     }
 
     async loadUsers() {
@@ -361,6 +378,7 @@ class ChatManager {
                 // Clear input
                 messageInput.value = '';
                 document.getElementById('charCount').textContent = '0';
+                this.autoResizeTextarea(messageInput); // รีเซ็ตขนาด textarea
                 
                 // Update user list
                 this.loadUsers();

@@ -3819,7 +3819,9 @@ function processQueueMessageForDisplay(content) {
 
       // สร้าง HTML สำหรับแสดงผล
       if (textParts.length > 0) {
-        displayContent += `<div class="message-text">${textParts.join('<br>')}</div>`;
+        // รวมข้อความและรักษาการเว้นบรรทัด
+        const combinedText = textParts.join('\n');
+        displayContent += `<div class="message-text">${combinedText.replace(/\n/g, '<br>')}</div>`;
       }
 
       if (imageParts.length > 0) {
@@ -3845,7 +3847,9 @@ function processQueueMessageForDisplay(content) {
       if (content.data) {
         const data = content.data;
         if (data.type === 'text' && data.text) {
-          displayContent = `<div class="message-text">${data.text}</div>`;
+          // รองรับการเว้นบรรทัดในข้อความ
+          const textWithBreaks = data.text.replace(/\n/g, '<br>');
+          displayContent = `<div class="message-text">${textWithBreaks}</div>`;
           contentType = 'text';
         } else if (data.type === 'image' && data.base64) {
           displayContent = createImageHTML(data);
@@ -3924,7 +3928,9 @@ function processQueueMessageForDisplayV2(content) {
 
       // สร้าง HTML สำหรับแสดงผล
       if (textParts.length > 0) {
-        displayContent += `<div class="message-text">${textParts.join('<br>')}</div>`;
+        // รวมข้อความและรักษาการเว้นบรรทัด
+        const combinedText = textParts.join('\n');
+        displayContent += `<div class="message-text">${combinedText.replace(/\n/g, '<br>')}</div>`;
       }
 
       if (imageParts.length > 0) {
@@ -3949,7 +3955,9 @@ function processQueueMessageForDisplayV2(content) {
     else if (content && typeof content === 'object') {
       // รองรับรูปแบบใหม่
       if (content.type === 'text' && content.content) {
-        displayContent = `<div class="message-text">${content.content}</div>`;
+        // รองรับการเว้นบรรทัดในข้อความ
+        const textWithBreaks = content.content.replace(/\n/g, '<br>');
+        displayContent = `<div class="message-text">${textWithBreaks}</div>`;
         contentType = 'text';
       } else if (content.type === 'image' && content.content) {
         displayContent = createImageHTML({
@@ -3962,7 +3970,9 @@ function processQueueMessageForDisplayV2(content) {
       else if (content.data) {
         const data = content.data;
         if (data.type === 'text' && data.text) {
-          displayContent = `<div class="message-text">${data.text}</div>`;
+          // รองรับการเว้นบรรทัดในข้อความ
+          const textWithBreaks = data.text.replace(/\n/g, '<br>');
+          displayContent = `<div class="message-text">${textWithBreaks}</div>`;
           contentType = 'text';
         } else if (data.type === 'image' && data.base64) {
           displayContent = createImageHTML(data);
