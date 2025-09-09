@@ -313,6 +313,36 @@ function displayLineBotOverview(lineBots) {
     `;
 }
 
+// Display Facebook Bot overview
+function displayFacebookBotOverview(facebookBots) {
+    const container = document.getElementById('facebookBotOverview');
+    if (!container) {
+        console.log('Facebook Bot Overview container not found');
+        return;
+    }
+    
+    const total = facebookBots.length;
+    const active = facebookBots.filter(bot => bot.status === 'active').length;
+    
+    if (total === 0) {
+        container.innerHTML = '<p class="text-muted mb-0">ยังไม่มี Facebook Bot</p>';
+        return;
+    }
+    
+    container.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h4 class="mb-0">${total}</h4>
+                <small>Bot ทั้งหมด</small>
+            </div>
+            <div class="text-end">
+                <h6 class="mb-0 text-success">${active}</h6>
+                <small>Bot ที่ใช้งาน</small>
+            </div>
+        </div>
+    `;
+}
+
 // Display AI Model overview
 function displayAiModelOverview() {
     const container = document.getElementById('aiModelOverview');
@@ -403,6 +433,7 @@ window.instructionsManagement = {
     saveSelectedInstructions,
     loadOverviewData,
     displayLineBotOverview,
+    displayFacebookBotOverview,
     displayAiModelOverview,
     displayInstructionsOverview,
     displaySecurityOverview
