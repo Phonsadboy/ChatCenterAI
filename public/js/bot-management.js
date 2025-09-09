@@ -9,6 +9,11 @@ async function loadLineBotSettings() {
             const lineBots = await response.json();
             displayLineBotList(lineBots);
             
+            // อัปเดตข้อมูล AI Model ในส่วนการตั้งค่า AI (ถ้ามี)
+            const lineBotAiModelInfo = document.getElementById('lineBotAiModelInfo');
+            if (lineBotAiModelInfo) {
+                displayLineBotAiModelInfo(lineBots);
+            }
         } else {
             showAlert('ไม่สามารถโหลดข้อมูล Line Bot ได้', 'danger');
         }
@@ -147,6 +152,51 @@ function updateLineBotStats(lineBots) {
     inactiveBotsElement.textContent = inactive;
 }
 
+// Load Line Bot AI Model information
+async function loadLineBotAiModelInfo() {
+    try {
+        const response = await fetch('/api/line-bots');
+        if (response.ok) {
+            const lineBots = await response.json();
+            displayLineBotAiModelInfo(lineBots);
+        }
+    } catch (error) {
+        console.error('Error loading line bot AI model info:', error);
+    }
+}
+
+// Display Line Bot AI Model information
+function displayLineBotAiModelInfo(lineBots) {
+    const container = document.getElementById('lineBotAiModelInfo');
+    if (!container) {
+        console.log('Line Bot AI Model Info container not found');
+        return;
+    }
+    
+    if (!lineBots || lineBots.length === 0) {
+        container.innerHTML = '<p class="text-muted mb-0">ยังไม่มี Line Bot ในระบบ</p>';
+        return;
+    }
+    
+    let html = '<div class="row">';
+    lineBots.forEach(bot => {
+        const modelName = bot.aiModel || 'gpt-5';
+        const statusClass = bot.status === 'active' ? 'success' : 'warning';
+        
+        html += `
+            <div class="col-md-6 mb-2">
+                <div class="d-flex align-items-center">
+                    <span class="badge bg-${statusClass} me-2">${bot.status === 'active' ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}</span>
+                    <strong>${bot.name}:</strong>
+                    <span class="badge bg-info ms-2">${modelName}</span>
+                </div>
+            </div>
+        `;
+    });
+    html += '</div>';
+    
+    container.innerHTML = html;
+}
 
 // Add new Line Bot
 function addNewLineBot() {
@@ -444,24 +494,30 @@ function addNewFacebookBot() {
     const deleteBtn = document.getElementById('deleteFacebookBotBtn');
     if (deleteBtn) deleteBtn.style.display = 'none';
 
-    // Generate webhook URL and verify token (similar to Line Bot approach)
-    const baseUrl = window.location.origin;
-    const webhookInput = document.getElementById('facebookWebhookUrl');
-    const verifyTokenInput = document.getElementById('facebookVerifyToken');
-    
-    if (webhookInput) {
-        // Generate unique ID like Line Bot does
-        const uniqueId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-        webhookInput.value = `${baseUrl}/webhook/facebook/${uniqueId}`;
-    }
-    
-    if (verifyTokenInput) {
-        // Generate a simple verify token
-        const verifyToken = 'vt_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-        verifyTokenInput.value = verifyToken;
-    }
-    
-    showAlert('สร้าง Webhook URL และ Verify Token สำเร็จ นำไปยืนยันใน Facebook App ได้เลย', 'success');
+    // Request server to create a stub and return real webhook URL + verify token
+    (async () => {
+        try {
+            const res = await fetch('/api/facebook-bots/init', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (facebookBotId) facebookBotId.value = data.id;
+                const webhookInput = document.getElementById('facebookWebhookUrl');
+                const verifyTokenInput = document.getElementById('facebookVerifyToken');
+                if (webhookInput) webhookInput.value = data.webhookUrl;
+                if (verifyTokenInput) verifyTokenInput.value = data.verifyToken;
+                showAlert('สร้าง Webhook URL และ Verify Token สำเร็จ นำไปยืนยันใน Facebook App ได้เลย', 'success');
+            } else {
+                showAlert('ไม่สามารถสร้าง Webhook URL / Verify Token ได้', 'danger');
+            }
+        } catch (e) {
+            console.error('init facebook bot error', e);
+            showAlert('เกิดข้อผิดพลาดในการเตรียมข้อมูลยืนยัน Webhook', 'danger');
+        }
+    })();
 }
 
 // Edit Facebook Bot
