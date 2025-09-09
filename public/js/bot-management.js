@@ -444,51 +444,24 @@ function addNewFacebookBot() {
     const deleteBtn = document.getElementById('deleteFacebookBotBtn');
     if (deleteBtn) deleteBtn.style.display = 'none';
 
-    // Request server to create a stub and return real webhook URL + verify token
-    (async () => {
-        try {
-            console.log('กำลังเรียก API /api/facebook-bots/init...');
-            const res = await fetch('/api/facebook-bots/init', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
-            });
-            
-            console.log('Response status:', res.status);
-            
-            if (res.ok) {
-                const data = await res.json();
-                console.log('Response data:', data);
-                
-                if (facebookBotId) facebookBotId.value = data.id;
-                const webhookInput = document.getElementById('facebookWebhookUrl');
-                const verifyTokenInput = document.getElementById('facebookVerifyToken');
-                
-                if (webhookInput) {
-                    webhookInput.value = data.webhookUrl;
-                    console.log('Webhook URL set to:', data.webhookUrl);
-                } else {
-                    console.error('Webhook input element not found');
-                }
-                
-                if (verifyTokenInput) {
-                    verifyTokenInput.value = data.verifyToken;
-                    console.log('Verify Token set to:', data.verifyToken);
-                } else {
-                    console.error('Verify Token input element not found');
-                }
-                
-                showAlert('สร้าง Webhook URL และ Verify Token สำเร็จ นำไปยืนยันใน Facebook App ได้เลย', 'success');
-            } else {
-                const errorText = await res.text();
-                console.error('API Error:', res.status, errorText);
-                showAlert(`ไม่สามารถสร้าง Webhook URL / Verify Token ได้ (${res.status}): ${errorText}`, 'danger');
-            }
-        } catch (e) {
-            console.error('init facebook bot error', e);
-            showAlert('เกิดข้อผิดพลาดในการเตรียมข้อมูลยืนยัน Webhook: ' + e.message, 'danger');
-        }
-    })();
+    // Generate webhook URL and verify token (similar to Line Bot approach)
+    const baseUrl = window.location.origin;
+    const webhookInput = document.getElementById('facebookWebhookUrl');
+    const verifyTokenInput = document.getElementById('facebookVerifyToken');
+    
+    if (webhookInput) {
+        // Generate unique ID like Line Bot does
+        const uniqueId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+        webhookInput.value = `${baseUrl}/webhook/facebook/${uniqueId}`;
+    }
+    
+    if (verifyTokenInput) {
+        // Generate a simple verify token
+        const verifyToken = 'vt_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+        verifyTokenInput.value = verifyToken;
+    }
+    
+    showAlert('สร้าง Webhook URL และ Verify Token สำเร็จ นำไปยืนยันใน Facebook App ได้เลย', 'success');
 }
 
 // Edit Facebook Bot
