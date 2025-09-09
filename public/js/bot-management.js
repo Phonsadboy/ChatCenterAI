@@ -9,11 +9,6 @@ async function loadLineBotSettings() {
             const lineBots = await response.json();
             displayLineBotList(lineBots);
             
-            // อัปเดตข้อมูล AI Model ในส่วนการตั้งค่า AI (ถ้ามี)
-            const lineBotAiModelInfo = document.getElementById('lineBotAiModelInfo');
-            if (lineBotAiModelInfo) {
-                displayLineBotAiModelInfo(lineBots);
-            }
         } else {
             showAlert('ไม่สามารถโหลดข้อมูล Line Bot ได้', 'danger');
         }
@@ -152,51 +147,6 @@ function updateLineBotStats(lineBots) {
     inactiveBotsElement.textContent = inactive;
 }
 
-// Load Line Bot AI Model information
-async function loadLineBotAiModelInfo() {
-    try {
-        const response = await fetch('/api/line-bots');
-        if (response.ok) {
-            const lineBots = await response.json();
-            displayLineBotAiModelInfo(lineBots);
-        }
-    } catch (error) {
-        console.error('Error loading line bot AI model info:', error);
-    }
-}
-
-// Display Line Bot AI Model information
-function displayLineBotAiModelInfo(lineBots) {
-    const container = document.getElementById('lineBotAiModelInfo');
-    if (!container) {
-        console.log('Line Bot AI Model Info container not found');
-        return;
-    }
-    
-    if (!lineBots || lineBots.length === 0) {
-        container.innerHTML = '<p class="text-muted mb-0">ยังไม่มี Line Bot ในระบบ</p>';
-        return;
-    }
-    
-    let html = '<div class="row">';
-    lineBots.forEach(bot => {
-        const modelName = bot.aiModel || 'gpt-5';
-        const statusClass = bot.status === 'active' ? 'success' : 'warning';
-        
-        html += `
-            <div class="col-md-6 mb-2">
-                <div class="d-flex align-items-center">
-                    <span class="badge bg-${statusClass} me-2">${bot.status === 'active' ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}</span>
-                    <strong>${bot.name}:</strong>
-                    <span class="badge bg-info ms-2">${modelName}</span>
-                </div>
-            </div>
-        `;
-    });
-    html += '</div>';
-    
-    container.innerHTML = html;
-}
 
 // Add new Line Bot
 function addNewLineBot() {

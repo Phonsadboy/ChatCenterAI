@@ -138,8 +138,6 @@ async function loadSettings() {
             showAlert('ไม่สามารถโหลดการตั้งค่าได้', 'danger');
         }
 
-        // โหลดข้อมูล AI Model ของ Line Bot
-        await loadLineBotAiModelInfo();
 
         // โหลดข้อมูล Facebook Bot
         await loadFacebookBotSettings();

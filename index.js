@@ -2420,12 +2420,18 @@ app.put('/api/line-bots/:id/instructions', async (req, res) => {
 // Initialize a Facebook Bot stub for webhook verification
 app.post('/api/facebook-bots/init', async (req, res) => {
   try {
+    console.log('Starting Facebook Bot init process...');
+    
     const client = await connectDB();
+    console.log('Database connected successfully');
+    
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
 
     const providedVerifyToken = (req.body && req.body.verifyToken) || null;
     const verifyToken = providedVerifyToken || ('vt_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10));
+
+    console.log('Generated verify token:', verifyToken);
 
     // Create minimal bot stub
     const stub = {
@@ -2443,33 +2449,46 @@ app.post('/api/facebook-bots/init', async (req, res) => {
       updatedAt: new Date()
     };
 
+    console.log('Inserting bot stub:', JSON.stringify(stub, null, 2));
     const insert = await coll.insertOne(stub);
     const id = insert.insertedId;
+    console.log('Inserted with ID:', id);
 
     // Build webhook URL using bot id
     const baseUrl = process.env.PUBLIC_BASE_URL || ('https://' + req.get('host'));
     const webhookUrl = `${baseUrl}/webhook/facebook/${id.toString()}`;
+    console.log('Generated webhook URL:', webhookUrl);
 
     await coll.updateOne({ _id: id }, { $set: { webhookUrl } });
+    console.log('Updated webhook URL in database');
 
     return res.json({ id: id.toString(), webhookUrl, verifyToken });
   } catch (err) {
     console.error('Error initializing facebook bot stub:', err);
-    res.status(500).json({ error: 'ไม่สามารถเตรียมข้อมูลสำหรับยืนยัน Webhook ได้' });
+    console.error('Error stack:', err.stack);
+    res.status(500).json({ error: 'ไม่สามารถเตรียมข้อมูลสำหรับยืนยัน Webhook ได้: ' + err.message });
   }
 });
 
 // Get all Facebook Bots
 app.get('/api/facebook-bots', async (req, res) => {
   try {
+    console.log('Fetching Facebook Bots...');
     const client = await connectDB();
+    console.log('Database connected for Facebook Bots fetch');
+    
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
+    
+    console.log('Querying Facebook Bots collection...');
     const facebookBots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    console.log(`Found ${facebookBots.length} Facebook Bots`);
+    
     res.json(facebookBots);
   } catch (err) {
     console.error('Error fetching facebook bots:', err);
-    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูล Facebook Bot ได้' });
+    console.error('Error stack:', err.stack);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูล Facebook Bot ได้: ' + err.message });
   }
 });
 
@@ -2477,6 +2496,14 @@ app.get('/api/facebook-bots', async (req, res) => {
 app.get('/api/facebook-bots/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    console.log('Fetching Facebook Bot with ID:', id);
+    
+    // Validate ObjectId format
+    if (!ObjectId.isValid(id)) {
+      console.error('Invalid ObjectId format:', id);
+      return res.status(400).json({ error: 'รูปแบบ ID ไม่ถูกต้อง' });
+    }
+    
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
@@ -2489,7 +2516,8 @@ app.get('/api/facebook-bots/:id', async (req, res) => {
     res.json(facebookBot);
   } catch (err) {
     console.error('Error fetching facebook bot:', err);
-    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูล Facebook Bot ได้' });
+    console.error('Error stack:', err.stack);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูล Facebook Bot ได้: ' + err.message });
   }
 });
 
