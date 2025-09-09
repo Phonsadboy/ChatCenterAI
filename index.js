@@ -1233,6 +1233,19 @@ async function buildSystemInstructions(history) {
   return systemText.trim();
 }
 
+// ฟังก์ชันสำหรับดึงข้อความจากแท็ก <THAI_REPLY>
+function extractThaiReply(aiResponse) {
+  const thaiReplyRegex = /<THAI_REPLY>([\s\S]*?)<\/THAI_REPLY>/i;
+  const match = aiResponse.match(thaiReplyRegex);
+  
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  
+  // ถ้าไม่มีแท็ก THAI_REPLY ให้ส่งข้อความทั้งหมด
+  return aiResponse;
+}
+
 // ฟังก์ชันสำหรับจัดการข้อความอย่างเดียว (ไม่มีรูปภาพ)
 async function getAssistantResponseTextOnly(systemInstructions, history, userText, aiModel = null) {
   try {
@@ -1282,7 +1295,10 @@ async function getAssistantResponseTextOnly(systemInstructions, history, userTex
       console.log(`[LOG] Token usage (text): ${usage.total_tokens} total (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion)`);
     }
 
-    return assistantReply.trim();
+    // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
+    const finalReply = extractThaiReply(assistantReply);
+    
+    return finalReply.trim();
   } catch (err) {
     console.error("OpenAI text error:", err);
     return "ขออภัยค่ะ ระบบขัดข้องชั่วคราว ไม่สามารถตอบได้ในขณะนี้";
@@ -1401,7 +1417,10 @@ async function getAssistantResponseMultimodal(systemInstructions, history, conte
       console.log(`[LOG] Token usage (multimodal): ${usage.total_tokens} total (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion) with ${imageCount} images`);
     }
 
-    return assistantReply.trim();
+    // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
+    const finalReply = extractThaiReply(assistantReply);
+    
+    return finalReply.trim();
   } catch (err) {
     console.error("OpenAI multimodal error:", err);
     return "ขออภัยค่ะ ระบบขัดข้องชั่วคราว ไม่สามารถประมวลผลรูปภาพได้ในขณะนี้";
@@ -2124,9 +2143,12 @@ async function processFacebookMessageWithAI(contentSequence, userId, facebookBot
 
     assistantReply = await filterMessage(assistantReply);
 
+    // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
+    const finalReply = extractThaiReply(assistantReply);
+
     await saveChatHistory(userId, contentSequence, assistantReply, 'facebook', facebookBot._id.toString());
 
-    return assistantReply.trim();
+    return finalReply.trim();
   } catch (error) {
     console.error('Error processing Facebook message with AI:', error);
     return 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ';
@@ -2182,7 +2204,10 @@ async function processMessageWithAI(message, userId, lineBot) {
       assistantReply += tokenInfo;
     }
     
-    return assistantReply.trim();
+    // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
+    const finalReply = extractThaiReply(assistantReply);
+    
+    return finalReply.trim();
   } catch (error) {
     console.error('Error processing message with AI:', error);
     return 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ';
