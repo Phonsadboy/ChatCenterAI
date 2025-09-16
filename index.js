@@ -193,6 +193,25 @@ function processExcelToInstructions(buffer, originalName) {
   }
 }
 
+function sanitizeSheetName(name, fallback) {
+  const invalidChars = /[\\/?*\[\]:]/g;
+  let sanitized = (name || '').replace(invalidChars, ' ').trim();
+  if (!sanitized) {
+    sanitized = fallback;
+  }
+  if (sanitized.length > 31) {
+    sanitized = sanitized.substring(0, 31).trim();
+  }
+  return sanitized || fallback;
+}
+
+function escapeMarkdownCell(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
 let mongoClient = null;
 async function connectDB() {
   if (!mongoClient) {
@@ -2948,6 +2967,157 @@ app.post('/admin/instructions/:id/edit', async (req, res) => {
     console.error('[Edit] Error updating instruction:', err);
     console.error('[Edit] Error stack:', err.stack);
     res.redirect('/admin/dashboard?error=ไม่สามารถแก้ไขข้อมูลได้');
+  }
+});
+
+// Instruction export endpoints
+app.get('/admin/instructions/export/json', async (req, res) => {
+  try {
+    const instructions = await getInstructions();
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      total: instructions.length,
+      instructions
+    };
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
+    res.setHeader('Content-Disposition', `attachment; filename="instructions-${timestamp}.json"`);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.send(JSON.stringify(payload, null, 2));
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'ไม่สามารถส่งออกข้อมูล JSON ได้', details: err.message });
+  }
+});
+
+app.get('/admin/instructions/export/markdown', async (req, res) => {
+  try {
+    const instructions = await getInstructions();
+    const lines = [];
+    const exportedAt = new Date();
+    lines.push('# Instructions Export');
+    lines.push('');
+    lines.push(`- Exported at: ${exportedAt.toISOString()}`);
+    lines.push(`- Total: ${instructions.length}`);
+    lines.push('');
+
+    if (instructions.length === 0) {
+      lines.push('_ไม่มีข้อมูล instructions_');
+    } else {
+      instructions.forEach((instruction, idx) => {
+        const indexLabel = idx + 1;
+        const title = instruction.title && instruction.title.trim() ? instruction.title.trim() : `Instruction ${indexLabel}`;
+        lines.push(`## ${indexLabel}. ${title}`);
+        lines.push('');
+
+        if (instruction.type === 'table' && instruction.data) {
+          const columns = Array.isArray(instruction.data.columns) && instruction.data.columns.length > 0
+            ? instruction.data.columns
+            : Array.from(new Set((instruction.data.rows || []).flatMap(row => Object.keys(row))));
+          const rows = Array.isArray(instruction.data.rows) ? instruction.data.rows : [];
+
+          if (columns.length === 0) {
+            lines.push('_ไม่มีข้อมูลตาราง_');
+          } else {
+            lines.push(`| ${columns.map(col => escapeMarkdownCell(col)).join(' | ')} |`);
+            lines.push(`| ${columns.map(() => '---').join(' | ')} |`);
+            if (rows.length === 0) {
+              lines.push(`| ${columns.map(() => ' ').join(' | ')} |`);
+              lines.push('> ไม่มีข้อมูลในตาราง');
+            } else {
+              rows.forEach(row => {
+                lines.push(`| ${columns.map(col => escapeMarkdownCell(row[col] ?? '')).join(' | ')} |`);
+              });
+            }
+          }
+        } else {
+          const content = instruction.content && String(instruction.content).trim() ? String(instruction.content) : '_ไม่มีเนื้อหา_';
+          lines.push(content);
+        }
+
+        lines.push('');
+      });
+    }
+
+    const markdown = lines.join('\n');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
+    res.setHeader('Content-Disposition', `attachment; filename="instructions-${timestamp}.md"`);
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.send(markdown);
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'ไม่สามารถส่งออกข้อมูล Markdown ได้', details: err.message });
+  }
+});
+
+app.get('/admin/instructions/export/excel', async (req, res) => {
+  try {
+    const instructions = await getInstructions();
+    const workbook = XLSX.utils.book_new();
+    const usedNames = new Set();
+
+    const reserveSheetName = (title, index) => {
+      const fallback = `Instruction_${index + 1}`;
+      const baseName = sanitizeSheetName(title, fallback);
+      let candidate = baseName;
+      let counter = 1;
+      while (usedNames.has(candidate)) {
+        const suffix = `_${counter++}`;
+        const maxLength = Math.max(31 - suffix.length, 1);
+        candidate = `${baseName.substring(0, maxLength)}${suffix}`;
+      }
+      usedNames.add(candidate);
+      return candidate;
+    };
+
+    if (instructions.length === 0) {
+      const sheetName = sanitizeSheetName('Instructions', 'Instructions');
+      const worksheet = XLSX.utils.aoa_to_sheet([['ไม่มีข้อมูล instructions']]);
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    } else {
+      instructions.forEach((instruction, idx) => {
+        const sheetName = reserveSheetName(instruction.title, idx);
+        let sheetData = [];
+
+        if (instruction.type === 'table' && instruction.data) {
+          const columns = Array.isArray(instruction.data.columns) && instruction.data.columns.length > 0
+            ? instruction.data.columns
+            : Array.from(new Set((instruction.data.rows || []).flatMap(row => Object.keys(row))));
+          const rows = Array.isArray(instruction.data.rows) ? instruction.data.rows : [];
+
+          if (columns.length === 0) {
+            sheetData = [['ไม่มีข้อมูลตาราง']];
+          } else {
+            sheetData.push(columns);
+            if (rows.length === 0) {
+              sheetData.push(new Array(columns.length).fill(''));
+            } else {
+              rows.forEach(row => {
+                sheetData.push(columns.map(col => {
+                  const value = row[col];
+                  return value === undefined || value === null ? '' : String(value);
+                }));
+              });
+            }
+          }
+        } else {
+          const text = instruction.content ? String(instruction.content) : '';
+          sheetData = [[text]];
+        }
+
+        if (sheetData.length === 0) {
+          sheetData = [['']];
+        }
+
+        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      });
+    }
+
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
+    res.setHeader('Content-Disposition', `attachment; filename="instructions-${timestamp}.xlsx"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'ไม่สามารถส่งออกไฟล์ Excel ได้', details: err.message });
   }
 });
 
