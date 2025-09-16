@@ -205,13 +205,6 @@ function sanitizeSheetName(name, fallback) {
   return sanitized || fallback;
 }
 
-function escapeMarkdownCell(value) {
-  if (value === null || value === undefined) {
-    return '';
-  }
-  return String(value).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
-}
-
 let mongoClient = null;
 async function connectDB() {
   if (!mongoClient) {
@@ -2992,48 +2985,44 @@ app.get('/admin/instructions/export/markdown', async (req, res) => {
   try {
     const instructions = await getInstructions();
     const lines = [];
-    const exportedAt = new Date();
-    lines.push('# Instructions Export');
-    lines.push('');
-    lines.push(`- Exported at: ${exportedAt.toISOString()}`);
-    lines.push(`- Total: ${instructions.length}`);
-    lines.push('');
 
     if (instructions.length === 0) {
-      lines.push('_ไม่มีข้อมูล instructions_');
+      lines.push('ไม่มีข้อมูล instructions');
     } else {
       instructions.forEach((instruction, idx) => {
         const indexLabel = idx + 1;
         const title = instruction.title && instruction.title.trim() ? instruction.title.trim() : `Instruction ${indexLabel}`;
-        lines.push(`## ${indexLabel}. ${title}`);
-        lines.push('');
 
-        if (instruction.type === 'table' && instruction.data) {
-          const columns = Array.isArray(instruction.data.columns) && instruction.data.columns.length > 0
-            ? instruction.data.columns
-            : Array.from(new Set((instruction.data.rows || []).flatMap(row => Object.keys(row))));
-          const rows = Array.isArray(instruction.data.rows) ? instruction.data.rows : [];
-
-          if (columns.length === 0) {
-            lines.push('_ไม่มีข้อมูลตาราง_');
-          } else {
-            lines.push(`| ${columns.map(col => escapeMarkdownCell(col)).join(' | ')} |`);
-            lines.push(`| ${columns.map(() => '---').join(' | ')} |`);
-            if (rows.length === 0) {
-              lines.push(`| ${columns.map(() => ' ').join(' | ')} |`);
-              lines.push('> ไม่มีข้อมูลในตาราง');
-            } else {
-              rows.forEach(row => {
-                lines.push(`| ${columns.map(col => escapeMarkdownCell(row[col] ?? '')).join(' | ')} |`);
-              });
-            }
-          }
-        } else {
-          const content = instruction.content && String(instruction.content).trim() ? String(instruction.content) : '_ไม่มีเนื้อหา_';
-          lines.push(content);
+        if (idx > 0) {
+          lines.push('');
         }
 
-        lines.push('');
+        lines.push(`#${indexLabel} ${title}`);
+
+        const normalizeText = (text) => {
+          if (!text) return '';
+          return String(text).replace(/\r\n/g, '\n');
+        };
+
+        if (instruction.type === 'table' && instruction.data) {
+          const content = normalizeText(instruction.content).trim();
+          if (content) {
+            lines.push('');
+            content.split('\n').forEach(line => lines.push(line));
+          }
+
+          const tableJson = JSON.stringify(instruction.data, null, 2);
+          lines.push('');
+          tableJson.split('\n').forEach(line => lines.push(line));
+        } else {
+          const content = normalizeText(instruction.content).trim();
+          lines.push('');
+          if (content) {
+            content.split('\n').forEach(line => lines.push(line));
+          } else {
+            lines.push('_ไม่มีเนื้อหา_');
+          }
+        }
       });
     }
 
