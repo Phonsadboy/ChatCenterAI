@@ -205,6 +205,47 @@ function sanitizeSheetName(name, fallback) {
   return sanitized || fallback;
 }
 
+function buildInstructionText(instructions, options = {}) {
+  const { tableMode = 'placeholder', emptyText = '_ไม่มีเนื้อหา_' } = options;
+  const normalizeText = (text) => {
+    if (!text) return '';
+    return String(text).replace(/\r\n/g, '\n');
+  };
+
+  return instructions.map((instruction, idx) => {
+    const indexLabel = idx + 1;
+    const title = instruction.title && instruction.title.trim() ? instruction.title.trim() : `Instruction ${indexLabel}`;
+    const lines = [`#${indexLabel} ${title}`];
+
+    if (instruction.type === 'table' && instruction.data) {
+      const content = normalizeText(instruction.content).trim();
+      if (content) {
+        lines.push('');
+        lines.push(...content.split('\n'));
+      }
+
+      if (tableMode === 'json') {
+        const tableJson = JSON.stringify(instruction.data, null, 2);
+        lines.push('');
+        lines.push(...tableJson.split('\n'));
+      } else if (tableMode === 'placeholder') {
+        lines.push('');
+        lines.push('[TABLE DATA]');
+      }
+    } else {
+      const content = normalizeText(instruction.content).trim();
+      lines.push('');
+      if (content) {
+        lines.push(...content.split('\n'));
+      } else if (emptyText) {
+        lines.push(emptyText);
+      }
+    }
+
+    return lines.join('\n');
+  }).join('\n\n');
+}
+
 let mongoClient = null;
 async function connectDB() {
   if (!mongoClient) {
@@ -2967,10 +3008,23 @@ app.post('/admin/instructions/:id/edit', async (req, res) => {
 app.get('/admin/instructions/export/json', async (req, res) => {
   try {
     const instructions = await getInstructions();
+    const exportedAt = new Date().toISOString();
+    const previewText = buildInstructionText(instructions, { tableMode: 'placeholder', emptyText: '' });
+    const detailedText = buildInstructionText(instructions, { tableMode: 'json', emptyText: '_ไม่มีเนื้อหา_' });
+    const sanitizedInstructions = instructions.map(instruction => {
+      const { _id, ...rest } = instruction;
+      return {
+        id: _id ? _id.toString() : null,
+        ...rest
+      };
+    });
+
     const payload = {
-      exportedAt: new Date().toISOString(),
+      exportedAt,
       total: instructions.length,
-      instructions
+      preview: previewText,
+      detailed: detailedText,
+      instructions: sanitizedInstructions
     };
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
     res.setHeader('Content-Disposition', `attachment; filename="instructions-${timestamp}.json"`);
@@ -2984,49 +3038,9 @@ app.get('/admin/instructions/export/json', async (req, res) => {
 app.get('/admin/instructions/export/markdown', async (req, res) => {
   try {
     const instructions = await getInstructions();
-    const lines = [];
-
-    if (instructions.length === 0) {
-      lines.push('ไม่มีข้อมูล instructions');
-    } else {
-      instructions.forEach((instruction, idx) => {
-        const indexLabel = idx + 1;
-        const title = instruction.title && instruction.title.trim() ? instruction.title.trim() : `Instruction ${indexLabel}`;
-
-        if (idx > 0) {
-          lines.push('');
-        }
-
-        lines.push(`#${indexLabel} ${title}`);
-
-        const normalizeText = (text) => {
-          if (!text) return '';
-          return String(text).replace(/\r\n/g, '\n');
-        };
-
-        if (instruction.type === 'table' && instruction.data) {
-          const content = normalizeText(instruction.content).trim();
-          if (content) {
-            lines.push('');
-            content.split('\n').forEach(line => lines.push(line));
-          }
-
-          const tableJson = JSON.stringify(instruction.data, null, 2);
-          lines.push('');
-          tableJson.split('\n').forEach(line => lines.push(line));
-        } else {
-          const content = normalizeText(instruction.content).trim();
-          lines.push('');
-          if (content) {
-            content.split('\n').forEach(line => lines.push(line));
-          } else {
-            lines.push('_ไม่มีเนื้อหา_');
-          }
-        }
-      });
-    }
-
-    const markdown = lines.join('\n');
+    const markdown = instructions.length === 0
+      ? 'ไม่มีข้อมูล instructions'
+      : buildInstructionText(instructions, { tableMode: 'json', emptyText: '_ไม่มีเนื้อหา_' });
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
     res.setHeader('Content-Disposition', `attachment; filename="instructions-${timestamp}.md"`);
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
@@ -3114,7 +3128,9 @@ app.get('/admin/instructions/export/excel', async (req, res) => {
 app.get('/admin/instructions/preview', async (req, res) => {
   try {
     const instructions = await getInstructions();
-    const preview = instructions.map((i, idx) => `#${idx + 1} ${i.title || ''}\n${i.type === 'text' ? i.content : '[TABLE DATA]'}`).join('\n\n');
+    const preview = instructions.length === 0
+      ? ''
+      : buildInstructionText(instructions, { tableMode: 'placeholder', emptyText: '' });
     res.json({ success: true, instructions: preview });
   } catch (err) {
     res.json({ success: false, error: err.message });
