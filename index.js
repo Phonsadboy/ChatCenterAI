@@ -1913,14 +1913,18 @@ app.post('/webhook/line/:botId', async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("line_bots");
-    
-    // Find the Line Bot by webhook URL or ID
-    const lineBot = await coll.findOne({
-      $or: [
-        { webhookUrl: { $regex: botId, $options: 'i' } },
-        { _id: new ObjectId(botId) }
-      ]
-    });
+
+    const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedBotId = escapeRegex(botId);
+    const queryConditions = [
+      { webhookUrl: { $regex: `${escapedBotId}$`, $options: 'i' } }
+    ];
+
+    if (ObjectId.isValid(botId)) {
+      queryConditions.push({ _id: new ObjectId(botId) });
+    }
+
+    const lineBot = await coll.findOne({ $or: queryConditions });
 
     if (!lineBot || lineBot.status !== 'active') {
       return res.status(404).json({ error: 'Line Bot ไม่พบหรือไม่เปิดใช้งาน' });
@@ -1934,7 +1938,13 @@ app.post('/webhook/line/:botId', async (req, res) => {
     const lineClient = new line.Client(lineConfig);
 
     // Handle Line webhook events
-    const events = req.body.events;
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+
+    if (events.length === 0) {
+      console.warn(`[Line Bot Webhook] Received request without events for identifier: ${botId}`);
+      return res.status(200).json({ status: 'NO_EVENTS' });
+    }
+
     for (let event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
         const userId = event.source.userId;
