@@ -1,4 +1,37 @@
 // Bot Management JavaScript
+
+// Shared dashboard statistics state
+let lineBotStats = { total: 0, active: 0, configured: 0, inactive: 0 };
+let facebookBotStats = { total: 0, active: 0, configured: 0, inactive: 0 };
+
+function refreshBotMetricDisplay() {
+    const totalBotsElement = document.getElementById('totalBots');
+    const lineBotsElement = document.getElementById('lineBots');
+    const facebookBotsElement = document.getElementById('facebookBots');
+    const activeBotsElement = document.getElementById('activeBots');
+    const configuredBotsElement = document.getElementById('configuredBots');
+    const inactiveBotsElement = document.getElementById('inactiveBots');
+
+    if (!totalBotsElement || !lineBotsElement || !facebookBotsElement ||
+        !activeBotsElement || !configuredBotsElement || !inactiveBotsElement) {
+        return;
+    }
+
+    const totals = {
+        total: lineBotStats.total + facebookBotStats.total,
+        active: lineBotStats.active + facebookBotStats.active,
+        configured: lineBotStats.configured + facebookBotStats.configured,
+        inactive: lineBotStats.inactive + facebookBotStats.inactive
+    };
+
+    totalBotsElement.textContent = totals.total;
+    lineBotsElement.textContent = lineBotStats.total;
+    facebookBotsElement.textContent = facebookBotStats.total;
+    activeBotsElement.textContent = totals.active;
+    configuredBotsElement.textContent = totals.configured;
+    inactiveBotsElement.textContent = totals.inactive;
+}
+
 // Line Bot Management Functions
 
 // Load Line Bot settings
@@ -130,26 +163,34 @@ function displayLineBotList(lineBots) {
 }
 
 // Update Line Bot statistics
-function updateLineBotStats(lineBots) {
-    const totalBotsElement = document.getElementById('totalBots');
-    const activeBotsElement = document.getElementById('activeBots');
-    const configuredBotsElement = document.getElementById('configuredBots');
-    const inactiveBotsElement = document.getElementById('inactiveBots');
-    
-    if (!totalBotsElement || !activeBotsElement || !configuredBotsElement || !inactiveBotsElement) {
-        console.log('Line Bot statistics elements not found');
-        return;
-    }
-    
+function updateLineBotStats(lineBots = []) {
     const total = lineBots.length;
     const active = lineBots.filter(bot => bot.status === 'active').length;
     const configured = lineBots.filter(bot => bot.aiModel && bot.selectedInstructions && bot.selectedInstructions.length > 0).length;
-    const inactive = total - active;
-    
-    totalBotsElement.textContent = total;
-    activeBotsElement.textContent = active;
-    configuredBotsElement.textContent = configured;
-    inactiveBotsElement.textContent = inactive;
+
+    lineBotStats = {
+        total,
+        active,
+        configured,
+        inactive: Math.max(total - active, 0)
+    };
+
+    refreshBotMetricDisplay();
+}
+
+function updateFacebookBotStats(facebookBots = []) {
+    const total = facebookBots.length;
+    const active = facebookBots.filter(bot => bot.status === 'active').length;
+    const configured = facebookBots.filter(bot => bot.aiModel && bot.selectedInstructions && bot.selectedInstructions.length > 0).length;
+
+    facebookBotStats = {
+        total,
+        active,
+        configured,
+        inactive: Math.max(total - active, 0)
+    };
+
+    refreshBotMetricDisplay();
 }
 
 // Load Line Bot AI Model information
@@ -414,6 +455,8 @@ function displayFacebookBotList(facebookBots) {
         console.log('Facebook Bot List container not found');
         return;
     }
+
+    updateFacebookBotStats(facebookBots || []);
 
     if (!facebookBots || facebookBots.length === 0) {
         container.innerHTML = `

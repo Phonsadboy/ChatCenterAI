@@ -144,8 +144,6 @@ async function loadSettings() {
         // โหลดข้อมูล Facebook Bot
         await loadFacebookBotSettings();
 
-        // โหลดข้อมูลภาพรวมระบบ
-        await loadOverviewData();
     } catch (error) {
         console.error('Error loading settings:', error);
         showAlert('เกิดข้อผิดพลาดในการโหลดการตั้งค่า', 'danger');
