@@ -216,11 +216,10 @@ function addNewLineBot() {
         saveLineBotBtn.innerHTML = '<i class="fas fa-save me-2"></i>บันทึก';
     }
     
-    // Generate webhook URL
-    const baseUrl = window.location.origin;
+    // Reset webhook URL so backend can generate a unique endpoint on save
     const lineWebhookUrl = document.getElementById('lineWebhookUrl');
     if (lineWebhookUrl) {
-        lineWebhookUrl.value = `${baseUrl}/webhook/line/new`;
+        lineWebhookUrl.value = '';
     }
 }
 
@@ -349,13 +348,33 @@ async function saveLineBot() {
         });
 
         if (response.ok) {
-            showAlert(botId ? 'อัปเดต Line Bot เรียบร้อยแล้ว' : 'เพิ่ม Line Bot เรียบร้อยแล้ว', 'success');
+            let responseData = {};
+            try {
+                responseData = await response.json();
+            } catch (parseError) {
+                console.warn('Unable to parse Line Bot response JSON:', parseError);
+            }
+
+            const successMessage = botId
+                ? (responseData.message || 'อัปเดต Line Bot เรียบร้อยแล้ว')
+                : `เพิ่ม Line Bot เรียบร้อยแล้ว${responseData.webhookUrl ? `<br><small>Webhook URL: <code>${responseData.webhookUrl}</code></small>` : ''}`;
+
+            showAlert(successMessage, 'success');
             await loadLineBotSettings();
             
             const modal = bootstrap.Modal.getInstance(document.getElementById('addLineBotModal'));
             if (modal) modal.hide();
         } else {
-            showAlert('ไม่สามารถบันทึก Line Bot ได้', 'danger');
+            let errorMessage = 'ไม่สามารถบันทึก Line Bot ได้';
+            try {
+                const errorData = await response.json();
+                if (errorData && errorData.error) {
+                    errorMessage = errorData.error;
+                }
+            } catch (parseError) {
+                console.warn('Unable to parse Line Bot error JSON:', parseError);
+            }
+            showAlert(errorMessage, 'danger');
         }
     } catch (error) {
         console.error('Error saving line bot:', error);
