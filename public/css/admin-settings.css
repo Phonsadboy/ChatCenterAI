@@ -43,11 +43,11 @@
 }
 
 .setting-item {
-    margin-bottom: 15px;
-    padding: 15px;
-    background: #f8f9fa;
-    border-radius: 8px;
-    border-left: 4px solid #667eea;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background: #f9fafb;
+    border-radius: 12px;
+    border: 1px solid #e9ecef;
 }
 
 .setting-label {
@@ -196,6 +196,142 @@
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+}
+
+/* Bot & AI refreshed layout */
+.bot-ai-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+}
+
+.bot-ai-hero {
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 18px;
+    padding: 1.5rem 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+@media (min-width: 992px) {
+    .bot-ai-hero {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+}
+
+.bot-ai-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.bot-ai-section {
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 18px;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+    display: flex;
+    flex-direction: column;
+}
+
+.bot-ai-section__header {
+    padding: 1.5rem;
+    border-bottom: 1px solid #f1f3f5;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.bot-ai-section__body {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.bot-ai-form .setting-item {
+    margin-bottom: 0;
+    background: #f8f9ff;
+    border: 1px solid #dfe6ff;
+    border-radius: 12px;
+}
+
+.bot-ai-form .setting-item + .setting-item {
+    margin-top: 1.25rem;
+}
+
+.bot-ai-form .setting-description {
+    font-size: 0.85rem;
+}
+
+.bot-ai-legend {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.legend-item i {
+    font-size: 0.65rem;
+}
+
+.bot-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.bot-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.bot-group__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.bot-group__summary {
+    font-size: 0.9rem;
+    color: #495057;
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+}
+
+.bot-list-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.bot-list-grid .card {
+    margin-bottom: 0;
+}
+
+@media (max-width: 575.98px) {
+    .bot-ai-hero {
+        padding: 1.25rem;
+    }
+
+    .bot-ai-section__header,
+    .bot-ai-section__body {
+        padding: 1.25rem;
+    }
 }
 
 .ai-metrics .metric-card {

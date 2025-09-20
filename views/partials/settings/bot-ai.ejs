@@ -1,151 +1,39 @@
 <div class="tab-pane fade show active" id="line-ai-settings" role="tabpanel" aria-labelledby="line-ai-tab">
-    <div class="ai-dashboard">
-        <div class="card border-0 shadow-sm mb-4">
-            <div class="card-body">
-                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-                    <div>
-                        <h3 class="mb-1">
-                            <i class="fas fa-robot text-primary me-2"></i>
-                            Bot & AI Management
-                        </h3>
-                        <p class="text-muted mb-0">จัดการบอททุกช่องทาง กำหนดโมเดล AI และ Instruction ให้เหมาะกับการตอบแชทของทีม</p>
-                    </div>
-                    <div class="d-flex flex-wrap gap-2">
-                        <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
-                            <i class="fab fa-line me-2"></i>เพิ่ม Line Bot
-                        </button>
-                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
-                            <i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" onclick="refreshLineBotList()">
-                            <i class="fas fa-sync-alt me-2"></i>รีเฟรชข้อมูล
-                        </button>
-                    </div>
-                </div>
+    <div class="bot-ai-container">
+        <section class="bot-ai-hero shadow-sm">
+            <div>
+                <h3 class="mb-1">
+                    <i class="fas fa-robot text-primary me-2"></i>
+                    Bot & AI Management
+                </h3>
+                <p class="text-muted mb-0">จัดการบอททุกช่องทาง กำหนดโมเดล AI และ Instruction ให้เหมาะกับการตอบแชทของทีม</p>
             </div>
-        </div>
+            <div class="bot-ai-actions">
+                <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
+                    <i class="fab fa-line me-2"></i>เพิ่ม Line Bot
+                </button>
+                <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                    <i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot
+                </button>
+                <button type="button" class="btn btn-outline-secondary" onclick="refreshLineBotList()">
+                    <i class="fas fa-sync-alt me-2"></i>รีเฟรชข้อมูล
+                </button>
+            </div>
+        </section>
 
-        <div class="row g-3 mb-4 ai-metrics">
-            <div class="col-6 col-sm-4 col-xl-2">
-                <div class="metric-card shadow-sm">
-                    <div class="metric-icon bg-primary-subtle text-primary">
-                        <i class="fas fa-robot"></i>
-                    </div>
-                    <div class="metric-value" id="totalBots">0</div>
-                    <div class="metric-label">Bot ทั้งหมด</div>
-                </div>
-            </div>
-            <div class="col-6 col-sm-4 col-xl-2">
-                <div class="metric-card shadow-sm">
-                    <div class="metric-icon bg-success-subtle text-success">
-                        <i class="fab fa-line"></i>
-                    </div>
-                    <div class="metric-value" id="lineBots">0</div>
-                    <div class="metric-label">Line Bot</div>
-                </div>
-            </div>
-            <div class="col-6 col-sm-4 col-xl-2">
-                <div class="metric-card shadow-sm">
-                    <div class="metric-icon bg-primary-subtle text-primary">
-                        <i class="fab fa-facebook"></i>
-                    </div>
-                    <div class="metric-value" id="facebookBots">0</div>
-                    <div class="metric-label">Facebook Bot</div>
-                </div>
-            </div>
-            <div class="col-6 col-sm-4 col-xl-2">
-                <div class="metric-card shadow-sm">
-                    <div class="metric-icon bg-success-subtle text-success">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
-                    <div class="metric-value" id="activeBots">0</div>
-                    <div class="metric-label">เปิดใช้งาน</div>
-                </div>
-            </div>
-            <div class="col-6 col-sm-4 col-xl-2">
-                <div class="metric-card shadow-sm">
-                    <div class="metric-icon bg-info-subtle text-info">
-                        <i class="fas fa-cog"></i>
-                    </div>
-                    <div class="metric-value" id="configuredBots">0</div>
-                    <div class="metric-label">ตั้งค่าแล้ว</div>
-                </div>
-            </div>
-            <div class="col-6 col-sm-4 col-xl-2">
-                <div class="metric-card shadow-sm">
-                    <div class="metric-icon bg-warning-subtle text-warning">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                    <div class="metric-value" id="inactiveBots">0</div>
-                    <div class="metric-label">ปิดใช้งาน</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="row g-4">
-            <div class="col-xl-4">
-                <div class="card border-0 shadow-sm h-100">
-                    <div class="card-header bg-primary text-white">
-                        <h6 class="mb-0"><i class="fas fa-robot me-2"></i>AI Models ที่รองรับ</h6>
-                    </div>
-                    <div class="card-body">
-                        <ul class="ai-model-list list-unstyled mb-0">
-                            <li class="ai-model-item">
-                                <span class="badge rounded-pill bg-success me-2">แนะนำ</span>
-                                <div>
-                                    <strong>GPT-5</strong>
-                                    <div class="text-muted small">มาตรฐาน ตอบครบทุก use case</div>
-                                </div>
-                            </li>
-                            <li class="ai-model-item">
-                                <span class="badge rounded-pill bg-info me-2">ประหยัด</span>
-                                <div>
-                                    <strong>GPT-5 Mini</strong>
-                                    <div class="text-muted small">เหมาะกับงานตอบลูกค้าจำนวนมาก</div>
-                                </div>
-                            </li>
-                            <li class="ai-model-item">
-                                <span class="badge rounded-pill bg-warning me-2">เร็ว</span>
-                                <div>
-                                    <strong>GPT-5 Nano</strong>
-                                    <div class="text-muted small">ตอบไวสำหรับ workflow real-time</div>
-                                </div>
-                            </li>
-                            <li class="ai-model-item">
-                                <span class="badge rounded-pill bg-danger me-2">สำรอง</span>
-                                <div>
-                                    <strong>O3</strong>
-                                    <div class="text-muted small">เลือกใช้เมื่ออยากทดลองโมเดลอื่น</div>
-                                </div>
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="card border-0 shadow-sm mt-4">
-                    <div class="card-header bg-info text-white">
-                        <h6 class="mb-0"><i class="fas fa-book me-2"></i>Instruction Library</h6>
-                    </div>
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <div>
-                                <h4 class="mb-0" id="instructionsCount">0</h4>
-                                <small class="text-muted">คลัง Instruction พร้อมใช้งาน</small>
-                            </div>
-                            <span class="badge bg-light text-secondary fw-medium"><i class="fas fa-layer-group me-1"></i>พร้อมจัดสรร</span>
+        <div class="row g-4 align-items-start bot-ai-grid">
+            <div class="col-12 col-xl-4">
+                <section class="bot-ai-section h-100">
+                    <div class="bot-ai-section__header">
+                        <div>
+                            <h5 class="mb-1"><i class="fas fa-sliders-h me-2 text-primary"></i>การตั้งค่า AI หลัก (Global Fallback)</h5>
+                            <p class="text-muted mb-0">เลือกโมเดลสำรองและ Instruction เริ่มต้นให้ทุกบอทใช้ร่วมกัน</p>
                         </div>
-                        <p class="text-muted small mb-0">กำหนด tone & persona ของแต่ละบอทด้วยการเลือก Instruction คนละชุด เพื่อให้ตอบได้ตรงกับแบรนด์</p>
                     </div>
-                </div>
-
-                <div class="card border-0 shadow-sm mt-4">
-                    <div class="card-header bg-secondary text-white">
-                        <h6 class="mb-0"><i class="fas fa-sliders-h me-2"></i>การตั้งค่า AI หลัก (Global Fallback)</h6>
-                    </div>
-                    <div class="card-body">
-                        <form id="aiSettingsForm">
+                    <div class="bot-ai-section__body">
+                        <form id="aiSettingsForm" class="bot-ai-form">
                             <div class="setting-item">
-                                <div class="setting-label">โมเดลสำหรับข้อความ</div>
+                                <label class="setting-label" for="textModel">โมเดลสำหรับข้อความ</label>
                                 <div class="setting-description">เลือกโมเดล fallback เมื่อบอทยังไม่ได้ตั้งค่าเฉพาะ</div>
                                 <select class="form-select" id="textModel">
                                     <option value="gpt-5">GPT-5</option>
@@ -159,7 +47,7 @@
                             </div>
 
                             <div class="setting-item">
-                                <div class="setting-label">โมเดลสำหรับรูปภาพ</div>
+                                <label class="setting-label" for="visionModel">โมเดลสำหรับรูปภาพ</label>
                                 <div class="setting-description">ใช้สำหรับงาน Vision หรือวิเคราะห์ภาพในกรณี fallback</div>
                                 <select class="form-select" id="visionModel">
                                     <option value="gpt-5">GPT-5</option>
@@ -173,69 +61,66 @@
                             </div>
 
                             <div class="setting-item">
-                                <div class="setting-label">จำนวนรูปภาพสูงสุดต่อข้อความ</div>
+                                <label class="setting-label" for="maxImagesPerMessage">จำนวนรูปภาพสูงสุดต่อข้อความ</label>
                                 <div class="setting-description">จำกัดเพื่อควบคุมต้นทุนการประมวลผลภาพ</div>
                                 <input type="number" class="form-control" id="maxImagesPerMessage" min="1" max="10" step="1" placeholder="3" value="3">
                                 <small class="text-muted">แนะนำ 2-5 รูปภาพต่อคำถาม</small>
                             </div>
 
-                            <div class="setting-item">
-                                <div class="setting-label">Instruction เริ่มต้น</div>
+                            <div class="setting-item mb-0">
+                                <label class="setting-label" for="defaultInstruction">Instruction เริ่มต้น</label>
                                 <div class="setting-description">ใช้เมื่อบอทยังไม่ได้เลือก Instruction ของตัวเอง</div>
                                 <select class="form-select" id="defaultInstruction">
                                     <option value="">ไม่เลือก</option>
                                 </select>
                             </div>
 
-                            <button type="submit" class="btn btn-save text-white w-100">
+                            <button type="submit" class="btn btn-save text-white w-100 mt-3">
                                 <i class="fas fa-save me-2"></i>บันทึกการตั้งค่า AI
                             </button>
                         </form>
                     </div>
-                </div>
+                </section>
             </div>
 
-            <div class="col-xl-8">
-                <div class="card border-0 shadow-sm h-100">
-                    <div class="card-header bg-white d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2">
-                        <div>
+            <div class="col-12 col-xl-8">
+                <section class="bot-ai-section h-100">
+                    <div class="bot-ai-section__header flex-column flex-lg-row align-items-lg-center">
+                        <div class="mb-3 mb-lg-0">
                             <h5 class="mb-1"><i class="fas fa-layer-group me-2 text-primary"></i>ภาพรวมบอททั้งหมด</h5>
                             <p class="text-muted mb-0 small">ตรวจสอบสถานะและโมเดลที่ใช้ของแต่ละบอท ปรับแต่งได้ทันที</p>
                         </div>
-                        <div class="d-flex gap-2">
-                            <span class="badge bg-success-subtle text-success"><i class="fas fa-circle me-1"></i>Active</span>
-                            <span class="badge bg-warning-subtle text-warning"><i class="fas fa-circle me-1"></i>Inactive</span>
+                        <div class="bot-ai-legend">
+                            <span class="legend-item text-success"><i class="fas fa-circle me-1"></i>Active</span>
+                            <span class="legend-item text-warning"><i class="fas fa-circle me-1"></i>Inactive</span>
                         </div>
                     </div>
-                    <div class="card-body">
-                        <div class="bot-list-group">
-                            <div class="bot-list-section">
-                                <div class="d-flex align-items-center justify-content-between mb-3">
-                                    <h6 class="mb-0"><i class="fab fa-line text-success me-2"></i>Line Bots</h6>
-                                    <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
-                                        <i class="fas fa-plus-circle me-1"></i>เพิ่มใหม่
-                                    </button>
-                                </div>
-                                <div id="lineBotAiModelInfo" class="ai-model-summary mb-3"></div>
-                                <div id="lineBotList" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
-                                    <!-- Line Bot items load here -->
-                                </div>
+                    <div class="bot-ai-section__body bot-overview">
+                        <div class="bot-group">
+                            <div class="bot-group__header">
+                                <h6 class="mb-0"><i class="fab fa-line text-success me-2"></i>Line Bots</h6>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
+                                    <i class="fas fa-plus-circle me-1"></i>เพิ่มใหม่
+                                </button>
                             </div>
-                            <hr class="my-4">
-                            <div class="bot-list-section">
-                                <div class="d-flex align-items-center justify-content-between mb-3">
-                                    <h6 class="mb-0"><i class="fab fa-facebook text-primary me-2"></i>Facebook Bots</h6>
-                                    <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
-                                        <i class="fas fa-plus-circle me-1"></i>เพิ่มใหม่
-                                    </button>
-                                </div>
-                                <div id="facebookBotList" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
-                                    <!-- Facebook Bot items load here -->
-                                </div>
+                            <div id="lineBotAiModelInfo" class="bot-group__summary"></div>
+                            <div id="lineBotList" class="bot-list-grid">
+                                <!-- Line Bot items load here -->
+                            </div>
+                        </div>
+                        <div class="bot-group">
+                            <div class="bot-group__header">
+                                <h6 class="mb-0"><i class="fab fa-facebook text-primary me-2"></i>Facebook Bots</h6>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                                    <i class="fas fa-plus-circle me-1"></i>เพิ่มใหม่
+                                </button>
+                            </div>
+                            <div id="facebookBotList" class="bot-list-grid">
+                                <!-- Facebook Bot items load here -->
                             </div>
                         </div>
                     </div>
-                </div>
+                </section>
             </div>
         </div>
     </div>
