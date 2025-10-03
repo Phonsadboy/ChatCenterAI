@@ -2223,41 +2223,36 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
           }
         }
       } else if (seg.type === 'image') {
-        try {
+        const mode = await getSettingValue('facebookImageSendMode', 'upload');
+        const tryUploadFirst = mode === 'upload';
+        let sent = false;
+        const sendByUrl = async () => {
           const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
             recipient: { id: recipientId },
-            message: {
-              attachment: {
-                type: 'image',
-                payload: { url: seg.url, is_reusable: true }
-              }
-            }
-          }, {
-            params: { access_token: accessToken },
-            headers: { 'Content-Type': 'application/json' }
-          });
-          console.log('Facebook image sent:', response.data?.message_id || 'ok', seg.label);
-        } catch (error) {
-          const status = error.response?.status;
-          const fbMessage = error.response?.data?.error?.message || error.message;
-          const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
-          console.error('Error sending Facebook image (URL mode):', conciseError);
-          // If blocked by robots.txt or URL fetch issues, try direct upload flow
+            message: { attachment: { type: 'image', payload: { url: seg.url, is_reusable: true } } }
+          }, { params: { access_token: accessToken }, headers: { 'Content-Type': 'application/json' } });
+          console.log('Facebook image sent (url):', response.data?.message_id || 'ok', seg.label);
+        };
+        const sendByUpload = async () => {
+          await sendFacebookImageByUpload(recipientId, seg, accessToken);
+          console.log('Facebook image sent (upload):', seg.label);
+        };
+        try {
+          if (tryUploadFirst) { await sendByUpload(); } else { await sendByUrl(); }
+          sent = true;
+        } catch (firstErr) {
+          console.error(`Facebook image ${tryUploadFirst ? 'upload' : 'url'} mode failed:`, firstErr?.message || firstErr);
           try {
-            await sendFacebookImageByUpload(recipientId, seg, accessToken);
-            console.log('Facebook image sent via upload:', seg.label);
-          } catch (uploadErr) {
-            console.error('Facebook image upload fallback failed:', uploadErr?.message || uploadErr);
-            // Final fallback: send alt text if available
+            if (tryUploadFirst) { await sendByUrl(); } else { await sendByUpload(); }
+            sent = true;
+          } catch (secondErr) {
+            console.error('Facebook image both modes failed:', secondErr?.message || secondErr);
             const alt = seg.alt ? `\n(รูป: ${seg.alt})` : '';
             try {
               await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
                 recipient: { id: recipientId },
                 message: { text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}` }
-              }, {
-                params: { access_token: accessToken },
-                headers: { 'Content-Type': 'application/json' }
-              });
+              }, { params: { access_token: accessToken }, headers: { 'Content-Type': 'application/json' } });
             } catch (_) {}
           }
         }
@@ -2268,25 +2263,11 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
 
 // Upload image to Facebook to obtain attachment_id, then send it
 async function sendFacebookImageByUpload(recipientId, seg, accessToken) {
-  const baseDir = path.join(__dirname, 'public', 'assets', 'instructions');
-  const localPath = path.join(baseDir, seg.fileName || `${seg.label}.jpg`);
-  let buffer = null;
-  try {
-    if (fs.existsSync(localPath)) {
-      buffer = fs.readFileSync(localPath);
-    } else if (seg.url) {
-      const resp = await axios.get(seg.url, { responseType: 'arraybuffer' });
-      buffer = Buffer.from(resp.data);
-    } else {
-      throw new Error('ไม่พบไฟล์รูปภาพสำหรับอัพโหลด');
-    }
-  } catch (e) {
-    throw new Error('อ่านไฟล์รูปภาพไม่สำเร็จ: ' + (e.message || e));
-  }
+  const { buffer, filename, contentType } = await readInstructionAssetBuffer(seg);
 
   const form = new FormData();
   form.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: true } } }));
-  form.append('filedata', buffer, { filename: seg.fileName || `${seg.label}.jpg`, contentType: 'image/jpeg' });
+  form.append('filedata', buffer, { filename, contentType });
 
   // 1) Upload attachment to get attachment_id
   const uploadRes = await axios.post(`https://graph.facebook.com/v18.0/me/message_attachments`, form, {
@@ -2304,6 +2285,37 @@ async function sendFacebookImageByUpload(recipientId, seg, accessToken) {
     params: { access_token: accessToken },
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+// Helper: read local asset buffer robustly (handle ext variants and URL fallback)
+async function readInstructionAssetBuffer(seg) {
+  const baseDir = path.join(__dirname, 'public', 'assets', 'instructions');
+  const tryFiles = [];
+  if (seg.fileName) tryFiles.push(seg.fileName);
+  tryFiles.push(`${seg.label}.jpg`, `${seg.label}.jpeg`, `${seg.label}.png`, `${seg.label}.webp`, `${seg.label}_thumb.jpg`);
+
+  for (const name of tryFiles) {
+    const p = path.join(baseDir, name);
+    try {
+      if (fs.existsSync(p)) {
+        const b = fs.readFileSync(p);
+        const ext = path.extname(p).toLowerCase().replace('.', '') || 'jpg';
+        const ct = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+        return { buffer: b, filename: name, contentType: ct };
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  // Fallback: fetch by URL if available
+  if (seg.url) {
+    const resp = await axios.get(seg.url, { responseType: 'arraybuffer' });
+    const b = Buffer.from(resp.data);
+    const urlExt = (seg.url.split('.').pop() || 'jpg').toLowerCase();
+    const ct = urlExt.startsWith('png') ? 'image/png' : urlExt.startsWith('webp') ? 'image/webp' : 'image/jpeg';
+    return { buffer: b, filename: seg.fileName || `${seg.label}.jpg`, contentType: ct };
+  }
+
+  throw new Error('อ่านไฟล์รูปภาพไม่สำเร็จ: ไม่พบไฟล์ในเครื่องและไม่มี URL ให้ดึง');
 }
 
 // Helper to download and optimize Facebook image to base64
