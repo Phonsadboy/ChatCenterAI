@@ -23,6 +23,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const XLSX = require('xlsx');
 const multer = require('multer');
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
 
 const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -83,7 +84,7 @@ app.get('/favicon.ico', (req, res) => res.sendStatus(204));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
-// ============================ Multer Configuration for Excel Upload ============================
+// ============================ Multer Configuration ============================
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
@@ -98,6 +99,22 @@ const upload = multer({
   },
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB
+  }
+});
+
+// Multer for image uploads (Instruction Assets)
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (allowed.includes(file.mimetype) || file.originalname.match(/\.(jpe?g|png|webp)$/i)) {
+      cb(null, true);
+    } else {
+      cb(new Error('กรุณาอัพโหลดเฉพาะไฟล์รูปภาพ (jpg, png, webp)'), false);
+    }
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB per image
   }
 });
 
@@ -1266,6 +1283,7 @@ function scheduleDailyRefresh() {
 async function buildSystemInstructions(history) {
   // ดึง instructions จากฐานข้อมูลเท่านั้น ไม่ใช้ Google Docs/Sheets อีกต่อไป
   const instructions = await getInstructions();
+  const assetsText = await getAssetsInstructionsText();
 
   let systemText = "คุณเป็น AI chatbot ภาษาไทย\n\n";
 
@@ -1277,6 +1295,10 @@ async function buildSystemInstructions(history) {
       if (inst.title) systemText += `=== ${inst.title} ===\n`;
       systemText += "ข้อมูลตารางในรูปแบบ JSON:\n```json\n" + JSON.stringify(inst.data, null, 2) + "\n```\n\n";
     }
+  }
+
+  if (assetsText) {
+    systemText += "\n\n" + assetsText + "\n\n";
   }
 
   // เพิ่มเวลาไทยปัจจุบัน
@@ -1545,6 +1567,72 @@ async function getInstructions() {
   const db = client.db("chatbot");
   const coll = db.collection("instructions");
   return coll.find({}).sort({ order: 1, createdAt: 1 }).toArray();
+}
+
+// ============================ Instruction Assets Helpers ============================
+async function getInstructionAssets() {
+  try {
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('instruction_assets');
+    const assets = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    return assets;
+  } catch (e) {
+    console.error('[Assets] Error fetching assets:', e);
+    return [];
+  }
+}
+
+async function getInstructionAssetsMap() {
+  const assets = await getInstructionAssets();
+  const map = {};
+  for (const a of assets) {
+    if (a && a.label) map[a.label] = a;
+  }
+  return map;
+}
+
+async function getAssetsInstructionsText() {
+  const assets = await getInstructionAssets();
+  if (!assets || assets.length === 0) return '';
+  const lines = [];
+  lines.push('การแทรกรูปภาพในการตอบ: ใช้แท็ก #[IMAGE:<label>] ในตำแหน่งที่ต้องการ เช่น ตัวอย่าง: "ยอดชำระ 500 บาท #[IMAGE:qr-code] ขอบคุณค่ะ" ระบบจะแยกเป็นข้อความ-รูปภาพ-ข้อความโดยอัตโนมัติ');
+  lines.push('รายการรูปที่สามารถใช้ได้ (label: คำอธิบาย):');
+  for (const a of assets) {
+    const label = a.label;
+    const desc = a.description || a.alt || '';
+    lines.push(`- ${label}: ${desc}`);
+  }
+  return lines.join('\n');
+}
+
+// Parse assistant reply into segments of text and images based on #[IMAGE:label]
+function parseMessageSegmentsByImageTokens(message, assetsMap) {
+  if (!message || typeof message !== 'string') return [{ type: 'text', text: '' }];
+  const segments = [];
+  const regex = /#\[\s*IMAGE\s*:\s*([^\]]*?)\s*\]/gi;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(message)) !== null) {
+    const idx = match.index;
+    const prev = message.slice(lastIndex, idx);
+    if (prev && prev.trim() !== '') segments.push({ type: 'text', text: prev });
+    let rawLabel = (match[1] || '').trim();
+    // normalize trailing colon (e.g., qr-code:)
+    if (rawLabel.endsWith(':')) rawLabel = rawLabel.slice(0, -1).trim();
+    const asset = assetsMap[rawLabel];
+    if (asset) {
+      segments.push({ type: 'image', label: rawLabel, url: asset.url, thumbUrl: asset.thumbUrl || asset.url, alt: asset.alt || '' });
+    } else {
+      // If asset not found, keep the literal token as text to avoid losing info
+      segments.push({ type: 'text', text: ` [รูป ${rawLabel} ไม่พบ] ` });
+    }
+    lastIndex = regex.lastIndex;
+  }
+  const tail = message.slice(lastIndex);
+  if (tail && tail.trim() !== '') segments.push({ type: 'text', text: tail });
+  if (segments.length === 0) segments.push({ type: 'text', text: message });
+  return segments;
 }
 
 // ============================ Instruction Library ============================
@@ -2098,37 +2186,73 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
 
 // Helper function to send Facebook message
 async function sendFacebookMessage(recipientId, message, accessToken) {
-  // แยกข้อความตามตัวแบ่ง [cut] เพื่อส่งเป็นหลายข้อความ
+  // แยกข้อความตามตัวแบ่ง [cut] → จากนั้น parse #[IMAGE:<label>] เป็น segments
   const parts = String(message)
-    .split("[cut]")
-    .map(part => part.trim())
-    .filter(part => part.length > 0);
+    .split('[cut]')
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
 
+  const assetsMap = await getInstructionAssetsMap();
   const maxLength = 2000;
 
   for (const part of parts) {
-    const chunks = [];
-    for (let i = 0; i < part.length; i += maxLength) {
-      chunks.push(part.slice(i, i + maxLength));
-    }
-
-    for (const chunk of chunks) {
-      try {
-        const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
-          recipient: { id: recipientId },
-          message: { text: chunk }
-        }, {
-          params: { access_token: accessToken },
-          headers: { 'Content-Type': 'application/json' }
-        });
-
-        console.log('Facebook message sent successfully:', response.data);
-      } catch (error) {
-        const status = error.response?.status;
-        const fbMessage = error.response?.data?.error?.message || error.message;
-        const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
-        console.error('Error sending Facebook message:', conciseError);
-        throw new Error(conciseError);
+    const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
+    for (const seg of segments) {
+      if (seg.type === 'text') {
+        const text = seg.text || '';
+        // chunk text to maxLength
+        for (let i = 0; i < text.length; i += maxLength) {
+          const chunk = text.slice(i, i + maxLength);
+          if (!chunk.trim()) continue;
+          try {
+            const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+              recipient: { id: recipientId },
+              message: { text: chunk }
+            }, {
+              params: { access_token: accessToken },
+              headers: { 'Content-Type': 'application/json' }
+            });
+            console.log('Facebook text sent:', response.data?.message_id || 'ok');
+          } catch (error) {
+            const status = error.response?.status;
+            const fbMessage = error.response?.data?.error?.message || error.message;
+            const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
+            console.error('Error sending Facebook text:', conciseError);
+            throw new Error(conciseError);
+          }
+        }
+      } else if (seg.type === 'image') {
+        try {
+          const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+            recipient: { id: recipientId },
+            message: {
+              attachment: {
+                type: 'image',
+                payload: { url: seg.url, is_reusable: true }
+              }
+            }
+          }, {
+            params: { access_token: accessToken },
+            headers: { 'Content-Type': 'application/json' }
+          });
+          console.log('Facebook image sent:', response.data?.message_id || 'ok', seg.label);
+        } catch (error) {
+          const status = error.response?.status;
+          const fbMessage = error.response?.data?.error?.message || error.message;
+          const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
+          console.error('Error sending Facebook image:', conciseError);
+          // Fallback: send alt text if available
+          const alt = seg.alt ? `\n(รูป: ${seg.alt})` : '';
+          try {
+            await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+              recipient: { id: recipientId },
+              message: { text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}` }
+            }, {
+              params: { access_token: accessToken },
+              headers: { 'Content-Type': 'application/json' }
+            });
+          } catch (_) {}
+        }
       }
     }
   }
@@ -2191,6 +2315,12 @@ async function processFacebookMessageWithAI(contentSequence, userId, facebookBot
       if (prompt.trim()) {
         systemPrompt = prompt;
       }
+    }
+
+    // เพิ่มคำแนะนำเกี่ยวกับการแทรกรูปภาพด้วยแท็ก #[IMAGE:<label>]
+    const assetsText = await getAssetsInstructionsText();
+    if (assetsText) {
+      systemPrompt = `${systemPrompt}\n\n${assetsText}`;
     }
 
     const history = await getChatHistory(userId);
@@ -3193,6 +3323,114 @@ app.get('/admin/instructions/list', async (req, res) => {
     });
   } catch (err) {
     res.json({ success: false, error: err.message });
+  }
+});
+
+// ============================ Instruction Assets API ============================
+// List all instruction assets
+app.get('/admin/instructions/assets', async (req, res) => {
+  try {
+    const assets = await getInstructionAssets();
+    res.json({ success: true, assets });
+  } catch (err) {
+    console.error('[Assets] list error:', err);
+    res.status(500).json({ success: false, error: 'ไม่สามารถดึงรายการรูปภาพได้' });
+  }
+});
+
+// Upload a new instruction asset
+app.post('/admin/instructions/assets', imageUpload.single('image'), async (req, res) => {
+  try {
+    const label = (req.body.label || '').trim();
+    const alt = (req.body.alt || '').trim();
+    const description = (req.body.description || '').trim();
+    const overwrite = String(req.body.overwrite || '').toLowerCase() === 'true';
+
+    if (!label || !/^[a-z0-9_-]+$/i.test(label)) {
+      return res.status(400).json({ success: false, error: 'label ไม่ถูกต้อง (a-z, 0-9, -, _)' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'กรุณาอัพโหลดไฟล์รูปภาพ' });
+    }
+
+    // Ensure folder exists
+    const baseDir = path.join(__dirname, 'public', 'assets', 'instructions');
+    if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
+
+    // Convert to optimized JPEG and thumbnail
+    const inputBuffer = req.file.buffer;
+    const image = sharp(inputBuffer);
+    const metadata = await image.metadata();
+    const optimized = await image.jpeg({ quality: 88, progressive: true }).toBuffer();
+    const thumb = await sharp(optimized).resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+
+    const sha256 = crypto.createHash('sha256').update(optimized).digest('hex').slice(0, 16);
+    const fileName = `${label}.jpg`;
+    const thumbName = `${label}_thumb.jpg`;
+    const filePath = path.join(baseDir, fileName);
+    const thumbPath = path.join(baseDir, thumbName);
+    fs.writeFileSync(filePath, optimized);
+    fs.writeFileSync(thumbPath, thumb);
+
+    const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, '') : '';
+    const url = `${urlBase}/assets/instructions/${fileName}`;
+    const thumbUrl = `${urlBase}/assets/instructions/${thumbName}`;
+
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('instruction_assets');
+
+    const existing = await coll.findOne({ label });
+    const doc = {
+      label,
+      fileName,
+      mime: 'image/jpeg',
+      size: optimized.length,
+      width: metadata.width || null,
+      height: metadata.height || null,
+      sha256,
+      alt,
+      description,
+      url,
+      thumbUrl,
+      updatedAt: new Date(),
+      createdAt: existing?.createdAt || new Date()
+    };
+
+    if (existing && !overwrite) {
+      return res.status(409).json({ success: false, error: 'label นี้มีอยู่แล้ว หากต้องการแทนที่ให้ส่ง overwrite=true' });
+    }
+
+    await coll.updateOne({ label }, { $set: doc }, { upsert: true });
+
+    res.json({ success: true, asset: doc });
+  } catch (err) {
+    console.error('[Assets] upload error:', err);
+    res.status(400).json({ success: false, error: err.message || 'อัพโหลดรูปภาพไม่สำเร็จ' });
+  }
+});
+
+// Delete an instruction asset by label
+app.delete('/admin/instructions/assets/:label', async (req, res) => {
+  try {
+    const { label } = req.params;
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('instruction_assets');
+    const doc = await coll.findOne({ label });
+    if (!doc) return res.status(404).json({ success: false, error: 'ไม่พบ asset' });
+
+    await coll.deleteOne({ label });
+
+    // Remove files if exist
+    const baseDir = path.join(__dirname, 'public', 'assets', 'instructions');
+    const files = [path.join(baseDir, doc.fileName), path.join(baseDir, `${label}_thumb.jpg`)];
+    files.forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_){} });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Assets] delete error:', err);
+    res.status(500).json({ success: false, error: 'ลบรูปภาพไม่สำเร็จ' });
   }
 });
 

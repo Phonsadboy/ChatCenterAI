@@ -25,6 +25,13 @@ async function manageInstructions(botId) {
         displayInstructionLibraries();
         displaySelectedInstructions();
 
+        // Load assets and bind upload handler
+        await loadInstructionAssets();
+        const uploadBtn = document.getElementById('uploadInstructionAssetBtn');
+        if (uploadBtn) {
+            uploadBtn.onclick = uploadInstructionAsset;
+        }
+
         // Show modal
         const manageInstructionsModalLabel = document.getElementById('manageInstructionsModalLabel');
         if (manageInstructionsModalLabel) {
@@ -64,6 +71,13 @@ async function manageFacebookInstructions(botId) {
         // Display data
         displayInstructionLibraries();
         displaySelectedInstructions();
+
+        // Load assets and bind upload handler
+        await loadInstructionAssets();
+        const uploadBtn = document.getElementById('uploadInstructionAssetBtn');
+        if (uploadBtn) {
+            uploadBtn.onclick = uploadInstructionAsset;
+        }
 
         // Show modal
         const manageInstructionsModalLabel = document.getElementById('manageInstructionsModalLabel');
@@ -370,6 +384,104 @@ function displayInstructionsOverview(libraries) {
     }
 }
 
+// ==================== Instruction Assets Management ====================
+
+async function loadInstructionAssets() {
+    try {
+        const listEl = document.getElementById('instructionAssetsList');
+        if (!listEl) return;
+        listEl.innerHTML = '<div class="text-muted">กำลังโหลด...</div>';
+        const res = await fetch('/admin/instructions/assets');
+        if (!res.ok) throw new Error('ไม่สามารถดึงรายการรูปภาพได้');
+        const data = await res.json();
+        const assets = data.assets || [];
+        renderInstructionAssets(assets);
+    } catch (err) {
+        console.error('loadInstructionAssets error:', err);
+        if (window.adminSettings?.showAlert) window.adminSettings.showAlert('โหลดรายการรูปภาพไม่สำเร็จ', 'danger');
+    }
+}
+
+function renderInstructionAssets(assets) {
+    const listEl = document.getElementById('instructionAssetsList');
+    if (!listEl) return;
+    if (!assets || assets.length === 0) {
+        listEl.innerHTML = '<div class="text-muted">ยังไม่มีรูปภาพ</div>';
+        return;
+    }
+    listEl.innerHTML = assets.map(a => `
+        <div class="col-12">
+            <div class="card p-2 d-flex flex-row align-items-center">
+                <img src="${a.thumbUrl || a.url}" class="rounded me-2" style="width:64px;height:64px;object-fit:cover;" alt="${a.alt || a.label}">
+                <div class="flex-grow-1">
+                    <div><strong>${a.label}</strong> <span class="text-muted small">(${Math.round((a.size||0)/1024)} KB)</span></div>
+                    <div class="text-muted small">${a.description || a.alt || ''}</div>
+                    <div class="text-muted small">token: <code>#[IMAGE:${a.label}]</code></div>
+                </div>
+                <div class="ms-2 d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="instructionsManagement.copyImageToken('${a.label}')"><i class="fas fa-copy me-1"></i>คัดลอก</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="instructionsManagement.deleteInstructionAsset('${a.label}')"><i class="fas fa-trash me-1"></i>ลบ</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function uploadInstructionAsset() {
+    const fileEl = document.getElementById('instructionAssetFile');
+    const labelEl = document.getElementById('instructionAssetLabel');
+    const altEl = document.getElementById('instructionAssetAlt');
+    const descEl = document.getElementById('instructionAssetDescription');
+    const overwriteEl = document.getElementById('assetOverwrite');
+    if (!fileEl?.files?.[0] || !labelEl?.value) {
+        if (window.adminSettings?.showAlert) window.adminSettings.showAlert('กรุณาเลือกไฟล์และระบุ label', 'warning');
+        return;
+    }
+    const form = new FormData();
+    form.append('image', fileEl.files[0]);
+    form.append('label', labelEl.value.trim());
+    form.append('alt', (altEl?.value || '').trim());
+    form.append('description', (descEl?.value || '').trim());
+    form.append('overwrite', overwriteEl?.checked ? 'true' : 'false');
+    try {
+        const res = await fetch('/admin/instructions/assets', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'อัพโหลดไม่สำเร็จ');
+        if (window.adminSettings?.showAlert) window.adminSettings.showAlert('อัพโหลดรูปภาพสำเร็จ', 'success');
+        // reset inputs
+        fileEl.value = '';
+        // refresh list
+        await loadInstructionAssets();
+    } catch (err) {
+        console.error('uploadInstructionAsset error:', err);
+        if (window.adminSettings?.showAlert) window.adminSettings.showAlert(err.message || 'อัพโหลดรูปภาพไม่สำเร็จ', 'danger');
+    }
+}
+
+async function deleteInstructionAsset(label) {
+    if (!confirm(`ยืนยันการลบรูปภาพ: ${label}?`)) return;
+    try {
+        const res = await fetch(`/admin/instructions/assets/${encodeURIComponent(label)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'ลบไม่สำเร็จ');
+        if (window.adminSettings?.showAlert) window.adminSettings.showAlert('ลบรูปภาพสำเร็จ', 'success');
+        await loadInstructionAssets();
+    } catch (err) {
+        console.error('deleteInstructionAsset error:', err);
+        if (window.adminSettings?.showAlert) window.adminSettings.showAlert(err.message || 'ลบรูปภาพไม่สำเร็จ', 'danger');
+    }
+}
+
+function copyImageToken(label) {
+    const token = `#[IMAGE:${label}]`;
+    navigator.clipboard?.writeText(token).then(() => {
+        if (window.adminSettings?.showAlert) window.adminSettings.showAlert('คัดลอกโทเคนเรียบร้อยแล้ว', 'success');
+    }).catch(() => {
+        // fallback
+        window.prompt('คัดลอกโทเคนด้วยตนเอง:', token);
+    });
+}
+
 // Display Security overview
 function displaySecurityOverview() {
     const container = document.getElementById('securityOverview');
@@ -405,5 +517,10 @@ window.instructionsManagement = {
     displayLineBotOverview,
     displayAiModelOverview,
     displayInstructionsOverview,
-    displaySecurityOverview
+    displaySecurityOverview,
+    // assets
+    loadInstructionAssets,
+    uploadInstructionAsset,
+    deleteInstructionAsset,
+    copyImageToken
 };
