@@ -1521,7 +1521,8 @@ async function ensureSettings() {
     { key: "enableChatHistory", value: true },
     { key: "enableAdminNotifications", value: true },
     { key: "systemMode", value: "production" },
-    { key: "showTokenUsage", value: false }
+    { key: "showTokenUsage", value: false },
+    { key: "facebookImageSendMode", value: "upload" }
   ];
   
   for (const setting of defaultSettings) {
