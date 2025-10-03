@@ -24,6 +24,7 @@ const crypto = require('crypto');
 const XLSX = require('xlsx');
 const multer = require('multer');
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
+const ASSETS_DIR = process.env.ASSETS_DIR || path.join(__dirname, 'public', 'assets', 'instructions');
 
 const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -76,6 +77,16 @@ app.use(cors());
 
 // Static assets (CSS/JS/img)
 app.use(express.static(path.join(__dirname, 'public')));
+// Serve instruction assets from configurable directory (supports mounted volumes)
+try {
+  if (!fs.existsSync(ASSETS_DIR)) {
+    fs.mkdirSync(ASSETS_DIR, { recursive: true });
+  }
+  app.use('/assets/instructions', express.static(ASSETS_DIR, { maxAge: '7d' }));
+  console.log('[Static] Serving instruction assets from:', ASSETS_DIR);
+} catch (e) {
+  console.warn('[Static] Could not ensure ASSETS_DIR:', ASSETS_DIR, e?.message || e);
+}
 
 // Avoid favicon 404s in environments without a favicon
 app.get('/favicon.ico', (req, res) => res.sendStatus(204));
@@ -2289,7 +2300,7 @@ async function sendFacebookImageByUpload(recipientId, seg, accessToken) {
 
 // Helper: read local asset buffer robustly (handle ext variants and URL fallback)
 async function readInstructionAssetBuffer(seg) {
-  const baseDir = path.join(__dirname, 'public', 'assets', 'instructions');
+  const baseDir = ASSETS_DIR;
   const tryFiles = [];
   if (seg.fileName) tryFiles.push(seg.fileName);
   tryFiles.push(`${seg.label}.jpg`, `${seg.label}.jpeg`, `${seg.label}.png`, `${seg.label}.webp`, `${seg.label}_thumb.jpg`);
@@ -3414,7 +3425,7 @@ app.post('/admin/instructions/assets', imageUpload.single('image'), async (req, 
     }
 
     // Ensure folder exists
-    const baseDir = path.join(__dirname, 'public', 'assets', 'instructions');
+    const baseDir = ASSETS_DIR;
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
     // Convert to optimized JPEG and thumbnail
@@ -3483,7 +3494,7 @@ app.delete('/admin/instructions/assets/:label', async (req, res) => {
     await coll.deleteOne({ label });
 
     // Remove files if exist
-    const baseDir = path.join(__dirname, 'public', 'assets', 'instructions');
+    const baseDir = ASSETS_DIR;
     const files = [path.join(baseDir, doc.fileName), path.join(baseDir, `${label}_thumb.jpg`)];
     files.forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_){} });
 
