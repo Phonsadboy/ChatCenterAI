@@ -1622,7 +1622,7 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
     if (rawLabel.endsWith(':')) rawLabel = rawLabel.slice(0, -1).trim();
     const asset = assetsMap[rawLabel];
     if (asset) {
-      segments.push({ type: 'image', label: rawLabel, url: asset.url, thumbUrl: asset.thumbUrl || asset.url, alt: asset.alt || '' });
+      segments.push({ type: 'image', label: rawLabel, url: asset.url, thumbUrl: asset.thumbUrl || asset.url, alt: asset.alt || '', fileName: asset.fileName || `${rawLabel}.jpg` });
     } else {
       // If asset not found, keep the literal token as text to avoid losing info
       segments.push({ type: 'text', text: ` [รูป ${rawLabel} ไม่พบ] ` });
@@ -2240,22 +2240,69 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
           const status = error.response?.status;
           const fbMessage = error.response?.data?.error?.message || error.message;
           const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
-          console.error('Error sending Facebook image:', conciseError);
-          // Fallback: send alt text if available
-          const alt = seg.alt ? `\n(รูป: ${seg.alt})` : '';
+          console.error('Error sending Facebook image (URL mode):', conciseError);
+          // If blocked by robots.txt or URL fetch issues, try direct upload flow
           try {
-            await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
-              recipient: { id: recipientId },
-              message: { text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}` }
-            }, {
-              params: { access_token: accessToken },
-              headers: { 'Content-Type': 'application/json' }
-            });
-          } catch (_) {}
+            await sendFacebookImageByUpload(recipientId, seg, accessToken);
+            console.log('Facebook image sent via upload:', seg.label);
+          } catch (uploadErr) {
+            console.error('Facebook image upload fallback failed:', uploadErr?.message || uploadErr);
+            // Final fallback: send alt text if available
+            const alt = seg.alt ? `\n(รูป: ${seg.alt})` : '';
+            try {
+              await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+                recipient: { id: recipientId },
+                message: { text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}` }
+              }, {
+                params: { access_token: accessToken },
+                headers: { 'Content-Type': 'application/json' }
+              });
+            } catch (_) {}
+          }
         }
       }
     }
   }
+}
+
+// Upload image to Facebook to obtain attachment_id, then send it
+async function sendFacebookImageByUpload(recipientId, seg, accessToken) {
+  const baseDir = path.join(__dirname, 'public', 'assets', 'instructions');
+  const localPath = path.join(baseDir, seg.fileName || `${seg.label}.jpg`);
+  let buffer = null;
+  try {
+    if (fs.existsSync(localPath)) {
+      buffer = fs.readFileSync(localPath);
+    } else if (seg.url) {
+      const resp = await axios.get(seg.url, { responseType: 'arraybuffer' });
+      buffer = Buffer.from(resp.data);
+    } else {
+      throw new Error('ไม่พบไฟล์รูปภาพสำหรับอัพโหลด');
+    }
+  } catch (e) {
+    throw new Error('อ่านไฟล์รูปภาพไม่สำเร็จ: ' + (e.message || e));
+  }
+
+  const form = new FormData();
+  form.append('message', JSON.stringify({ attachment: { type: 'image', payload: { is_reusable: true } } }));
+  form.append('filedata', buffer, { filename: seg.fileName || `${seg.label}.jpg`, contentType: 'image/jpeg' });
+
+  // 1) Upload attachment to get attachment_id
+  const uploadRes = await axios.post(`https://graph.facebook.com/v18.0/me/message_attachments`, form, {
+    params: { access_token: accessToken },
+    headers: form.getHeaders()
+  });
+  const attachment_id = uploadRes.data?.attachment_id;
+  if (!attachment_id) throw new Error('ไม่ได้รับ attachment_id จาก Facebook');
+
+  // 2) Send the message referencing attachment_id
+  await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+    recipient: { id: recipientId },
+    message: { attachment: { type: 'image', payload: { attachment_id } } }
+  }, {
+    params: { access_token: accessToken },
+    headers: { 'Content-Type': 'application/json' }
+  });
 }
 
 // Helper to download and optimize Facebook image to base64
