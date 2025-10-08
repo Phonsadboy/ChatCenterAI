@@ -2257,7 +2257,66 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
     if (req.body.object === 'page') {
       for (let entry of req.body.entry) {
         for (let messagingEvent of entry.messaging) {
+          // จัดการข้อความที่ส่งจากเพจเอง (echo) – ถือว่าเป็นข้อความจากแอดมินเพจ
           if (messagingEvent.message?.is_echo) {
+            try {
+              const targetUserId = messagingEvent.recipient?.id; // ผู้ใช้ปลายทางของข้อความจากเพจ
+              const text = messagingEvent.message?.text?.trim();
+
+              if (!targetUserId) {
+                continue;
+              }
+
+              const client = await connectDB();
+              const db = client.db("chatbot");
+              const coll = db.collection("chat_history");
+
+              // บันทึกข้อความจากแอดมินเพจเป็น assistant
+              const baseDoc = {
+                senderId: targetUserId,
+                role: 'assistant',
+                content: text || 'ไฟล์แนบ',
+                timestamp: new Date(),
+                source: 'admin_chat', // ใช้ค่าเดียวกับแอดมินหน้าเว็บ เพื่อให้ UI แสดงเป็น "แอดมิน"
+                platform: 'facebook',
+                botId: facebookBot?._id?.toString?.() || null
+              };
+              await coll.insertOne(baseDoc);
+
+              // คำสั่งควบคุม [ปิด]/[เปิด]
+              if (text === '[ปิด]' || text === '[เปิด]') {
+                const enable = text === '[เปิด]';
+                await setUserStatus(targetUserId, enable);
+
+                const controlText = enable ? 'เปิด AI สำหรับผู้ใช้นี้แล้ว' : 'ปิด AI สำหรับผู้ใช้นี้ชั่วคราวแล้ว';
+                const controlDoc = {
+                  senderId: targetUserId,
+                  role: 'assistant',
+                  content: `[ระบบ] ${controlText}`,
+                  timestamp: new Date(),
+                  source: 'admin_chat',
+                  platform: 'facebook',
+                  botId: facebookBot?._id?.toString?.() || null
+                };
+                await coll.insertOne(controlDoc);
+
+                try { await resetUserUnreadCount(targetUserId); } catch (_) {}
+
+                // แจ้ง UI แอดมินแบบเรียลไทม์
+                try {
+                  io.emit('newMessage', { userId: targetUserId, message: baseDoc, sender: 'assistant', timestamp: baseDoc.timestamp });
+                  io.emit('newMessage', { userId: targetUserId, message: controlDoc, sender: 'assistant', timestamp: controlDoc.timestamp });
+                } catch (_) {}
+              } else {
+                // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
+                try { await resetUserUnreadCount(targetUserId); } catch (_) {}
+                try {
+                  io.emit('newMessage', { userId: targetUserId, message: baseDoc, sender: 'assistant', timestamp: baseDoc.timestamp });
+                } catch (_) {}
+              }
+            } catch (echoErr) {
+              console.error(`[Facebook Bot: ${facebookBot.name}] Error handling admin echo:`, echoErr.message);
+            }
             continue;
           }
 
@@ -2291,15 +2350,27 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
             console.log(`[Facebook Bot: ${facebookBot.name}] ข้อความจาก ${senderId}: ${messageText || '[มีรูปภาพ]'}`);
 
             try {
-              const aiResponse = await processFacebookMessageWithAI(contentSequence, senderId, facebookBot);
-              await sendFacebookMessage(senderId, aiResponse, facebookBot.accessToken);
+              // ตรวจสอบสถานะ AI ของผู้ใช้ หากปิดอยู่ ให้บันทึกประวัติและไม่เรียก AI
+              const userStatus = await getUserStatus(senderId);
+              if (userStatus && userStatus.aiEnabled === false) {
+                await saveChatHistory(senderId, contentSequence, '', 'facebook', facebookBot._id.toString());
+                await notifyAdminsNewMessage(senderId, {
+                  content: messageText || 'ไฟล์แนบ',
+                  role: 'user',
+                  timestamp: new Date(),
+                  platform: 'facebook'
+                });
+              } else {
+                const aiResponse = await processFacebookMessageWithAI(contentSequence, senderId, facebookBot);
+                await sendFacebookMessage(senderId, aiResponse, facebookBot.accessToken);
 
-              await notifyAdminsNewMessage(senderId, {
-                content: messageText || 'ไฟล์แนบ',
-                role: 'user',
-                timestamp: new Date(),
-                platform: 'facebook'
-              });
+                await notifyAdminsNewMessage(senderId, {
+                  content: messageText || 'ไฟล์แนบ',
+                  role: 'user',
+                  timestamp: new Date(),
+                  platform: 'facebook'
+                });
+              }
             } catch (error) {
               console.error(`[Facebook Bot: ${facebookBot.name}] Error processing message:`, error);
               await sendFacebookMessage(senderId, 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ', facebookBot.accessToken);
@@ -3795,7 +3866,9 @@ app.post('/admin/chat/send', async (req, res) => {
       return res.json({ success: false, error: 'ข้อมูลไม่ครบถ้วน' });
     }
     
-    // Save message to database as assistant message
+    // ตรวจจับคำสั่งควบคุมจากแอดมิน
+    const trimmed = String(message).trim();
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("chat_history");
@@ -3805,6 +3878,40 @@ app.post('/admin/chat/send', async (req, res) => {
     const platform = lastChat?.platform || 'line';
     const botId = lastChat?.botId || null;
 
+    // กรณีเป็นคำสั่ง [ปิด] / [เปิด]
+    if (trimmed === '[ปิด]' || trimmed === '[เปิด]') {
+      const enable = trimmed === '[เปิด]';
+      await setUserStatus(userId, enable);
+
+      const controlText = enable ? 'เปิด AI สำหรับผู้ใช้นี้แล้ว' : 'ปิด AI สำหรับผู้ใช้นี้ชั่วคราวแล้ว';
+      const controlDoc = {
+        senderId: userId,
+        role: "assistant",
+        content: `[ระบบ] ${controlText}`,
+        timestamp: new Date(),
+        source: "admin_chat",
+        platform,
+        botId
+      };
+      await coll.insertOne(controlDoc);
+
+      // รีเซ็ต unread count เมื่อแอดมินตอบกลับ
+      await resetUserUnreadCount(userId);
+
+      // ไม่ส่งข้อความควบคุมไปยังผู้ใช้
+
+      // Emit เพื่ออัปเดต UI ของแอดมิน
+      io.emit('newMessage', {
+        userId: userId,
+        message: controlDoc,
+        sender: 'assistant',
+        timestamp: controlDoc.timestamp
+      });
+      
+      return res.json({ success: true, control: true, displayMessage: controlText, skipEcho: true });
+    }
+
+    // Save message to database as assistant message (ข้อความทั่วไป)
     const messageDoc = {
       senderId: userId,
       role: "assistant",
@@ -3820,6 +3927,7 @@ app.post('/admin/chat/send', async (req, res) => {
     // รีเซ็ต unread count เมื่อแอดมินตอบกลับ
     await resetUserUnreadCount(userId);
 
+    // ส่งต่อไปยังแพลตฟอร์มของผู้ใช้
     if (platform === 'facebook') {
       try {
         if (botId) {
@@ -3835,11 +3943,8 @@ app.post('/admin/chat/send', async (req, res) => {
     } else {
       // Send message via LINE if possible
       try {
-        // ตรวจสอบว่าผู้ใช้มี LINE ID หรือไม่
         const userStatus = await getUserStatus(userId);
         if (userStatus) {
-          // ส่งข้อความไปยัง LINE (ไม่ใช้ replyToken เพราะไม่มี)
-          // ใช้ push message แทน
           await lineClient.pushMessage(userId, {
             type: 'text',
             text: message
@@ -3851,7 +3956,7 @@ app.post('/admin/chat/send', async (req, res) => {
         // ไม่ return error เพราะข้อความยังบันทึกลง database ได้
       }
     }
-    
+
     // Emit to socket clients
     io.emit('newMessage', {
       userId: userId,

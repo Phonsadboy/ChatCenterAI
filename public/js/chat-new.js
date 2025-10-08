@@ -359,9 +359,20 @@ class ChatManager {
 
             const data = await response.json();
             if (data.success) {
+                // ถ้าเป็นคำสั่งควบคุมจากแอดมิน ให้ข้ามการ echo ฝั่ง client และรอ socket update
+                if (data.skipEcho) {
+                    // Clear input only
+                    messageInput.value = '';
+                    document.getElementById('charCount').textContent = '0';
+                    this.autoResizeTextarea(messageInput);
+                    this.loadUsers();
+                    this.showToast(data.control ? (data.displayMessage || 'อัปเดตสถานะผู้ใช้แล้ว') : 'ส่งข้อความสำเร็จ', 'success');
+                    return;
+                }
+
                 // Add new message to history
                 const newMessage = {
-                    content: messageText,
+                    content: data.control && data.displayMessage ? `[ระบบ] ${data.displayMessage}` : messageText,
                     role: 'assistant',
                     timestamp: new Date(),
                     source: 'admin_chat'
