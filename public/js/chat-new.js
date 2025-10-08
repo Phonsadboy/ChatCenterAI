@@ -472,7 +472,9 @@ class ChatManager {
         // Update unread count for user
         const user = this.users.find(u => u.userId === data.userId);
         if (user) {
-            user.unreadCount = (user.unreadCount || 0) + 1;
+            if (data.sender === 'user') {
+                user.unreadCount = (user.unreadCount || 0) + 1;
+            }
             user.lastMessage = this.normalizeContentToPreview(data.message?.content);
             user.lastTimestamp = data.timestamp || data.message?.timestamp || new Date().toISOString();
             

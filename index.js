@@ -2271,18 +2271,6 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
               const db = client.db("chatbot");
               const coll = db.collection("chat_history");
 
-              // บันทึกข้อความจากแอดมินเพจเป็น assistant
-              const baseDoc = {
-                senderId: targetUserId,
-                role: 'assistant',
-                content: text || 'ไฟล์แนบ',
-                timestamp: new Date(),
-                source: 'admin_chat', // ใช้ค่าเดียวกับแอดมินหน้าเว็บ เพื่อให้ UI แสดงเป็น "แอดมิน"
-                platform: 'facebook',
-                botId: facebookBot?._id?.toString?.() || null
-              };
-              await coll.insertOne(baseDoc);
-
               // คำสั่งควบคุม [ปิด]/[เปิด]
               if (text === '[ปิด]' || text === '[เปิด]') {
                 const enable = text === '[เปิด]';
@@ -2304,10 +2292,20 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
 
                 // แจ้ง UI แอดมินแบบเรียลไทม์
                 try {
-                  io.emit('newMessage', { userId: targetUserId, message: baseDoc, sender: 'assistant', timestamp: baseDoc.timestamp });
                   io.emit('newMessage', { userId: targetUserId, message: controlDoc, sender: 'assistant', timestamp: controlDoc.timestamp });
                 } catch (_) {}
               } else {
+                // บันทึกข้อความจากแอดมินเพจเป็น assistant (เฉพาะกรณีไม่ใช่คำสั่ง)
+                const baseDoc = {
+                  senderId: targetUserId,
+                  role: 'assistant',
+                  content: text || 'ไฟล์แนบ',
+                  timestamp: new Date(),
+                  source: 'admin_chat', // ใช้ค่าเดียวกับแอดมินหน้าเว็บ เพื่อให้ UI แสดงเป็น "แอดมิน"
+                  platform: 'facebook',
+                  botId: facebookBot?._id?.toString?.() || null
+                };
+                await coll.insertOne(baseDoc);
                 // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
                 try { await resetUserUnreadCount(targetUserId); } catch (_) {}
                 try {
@@ -3967,7 +3965,27 @@ app.post('/admin/chat/send', async (req, res) => {
       return res.json({ success: true, control: true, displayMessage: controlText, skipEcho: true });
     }
 
-    // Save message to database as assistant message (ข้อความทั่วไป)
+    // ส่งต่อไปยังแพลตฟอร์มของผู้ใช้ (และหลีกเลี่ยงการบันทึกซ้ำในกรณี Facebook เพื่อกันแสดงซ้ำ)
+    if (platform === 'facebook') {
+      try {
+        if (botId) {
+          const fbBot = await db.collection('facebook_bots').findOne({ _id: new ObjectId(botId) });
+          if (fbBot) {
+            await sendFacebookMessage(userId, message, fbBot.accessToken);
+            console.log(`[Admin Chat] ส่งข้อความไปยัง Facebook user ${userId}: ${message.substring(0, 50)}...`);
+            // ไม่ insert messageDoc และไม่ emit ที่นี่ ให้รอ Facebook echo บันทึกและกระจาย UI แทน
+            return res.json({ success: true, skipEcho: true });
+          }
+        }
+        // ถ้าไม่มี fbBot ให้ถือว่าไม่สามารถส่งได้
+        return res.json({ success: false, error: 'ไม่พบ Facebook Bot สำหรับผู้ใช้นี้' });
+      } catch (fbError) {
+        console.log(`[Admin Chat] ไม่สามารถส่งไปยัง Facebook ได้: ${fbError.message}`);
+        return res.json({ success: false, error: 'ไม่สามารถส่งไปยัง Facebook ได้' });
+      }
+    }
+
+    // LINE หรือแพลตฟอร์มอื่น: insert และ emit ตามปกติ
     const messageDoc = {
       senderId: userId,
       role: "assistant",
@@ -3979,48 +3997,18 @@ app.post('/admin/chat/send', async (req, res) => {
     };
 
     await coll.insertOne(messageDoc);
-
-    // รีเซ็ต unread count เมื่อแอดมินตอบกลับ
     await resetUserUnreadCount(userId);
 
-    // ส่งต่อไปยังแพลตฟอร์มของผู้ใช้
-    if (platform === 'facebook') {
-      try {
-        if (botId) {
-          const fbBot = await db.collection('facebook_bots').findOne({ _id: new ObjectId(botId) });
-          if (fbBot) {
-            await sendFacebookMessage(userId, message, fbBot.accessToken);
-            console.log(`[Admin Chat] ส่งข้อความไปยัง Facebook user ${userId}: ${message.substring(0, 50)}...`);
-          }
-        }
-      } catch (fbError) {
-        console.log(`[Admin Chat] ไม่สามารถส่งไปยัง Facebook ได้: ${fbError.message}`);
-      }
-    } else {
-      // Send message via LINE if possible
-      try {
-        const userStatus = await getUserStatus(userId);
-        if (userStatus) {
-          await lineClient.pushMessage(userId, {
-            type: 'text',
-            text: message
-          });
-          console.log(`[Admin Chat] ส่งข้อความไปยัง LINE user ${userId}: ${message.substring(0, 50)}...`);
-        }
-      } catch (lineError) {
-        console.log(`[Admin Chat] ไม่สามารถส่งไปยัง LINE ได้: ${lineError.message}`);
-        // ไม่ return error เพราะข้อความยังบันทึกลง database ได้
-      }
+    try {
+      await lineClient.pushMessage(userId, { type: 'text', text: message });
+      console.log(`[Admin Chat] ส่งข้อความไปยัง LINE user ${userId}: ${message.substring(0, 50)}...`);
+    } catch (lineError) {
+      console.log(`[Admin Chat] ไม่สามารถส่งไปยัง LINE ได้: ${lineError.message}`);
+      // ไม่ return error เพราะข้อความยังบันทึกลง database ได้
     }
 
-    // Emit to socket clients
-    io.emit('newMessage', {
-      userId: userId,
-      message: messageDoc,
-      sender: 'assistant',
-      timestamp: messageDoc.timestamp
-    });
-    
+    io.emit('newMessage', { userId, message: messageDoc, sender: 'assistant', timestamp: messageDoc.timestamp });
+
     res.json({ success: true, message: 'ส่งข้อความเรียบร้อยแล้ว' });
   } catch (err) {
     console.error('Error sending admin message:', err);
