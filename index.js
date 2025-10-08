@@ -318,6 +318,126 @@ async function getChatHistory(userId) {
   });
 }
 
+/**
+ * ดึงประวัติแชทที่ถูกทำให้เหมาะสมสำหรับส่งให้ OpenAI
+ * - ตัดข้อมูลรูปภาพ (base64) ออกจากข้อความเก่า
+ * - เก็บเฉพาะข้อความตัวอักษร และใส่หมายเหตุว่ามีรูปภาพกี่รูป
+ * - จำกัดจำนวนข้อความล่าสุดเพื่อลด token
+ */
+async function getAIHistory(userId) {
+  // หากปิดการบันทึกประวัติ ก็ไม่มีอะไรให้ส่ง
+  const enableChatHistory = await getSettingValue('enableChatHistory', true);
+  if (!enableChatHistory) return [];
+
+  // จำกัดจำนวนข้อความล่าสุด (ปรับได้จาก settings), ค่าเริ่มต้น 30
+  const historyLimit = await getSettingValue('aiHistoryLimit', 30);
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("chat_history");
+
+  // ดึงเฉพาะข้อความล่าสุดตามจำนวนที่กำหนด แล้วกลับลำดับเป็นเก่าสุด -> ใหม่สุด
+  const raw = await coll
+    .find({ senderId: userId })
+    .sort({ timestamp: -1 })
+    .limit(historyLimit)
+    .toArray();
+
+  const items = raw.reverse();
+
+  const sanitize = (role, content) => {
+    // คืนค่าเป็น string เสมอ และไม่มี base64 ขนาดใหญ่
+    const isBase64Like = (str) => {
+      if (typeof str !== 'string') return false;
+      if (str.length < 1024) return false; // เล็กๆ ปล่อยผ่าน
+      // รูปแบบพบได้บ่อยของ base64 รูปภาพ
+      if (str.startsWith('data:image/')) return true;
+      if (str.includes('\n')) return false; // เนื้อความปกติมักมีช่องว่าง/ขึ้นบรรทัด
+      const base64Chars = /^[A-Za-z0-9+/=]+$/;
+      return base64Chars.test(str.slice(0, Math.min(str.length, 8192)));
+    };
+
+    const truncateLong = (str, maxLen = 4000) => {
+      if (typeof str !== 'string') return '';
+      return str.length > maxLen ? (str.slice(0, maxLen) + '\n[ตัดเนื้อความยาว]') : str;
+    };
+
+    try {
+      // ถ้าเก็บเป็น JSON (เช่น array ของ contentSequence)
+      const parsed = typeof content === 'string' ? JSON.parse(content) : content;
+
+      // กรณีเป็น array: รูปแบบ contentSequence
+      if (Array.isArray(parsed)) {
+        let textParts = [];
+        let imgCount = 0;
+
+        for (const item of parsed) {
+          if (!item) continue;
+          // รูปแบบใหม่ { type, content, description }
+          if (item.type === 'text' && typeof item.content === 'string') {
+            textParts.push(item.content);
+          } else if (item.type === 'image') {
+            imgCount++;
+          }
+          // รูปแบบเก่า { data: { type, text|base64 } }
+          else if (item.data) {
+            const d = item.data;
+            if (d.type === 'text' && typeof d.text === 'string') {
+              textParts.push(d.text);
+            } else if (d.type === 'image') {
+              imgCount++;
+            }
+          }
+        }
+
+        let text = textParts.join('\n\n');
+        if (imgCount > 0) {
+          const note = `[มีรูปภาพก่อนหน้า ${imgCount} รูป]`;
+          text = text ? `${text}\n\n${note}` : note;
+        }
+        return truncateLong(text);
+      }
+
+      // กรณีเป็น object เดี่ยว (ไม่ใช่ array)
+      if (parsed && typeof parsed === 'object') {
+        // พยายามดึงข้อความถ้ามี
+        if (parsed.type === 'text' && typeof parsed.content === 'string') {
+          return truncateLong(parsed.content);
+        }
+        if (parsed.data && parsed.data.type === 'text' && typeof parsed.data.text === 'string') {
+          return truncateLong(parsed.data.text);
+        }
+        // ถ้ามีรูปภาพแต่ไม่มีข้อความ ให้ใส่หมายเหตุ
+        if ((parsed.type === 'image') || (parsed.data && parsed.data.type === 'image')) {
+          return '[มีรูปภาพก่อนหน้า 1 รูป]';
+        }
+        // อย่างอื่นให้ตัดให้สั้นๆ
+        return truncateLong(JSON.stringify(parsed));
+      }
+
+      // ตกมาที่นี่แปลว่า content เป็น string ปกติ
+      if (isBase64Like(content)) {
+        return '[ตัดข้อมูลรูปภาพขนาดใหญ่จากประวัติ]';
+      }
+      return truncateLong(content);
+    } catch (_) {
+      // parse ไม่ได้: ตรวจจับ base64 แล้วตัดทิ้ง
+      if (isBase64Like(content)) {
+        return '[ตัดข้อมูลรูปภาพขนาดใหญ่จากประวัติ]';
+      }
+      return truncateLong(String(content ?? ''));
+    }
+  };
+
+  const sanitized = items.map(ch => ({
+    role: ch.role,
+    content: sanitize(ch.role, ch.content)
+  }));
+
+  // ลบข้อความว่างที่ไม่มีประโยชน์ต่อบริบท
+  return sanitized.filter(m => m && typeof m.content === 'string' && m.content.trim() !== '');
+}
+
 // ฟังก์ชันสำหรับดึงข้อมูลโปรไฟล์จาก LINE API
 async function getLineUserProfile(userId) {
   try {
@@ -713,8 +833,8 @@ async function processFlushedMessages(userId, mergedContent) {
   const aiEnabled = userStatus.aiEnabled;
   console.log(`[LOG] สถานะการใช้ AI ของผู้ใช้ ${userId}: ${aiEnabled ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}`);
 
-  const history = await getChatHistory(userId);
-  console.log(`[LOG] ดึงประวัติการสนทนาของผู้ใช้ ${userId}: ${history.length} ข้อความ`);
+  const history = await getAIHistory(userId);
+  console.log(`[LOG] ดึงประวัติ (สำหรับ AI) ของผู้ใช้ ${userId}: ${history.length} ข้อความ`);
 
   // ตรวจสอบการตั้งค่า AI ในระดับระบบ
   const systemAiEnabled = await getSettingValue('aiEnabled', true);
@@ -2394,7 +2514,7 @@ async function processFacebookMessageWithAI(contentSequence, userId, facebookBot
       systemPrompt = `${systemPrompt}\n\n${assetsText}`;
     }
 
-    const history = await getChatHistory(userId);
+    const history = await getAIHistory(userId);
 
     let assistantReply = '';
     const hasImages = contentSequence.some(item => item.type === 'image');
