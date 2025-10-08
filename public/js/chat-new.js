@@ -11,6 +11,45 @@ class ChatManager {
         this.init();
     }
 
+    async toggleAiForCurrent() {
+        if (!this.currentUserId) return;
+        try {
+            // อ่านสถานะปัจจุบันจาก this.users
+            const user = this.users.find(u => u.userId === this.currentUserId) || {};
+            let current = typeof user.aiEnabled !== 'undefined' ? !!user.aiEnabled : null;
+            if (current === null) {
+                const res = await fetch(`/admin/chat/user-status/${this.currentUserId}`);
+                const data = await res.json();
+                current = data.success ? !!data.aiEnabled : true;
+            }
+
+            const desired = !current;
+            const resp = await fetch('/admin/chat/user-status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: this.currentUserId, aiEnabled: desired })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                // อัปเดตรายชื่อผู้ใช้และ header
+                await this.loadUsers();
+                const res2 = await fetch(`/admin/chat/user-status/${this.currentUserId}`);
+                const upd = await res2.json();
+                if (upd.success) {
+                    const u = this.users.find(x => x.userId === this.currentUserId) || {};
+                    u.aiEnabled = !!upd.aiEnabled;
+                    this.updateChatHeader(u);
+                }
+                this.showToast(desired ? 'เปิด AI สำหรับผู้ใช้นี้แล้ว' : 'ปิด AI สำหรับผู้ใช้นี้ชั่วคราวแล้ว', 'success');
+            } else {
+                this.showToast('ไม่สามารถอัปเดตสถานะ AI ได้: ' + data.error, 'error');
+            }
+        } catch (err) {
+            console.error('toggleAiForCurrent error', err);
+            this.showToast('เกิดข้อผิดพลาดในการอัปเดตสถานะ AI', 'error');
+        }
+    }
+
     init() {
         this.initializeSocket();
         this.setupEventListeners();
@@ -168,6 +207,8 @@ class ChatManager {
                 }
             }
             
+            const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-2">AI เปิด</span>` : `<span class="badge bg-secondary ms-2">AI ปิด</span>`;
+
             return `
                 <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" 
                      onclick="chatManager.selectUser('${user.userId}')">
@@ -176,7 +217,7 @@ class ChatManager {
                             ${user.displayName.charAt(0).toUpperCase()}
                         </div>
                         <div class="user-details">
-                            <div class="user-name">${this.escapeHtml(user.displayName)}</div>
+                            <div class="user-name">${this.escapeHtml(user.displayName)} ${aiBadge}</div>
                             <div class="user-last-message">${this.escapeHtml(lastMsg.substring(0, 50))}${lastMsg.length > 50 ? '...' : ''}</div>
                             <div class="user-timestamp">${this.formatTimestamp(user.lastTimestamp)}</div>
                         </div>
@@ -211,6 +252,12 @@ class ChatManager {
         // Update chat header
         const user = this.users.find(u => u.userId === userId);
         if (user) {
+            // ดึงสถานะล่าสุดจากเซิร์ฟเวอร์ก่อนแสดง
+            try {
+                const res = await fetch(`/admin/chat/user-status/${userId}`);
+                const data = await res.json();
+                if (data.success) user.aiEnabled = !!data.aiEnabled;
+            } catch (_) {}
             this.updateChatHeader(user);
         }
         
@@ -225,6 +272,11 @@ class ChatManager {
         const chatHeader = document.getElementById('chatHeader');
         const headerActions = document.getElementById('headerActions');
         
+        const aiOn = !!user.aiEnabled;
+        const aiBtnClass = aiOn ? 'btn-outline-success' : 'btn-outline-secondary';
+        const aiIcon = aiOn ? 'fa-toggle-on text-success' : 'fa-toggle-off text-secondary';
+        const aiLabel = aiOn ? 'AI กำลังเปิด' : 'AI ปิดอยู่';
+
         chatHeader.innerHTML = `
             <div class="header-content">
                 <div class="user-info">
@@ -233,16 +285,28 @@ class ChatManager {
                     </div>
                     <div class="user-details">
                         <h6 class="mb-0">${this.escapeHtml(user.displayName)}</h6>
-                        <small class="text-muted">${user.messageCount} ข้อความ</small>
+                        <small class="text-muted">${user.messageCount} ข้อความ • <span id=\"aiStatusLabel\">${aiLabel}</span></small>
                     </div>
                 </div>
                 <div class="header-actions" id="headerActions">
+                    <button class="btn btn-sm ${aiBtnClass} me-2" id="toggleAiBtn" title="สลับสถานะ AI">
+                        <i class="fas ${aiIcon} me-1"></i><span id="toggleAiText">${aiOn ? 'ปิด AI' : 'เปิด AI'}</span>
+                    </button>
                     <button class="btn btn-sm btn-outline-danger" onclick="chatManager.clearUserChat()">
                         <i class="fas fa-trash me-1"></i>ล้างประวัติ
                     </button>
                 </div>
             </div>
         `;
+        // bind toggle
+        setTimeout(() => {
+            const btn = document.getElementById('toggleAiBtn');
+            if (btn) {
+                btn.addEventListener('click', async () => {
+                    await this.toggleAiForCurrent();
+                });
+            }
+        }, 0);
     }
 
     async loadChatHistory(userId) {

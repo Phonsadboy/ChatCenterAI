@@ -3839,6 +3839,62 @@ app.get('/admin/chat/users', async (req, res) => {
   }
 });
 
+// Get per-user AI status
+app.get('/admin/chat/user-status/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const status = await getUserStatus(userId);
+    res.json({ success: true, aiEnabled: !!status.aiEnabled, updatedAt: status.updatedAt });
+  } catch (err) {
+    console.error('Error getting user status:', err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Set per-user AI status
+app.post('/admin/chat/user-status', async (req, res) => {
+  try {
+    const { userId, aiEnabled } = req.body || {};
+    if (!userId || typeof aiEnabled === 'undefined') {
+      return res.json({ success: false, error: 'ข้อมูลไม่ครบถ้วน' });
+    }
+
+    await setUserStatus(userId, !!aiEnabled);
+
+    // บันทึกข้อความระบบลงประวัติ (ไม่ส่งถึงผู้ใช้จริง)
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("chat_history");
+    const lastChat = await coll.findOne({ senderId: userId }, { sort: { timestamp: -1 } });
+    const platform = lastChat?.platform || 'line';
+    const botId = lastChat?.botId || null;
+
+    const controlText = aiEnabled ? 'เปิด AI สำหรับผู้ใช้นี้แล้ว' : 'ปิด AI สำหรับผู้ใช้นี้ชั่วคราวแล้ว';
+    const controlDoc = {
+      senderId: userId,
+      role: 'assistant',
+      content: `[ระบบ] ${controlText}`,
+      timestamp: new Date(),
+      source: 'admin_chat',
+      platform,
+      botId
+    };
+    await coll.insertOne(controlDoc);
+
+    try { await resetUserUnreadCount(userId); } catch (_) {}
+
+    // Notify admin UIs
+    try {
+      io.emit('newMessage', { userId, message: controlDoc, sender: 'assistant', timestamp: controlDoc.timestamp });
+    } catch (_) {}
+
+    res.json({ success: true, aiEnabled: !!aiEnabled });
+  } catch (err) {
+    console.error('Error setting user status:', err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // Get chat history for a specific user
 app.get('/admin/chat/history/:userId', async (req, res) => {
   try {
@@ -4879,6 +4935,13 @@ async function getNormalizedChatUsers() {
         timestamp: user.lastTimestamp
       });
 
+      // ดึงสถานะ AI ต่อผู้ใช้
+      let aiEnabled = true;
+      try {
+        const status = await getUserStatus(user._id);
+        aiEnabled = !!status.aiEnabled;
+      } catch (_) {}
+
       return {
         userId: user._id,
         displayName: userProfile ? userProfile.displayName : user._id.substring(0, 8) + '...',
@@ -4890,7 +4953,8 @@ async function getNormalizedChatUsers() {
         messageCount: user.messageCount,
         unreadCount: unreadCount,
         platform,
-        botId: user.botId || null
+        botId: user.botId || null,
+        aiEnabled
       };
     }));
     
