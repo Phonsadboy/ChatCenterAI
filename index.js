@@ -2220,7 +2220,7 @@ async function addToQueue(userId, incomingItem, options = {}) {
   }
   
   // ใช้ค่าที่ตั้งไว้ในฐานข้อมูล
-  const chatDelaySetting = await getSettingValue('chatDelaySeconds', 5);
+  const chatDelaySetting = await getSettingValue('chatDelaySeconds', 0);
   const chatDelay = Number(chatDelaySetting);
   const normalizedDelay = Number.isFinite(chatDelay) && chatDelay >= 0 ? chatDelay : 5;
   console.log(`[LOG] ตั้งเวลาประมวลผลคิวใน ${normalizedDelay} วินาที สำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`);
