@@ -19,10 +19,11 @@
                                 ระยะเวลารอเพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนตอบกลับ
                                 <br><strong>การทำงาน:</strong> เมื่อผู้ใช้ส่งข้อความ ระบบจะรอตามเวลาที่กำหนดนี้ 
                                 หากมีข้อความใหม่เข้ามาในระหว่างนี้ ระบบจะรีเซ็ตตัวจับเวลาและรอใหม่
+                                <br><strong>หมายเหตุ:</strong> หากตั้งค่าเป็น 0 ระบบจะส่งข้อความให้ AI ทันทีโดยไม่รอเวลา
                             </div>
                             <input type="number" class="form-control" id="chatDelaySeconds" 
-                                   min="1" max="60" step="1" placeholder="5" value="5">
-                            <small class="text-muted">แนะนำ: 3-10 วินาที | ค่าปัจจุบัน: <span id="currentChatDelay">5</span> วินาที</small>
+                                   min="0" max="60" step="1" placeholder="0" value="0">
+                            <small class="text-muted">แนะนำ: 0-10 วินาที | ค่าปัจจุบัน: <span id="currentChatDelay">0</span> วินาที</small>
                         </div>
 
                         <div class="setting-item">

@@ -184,8 +184,8 @@ function populateSettings() {
     } else {
         const chatDelayInput = document.getElementById('chatDelaySeconds');
         const currentChatDelay = document.getElementById('currentChatDelay');
-        if (chatDelayInput) chatDelayInput.value = 5;
-        if (currentChatDelay) currentChatDelay.textContent = 5;
+        if (chatDelayInput) chatDelayInput.value = 0;
+        if (currentChatDelay) currentChatDelay.textContent = 0;
     }
     
     if (currentSettings.maxQueueMessages !== undefined) {
