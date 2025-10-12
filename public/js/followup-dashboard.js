@@ -9,7 +9,11 @@
         config: window.followUpDashboardConfig || {},
         currentContextConfig: null,
         modalRounds: [],
-        statusFilter: 'all'
+        statusFilter: 'all',
+        overview: {
+            summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 },
+            groups: []
+        }
     };
 
     const el = {
@@ -39,6 +43,7 @@
         modalResetBtn: document.getElementById('followupModalResetBtn'),
         modalSaveBtn: document.getElementById('followupModalSaveBtn'),
         modalTitle: document.getElementById('followupModalTitle'),
+        pageGrid: document.getElementById('followupPageGrid'),
         summaryActive: document.getElementById('followupMetricActive'),
         summaryActiveMeta: document.getElementById('followupMetricActiveMeta'),
         summaryCompleted: document.getElementById('followupMetricCompleted'),
@@ -112,6 +117,19 @@
             return `${hours} ชม.`;
         }
         return `${hours} ชม. ${mins} นาที`;
+    };
+
+    const defaultSummary = () => ({
+        total: 0,
+        active: 0,
+        completed: 0,
+        canceled: 0,
+        failed: 0
+    });
+
+    const getGroupForPage = (pageId) => {
+        if (!pageId || !state.overview || !Array.isArray(state.overview.groups)) return null;
+        return state.overview.groups.find(group => group.contextKey === pageId) || null;
     };
 
     const getStatusBadge = (status) => {
@@ -318,12 +336,14 @@
             const active = state.currentPage && page.id === state.currentPage.id;
             const disabled = page.settings.showInDashboard === false;
             const analysisOff = page.settings.analysisEnabled === false;
+            const autoOff = page.settings.autoFollowUpEnabled === false;
             const overrideBadge = page.hasOverride ? '<span class="pill-dot" title="ตั้งค่ากำหนดเองแล้ว"></span>' : '';
             return `
                 <button class="followup-page-pill ${active ? 'active' : ''} ${disabled ? 'disabled' : ''}" data-page-id="${page.id}">
                     <span class="pill-name">${escapeHtml(page.name)}</span>
                     ${page.type === 'default' ? '<span class="pill-badge">ค่าเริ่มต้น</span>' : ''}
                     ${analysisOff ? '<span class="pill-status off">ปิดวิเคราะห์</span>' : ''}
+                    ${autoOff ? '<span class="pill-status muted">ปิดส่งอัตโนมัติ</span>' : ''}
                     ${disabled ? '<span class="pill-status muted">ซ่อน</span>' : ''}
                     ${overrideBadge}
                 </button>
@@ -339,52 +359,240 @@
         });
     };
 
-    const updateMetrics = () => {
-        const summary = state.summary || {};
-        const active = summary.active || 0;
-        const completed = summary.completed || 0;
-        const canceled = summary.canceled || 0;
-        const failed = summary.failed || 0;
+    const loadOverview = async (options = {}) => {
+        try {
+            const response = await fetch('/admin/followup/overview');
+            const data = await response.json();
+            if (data.success) {
+                const summaryData = data.summary || {};
+                state.overview = {
+                    summary: {
+                        total: summaryData.total || 0,
+                        active: summaryData.active || 0,
+                        completed: summaryData.completed || 0,
+                        canceled: summaryData.canceled || 0,
+                        failed: summaryData.failed || 0
+                    },
+                    groups: Array.isArray(data.groups) ? data.groups : []
+                };
+                if (state.pages.length) {
+                    renderPageSelector();
+                    renderPageGrid();
+                } else if (el.pageGrid) {
+                    renderPageGrid();
+                }
+                updateMetrics();
+            } else if (!options.silent) {
+                showAlert('danger', data.error || 'ไม่สามารถโหลดข้อมูลภาพรวมได้');
+            }
+        } catch (error) {
+            console.error('load follow-up overview error', error);
+            if (!options.silent) {
+                showAlert('danger', 'เกิดข้อผิดพลาดในการโหลดข้อมูลภาพรวม');
+            }
+        }
+    };
 
-        if (el.summaryActive) el.summaryActive.textContent = active;
-        if (el.summaryCompleted) el.summaryCompleted.textContent = completed;
-        if (el.summaryCanceled) el.summaryCanceled.textContent = canceled;
-        if (el.summaryFailed) el.summaryFailed.textContent = failed;
+    const renderPageGrid = () => {
+        if (!el.pageGrid) return;
+        if (!state.pages.length) {
+            el.pageGrid.innerHTML = `
+                <div class="text-muted small">
+                    ยังไม่มีเพจที่เชื่อมต่อกับระบบ โปรดเพิ่ม LINE Bot หรือ Facebook Page ก่อน
+                </div>
+            `;
+            return;
+        }
 
-        if (el.summaryActiveMeta) {
-            const now = Date.now();
-            const dueSoon = state.users.filter(user => {
+        const groupsMap = new Map();
+        if (state.overview && Array.isArray(state.overview.groups)) {
+            state.overview.groups.forEach(group => {
+                groupsMap.set(group.contextKey, group);
+            });
+        }
+
+        const now = Date.now();
+        const cardsHtml = state.pages.map(page => {
+            const group = groupsMap.get(page.id) || null;
+            const stats = group?.stats || defaultSummary();
+            const usersInGroup = Array.isArray(group?.users) ? group.users : [];
+            const dueSoon = usersInGroup.filter(user => {
                 if (user.status !== 'active' || !user.nextScheduledAt) return false;
-                const diff = new Date(user.nextScheduledAt).getTime() - now;
+                const time = new Date(user.nextScheduledAt).getTime();
+                if (Number.isNaN(time)) return false;
+                const diff = time - now;
                 return diff >= 0 && diff <= 30 * 60000;
             }).length;
-            el.summaryActiveMeta.textContent = dueSoon > 0
-                ? `ส่งใน 30 นาทีนี้ ${dueSoon} ราย`
-                : 'กำลังรอรอบถัดไป';
+            const autoEnabled = page.settings && page.settings.autoFollowUpEnabled !== false;
+            const analysisEnabled = page.settings && page.settings.analysisEnabled !== false;
+            const platformLabel = page.platform === 'facebook' ? 'Facebook' : 'LINE';
+            const subtitle = page.botId ? `${platformLabel} • บอทเฉพาะ` : `${platformLabel} • ค่าเริ่มต้น`;
+
+            return `
+                <div class="followup-page-card" data-page-id="${page.id}">
+                    <div class="followup-page-card-header">
+                        <div>
+                            <div class="page-card-name">${escapeHtml(page.name)}</div>
+                            <div class="page-card-meta text-muted">${escapeHtml(subtitle)}</div>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input followup-auto-toggle" type="checkbox" data-page-id="${page.id}" ${autoEnabled ? 'checked' : ''}>
+                            <label class="form-check-label">ส่งอัตโนมัติ</label>
+                        </div>
+                    </div>
+                    <div class="followup-page-card-body">
+                        <div class="page-stat-row"><span>กำลังติดตาม</span><span>${stats.active || 0} ราย</span></div>
+                        <div class="page-stat-row"><span>ส่งครบแล้ว</span><span>${stats.completed || 0} ราย</span></div>
+                        <div class="page-stat-row"><span>ยกเลิกแล้ว</span><span>${stats.canceled || 0} ราย</span></div>
+                        <div class="page-stat-row"><span>ส่งไม่สำเร็จ</span><span>${stats.failed || 0} ราย</span></div>
+                        <div class="page-stat-row text-muted small">
+                            <span>รอส่งภายใน 30 นาที</span><span>${dueSoon} ราย</span>
+                        </div>
+                        <div class="page-flags mt-2">
+                            <span class="badge ${autoEnabled ? 'bg-success' : 'bg-secondary'}">${autoEnabled ? 'ส่งอัตโนมัติ: เปิด' : 'ส่งอัตโนมัติ: ปิด'}</span>
+                            <span class="badge ${analysisEnabled ? 'bg-info' : 'bg-secondary'}">วิเคราะห์ด้วย AI: ${analysisEnabled ? 'เปิด' : 'ปิด'}</span>
+                        </div>
+                    </div>
+                    <div class="followup-page-card-actions">
+                        <button class="btn btn-outline-primary btn-sm" data-action="select" data-page-id="${page.id}">
+                            <i class="fas fa-eye me-1"></i>ดูรายละเอียด
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" data-action="edit" data-page-id="${page.id}">
+                            <i class="fas fa-sliders-h me-1"></i>แก้ไข
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        el.pageGrid.innerHTML = cardsHtml;
+
+        el.pageGrid.querySelectorAll('.followup-auto-toggle').forEach(input => {
+            input.addEventListener('change', async (event) => {
+                const pageId = event.target.getAttribute('data-page-id');
+                if (!pageId) return;
+                const enabled = event.target.checked;
+                try {
+                    await updatePageAutoSend(pageId, enabled, event.target);
+                } catch (_) {}
+            });
+        });
+
+        el.pageGrid.querySelectorAll('[data-action="select"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const pageId = btn.getAttribute('data-page-id');
+                if (!pageId) return;
+                selectPage(pageId);
+                el.pageLabel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+
+        el.pageGrid.querySelectorAll('[data-action="edit"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const pageId = btn.getAttribute('data-page-id');
+                if (!pageId) return;
+                if (!state.currentPage || state.currentPage.id !== pageId) {
+                    selectPage(pageId, { skipReload: false });
+                }
+                setTimeout(() => {
+                    openSettingsModal();
+                }, 150);
+            });
+        });
+    };
+
+    const savePageSettingsQuick = async (page, settings) => {
+        if (!page) throw new Error('ไม่พบเพจที่ต้องการแก้ไข');
+        const payload = {
+            platform: page.platform,
+            botId: page.botId,
+            settings
+        };
+        const response = await fetch('/admin/followup/page-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'ไม่สามารถบันทึกการตั้งค่าได้');
+        }
+        page.settings = { ...(page.settings || {}), ...settings };
+        return data;
+    };
+
+    const updatePageAutoSend = async (pageId, enabled, inputEl) => {
+        const page = state.pages.find(p => p.id === pageId);
+        if (!page) {
+            if (inputEl) inputEl.checked = !enabled;
+            showAlert('danger', 'ไม่พบข้อมูลเพจที่เลือก');
+            return;
+        }
+        try {
+            await savePageSettingsQuick(page, { autoFollowUpEnabled: !!enabled });
+            showAlert('success', enabled
+                ? `เปิดการส่งติดตามอัตโนมัติสำหรับ ${page.name}`
+                : `ปิดการส่งติดตามอัตโนมัติสำหรับ ${page.name}`
+            );
+
+            if (state.currentPage && state.currentPage.id === pageId) {
+                state.currentContextConfig = {
+                    ...(state.currentContextConfig || {}),
+                    autoFollowUpEnabled: !!enabled
+                };
+                updateToolbar();
+                renderSchedulePreview(state.currentContextConfig);
+            }
+
+            renderPageSelector();
+            renderPageGrid();
+            await loadOverview({ silent: true });
+            if (state.currentPage && state.currentPage.id === pageId) {
+                await loadUsers(true);
+            }
+        } catch (error) {
+            console.error('update auto follow error', error);
+            if (inputEl) inputEl.checked = !enabled;
+            showAlert('danger', error.message || 'ไม่สามารถอัปเดตการตั้งค่าได้');
+        }
+    };
+
+    const updateMetrics = () => {
+        const globalSummary = state.overview?.summary || defaultSummary();
+        const currentGroup = state.currentPage ? getGroupForPage(state.currentPage.id) : null;
+        const currentStats = currentGroup?.stats || state.summary || defaultSummary();
+        const selectedUsers = state.users && state.users.length
+            ? state.users
+            : (Array.isArray(currentGroup?.users) ? currentGroup.users : []);
+
+        if (el.summaryActive) el.summaryActive.textContent = globalSummary.active || 0;
+        if (el.summaryCompleted) el.summaryCompleted.textContent = globalSummary.completed || 0;
+        if (el.summaryCanceled) el.summaryCanceled.textContent = globalSummary.canceled || 0;
+        if (el.summaryFailed) el.summaryFailed.textContent = globalSummary.failed || 0;
+
+        const now = Date.now();
+        const dueSoonSelected = selectedUsers.filter(user => {
+            if (user.status !== 'active' || !user.nextScheduledAt) return false;
+            const time = new Date(user.nextScheduledAt).getTime();
+            if (Number.isNaN(time)) return false;
+            const diff = time - now;
+            return diff >= 0 && diff <= 30 * 60000;
+        }).length;
+
+        if (el.summaryActiveMeta) {
+            el.summaryActiveMeta.textContent = `เพจนี้กำลังติดตาม ${currentStats.active || 0} ราย • รอส่งใน 30 นาทีนี้ ${dueSoonSelected} ราย`;
         }
 
         if (el.summaryCompletedMeta) {
-            const messagesSent = state.users
-                .filter(user => user.status === 'completed')
-                .reduce((sum, user) => {
-                    const rounds = Array.isArray(user.rounds) ? user.rounds.length : Number(user.sentRounds) || 0;
-                    return sum + rounds;
-                }, 0);
-            el.summaryCompletedMeta.textContent = messagesSent > 0
-                ? `รวมส่งแล้ว ${messagesSent} ข้อความ`
-                : 'รอข้อความครบตามแผน';
+            el.summaryCompletedMeta.textContent = `เพจนี้ส่งครบแล้ว ${currentStats.completed || 0} ราย`;
         }
 
         if (el.summaryCanceledMeta) {
-            el.summaryCanceledMeta.textContent = canceled > 0
-                ? `ยกเลิกเพราะลูกค้าตอบกลับ ${canceled} ราย`
-                : 'ยังไม่มีการยกเลิกในวันนี้';
+            el.summaryCanceledMeta.textContent = `เพจนี้ยกเลิกแล้ว ${currentStats.canceled || 0} ราย`;
         }
 
         if (el.summaryFailedMeta) {
-            el.summaryFailedMeta.textContent = failed > 0
-                ? `ต้องตรวจสอบเพิ่มเติม ${failed} ราย`
-                : 'ยังไม่มีงานที่ส่งไม่สำเร็จ';
+            el.summaryFailedMeta.textContent = `เพจนี้ส่งไม่สำเร็จ ${currentStats.failed || 0} ราย`;
         }
     };
 

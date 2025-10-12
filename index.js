@@ -695,7 +695,7 @@ async function getFollowUpBaseConfig() {
     model: map.followUpModel || 'gpt-5-mini',
     showInChat: typeof map.followUpShowInChat === 'boolean' ? map.followUpShowInChat : true,
     showInDashboard: typeof map.followUpShowInDashboard === 'boolean' ? map.followUpShowInDashboard : true,
-    autoFollowUpEnabled: typeof map.followUpAutoEnabled === 'boolean' ? map.followUpAutoEnabled : true,
+    autoFollowUpEnabled: typeof map.followUpAutoEnabled === 'boolean' ? map.followUpAutoEnabled : false,
     rounds: normalizeFollowUpRounds(map.followUpRounds || [])
   };
 
@@ -1665,6 +1665,56 @@ async function getFollowUpUsers(filter = {}) {
   };
 
   return { users, summary };
+}
+
+async function buildFollowUpOverview() {
+  const [{ users, summary }, pageSettings] = await Promise.all([
+    getFollowUpUsers({}),
+    listFollowUpPageSettings()
+  ]);
+
+  const normalizedSummary = {
+    total: summary?.total || 0,
+    active: summary?.active || 0,
+    completed: summary?.completed || 0,
+    canceled: summary?.canceled || 0,
+    failed: summary?.failed || 0,
+    dateKey: summary?.dateKey || getDateKey()
+  };
+
+  const pageMap = new Map();
+  (pageSettings.pages || []).forEach(page => {
+    pageMap.set(page.id, page);
+  });
+
+  const groupMap = new Map();
+  users.forEach(user => {
+    const contextKey = user.contextKey || `${user.platform || 'line'}:${user.botId || 'default'}`;
+    if (!groupMap.has(contextKey)) {
+      const pageInfo = pageMap.get(contextKey) || null;
+      const label = pageInfo?.name || (user.platform === 'facebook' ? 'Facebook (ค่าเริ่มต้น)' : 'LINE (ค่าเริ่มต้น)');
+      groupMap.set(contextKey, {
+        contextKey,
+        platform: user.platform || 'line',
+        botId: user.botId || null,
+        pageName: label,
+        pageInfo,
+        config: user.config || {},
+        stats: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 },
+        users: []
+      });
+    }
+
+    const group = groupMap.get(contextKey);
+    group.stats.total += 1;
+    if (user.status && group.stats.hasOwnProperty(user.status)) {
+      group.stats[user.status] += 1;
+    }
+    group.users.push(user);
+  });
+
+  const groups = Array.from(groupMap.values()).sort((a, b) => a.pageName.localeCompare(b.pageName));
+  return { summary: normalizedSummary, groups };
 }
 
 async function clearFollowUpStatus(userId) {
@@ -2767,7 +2817,7 @@ async function ensureSettings() {
     { key: "followUpModel", value: "gpt-5-mini" },
     { key: "followUpShowInChat", value: true },
     { key: "followUpShowInDashboard", value: true },
-    { key: "followUpAutoEnabled", value: true },
+    { key: "followUpAutoEnabled", value: false },
     { 
       key: "followUpRounds",
       value: [
@@ -4950,70 +5000,22 @@ app.get('/admin/followup', async (req, res) => {
   }
 });
 
-// Follow-up status page (enhanced overview)
-app.get('/admin/followup/status', async (req, res) => {
+// Follow-up status page now redirects to unified dashboard
+app.get('/admin/followup/status', (req, res) => {
+  return res.redirect('/admin/followup');
+});
+
+app.get('/admin/followup/overview', async (req, res) => {
   try {
-    const [{ users, summary }, pageSettings] = await Promise.all([
-      getFollowUpUsers({}),
-      listFollowUpPageSettings()
-    ]);
-    const pageMap = new Map();
-    (pageSettings.pages || []).forEach(page => {
-      pageMap.set(page.id, page);
-    });
-
-    const groupMap = new Map();
-    users.forEach(user => {
-      const contextKey = user.contextKey || `${user.platform || 'line'}:${user.botId || 'default'}`;
-      if (!groupMap.has(contextKey)) {
-        const pageInfo = pageMap.get(contextKey) || null;
-        const label = pageInfo?.name || (user.platform === 'facebook' ? 'Facebook (ค่าเริ่มต้น)' : 'LINE (ค่าเริ่มต้น)');
-        groupMap.set(contextKey, {
-          contextKey,
-          platform: user.platform || 'line',
-          botId: user.botId || null,
-          pageName: label,
-          pageInfo,
-          config: user.config || {},
-          stats: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 },
-          users: []
-        });
-      }
-      const group = groupMap.get(contextKey);
-      group.stats.total += 1;
-      if (user.status && group.stats.hasOwnProperty(user.status)) {
-        group.stats[user.status] += 1;
-      }
-      group.users.push(user);
-    });
-
-    const groups = Array.from(groupMap.values()).map(group => {
-      group.users.sort((a, b) => {
-        const aTime = a.nextScheduledAt ? new Date(a.nextScheduledAt).getTime() : Infinity;
-        const bTime = b.nextScheduledAt ? new Date(b.nextScheduledAt).getTime() : Infinity;
-        if (aTime === bTime) {
-          return (a.displayName || '').localeCompare(b.displayName || '');
-        }
-        return aTime - bTime;
-      });
-      return group;
-    }).sort((a, b) => a.pageName.localeCompare(b.pageName));
-
-    const summaryLabel = getBangkokMoment().format('D MMMM YYYY');
-
-    res.render('admin-followup-status', {
-      summary,
-      summaryLabel,
-      groups
+    const overview = await buildFollowUpOverview();
+    res.json({
+      success: true,
+      summary: overview.summary,
+      groups: overview.groups
     });
   } catch (error) {
-    console.error('[FollowUp] ไม่สามารถโหลดหน้าติดตามลูกค้าได้:', error);
-    res.render('admin-followup-status', {
-      error: 'ไม่สามารถโหลดข้อมูลติดตามลูกค้าได้ในขณะนี้',
-      summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0, dateKey: getDateKey() },
-      summaryLabel: getBangkokMoment().format('D MMMM YYYY'),
-      groups: []
-    });
+    console.error('[FollowUp] ไม่สามารถดึงข้อมูลสรุปได้:', error);
+    res.json({ success: false, error: error.message || 'ไม่สามารถดึงข้อมูลสรุปได้' });
   }
 });
 
