@@ -2010,7 +2010,38 @@ async function fetchAllSheetsData(spreadsheetId) {
 // ระบบคิว (ดีเลย์ 5 วินาที) - ปรับปรุงแล้ว
 // ------------------------
 const processedIds = new Set();
-const userQueues = {};  // { userId: { messages: [], timer: null } }
+const userQueues = {};  // { queueKey: { userId, messages: [], timer: null, context: {} } }
+
+function buildQueueKey(userId, options = {}) {
+  if (options.queueKey) {
+    return options.queueKey;
+  }
+  const idPart = typeof userId === 'string' ? userId : String(userId || 'unknown');
+  const botType = options.botType || options.platform || null;
+  const rawBotId = options.botId || options.lineBotId || null;
+  if (botType || rawBotId) {
+    const botId = rawBotId || 'default';
+    return `${botType || 'bot'}:${botId}:${idPart}`;
+  }
+  return idPart;
+}
+
+function mergeQueueContext(existingContext = {}, newContext = {}) {
+  const merged = { ...existingContext, ...newContext };
+  if (!merged.botId && merged.lineBotId) {
+    merged.botId = merged.lineBotId;
+  }
+  if (!merged.platform) {
+    merged.platform = merged.botType || 'line';
+  }
+  if (!merged.botType) {
+    merged.botType = merged.platform || 'line';
+  }
+  if (!merged.platform && merged.botType === 'line') {
+    merged.platform = 'line';
+  }
+  return merged;
+}
 
 // ฟังก์ชันสำหรับวิเคราะห์ประเภทเนื้อหาในคิว
 function analyzeQueueContent(messages) {
@@ -2049,81 +2080,132 @@ function analyzeQueueContent(messages) {
   return analysis;
 }
 
-async function addToQueue(userId, incomingItem) {
+async function addToQueue(userId, incomingItem, options = {}) {
   console.log(`[LOG] เพิ่มข้อมูลเข้าคิวสำหรับผู้ใช้: ${userId}`);
+  const queueKey = buildQueueKey(userId, options);
   
-  if (!userQueues[userId]) {
-    console.log(`[LOG] สร้างคิวใหม่สำหรับผู้ใช้: ${userId}`);
-    userQueues[userId] = {
+  if (!userQueues[queueKey]) {
+    console.log(`[LOG] สร้างคิวใหม่สำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`);
+    userQueues[queueKey] = {
+      userId,
       messages: [],
-      timer: null
+      timer: null,
+      context: {}
     };
   }
+
+  userQueues[queueKey].context = mergeQueueContext(userQueues[queueKey].context, options);
+
+  const queue = userQueues[queueKey];
   // ตรวจสอบจำนวนข้อความสูงสุดในคิว
-  const maxQueueMessages = await getSettingValue('maxQueueMessages', 10);
+  const maxQueueSetting = await getSettingValue('maxQueueMessages', 10);
+  const maxQueueMessages = Number(maxQueueSetting);
+  const normalizedMax = Number.isFinite(maxQueueMessages) && maxQueueMessages > 0 ? Math.floor(maxQueueMessages) : 10;
   
-  if (userQueues[userId].messages.length >= maxQueueMessages) {
-    console.log(`[LOG] จำนวนข้อความในคิวถึงขีดจำกัด (${maxQueueMessages}) เริ่มประมวลผลทันที`);
-    console.log(`[LOG] ไม่รอเวลา delay เนื่องจากจำนวนข้อความเต็มคิวแล้ว`);
+  if (queue.messages.length >= normalizedMax) {
+    console.log(`[LOG] จำนวนข้อความในคิวถึงขีดจำกัด (${normalizedMax}) เริ่มประมวลผลทันที (queueKey: ${queueKey})`);
     // ยกเลิกตัวจับเวลาเดิม
-    if (userQueues[userId].timer) {
-      clearTimeout(userQueues[userId].timer);
+    if (queue.timer) {
+      clearTimeout(queue.timer);
+      queue.timer = null;
     }
-    // ประมวลผลทันที
-    flushQueue(userId);
-    return;
+    // ประมวลผลทันทีและรอให้เสร็จ ก่อนเพิ่มข้อความใหม่
+    await flushQueue(queueKey);
   }
   
-  userQueues[userId].messages.push(incomingItem);
-  console.log(`[LOG] คิวของผู้ใช้ ${userId} มีข้อความ ${userQueues[userId].messages.length} ข้อความ`);
+  queue.messages.push(incomingItem);
+  console.log(`[LOG] คิวของผู้ใช้ ${userId} (queueKey: ${queueKey}) มีข้อความ ${queue.messages.length} ข้อความ`);
 
-  if (userQueues[userId].timer) {
-    console.log(`[LOG] ยกเลิกตัวจับเวลาคิวเดิมสำหรับผู้ใช้: ${userId}`);
-    clearTimeout(userQueues[userId].timer);
+  if (queue.timer) {
+    console.log(`[LOG] ยกเลิกตัวจับเวลาคิวเดิมสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`);
+    clearTimeout(queue.timer);
+    queue.timer = null;
   }
   
   // ใช้ค่าที่ตั้งไว้ในฐานข้อมูล
-  const chatDelay = await getSettingValue('chatDelaySeconds', 5);
-  console.log(`[LOG] ตั้งเวลาประมวลผลคิวใน ${chatDelay} วินาที สำหรับผู้ใช้: ${userId}`);
-  console.log(`[LOG] ระบบจะรอข้อความเพิ่มจากผู้ใช้เป็นเวลา ${chatDelay} วินาที`);
-  userQueues[userId].timer = setTimeout(() => {
-    console.log(`[LOG] ครบเวลา delay (${chatDelay} วินาที) เริ่มประมวลผลคิวสำหรับผู้ใช้: ${userId}`);
-    flushQueue(userId);
-  }, chatDelay * 1000);
+  const chatDelaySetting = await getSettingValue('chatDelaySeconds', 5);
+  const chatDelay = Number(chatDelaySetting);
+  const normalizedDelay = Number.isFinite(chatDelay) && chatDelay >= 0 ? chatDelay : 5;
+  console.log(`[LOG] ตั้งเวลาประมวลผลคิวใน ${normalizedDelay} วินาที สำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`);
+  console.log(`[LOG] ระบบจะรอข้อความเพิ่มจากผู้ใช้เป็นเวลา ${normalizedDelay} วินาที`);
+  queue.timer = setTimeout(() => {
+    console.log(`[LOG] ครบเวลา delay (${normalizedDelay} วินาที) เริ่มประมวลผลคิวสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`);
+    flushQueue(queueKey).catch(err => {
+      console.error(`[LOG] เกิดข้อผิดพลาดระหว่างประมวลผลคิวสำหรับผู้ใช้ ${userId} (queueKey: ${queueKey}):`, err);
+    });
+  }, normalizedDelay * 1000);
 }
 
-async function flushQueue(userId) {
-  console.log(`[LOG] เริ่มการประมวลผลคิวสำหรับผู้ใช้: ${userId}`);
-  
-  if (!userQueues[userId] || userQueues[userId].messages.length === 0) {
-    console.log(`[LOG] ไม่พบข้อความในคิวสำหรับผู้ใช้: ${userId}`);
+async function flushQueue(queueKey) {
+  const queue = userQueues[queueKey];
+  if (!queue) {
+    console.log(`[LOG] ไม่พบคิวสำหรับ key: ${queueKey}`);
     return;
   }
-  const allItems = userQueues[userId].messages;
+  const { userId, messages } = queue;
+  console.log(`[LOG] เริ่มการประมวลผลคิวสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`);
+  
+  if (!messages || messages.length === 0) {
+    console.log(`[LOG] ไม่พบข้อความในคิวสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`);
+    queue.timer = null;
+    return;
+  }
+  const allItems = [...messages];
   console.log(`[LOG] มีข้อความ ${allItems.length} ข้อความในคิวของผู้ใช้: ${userId}`);
-  userQueues[userId].messages = [];
-  userQueues[userId].timer = null;
+  queue.messages = [];
+  queue.timer = null;
 
   console.log(`[LOG] เริ่มประมวลผลข้อความทั้งหมดในคิวสำหรับผู้ใช้: ${userId}`);
-  await processFlushedMessages(userId, allItems);
+  await processFlushedMessages(userId, allItems, queue.context);
   console.log(`[LOG] ประมวลผลคิวเสร็จสิ้นสำหรับผู้ใช้: ${userId}`);
 }
 
-async function processFlushedMessages(userId, mergedContent) {
+async function processFlushedMessages(userId, mergedContent, queueContext = {}) {
   console.log(`[LOG] เริ่มประมวลผลข้อความในคิวสำหรับผู้ใช้: ${userId}`);
+  
+  const platform = queueContext.platform || queueContext.botType || 'line';
+  const botIdForHistory = queueContext.botId || null;
+  const aiModelOverride = queueContext.aiModel || null;
+  const replyToken = mergedContent.length > 0 ? mergedContent[mergedContent.length - 1].replyToken : null;
+  const channelAccessToken = queueContext.channelAccessToken;
+  const channelSecret = queueContext.channelSecret;
+  const lineClientFromContext = queueContext.lineClient;
+  const isLinePlatform = (queueContext.botType === 'line') || (platform === 'line');
+
+  async function replyWithLineText(messageText) {
+    if (!isLinePlatform) {
+      return false;
+    }
+    if (!replyToken) {
+      console.log(`[LOG] ไม่มี replyToken สำหรับผู้ใช้ ${userId} ไม่สามารถส่งข้อความกลับได้`);
+      return false;
+    }
+    if (!messageText) {
+      return false;
+    }
+    try {
+      if (channelAccessToken && channelSecret) {
+        await sendMessage(replyToken, messageText, userId, true, channelAccessToken, channelSecret);
+        return true;
+      }
+      if (lineClientFromContext) {
+        await lineClientFromContext.replyMessage(replyToken, { type: 'text', text: messageText });
+        return true;
+      }
+      console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ไม่มีข้อมูล Line Client หรือ Channel Credentials สำหรับผู้ใช้ ${userId}`);
+      return false;
+    } catch (error) {
+      console.error('[LOG] ไม่สามารถส่งข้อความตอบกลับได้:', error);
+      return false;
+    }
+  }
   
   // ตรวจสอบโหมดระบบ
   const systemMode = await getSettingValue('systemMode', 'production');
   if (systemMode === 'maintenance') {
     console.log(`[LOG] ระบบอยู่ในโหมดบำรุงรักษา ไม่สามารถประมวลผลข้อความได้`);
-    // ส่งข้อความแจ้งเตือนผู้ใช้
-    try {
-      await lineClient.replyMessage(mergedContent[0].replyToken, {
-        type: 'text',
-        text: 'ขออภัยค่ะ ระบบกำลังอยู่ในโหมดบำรุงรักษา กรุณาลองใหม่อีกครั้ง'
-      });
-    } catch (error) {
-      console.error('[LOG] ไม่สามารถส่งข้อความแจ้งเตือนได้:', error);
+    if (isLinePlatform) {
+      await replyWithLineText('ขออภัยค่ะ ระบบกำลังอยู่ในโหมดบำรุงรักษา กรุณาลองใหม่อีกครั้ง');
     }
     return;
   }
@@ -2139,14 +2221,14 @@ async function processFlushedMessages(userId, mergedContent) {
   const systemAiEnabled = await getSettingValue('aiEnabled', true);
   if (!systemAiEnabled) {
     console.log(`[LOG] AI ถูกปิดใช้งานในระดับระบบ`);
-    await saveChatHistory(userId, mergedContent, "", 'line');
+    await saveChatHistory(userId, mergedContent, "", platform, botIdForHistory);
     return;
   }
 
   if (!aiEnabled) {
     // ถ้า AI ปิดอยู่
     console.log(`[LOG] AI ปิดใช้งาน, บันทึกข้อความโดยไม่มีการตอบกลับสำหรับผู้ใช้: ${userId}`);
-    await saveChatHistory(userId, mergedContent, "", 'line');
+    await saveChatHistory(userId, mergedContent, "", platform, botIdForHistory);
     return;
   }
 
@@ -2183,12 +2265,9 @@ async function processFlushedMessages(userId, mergedContent) {
       }
     }
   }
-
-  const replyToken = mergedContent.length > 0 ? mergedContent[mergedContent.length - 1].replyToken : null;
   
-  // สร้าง instructions
   console.log(`[LOG] สร้าง system instructions สำหรับการตอบกลับ...`);
-  let systemInstructions = await buildSystemInstructions(history);
+  const systemInstructions = await buildSystemInstructionsWithContext(history, queueContext);
   
   let assistantMsg = "";
   
@@ -2197,21 +2276,21 @@ async function processFlushedMessages(userId, mergedContent) {
     // กรณีมีแต่ข้อความ - ใช้โมเดลปกติ
     const combinedText = combinedTextParts.join('\n\n'); // ใช้ \n\n แทน space เพื่อแยกข้อความ
     console.log(`[LOG] ประมวลผลข้อความอย่างเดียว: ${combinedText.substring(0, 100)}${combinedText.length > 100 ? '...' : ''}`);
-    assistantMsg = await getAssistantResponseTextOnly(systemInstructions, history, combinedText);
+    assistantMsg = await getAssistantResponseTextOnly(systemInstructions, history, combinedText, aiModelOverride);
   } else if (contentAnalysis.processingStrategy === 'image_focused') {
     // กรณีมีแต่รูปภาพ - ให้ความสำคัญกับรูปภาพ
     console.log(`[LOG] ประมวลผลโฟกัสที่รูปภาพ: ${contentSequence.filter(c => c.type === 'image').length} รูป`);
-    assistantMsg = await getAssistantResponseMultimodal(systemInstructions, history, contentSequence);
+    assistantMsg = await getAssistantResponseMultimodal(systemInstructions, history, contentSequence, aiModelOverride);
   } else {
     // กรณีมีทั้งข้อความและรูปภาพ - จัดการแบบผสม
     console.log(`[LOG] ประมวลผลเนื้อหาแบบ multimodal: ข้อความ ${combinedTextParts.length} ส่วน, รูปภาพ ${contentSequence.filter(c => c.type === 'image').length} รูป`);
-    assistantMsg = await getAssistantResponseMultimodal(systemInstructions, history, contentSequence);
+    assistantMsg = await getAssistantResponseMultimodal(systemInstructions, history, contentSequence, aiModelOverride);
   }
   
   console.log(`[LOG] ได้รับคำตอบ: ${assistantMsg.substring(0, 100)}${assistantMsg.length > 100 ? '...' : ''}`);
   
   console.log(`[LOG] บันทึกประวัติการสนทนาสำหรับผู้ใช้: ${userId}`);
-  await saveChatHistory(userId, mergedContent, assistantMsg, 'line');
+  await saveChatHistory(userId, mergedContent, assistantMsg, platform, botIdForHistory);
 
   // แจ้งเตือนแอดมินเมื่อมีข้อความใหม่จากผู้ใช้
   try {
@@ -2226,17 +2305,17 @@ async function processFlushedMessages(userId, mergedContent) {
     console.error('[Socket.IO] ไม่สามารถแจ้งเตือนแอดมินได้:', notifyError);
   }
 
-  if (replyToken) {
+  if (replyToken && isLinePlatform) {
     console.log(`[LOG] ส่งข้อความตอบกลับให้ผู้ใช้: ${userId}`);
     
     // กรองข้อความก่อนส่ง
     const filteredMessage = await filterMessage(assistantMsg);
     console.log(`[LOG] ข้อความหลังกรอง: ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? '...' : ''}`);
     
-    // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการส่งข้อความ
-    console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ต้องตั้งค่า Line Bot ก่อน`);
-    // await sendMessage(replyToken, filteredMessage, userId, true);
-    console.log(`[LOG] ส่งข้อความตอบกลับเรียบร้อยแล้ว`);
+    const sent = await replyWithLineText(filteredMessage);
+    if (sent) {
+      console.log(`[LOG] ส่งข้อความตอบกลับเรียบร้อยแล้ว`);
+    }
   }
 }
 
@@ -2246,11 +2325,16 @@ async function processFlushedMessages(userId, mergedContent) {
 // Webhook handler จะถูกจัดการผ่าน dynamic webhook routes ที่สร้างขึ้นใหม่
 // app.post('/webhook', ...) ถูกลบออกแล้ว
 
-async function handleLineEvent(event) {
-  let uniqueId = event.eventId || "";
+async function handleLineEvent(event, queueOptions = {}) {
+  const botIdentifier = queueOptions.botId || queueOptions.lineBotId || 'default';
+  let uniqueId = `${botIdentifier}:${event.eventId || ""}`;
   if (event.message && event.message.id) {
     uniqueId += "_" + event.message.id;
   }
+
+  const channelAccessToken = queueOptions.channelAccessToken;
+  const channelSecret = queueOptions.channelSecret;
+  const botIdForHistory = queueOptions.botId || queueOptions.lineBotId || null;
   
   console.log(`[LOG] เริ่มประมวลผล event: ${uniqueId}`);
   
@@ -2273,9 +2357,13 @@ async function handleLineEvent(event) {
       // เรียกฟังก์ชันล้างประวัติ
       await clearUserChatHistory(userId);
       // แจ้งผู้ใช้ว่าเราลบประวัติเรียบร้อยแล้ว
-      // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการส่งข้อความ
-      console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ต้องตั้งค่า Line Bot ก่อน`);
-      // await sendMessage(event.replyToken, "ลบประวัติสนทนาเรียบร้อยแล้ว!", userId, true);
+      if (event.replyToken) {
+        try {
+          await sendMessage(event.replyToken, "ลบประวัติสนทนาเรียบร้อยแล้ว!", userId, true, channelAccessToken, channelSecret);
+        } catch (error) {
+          console.error('[LOG] ไม่สามารถส่งข้อความยืนยันการลบประวัติได้:', error);
+        }
+      }
       console.log(`[LOG] ลบประวัติสนทนาของผู้ใช้ ${userId} เรียบร้อยแล้ว`);
       // ไม่ต้องบันทึกข้อความใหม่ หรือเข้าคิวใด ๆ ทั้งสิ้น -> return ออกได้เลย
       return;
@@ -2285,19 +2373,27 @@ async function handleLineEvent(event) {
     if (userMsg === "สวัสดีค่า แอดมิน Venus นะคะ จะมาดำเนินเรื่องต่อ") {
       console.log(`[LOG] พบคำสั่งเปลี่ยนเป็นโหมดแอดมินสำหรับผู้ใช้: ${userId}`);
       await setUserStatus(userId, false);
-      // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการส่งข้อความ
-      console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ต้องตั้งค่า Line Bot ก่อน`);
-      // await sendMessage(event.replyToken, "แอดมิน Venus สวัสดีค่ะ", userId, true);
-      await saveChatHistory(userId, userMsg, "แอดมิน Venus สวัสดีค่ะ", 'line');
+      if (event.replyToken) {
+        try {
+          await sendMessage(event.replyToken, "แอดมิน Venus สวัสดีค่ะ", userId, true, channelAccessToken, channelSecret);
+        } catch (error) {
+          console.error('[LOG] ไม่สามารถส่งข้อความโหมดแอดมินได้:', error);
+        }
+      }
+      await saveChatHistory(userId, userMsg, "แอดมิน Venus สวัสดีค่ะ", 'line', botIdForHistory);
       console.log(`[LOG] เปลี่ยนเป็นโหมดแอดมินเรียบร้อยแล้ว`);
       return;
     } else if (userMsg === "ขอนุญาตส่งต่อให้ทางแอดมินประจำสนทนาต่อนะคะ") {
       console.log(`[LOG] พบคำสั่งเปลี่ยนเป็นโหมด AI สำหรับผู้ใช้: ${userId}`);
       await setUserStatus(userId, true);
-      // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการส่งข้อความ
-      console.log(`[LOG] ไม่สามารถส่งข้อความได้ - ต้องตั้งค่า Line Bot ก่อน`);
-      // await sendMessage(event.replyToken, "แอดมิน Venus ขอตัวก่อนนะคะ", userId, true);
-      await saveChatHistory(userId, userMsg, "แอดมิน Venus ขอตัวก่อนนะคะ", 'line');
+      if (event.replyToken) {
+        try {
+          await sendMessage(event.replyToken, "แอดมิน Venus ขอตัวก่อนนะคะ", userId, true, channelAccessToken, channelSecret);
+        } catch (error) {
+          console.error('[LOG] ไม่สามารถส่งข้อความโหมด AI ได้:', error);
+        }
+      }
+      await saveChatHistory(userId, userMsg, "แอดมิน Venus ขอตัวก่อนนะคะ", 'line', botIdForHistory);
       console.log(`[LOG] เปลี่ยนเป็นโหมด AI เรียบร้อยแล้ว`);
       return;
     }
@@ -2311,7 +2407,7 @@ async function handleLineEvent(event) {
     if (message.type === 'text') {
       console.log(`[LOG] เพิ่มข้อความเข้าคิว สำหรับผู้ใช้: ${userId}`);
       itemToQueue.data = { type: "text", text: message.text };
-      addToQueue(userId, itemToQueue);
+      await addToQueue(userId, itemToQueue, { ...queueOptions, platform: 'line' });
 
     } else if (message.type === 'image') {
       console.log(`[LOG] ได้รับรูปภาพจากผู้ใช้: ${userId}, กำลังประมวลผล...`);
@@ -2324,7 +2420,7 @@ async function handleLineEvent(event) {
           type: "text",
           text: "ขออภัย ระบบยังไม่พร้อมประมวลผลรูปภาพ กรุณาตั้งค่า Line Bot ก่อน"
         };
-        addToQueue(userId, itemToQueue);
+        await addToQueue(userId, itemToQueue, { ...queueOptions, platform: 'line' });
         return;
         
         // โค้ดเดิม (ถูก comment ออก):
@@ -2386,7 +2482,7 @@ async function handleLineEvent(event) {
           text: "ผู้ใช้ส่งรูปภาพมา โปรดดูรูปภาพและให้คำตอบที่เหมาะสม"
         };
         console.log(`[LOG] เพิ่มรูปภาพเข้าคิว สำหรับผู้ใช้: ${userId}`);
-        addToQueue(userId, itemToQueue);
+        await addToQueue(userId, itemToQueue, { ...queueOptions, platform: 'line' });
         
       } catch (err) {
         console.error("[ERROR] เกิดข้อผิดพลาดในการประมวลผลรูปภาพ:", err.message);
@@ -2395,7 +2491,7 @@ async function handleLineEvent(event) {
           type: "text",
           text: "เกิดข้อผิดพลาดในการประมวลผลรูปภาพ กรุณาลองส่งรูปภาพใหม่อีกครั้ง"
         };
-        addToQueue(userId, itemToQueue);
+        await addToQueue(userId, itemToQueue, { ...queueOptions, platform: 'line' });
       }
 
     } else if (message.type === 'video') {
@@ -2405,7 +2501,7 @@ async function handleLineEvent(event) {
         text: "ผู้ใช้ส่งไฟล์แนบประเภท: video"
       };
       console.log(`[LOG] เพิ่มการแจ้งเตือนวิดีโอเข้าคิว สำหรับผู้ใช้: ${userId}`);
-      addToQueue(userId, itemToQueue);
+      await addToQueue(userId, itemToQueue, { ...queueOptions, platform: 'line' });
     }
   }
   console.log(`[LOG] จบการประมวลผล event: ${uniqueId}`);
@@ -2738,6 +2834,32 @@ async function buildSystemInstructions(history) {
   systemText += `เวลาปัจจุบัน: ${now}`;
 
   return systemText.trim();
+}
+
+async function buildSystemInstructionsWithContext(history, queueContext = {}) {
+  const hasSelectedLibraries = Array.isArray(queueContext.selectedInstructions) && queueContext.selectedInstructions.length > 0;
+  const isLineBot = queueContext.botType === 'line' || queueContext.platform === 'line';
+
+  if (isLineBot && hasSelectedLibraries) {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const instructionColl = db.collection("instruction_library");
+      const instructionDocs = await instructionColl.find({
+        date: { $in: queueContext.selectedInstructions }
+      }).toArray();
+
+      const libraryPrompt = buildSystemPromptFromLibraries(instructionDocs).trim();
+      if (libraryPrompt) {
+        const baseInstructions = await buildSystemInstructions(history);
+        return `${libraryPrompt}\n\n${baseInstructions}`.trim();
+      }
+    } catch (error) {
+      console.error('[LOG] ไม่สามารถสร้าง system instructions จาก instruction library:', error);
+    }
+  }
+
+  return await buildSystemInstructions(history);
 }
 
 // ฟังก์ชันสำหรับดึงข้อความจากแท็ก <THAI_REPLY>
@@ -3480,28 +3602,23 @@ app.post('/webhook/line/:botId', async (req, res) => {
       return res.status(200).json({ status: 'NO_EVENTS' });
     }
 
-    for (let event of events) {
-      if (event.type === 'message' && event.message.type === 'text') {
-        const userId = event.source.userId;
-        const message = event.message.text;
-        const replyToken = event.replyToken;
+    const queueOptions = {
+      botType: 'line',
+      platform: 'line',
+      botId: lineBot._id ? lineBot._id.toString() : null,
+      lineBotId: lineBot._id ? lineBot._id.toString() : botId,
+      lineClient,
+      channelAccessToken: lineBot.channelAccessToken,
+      channelSecret: lineBot.channelSecret,
+      aiModel: lineBot.aiModel || null,
+      selectedInstructions: lineBot.selectedInstructions || []
+    };
 
-        console.log(`[Line Bot: ${lineBot.name}] ข้อความจาก ${userId}: ${message}`);
-
-        // Process message with AI (you can customize this part)
-        try {
-          const aiResponse = await processMessageWithAI(message, userId, lineBot);
-          await lineClient.replyMessage(replyToken, {
-            type: 'text',
-            text: aiResponse
-          });
-        } catch (error) {
-          console.error(`[Line Bot: ${lineBot.name}] Error processing message:`, error);
-          await lineClient.replyMessage(replyToken, {
-            type: 'text',
-            text: 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ'
-          });
-        }
+    for (const event of events) {
+      try {
+        await handleLineEvent(event, queueOptions);
+      } catch (eventError) {
+        console.error(`[Line Bot: ${lineBot.name}] Error handling event:`, eventError);
       }
     }
 

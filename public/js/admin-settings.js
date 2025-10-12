@@ -562,30 +562,87 @@ function updateHiddenWordsCount() {
     hiddenWordsCountElement.textContent = words.length;
 }
 
+const ALERT_ICON_MAP = {
+    success: 'circle-check',
+    danger: 'triangle-exclamation',
+    warning: 'circle-exclamation',
+    info: 'circle-info'
+};
+
+const ALERT_CLASS_MAP = {
+    success: 'alert-toast-success',
+    danger: 'alert-toast-danger',
+    warning: 'alert-toast-warning',
+    info: 'alert-toast-info'
+};
+
+function ensureAlertToastContainer() {
+    let container = document.getElementById('alertToastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'alertToastContainer';
+        container.className = 'alert-toast-container';
+        container.setAttribute('aria-live', 'polite');
+        container.setAttribute('aria-atomic', 'true');
+        document.body.appendChild(container);
+    }
+    return container;
+}
+
+function createAlertToastElement(type, message) {
+    const normalizedType = ALERT_CLASS_MAP[type] ? type : 'info';
+    const toast = document.createElement('div');
+    toast.className = `alert-toast ${ALERT_CLASS_MAP[normalizedType]}`;
+    toast.setAttribute('role', 'alert');
+
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'alert-toast-icon';
+    iconSpan.innerHTML = `<i class="fas fa-${ALERT_ICON_MAP[normalizedType] || ALERT_ICON_MAP.info}"></i>`;
+
+    const content = document.createElement('div');
+    content.className = 'alert-toast-content';
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'alert-toast-message';
+    messageDiv.textContent = message;
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'alert-toast-close';
+    closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
+    closeBtn.innerHTML = '<i class="fas fa-times"></i>';
+
+    content.appendChild(messageDiv);
+    content.appendChild(closeBtn);
+
+    toast.appendChild(iconSpan);
+    toast.appendChild(content);
+
+    return { toast, closeBtn };
+}
+
 // Show alert message
-function showAlert(message, type) {
-    const alertContainer = document.getElementById('alertContainer');
-    if (!alertContainer) return;
-    
-    const alertId = 'alert-' + Date.now();
-    
-    const alertHtml = `
-        <div class="alert alert-${type} alert-custom alert-dismissible fade show" id="${alertId}" role="alert">
-            <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'danger' ? 'exclamation-triangle' : 'info-circle'} me-2"></i>
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-    `;
-    
-    alertContainer.innerHTML = alertHtml;
-    
-    // Auto-hide after 5 seconds
-    setTimeout(() => {
-        const alert = document.getElementById(alertId);
-        if (alert) {
-            alert.remove();
-        }
-    }, 5000);
+function showAlert(message, type = 'info') {
+    const container = ensureAlertToastContainer();
+    const { toast, closeBtn } = createAlertToastElement(type, message);
+
+    container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    const hideToast = () => {
+        toast.classList.remove('show');
+        toast.classList.add('hide');
+        setTimeout(() => {
+            toast.remove();
+        }, 220);
+    };
+
+    const timeoutId = setTimeout(hideToast, 5000);
+
+    closeBtn.addEventListener('click', () => {
+        clearTimeout(timeoutId);
+        hideToast();
+    });
 }
 
 // Export functions for use in other modules
