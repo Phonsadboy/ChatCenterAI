@@ -210,6 +210,9 @@ class ChatManager {
             const isActive = user.userId === this.currentUserId;
             const hasUnread = user.unreadCount > 0;
             const displayName = user.displayName || `${user.userId.slice(0, 6)}...`;
+            const showFollowUp = (user.followUp && typeof user.followUp.showInChat === 'boolean')
+                ? user.followUp.showInChat
+                : this.followUpOptions.showInChat;
             
             // ใช้ข้อมูลที่แปลงแล้วจาก backend
             let lastMsg = '';
@@ -222,13 +225,13 @@ class ChatManager {
                 } else {
                     lastMsg = user.lastMessage;
             }
-        }
-
-        const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-2">AI เปิด</span>` : `<span class="badge bg-secondary ms-2">AI ปิด</span>`;
-        const followUpBadge = (this.followUpOptions.showInChat && user.hasFollowUp)
+            }
+            
+            const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-2">AI เปิด</span>` : `<span class="badge bg-secondary ms-2">AI ปิด</span>`;
+            const followUpBadge = (showFollowUp && user.hasFollowUp) 
                 ? `<span class="badge followup-badge ms-2" title="${this.escapeAttribute(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว')}">ติดตาม</span>`
                 : '';
-        const initials = displayName.charAt(0).toUpperCase();
+            const initials = displayName.charAt(0).toUpperCase();
 
             return `
                 <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" 
@@ -300,7 +303,10 @@ class ChatManager {
         const initials = displayName.charAt(0).toUpperCase();
         const messageCount = Number.isFinite(user.messageCount) ? user.messageCount : 0;
         const updatedLabel = user.followUpUpdatedAt ? this.formatTimestamp(user.followUpUpdatedAt) : '';
-        const shouldShowFollowUp = this.followUpOptions.showInChat && user.hasFollowUp;
+        const showFollowUp = (user.followUp && typeof user.followUp.showInChat === 'boolean')
+            ? user.followUp.showInChat
+            : this.followUpOptions.showInChat;
+        const shouldShowFollowUp = showFollowUp && user.hasFollowUp;
         const followUpInfo = shouldShowFollowUp ? `
             <div class="followup-info mt-1">
                 <span class="badge followup-badge me-2">ติดตามลูกค้า</span>

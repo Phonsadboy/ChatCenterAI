@@ -79,50 +79,49 @@
             </div>
           </div>
           <div class="card-body">
-            <% if (!(followUpConfig && followUpConfig.showDashboard)) { %>
-              <div class="alert alert-warning">
-                <i class="fas fa-exclamation-triangle me-2"></i>
-                หน้าติดตามลูกค้าถูกปิดใช้งานจากการตั้งค่าระบบ สามารถเปิดใช้งานได้ที่แท็บ "ตั้งค่าแชท" ในหน้า Settings
-              </div>
-            <% } %>
-            <% if (followUpConfig && !followUpConfig.analysisEnabled) { %>
-              <div class="alert alert-info">
-                <i class="fas fa-info-circle me-2"></i>
-                ระบบยังไม่วิเคราะห์การสั่งซื้อใหม่ เพราะปิดตัวเลือกการวิเคราะห์ติดตามลูกค้าไว้
-              </div>
-            <% } %>
-            <div class="row g-3 align-items-center mb-3">
-              <div class="col-md-4 col-12">
-                <div class="border rounded p-3 bg-light">
-                  <div class="text-muted">ลูกค้าที่ต้องติดตาม</div>
-                  <div class="fs-4 fw-bold mt-2"><span id="followupCount">0</span> ราย</div>
-                </div>
-              </div>
-              <div class="col-md-4 col-12 ms-auto">
-                <div class="input-group">
-                  <span class="input-group-text"><i class="fas fa-search"></i></span>
-                  <input type="text" class="form-control" id="followupSearch" placeholder="ค้นหาด้วยชื่อหรือเหตุผล" <%= (followUpConfig && followUpConfig.showDashboard) ? '' : 'disabled' %>>
-                </div>
-              </div>
-            </div>
-
             <div id="followupAlert" class="alert d-none" role="alert"></div>
 
-            <div class="table-responsive">
-              <table class="table table-hover align-middle">
-                <thead class="table-light">
-                  <tr>
-                    <th style="width: 220px;">ผู้ใช้</th>
-                    <th>เหตุผล</th>
-                    <th style="width: 180px;">อัปเดตล่าสุด</th>
-                    <th style="width: 130px;">การจัดการ</th>
-                  </tr>
-                </thead>
-                <tbody id="followupTableBody"></tbody>
-              </table>
+            <div class="row g-3 align-items-stretch mb-3">
+              <div class="col-lg-4 col-md-6">
+                <div class="followup-metric-card">
+                  <div class="metric-label">ลูกค้าที่ต้องติดตาม</div>
+                  <div class="metric-value" id="followupCount">0</div>
+                  <div class="metric-sub">อัปเดตอัตโนมัติทุกครั้งที่มีการสั่งซื้อ</div>
+                </div>
+              </div>
+              <div class="col-lg-4 col-md-6">
+                <div class="followup-metric-card" id="followupMetricStatus">
+                  <div class="metric-label">สถานะการวิเคราะห์</div>
+                  <div class="metric-value" id="followupAnalysisLabel">-</div>
+                  <div class="metric-sub" id="followupAnalysisSubtitle"></div>
+                </div>
+              </div>
+              <div class="col-lg-4 col-md-12 text-lg-end">
+                <button class="btn btn-outline-primary" id="openFollowupSettingsBtn" disabled>
+                  <i class="fas fa-sliders-h me-2"></i>ตั้งค่าหน้าเพจ
+                </button>
+                <button class="btn btn-outline-secondary ms-2" id="followupRefreshBtn">
+                  <i class="fas fa-sync-alt me-1"></i>รีเฟรชข้อมูล
+                </button>
+              </div>
             </div>
 
-            <div id="followupEmptyState" class="text-center text-muted py-4 d-none">
+            <div class="followup-page-selector" id="followupPageSelector"></div>
+
+            <div class="followup-toolbar d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2 mb-3">
+              <div>
+                <span class="badge bg-light text-dark" id="followupPageLabel">เลือกหน้าเพจที่ต้องการติดตาม</span>
+                <span class="text-muted small d-block" id="followupPageStatus"></span>
+              </div>
+              <div class="input-group followup-search">
+                <span class="input-group-text"><i class="fas fa-search"></i></span>
+                <input type="text" class="form-control" id="followupSearch" placeholder="ค้นหาด้วยชื่อ เหตุผล หรือไอดีผู้ใช้">
+              </div>
+            </div>
+
+            <div id="followupList" class="followup-list"></div>
+
+            <div id="followupEmptyState" class="text-center text-muted py-5 d-none">
               <i class="fas fa-check-circle fa-2x mb-2 text-success"></i>
               <p class="mb-1">ยังไม่มีลูกค้าที่ต้องติดตาม</p>
               <p class="small mb-0">เมื่อมีการสั่งซื้อ ระบบจะแสดงรายชื่อที่นี่โดยอัตโนมัติ</p>
@@ -142,5 +141,68 @@
   </script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/followup-dashboard.js"></script>
+
+  <!-- Modal: Follow-up Page Settings -->
+  <div class="modal fade" id="followupSettingsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="followupModalTitle">ตั้งค่าเพจติดตามลูกค้า</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="followupModalAnalysis">
+                <label class="form-check-label" for="followupModalAnalysis">เปิดใช้งานการวิเคราะห์การสั่งซื้อด้วย AI</label>
+              </div>
+              <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="followupModalShowChat">
+                <label class="form-check-label" for="followupModalShowChat">แสดงป้ายติดตามในหน้าแชทแอดมิน</label>
+              </div>
+              <div class="form-check form-switch mb-4">
+                <input class="form-check-input" type="checkbox" id="followupModalShowDashboard">
+                <label class="form-check-label" for="followupModalShowDashboard">แสดงเพจนี้ในแดชบอร์ดติดตามลูกค้า</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">จำนวนข้อความล่าสุดที่ใช้วิเคราะห์</label>
+                <input type="number" class="form-control" id="followupModalHistoryLimit" min="1" max="50" step="1">
+                <small class="text-muted">ยิ่งมากยิ่งเข้าใจบริบท แต่จะใช้โทเคนมากขึ้น (แนะนำ 5-15)</small>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">คูลดาวน์ก่อนวิเคราะห์ซ้ำ (นาที)</label>
+                <input type="number" class="form-control" id="followupModalCooldown" min="1" max="1440" step="1">
+                <small class="text-muted">ใช้เพื่อป้องกันการเรียก AI ถี่เกินไป</small>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">โมเดลที่ใช้วิเคราะห์</label>
+                <select class="form-select" id="followupModalModel">
+                  <option value="gpt-5-mini">GPT-5 Mini (แนะนำ)</option>
+                  <option value="gpt-4o-mini">GPT-4o Mini</option>
+                  <option value="gpt-5">GPT-5</option>
+                  <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                </select>
+              </div>
+              <div class="text-muted small" id="followupModalUpdatedAt"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer d-flex justify-content-between">
+          <button type="button" class="btn btn-outline-secondary" id="followupModalResetBtn">
+            <i class="fas fa-undo me-1"></i>คืนค่าเริ่มต้น
+          </button>
+          <div>
+            <button type="button" class="btn btn-light me-2" data-bs-dismiss="modal">ปิด</button>
+            <button type="button" class="btn btn-primary" id="followupModalSaveBtn">
+              <i class="fas fa-save me-1"></i>บันทึกการตั้งค่า
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

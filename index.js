@@ -593,6 +593,196 @@ async function clearUserChatHistory(userId) {
   await coll.deleteMany({ senderId: userId });
 }
 
+const FOLLOW_UP_BASE_CACHE_TTL = 60 * 1000;
+let followUpBaseConfigCache = null;
+let followUpBaseCacheTimestamp = 0;
+const followUpContextCache = new Map();
+
+function normalizeFollowUpBotId(botId) {
+  if (!botId) return null;
+  if (typeof botId === 'string') return botId;
+  try {
+    return botId.toString();
+  } catch {
+    return String(botId);
+  }
+}
+
+function resetFollowUpConfigCache() {
+  followUpBaseConfigCache = null;
+  followUpBaseCacheTimestamp = 0;
+  followUpContextCache.clear();
+}
+
+async function getFollowUpBaseConfig() {
+  const now = Date.now();
+  if (followUpBaseConfigCache && (now - followUpBaseCacheTimestamp) < FOLLOW_UP_BASE_CACHE_TTL) {
+    return followUpBaseConfigCache;
+  }
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("settings");
+  const keys = [
+    "enableFollowUpAnalysis",
+    "followUpHistoryLimit",
+    "followUpCooldownMinutes",
+    "followUpModel",
+    "followUpShowInChat",
+    "followUpShowInDashboard"
+  ];
+  const docs = await coll.find({ key: { $in: keys } }).toArray();
+  const map = {};
+  docs.forEach(doc => { map[doc.key] = doc.value; });
+
+  const config = {
+    analysisEnabled: typeof map.enableFollowUpAnalysis === 'boolean' ? map.enableFollowUpAnalysis : true,
+    historyLimit: typeof map.followUpHistoryLimit === 'number' ? map.followUpHistoryLimit : 10,
+    cooldownMinutes: typeof map.followUpCooldownMinutes === 'number' ? map.followUpCooldownMinutes : 30,
+    model: map.followUpModel || 'gpt-5-mini',
+    showInChat: typeof map.followUpShowInChat === 'boolean' ? map.followUpShowInChat : true,
+    showInDashboard: typeof map.followUpShowInDashboard === 'boolean' ? map.followUpShowInDashboard : true
+  };
+
+  followUpBaseConfigCache = config;
+  followUpBaseCacheTimestamp = now;
+  return config;
+}
+
+async function getFollowUpConfigForContext(platform = 'line', botId = null) {
+  const normalizedPlatform = platform || 'line';
+  const normalizedBotId = normalizeFollowUpBotId(botId);
+  const cacheKey = `${normalizedPlatform}:${normalizedBotId || 'default'}`;
+  if (followUpContextCache.has(cacheKey)) {
+    return followUpContextCache.get(cacheKey);
+  }
+
+  const baseConfig = await getFollowUpBaseConfig();
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("follow_up_page_settings");
+
+  let query = { platform: normalizedPlatform };
+  if (normalizedBotId === null) {
+    query.botId = null;
+  } else {
+    query.botId = { $in: [null, normalizedBotId] };
+  }
+
+  const overrides = await coll.find(query).toArray();
+  let platformDefaults = {};
+  let specificOverrides = {};
+  overrides.forEach(doc => {
+    if (!doc) return;
+    const settings = doc.settings || {};
+    if (doc.botId === null) {
+      platformDefaults = { ...platformDefaults, ...settings };
+    } else if (doc.botId === normalizedBotId) {
+      specificOverrides = { ...specificOverrides, ...settings };
+    }
+  });
+
+  const merged = {
+    ...baseConfig,
+    ...platformDefaults,
+    ...specificOverrides
+  };
+
+  followUpContextCache.set(cacheKey, merged);
+  return merged;
+}
+
+async function listFollowUpPageSettings() {
+  const baseConfig = await getFollowUpBaseConfig();
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const lineBots = await db.collection("line_bots").find({}).sort({ createdAt: -1 }).toArray();
+  const facebookBots = await db.collection("facebook_bots").find({}).sort({ createdAt: -1 }).toArray();
+  const settingsDocs = await db.collection("follow_up_page_settings").find({}).toArray();
+
+  const settingsMap = {};
+  settingsDocs.forEach(doc => {
+    if (!doc || !doc.platform) return;
+    const key = `${doc.platform}:${doc.botId || 'default'}`;
+    settingsMap[key] = doc;
+  });
+
+  const buildConfig = (platform, botId = null) => {
+    const normalizedBotId = normalizeFollowUpBotId(botId);
+    const platformDefault = settingsMap[`${platform}:default`] || settingsMap[`${platform}:null`];
+    const specific = normalizedBotId ? settingsMap[`${platform}:${normalizedBotId}`] : null;
+    return {
+      ...baseConfig,
+      ...(platformDefault?.settings || {}),
+      ...(specific?.settings || {})
+    };
+  };
+
+  const pages = [];
+
+  // Defaults for each platform
+  ['line', 'facebook'].forEach(platform => {
+    const config = buildConfig(platform, null);
+    const key = `${platform}:default`;
+    const doc = settingsMap[`${platform}:default`] || settingsMap[`${platform}:null`];
+    pages.push({
+      id: key,
+      platform,
+      botId: null,
+      type: 'default',
+      name: platform === 'line' ? 'ค่าเริ่มต้น LINE' : 'ค่าเริ่มต้น Facebook',
+      settings: config,
+      hasOverride: !!doc,
+      updatedAt: doc?.updatedAt || null
+    });
+  });
+
+  lineBots.forEach(bot => {
+    const key = `line:${bot._id.toString()}`;
+    const config = buildConfig('line', bot._id.toString());
+    const doc = settingsMap[key];
+    pages.push({
+      id: key,
+      platform: 'line',
+      botId: bot._id.toString(),
+      type: 'line_bot',
+      name: bot.name || bot.displayName || bot.botName || `LINE Bot (${bot._id.toString().slice(-4)})`,
+      settings: config,
+      hasOverride: !!doc,
+      updatedAt: doc?.updatedAt || null,
+      metadata: {
+        status: bot.status || null,
+        description: bot.description || ''
+      }
+    });
+  });
+
+  facebookBots.forEach(bot => {
+    const key = `facebook:${bot._id.toString()}`;
+    const config = buildConfig('facebook', bot._id.toString());
+    const doc = settingsMap[key];
+    pages.push({
+      id: key,
+      platform: 'facebook',
+      botId: bot._id.toString(),
+      type: 'facebook_bot',
+      name: bot.pageName || bot.name || `Facebook Page (${bot._id.toString().slice(-4)})`,
+      settings: config,
+      hasOverride: !!doc,
+      updatedAt: doc?.updatedAt || null,
+      metadata: {
+        status: bot.status || null,
+        pageId: bot.pageId || null
+      }
+    });
+  });
+
+  return {
+    baseConfig,
+    pages
+  };
+}
+
 function sanitizeContentForFollowUp(rawContent) {
   if (rawContent === null || typeof rawContent === 'undefined') {
     return '';
@@ -676,23 +866,30 @@ async function updateFollowUpStatus(userId, fields) {
   const db = client.db("chatbot");
   const coll = db.collection("follow_up_status");
   const now = new Date();
+  const sanitizedFields = { ...(fields || {}) };
+  const normalizedPlatform = sanitizedFields.platform || null;
+  const normalizedBotId = normalizeFollowUpBotId(sanitizedFields.botId);
+
+  sanitizedFields.platform = normalizedPlatform;
+  sanitizedFields.botId = normalizedBotId;
+
   const updateDoc = {
     $set: {
       senderId: userId,
       lastAnalyzedAt: now,
-      ...fields
+      ...sanitizedFields
     }
   };
   await coll.updateOne({ senderId: userId }, updateDoc, { upsert: true });
 }
 
-async function analyzeChatHistoryForFollowUp(userId, history) {
+async function analyzeChatHistoryForFollowUp(userId, history, modelOverride = null) {
   if (!OPENAI_API_KEY) {
     console.warn('[FollowUp] ไม่มี OPENAI_API_KEY ข้ามการวิเคราะห์');
     return null;
   }
   
-  const followUpModel = await getSettingValue('followUpModel', 'gpt-5-mini');
+  const followUpModel = modelOverride || await getSettingValue('followUpModel', 'gpt-5-mini');
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
   
   const formattedConversation = history.map(entry => {
@@ -756,15 +953,18 @@ async function analyzeChatHistoryForFollowUp(userId, history) {
 
 async function maybeAnalyzeFollowUp(userId, platform = 'line', botId = null) {
   try {
-    const enabled = await getSettingValue('enableFollowUpAnalysis', true);
-    if (!enabled) return;
-    
+    const normalizedPlatform = platform || 'line';
+    const config = await getFollowUpConfigForContext(normalizedPlatform, botId);
+    if (!config.analysisEnabled) {
+      return;
+    }
+
     const status = await getFollowUpStatus(userId);
     if (status?.hasFollowUp) {
       return; // ติดแท็กแล้วไม่ต้องประมวลผลซ้ำ
     }
-    
-    const cooldownMinutes = await getSettingValue('followUpCooldownMinutes', 30);
+
+    const cooldownMinutes = typeof config.cooldownMinutes === 'number' ? config.cooldownMinutes : 30;
     if (status?.lastAnalyzedAt) {
       const last = new Date(status.lastAnalyzedAt);
       const diffMinutes = (Date.now() - last.getTime()) / 60000;
@@ -772,43 +972,48 @@ async function maybeAnalyzeFollowUp(userId, platform = 'line', botId = null) {
         return;
       }
     }
-    
-    const historyLimit = await getSettingValue('followUpHistoryLimit', 10);
+
+    const historyLimit = typeof config.historyLimit === 'number' ? config.historyLimit : 10;
     const history = await getRecentChatHistoryForFollowUp(userId, historyLimit);
     if (!history || history.length === 0) return;
-    
+
     const newest = history[history.length - 1];
     if (!newest || !newest.content) return;
-    
-    const analysis = await analyzeChatHistoryForFollowUp(userId, history);
+
+    const analysis = await analyzeChatHistoryForFollowUp(userId, history, config.model);
+    const payloadBase = {
+      platform: normalizedPlatform,
+      botId
+    };
+
     if (!analysis) {
       await updateFollowUpStatus(userId, {
         hasFollowUp: status?.hasFollowUp || false,
         followUpReason: status?.followUpReason || '',
         followUpUpdatedAt: status?.followUpUpdatedAt || null,
-        platform,
-        botId: botId || null
+        ...payloadBase
       });
       return;
     }
-    
+
     if (analysis.hasFollowUp) {
       const followUpUpdatedAt = new Date();
       await updateFollowUpStatus(userId, {
         hasFollowUp: true,
         followUpReason: analysis.reason || 'ลูกค้ายืนยันสั่งซื้อ',
         followUpUpdatedAt,
-        platform,
-        botId: botId || null
+        ...payloadBase
       });
-      
+
       try {
         if (io) {
           io.emit('followUpTagged', {
             userId,
             hasFollowUp: true,
             followUpReason: analysis.reason || 'ลูกค้ายืนยันสั่งซื้อ',
-            followUpUpdatedAt
+            followUpUpdatedAt,
+            platform: normalizedPlatform,
+            botId: normalizeFollowUpBotId(botId)
           });
         }
       } catch (_) {}
@@ -817,8 +1022,7 @@ async function maybeAnalyzeFollowUp(userId, platform = 'line', botId = null) {
         hasFollowUp: false,
         followUpReason: '',
         followUpUpdatedAt: status?.followUpUpdatedAt || null,
-        platform,
-        botId: botId || null
+        ...payloadBase
       });
     }
   } catch (error) {
@@ -826,29 +1030,33 @@ async function maybeAnalyzeFollowUp(userId, platform = 'line', botId = null) {
   }
 }
 
-async function getFollowUpUsers() {
+async function getFollowUpUsers(filter = {}) {
   const client = await connectDB();
   const db = client.db("chatbot");
   const statusColl = db.collection("follow_up_status");
   const chatColl = db.collection("chat_history");
   const profileColl = db.collection("user_profiles");
 
-  const dashboardEnabled = await getSettingValue('followUpShowInDashboard', true);
-  if (!dashboardEnabled) {
-    return [];
+  const statusQuery = { hasFollowUp: true };
+  if (filter.platform) {
+    statusQuery.platform = filter.platform;
+  }
+  if (filter.botId) {
+    statusQuery.botId = normalizeFollowUpBotId(filter.botId);
   }
 
-  const statuses = await statusColl.find({ hasFollowUp: true }).sort({ followUpUpdatedAt: -1 }).limit(200).toArray();
-  if (statuses.length === 0) return [];
-  
+  const statuses = await statusColl.find(statusQuery).sort({ followUpUpdatedAt: -1 }).limit(200).toArray();
+  if (statuses.length === 0) {
+    return { users: [], summary: { total: 0 } };
+  }
+
   const userIds = statuses.map(status => status.senderId);
-  
   const profiles = await profileColl.find({ userId: { $in: userIds } }).toArray();
   const profileMap = {};
   profiles.forEach(profile => {
     profileMap[profile.userId] = profile;
   });
-  
+
   const latestMessages = await chatColl.aggregate([
     { $match: { senderId: { $in: userIds } } },
     { $sort: { timestamp: -1 } },
@@ -867,22 +1075,60 @@ async function getFollowUpUsers() {
   latestMessages.forEach(msg => {
     messageMap[msg._id] = msg;
   });
-  
-  return statuses.map(status => {
-    const profile = profileMap[status.senderId];
-    const lastMessage = messageMap[status.senderId];
-    return {
-      userId: status.senderId,
-      displayName: profile?.displayName || `${status.senderId.slice(0, 6)}…`,
-      pictureUrl: profile?.pictureUrl || null,
-      followUpReason: status.followUpReason || '',
-      followUpUpdatedAt: status.followUpUpdatedAt || status.lastAnalyzedAt || null,
-      platform: lastMessage?.platform || status.platform || 'line',
-      lastMessage: lastMessage ? sanitizeContentForFollowUp(lastMessage.lastMessage) : '',
-      lastTimestamp: lastMessage?.lastTimestamp || null,
-      botId: lastMessage?.botId || status.botId || null
-    };
+
+  const contextKeys = [...new Set(statuses.map(status => {
+    const contextPlatform = status.platform || 'line';
+    const contextBotId = normalizeFollowUpBotId(status.botId);
+    return `${contextPlatform}:${contextBotId || 'default'}`;
+  }))];
+
+  const contextConfigEntries = await Promise.all(contextKeys.map(async key => {
+    const [ctxPlatform, ctxBotId] = key.split(':');
+    const config = await getFollowUpConfigForContext(ctxPlatform, ctxBotId === 'default' ? null : ctxBotId);
+    return { key, config };
+  }));
+
+  const contextConfigMap = new Map();
+  contextConfigEntries.forEach(entry => {
+    contextConfigMap.set(entry.key, entry.config);
   });
+
+  const users = statuses
+    .map(status => {
+      const profile = profileMap[status.senderId];
+      const lastMessage = messageMap[status.senderId];
+      const contextPlatform = status.platform || lastMessage?.platform || 'line';
+      const contextBotId = normalizeFollowUpBotId(status.botId || lastMessage?.botId);
+      const configKey = `${contextPlatform}:${contextBotId || 'default'}`;
+      const config = contextConfigMap.get(configKey) || {};
+
+      if (config.showInDashboard === false) {
+        return null;
+      }
+
+      return {
+        userId: status.senderId,
+        displayName: profile?.displayName || `${status.senderId.slice(0, 6)}…`,
+        pictureUrl: profile?.pictureUrl || null,
+        followUpReason: status.followUpReason || '',
+        followUpUpdatedAt: status.followUpUpdatedAt || status.lastAnalyzedAt || null,
+        platform: contextPlatform,
+        botId: contextBotId,
+        lastMessage: lastMessage ? sanitizeContentForFollowUp(lastMessage.lastMessage) : '',
+        lastTimestamp: lastMessage?.lastTimestamp || null,
+        config
+      };
+    })
+    .filter(Boolean);
+
+  const summary = {
+    total: users.length,
+    platform: filter.platform || null,
+    botId: filter.botId ? normalizeFollowUpBotId(filter.botId) : null,
+    contexts: contextKeys.length
+  };
+
+  return { users, summary };
 }
 
 async function clearFollowUpStatus(userId) {
@@ -890,6 +1136,7 @@ async function clearFollowUpStatus(userId) {
   const db = client.db("chatbot");
   const coll = db.collection("follow_up_status");
   const now = new Date();
+  const existing = await coll.findOne({ senderId: userId }) || {};
   await coll.updateOne(
     { senderId: userId },
     {
@@ -898,7 +1145,9 @@ async function clearFollowUpStatus(userId) {
         hasFollowUp: false,
         followUpReason: '',
         followUpUpdatedAt: now,
-        lastAnalyzedAt: now
+        lastAnalyzedAt: now,
+        platform: existing.platform || null,
+        botId: normalizeFollowUpBotId(existing.botId)
       }
     },
     { upsert: true }
@@ -4162,12 +4411,31 @@ app.get('/admin/followup/status', (req, res) => {
 
 app.get('/admin/followup/users', async (req, res) => {
   try {
-    const showDashboard = await getSettingValue('followUpShowInDashboard', true);
-    if (!showDashboard) {
-      return res.json({ success: false, error: 'หน้าติดตามลูกค้าถูกปิดใช้งาน' });
+    const { platform, botId } = req.query || {};
+    const normalizedPlatform = platform || null;
+    const normalizedBotId = botId ? normalizeFollowUpBotId(botId) : null;
+    const contextConfig = await getFollowUpConfigForContext(normalizedPlatform || 'line', normalizedBotId);
+
+    if (contextConfig.showInDashboard === false) {
+      return res.json({
+        success: false,
+        disabled: true,
+        message: 'หน้าติดตามลูกค้าถูกปิดใช้งานสำหรับเพจนี้',
+        config: contextConfig
+      });
     }
-    const users = await getFollowUpUsers();
-    res.json({ success: true, users });
+
+    const result = await getFollowUpUsers({
+      platform: normalizedPlatform || undefined,
+      botId: normalizedBotId || undefined
+    });
+
+    res.json({
+      success: true,
+      users: result.users,
+      summary: result.summary,
+      config: contextConfig
+    });
   } catch (error) {
     console.error('[FollowUp] ไม่สามารถดึงรายการผู้ใช้ได้:', error);
     res.json({ success: false, error: error.message });
@@ -4176,14 +4444,22 @@ app.get('/admin/followup/users', async (req, res) => {
 
 app.post('/admin/followup/clear', async (req, res) => {
   try {
-    const showDashboard = await getSettingValue('followUpShowInDashboard', true);
-    if (!showDashboard) {
-      return res.json({ success: false, error: 'หน้าติดตามลูกค้าถูกปิดใช้งาน' });
-    }
     const { userId } = req.body || {};
     if (!userId) {
       return res.json({ success: false, error: 'กรุณาระบุ userId' });
     }
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const existing = await db.collection("follow_up_status").findOne({ senderId: userId });
+    const platform = existing?.platform || 'line';
+    const botId = normalizeFollowUpBotId(existing?.botId);
+
+    const contextConfig = await getFollowUpConfigForContext(platform, botId);
+    if (contextConfig.showInDashboard === false) {
+      // อนุญาตให้ล้างแท็กแม้ถูกปิดแสดง แต่แจ้งเตือนฝั่ง client
+      console.warn('[FollowUp] Clearing status on hidden page:', platform, botId);
+    }
+
     await clearFollowUpStatus(userId);
     try {
       if (io) {
@@ -4191,13 +4467,106 @@ app.post('/admin/followup/clear', async (req, res) => {
           userId,
           hasFollowUp: false,
           followUpReason: '',
-          followUpUpdatedAt: new Date()
+          followUpUpdatedAt: new Date(),
+          platform,
+          botId
         });
       }
     } catch (_) {}
     res.json({ success: true });
   } catch (error) {
     console.error('[FollowUp] ไม่สามารถล้างสถานะได้:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.get('/admin/followup/page-settings', async (req, res) => {
+  try {
+    const result = await listFollowUpPageSettings();
+    res.json({ success: true, pages: result.pages, baseConfig: result.baseConfig });
+  } catch (error) {
+    console.error('[FollowUp] ไม่สามารถดึงการตั้งค่าหน้าเพจได้:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post('/admin/followup/page-settings', async (req, res) => {
+  try {
+    const { platform, botId, settings } = req.body || {};
+    if (!platform || !['line', 'facebook'].includes(platform)) {
+      return res.status(400).json({ success: false, error: 'ระบุแพลตฟอร์มไม่ถูกต้อง' });
+    }
+
+    const normalizedBotId = normalizeFollowUpBotId(botId);
+    const sanitized = {};
+    const boolKeys = ['analysisEnabled', 'showInChat', 'showInDashboard'];
+    const numberKeys = {
+      historyLimit: { min: 1, max: 100 },
+      cooldownMinutes: { min: 1, max: 1440 }
+    };
+
+    (boolKeys).forEach(key => {
+      if (typeof settings?.[key] === 'boolean') {
+        sanitized[key] = settings[key];
+      }
+    });
+
+    Object.keys(numberKeys).forEach(key => {
+      const value = settings?.[key];
+      if (typeof value === 'number' && !Number.isNaN(value)) {
+        const range = numberKeys[key];
+        const clamped = Math.min(Math.max(value, range.min), range.max);
+        sanitized[key] = clamped;
+      }
+    });
+
+    if (typeof settings?.model === 'string' && settings.model.trim().length > 0) {
+      sanitized.model = settings.model.trim();
+    }
+
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('follow_up_page_settings');
+
+    await coll.updateOne(
+      { platform, botId: normalizedBotId },
+      {
+        $set: {
+          platform,
+          botId: normalizedBotId,
+          settings: sanitized,
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+
+    resetFollowUpConfigCache();
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[FollowUp] ไม่สามารถปรับปรุงการตั้งค่าหน้าเพจได้:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/admin/followup/page-settings', async (req, res) => {
+  try {
+    const { platform, botId } = req.body || {};
+    if (!platform || !['line', 'facebook'].includes(platform)) {
+      return res.status(400).json({ success: false, error: 'ระบุแพลตฟอร์มไม่ถูกต้อง' });
+    }
+    const normalizedBotId = normalizeFollowUpBotId(botId);
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('follow_up_page_settings');
+
+    await coll.deleteOne({ platform, botId: normalizedBotId });
+    resetFollowUpConfigCache();
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[FollowUp] ไม่สามารถรีเซ็ตการตั้งค่าหน้าเพจได้:', error);
     res.json({ success: false, error: error.message });
   }
 });
@@ -4583,6 +4952,7 @@ app.post('/api/settings/chat', async (req, res) => {
       { $set: { value: !!followUpShowInDashboard } },
       { upsert: true }
     );
+    resetFollowUpConfigCache();
     
     res.json({ success: true, message: 'บันทึกการตั้งค่าแชทเรียบร้อยแล้ว' });
   } catch (err) {
@@ -5335,22 +5705,30 @@ async function getNormalizedChatUsers() {
       }
     ];
     
-    const showFollowUp = await getSettingValue('followUpShowInChat', true);
     const users = await chatColl.aggregate(pipeline).toArray();
     const userIds = users.map(user => user._id);
+    const followStatuses = userIds.length > 0
+      ? await followColl.find({ senderId: { $in: userIds } }).toArray()
+      : [];
     const followMap = {};
+    followStatuses.forEach(status => {
+      followMap[status.senderId] = status;
+    });
 
-    if (showFollowUp && userIds.length > 0) {
-      const followStatuses = await followColl.find({ senderId: { $in: userIds } }).toArray();
-      followStatuses.forEach(status => {
-        followMap[status.senderId] = status;
-      });
-    }
+    const contextCache = new Map();
     
     // แปลงข้อมูลผู้ใช้แต่ละคน
     const normalizedUsers = await Promise.all(users.map(async (user) => {
       const unreadCount = await getUserUnreadCount(user._id);
       const platform = user.platform || 'line';
+      const botId = normalizeFollowUpBotId(user.botId);
+      const contextKey = `${platform}:${botId || 'default'}`;
+
+      let config = contextCache.get(contextKey);
+      if (!config) {
+        config = await getFollowUpConfigForContext(platform, botId);
+        contextCache.set(contextKey, config);
+      }
 
       // ดึงข้อมูลโปรไฟล์
       let userProfile = null;
@@ -5376,6 +5754,10 @@ async function getNormalizedChatUsers() {
       } catch (_) {}
 
       const followStatus = followMap[user._id];
+      const showFollowUp = config.showInChat !== false;
+      const hasFollowUp = showFollowUp && followStatus ? !!followStatus.hasFollowUp : false;
+      const followUpReason = hasFollowUp ? (followStatus.followUpReason || '') : '';
+      const followUpUpdatedAt = hasFollowUp ? (followStatus.followUpUpdatedAt || followStatus.lastAnalyzedAt || null) : null;
       return {
         userId: user._id,
         displayName: userProfile ? userProfile.displayName : user._id.substring(0, 8) + '...',
@@ -5387,11 +5769,16 @@ async function getNormalizedChatUsers() {
         messageCount: user.messageCount,
         unreadCount,
         platform,
-        botId: user.botId || null,
+        botId,
         aiEnabled,
-        hasFollowUp: showFollowUp && followStatus ? !!followStatus.hasFollowUp : false,
-        followUpReason: showFollowUp ? (followStatus?.followUpReason || '') : '',
-        followUpUpdatedAt: showFollowUp ? (followStatus?.followUpUpdatedAt || followStatus?.lastAnalyzedAt || null) : null
+        hasFollowUp,
+        followUpReason,
+        followUpUpdatedAt,
+        followUp: {
+          analysisEnabled: config.analysisEnabled !== false,
+          showInChat: showFollowUp,
+          showInDashboard: config.showInDashboard !== false
+        }
       };
     }));
     

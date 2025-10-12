@@ -155,8 +155,252 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-outline-primary:hover {
-  background: var(--primary);
-  box-shadow: 0 4px 10px rgba(104, 185, 132, 0.2);
+    background: var(--primary);
+    box-shadow: 0 4px 10px rgba(104, 185, 132, 0.2);
+}
+
+/* ================= Follow-up Dashboard ================= */
+.followup-metric-card {
+    background: linear-gradient(135deg, rgba(104, 185, 132, 0.08), rgba(255, 201, 95, 0.08));
+    border-radius: var(--border-radius);
+    padding: 1.25rem;
+    box-shadow: var(--shadow-sm);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.followup-metric-card .metric-label {
+    font-size: 0.9rem;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.06rem;
+}
+
+.followup-metric-card .metric-value {
+    font-size: 2.2rem;
+    font-weight: 600;
+    color: var(--primary-dark);
+    line-height: 1.1;
+}
+
+.followup-metric-card .metric-sub {
+    font-size: 0.85rem;
+    color: var(--text-light);
+    margin-top: 0.25rem;
+}
+
+.followup-page-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.followup-page-pill {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: white;
+    color: var(--text-dark);
+    border-radius: 999px;
+    padding: 0.45rem 0.95rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    box-shadow: var(--shadow-sm);
+    transition: var(--transition);
+    font-weight: 500;
+}
+
+.followup-page-pill .pill-name {
+    white-space: nowrap;
+}
+
+.followup-page-pill .pill-badge {
+    background: rgba(104, 185, 132, 0.15);
+    color: var(--primary-dark);
+    border-radius: 999px;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+}
+
+.followup-page-pill .pill-status {
+    font-size: 0.75rem;
+    border-radius: 999px;
+    padding: 0.05rem 0.45rem;
+}
+
+.followup-page-pill .pill-status.off {
+    background: rgba(255, 104, 104, 0.15);
+    color: var(--danger);
+}
+
+.followup-page-pill .pill-status.muted {
+    background: rgba(0, 0, 0, 0.08);
+    color: var(--text-light);
+}
+
+.followup-page-pill .pill-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--secondary);
+    display: inline-block;
+}
+
+.followup-page-pill:hover,
+.followup-page-pill.active {
+    background: var(--primary);
+    color: white;
+    box-shadow: var(--shadow-md);
+}
+
+.followup-page-pill.active .pill-badge,
+.followup-page-pill.active .pill-status,
+.followup-page-pill.active .pill-dot {
+    color: white;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.followup-page-pill.disabled {
+    opacity: 0.55;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+.followup-toolbar {
+    background: white;
+    border-radius: var(--border-radius);
+    padding: 0.75rem 1rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.followup-search .input-group-text {
+    background: transparent;
+    border-right: none;
+}
+
+.followup-search .form-control {
+    border-left: none;
+}
+
+.followup-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+}
+
+.followup-card {
+    background: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    padding: 1.1rem 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    transition: var(--transition);
+}
+
+.followup-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.followup-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+}
+
+.followup-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: white;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    letter-spacing: 0.04rem;
+}
+
+.followup-card-meta .followup-name {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.1rem;
+}
+
+.followup-card-meta .followup-sub {
+    font-size: 0.78rem;
+    color: var(--text-light);
+}
+
+.followup-card-meta .badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.4rem;
+}
+
+.bg-primary-soft {
+    background: rgba(33, 150, 243, 0.15);
+    color: #1e6bd6;
+}
+
+.bg-success-soft {
+    background: rgba(104, 185, 132, 0.15);
+    color: var(--primary-dark);
+}
+
+.followup-updated {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--text-light);
+}
+
+.followup-reason {
+    font-weight: 500;
+    color: var(--text-dark);
+}
+
+.followup-lastmessage {
+    font-size: 0.85rem;
+    color: var(--text-light);
+}
+
+.followup-lastmessage .label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 0.2rem;
+}
+
+.followup-card-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.followup-card-actions .btn {
+    flex: 1;
+}
+
+.followup-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    padding: 2rem 0;
+    color: var(--text-light);
+}
+
+@media (max-width: 576px) {
+    .followup-list {
+        grid-template-columns: 1fr;
+    }
+
+    .followup-card-actions {
+        flex-direction: column;
+    }
 }
 
 .btn-secondary {
