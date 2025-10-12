@@ -7,6 +7,11 @@ class ChatManager {
         this.users = [];
         this.chatHistory = {};
         this.isLoading = false;
+        const followUpConfig = window.chatCenterFollowUpConfig || {};
+        this.followUpOptions = {
+            analysisEnabled: typeof followUpConfig.analysisEnabled === 'boolean' ? followUpConfig.analysisEnabled : true,
+            showInChat: typeof followUpConfig.showInChat === 'boolean' ? followUpConfig.showInChat : true
+        };
         
         this.init();
     }
@@ -73,6 +78,11 @@ class ChatManager {
         this.socket.on('newMessage', (data) => {
             console.log('ข้อความใหม่:', data);
             this.handleNewMessage(data);
+        });
+
+        this.socket.on('followUpTagged', (data) => {
+            console.log('อัปเดตสถานะติดตาม:', data);
+            this.handleFollowUpTagged(data);
         });
 
         this.socket.on('chatCleared', (data) => {
@@ -152,6 +162,12 @@ class ChatManager {
                 this.users = data.users;
                 this.renderUserList();
                 this.updateUserCount();
+                if (this.currentUserId) {
+                    const current = this.users.find(u => u.userId === this.currentUserId);
+                    if (current) {
+                        this.updateChatHeader(current);
+                    }
+                }
             } else {
                 console.error('ไม่สามารถโหลดรายชื่อผู้ใช้ได้:', data.error);
                 this.showToast('ไม่สามารถโหลดรายชื่อผู้ใช้ได้', 'error');
@@ -193,6 +209,7 @@ class ChatManager {
         const userHtml = this.users.map(user => {
             const isActive = user.userId === this.currentUserId;
             const hasUnread = user.unreadCount > 0;
+            const displayName = user.displayName || `${user.userId.slice(0, 6)}...`;
             
             // ใช้ข้อมูลที่แปลงแล้วจาก backend
             let lastMsg = '';
@@ -204,20 +221,24 @@ class ChatManager {
                     lastMsg = tempDiv.textContent || tempDiv.innerText || '';
                 } else {
                     lastMsg = user.lastMessage;
-                }
             }
-            
-            const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-2">AI เปิด</span>` : `<span class="badge bg-secondary ms-2">AI ปิด</span>`;
+        }
+
+        const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-2">AI เปิด</span>` : `<span class="badge bg-secondary ms-2">AI ปิด</span>`;
+        const followUpBadge = (this.followUpOptions.showInChat && user.hasFollowUp)
+                ? `<span class="badge followup-badge ms-2" title="${this.escapeAttribute(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว')}">ติดตาม</span>`
+                : '';
+        const initials = displayName.charAt(0).toUpperCase();
 
             return `
                 <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" 
                      onclick="chatManager.selectUser('${user.userId}')">
                     <div class="user-item-content">
                         <div class="user-avatar">
-                            ${user.displayName.charAt(0).toUpperCase()}
+                            ${this.escapeHtml(initials)}
                         </div>
                         <div class="user-details">
-                            <div class="user-name">${this.escapeHtml(user.displayName)} ${aiBadge}</div>
+                            <div class="user-name">${this.escapeHtml(displayName)} ${aiBadge} ${followUpBadge}</div>
                             <div class="user-last-message">${this.escapeHtml(lastMsg.substring(0, 50))}${lastMsg.length > 50 ? '...' : ''}</div>
                             <div class="user-timestamp">${this.formatTimestamp(user.lastTimestamp)}</div>
                         </div>
@@ -270,22 +291,36 @@ class ChatManager {
 
     updateChatHeader(user) {
         const chatHeader = document.getElementById('chatHeader');
-        const headerActions = document.getElementById('headerActions');
-        
+
         const aiOn = !!user.aiEnabled;
         const aiBtnClass = aiOn ? 'btn-outline-success' : 'btn-outline-secondary';
         const aiIcon = aiOn ? 'fa-toggle-on text-success' : 'fa-toggle-off text-secondary';
         const aiLabel = aiOn ? 'AI กำลังเปิด' : 'AI ปิดอยู่';
+        const displayName = user.displayName || `${user.userId.slice(0, 6)}...`;
+        const initials = displayName.charAt(0).toUpperCase();
+        const messageCount = Number.isFinite(user.messageCount) ? user.messageCount : 0;
+        const updatedLabel = user.followUpUpdatedAt ? this.formatTimestamp(user.followUpUpdatedAt) : '';
+        const shouldShowFollowUp = this.followUpOptions.showInChat && user.hasFollowUp;
+        const followUpInfo = shouldShowFollowUp ? `
+            <div class="followup-info mt-1">
+                <span class="badge followup-badge me-2">ติดตามลูกค้า</span>
+                <small class="text-muted">
+                    ${this.escapeHtml(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว')}
+                    ${updatedLabel ? '• อัปเดต ' + updatedLabel : ''}
+                </small>
+            </div>
+        ` : '';
 
         chatHeader.innerHTML = `
             <div class="header-content">
                 <div class="user-info">
                     <div class="user-avatar">
-                        ${user.displayName.charAt(0).toUpperCase()}
+                        ${this.escapeHtml(initials)}
                     </div>
                     <div class="user-details">
-                        <h6 class="mb-0">${this.escapeHtml(user.displayName)}</h6>
-                        <small class="text-muted">${user.messageCount} ข้อความ • <span id=\"aiStatusLabel\">${aiLabel}</span></small>
+                        <h6 class="mb-0">${this.escapeHtml(displayName)}</h6>
+                        <small class="text-muted">${messageCount} ข้อความ • <span id="aiStatusLabel">${aiLabel}</span></small>
+                        ${followUpInfo}
                     </div>
                 </div>
                 <div class="header-actions" id="headerActions">
@@ -492,6 +527,27 @@ class ChatManager {
         }
     }
 
+    handleFollowUpTagged(data) {
+        if (!data || !data.userId) return;
+        const user = this.users.find(u => u.userId === data.userId);
+        if (user) {
+            user.hasFollowUp = !!data.hasFollowUp;
+            user.followUpReason = data.followUpReason || '';
+            user.followUpUpdatedAt = data.followUpUpdatedAt || null;
+            this.renderUserList();
+            if (this.currentUserId === data.userId) {
+                this.updateChatHeader(user);
+            }
+        } else if (data.hasFollowUp) {
+            // โหลดใหม่กรณีผู้ใช้ยังไม่อยู่ในรายการ
+            this.loadUsers();
+        }
+
+        if (this.followUpOptions.showInChat && data.hasFollowUp) {
+            this.showToast('ตรวจพบลูกค้ายืนยันการสั่งซื้อ', 'info');
+        }
+    }
+
     async clearUserChat() {
         if (!this.currentUserId) return;
         
@@ -591,6 +647,15 @@ class ChatManager {
         html = html.replace(/\n/g, '<br>');
         
         return html;
+    }
+
+    escapeAttribute(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     // Image handling methods
