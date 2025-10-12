@@ -5,8 +5,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const util = require('util');
 const { google } = require('googleapis');
-const { MongoClient } = require('mongodb');
-const { ObjectId } = require('mongodb');
+const { MongoClient, ObjectId, GridFSBucket } = require('mongodb');
 const { OpenAI } = require('openai');
 const line = require('@line/bot-sdk');
 const sharp = require('sharp'); // <--- เพิ่มตรงนี้ ตามต้นฉบับ
@@ -94,6 +93,97 @@ try {
 } catch (e) {
   console.warn('[Static] Could not ensure asset directories:', e?.message || e);
 }
+
+app.get('/assets/instructions/:fileName', async (req, res, next) => {
+  try {
+    const { fileName } = req.params;
+    if (!fileName) return next();
+
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('instruction_assets');
+    const doc = await coll.findOne({
+      $or: [
+        { fileName },
+        { thumbFileName: fileName },
+        { label: fileName.replace(/\.[^/.]+$/, '') },
+        { label: fileName.replace(/_thumb\.[^/.]+$/, '') }
+      ]
+    });
+
+    if (!doc) return next();
+
+    const bucket = new GridFSBucket(db, { bucketName: 'instructionAssets' });
+    const isThumb = fileName === doc.thumbFileName || fileName.endsWith('_thumb.jpg') || fileName.endsWith('_thumb.jpeg');
+    const targetName = isThumb ? (doc.thumbFileName || `${doc.label}_thumb.jpg`) : (doc.fileName || `${doc.label}.jpg`);
+    const targetId = isThumb ? doc.thumbFileId : doc.fileId;
+    if (!targetName) return next();
+    let fileObjectId = toObjectId(targetId);
+
+    if (!fileObjectId) {
+      const files = await bucket.find({ filename: targetName }).sort({ uploadDate: -1 }).limit(1).toArray();
+      if (!files.length) return next();
+      fileObjectId = files[0]._id;
+    }
+
+    const stream = bucket.openDownloadStream(fileObjectId);
+
+    res.set('Content-Type', doc.mime || 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=604800, immutable');
+    stream.on('error', err => {
+      if (err.code === 'FileNotFound') return next();
+      next(err);
+    });
+    stream.pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/assets/followup/:fileName', async (req, res, next) => {
+  try {
+    const { fileName } = req.params;
+    if (!fileName) return next();
+
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('follow_up_assets');
+    const doc = await coll.findOne({
+      $or: [
+        { fileName },
+        { thumbName: fileName },
+        { thumbFileName: fileName }
+      ]
+    });
+
+    if (!doc) return next();
+
+    const bucket = new GridFSBucket(db, { bucketName: 'followupAssets' });
+    const isThumb = fileName === doc.thumbName || fileName === doc.thumbFileName || fileName.endsWith('_thumb.jpg') || fileName.endsWith('_thumb.jpeg');
+    const targetName = isThumb ? (doc.thumbFileName || doc.thumbName) : doc.fileName;
+    const targetId = isThumb ? (doc.thumbFileId || null) : (doc.fileId || null);
+    if (!targetName) return next();
+    let fileObjectId = toObjectId(targetId);
+
+    if (!fileObjectId) {
+      const files = await bucket.find({ filename: targetName }).sort({ uploadDate: -1 }).limit(1).toArray();
+      if (!files.length) return next();
+      fileObjectId = files[0]._id;
+    }
+
+    const stream = bucket.openDownloadStream(fileObjectId);
+
+    res.set('Content-Type', doc.mime || 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=604800, immutable');
+    stream.on('error', err => {
+      if (err.code === 'FileNotFound') return next();
+      next(err);
+    });
+    stream.pipe(res);
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Avoid favicon 404s in environments without a favicon
 app.get('/favicon.ico', (req, res) => res.sendStatus(204));
@@ -1003,7 +1093,14 @@ async function scheduleFollowUpForUser(userId, options = {}) {
     if (existingTask) {
       if (!existingTask.completed && !existingTask.canceled) {
         const nextScheduledAt = existingTask.nextScheduledAt ? new Date(existingTask.nextScheduledAt) : null;
-        if (nextScheduledAt && messageTimestamp < nextScheduledAt) {
+        const sentRoundsCount = Array.isArray(existingTask.rounds)
+          ? existingTask.rounds.reduce((count, round) => (round?.status === 'sent' ? count + 1 : count), 0)
+          : Array.isArray(existingTask.sentRounds)
+            ? existingTask.sentRounds.length
+            : (typeof existingTask.nextRoundIndex === 'number' ? existingTask.nextRoundIndex : 0);
+        const shouldCancel = nextScheduledAt && messageTimestamp < nextScheduledAt && sentRoundsCount > 1;
+
+        if (shouldCancel) {
           await coll.updateOne(
             { _id: existingTask._id },
             {
@@ -2170,6 +2267,7 @@ async function processFlushedMessages(userId, mergedContent, queueContext = {}) 
   const channelAccessToken = queueContext.channelAccessToken;
   const channelSecret = queueContext.channelSecret;
   const lineClientFromContext = queueContext.lineClient;
+  const facebookAccessToken = queueContext.facebookAccessToken || queueContext.accessToken || queueContext.pageAccessToken || null;
   const isLinePlatform = (queueContext.botType === 'line') || (platform === 'line');
 
   async function replyWithLineText(messageText) {
@@ -2315,6 +2413,21 @@ async function processFlushedMessages(userId, mergedContent, queueContext = {}) 
     const sent = await replyWithLineText(filteredMessage);
     if (sent) {
       console.log(`[LOG] ส่งข้อความตอบกลับเรียบร้อยแล้ว`);
+    }
+  } else if (platform === 'facebook') {
+    console.log(`[LOG] ส่งข้อความตอบกลับผ่าน Facebook ให้ผู้ใช้: ${userId}`);
+    const filteredMessage = await filterMessage(assistantMsg);
+    console.log(`[LOG] ข้อความหลังกรอง (Facebook): ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? '...' : ''}`);
+
+    if (!facebookAccessToken) {
+      console.error('[Facebook] ไม่พบ access token สำหรับการส่งข้อความ');
+    } else if (filteredMessage) {
+      try {
+        await sendFacebookMessage(userId, filteredMessage, facebookAccessToken);
+        console.log('[Facebook] ส่งข้อความตอบกลับเรียบร้อยแล้ว');
+      } catch (error) {
+        console.error('[Facebook] ไม่สามารถส่งข้อความตอบกลับได้:', error);
+      }
     }
   }
 }
@@ -2838,9 +2951,10 @@ async function buildSystemInstructions(history) {
 
 async function buildSystemInstructionsWithContext(history, queueContext = {}) {
   const hasSelectedLibraries = Array.isArray(queueContext.selectedInstructions) && queueContext.selectedInstructions.length > 0;
-  const isLineBot = queueContext.botType === 'line' || queueContext.platform === 'line';
+  const botKind = queueContext.botType || queueContext.platform || 'line';
+  const supportsLibrary = hasSelectedLibraries && ['line', 'facebook'].includes(botKind);
 
-  if (isLineBot && hasSelectedLibraries) {
+  if (supportsLibrary) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -3138,6 +3252,68 @@ async function getInstructions() {
   return coll.find({}).sort({ order: 1, createdAt: 1 }).toArray();
 }
 
+function toObjectId(id) {
+  if (!id) return null;
+  if (id instanceof ObjectId) return id;
+  try {
+    return new ObjectId(id);
+  } catch (e) {
+    return null;
+  }
+}
+
+function streamToBuffer(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on('data', chunk => chunks.push(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+async function uploadBufferToGridFS(bucket, filename, buffer, options = {}) {
+  return new Promise((resolve, reject) => {
+    const uploadStream = bucket.openUploadStream(filename, options);
+    uploadStream.on('error', reject);
+    uploadStream.on('finish', () => resolve(uploadStream.id));
+    uploadStream.end(buffer);
+  });
+}
+
+async function deleteGridFsEntries(bucket, entries = []) {
+  for (const entry of entries) {
+    if (!entry) continue;
+    if (entry.id) {
+      const objectId = toObjectId(entry.id);
+      if (!objectId) continue;
+      try {
+        await bucket.delete(objectId);
+      } catch (err) {
+        if (err.code !== 'FileNotFound' && err.code !== 26) {
+          console.warn('[GridFS] delete by id failed:', err?.message || err);
+        }
+      }
+      continue;
+    }
+    if (entry.filename) {
+      try {
+        const files = await bucket.find({ filename: entry.filename }).toArray();
+        for (const file of files) {
+          try {
+            await bucket.delete(file._id);
+          } catch (err) {
+            if (err.code !== 'FileNotFound' && err.code !== 26) {
+              console.warn('[GridFS] delete by filename failed:', err?.message || err);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[GridFS] find for delete failed:', err?.message || err);
+      }
+    }
+  }
+}
+
 // ============================ Instruction Assets Helpers ============================
 async function getInstructionAssets() {
   try {
@@ -3145,7 +3321,11 @@ async function getInstructionAssets() {
     const db = client.db('chatbot');
     const coll = db.collection('instruction_assets');
     const assets = await coll.find({}).sort({ createdAt: -1 }).toArray();
-    return assets;
+    return assets.map(asset => ({
+      ...asset,
+      fileId: asset?.fileId ? asset.fileId.toString() : undefined,
+      thumbFileId: asset?.thumbFileId ? asset.thumbFileId.toString() : undefined
+    }));
   } catch (e) {
     console.error('[Assets] Error fetching assets:', e);
     return [];
@@ -3682,6 +3862,15 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
       return res.status(404).json({ error: 'Facebook Bot ไม่พบหรือไม่เปิดใช้งาน' });
     }
 
+    const queueOptionsBase = {
+      botType: 'facebook',
+      platform: 'facebook',
+      botId: facebookBot._id ? facebookBot._id.toString() : null,
+      facebookAccessToken: facebookBot.accessToken,
+      aiModel: facebookBot.aiModel || null,
+      selectedInstructions: facebookBot.selectedInstructions || []
+    };
+
     // Respond immediately to avoid Facebook retries
     res.status(200).json({ status: 'EVENT_RECEIVED' });
 
@@ -3752,11 +3941,14 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
 
           if (messagingEvent.message) {
             const senderId = messagingEvent.sender.id;
-            const contentSequence = [];
+            const queueOptions = { ...queueOptionsBase };
+            const itemsToQueue = [];
             const messageText = messagingEvent.message.text;
 
             if (messageText) {
-              contentSequence.push({ type: 'text', content: messageText });
+              itemsToQueue.push({
+                data: { type: 'text', text: messageText }
+              });
             }
 
             if (messagingEvent.message.attachments) {
@@ -3764,7 +3956,13 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
                 if (attachment.type === 'image' && attachment.payload?.url) {
                   try {
                     const base64 = await fetchFacebookImageAsBase64(attachment.payload.url);
-                    contentSequence.push({ type: 'image', content: base64, description: 'ผู้ใช้ส่งรูปภาพมา' });
+                    itemsToQueue.push({
+                      data: {
+                        type: 'image',
+                        base64,
+                        text: 'ผู้ใช้ส่งรูปภาพมา'
+                      }
+                    });
                   } catch (imgErr) {
                     console.error(`[Facebook Bot: ${facebookBot.name}] Error fetching image:`, imgErr.message);
                   }
@@ -3772,38 +3970,19 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
               }
             }
 
-            if (contentSequence.length === 0) {
+            if (itemsToQueue.length === 0) {
               await sendFacebookMessage(senderId, 'ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้', facebookBot.accessToken);
               continue;
             }
 
-            console.log(`[Facebook Bot: ${facebookBot.name}] ข้อความจาก ${senderId}: ${messageText || '[มีรูปภาพ]'}`);
+            console.log(`[Facebook Bot: ${facebookBot.name}] รับข้อความเข้าคิวจาก ${senderId}: ${messageText || '[มีรูปภาพ]'}`);
 
-            try {
-              // ตรวจสอบสถานะ AI ของผู้ใช้ หากปิดอยู่ ให้บันทึกประวัติและไม่เรียก AI
-              const userStatus = await getUserStatus(senderId);
-              if (userStatus && userStatus.aiEnabled === false) {
-                await saveChatHistory(senderId, contentSequence, '', 'facebook', facebookBot._id.toString());
-                await notifyAdminsNewMessage(senderId, {
-                  content: messageText || 'ไฟล์แนบ',
-                  role: 'user',
-                  timestamp: new Date(),
-                  platform: 'facebook'
-                });
-              } else {
-                const aiResponse = await processFacebookMessageWithAI(contentSequence, senderId, facebookBot);
-                await sendFacebookMessage(senderId, aiResponse, facebookBot.accessToken);
-
-                await notifyAdminsNewMessage(senderId, {
-                  content: messageText || 'ไฟล์แนบ',
-                  role: 'user',
-                  timestamp: new Date(),
-                  platform: 'facebook'
-                });
+            for (const item of itemsToQueue) {
+              try {
+                await addToQueue(senderId, { ...item }, queueOptions);
+              } catch (queueErr) {
+                console.error(`[Facebook Bot: ${facebookBot.name}] Error queuing message:`, queueErr);
               }
-            } catch (error) {
-              console.error(`[Facebook Bot: ${facebookBot.name}] Error processing message:`, error);
-              await sendFacebookMessage(senderId, 'ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ', facebookBot.accessToken);
             }
           }
         }
@@ -3951,10 +4130,66 @@ async function sendFacebookImageByUpload(recipientId, seg, accessToken) {
 
 // Helper: read local asset buffer robustly (handle ext variants and URL fallback)
 async function readInstructionAssetBuffer(seg) {
+  const label = seg.label || '';
+  const requestedFileName = seg.fileName || '';
+  let assetDoc = null;
+
+  try {
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('instruction_assets');
+
+    if (label) {
+      assetDoc = await coll.findOne({ label });
+    }
+    if (!assetDoc && requestedFileName) {
+      assetDoc = await coll.findOne({ $or: [{ fileName: requestedFileName }, { thumbFileName: requestedFileName }] });
+    }
+
+    if (assetDoc) {
+      const bucket = new GridFSBucket(db, { bucketName: 'instructionAssets' });
+      const useThumb = requestedFileName && (requestedFileName === assetDoc.thumbFileName || requestedFileName.endsWith('_thumb.jpg'));
+      const targetFileName = useThumb
+        ? (assetDoc.thumbFileName || `${assetDoc.label}_thumb.jpg`)
+        : (assetDoc.fileName || `${assetDoc.label}.jpg`);
+      const targetId = useThumb ? assetDoc.thumbFileId : assetDoc.fileId;
+      let downloadStream = null;
+
+      if (targetId) {
+        const objectId = toObjectId(targetId);
+        if (objectId) {
+          downloadStream = bucket.openDownloadStream(objectId);
+        }
+      }
+
+      if (!downloadStream) {
+        downloadStream = bucket.openDownloadStreamByName(targetFileName);
+      }
+
+      const buffer = await streamToBuffer(downloadStream);
+      let contentType = assetDoc.mime || 'image/jpeg';
+      if (!assetDoc.mime) {
+        const ext = path.extname(targetFileName).toLowerCase();
+        if (ext === '.png') contentType = 'image/png';
+        else if (ext === '.webp') contentType = 'image/webp';
+      }
+
+      return {
+        buffer,
+        filename: targetFileName,
+        contentType
+      };
+    }
+  } catch (err) {
+    console.warn('[Assets] read buffer from MongoDB failed, fallback to filesystem/url:', err?.message || err);
+  }
+
   const baseDir = ASSETS_DIR;
   const tryFiles = [];
-  if (seg.fileName) tryFiles.push(seg.fileName);
-  tryFiles.push(`${seg.label}.jpg`, `${seg.label}.jpeg`, `${seg.label}.png`, `${seg.label}.webp`, `${seg.label}_thumb.jpg`);
+  if (requestedFileName) tryFiles.push(requestedFileName);
+  if (label) {
+    tryFiles.push(`${label}.jpg`, `${label}.jpeg`, `${label}.png`, `${label}.webp`, `${label}_thumb.jpg`);
+  }
 
   for (const name of tryFiles) {
     const p = path.join(baseDir, name);
@@ -3968,16 +4203,15 @@ async function readInstructionAssetBuffer(seg) {
     } catch (_) { /* ignore */ }
   }
 
-  // Fallback: fetch by URL if available
   if (seg.url) {
     const resp = await axios.get(seg.url, { responseType: 'arraybuffer' });
     const b = Buffer.from(resp.data);
     const urlExt = (seg.url.split('.').pop() || 'jpg').toLowerCase();
     const ct = urlExt.startsWith('png') ? 'image/png' : urlExt.startsWith('webp') ? 'image/webp' : 'image/jpeg';
-    return { buffer: b, filename: seg.fileName || `${seg.label}.jpg`, contentType: ct };
+    return { buffer: b, filename: seg.fileName || `${label || 'image'}.jpg`, contentType: ct };
   }
 
-  throw new Error('อ่านไฟล์รูปภาพไม่สำเร็จ: ไม่พบไฟล์ในเครื่องและไม่มี URL ให้ดึง');
+  throw new Error('อ่านไฟล์รูปภาพไม่สำเร็จ: ไม่พบไฟล์ในระบบและไม่มี URL ให้ดึง');
 }
 
 // Helper to download and optimize Facebook image to base64
@@ -5075,10 +5309,6 @@ app.post('/admin/instructions/assets', imageUpload.single('image'), async (req, 
       return res.status(400).json({ success: false, error: 'กรุณาอัพโหลดไฟล์รูปภาพ' });
     }
 
-    // Ensure folder exists
-    const baseDir = ASSETS_DIR;
-    if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
-
     // Convert to optimized JPEG and thumbnail
     const inputBuffer = req.file.buffer;
     const image = sharp(inputBuffer);
@@ -5089,10 +5319,6 @@ app.post('/admin/instructions/assets', imageUpload.single('image'), async (req, 
     const sha256 = crypto.createHash('sha256').update(optimized).digest('hex').slice(0, 16);
     const fileName = `${label}.jpg`;
     const thumbName = `${label}_thumb.jpg`;
-    const filePath = path.join(baseDir, fileName);
-    const thumbPath = path.join(baseDir, thumbName);
-    fs.writeFileSync(filePath, optimized);
-    fs.writeFileSync(thumbPath, thumb);
 
     const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, '') : '';
     const url = `${urlBase}/assets/instructions/${fileName}`;
@@ -5101,11 +5327,45 @@ app.post('/admin/instructions/assets', imageUpload.single('image'), async (req, 
     const client = await connectDB();
     const db = client.db('chatbot');
     const coll = db.collection('instruction_assets');
+    const bucket = new GridFSBucket(db, { bucketName: 'instructionAssets' });
 
     const existing = await coll.findOne({ label });
+    if (existing && !overwrite) {
+      return res.status(409).json({ success: false, error: 'label นี้มีอยู่แล้ว หากต้องการแทนที่ให้ส่ง overwrite=true' });
+    }
+
+    if (existing) {
+      await deleteGridFsEntries(bucket, [
+        { id: existing.fileId },
+        { id: existing.thumbFileId },
+        { filename: existing.fileName },
+        { filename: existing.thumbFileName || `${label}_thumb.jpg` }
+      ]);
+    }
+
+    const [fileId, thumbFileId] = await Promise.all([
+      uploadBufferToGridFS(bucket, fileName, optimized, {
+        contentType: 'image/jpeg',
+        metadata: {
+          label,
+          type: 'original',
+          width: metadata.width || null,
+          height: metadata.height || null
+        }
+      }),
+      uploadBufferToGridFS(bucket, thumbName, thumb, {
+        contentType: 'image/jpeg',
+        metadata: { label, type: 'thumb' }
+      })
+    ]);
+
     const doc = {
       label,
       fileName,
+      thumbFileName: thumbName,
+      fileId,
+      thumbFileId,
+      storage: 'mongo',
       mime: 'image/jpeg',
       size: optimized.length,
       width: metadata.width || null,
@@ -5119,13 +5379,16 @@ app.post('/admin/instructions/assets', imageUpload.single('image'), async (req, 
       createdAt: existing?.createdAt || new Date()
     };
 
-    if (existing && !overwrite) {
-      return res.status(409).json({ success: false, error: 'label นี้มีอยู่แล้ว หากต้องการแทนที่ให้ส่ง overwrite=true' });
-    }
-
     await coll.updateOne({ label }, { $set: doc }, { upsert: true });
 
-    res.json({ success: true, asset: doc });
+    res.json({
+      success: true,
+      asset: {
+        ...doc,
+        fileId: doc.fileId?.toString?.() || doc.fileId,
+        thumbFileId: doc.thumbFileId?.toString?.() || doc.thumbFileId
+      }
+    });
   } catch (err) {
     console.error('[Assets] upload error:', err);
     res.status(400).json({ success: false, error: err.message || 'อัพโหลดรูปภาพไม่สำเร็จ' });
@@ -5144,9 +5407,18 @@ app.delete('/admin/instructions/assets/:label', async (req, res) => {
 
     await coll.deleteOne({ label });
 
-    // Remove files if exist
+    const bucket = new GridFSBucket(db, { bucketName: 'instructionAssets' });
+    await deleteGridFsEntries(bucket, [
+      { id: doc.fileId },
+      { id: doc.thumbFileId },
+      { filename: doc.fileName },
+      { filename: doc.thumbFileName || `${label}_thumb.jpg` }
+    ]);
+
+    // Remove files on disk if exist (legacy fallback)
     const baseDir = ASSETS_DIR;
-    const files = [path.join(baseDir, doc.fileName), path.join(baseDir, `${label}_thumb.jpg`)];
+    const thumbName = doc.thumbFileName || `${label}_thumb.jpg`;
+    const files = [path.join(baseDir, doc.fileName || ''), path.join(baseDir, thumbName)];
     files.forEach(p => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch(_){} });
 
     res.json({ success: true });
@@ -5496,13 +5768,10 @@ app.post('/admin/followup/assets', imageUpload.array('images', 5), async (req, r
       return res.status(400).json({ success: false, error: 'กรุณาอัพโหลดไฟล์รูปภาพ' });
     }
 
-    if (!fs.existsSync(FOLLOWUP_ASSETS_DIR)) {
-      fs.mkdirSync(FOLLOWUP_ASSETS_DIR, { recursive: true });
-    }
-
     const client = await connectDB();
     const db = client.db('chatbot');
     const coll = db.collection('follow_up_assets');
+    const bucket = new GridFSBucket(db, { bucketName: 'followupAssets' });
     const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, '') : '';
 
     const assets = [];
@@ -5538,15 +5807,28 @@ app.post('/admin/followup/assets', imageUpload.array('images', 5), async (req, r
       const baseName = `followup_${timestamp}_${uniqueId}`;
       const fileName = `${baseName}.jpg`;
       const thumbName = `${baseName}_thumb.jpg`;
-      const filePath = path.join(FOLLOWUP_ASSETS_DIR, fileName);
-      const thumbPath = path.join(FOLLOWUP_ASSETS_DIR, thumbName);
-
-      fs.writeFileSync(filePath, optimized);
-      fs.writeFileSync(thumbPath, thumb);
+      const [fileId, thumbFileId] = await Promise.all([
+        uploadBufferToGridFS(bucket, fileName, optimized, {
+          contentType: 'image/jpeg',
+          metadata: {
+            type: 'original',
+            width: metadata.width || null,
+            height: metadata.height || null
+          }
+        }),
+        uploadBufferToGridFS(bucket, thumbName, thumb, {
+          contentType: 'image/jpeg',
+          metadata: { type: 'thumb' }
+        })
+      ]);
 
       const assetDoc = {
         fileName,
         thumbName,
+        thumbFileName: thumbName,
+        fileId,
+        thumbFileId,
+        storage: 'mongo',
         sha256,
         mime: 'image/jpeg',
         size: optimized.length,

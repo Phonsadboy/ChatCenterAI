@@ -313,14 +313,133 @@
     padding: 0.75rem 1rem;
 }
 
-.bot-list-grid {
-    display: grid;
-    gap: 1rem;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+.bot-overview-table-container {
+    display: block;
 }
 
-.bot-list-grid .card {
+.bot-overview-table-wrapper {
+    background: #ffffff;
+    border-radius: 16px;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    box-shadow: 0 16px 32px rgba(15, 34, 58, 0.08);
+    overflow: hidden;
+}
+
+.bot-overview-table {
     margin-bottom: 0;
+}
+
+.bot-overview-table thead th {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6c757d;
+    background: rgba(102, 126, 234, 0.08);
+    border-top: none;
+    padding-top: 0.85rem;
+    padding-bottom: 0.85rem;
+}
+
+.bot-overview-table tbody td {
+    vertical-align: top;
+    padding: 1.15rem 1.25rem;
+}
+
+.bot-overview-table tbody tr + tr td {
+    border-top: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.bot-overview-row:hover td {
+    background: rgba(102, 126, 234, 0.05);
+}
+
+.bot-overview-name {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.bot-overview-description {
+    margin-top: 0.35rem;
+}
+
+.bot-overview-badge .badge {
+    font-size: 0.78rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 999px;
+}
+
+.bot-overview-status .badge {
+    min-width: 96px;
+    justify-content: center;
+}
+
+.bot-overview-ellipsis {
+    max-width: 220px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 500;
+    color: #495057;
+}
+
+.bot-overview-actions .btn {
+    min-width: 112px;
+}
+
+.bot-overview-actions .btn i {
+    pointer-events: none;
+}
+
+.bot-overview-actions .d-flex {
+    gap: 0.5rem;
+}
+
+@media (max-width: 992px) {
+    .bot-overview-table thead {
+        display: none;
+    }
+
+    .bot-overview-table tbody tr {
+        display: block;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+        padding: 1rem 1.25rem;
+    }
+
+    .bot-overview-table tbody td {
+        display: block;
+        width: 100%;
+        padding: 0.65rem 0;
+    }
+
+    .bot-overview-table tbody td::before {
+        content: attr(data-label);
+        display: block;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #6c757d;
+        margin-bottom: 0.25rem;
+    }
+
+    .bot-overview-info .bot-overview-name {
+        font-size: 1.05rem;
+    }
+
+    .bot-overview-actions {
+        margin-top: 0.85rem;
+    }
+
+    .bot-overview-actions .d-flex {
+        gap: 0.5rem;
+    }
+
+    .bot-overview-actions .btn {
+        flex: 1 0 48%;
+        min-width: unset;
+    }
 }
 
 @media (max-width: 575.98px) {
