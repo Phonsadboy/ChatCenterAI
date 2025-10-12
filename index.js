@@ -6195,8 +6195,8 @@ app.post('/api/settings/chat', async (req, res) => {
     const coll = db.collection("settings");
     
     // Validate input
-    if (chatDelaySeconds < 1 || chatDelaySeconds > 60) {
-      return res.status(400).json({ success: false, error: 'ระยะเวลาดีเลย์ต้องอยู่ระหว่าง 1-60 วินาที' });
+    if (chatDelaySeconds < 0 || chatDelaySeconds > 60) {
+      return res.status(400).json({ success: false, error: 'ระยะเวลาดีเลย์ต้องอยู่ระหว่าง 0-60 วินาที' });
     }
     
     if (maxQueueMessages < 1 || maxQueueMessages > 20) {
