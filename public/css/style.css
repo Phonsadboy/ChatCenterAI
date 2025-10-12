@@ -1252,87 +1252,152 @@ h1, h2, h3, h4, h5, h6 {
     opacity: 0.6;
 }
 
-.followup-page-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 1rem;
-}
-
-.followup-page-card {
+.followup-page-table-wrapper {
     background: #ffffff;
-    border: 1px solid rgba(0, 0, 0, 0.05);
     border-radius: 14px;
+    border: 1px solid rgba(0, 0, 0, 0.05);
     box-shadow: var(--shadow-sm);
-    padding: 1rem 1.15rem;
-    display: flex;
-    flex-direction: column;
-    transition: var(--transition);
+    overflow: hidden;
 }
 
-.followup-page-card:hover {
-    box-shadow: var(--shadow-md);
-    transform: translateY(-2px);
+.followup-page-table {
+    margin-bottom: 0;
 }
 
-.followup-page-card.active {
-    border-color: rgba(104, 185, 132, 0.4);
-    box-shadow: 0 0 0 2px rgba(104, 185, 132, 0.15);
+.followup-page-table thead th {
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-light);
+    background: rgba(33, 150, 83, 0.06);
+    border-top: none;
 }
 
-.followup-page-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-    margin-bottom: 0.75rem;
+.followup-page-table tbody td {
+    vertical-align: top;
+    padding-top: 1.1rem;
+    padding-bottom: 1.1rem;
 }
 
-.page-card-name {
+.followup-page-table tbody tr {
+    cursor: pointer;
+}
+
+.followup-page-row.is-muted {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.followup-page-row.is-active td {
+    background: rgba(104, 185, 132, 0.08);
+}
+
+.followup-page-info .badge {
+    font-size: 0.72rem;
+}
+
+.followup-page-name {
     font-weight: 600;
     font-size: 1rem;
-    margin-bottom: 0.15rem;
 }
 
-.page-card-meta {
-    font-size: 0.8rem;
+.followup-page-subtitle {
+    font-size: 0.82rem;
 }
 
-.followup-page-card-body {
+.followup-page-flags .badge {
+    font-size: 0.74rem;
+    border-radius: 999px;
+    padding: 0.35rem 0.65rem;
+}
+
+.followup-page-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    font-size: 0.85rem;
+}
+
+.followup-page-stat {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
-    margin-bottom: 0.75rem;
+    gap: 0.2rem;
 }
 
-.page-stat-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.86rem;
+.followup-page-stat .label {
+    color: var(--text-light);
 }
 
-.page-stat-row span:last-child {
+.followup-page-stat .value {
     font-weight: 600;
+    font-size: 1.05rem;
 }
 
-.page-flags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
+.followup-page-control .form-switch {
+    display: inline-flex;
 }
 
-.page-flags .badge {
-    margin-right: 0.4rem;
-    font-size: 0.75rem;
-}
-
-.followup-page-card-actions {
-    display: flex;
-    gap: 0.5rem;
-}
-
-.followup-page-card-actions .btn {
-    flex: 1;
+.followup-page-actions .btn-group .btn {
+    min-width: 105px;
     white-space: nowrap;
+}
+
+@media (max-width: 992px) {
+    .followup-page-table thead {
+        display: none;
+    }
+
+    .followup-page-table tbody tr {
+        display: block;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+        padding: 1rem 1.25rem;
+    }
+
+    .followup-page-table tbody td {
+        display: block;
+        width: 100%;
+        padding: 0.6rem 0;
+    }
+
+    .followup-page-table tbody td::before {
+        content: attr(data-label);
+        display: block;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-light);
+        margin-bottom: 0.25rem;
+    }
+
+    .followup-page-table tbody td.followup-page-info {
+        display: block;
+        padding-bottom: 0.75rem;
+    }
+
+    .followup-page-table tbody td.followup-page-info::before {
+        content: '';
+        display: none;
+    }
+
+    .followup-page-table tbody td.followup-page-stats {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.5rem;
+        padding-bottom: 0.75rem;
+    }
+
+    .followup-page-actions {
+        justify-content: flex-end;
+    }
+
+    .followup-page-actions .btn-group {
+        width: 100%;
+        gap: 0.5rem;
+    }
+
+    .followup-page-actions .btn-group .btn {
+        flex: 1;
+    }
 }
 
 /* Dark mode support (optional) */

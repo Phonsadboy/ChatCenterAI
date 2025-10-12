@@ -412,7 +412,7 @@
         }
 
         const now = Date.now();
-        const cardsHtml = state.pages.map(page => {
+        const rowsHtml = state.pages.map(page => {
             const group = groupsMap.get(page.id) || null;
             const stats = group?.stats || defaultSummary();
             const usersInGroup = Array.isArray(group?.users) ? group.users : [];
@@ -427,50 +427,86 @@
             const analysisEnabled = page.settings && page.settings.analysisEnabled !== false;
             const platformLabel = page.platform === 'facebook' ? 'Facebook' : 'LINE';
             const subtitle = page.botId ? `${platformLabel} • บอทเฉพาะ` : `${platformLabel} • ค่าเริ่มต้น`;
-            const activeClass = state.currentPage && state.currentPage.id === page.id ? ' active' : '';
+            const isActive = state.currentPage && state.currentPage.id === page.id;
             const showInDashboard = !(page.settings && page.settings.showInDashboard === false);
             const showInChat = !(page.settings && page.settings.showInChat === false);
+            const rowClasses = ['followup-page-row'];
+            if (isActive) rowClasses.push('is-active');
+            if (!showInDashboard) rowClasses.push('is-muted');
+            const badges = [
+                `<span class="badge ${autoEnabled ? 'bg-success-soft text-success' : 'bg-secondary'}">${autoEnabled ? 'ส่งอัตโนมัติ: เปิด' : 'ส่งอัตโนมัติ: ปิด'}</span>`,
+                `<span class="badge ${analysisEnabled ? 'bg-info' : 'bg-secondary'}">วิเคราะห์ด้วย AI: ${analysisEnabled ? 'เปิด' : 'ปิด'}</span>`,
+                `<span class="badge ${showInDashboard ? 'bg-primary-soft text-primary' : 'bg-warning text-dark'}">${showInDashboard ? 'แสดงในแดชบอร์ด' : 'ซ่อนจากแดชบอร์ด'}</span>`,
+                `<span class="badge ${showInChat ? 'bg-light text-dark' : 'bg-secondary'}">ป้ายหน้าแชท: ${showInChat ? 'เปิด' : 'ปิด'}</span>`
+            ];
 
             return `
-                <div class="followup-page-card${activeClass}" data-page-id="${page.id}">
-                    <div class="followup-page-card-header">
-                        <div>
-                            <div class="page-card-name">${escapeHtml(page.name)}</div>
-                            <div class="page-card-meta text-muted">${escapeHtml(subtitle)}</div>
+                <tr class="${rowClasses.join(' ')}" data-page-id="${page.id}">
+                    <td class="followup-page-info" data-label="เพจ / บอท">
+                        <div class="followup-page-name">
+                            ${escapeHtml(page.name)}
+                            ${isActive ? '<span class="badge bg-success-soft text-success ms-2">กำลังดูอยู่</span>' : ''}
                         </div>
-                        <div class="form-check form-switch">
-                            <input class="form-check-input followup-auto-toggle" type="checkbox" data-page-id="${page.id}" ${autoEnabled ? 'checked' : ''}>
-                            <label class="form-check-label">ส่งอัตโนมัติ</label>
+                        <div class="followup-page-subtitle text-muted small">${escapeHtml(subtitle)}</div>
+                        <div class="followup-page-flags d-flex flex-wrap gap-2 mt-2">
+                            ${badges.join('')}
                         </div>
-                    </div>
-                    <div class="followup-page-card-body">
-                        <div class="page-stat-row"><span>กำลังติดตาม</span><span>${stats.active || 0} ราย</span></div>
-                        <div class="page-stat-row"><span>ส่งครบแล้ว</span><span>${stats.completed || 0} ราย</span></div>
-                        <div class="page-stat-row"><span>ยกเลิกแล้ว</span><span>${stats.canceled || 0} ราย</span></div>
-                        <div class="page-stat-row"><span>ส่งไม่สำเร็จ</span><span>${stats.failed || 0} ราย</span></div>
-                        <div class="page-stat-row text-muted small">
-                            <span>รอส่งภายใน 30 นาที</span><span>${dueSoon} ราย</span>
+                        ${dueSoon > 0 ? `<div class="followup-page-meta text-muted small mt-2">รอส่งภายใน 30 นาที: <strong>${dueSoon}</strong> ราย</div>` : ''}
+                    </td>
+                    <td class="followup-page-stats" data-label="สถิติวันนี้">
+                        <div class="followup-page-stat">
+                            <span class="label">กำลังติดตาม</span>
+                            <span class="value">${stats.active || 0}</span>
                         </div>
-                        <div class="page-flags mt-2">
-                            <span class="badge ${autoEnabled ? 'bg-success' : 'bg-secondary'}">${autoEnabled ? 'ส่งอัตโนมัติ: เปิด' : 'ส่งอัตโนมัติ: ปิด'}</span>
-                            <span class="badge ${analysisEnabled ? 'bg-info' : 'bg-secondary'}">วิเคราะห์ด้วย AI: ${analysisEnabled ? 'เปิด' : 'ปิด'}</span>
-                            <span class="badge ${showInDashboard ? 'bg-primary-soft text-primary' : 'bg-warning text-dark'}">${showInDashboard ? 'แสดงในแดชบอร์ด' : 'ซ่อนในแดชบอร์ด'}</span>
-                            <span class="badge ${showInChat ? 'bg-light text-dark' : 'bg-secondary'}">ป้ายในหน้าแชท: ${showInChat ? 'เปิด' : 'ปิด'}</span>
+                        <div class="followup-page-stat">
+                            <span class="label">ส่งครบแล้ว</span>
+                            <span class="value text-success">${stats.completed || 0}</span>
                         </div>
-                    </div>
-                    <div class="followup-page-card-actions">
-                        <button type="button" class="btn btn-outline-primary btn-sm" data-action="select" data-page-id="${page.id}">
-                            <i class="fas fa-eye me-1"></i>ดูรายละเอียด
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" data-action="edit" data-page-id="${page.id}">
-                            <i class="fas fa-sliders-h me-1"></i>แก้ไข
-                        </button>
-                    </div>
-                </div>
+                        <div class="followup-page-stat">
+                            <span class="label">ยกเลิกแล้ว</span>
+                            <span class="value text-muted">${stats.canceled || 0}</span>
+                        </div>
+                        <div class="followup-page-stat">
+                            <span class="label">ส่งไม่สำเร็จ</span>
+                            <span class="value text-danger">${stats.failed || 0}</span>
+                        </div>
+                    </td>
+                    <td class="followup-page-control text-center" data-label="ส่งอัตโนมัติ">
+                        <div class="form-check form-switch justify-content-center">
+                            <input class="form-check-input followup-auto-toggle" type="checkbox" data-page-id="${page.id}" ${autoEnabled ? 'checked' : ''} aria-label="สลับการส่งอัตโนมัติสำหรับ ${escapeHtml(page.name)}">
+                        </div>
+                    </td>
+                    <td class="followup-page-actions text-end" data-label="การจัดการ">
+                        <div class="btn-group btn-group-sm" role="group" aria-label="การจัดการเพจ ${escapeHtml(page.name)}">
+                            <button type="button" class="btn btn-outline-primary" data-action="select" data-page-id="${page.id}">
+                                <i class="fas fa-eye me-1"></i>ดูลูกค้า
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" data-action="edit" data-page-id="${page.id}">
+                                <i class="fas fa-sliders-h me-1"></i>แก้ไข
+                            </button>
+                        </div>
+                    </td>
+                </tr>
             `;
         }).join('');
 
-        el.pageGrid.innerHTML = cardsHtml;
+        el.pageGrid.innerHTML = `
+            <div class="table-responsive followup-page-table-wrapper">
+                <table class="table table-hover align-middle followup-page-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">เพจ / บอท</th>
+                            <th scope="col" class="followup-page-stats-head">สถิติวันนี้</th>
+                            <th scope="col" class="text-center">ส่งอัตโนมัติ</th>
+                            <th scope="col" class="text-end">การจัดการ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
+            </div>
+        `;
 
         el.pageGrid.querySelectorAll('.followup-auto-toggle').forEach(input => {
             input.addEventListener('change', async (event) => {
@@ -502,6 +538,18 @@
                 setTimeout(() => {
                     openSettingsModal();
                 }, 150);
+            });
+        });
+
+        el.pageGrid.querySelectorAll('tbody tr[data-page-id]').forEach(row => {
+            row.addEventListener('click', (event) => {
+                const target = event.target;
+                if (target.closest('.followup-auto-toggle') || target.closest('.btn-group') || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.tagName === 'LABEL') {
+                    return;
+                }
+                const pageId = row.getAttribute('data-page-id');
+                if (!pageId) return;
+                selectPage(pageId);
             });
         });
     };
