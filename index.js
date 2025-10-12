@@ -3179,7 +3179,7 @@ async function ensureSettings() {
   // ตรวจสอบและสร้างการตั้งค่าเริ่มต้น
   const defaultSettings = [
     { key: "aiEnabled", value: true },
-    { key: "chatDelaySeconds", value: 5 },
+    { key: "chatDelaySeconds", value: 0 },
     { key: "maxQueueMessages", value: 10 },
     { key: "enableMessageMerging", value: true },
     { key: "textModel", value: "gpt-5" },
@@ -6142,7 +6142,7 @@ app.get('/api/settings', async (req, res) => {
     
     // Set default values if not exists
     const defaultSettings = {
-      chatDelaySeconds: 5,
+      chatDelaySeconds: 0,
       maxQueueMessages: 10,
       enableMessageMerging: true,
       showTokenUsage: false,
