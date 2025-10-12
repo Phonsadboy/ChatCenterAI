@@ -1252,6 +1252,89 @@ h1, h2, h3, h4, h5, h6 {
     opacity: 0.6;
 }
 
+.followup-page-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+}
+
+.followup-page-card {
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    border-radius: 14px;
+    box-shadow: var(--shadow-sm);
+    padding: 1rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    transition: var(--transition);
+}
+
+.followup-page-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.followup-page-card.active {
+    border-color: rgba(104, 185, 132, 0.4);
+    box-shadow: 0 0 0 2px rgba(104, 185, 132, 0.15);
+}
+
+.followup-page-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.page-card-name {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 0.15rem;
+}
+
+.page-card-meta {
+    font-size: 0.8rem;
+}
+
+.followup-page-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.75rem;
+}
+
+.page-stat-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.86rem;
+}
+
+.page-stat-row span:last-child {
+    font-weight: 600;
+}
+
+.page-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.page-flags .badge {
+    margin-right: 0.4rem;
+    font-size: 0.75rem;
+}
+
+.followup-page-card-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.followup-page-card-actions .btn {
+    flex: 1;
+    white-space: nowrap;
+}
+
 /* Dark mode support (optional) */
 @media (prefers-color-scheme: dark) {
     .card {

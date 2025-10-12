@@ -1713,7 +1713,19 @@ async function buildFollowUpOverview() {
     group.users.push(user);
   });
 
-  const groups = Array.from(groupMap.values()).sort((a, b) => a.pageName.localeCompare(b.pageName));
+  const groups = Array.from(groupMap.values()).map(group => {
+    if (Array.isArray(group.users)) {
+      group.users = group.users.sort((a, b) => {
+        const aTime = a.nextScheduledAt ? new Date(a.nextScheduledAt).getTime() : Infinity;
+        const bTime = b.nextScheduledAt ? new Date(b.nextScheduledAt).getTime() : Infinity;
+        if (aTime === bTime) {
+          return (a.displayName || '').localeCompare(b.displayName || '');
+        }
+        return aTime - bTime;
+      });
+    }
+    return group;
+  }).sort((a, b) => a.pageName.localeCompare(b.pageName));
   return { summary: normalizedSummary, groups };
 }
 

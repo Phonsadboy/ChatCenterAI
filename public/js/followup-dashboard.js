@@ -3,7 +3,7 @@
         pages: [],
         currentPage: null,
         users: [],
-        summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 },
+        summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0, dateKey: '' },
         isLoadingUsers: false,
         socket: null,
         config: window.followUpDashboardConfig || {},
@@ -427,9 +427,12 @@
             const analysisEnabled = page.settings && page.settings.analysisEnabled !== false;
             const platformLabel = page.platform === 'facebook' ? 'Facebook' : 'LINE';
             const subtitle = page.botId ? `${platformLabel} • บอทเฉพาะ` : `${platformLabel} • ค่าเริ่มต้น`;
+            const activeClass = state.currentPage && state.currentPage.id === page.id ? ' active' : '';
+            const showInDashboard = !(page.settings && page.settings.showInDashboard === false);
+            const showInChat = !(page.settings && page.settings.showInChat === false);
 
             return `
-                <div class="followup-page-card" data-page-id="${page.id}">
+                <div class="followup-page-card${activeClass}" data-page-id="${page.id}">
                     <div class="followup-page-card-header">
                         <div>
                             <div class="page-card-name">${escapeHtml(page.name)}</div>
@@ -451,13 +454,15 @@
                         <div class="page-flags mt-2">
                             <span class="badge ${autoEnabled ? 'bg-success' : 'bg-secondary'}">${autoEnabled ? 'ส่งอัตโนมัติ: เปิด' : 'ส่งอัตโนมัติ: ปิด'}</span>
                             <span class="badge ${analysisEnabled ? 'bg-info' : 'bg-secondary'}">วิเคราะห์ด้วย AI: ${analysisEnabled ? 'เปิด' : 'ปิด'}</span>
+                            <span class="badge ${showInDashboard ? 'bg-primary-soft text-primary' : 'bg-warning text-dark'}">${showInDashboard ? 'แสดงในแดชบอร์ด' : 'ซ่อนในแดชบอร์ด'}</span>
+                            <span class="badge ${showInChat ? 'bg-light text-dark' : 'bg-secondary'}">ป้ายในหน้าแชท: ${showInChat ? 'เปิด' : 'ปิด'}</span>
                         </div>
                     </div>
                     <div class="followup-page-card-actions">
-                        <button class="btn btn-outline-primary btn-sm" data-action="select" data-page-id="${page.id}">
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-action="select" data-page-id="${page.id}">
                             <i class="fas fa-eye me-1"></i>ดูรายละเอียด
                         </button>
-                        <button class="btn btn-outline-secondary btn-sm" data-action="edit" data-page-id="${page.id}">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" data-action="edit" data-page-id="${page.id}">
                             <i class="fas fa-sliders-h me-1"></i>แก้ไข
                         </button>
                     </div>
@@ -518,6 +523,7 @@
             throw new Error(data.error || 'ไม่สามารถบันทึกการตั้งค่าได้');
         }
         page.settings = { ...(page.settings || {}), ...settings };
+        page.hasOverride = true;
         return data;
     };
 
@@ -528,6 +534,7 @@
             showAlert('danger', 'ไม่พบข้อมูลเพจที่เลือก');
             return;
         }
+        if (inputEl) inputEl.disabled = true;
         try {
             await savePageSettingsQuick(page, { autoFollowUpEnabled: !!enabled });
             showAlert('success', enabled
@@ -554,6 +561,8 @@
             console.error('update auto follow error', error);
             if (inputEl) inputEl.checked = !enabled;
             showAlert('danger', error.message || 'ไม่สามารถอัปเดตการตั้งค่าได้');
+        } finally {
+            if (inputEl) inputEl.disabled = false;
         }
     };
 
@@ -880,6 +889,7 @@
                 showAlert('danger', data.error || 'ไม่สามารถดึงข้อมูลเพจได้');
                 state.pages = [];
                 renderPageSelector();
+                renderPageGrid();
                 return;
             }
             const previousId = state.currentPage ? state.currentPage.id : null;
@@ -888,6 +898,7 @@
                 settings: page.settings || {}
             }));
             renderPageSelector();
+            renderPageGrid();
             if (state.pages.length === 0) {
                 state.currentPage = null;
                 updateToolbar();
@@ -901,6 +912,7 @@
         } catch (error) {
             console.error('load follow-up pages error', error);
             showAlert('danger', 'เกิดข้อผิดพลาดในการดึงข้อมูลเพจ');
+            renderPageGrid();
         }
     };
 
@@ -928,7 +940,8 @@
                     active: typeof summaryData.active === 'number' ? summaryData.active : (state.users.length || 0),
                     completed: typeof summaryData.completed === 'number' ? summaryData.completed : 0,
                     canceled: typeof summaryData.canceled === 'number' ? summaryData.canceled : 0,
-                    failed: typeof summaryData.failed === 'number' ? summaryData.failed : 0
+                    failed: typeof summaryData.failed === 'number' ? summaryData.failed : 0,
+                    dateKey: summaryData.dateKey || ''
                 };
                 if (data.config) {
                     state.currentContextConfig = data.config;
@@ -937,19 +950,50 @@
                         state.pages[pageIndex].settings = data.config;
                     }
                 }
+                const currentGroup = state.currentPage ? getGroupForPage(state.currentPage.id) : null;
+                if (currentGroup) {
+                    currentGroup.users = state.users.slice();
+                    currentGroup.stats = {
+                        total: state.summary.total || 0,
+                        active: state.summary.active || 0,
+                        completed: state.summary.completed || 0,
+                        canceled: state.summary.canceled || 0,
+                        failed: state.summary.failed || 0
+                    };
+                }
+                if (state.overview && Array.isArray(state.overview.groups) && state.overview.groups.length) {
+                    const previousSummary = state.overview.summary || {};
+                    const aggregated = state.overview.groups.reduce((acc, group) => {
+                        const stats = group.stats || {};
+                        acc.total += stats.total || 0;
+                        acc.active += stats.active || 0;
+                        acc.completed += stats.completed || 0;
+                        acc.canceled += stats.canceled || 0;
+                        acc.failed += stats.failed || 0;
+                        return acc;
+                    }, defaultSummary());
+                    state.overview.summary = {
+                        ...aggregated,
+                        dateKey: previousSummary.dateKey || state.summary.dateKey || ''
+                    };
+                }
                 updateToolbar();
                 updateMetrics();
                 renderUsers();
+                renderPageGrid();
+                await loadOverview({ silent: true });
                 if (showMessage) {
                     showAlert('info', 'อัปเดตรายการล่าสุดแล้ว');
                 }
             } else if (data.disabled) {
                 state.users = [];
-                state.summary = { total: 0 };
+                state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
                 state.currentContextConfig = data.config || null;
                 renderDisabledState();
                 updateToolbar();
                 updateMetrics();
+                renderPageGrid();
+                await loadOverview({ silent: true });
                 showAlert('warning', data.message || 'เพจนี้ถูกปิดจากแดชบอร์ด');
             } else {
                 showAlert('danger', data.error || 'ไม่สามารถดึงข้อมูลได้');
@@ -974,8 +1018,9 @@
     if (options.skipReload) {
         state.users = [];
         state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
-    }
+        }
         renderPageSelector();
+        renderPageGrid();
         updateToolbar();
         updateMetrics();
         if (!options.skipReload) {
@@ -1052,6 +1097,7 @@
                 modalInstance.hide();
                 await loadPages();
                 await loadUsers();
+                await loadOverview({ silent: true });
             } else {
                 showAlert('danger', data.error || 'ไม่สามารถบันทึกการตั้งค่าได้');
             }
@@ -1184,6 +1230,7 @@
         populateModalOptions();
         setupEventListeners();
         setStatusFilter(state.statusFilter || 'all');
+        await loadOverview({ silent: true });
         await loadPages();
         initSocket();
         if (state.currentPage) {
