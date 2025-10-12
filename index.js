@@ -25,6 +25,7 @@ const XLSX = require('xlsx');
 const multer = require('multer');
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
 const ASSETS_DIR = process.env.ASSETS_DIR || path.join(__dirname, 'public', 'assets', 'instructions');
+const FOLLOWUP_ASSETS_DIR = process.env.FOLLOWUP_ASSETS_DIR || path.join(__dirname, 'public', 'assets', 'followup');
 
 const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -84,8 +85,14 @@ try {
   }
   app.use('/assets/instructions', express.static(ASSETS_DIR, { maxAge: '7d' }));
   console.log('[Static] Serving instruction assets from:', ASSETS_DIR);
+
+  if (!fs.existsSync(FOLLOWUP_ASSETS_DIR)) {
+    fs.mkdirSync(FOLLOWUP_ASSETS_DIR, { recursive: true });
+  }
+  app.use('/assets/followup', express.static(FOLLOWUP_ASSETS_DIR, { maxAge: '7d' }));
+  console.log('[Static] Serving follow-up assets from:', FOLLOWUP_ASSETS_DIR);
 } catch (e) {
-  console.warn('[Static] Could not ensure ASSETS_DIR:', ASSETS_DIR, e?.message || e);
+  console.warn('[Static] Could not ensure asset directories:', e?.message || e);
 }
 
 // Avoid favicon 404s in environments without a favicon
@@ -635,6 +642,80 @@ function getDateKey(date = new Date()) {
   return getBangkokMoment(date).format('YYYY-MM-DD');
 }
 
+function sanitizeFollowUpImage(image) {
+  if (!image) return null;
+  const url = typeof image.url === 'string' ? image.url.trim() : '';
+  if (!url) return null;
+
+  const previewCandidates = [
+    typeof image.previewUrl === 'string' ? image.previewUrl.trim() : '',
+    typeof image.thumbUrl === 'string' ? image.thumbUrl.trim() : ''
+  ];
+  const previewUrl = previewCandidates.find(value => value) || url;
+
+  const sanitized = {
+    url,
+    previewUrl
+  };
+
+  if (typeof image.thumbUrl === 'string' && image.thumbUrl.trim()) {
+    sanitized.thumbUrl = image.thumbUrl.trim();
+  }
+
+  const assignTrimmed = (field, value) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) sanitized[field] = trimmed;
+    }
+  };
+
+  assignTrimmed('alt', image.alt);
+  assignTrimmed('caption', image.caption);
+  assignTrimmed('fileName', image.fileName);
+
+  const assetId = image.assetId ?? image.id ?? image._id;
+  if (assetId !== undefined && assetId !== null) {
+    try {
+      const value = typeof assetId === 'string' ? assetId.trim() : assetId.toString();
+      if (value) sanitized.assetId = value;
+    } catch {
+      const fallback = String(assetId);
+      if (fallback) sanitized.assetId = fallback;
+    }
+  }
+
+  ['width', 'height', 'size'].forEach(key => {
+    const numeric = Number(image[key]);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      sanitized[key] = Math.round(numeric);
+    }
+  });
+
+  return sanitized;
+}
+
+function sanitizeFollowUpImages(images) {
+  if (!Array.isArray(images)) return [];
+  return images
+    .map(sanitizeFollowUpImage)
+    .filter(Boolean);
+}
+
+function summarizeFollowUpRound(round) {
+  if (!round) return '';
+  const message = typeof round.message === 'string' ? round.message.trim() : '';
+  const imageCount = Array.isArray(round.images) ? round.images.length : 0;
+
+  if (message && imageCount > 0) {
+    return `${message} • รูปภาพ ${imageCount} รูป`;
+  }
+  if (message) return message;
+  if (imageCount > 0) {
+    return `ส่งรูปภาพ ${imageCount} รูป`;
+  }
+  return '';
+}
+
 function normalizeFollowUpRounds(rounds) {
   if (!Array.isArray(rounds)) return [];
   const normalized = [];
@@ -642,11 +723,13 @@ function normalizeFollowUpRounds(rounds) {
     if (!item) return;
     const delay = Number(item.delayMinutes);
     const message = typeof item.message === 'string' ? item.message.trim() : '';
+    const images = sanitizeFollowUpImages(item.images || item.media);
     if (!Number.isFinite(delay) || delay < 1) return;
-    if (!message) return;
+    if (!message && images.length === 0) return;
     normalized.push({
       delayMinutes: Math.round(delay),
       message,
+      images,
       order: idx
     });
   });
@@ -656,7 +739,10 @@ function normalizeFollowUpRounds(rounds) {
     }
     return a.delayMinutes - b.delayMinutes;
   });
-  return normalized;
+  return normalized.map(round => {
+    const { order, ...rest } = round;
+    return rest;
+  });
 }
 
 function resetFollowUpConfigCache() {
@@ -795,23 +881,6 @@ async function listFollowUpPageSettings() {
   };
 
   const pages = [];
-
-  // Defaults for each platform
-  ['line', 'facebook'].forEach(platform => {
-    const config = buildConfig(platform, null);
-    const key = `${platform}:default`;
-    const doc = settingsMap[`${platform}:default`] || settingsMap[`${platform}:null`];
-    pages.push({
-      id: key,
-      platform,
-      botId: null,
-      type: 'default',
-      name: platform === 'line' ? 'ค่าเริ่มต้น LINE' : 'ค่าเริ่มต้น Facebook',
-      settings: config,
-      hasOverride: !!doc,
-      updatedAt: doc?.updatedAt || null
-    });
-  });
 
   lineBots.forEach(bot => {
     const key = `line:${bot._id.toString()}`;
@@ -980,7 +1049,8 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       return {
         index,
         delayMinutes: round.delayMinutes,
-        message: round.message,
+        message: typeof round.message === 'string' ? round.message : '',
+        images: sanitizeFollowUpImages(round.images),
         scheduledAt: scheduledMoment.toDate(),
         sentAt: null,
         status: 'pending'
@@ -1008,7 +1078,11 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       createdAt: now,
       updatedAt: now,
       configSnapshot: {
-        rounds: roundsConfig,
+        rounds: roundsConfig.map(item => ({
+          delayMinutes: item.delayMinutes,
+          message: typeof item.message === 'string' ? item.message : '',
+          images: sanitizeFollowUpImages(item.images)
+        })),
         autoFollowUpEnabled: config.autoFollowUpEnabled !== false
       }
     };
@@ -1211,8 +1285,9 @@ async function handleFollowUpTask(task, db) {
 
 async function sendFollowUpMessage(task, round, db) {
   const message = typeof round?.message === 'string' ? round.message.trim() : '';
-  if (!message) {
-    throw new Error('ไม่มีข้อความสำหรับการติดตาม');
+  const images = sanitizeFollowUpImages(round?.images || []);
+  if (!message && images.length === 0) {
+    throw new Error('ไม่มีเนื้อหาสำหรับการติดตาม');
   }
 
   if (task.platform === 'facebook') {
@@ -1224,17 +1299,43 @@ async function sendFollowUpMessage(task, round, db) {
     if (!fbBot || !fbBot.accessToken) {
       throw new Error('ไม่พบข้อมูล Facebook Bot');
     }
-    await sendFacebookMessage(task.userId, message, fbBot.accessToken);
+    if (message) {
+      await sendFacebookMessage(task.userId, message, fbBot.accessToken);
+    }
+    for (const image of images) {
+      await sendFacebookImageMessage(task.userId, image, fbBot.accessToken);
+    }
   } else {
-    await sendLineFollowUpMessage(task.userId, message, task.botId, db);
+    await sendLineFollowUpMessage(task.userId, message, task.botId, db, images);
   }
 
   const historyColl = db.collection("chat_history");
   const timestamp = new Date();
+  const historyParts = [];
+  if (message) {
+    historyParts.push({ type: 'text', text: message });
+  }
+  images.forEach(image => {
+    historyParts.push({
+      type: 'image',
+      url: image.url,
+      previewUrl: image.previewUrl || image.thumbUrl || image.url,
+      alt: image.alt || '',
+      caption: image.caption || ''
+    });
+  });
+
+  let storedContent = '';
+  if (historyParts.length === 1 && historyParts[0].type === 'text') {
+    storedContent = historyParts[0].text;
+  } else if (historyParts.length > 0) {
+    storedContent = JSON.stringify(historyParts);
+  }
+
   const messageDoc = {
     senderId: task.userId,
     role: "assistant",
-    content: message,
+    content: storedContent,
     timestamp,
     platform: task.platform || 'line',
     botId: task.botId || null,
@@ -1254,8 +1355,37 @@ async function sendFollowUpMessage(task, round, db) {
   } catch (_) {}
 }
 
-async function sendLineFollowUpMessage(userId, message, botId, db) {
+async function sendLineFollowUpMessage(userId, message, botId, db, images = []) {
   try {
+    const payloads = [];
+    const trimmed = typeof message === 'string' ? message.trim() : '';
+    if (trimmed) {
+      payloads.push({ type: 'text', text: trimmed });
+    }
+    const media = sanitizeFollowUpImages(images);
+    media.forEach(image => {
+      payloads.push({
+        type: 'image',
+        originalContentUrl: image.url,
+        previewImageUrl: image.previewUrl || image.thumbUrl || image.url
+      });
+    });
+
+    if (!payloads.length) {
+      throw new Error('ไม่มีเนื้อหาสำหรับการติดตาม');
+    }
+
+    const chunks = [];
+    for (let i = 0; i < payloads.length; i += 5) {
+      chunks.push(payloads.slice(i, i + 5));
+    }
+
+    const sendChunks = async (client) => {
+      for (const chunk of chunks) {
+        await client.pushMessage(userId, chunk.length === 1 ? chunk[0] : chunk);
+      }
+    };
+
     if (botId) {
       const query = ObjectId.isValid(botId) ? { _id: new ObjectId(botId) } : { _id: botId };
       const botDoc = await db.collection('line_bots').findOne(query);
@@ -1263,13 +1393,13 @@ async function sendLineFollowUpMessage(userId, message, botId, db) {
         throw new Error('ไม่พบข้อมูล Line Bot สำหรับการส่งข้อความ');
       }
       const client = createLineClient(botDoc.channelAccessToken, botDoc.channelSecret);
-      await client.pushMessage(userId, { type: 'text', text: message });
+      await sendChunks(client);
       return;
     }
     if (!lineClient) {
       throw new Error('Line Client ยังไม่ถูกตั้งค่า');
     }
-    await lineClient.pushMessage(userId, { type: 'text', text: message });
+    await sendChunks(lineClient);
   } catch (error) {
     throw new Error(error.message || 'ไม่สามารถส่งข้อความผ่าน LINE ได้');
   }
@@ -1597,12 +1727,20 @@ async function getFollowUpUsers(filter = {}) {
         return null;
       }
 
-      const rounds = Array.isArray(task.rounds) ? task.rounds : [];
-      const totalRounds = rounds.length;
-      const sentCount = rounds.filter(r => r && r.status === 'sent').length;
-      const hasFailed = rounds.some(r => r && r.status === 'failed');
+      const rawRounds = Array.isArray(task.rounds) ? task.rounds : [];
+      const sanitizedRounds = rawRounds.map(r => ({
+        index: r?.index ?? 0,
+        message: typeof r?.message === 'string' ? r.message : '',
+        images: sanitizeFollowUpImages(r?.images || []),
+        scheduledAt: r?.scheduledAt || null,
+        sentAt: r?.sentAt || null,
+        status: r?.status || 'pending'
+      }));
+      const totalRounds = sanitizedRounds.length;
+      const sentCount = sanitizedRounds.filter(r => r && r.status === 'sent').length;
+      const hasFailed = sanitizedRounds.some(r => r && r.status === 'failed');
       const nextIndex = typeof task.nextRoundIndex === 'number' ? task.nextRoundIndex : 0;
-      const nextRound = nextIndex < rounds.length ? rounds[nextIndex] : null;
+      const nextRound = nextIndex < sanitizedRounds.length ? sanitizedRounds[nextIndex] : null;
 
       let status = 'active';
       if (hasFailed) {
@@ -1630,16 +1768,10 @@ async function getFollowUpUsers(filter = {}) {
         lastUserMessageAt: task.lastUserMessageAt || null,
         lastFollowUpAt: task.lastSentAt || null,
         nextScheduledAt: task.nextScheduledAt || null,
-        nextMessage: nextRound?.message || '',
+        nextMessage: summarizeFollowUpRound(nextRound),
         totalRounds,
         sentRounds: sentCount,
-        rounds: rounds.map(r => ({
-          index: r?.index ?? 0,
-          message: r?.message || '',
-          scheduledAt: r?.scheduledAt || null,
-          sentAt: r?.sentAt || null,
-          status: r?.status || 'pending'
-        })),
+        rounds: sanitizedRounds,
         canceledReason: task.cancelReason || null,
         dateKey: task.dateKey,
         lastMessage: preview,
@@ -1692,7 +1824,7 @@ async function buildFollowUpOverview() {
     const contextKey = user.contextKey || `${user.platform || 'line'}:${user.botId || 'default'}`;
     if (!groupMap.has(contextKey)) {
       const pageInfo = pageMap.get(contextKey) || null;
-      const label = pageInfo?.name || (user.platform === 'facebook' ? 'Facebook (ค่าเริ่มต้น)' : 'LINE (ค่าเริ่มต้น)');
+      const label = pageInfo?.name || (user.platform === 'facebook' ? 'Facebook' : 'LINE');
       groupMap.set(contextKey, {
         contextKey,
         platform: user.platform || 'line',
@@ -3645,6 +3777,36 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
 }
 
 // Upload image to Facebook to obtain attachment_id, then send it
+async function sendFacebookImageMessage(recipientId, image, accessToken) {
+  if (!image || !image.url) {
+    throw new Error('ไม่มี URL สำหรับรูปภาพ');
+  }
+
+  try {
+    const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+      recipient: { id: recipientId },
+      message: {
+        attachment: {
+          type: 'image',
+          payload: {
+            url: image.url,
+            is_reusable: true
+          }
+        }
+      }
+    }, {
+      params: { access_token: accessToken },
+      headers: { 'Content-Type': 'application/json' }
+    });
+    console.log('Facebook follow-up image sent:', response.data?.message_id || 'ok');
+  } catch (error) {
+    const status = error.response?.status;
+    const fbMessage = error.response?.data?.error?.message || error.message;
+    const conciseError = status ? `Facebook API ${status}: ${fbMessage}` : fbMessage;
+    throw new Error(conciseError);
+  }
+}
+
 async function sendFacebookImageByUpload(recipientId, seg, accessToken) {
   const { buffer, filename, contentType } = await readInstructionAssetBuffer(seg);
 
@@ -5206,6 +5368,100 @@ app.delete('/admin/followup/page-settings', async (req, res) => {
   } catch (error) {
     console.error('[FollowUp] ไม่สามารถรีเซ็ตการตั้งค่าหน้าเพจได้:', error);
     res.json({ success: false, error: error.message });
+  }
+});
+
+app.post('/admin/followup/assets', imageUpload.array('images', 5), async (req, res) => {
+  try {
+    const files = Array.isArray(req.files) && req.files.length ? req.files
+      : (req.file ? [req.file] : []);
+    if (!files.length) {
+      return res.status(400).json({ success: false, error: 'กรุณาอัพโหลดไฟล์รูปภาพ' });
+    }
+
+    if (!fs.existsSync(FOLLOWUP_ASSETS_DIR)) {
+      fs.mkdirSync(FOLLOWUP_ASSETS_DIR, { recursive: true });
+    }
+
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('follow_up_assets');
+    const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, '') : '';
+
+    const assets = [];
+    for (const file of files) {
+      const image = sharp(file.buffer);
+      const metadata = await image.metadata();
+      const optimized = await image.jpeg({ quality: 88, progressive: true }).toBuffer();
+      const sha256 = crypto.createHash('sha256').update(optimized).digest('hex');
+
+      const existing = await coll.findOne({ sha256 });
+      if (existing) {
+        assets.push({
+          id: existing._id?.toString(),
+          assetId: existing._id?.toString(),
+          url: existing.url,
+          previewUrl: existing.thumbUrl || existing.url,
+          thumbUrl: existing.thumbUrl,
+          width: existing.width || null,
+          height: existing.height || null,
+          size: existing.size || null,
+          fileName: existing.fileName || null
+        });
+        continue;
+      }
+
+      const thumb = await sharp(optimized)
+        .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 80 })
+        .toBuffer();
+
+      const uniqueId = crypto.randomBytes(8).toString('hex');
+      const timestamp = Date.now();
+      const baseName = `followup_${timestamp}_${uniqueId}`;
+      const fileName = `${baseName}.jpg`;
+      const thumbName = `${baseName}_thumb.jpg`;
+      const filePath = path.join(FOLLOWUP_ASSETS_DIR, fileName);
+      const thumbPath = path.join(FOLLOWUP_ASSETS_DIR, thumbName);
+
+      fs.writeFileSync(filePath, optimized);
+      fs.writeFileSync(thumbPath, thumb);
+
+      const assetDoc = {
+        fileName,
+        thumbName,
+        sha256,
+        mime: 'image/jpeg',
+        size: optimized.length,
+        width: metadata.width || null,
+        height: metadata.height || null,
+        url: `${urlBase}/assets/followup/${fileName}`,
+        thumbUrl: `${urlBase}/assets/followup/${thumbName}`,
+        originalName: file.originalname || '',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      const insertResult = await coll.insertOne(assetDoc);
+      const assetId = insertResult.insertedId?.toString();
+
+      assets.push({
+        id: assetId,
+        assetId,
+        url: assetDoc.url,
+        previewUrl: assetDoc.thumbUrl || assetDoc.url,
+        thumbUrl: assetDoc.thumbUrl,
+        width: assetDoc.width,
+        height: assetDoc.height,
+        size: assetDoc.size,
+        fileName: assetDoc.fileName
+      });
+    }
+
+    res.json({ success: true, assets });
+  } catch (error) {
+    console.error('[FollowUp] อัพโหลดรูปภาพไม่สำเร็จ:', error);
+    res.status(400).json({ success: false, error: error.message || 'อัพโหลดรูปภาพไม่สำเร็จ' });
   }
 });
 

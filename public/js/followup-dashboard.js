@@ -78,6 +78,81 @@
         return div.innerHTML;
     };
 
+    const escapeAttr = (text) => {
+        if (text === undefined || text === null) return '';
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    };
+
+    const cloneRoundImage = (image) => {
+        if (!image || !image.url) return null;
+        const url = String(image.url);
+        const previewUrl = typeof image.previewUrl === 'string' && image.previewUrl
+            ? image.previewUrl
+            : (typeof image.thumbUrl === 'string' && image.thumbUrl ? image.thumbUrl : url);
+        const cloned = {
+            url,
+            previewUrl
+        };
+        if (image.thumbUrl) cloned.thumbUrl = image.thumbUrl;
+        if (image.assetId) cloned.assetId = image.assetId;
+        if (image.id) cloned.id = image.id;
+        if (image.fileName) cloned.fileName = image.fileName;
+        if (image.alt) cloned.alt = image.alt;
+        if (image.caption) cloned.caption = image.caption;
+        if (Number.isFinite(Number(image.width))) cloned.width = Number(image.width);
+        if (Number.isFinite(Number(image.height))) cloned.height = Number(image.height);
+        if (Number.isFinite(Number(image.size))) cloned.size = Number(image.size);
+        return cloned;
+    };
+
+    const sanitizeRoundImages = (images) => {
+        if (!Array.isArray(images)) return [];
+        return images
+            .map(img => {
+                if (!img || !img.url) return null;
+                const url = String(img.url).trim();
+                if (!url) return null;
+                const previewUrl = typeof img.previewUrl === 'string' && img.previewUrl.trim()
+                    ? img.previewUrl.trim()
+                    : (typeof img.thumbUrl === 'string' && img.thumbUrl.trim() ? img.thumbUrl.trim() : url);
+                const sanitized = { url, previewUrl };
+                if (typeof img.thumbUrl === 'string' && img.thumbUrl.trim()) sanitized.thumbUrl = img.thumbUrl.trim();
+                const assetId = img.assetId || img.id;
+                if (assetId) sanitized.assetId = String(assetId);
+                if (typeof img.fileName === 'string' && img.fileName.trim()) sanitized.fileName = img.fileName.trim();
+                if (typeof img.alt === 'string' && img.alt.trim()) sanitized.alt = img.alt.trim();
+                if (typeof img.caption === 'string' && img.caption.trim()) sanitized.caption = img.caption.trim();
+                const toRounded = (value) => {
+                    const num = Number(value);
+                    return Number.isFinite(num) && num > 0 ? Math.round(num) : null;
+                };
+                const width = toRounded(img.width);
+                const height = toRounded(img.height);
+                const size = toRounded(img.size);
+                if (width) sanitized.width = width;
+                if (height) sanitized.height = height;
+                if (size) sanitized.size = size;
+                return sanitized;
+            })
+            .filter(Boolean);
+    };
+
+    const formatRoundPreview = (round) => {
+        if (!round) return '';
+        const message = typeof round.message === 'string' ? round.message.trim() : '';
+        const imageCount = Array.isArray(round.images) ? round.images.length : 0;
+        if (message && imageCount > 0) {
+            return `${message} • รูปภาพ ${imageCount} รูป`;
+        }
+        if (message) return message;
+        if (imageCount > 0) return `ส่งรูปภาพ ${imageCount} รูป`;
+        return '';
+    };
+
     const formatDateTime = (value) => {
         if (!value) return '-';
         const date = new Date(value);
@@ -156,6 +231,63 @@
         }
     };
 
+    const uploadRoundImages = async (roundIndex, files) => {
+        if (!Array.isArray(files) || files.length === 0) return;
+        if (!Array.isArray(state.modalRounds)) return;
+        const round = state.modalRounds[roundIndex];
+        if (!round) return;
+        if (!Array.isArray(round.images)) {
+            round.images = [];
+        }
+
+        round.isUploading = true;
+        renderModalRounds();
+
+        try {
+            for (const file of files) {
+                const formData = new FormData();
+                formData.append('images', file);
+                const response = await fetch('/admin/followup/assets', {
+                    method: 'POST',
+                    body: formData
+                });
+                let result;
+                try {
+                    result = await response.json();
+                } catch (parseError) {
+                    result = { success: false, error: 'อัพโหลดรูปภาพไม่สำเร็จ' };
+                }
+                if (!response.ok || !result.success) {
+                    showAlert('danger', result.error || 'อัพโหลดรูปภาพไม่สำเร็จ');
+                    continue;
+                }
+                const uploaded = Array.isArray(result.assets) ? result.assets : [];
+                uploaded.forEach(asset => {
+                    const cloned = cloneRoundImage({
+                        url: asset.url,
+                        previewUrl: asset.previewUrl || asset.thumbUrl || asset.url,
+                        thumbUrl: asset.thumbUrl,
+                        assetId: asset.assetId || asset.id,
+                        id: asset.id,
+                        width: asset.width,
+                        height: asset.height,
+                        size: asset.size,
+                        fileName: asset.fileName
+                    });
+                    if (cloned) {
+                        round.images.push(cloned);
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('upload follow-up images error', error);
+            showAlert('danger', 'เกิดข้อผิดพลาดในการอัพโหลดรูปภาพ');
+        } finally {
+            delete round.isUploading;
+            renderModalRounds();
+        }
+    };
+
     const renderModalRounds = () => {
         if (!el.modalRounds) return;
         if (!Array.isArray(state.modalRounds)) {
@@ -163,31 +295,73 @@
         }
 
         if (state.modalRounds.length === 0) {
-            el.modalRounds.innerHTML = '<div class="text-muted small py-2">ยังไม่มีข้อความติดตาม กดปุ่ม "เพิ่มข้อความ" เพื่อเริ่มต้น</div>';
+            el.modalRounds.innerHTML = '<div class="text-muted small py-2">ยังไม่มีรอบการติดตาม กดปุ่ม "เพิ่มข้อความ" เพื่อเริ่มต้น</div>';
             return;
         }
 
         el.modalRounds.innerHTML = state.modalRounds.map((round, index) => {
-            const safeMessage = escapeHtml(round?.message || '');
-            const delayValue = Number(round?.delayMinutes);
+            if (!round || typeof round !== 'object') {
+                state.modalRounds[index] = { delayMinutes: 10, message: '', images: [] };
+            }
+            if (!Array.isArray(state.modalRounds[index].images)) {
+                state.modalRounds[index].images = [];
+            }
+            const delayValue = Number(state.modalRounds[index].delayMinutes);
+            const safeMessage = escapeHtml(state.modalRounds[index].message || '');
+            const images = state.modalRounds[index].images;
+            const imageItems = images.length
+                ? images.map((img, imgIndex) => {
+                    const preview = escapeAttr(img.previewUrl || img.thumbUrl || img.url || '');
+                    const full = escapeAttr(img.url || '');
+                    const caption = escapeHtml(img.caption || img.alt || '');
+                    return `
+                        <div class="col-auto">
+                            <div class="followup-round-image-card">
+                                <a href="${full}" target="_blank" rel="noopener" class="followup-round-image-link">
+                                    <img src="${preview}" alt="${caption || 'รูปภาพ'}" class="followup-round-image-thumb">
+                                </a>
+                                <button type="button" class="btn btn-sm btn-outline-danger followup-round-remove-image" data-index="${index}" data-image-index="${imgIndex}" title="ลบรูปภาพนี้">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('')
+                : '<div class="col-12 text-muted small">ยังไม่มีรูปภาพ</div>';
+            const uploading = round?.isUploading
+                ? '<div class="text-muted small mt-2"><i class="fas fa-spinner fa-spin me-1"></i>กำลังอัพโหลด...</div>'
+                : '';
+
             return `
-                <div class="followup-round-item border rounded p-2 mb-2 bg-white" data-index="${index}">
-                    <div class="row g-2 align-items-start">
-                        <div class="col-sm-3">
+                <div class="followup-round-item border rounded p-3 mb-3 bg-white" data-index="${index}">
+                    <div class="row g-3 align-items-start">
+                        <div class="col-md-3">
                             <label class="form-label form-label-sm text-muted mb-1">เวลาหลังคุยล่าสุด</label>
                             <div class="input-group input-group-sm">
                                 <input type="number" class="form-control followup-round-delay" min="1" step="1" value="${Number.isFinite(delayValue) ? delayValue : ''}">
                                 <span class="input-group-text">นาที</span>
                             </div>
                         </div>
-                        <div class="col-sm-8">
-                            <label class="form-label form-label-sm text-muted mb-1">ข้อความ</label>
-                            <textarea class="form-control form-control-sm followup-round-message" rows="2" placeholder="กรอกข้อความติดตาม">${safeMessage}</textarea>
+                        <div class="col-md-8 col-lg-7">
+                            <label class="form-label form-label-sm text-muted mb-1">ข้อความ (ไม่บังคับ)</label>
+                            <textarea class="form-control form-control-sm followup-round-message" rows="2" placeholder="กรอกข้อความติดตาม (เว้นว่างได้ หากต้องการส่งเฉพาะรูปภาพ)">${safeMessage}</textarea>
                         </div>
-                        <div class="col-sm-1 d-flex justify-content-end">
-                            <button type="button" class="btn btn-sm btn-outline-danger followup-round-remove" title="ลบข้อความ">
+                        <div class="col-md-1 d-flex justify-content-end">
+                            <button type="button" class="btn btn-sm btn-outline-danger followup-round-remove" title="ลบรอบนี้">
                                 <i class="fas fa-times"></i>
                             </button>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label form-label-sm text-muted mb-1">รูปภาพแนบ (ไม่บังคับ)</label>
+                            <div class="followup-round-images" data-index="${index}">
+                                <div class="row g-2 align-items-center">
+                                    ${imageItems}
+                                </div>
+                                ${uploading}
+                                <button type="button" class="btn btn-sm btn-outline-primary followup-round-add-image mt-2" data-index="${index}" ${round?.isUploading ? 'disabled' : ''}>
+                                    <i class="fas fa-image me-1"></i>เพิ่มรูป
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -222,6 +396,35 @@
                 renderModalRounds();
             });
         });
+
+        el.modalRounds.querySelectorAll('.followup-round-add-image').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const index = Number(btn.getAttribute('data-index'));
+                if (!Number.isFinite(index)) return;
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/*';
+                input.multiple = true;
+                input.addEventListener('change', (event) => {
+                    const files = Array.from(event.target.files || []);
+                    if (!files.length) return;
+                    uploadRoundImages(index, files);
+                });
+                input.click();
+            });
+        });
+
+        el.modalRounds.querySelectorAll('.followup-round-remove-image').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const roundIndex = Number(btn.getAttribute('data-index'));
+                const imageIndex = Number(btn.getAttribute('data-image-index'));
+                if (!Number.isFinite(roundIndex) || !Number.isFinite(imageIndex)) return;
+                const round = state.modalRounds[roundIndex];
+                if (!round || !Array.isArray(round.images)) return;
+                round.images.splice(imageIndex, 1);
+                renderModalRounds();
+            });
+        });
     };
 
     const addModalRound = (round) => {
@@ -233,7 +436,10 @@
             : 10;
         const nextRound = {
             delayMinutes: Number(round?.delayMinutes) || fallbackDelay,
-            message: round?.message || ''
+            message: round?.message || '',
+            images: Array.isArray(round?.images)
+                ? round.images.map(cloneRoundImage).filter(Boolean)
+                : []
         };
         state.modalRounds.push(nextRound);
         renderModalRounds();
@@ -243,11 +449,18 @@
         if (!Array.isArray(state.modalRounds)) return [];
         return state.modalRounds
             .map(round => {
-                const delay = Number(round.delayMinutes);
-                const message = (round.message || '').trim();
-                return { delayMinutes: delay, message };
+                const delay = Number(round?.delayMinutes);
+                if (!Number.isFinite(delay) || delay < 1) return null;
+                const message = typeof round?.message === 'string' ? round.message.trim() : '';
+                const images = sanitizeRoundImages(round?.images);
+                if (!message && images.length === 0) return null;
+                return {
+                    delayMinutes: Math.round(delay),
+                    message,
+                    images
+                };
             })
-            .filter(round => Number.isFinite(round.delayMinutes) && round.delayMinutes >= 1 && round.message.length > 0);
+            .filter(Boolean);
     };
 
     const handleAutoSendToggle = () => {
@@ -273,12 +486,22 @@
         const html = rounds.map((round, index) => {
             const delay = Number(round.delayMinutes);
             const label = formatDelayMinutes(delay);
+            const message = typeof round.message === 'string' ? round.message.trim() : '';
+            const imageCount = Array.isArray(round.images) ? round.images.length : 0;
+            const messageHtml = message ? `<div class="schedule-message">${escapeHtml(message)}</div>` : '';
+            const mediaHtml = imageCount > 0
+                ? `<div class="schedule-media text-muted small"><i class="fas fa-image me-1"></i>${imageCount} รูป</div>`
+                : '';
+            const emptyPlaceholder = !message && imageCount === 0
+                ? '<div class="schedule-message text-muted">-</div>'
+                : '';
             return `
                 <div class="followup-schedule-item">
                     <div class="schedule-order">${index + 1}</div>
                     <div class="schedule-detail">
                         <div class="schedule-time">+${label}</div>
-                        <div class="schedule-message">${escapeHtml(round.message || '')}</div>
+                        ${messageHtml || emptyPlaceholder}
+                        ${mediaHtml}
                     </div>
                 </div>
             `;
@@ -341,7 +564,6 @@
             return `
                 <button class="followup-page-pill ${active ? 'active' : ''} ${disabled ? 'disabled' : ''}" data-page-id="${page.id}">
                     <span class="pill-name">${escapeHtml(page.name)}</span>
-                    ${page.type === 'default' ? '<span class="pill-badge">ค่าเริ่มต้น</span>' : ''}
                     ${analysisOff ? '<span class="pill-status off">ปิดวิเคราะห์</span>' : ''}
                     ${autoOff ? '<span class="pill-status muted">ปิดส่งอัตโนมัติ</span>' : ''}
                     ${disabled ? '<span class="pill-status muted">ซ่อน</span>' : ''}
@@ -426,7 +648,9 @@
             const autoEnabled = page.settings && page.settings.autoFollowUpEnabled !== false;
             const analysisEnabled = page.settings && page.settings.analysisEnabled !== false;
             const platformLabel = page.platform === 'facebook' ? 'Facebook' : 'LINE';
-            const subtitle = page.botId ? `${platformLabel} • บอทเฉพาะ` : `${platformLabel} • ค่าเริ่มต้น`;
+            const subtitle = page.platform === 'facebook'
+                ? `${platformLabel} • เพจที่เชื่อมต่อ`
+                : `${platformLabel} • บอทที่เชื่อมต่อ`;
             const isActive = state.currentPage && state.currentPage.id === page.id;
             const showInDashboard = !(page.settings && page.settings.showInDashboard === false);
             const showInChat = !(page.settings && page.settings.showInChat === false);
@@ -757,6 +981,28 @@
                             ? `กำหนดส่ง ${formatRelativeTime(round.scheduledAt)}`
                             : `หลัง +${formatDelayMinutes(round?.delayMinutes)}`;
                     const absolute = scheduledAt || `+${formatDelayMinutes(round?.delayMinutes)}`;
+                    const messageText = typeof round?.message === 'string' ? round.message.trim() : '';
+                    const messageHtml = messageText
+                        ? `<div class="timeline-message">${escapeHtml(messageText)}</div>`
+                        : '';
+                    const images = Array.isArray(round?.images) ? round.images : [];
+                    const imagesHtml = images.length
+                        ? `<div class="timeline-images mt-2">
+                                ${images.map(img => {
+                                    const preview = escapeAttr(img.previewUrl || img.thumbUrl || img.url || '');
+                                    const full = escapeAttr(img.url || '');
+                                    const caption = escapeHtml(img.caption || img.alt || 'รูปภาพจากระบบติดตาม');
+                                    return `
+                                        <a href="${full}" target="_blank" rel="noopener" class="timeline-image-link">
+                                            <img src="${preview}" alt="${caption}" class="timeline-image-thumb">
+                                        </a>
+                                    `;
+                                }).join('')}
+                            </div>`
+                        : '';
+                    const emptyContent = !messageText && images.length === 0
+                        ? '<div class="timeline-message text-muted">ไม่มีข้อความ</div>'
+                        : '';
 
                     return `
                         <div class="followup-timeline-item ${displayStatus}">
@@ -767,7 +1013,8 @@
                                     <span class="timeline-status">${statusLabel}</span>
                                 </div>
                                 <div class="timeline-time text-muted">${relative} (${absolute})</div>
-                                <div class="timeline-message">${escapeHtml(round?.message || '')}</div>
+                                ${messageHtml || emptyContent}
+                                ${imagesHtml}
                             </div>
                         </div>
                     `;
@@ -831,7 +1078,15 @@
                 ? '<span class="badge bg-primary-soft text-primary"><i class="fab fa-facebook me-1"></i>Facebook</span>'
                 : '<span class="badge bg-success-soft text-success"><i class="fab fa-line me-1"></i>LINE</span>';
             const statusBadge = getStatusBadge(user.status);
-            const nextMessage = escapeHtml(user.nextMessage || '-');
+            const nextRoundData = Array.isArray(user.rounds)
+                ? user.rounds.find(round => round && round.status !== 'sent')
+                : null;
+            const nextPreview = formatRoundPreview(nextRoundData);
+            const nextMessageText = nextPreview || user.nextMessage || '-';
+            const nextMessage = escapeHtml(nextMessageText);
+            const nextMediaHtml = nextRoundData && Array.isArray(nextRoundData.images) && nextRoundData.images.length
+                ? `<div class="followup-next-media text-muted small"><i class="fas fa-image me-1"></i>${nextRoundData.images.length} รูป</div>`
+                : '';
             const nextScheduleRelative = user.nextScheduledAt ? formatRelativeTime(user.nextScheduledAt) : 'ยังไม่มีนัดหมาย';
             const nextScheduleExact = user.nextScheduledAt ? formatDateTime(user.nextScheduledAt) : '-';
             const lastCustomerMessage = escapeHtml(user.lastUserMessagePreview || '-');
@@ -857,6 +1112,7 @@
                         <div class="followup-section">
                             <div class="label">ข้อความถัดไป</div>
                             <div class="value">${nextMessage}</div>
+                            ${nextMediaHtml}
                             <div class="meta">${nextScheduleExact} (${nextScheduleRelative})</div>
                         </div>
                         <div class="followup-section">
@@ -1099,7 +1355,10 @@
         state.modalRounds = Array.isArray(cfg.rounds)
             ? cfg.rounds.map(round => ({
                 delayMinutes: Number(round.delayMinutes) || '',
-                message: round.message || ''
+                message: typeof round.message === 'string' ? round.message : '',
+                images: Array.isArray(round.images)
+                    ? round.images.map(cloneRoundImage).filter(Boolean)
+                    : []
             }))
             : [];
         renderModalRounds();
