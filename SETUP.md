@@ -58,7 +58,29 @@ npm install
 node index.js
 ```
 
-### 5. เข้าใช้งาน
+### 5. สำรองฐานข้อมูล MongoDB
+
+เพื่อให้ระบบพร้อมกู้คืนได้แม้มีการรีสตาร์ทเซิร์ฟเวอร์ ให้ใช้สคริปต์ `scripts/mongo-backup.sh` ซึ่งจะเรียก `mongodump` เพื่อสำรองทั้งฐานข้อมูล (รวม GridFS ที่เก็บรูปภาพ)
+
+1. ตรวจสอบว่ามี `mongodump` ใน PATH (`mongodump --version`)
+2. ตั้งค่า environment ตามต้องการก่อนรัน เช่น
+   ```bash
+   export MONGO_URI="mongodb://user:pass@host:27017/chatbot"
+   export BACKUP_ROOT="/var/backups/chatcenter"
+   export BACKUP_RETENTION_DAYS=14
+   ```
+3. รันสคริปต์ด้วยสิทธิ์ที่สามารถเขียนโฟลเดอร์ backup ได้
+   ```bash
+   ./scripts/mongo-backup.sh
+   ```
+4. ตั้ง Cron หรือ systemd timer ให้รันสคริปต์สม่ำเสมอ เช่นทุกวันตอนตี 2
+   ```
+   0 2 * * * /path/to/repo/scripts/mongo-backup.sh >> /var/log/chatcenter-backup.log 2>&1
+   ```
+
+> หมายเหตุ: สคริปต์จะสร้างไดเรกทอรีตามเวลาแบบ `YYYYMMDD-HHMMSS` และลบโฟลเดอร์เก่าที่อายุมากกว่า `BACKUP_RETENTION_DAYS`
+
+### 6. เข้าใช้งาน
 - **Admin Panel**: http://localhost:3000/admin
 - **Username**: (ไม่ต้องใส่)
 - **Password**: ตามที่ตั้งค่าใน `ADMIN_PASSWORD`
