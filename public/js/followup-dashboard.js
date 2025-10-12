@@ -3,17 +3,17 @@
         pages: [],
         currentPage: null,
         users: [],
-        summary: { total: 0 },
+        summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 },
         isLoadingUsers: false,
         socket: null,
         config: window.followUpDashboardConfig || {},
         currentContextConfig: null,
-        modalRounds: []
+        modalRounds: [],
+        statusFilter: 'all'
     };
 
     const el = {
         list: document.getElementById('followupList'),
-        count: document.getElementById('followupCount'),
         alert: document.getElementById('followupAlert'),
         emptyState: document.getElementById('followupEmptyState'),
         search: document.getElementById('followupSearch'),
@@ -38,7 +38,18 @@
         modalAddRound: document.getElementById('followupModalAddRound'),
         modalResetBtn: document.getElementById('followupModalResetBtn'),
         modalSaveBtn: document.getElementById('followupModalSaveBtn'),
-        modalTitle: document.getElementById('followupModalTitle')
+        modalTitle: document.getElementById('followupModalTitle'),
+        summaryActive: document.getElementById('followupMetricActive'),
+        summaryActiveMeta: document.getElementById('followupMetricActiveMeta'),
+        summaryCompleted: document.getElementById('followupMetricCompleted'),
+        summaryCompletedMeta: document.getElementById('followupMetricCompletedMeta'),
+        summaryCanceled: document.getElementById('followupMetricCanceled'),
+        summaryCanceledMeta: document.getElementById('followupMetricCanceledMeta'),
+        summaryFailed: document.getElementById('followupMetricFailed'),
+        summaryFailedMeta: document.getElementById('followupMetricFailedMeta'),
+        schedulePreview: document.getElementById('followupSchedulePreview'),
+        autoStatusBadge: document.getElementById('followupAutoStatusBadge'),
+        filterButtons: document.querySelectorAll('.followup-filter-btn')
     };
 
     const modalInstance = el.modalRoot ? new bootstrap.Modal(el.modalRoot) : null;
@@ -89,6 +100,18 @@
         if (diffHours < 24) return `${diffHours} ชั่วโมงที่แล้ว`;
         if (diffDays < 7) return `${diffDays} วันที่แล้ว`;
         return formatDateTime(value);
+    };
+
+    const formatDelayMinutes = (minutes) => {
+        const value = Number(minutes);
+        if (!Number.isFinite(value) || value <= 0) return '-';
+        if (value < 60) return `${value} นาที`;
+        const hours = Math.floor(value / 60);
+        const mins = value % 60;
+        if (mins === 0) {
+            return `${hours} ชม.`;
+        }
+        return `${hours} ชม. ${mins} นาที`;
     };
 
     const getStatusBadge = (status) => {
@@ -214,6 +237,67 @@
         setRoundsDisabled(!enabled);
     };
 
+    const renderSchedulePreview = (config) => {
+        if (!el.schedulePreview) return;
+        if (!config) {
+            el.schedulePreview.innerHTML = '<div class="text-muted small">เลือกหน้าเพจเพื่อดูแผนการส่งข้อความ</div>';
+            return;
+        }
+        if (config.autoFollowUpEnabled === false) {
+            el.schedulePreview.innerHTML = '<div class="text-muted small">ระบบจะไม่ส่งข้อความอัตโนมัติสำหรับเพจนี้</div>';
+            return;
+        }
+        const rounds = Array.isArray(config.rounds) ? config.rounds : [];
+        if (!rounds.length) {
+            el.schedulePreview.innerHTML = '<div class="text-muted small">ยังไม่ได้กำหนดข้อความติดตาม</div>';
+            return;
+        }
+        const html = rounds.map((round, index) => {
+            const delay = Number(round.delayMinutes);
+            const label = formatDelayMinutes(delay);
+            return `
+                <div class="followup-schedule-item">
+                    <div class="schedule-order">${index + 1}</div>
+                    <div class="schedule-detail">
+                        <div class="schedule-time">+${label}</div>
+                        <div class="schedule-message">${escapeHtml(round.message || '')}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        el.schedulePreview.innerHTML = html;
+    };
+
+    const updateConfigDisplay = (config) => {
+        const analysisOn = config && config.analysisEnabled !== false;
+        if (el.analysisLabel) {
+            el.analysisLabel.textContent = analysisOn ? 'วิเคราะห์ด้วย AI (เปิด)' : 'วิเคราะห์ด้วย AI (ปิด)';
+        }
+        if (el.autoStatusBadge) {
+            const autoOn = config && config.autoFollowUpEnabled !== false;
+            el.autoStatusBadge.textContent = autoOn ? 'ส่งข้อความอัตโนมัติ (เปิด)' : 'ส่งข้อความอัตโนมัติ (ปิด)';
+            el.autoStatusBadge.classList.remove('bg-success', 'bg-secondary');
+            el.autoStatusBadge.classList.add(autoOn ? 'bg-success' : 'bg-secondary');
+        }
+        if (el.analysisSubtitle) {
+            if (!config) {
+                el.analysisSubtitle.textContent = 'เลือกหน้าเพจเพื่อดูรายละเอียดการติดตาม';
+            } else if (config.autoFollowUpEnabled === false) {
+                el.analysisSubtitle.textContent = 'ระบบจะไม่ส่งข้อความอัตโนมัติจนกว่าจะเปิดใช้งาน';
+            } else {
+                const parts = ['ระบบจะนับเวลาจากข้อความล่าสุดของลูกค้า'];
+                if (typeof config.historyLimit === 'number') {
+                    parts.push(`ใช้ประวัติล่าสุด ${config.historyLimit} ข้อความ`);
+                }
+                if (typeof config.cooldownMinutes === 'number') {
+                    parts.push(`วิเคราะห์ซ้ำทุก ${config.cooldownMinutes} นาที`);
+                }
+                el.analysisSubtitle.textContent = parts.join(' • ');
+            }
+        }
+        renderSchedulePreview(config);
+    };
+
     const showAlert = (type, message) => {
         if (!el.alert) return;
         el.alert.className = `alert alert-${type}`;
@@ -256,37 +340,51 @@
     };
 
     const updateMetrics = () => {
-        const activeCount = typeof state.summary.active === 'number'
-            ? state.summary.active
-            : (state.summary.total || 0);
-        if (el.count) {
-            el.count.textContent = activeCount;
+        const summary = state.summary || {};
+        const active = summary.active || 0;
+        const completed = summary.completed || 0;
+        const canceled = summary.canceled || 0;
+        const failed = summary.failed || 0;
+
+        if (el.summaryActive) el.summaryActive.textContent = active;
+        if (el.summaryCompleted) el.summaryCompleted.textContent = completed;
+        if (el.summaryCanceled) el.summaryCanceled.textContent = canceled;
+        if (el.summaryFailed) el.summaryFailed.textContent = failed;
+
+        if (el.summaryActiveMeta) {
+            const now = Date.now();
+            const dueSoon = state.users.filter(user => {
+                if (user.status !== 'active' || !user.nextScheduledAt) return false;
+                const diff = new Date(user.nextScheduledAt).getTime() - now;
+                return diff >= 0 && diff <= 30 * 60000;
+            }).length;
+            el.summaryActiveMeta.textContent = dueSoon > 0
+                ? `ส่งใน 30 นาทีนี้ ${dueSoon} ราย`
+                : 'กำลังรอรอบถัดไป';
         }
-        if (el.analysisLabel) {
-            const analysisOn = state.currentContextConfig && state.currentContextConfig.analysisEnabled !== false;
-            el.analysisLabel.textContent = analysisOn ? 'วิเคราะห์อัตโนมัติ' : 'หยุดวิเคราะห์';
-            el.analysisLabel.classList.remove('text-success', 'text-danger');
-            el.analysisLabel.classList.add(analysisOn ? 'text-success' : 'text-danger');
+
+        if (el.summaryCompletedMeta) {
+            const messagesSent = state.users
+                .filter(user => user.status === 'completed')
+                .reduce((sum, user) => {
+                    const rounds = Array.isArray(user.rounds) ? user.rounds.length : Number(user.sentRounds) || 0;
+                    return sum + rounds;
+                }, 0);
+            el.summaryCompletedMeta.textContent = messagesSent > 0
+                ? `รวมส่งแล้ว ${messagesSent} ข้อความ`
+                : 'รอข้อความครบตามแผน';
         }
-        if (el.analysisSubtitle) {
-            const parts = [];
-            if (state.currentContextConfig) {
-                parts.push(`ส่งติดตามอัตโนมัติ: ${state.currentContextConfig.autoFollowUpEnabled === false ? 'ปิด' : 'เปิด'}`);
-                parts.push(`แสดงในหน้าแชท: ${state.currentContextConfig.showInChat !== false ? 'เปิด' : 'ปิด'}`);
-                parts.push(`ในแดชบอร์ด: ${state.currentContextConfig.showInDashboard !== false ? 'เปิด' : 'ปิด'}`);
-            } else {
-                parts.push('ยังไม่ได้เลือกหน้าเพจ');
-            }
-            if (state.summary) {
-                parts.push(`กำลังติดตาม: ${state.summary.active || 0}`);
-                if (typeof state.summary.completed === 'number') {
-                    parts.push(`ส่งครบแล้ว: ${state.summary.completed}`);
-                }
-                if (typeof state.summary.canceled === 'number' && state.summary.canceled > 0) {
-                    parts.push(`ยกเลิกวันนี้: ${state.summary.canceled}`);
-                }
-            }
-            el.analysisSubtitle.textContent = parts.join(' • ');
+
+        if (el.summaryCanceledMeta) {
+            el.summaryCanceledMeta.textContent = canceled > 0
+                ? `ยกเลิกเพราะลูกค้าตอบกลับ ${canceled} ราย`
+                : 'ยังไม่มีการยกเลิกในวันนี้';
+        }
+
+        if (el.summaryFailedMeta) {
+            el.summaryFailedMeta.textContent = failed > 0
+                ? `ต้องตรวจสอบเพิ่มเติม ${failed} ราย`
+                : 'ยังไม่มีงานที่ส่งไม่สำเร็จ';
         }
     };
 
@@ -300,6 +398,7 @@
             }
             if (el.settingsBtn) el.settingsBtn.disabled = true;
             if (el.refresh) el.refresh.disabled = true;
+            updateConfigDisplay(null);
             return;
         }
 
@@ -310,11 +409,9 @@
         if (el.pageStatus) {
             const cfg = state.currentContextConfig || state.currentPage.settings;
             const statusTexts = [];
-            statusTexts.push(`วิเคราะห์: ${cfg.analysisEnabled !== false ? 'เปิด' : 'ปิด'}`);
-            statusTexts.push(`ส่งติดตาม: ${cfg.autoFollowUpEnabled === false ? 'ปิด' : 'เปิด'}`);
-            if (cfg.showInDashboard === false) {
-                statusTexts.push('ซ่อนจากแดชบอร์ด');
-            }
+            statusTexts.push(state.currentPage.platform === 'facebook' ? 'Facebook' : 'LINE');
+            statusTexts.push(`ส่งอัตโนมัติ: ${cfg.autoFollowUpEnabled === false ? 'ปิด' : 'เปิด'}`);
+            statusTexts.push(`วิเคราะห์ด้วย AI: ${cfg.analysisEnabled !== false ? 'เปิด' : 'ปิด'}`);
             el.pageStatus.textContent = statusTexts.join(' • ');
         }
 
@@ -325,13 +422,16 @@
             }
         }
 
+        const disabledDashboard = state.currentContextConfig && state.currentContextConfig.showInDashboard === false;
         if (el.settingsBtn) {
             el.settingsBtn.disabled = false;
         }
 
         if (el.refresh) {
-            el.refresh.disabled = false;
+            el.refresh.disabled = !!disabledDashboard;
         }
+
+        updateConfigDisplay(state.currentContextConfig || state.currentPage.settings || null);
     };
 
     const renderLoadingState = () => {
@@ -347,7 +447,7 @@
     const renderDisabledState = () => {
         if (!el.emptyState) return;
         state.users = [];
-        state.summary = { total: 0 };
+        state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
         el.emptyState.classList.remove('d-none');
         if (!state.currentPage) {
             el.emptyState.innerHTML = `
@@ -363,7 +463,52 @@
             `;
         }
         if (el.list) el.list.innerHTML = '';
-        if (el.count) el.count.textContent = 0;
+    };
+
+    const renderUserTimeline = (user) => {
+        const rounds = Array.isArray(user.rounds) ? user.rounds : [];
+        if (!rounds.length) {
+            return '<div class="text-muted small">ยังไม่ได้ตั้งค่าข้อความติดตามสำหรับเพจนี้</div>';
+        }
+        return `
+            <div class="followup-timeline">
+                ${rounds.map((round, index) => {
+                    const status = round?.status || 'pending';
+                    let displayStatus = status;
+                    let statusLabel = 'รอส่ง';
+                    if (status === 'sent') {
+                        statusLabel = 'ส่งแล้ว';
+                    } else if (status === 'failed') {
+                        statusLabel = 'ส่งไม่สำเร็จ';
+                    } else if (user.status === 'canceled') {
+                        statusLabel = 'ถูกยกเลิก';
+                        displayStatus = 'canceled';
+                    }
+
+                    const scheduledAt = round?.scheduledAt ? formatDateTime(round.scheduledAt) : null;
+                    const relative = round?.sentAt
+                        ? `ส่งเมื่อ ${formatRelativeTime(round.sentAt)}`
+                        : scheduledAt
+                            ? `กำหนดส่ง ${formatRelativeTime(round.scheduledAt)}`
+                            : `หลัง +${formatDelayMinutes(round?.delayMinutes)}`;
+                    const absolute = scheduledAt || `+${formatDelayMinutes(round?.delayMinutes)}`;
+
+                    return `
+                        <div class="followup-timeline-item ${displayStatus}">
+                            <div class="timeline-dot"></div>
+                            <div class="timeline-body">
+                                <div class="timeline-header d-flex justify-content-between align-items-center">
+                                    <span class="timeline-index">รอบที่ ${index + 1}</span>
+                                    <span class="timeline-status">${statusLabel}</span>
+                                </div>
+                                <div class="timeline-time text-muted">${relative} (${absolute})</div>
+                                <div class="timeline-message">${escapeHtml(round?.message || '')}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
     };
 
     const renderUsers = () => {
@@ -371,27 +516,41 @@
         const cfg = state.currentContextConfig;
         if (!state.currentPage || (cfg && cfg.showInDashboard === false)) {
             renderDisabledState();
-            if (el.count) el.count.textContent = 0;
             return;
         }
         const keyword = el.search && typeof el.search.value === 'string'
             ? el.search.value.trim().toLowerCase()
             : '';
-        const filtered = state.users.filter(user => {
+        const statusFilter = state.statusFilter || 'all';
+        const byStatus = state.users.filter(user => {
+            if (statusFilter === 'all') return true;
+            return user.status === statusFilter;
+        });
+        const filtered = byStatus.filter(user => {
             if (!keyword) return true;
-            const name = (user.displayName || '').toLowerCase();
-            const reason = (user.followUpReason || '').toLowerCase();
-            return name.includes(keyword) || reason.includes(keyword) || user.userId.toLowerCase().includes(keyword);
+            const fields = [
+                user.displayName || '',
+                user.userId || '',
+                user.nextMessage || '',
+                user.lastUserMessagePreview || ''
+            ];
+            return fields.some(value => String(value).toLowerCase().includes(keyword));
         });
 
         if (!filtered.length) {
             if (el.list) el.list.innerHTML = '';
             if (el.emptyState) {
                 el.emptyState.classList.remove('d-none');
+                const emptyTitle = keyword
+                    ? 'ไม่พบข้อมูลที่ตรงกับคำค้น'
+                    : 'ยังไม่มีลูกค้าในสถานะนี้';
+                const emptySubtitle = keyword
+                    ? 'ลองเปลี่ยนคำค้นหา หรือรอลูกค้าพูดคุยเพิ่มเติม'
+                    : 'เมื่อมีลูกค้าที่ตรงเงื่อนไข ระบบจะแสดงรายชื่อที่นี่';
                 el.emptyState.innerHTML = `
                     <i class="fas fa-search fa-2x mb-2 text-muted"></i>
-                    <p class="mb-1">ไม่พบข้อมูลที่ตรงกับคำค้น</p>
-                    <p class="small mb-0">ลองเปลี่ยนคำค้นหา หรือรอลูกค้าพูดคุยเพิ่มเติม</p>
+                    <p class="mb-1">${emptyTitle}</p>
+                    <p class="small mb-0">${emptySubtitle}</p>
                 `;
             }
             return;
@@ -408,7 +567,8 @@
                 : '<span class="badge bg-success-soft text-success"><i class="fab fa-line me-1"></i>LINE</span>';
             const statusBadge = getStatusBadge(user.status);
             const nextMessage = escapeHtml(user.nextMessage || '-');
-            const nextSchedule = user.nextScheduledAt ? formatRelativeTime(user.nextScheduledAt) : 'ไม่มีการนัดหมาย';
+            const nextScheduleRelative = user.nextScheduledAt ? formatRelativeTime(user.nextScheduledAt) : 'ยังไม่มีนัดหมาย';
+            const nextScheduleExact = user.nextScheduledAt ? formatDateTime(user.nextScheduledAt) : '-';
             const lastCustomerMessage = escapeHtml(user.lastUserMessagePreview || '-');
             const lastCustomerTime = user.lastUserMessageAt ? formatRelativeTime(user.lastUserMessageAt) : '-';
             const progressLabel = `${user.sentRounds || 0}/${user.totalRounds || 0}`;
@@ -416,6 +576,8 @@
             const canceledInfo = user.status === 'canceled' && user.canceledReason
                 ? `<div class="followup-section text-muted small">เหตุผลการยกเลิก: ${escapeHtml(user.canceledReason)}</div>`
                 : '';
+            const timeline = renderUserTimeline(user);
+            const canCancel = user.status === 'active';
             return `
                 <div class="followup-card" data-user-id="${escapeHtml(user.userId)}">
                     <div class="followup-card-header">
@@ -424,13 +586,13 @@
                             <div class="followup-name">${escapeHtml(user.displayName || user.userId)}</div>
                             <div class="followup-sub">${escapeHtml(user.userId)} • ${platformBadge}</div>
                         </div>
-                        <div class="followup-status">${statusBadge}</div>
+                        <div class="followup-status-badge">${statusBadge}</div>
                     </div>
                     <div class="followup-card-body">
                         <div class="followup-section">
                             <div class="label">ข้อความถัดไป</div>
                             <div class="value">${nextMessage}</div>
-                            <div class="meta">${nextSchedule}</div>
+                            <div class="meta">${nextScheduleExact} (${nextScheduleRelative})</div>
                         </div>
                         <div class="followup-section">
                             <div class="label">ข้อความล่าสุดจากลูกค้า</div>
@@ -442,14 +604,18 @@
                             <div class="value">${progressLabel} รอบ</div>
                             <div class="meta">ส่งล่าสุด: ${lastFollowUp}</div>
                         </div>
+                        <div class="followup-section">
+                            <div class="label">ตารางข้อความ</div>
+                            ${timeline}
+                        </div>
                         ${canceledInfo}
                     </div>
                     <div class="followup-card-actions">
                         <button class="btn btn-sm btn-outline-secondary" data-action="open-chat">
                             <i class="fas fa-comments me-1"></i>เปิดหน้าแชท
                         </button>
-                        <button class="btn btn-sm btn-outline-danger" data-action="clear-task">
-                            <i class="fas fa-ban me-1"></i>ยกเลิกการติดตามวันนี้
+                        <button class="btn btn-sm btn-outline-danger" data-action="clear-task" ${canCancel ? '' : 'disabled'}>
+                            <i class="fas fa-ban me-1"></i>${canCancel ? 'หยุดติดตามวันนี้' : 'หยุดติดตามแล้ว'}
                         </button>
                     </div>
                 </div>
@@ -459,6 +625,7 @@
         el.list.innerHTML = cards;
         el.list.querySelectorAll('.followup-card button[data-action="clear-task"]').forEach(btn => {
             btn.addEventListener('click', async (event) => {
+                if (btn.disabled) return;
                 const card = event.currentTarget.closest('.followup-card');
                 const userId = card ? card.getAttribute('data-user-id') : null;
                 if (!userId) return;
@@ -547,12 +714,13 @@
             const data = await response.json();
             if (data.success) {
                 state.users = data.users || [];
-                state.summary = data.summary || {
-                    total: state.users.length,
-                    active: state.users.length,
-                    completed: 0,
-                    canceled: 0,
-                    failed: 0
+                const summaryData = data.summary || {};
+                state.summary = {
+                    total: typeof summaryData.total === 'number' ? summaryData.total : state.users.length,
+                    active: typeof summaryData.active === 'number' ? summaryData.active : (state.users.length || 0),
+                    completed: typeof summaryData.completed === 'number' ? summaryData.completed : 0,
+                    canceled: typeof summaryData.canceled === 'number' ? summaryData.canceled : 0,
+                    failed: typeof summaryData.failed === 'number' ? summaryData.failed : 0
                 };
                 if (data.config) {
                     state.currentContextConfig = data.config;
@@ -595,10 +763,10 @@
         if (el.search) {
             el.search.value = '';
         }
-        if (options.skipReload) {
-            state.users = [];
-            state.summary = { total: 0 };
-        }
+    if (options.skipReload) {
+        state.users = [];
+        state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
+    }
         renderPageSelector();
         updateToolbar();
         updateMetrics();
@@ -743,6 +911,21 @@
         }
     };
 
+    const setStatusFilter = (status) => {
+        state.statusFilter = status || 'all';
+        if (el.filterButtons && typeof el.filterButtons.forEach === 'function') {
+            el.filterButtons.forEach(btn => {
+                const btnStatus = btn.getAttribute('data-status') || 'all';
+                if (btnStatus === state.statusFilter) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+        renderUsers();
+    };
+
     const setupEventListeners = () => {
         if (el.search) {
             el.search.addEventListener('input', () => {
@@ -769,6 +952,14 @@
                 resetSettings();
             });
         }
+        if (el.filterButtons && typeof el.filterButtons.forEach === 'function') {
+            el.filterButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const status = btn.getAttribute('data-status') || 'all';
+                    setStatusFilter(status);
+                });
+            });
+        }
         if (el.modalAutoSend) {
             el.modalAutoSend.addEventListener('change', () => {
                 handleAutoSendToggle();
@@ -784,6 +975,7 @@
     const init = async () => {
         populateModalOptions();
         setupEventListeners();
+        setStatusFilter(state.statusFilter || 'all');
         await loadPages();
         initSocket();
         if (state.currentPage) {

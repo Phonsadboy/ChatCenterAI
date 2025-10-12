@@ -881,7 +881,13 @@ function buildFollowUpPreview(rawContent) {
 function emitFollowUpScheduleUpdate(payload) {
   try {
     if (io) {
-      io.emit('followUpScheduleUpdated', payload);
+      const sanitized = { ...(payload || {}) };
+      Object.keys(sanitized).forEach(key => {
+        if (typeof sanitized[key] === 'undefined') {
+          delete sanitized[key];
+        }
+      });
+      io.emit('followUpScheduleUpdated', sanitized);
     }
   } catch (_) {}
 }
@@ -898,6 +904,7 @@ async function scheduleFollowUpForUser(userId, options = {}) {
 
     const normalizedPlatform = platform || 'line';
     const normalizedBotId = normalizeFollowUpBotId(botId);
+    const contextKey = `${normalizedPlatform}:${normalizedBotId || 'default'}`;
 
     const config = configOverride || await getFollowUpConfigForContext(normalizedPlatform, normalizedBotId);
     if (!config) return null;
@@ -937,7 +944,8 @@ async function scheduleFollowUpForUser(userId, options = {}) {
                 canceledAt: now,
                 updatedAt: now,
                 lastUserMessageAt: messageTimestamp,
-                lastUserMessagePreview: previewText || existingTask.lastUserMessagePreview || ''
+                lastUserMessagePreview: previewText || existingTask.lastUserMessagePreview || '',
+                contextKey
               }
             }
           );
@@ -945,6 +953,7 @@ async function scheduleFollowUpForUser(userId, options = {}) {
             userId,
             platform: normalizedPlatform,
             botId: normalizedBotId,
+            contextKey,
             status: 'canceled',
             reason: 'user_replied'
           });
@@ -955,7 +964,8 @@ async function scheduleFollowUpForUser(userId, options = {}) {
               $set: {
                 lastUserMessageAt: messageTimestamp,
                 updatedAt: now,
-                lastUserMessagePreview: previewText || existingTask.lastUserMessagePreview || ''
+                lastUserMessagePreview: previewText || existingTask.lastUserMessagePreview || '',
+                contextKey
               }
             }
           );
@@ -984,6 +994,7 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       platform: normalizedPlatform,
       botId: normalizedBotId,
       dateKey,
+      contextKey,
       rounds,
       lastUserMessageAt: messageTimestamp,
       lastUserMessagePreview: previewText,
@@ -1007,6 +1018,7 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       userId,
       platform: normalizedPlatform,
       botId: normalizedBotId,
+      contextKey,
       status: 'scheduled',
       nextScheduledAt: taskDoc.nextScheduledAt
     });
@@ -1022,6 +1034,9 @@ async function cancelFollowUpTasksForUser(userId, platform = null, botId = undef
     const { reason = 'manual', dateKey = null } = options || {};
     const normalizedPlatform = platform || null;
     const normalizedBotId = botId === undefined ? undefined : normalizeFollowUpBotId(botId);
+    const contextKey = (normalizedPlatform && normalizedBotId !== undefined)
+      ? `${normalizedPlatform}:${normalizedBotId || 'default'}`
+      : null;
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("follow_up_tasks");
@@ -1059,6 +1074,7 @@ async function cancelFollowUpTasksForUser(userId, platform = null, botId = undef
         userId,
         platform: normalizedPlatform || undefined,
         botId: normalizedBotId === undefined ? undefined : normalizedBotId,
+        contextKey: contextKey || undefined,
         status: 'canceled',
         reason
       });
@@ -1110,6 +1126,7 @@ async function handleFollowUpTask(task, db) {
   const round = rounds[currentIndex];
   const coll = db.collection("follow_up_tasks");
   const now = new Date();
+  const derivedContextKey = task.contextKey || `${task.platform || 'line'}:${normalizeFollowUpBotId(task.botId) || 'default'}`;
 
   if (!round) {
     await coll.updateOne(
@@ -1126,6 +1143,7 @@ async function handleFollowUpTask(task, db) {
       userId: task.userId,
       platform: task.platform,
       botId: task.botId,
+      contextKey: derivedContextKey,
       status: 'completed'
     });
     return;
@@ -1143,7 +1161,8 @@ async function handleFollowUpTask(task, db) {
       updatedAt: now,
       nextRoundIndex: nextIndex,
       nextScheduledAt: hasMore ? rounds[nextIndex].scheduledAt : null,
-      completed: !hasMore
+      completed: !hasMore,
+      contextKey: derivedContextKey
     };
 
     await coll.updateOne(
@@ -1158,6 +1177,7 @@ async function handleFollowUpTask(task, db) {
       userId: task.userId,
       platform: task.platform,
       botId: task.botId,
+      contextKey: derivedContextKey,
       status: updateSet.completed ? 'completed' : 'progress',
       currentRound: currentIndex,
       nextRound: hasMore ? nextIndex : null,
@@ -1182,6 +1202,7 @@ async function handleFollowUpTask(task, db) {
       userId: task.userId,
       platform: task.platform,
       botId: task.botId,
+      contextKey: derivedContextKey,
       status: 'failed',
       reason: 'send_failed'
     });
@@ -1602,6 +1623,8 @@ async function getFollowUpUsers(filter = {}) {
         pictureUrl: profile?.pictureUrl || null,
         platform: contextPlatform,
         botId: contextBotId,
+        contextKey: configKey,
+        pageId: configKey,
         status,
         lastUserMessagePreview: preview,
         lastUserMessageAt: task.lastUserMessageAt || null,
@@ -1637,6 +1660,7 @@ async function getFollowUpUsers(filter = {}) {
     completed: users.filter(user => user.status === 'completed').length,
     canceled: users.filter(user => user.status === 'canceled').length,
     failed: users.filter(user => user.status === 'failed').length,
+    contexts: contextKeys.length,
     dateKey
   };
 
@@ -4926,9 +4950,71 @@ app.get('/admin/followup', async (req, res) => {
   }
 });
 
-// Follow-up status page (stub)
-app.get('/admin/followup/status', (req, res) => {
-  res.render('admin-followup-status', { statuses: [] });
+// Follow-up status page (enhanced overview)
+app.get('/admin/followup/status', async (req, res) => {
+  try {
+    const [{ users, summary }, pageSettings] = await Promise.all([
+      getFollowUpUsers({}),
+      listFollowUpPageSettings()
+    ]);
+    const pageMap = new Map();
+    (pageSettings.pages || []).forEach(page => {
+      pageMap.set(page.id, page);
+    });
+
+    const groupMap = new Map();
+    users.forEach(user => {
+      const contextKey = user.contextKey || `${user.platform || 'line'}:${user.botId || 'default'}`;
+      if (!groupMap.has(contextKey)) {
+        const pageInfo = pageMap.get(contextKey) || null;
+        const label = pageInfo?.name || (user.platform === 'facebook' ? 'Facebook (ค่าเริ่มต้น)' : 'LINE (ค่าเริ่มต้น)');
+        groupMap.set(contextKey, {
+          contextKey,
+          platform: user.platform || 'line',
+          botId: user.botId || null,
+          pageName: label,
+          pageInfo,
+          config: user.config || {},
+          stats: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 },
+          users: []
+        });
+      }
+      const group = groupMap.get(contextKey);
+      group.stats.total += 1;
+      if (user.status && group.stats.hasOwnProperty(user.status)) {
+        group.stats[user.status] += 1;
+      }
+      group.users.push(user);
+    });
+
+    const groups = Array.from(groupMap.values()).map(group => {
+      group.users.sort((a, b) => {
+        const aTime = a.nextScheduledAt ? new Date(a.nextScheduledAt).getTime() : Infinity;
+        const bTime = b.nextScheduledAt ? new Date(b.nextScheduledAt).getTime() : Infinity;
+        if (aTime === bTime) {
+          return (a.displayName || '').localeCompare(b.displayName || '');
+        }
+        return aTime - bTime;
+      });
+      return group;
+    }).sort((a, b) => a.pageName.localeCompare(b.pageName));
+
+    const summaryLabel = getBangkokMoment().format('D MMMM YYYY');
+
+    res.render('admin-followup-status', {
+      summary,
+      summaryLabel,
+      groups
+    });
+  } catch (error) {
+    console.error('[FollowUp] ไม่สามารถโหลดหน้าติดตามลูกค้าได้:', error);
+    res.render('admin-followup-status', {
+      error: 'ไม่สามารถโหลดข้อมูลติดตามลูกค้าได้ในขณะนี้',
+      summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0, dateKey: getDateKey() },
+      summaryLabel: getBangkokMoment().format('D MMMM YYYY'),
+      groups: []
+    });
+  }
 });
 
 app.get('/admin/followup/users', async (req, res) => {
@@ -4973,16 +5059,27 @@ app.post('/admin/followup/clear', async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const existing = await db.collection("follow_up_status").findOne({ senderId: userId });
-    const platform = existing?.platform || 'line';
-    const botId = normalizeFollowUpBotId(existing?.botId);
+    let platform = existing?.platform || null;
+    let botId = existing ? normalizeFollowUpBotId(existing?.botId) : null;
+    if (!platform) {
+      const latestTask = await db.collection("follow_up_tasks")
+        .find({ userId })
+        .sort({ createdAt: -1 })
+        .limit(1)
+        .toArray();
+      if (latestTask.length > 0) {
+        platform = latestTask[0].platform || null;
+        botId = normalizeFollowUpBotId(latestTask[0].botId);
+      }
+    }
 
-    const contextConfig = await getFollowUpConfigForContext(platform, botId);
+    const contextConfig = await getFollowUpConfigForContext(platform || 'line', botId);
     if (contextConfig.showInDashboard === false) {
       // อนุญาตให้ล้างแท็กแม้ถูกปิดแสดง แต่แจ้งเตือนฝั่ง client
       console.warn('[FollowUp] Clearing status on hidden page:', platform, botId);
     }
 
-    await cancelFollowUpTasksForUser(userId, null, undefined, { reason: 'manual_clear' });
+    await cancelFollowUpTasksForUser(userId, platform, botId, { reason: 'manual_clear' });
     await clearFollowUpStatus(userId);
     try {
       if (io) {
