@@ -900,7 +900,7 @@ async function analyzeChatHistoryForFollowUp(userId, history, modelOverride = nu
   const systemPrompt = [
     'คุณคือผู้ช่วยที่ตรวจสอบประวัติการสนทนาระหว่างลูกค้ากับร้านค้า',
     'หน้าที่ของคุณคือบอกว่ามีการสั่งซื้อหรือการขายสินค้าที่ตกลงแน่นอนแล้วหรือไม่',
-    'ให้พิจารณาเฉพาะกรณีที่มีการยืนยันสั่งซื้อ การตอบตกลงโอนเงิน การให้ที่อยู่จัดส่ง หรือรายละเอียดการชำระเงิน',
+    'ให้พิจารณาเฉพาะกรณีที่มีการยืนยันสั่งซื้อ การให้ที่อยู่จัดส่ง',
     'อย่าถือว่าเป็นการสั่งซื้อถ้าลูกค้าถามราคาเฉยๆ ต่อรอง หรือยังลังเล',
     'ตอบกลับเป็น JSON เท่านั้นในรูปแบบ {"hasFollowUp": boolean, "reason": "ข้อความสั้นๆ ภาษาไทย"}',
     'อย่าเพิ่มคำอธิบายอื่นนอกเหนือจาก JSON'
@@ -919,8 +919,7 @@ async function analyzeChatHistoryForFollowUp(userId, history, modelOverride = nu
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
-      ],
-      temperature: 0
+      ]
     });
     
     const content = response.choices?.[0]?.message?.content || '';
