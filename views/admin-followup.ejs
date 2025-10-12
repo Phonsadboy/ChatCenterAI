@@ -182,16 +182,6 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    window.followUpDashboardConfig = {
-      analysisEnabled: <%= (followUpConfig && followUpConfig.analysisEnabled) ? 'true' : 'false' %>,
-      showDashboard: <%= (followUpConfig && followUpConfig.showDashboard) ? 'true' : 'false' %>
-    };
-  </script>
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/followup-dashboard.js"></script>
-
   <!-- Modal: Follow-up Page Settings -->
   <div class="modal fade" id="followupSettingsModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-centered">
@@ -277,5 +267,15 @@
       </div>
     </div>
   </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    window.followUpDashboardConfig = {
+      analysisEnabled: <%= (followUpConfig && followUpConfig.analysisEnabled) ? 'true' : 'false' %>,
+      showDashboard: <%= (followUpConfig && followUpConfig.showDashboard) ? 'true' : 'false' %>
+    };
+  </script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/followup-dashboard.js"></script>
 </body>
 </html>
