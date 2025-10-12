@@ -7,7 +7,8 @@
         isLoadingUsers: false,
         socket: null,
         config: window.followUpDashboardConfig || {},
-        currentContextConfig: null
+        currentContextConfig: null,
+        modalRounds: []
     };
 
     const el = {
@@ -31,6 +32,10 @@
         modalCooldown: document.getElementById('followupModalCooldown'),
         modalModel: document.getElementById('followupModalModel'),
         modalUpdatedAt: document.getElementById('followupModalUpdatedAt'),
+        modalAutoSend: document.getElementById('followupModalAutoSend'),
+        modalRoundsContainer: document.getElementById('followupModalRoundsContainer'),
+        modalRounds: document.getElementById('followupModalRounds'),
+        modalAddRound: document.getElementById('followupModalAddRound'),
         modalResetBtn: document.getElementById('followupModalResetBtn'),
         modalSaveBtn: document.getElementById('followupModalSaveBtn'),
         modalTitle: document.getElementById('followupModalTitle')
@@ -86,6 +91,129 @@
         return formatDateTime(value);
     };
 
+    const getStatusBadge = (status) => {
+        switch (status) {
+            case 'completed':
+                return '<span class="badge bg-success"><i class="fas fa-check-circle me-1"></i>ส่งครบแล้ว</span>';
+            case 'canceled':
+                return '<span class="badge bg-secondary"><i class="fas fa-ban me-1"></i>ยกเลิกแล้ว</span>';
+            case 'failed':
+                return '<span class="badge bg-danger"><i class="fas fa-exclamation-triangle me-1"></i>ส่งไม่สำเร็จ</span>';
+            case 'active':
+                return '<span class="badge bg-warning text-dark"><i class="fas fa-sync me-1"></i>กำลังติดตาม</span>';
+            default:
+                return '<span class="badge bg-info text-dark"><i class="fas fa-clock me-1"></i>รอดำเนินการ</span>';
+        }
+    };
+
+    const setRoundsDisabled = (disabled) => {
+        if (el.modalRoundsContainer) {
+            el.modalRoundsContainer.classList.toggle('opacity-50', disabled);
+        }
+        if (el.modalAddRound) {
+            el.modalAddRound.disabled = !!disabled;
+        }
+    };
+
+    const renderModalRounds = () => {
+        if (!el.modalRounds) return;
+        if (!Array.isArray(state.modalRounds)) {
+            state.modalRounds = [];
+        }
+
+        if (state.modalRounds.length === 0) {
+            el.modalRounds.innerHTML = '<div class="text-muted small py-2">ยังไม่มีข้อความติดตาม กดปุ่ม "เพิ่มข้อความ" เพื่อเริ่มต้น</div>';
+            return;
+        }
+
+        el.modalRounds.innerHTML = state.modalRounds.map((round, index) => {
+            const safeMessage = escapeHtml(round?.message || '');
+            const delayValue = Number(round?.delayMinutes);
+            return `
+                <div class="followup-round-item border rounded p-2 mb-2 bg-white" data-index="${index}">
+                    <div class="row g-2 align-items-start">
+                        <div class="col-sm-3">
+                            <label class="form-label form-label-sm text-muted mb-1">เวลาหลังคุยล่าสุด</label>
+                            <div class="input-group input-group-sm">
+                                <input type="number" class="form-control followup-round-delay" min="1" step="1" value="${Number.isFinite(delayValue) ? delayValue : ''}">
+                                <span class="input-group-text">นาที</span>
+                            </div>
+                        </div>
+                        <div class="col-sm-8">
+                            <label class="form-label form-label-sm text-muted mb-1">ข้อความ</label>
+                            <textarea class="form-control form-control-sm followup-round-message" rows="2" placeholder="กรอกข้อความติดตาม">${safeMessage}</textarea>
+                        </div>
+                        <div class="col-sm-1 d-flex justify-content-end">
+                            <button type="button" class="btn btn-sm btn-outline-danger followup-round-remove" title="ลบข้อความ">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        el.modalRounds.querySelectorAll('.followup-round-delay').forEach(input => {
+            const container = input.closest('.followup-round-item');
+            if (!container) return;
+            const index = Number(container.dataset.index);
+            input.addEventListener('input', (event) => {
+                const value = Number(event.target.value);
+                state.modalRounds[index].delayMinutes = Number.isFinite(value) ? value : '';
+            });
+        });
+
+        el.modalRounds.querySelectorAll('.followup-round-message').forEach(textarea => {
+            const container = textarea.closest('.followup-round-item');
+            if (!container) return;
+            const index = Number(container.dataset.index);
+            textarea.addEventListener('input', (event) => {
+                state.modalRounds[index].message = event.target.value;
+            });
+        });
+
+        el.modalRounds.querySelectorAll('.followup-round-remove').forEach(btn => {
+            const container = btn.closest('.followup-round-item');
+            if (!container) return;
+            const index = Number(container.dataset.index);
+            btn.addEventListener('click', () => {
+                state.modalRounds.splice(index, 1);
+                renderModalRounds();
+            });
+        });
+    };
+
+    const addModalRound = (round) => {
+        if (!Array.isArray(state.modalRounds)) {
+            state.modalRounds = [];
+        }
+        const fallbackDelay = state.modalRounds.length > 0
+            ? Number(state.modalRounds[state.modalRounds.length - 1].delayMinutes) || 10
+            : 10;
+        const nextRound = {
+            delayMinutes: Number(round?.delayMinutes) || fallbackDelay,
+            message: round?.message || ''
+        };
+        state.modalRounds.push(nextRound);
+        renderModalRounds();
+    };
+
+    const collectRoundsPayload = () => {
+        if (!Array.isArray(state.modalRounds)) return [];
+        return state.modalRounds
+            .map(round => {
+                const delay = Number(round.delayMinutes);
+                const message = (round.message || '').trim();
+                return { delayMinutes: delay, message };
+            })
+            .filter(round => Number.isFinite(round.delayMinutes) && round.delayMinutes >= 1 && round.message.length > 0);
+    };
+
+    const handleAutoSendToggle = () => {
+        const enabled = el.modalAutoSend && el.modalAutoSend.checked;
+        setRoundsDisabled(!enabled);
+    };
+
     const showAlert = (type, message) => {
         if (!el.alert) return;
         el.alert.className = `alert alert-${type}`;
@@ -128,23 +256,35 @@
     };
 
     const updateMetrics = () => {
+        const activeCount = typeof state.summary.active === 'number'
+            ? state.summary.active
+            : (state.summary.total || 0);
         if (el.count) {
-            el.count.textContent = state.summary.total || 0;
+            el.count.textContent = activeCount;
         }
         if (el.analysisLabel) {
-            el.analysisLabel.textContent = state.currentContextConfig && state.currentContextConfig.analysisEnabled !== false
-                ? 'เปิดใช้งาน'
-                : 'ปิดอยู่';
+            const analysisOn = state.currentContextConfig && state.currentContextConfig.analysisEnabled !== false;
+            el.analysisLabel.textContent = analysisOn ? 'วิเคราะห์อัตโนมัติ' : 'หยุดวิเคราะห์';
             el.analysisLabel.classList.remove('text-success', 'text-danger');
-            el.analysisLabel.classList.add(state.currentContextConfig && state.currentContextConfig.analysisEnabled !== false ? 'text-success' : 'text-danger');
+            el.analysisLabel.classList.add(analysisOn ? 'text-success' : 'text-danger');
         }
         if (el.analysisSubtitle) {
             const parts = [];
             if (state.currentContextConfig) {
+                parts.push(`ส่งติดตามอัตโนมัติ: ${state.currentContextConfig.autoFollowUpEnabled === false ? 'ปิด' : 'เปิด'}`);
                 parts.push(`แสดงในหน้าแชท: ${state.currentContextConfig.showInChat !== false ? 'เปิด' : 'ปิด'}`);
-                parts.push(`แสดงในแดชบอร์ด: ${state.currentContextConfig.showInDashboard !== false ? 'เปิด' : 'ปิด'}`);
+                parts.push(`ในแดชบอร์ด: ${state.currentContextConfig.showInDashboard !== false ? 'เปิด' : 'ปิด'}`);
             } else {
                 parts.push('ยังไม่ได้เลือกหน้าเพจ');
+            }
+            if (state.summary) {
+                parts.push(`กำลังติดตาม: ${state.summary.active || 0}`);
+                if (typeof state.summary.completed === 'number') {
+                    parts.push(`ส่งครบแล้ว: ${state.summary.completed}`);
+                }
+                if (typeof state.summary.canceled === 'number' && state.summary.canceled > 0) {
+                    parts.push(`ยกเลิกวันนี้: ${state.summary.canceled}`);
+                }
             }
             el.analysisSubtitle.textContent = parts.join(' • ');
         }
@@ -170,7 +310,8 @@
         if (el.pageStatus) {
             const cfg = state.currentContextConfig || state.currentPage.settings;
             const statusTexts = [];
-            statusTexts.push(cfg.analysisEnabled !== false ? 'กำลังวิเคราะห์อัตโนมัติ' : 'หยุดการวิเคราะห์');
+            statusTexts.push(`วิเคราะห์: ${cfg.analysisEnabled !== false ? 'เปิด' : 'ปิด'}`);
+            statusTexts.push(`ส่งติดตาม: ${cfg.autoFollowUpEnabled === false ? 'ปิด' : 'เปิด'}`);
             if (cfg.showInDashboard === false) {
                 statusTexts.push('ซ่อนจากแดชบอร์ด');
             }
@@ -250,7 +391,7 @@
                 el.emptyState.innerHTML = `
                     <i class="fas fa-search fa-2x mb-2 text-muted"></i>
                     <p class="mb-1">ไม่พบข้อมูลที่ตรงกับคำค้น</p>
-                    <p class="small mb-0">ลองเปลี่ยนคำค้นหา หรือเพิ่มลูกค้าใหม่จากการสั่งซื้อ</p>
+                    <p class="small mb-0">ลองเปลี่ยนคำค้นหา หรือรอลูกค้าพูดคุยเพิ่มเติม</p>
                 `;
             }
             return;
@@ -262,12 +403,19 @@
 
         const cards = filtered.map(user => {
             const initials = escapeHtml((user.displayName || '?').charAt(0).toUpperCase());
-            const reason = escapeHtml(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว');
-            const lastMessage = escapeHtml(user.lastMessage || '-');
-            const updated = formatRelativeTime(user.followUpUpdatedAt || user.lastTimestamp);
             const platformBadge = user.platform === 'facebook'
                 ? '<span class="badge bg-primary-soft text-primary"><i class="fab fa-facebook me-1"></i>Facebook</span>'
                 : '<span class="badge bg-success-soft text-success"><i class="fab fa-line me-1"></i>LINE</span>';
+            const statusBadge = getStatusBadge(user.status);
+            const nextMessage = escapeHtml(user.nextMessage || '-');
+            const nextSchedule = user.nextScheduledAt ? formatRelativeTime(user.nextScheduledAt) : 'ไม่มีการนัดหมาย';
+            const lastCustomerMessage = escapeHtml(user.lastUserMessagePreview || '-');
+            const lastCustomerTime = user.lastUserMessageAt ? formatRelativeTime(user.lastUserMessageAt) : '-';
+            const progressLabel = `${user.sentRounds || 0}/${user.totalRounds || 0}`;
+            const lastFollowUp = user.lastFollowUpAt ? formatRelativeTime(user.lastFollowUpAt) : 'ยังไม่เคยส่ง';
+            const canceledInfo = user.status === 'canceled' && user.canceledReason
+                ? `<div class="followup-section text-muted small">เหตุผลการยกเลิก: ${escapeHtml(user.canceledReason)}</div>`
+                : '';
             return `
                 <div class="followup-card" data-user-id="${escapeHtml(user.userId)}">
                     <div class="followup-card-header">
@@ -276,21 +424,32 @@
                             <div class="followup-name">${escapeHtml(user.displayName || user.userId)}</div>
                             <div class="followup-sub">${escapeHtml(user.userId)} • ${platformBadge}</div>
                         </div>
-                        <div class="followup-updated">${escapeHtml(updated)}</div>
+                        <div class="followup-status">${statusBadge}</div>
                     </div>
                     <div class="followup-card-body">
-                        <div class="followup-reason">${reason}</div>
-                        <div class="followup-lastmessage">
-                            <span class="label">ข้อความล่าสุด</span>
-                            <span class="value">${lastMessage}</span>
+                        <div class="followup-section">
+                            <div class="label">ข้อความถัดไป</div>
+                            <div class="value">${nextMessage}</div>
+                            <div class="meta">${nextSchedule}</div>
                         </div>
+                        <div class="followup-section">
+                            <div class="label">ข้อความล่าสุดจากลูกค้า</div>
+                            <div class="value">${lastCustomerMessage}</div>
+                            <div class="meta">${lastCustomerTime}</div>
+                        </div>
+                        <div class="followup-section">
+                            <div class="label">ความคืบหน้า</div>
+                            <div class="value">${progressLabel} รอบ</div>
+                            <div class="meta">ส่งล่าสุด: ${lastFollowUp}</div>
+                        </div>
+                        ${canceledInfo}
                     </div>
                     <div class="followup-card-actions">
                         <button class="btn btn-sm btn-outline-secondary" data-action="open-chat">
                             <i class="fas fa-comments me-1"></i>เปิดหน้าแชท
                         </button>
-                        <button class="btn btn-sm btn-outline-danger" data-action="clear-tag">
-                            <i class="fas fa-check me-1"></i>ลบแท็กแล้วจัดการแล้ว
+                        <button class="btn btn-sm btn-outline-danger" data-action="clear-task">
+                            <i class="fas fa-ban me-1"></i>ยกเลิกการติดตามวันนี้
                         </button>
                     </div>
                 </div>
@@ -298,12 +457,12 @@
         }).join('');
 
         el.list.innerHTML = cards;
-        el.list.querySelectorAll('.followup-card button[data-action="clear-tag"]').forEach(btn => {
+        el.list.querySelectorAll('.followup-card button[data-action="clear-task"]').forEach(btn => {
             btn.addEventListener('click', async (event) => {
                 const card = event.currentTarget.closest('.followup-card');
                 const userId = card ? card.getAttribute('data-user-id') : null;
                 if (!userId) return;
-                if (!confirm('ยืนยันลบแท็กติดตามสำหรับลูกค้ารายนี้หรือไม่?')) return;
+                if (!confirm('ยืนยันยกเลิกการติดตามสำหรับลูกค้ารายนี้หรือไม่?')) return;
                 await clearUser(userId);
             });
         });
@@ -327,14 +486,14 @@
             });
             const data = await response.json();
             if (data.success) {
-                showAlert('success', 'ลบแท็กเรียบร้อยแล้ว');
+                showAlert('success', 'ยกเลิกการติดตามเรียบร้อยแล้ว');
                 await loadUsers();
             } else {
-                showAlert('danger', data.error || 'ไม่สามารถลบแท็กได้');
+                showAlert('danger', data.error || 'ไม่สามารถยกเลิกการติดตามได้');
             }
         } catch (error) {
             console.error('clear follow-up error', error);
-            showAlert('danger', 'เกิดข้อผิดพลาดในการลบแท็ก');
+            showAlert('danger', 'เกิดข้อผิดพลาดในการยกเลิกการติดตาม');
         }
     };
 
@@ -388,7 +547,13 @@
             const data = await response.json();
             if (data.success) {
                 state.users = data.users || [];
-                state.summary = data.summary || { total: state.users.length };
+                state.summary = data.summary || {
+                    total: state.users.length,
+                    active: state.users.length,
+                    completed: 0,
+                    canceled: 0,
+                    failed: 0
+                };
                 if (data.config) {
                     state.currentContextConfig = data.config;
                     const pageIndex = state.pages.findIndex(p => p.id === (state.currentPage && state.currentPage.id));
@@ -456,11 +621,20 @@
             el.modalTitle.textContent = `ตั้งค่าเพจ: ${state.currentPage.name}`;
         }
         if (el.modalAnalysis) el.modalAnalysis.checked = cfg.analysisEnabled !== false;
+        if (el.modalAutoSend) el.modalAutoSend.checked = cfg.autoFollowUpEnabled !== false;
         if (el.modalShowChat) el.modalShowChat.checked = cfg.showInChat !== false;
         if (el.modalShowDashboard) el.modalShowDashboard.checked = cfg.showInDashboard !== false;
         if (el.modalHistoryLimit) el.modalHistoryLimit.value = cfg.historyLimit ?? 10;
         if (el.modalCooldown) el.modalCooldown.value = cfg.cooldownMinutes ?? 30;
         if (el.modalModel) el.modalModel.value = cfg.model || MODEL_OPTIONS[0];
+        state.modalRounds = Array.isArray(cfg.rounds)
+            ? cfg.rounds.map(round => ({
+                delayMinutes: Number(round.delayMinutes) || '',
+                message: round.message || ''
+            }))
+            : [];
+        renderModalRounds();
+        handleAutoSendToggle();
         if (el.modalUpdatedAt) {
             if (state.currentPage.updatedAt) {
                 el.modalUpdatedAt.textContent = `ปรับปรุงล่าสุด: ${formatDateTime(state.currentPage.updatedAt)}`;
@@ -481,6 +655,7 @@
             botId: state.currentPage.botId,
             settings: {
                 analysisEnabled: !!(el.modalAnalysis && el.modalAnalysis.checked),
+                autoFollowUpEnabled: !!(el.modalAutoSend && el.modalAutoSend.checked),
                 showInChat: !!(el.modalShowChat && el.modalShowChat.checked),
                 showInDashboard: !!(el.modalShowDashboard && el.modalShowDashboard.checked),
                 historyLimit: el.modalHistoryLimit ? Number(el.modalHistoryLimit.value) : undefined,
@@ -488,6 +663,7 @@
                 model: el.modalModel ? el.modalModel.value : undefined
             }
         };
+        payload.settings.rounds = collectRoundsPayload();
         try {
             const response = await fetch('/admin/followup/page-settings', {
                 method: 'POST',
@@ -541,11 +717,24 @@
         try {
             state.socket = io();
             state.socket.on('followUpTagged', (data) => {
-                const dataPlatform = data && data.platform ? data.platform : 'line';
-                const dataBotId = normalizeId(data && data.botId ? data.botId : null);
+                const dataPlatform = data && data.platform !== undefined ? data.platform : null;
+                const dataBotId = normalizeId(data && data.botId !== undefined ? data.botId : null);
                 if (!state.currentPage) return;
                 const currentBotId = normalizeId(state.currentPage.botId);
-                if (dataPlatform === state.currentPage.platform && dataBotId === currentBotId) {
+                const platformMatch = dataPlatform === null || dataPlatform === state.currentPage.platform;
+                const botMatch = dataBotId === null || dataBotId === currentBotId;
+                if (platformMatch && botMatch) {
+                    loadUsers();
+                }
+            });
+            state.socket.on('followUpScheduleUpdated', (data) => {
+                const dataPlatform = data && data.platform !== undefined ? data.platform : null;
+                const dataBotId = normalizeId(data && data.botId !== undefined ? data.botId : null);
+                if (!state.currentPage) return;
+                const currentBotId = normalizeId(state.currentPage.botId);
+                const platformMatch = dataPlatform === null || dataPlatform === state.currentPage.platform;
+                const botMatch = dataBotId === null || dataBotId === currentBotId;
+                if (platformMatch && botMatch) {
                     loadUsers();
                 }
             });
@@ -578,6 +767,16 @@
         if (el.modalResetBtn) {
             el.modalResetBtn.addEventListener('click', () => {
                 resetSettings();
+            });
+        }
+        if (el.modalAutoSend) {
+            el.modalAutoSend.addEventListener('change', () => {
+                handleAutoSendToggle();
+            });
+        }
+        if (el.modalAddRound) {
+            el.modalAddRound.addEventListener('click', () => {
+                addModalRound({ delayMinutes: 10, message: '' });
             });
         }
     };

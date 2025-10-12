@@ -158,6 +158,10 @@
                 <label class="form-check-label" for="followupModalAnalysis">เปิดใช้งานการวิเคราะห์การสั่งซื้อด้วย AI</label>
               </div>
               <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="followupModalAutoSend">
+                <label class="form-check-label" for="followupModalAutoSend">ส่งข้อความติดตามอัตโนมัติ</label>
+              </div>
+              <div class="form-check form-switch mb-3">
                 <input class="form-check-input" type="checkbox" id="followupModalShowChat">
                 <label class="form-check-label" for="followupModalShowChat">แสดงป้ายติดตามในหน้าแชทแอดมิน</label>
               </div>
@@ -187,6 +191,25 @@
                 </select>
               </div>
               <div class="text-muted small" id="followupModalUpdatedAt"></div>
+            </div>
+            <div class="col-12 mt-2">
+              <div class="card border-0 bg-light" id="followupModalRoundsContainer">
+                <div class="card-body">
+                  <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h6 class="mb-0">ลำดับข้อความติดตาม</h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="followupModalAddRound">
+                      <i class="fas fa-plus me-1"></i>เพิ่มข้อความ
+                    </button>
+                  </div>
+                  <div class="text-muted small mb-3">
+                    ระบบจะส่งข้อความตามเวลาที่กำหนด โดยนับจากข้อความล่าสุดของลูกค้าในวันนั้น
+                  </div>
+                  <div id="followupModalRounds" class="followup-rounds-list"></div>
+                  <div class="text-muted small mt-2">
+                    ตัวอย่าง: 10 นาที &mdash; ส่งข้อความหลังจากลูกค้าคุยล่าสุดไปแล้ว 10 นาที
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

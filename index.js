@@ -548,6 +548,18 @@ async function saveChatHistory(userId, userMsg, assistantMsg, platform = 'line',
     // non-fatal: socket emit failure should not block saving history
   }
 
+  try {
+    const previewText = buildFollowUpPreview(userMsgToSave);
+    await scheduleFollowUpForUser(userId, {
+      platform,
+      botId,
+      messageTimestamp: userTimestamp,
+      preview: previewText
+    });
+  } catch (scheduleError) {
+    console.error('[FollowUp] ตั้งเวลาติดตามไม่สำเร็จ:', scheduleError.message);
+  }
+
   // Insert assistant message
   await coll.insertOne({ senderId: userId, role: "assistant", content: assistantMsg, timestamp: new Date(), platform, botId });
 
@@ -593,10 +605,14 @@ async function clearUserChatHistory(userId) {
   await coll.deleteMany({ senderId: userId });
 }
 
+const BANGKOK_TZ = 'Asia/Bangkok';
 const FOLLOW_UP_BASE_CACHE_TTL = 60 * 1000;
 let followUpBaseConfigCache = null;
 let followUpBaseCacheTimestamp = 0;
 const followUpContextCache = new Map();
+let followUpTaskTimer = null;
+let followUpProcessing = false;
+const FOLLOW_UP_TASK_INTERVAL_MS = 30 * 1000;
 
 function normalizeFollowUpBotId(botId) {
   if (!botId) return null;
@@ -606,6 +622,41 @@ function normalizeFollowUpBotId(botId) {
   } catch {
     return String(botId);
   }
+}
+
+function getBangkokMoment(value = null) {
+  if (value instanceof Date) return moment.tz(value, BANGKOK_TZ);
+  if (typeof value === 'number') return moment.tz(value, BANGKOK_TZ);
+  if (typeof value === 'string') return moment.tz(new Date(value), BANGKOK_TZ);
+  return moment.tz(BANGKOK_TZ);
+}
+
+function getDateKey(date = new Date()) {
+  return getBangkokMoment(date).format('YYYY-MM-DD');
+}
+
+function normalizeFollowUpRounds(rounds) {
+  if (!Array.isArray(rounds)) return [];
+  const normalized = [];
+  rounds.forEach((item, idx) => {
+    if (!item) return;
+    const delay = Number(item.delayMinutes);
+    const message = typeof item.message === 'string' ? item.message.trim() : '';
+    if (!Number.isFinite(delay) || delay < 1) return;
+    if (!message) return;
+    normalized.push({
+      delayMinutes: Math.round(delay),
+      message,
+      order: idx
+    });
+  });
+  normalized.sort((a, b) => {
+    if (a.delayMinutes === b.delayMinutes) {
+      return (a.order || 0) - (b.order || 0);
+    }
+    return a.delayMinutes - b.delayMinutes;
+  });
+  return normalized;
 }
 
 function resetFollowUpConfigCache() {
@@ -629,7 +680,9 @@ async function getFollowUpBaseConfig() {
     "followUpCooldownMinutes",
     "followUpModel",
     "followUpShowInChat",
-    "followUpShowInDashboard"
+    "followUpShowInDashboard",
+    "followUpAutoEnabled",
+    "followUpRounds"
   ];
   const docs = await coll.find({ key: { $in: keys } }).toArray();
   const map = {};
@@ -641,7 +694,9 @@ async function getFollowUpBaseConfig() {
     cooldownMinutes: typeof map.followUpCooldownMinutes === 'number' ? map.followUpCooldownMinutes : 30,
     model: map.followUpModel || 'gpt-5-mini',
     showInChat: typeof map.followUpShowInChat === 'boolean' ? map.followUpShowInChat : true,
-    showInDashboard: typeof map.followUpShowInDashboard === 'boolean' ? map.followUpShowInDashboard : true
+    showInDashboard: typeof map.followUpShowInDashboard === 'boolean' ? map.followUpShowInDashboard : true,
+    autoFollowUpEnabled: typeof map.followUpAutoEnabled === 'boolean' ? map.followUpAutoEnabled : true,
+    rounds: normalizeFollowUpRounds(map.followUpRounds || [])
   };
 
   followUpBaseConfigCache = config;
@@ -688,6 +743,17 @@ async function getFollowUpConfigForContext(platform = 'line', botId = null) {
     ...specificOverrides
   };
 
+  merged.rounds = normalizeFollowUpRounds(
+    (specificOverrides && specificOverrides.rounds) ||
+    (platformDefaults && platformDefaults.rounds) ||
+    (baseConfig && baseConfig.rounds) ||
+    []
+  );
+
+  if (typeof merged.autoFollowUpEnabled !== 'boolean') {
+    merged.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
+  }
+
   followUpContextCache.set(cacheKey, merged);
   return merged;
 }
@@ -711,11 +777,21 @@ async function listFollowUpPageSettings() {
     const normalizedBotId = normalizeFollowUpBotId(botId);
     const platformDefault = settingsMap[`${platform}:default`] || settingsMap[`${platform}:null`];
     const specific = normalizedBotId ? settingsMap[`${platform}:${normalizedBotId}`] : null;
-    return {
+    const config = {
       ...baseConfig,
       ...(platformDefault?.settings || {}),
       ...(specific?.settings || {})
     };
+    config.rounds = normalizeFollowUpRounds(
+      (specific?.settings?.rounds) ||
+      (platformDefault?.settings?.rounds) ||
+      (baseConfig?.rounds) ||
+      []
+    );
+    if (typeof config.autoFollowUpEnabled !== 'boolean') {
+      config.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
+    }
+    return config;
   };
 
   const pages = [];
@@ -781,6 +857,414 @@ async function listFollowUpPageSettings() {
     baseConfig,
     pages
   };
+}
+
+function buildFollowUpPreview(rawContent) {
+  try {
+    if (rawContent === null || typeof rawContent === 'undefined') {
+      return '';
+    }
+    const sanitized = sanitizeContentForFollowUp(rawContent);
+    if (!sanitized) return '';
+    return sanitized.length > 200 ? `${sanitized.slice(0, 197)}…` : sanitized;
+  } catch (error) {
+    try {
+      const asString = typeof rawContent === 'string' ? rawContent.trim() : JSON.stringify(rawContent);
+      if (!asString) return '';
+      return asString.length > 200 ? `${asString.slice(0, 197)}…` : asString;
+    } catch {
+      return '';
+    }
+  }
+}
+
+function emitFollowUpScheduleUpdate(payload) {
+  try {
+    if (io) {
+      io.emit('followUpScheduleUpdated', payload);
+    }
+  } catch (_) {}
+}
+
+async function scheduleFollowUpForUser(userId, options = {}) {
+  try {
+    const {
+      platform = 'line',
+      botId = null,
+      messageTimestamp = new Date(),
+      preview = '',
+      configOverride = null
+    } = options || {};
+
+    const normalizedPlatform = platform || 'line';
+    const normalizedBotId = normalizeFollowUpBotId(botId);
+
+    const config = configOverride || await getFollowUpConfigForContext(normalizedPlatform, normalizedBotId);
+    if (!config) return null;
+    if (config.autoFollowUpEnabled === false) return null;
+
+    const roundsConfig = normalizeFollowUpRounds(config.rounds || []);
+    if (roundsConfig.length === 0) return null;
+
+    // ข้ามหากลูกค้าซื้อแล้ว
+    const status = await getFollowUpStatus(userId);
+    if (status?.hasFollowUp) {
+      return null;
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("follow_up_tasks");
+
+    const dateKey = getDateKey(messageTimestamp);
+    const existingTask = await coll.findOne(
+      { userId, platform: normalizedPlatform, botId: normalizedBotId, dateKey },
+      { sort: { createdAt: -1 } }
+    );
+    const now = new Date();
+    const previewText = typeof preview === 'string' ? preview : buildFollowUpPreview(preview);
+
+    if (existingTask) {
+      if (!existingTask.completed && !existingTask.canceled) {
+        const nextScheduledAt = existingTask.nextScheduledAt ? new Date(existingTask.nextScheduledAt) : null;
+        if (nextScheduledAt && messageTimestamp < nextScheduledAt) {
+          await coll.updateOne(
+            { _id: existingTask._id },
+            {
+              $set: {
+                canceled: true,
+                cancelReason: 'user_replied',
+                canceledAt: now,
+                updatedAt: now,
+                lastUserMessageAt: messageTimestamp,
+                lastUserMessagePreview: previewText || existingTask.lastUserMessagePreview || ''
+              }
+            }
+          );
+          emitFollowUpScheduleUpdate({
+            userId,
+            platform: normalizedPlatform,
+            botId: normalizedBotId,
+            status: 'canceled',
+            reason: 'user_replied'
+          });
+        } else {
+          await coll.updateOne(
+            { _id: existingTask._id },
+            {
+              $set: {
+                lastUserMessageAt: messageTimestamp,
+                updatedAt: now,
+                lastUserMessagePreview: previewText || existingTask.lastUserMessagePreview || ''
+              }
+            }
+          );
+        }
+      }
+      return null;
+    }
+
+    const baseMoment = getBangkokMoment(messageTimestamp);
+    const rounds = roundsConfig.map((round, index) => {
+      const scheduledMoment = baseMoment.clone().add(round.delayMinutes, 'minutes');
+      return {
+        index,
+        delayMinutes: round.delayMinutes,
+        message: round.message,
+        scheduledAt: scheduledMoment.toDate(),
+        sentAt: null,
+        status: 'pending'
+      };
+    });
+
+    if (rounds.length === 0) return null;
+
+    const taskDoc = {
+      userId,
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+      dateKey,
+      rounds,
+      lastUserMessageAt: messageTimestamp,
+      lastUserMessagePreview: previewText,
+      nextRoundIndex: 0,
+      nextScheduledAt: rounds[0]?.scheduledAt || null,
+      lastSentAt: null,
+      sentRounds: [],
+      canceled: false,
+      completed: false,
+      cancelReason: null,
+      createdAt: now,
+      updatedAt: now,
+      configSnapshot: {
+        rounds: roundsConfig,
+        autoFollowUpEnabled: config.autoFollowUpEnabled !== false
+      }
+    };
+
+    await coll.insertOne(taskDoc);
+    emitFollowUpScheduleUpdate({
+      userId,
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+      status: 'scheduled',
+      nextScheduledAt: taskDoc.nextScheduledAt
+    });
+    return taskDoc;
+  } catch (error) {
+    console.error('[FollowUp] ไม่สามารถตั้งเวลาส่งข้อความติดตามได้:', error.message);
+    return null;
+  }
+}
+
+async function cancelFollowUpTasksForUser(userId, platform = null, botId = undefined, options = {}) {
+  try {
+    const { reason = 'manual', dateKey = null } = options || {};
+    const normalizedPlatform = platform || null;
+    const normalizedBotId = botId === undefined ? undefined : normalizeFollowUpBotId(botId);
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("follow_up_tasks");
+    const now = new Date();
+    const query = { userId };
+
+    if (normalizedPlatform) {
+      query.platform = normalizedPlatform;
+    }
+    if (normalizedBotId !== undefined) {
+      query.botId = normalizedBotId;
+    }
+    if (dateKey) {
+      query.dateKey = dateKey;
+    }
+
+    const result = await coll.updateMany(
+      {
+        ...query,
+        canceled: { $ne: true },
+        completed: { $ne: true }
+      },
+      {
+        $set: {
+          canceled: true,
+          cancelReason: reason,
+          canceledAt: now,
+          updatedAt: now
+        }
+      }
+    );
+
+    if (result.modifiedCount > 0) {
+      emitFollowUpScheduleUpdate({
+        userId,
+        platform: normalizedPlatform || undefined,
+        botId: normalizedBotId === undefined ? undefined : normalizedBotId,
+        status: 'canceled',
+        reason
+      });
+    }
+  } catch (error) {
+    console.error('[FollowUp] ไม่สามารถยกเลิกงานติดตามได้:', error.message);
+  }
+}
+
+async function ensureFollowUpIndexes() {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("follow_up_tasks");
+    await coll.createIndex({ userId: 1, platform: 1, botId: 1, dateKey: 1 });
+    await coll.createIndex({ nextScheduledAt: 1, canceled: 1, completed: 1 });
+  } catch (error) {
+    console.error('[FollowUp] ไม่สามารถสร้างดัชนีได้:', error.message);
+  }
+}
+
+async function processDueFollowUpTasks(limit = 10) {
+  if (followUpProcessing) return;
+  followUpProcessing = true;
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("follow_up_tasks");
+    const now = new Date();
+    const tasks = await coll.find({
+      canceled: { $ne: true },
+      completed: { $ne: true },
+      nextScheduledAt: { $lte: now }
+    }).sort({ nextScheduledAt: 1 }).limit(limit).toArray();
+
+    for (const task of tasks) {
+      await handleFollowUpTask(task, db);
+    }
+  } catch (error) {
+    console.error('[FollowUp] ไม่สามารถประมวลผลงานติดตาม:', error.message);
+  } finally {
+    followUpProcessing = false;
+  }
+}
+
+async function handleFollowUpTask(task, db) {
+  const rounds = Array.isArray(task.rounds) ? task.rounds : [];
+  const currentIndex = typeof task.nextRoundIndex === 'number' ? task.nextRoundIndex : 0;
+  const round = rounds[currentIndex];
+  const coll = db.collection("follow_up_tasks");
+  const now = new Date();
+
+  if (!round) {
+    await coll.updateOne(
+      { _id: task._id },
+      {
+        $set: {
+          completed: true,
+          nextScheduledAt: null,
+          updatedAt: now
+        }
+      }
+    );
+    emitFollowUpScheduleUpdate({
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      status: 'completed'
+    });
+    return;
+  }
+
+  try {
+    await sendFollowUpMessage(task, round, db);
+
+    const nextIndex = currentIndex + 1;
+    const hasMore = nextIndex < rounds.length;
+    const updateSet = {
+      [`rounds.${currentIndex}.sentAt`]: now,
+      [`rounds.${currentIndex}.status`]: 'sent',
+      lastSentAt: now,
+      updatedAt: now,
+      nextRoundIndex: nextIndex,
+      nextScheduledAt: hasMore ? rounds[nextIndex].scheduledAt : null,
+      completed: !hasMore
+    };
+
+    await coll.updateOne(
+      { _id: task._id },
+      {
+        $set: updateSet,
+        $addToSet: { sentRounds: currentIndex }
+      }
+    );
+
+    emitFollowUpScheduleUpdate({
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      status: updateSet.completed ? 'completed' : 'progress',
+      currentRound: currentIndex,
+      nextRound: hasMore ? nextIndex : null,
+      nextScheduledAt: updateSet.nextScheduledAt
+    });
+  } catch (error) {
+    console.error('[FollowUp] ส่งข้อความติดตามไม่สำเร็จ:', error.message);
+    await coll.updateOne(
+      { _id: task._id },
+      {
+        $set: {
+          [`rounds.${currentIndex}.status`]: 'failed',
+          [`rounds.${currentIndex}.error`]: error.message,
+          canceled: true,
+          cancelReason: 'send_failed',
+          canceledAt: now,
+          updatedAt: now
+        }
+      }
+    );
+    emitFollowUpScheduleUpdate({
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      status: 'failed',
+      reason: 'send_failed'
+    });
+  }
+}
+
+async function sendFollowUpMessage(task, round, db) {
+  const message = typeof round?.message === 'string' ? round.message.trim() : '';
+  if (!message) {
+    throw new Error('ไม่มีข้อความสำหรับการติดตาม');
+  }
+
+  if (task.platform === 'facebook') {
+    if (!task.botId) {
+      throw new Error('ไม่พบ Facebook Bot สำหรับการส่งข้อความ');
+    }
+    const query = ObjectId.isValid(task.botId) ? { _id: new ObjectId(task.botId) } : { _id: task.botId };
+    const fbBot = await db.collection('facebook_bots').findOne(query);
+    if (!fbBot || !fbBot.accessToken) {
+      throw new Error('ไม่พบข้อมูล Facebook Bot');
+    }
+    await sendFacebookMessage(task.userId, message, fbBot.accessToken);
+  } else {
+    await sendLineFollowUpMessage(task.userId, message, task.botId, db);
+  }
+
+  const historyColl = db.collection("chat_history");
+  const timestamp = new Date();
+  const messageDoc = {
+    senderId: task.userId,
+    role: "assistant",
+    content: message,
+    timestamp,
+    platform: task.platform || 'line',
+    botId: task.botId || null,
+    source: "follow_up"
+  };
+  await historyColl.insertOne(messageDoc);
+
+  try {
+    if (io) {
+      io.emit('newMessage', {
+        userId: task.userId,
+        message: messageDoc,
+        sender: 'assistant',
+        timestamp
+      });
+    }
+  } catch (_) {}
+}
+
+async function sendLineFollowUpMessage(userId, message, botId, db) {
+  try {
+    if (botId) {
+      const query = ObjectId.isValid(botId) ? { _id: new ObjectId(botId) } : { _id: botId };
+      const botDoc = await db.collection('line_bots').findOne(query);
+      if (!botDoc || !botDoc.channelAccessToken || !botDoc.channelSecret) {
+        throw new Error('ไม่พบข้อมูล Line Bot สำหรับการส่งข้อความ');
+      }
+      const client = createLineClient(botDoc.channelAccessToken, botDoc.channelSecret);
+      await client.pushMessage(userId, { type: 'text', text: message });
+      return;
+    }
+    if (!lineClient) {
+      throw new Error('Line Client ยังไม่ถูกตั้งค่า');
+    }
+    await lineClient.pushMessage(userId, { type: 'text', text: message });
+  } catch (error) {
+    throw new Error(error.message || 'ไม่สามารถส่งข้อความผ่าน LINE ได้');
+  }
+}
+
+function startFollowUpTaskWorker() {
+  if (followUpTaskTimer) return;
+  const runner = async () => {
+    try {
+      await processDueFollowUpTasks();
+    } catch (error) {
+      console.error('[FollowUp] งานประมวลผลติดตามล้มเหลว:', error.message);
+    }
+  };
+  followUpTaskTimer = setInterval(runner, FOLLOW_UP_TASK_INTERVAL_MS);
+  runner();
 }
 
 function sanitizeContentForFollowUp(rawContent) {
@@ -980,9 +1464,10 @@ async function maybeAnalyzeFollowUp(userId, platform = 'line', botId = null) {
     if (!newest || !newest.content) return;
 
     const analysis = await analyzeChatHistoryForFollowUp(userId, history, config.model);
+    const normalizedBotIdForCancel = normalizeFollowUpBotId(botId);
     const payloadBase = {
       platform: normalizedPlatform,
-      botId
+      botId: normalizedBotIdForCancel
     };
 
     if (!analysis) {
@@ -1003,6 +1488,7 @@ async function maybeAnalyzeFollowUp(userId, platform = 'line', botId = null) {
         followUpUpdatedAt,
         ...payloadBase
       });
+      await cancelFollowUpTasksForUser(userId, normalizedPlatform, normalizedBotIdForCancel, { reason: 'purchased' });
 
       try {
         if (io) {
@@ -1032,52 +1518,29 @@ async function maybeAnalyzeFollowUp(userId, platform = 'line', botId = null) {
 async function getFollowUpUsers(filter = {}) {
   const client = await connectDB();
   const db = client.db("chatbot");
-  const statusColl = db.collection("follow_up_status");
-  const chatColl = db.collection("chat_history");
+  const taskColl = db.collection("follow_up_tasks");
   const profileColl = db.collection("user_profiles");
 
-  const statusQuery = { hasFollowUp: true };
-  if (filter.platform) {
-    statusQuery.platform = filter.platform;
+  const normalizedPlatform = filter.platform || null;
+  const normalizedBotId = filter.botId ? normalizeFollowUpBotId(filter.botId) : null;
+  const dateKey = filter.dateKey || getDateKey();
+
+  const query = { dateKey };
+  if (normalizedPlatform) {
+    query.platform = normalizedPlatform;
   }
   if (filter.botId) {
-    statusQuery.botId = normalizeFollowUpBotId(filter.botId);
+    query.botId = normalizedBotId;
   }
 
-  const statuses = await statusColl.find(statusQuery).sort({ followUpUpdatedAt: -1 }).limit(200).toArray();
-  if (statuses.length === 0) {
-    return { users: [], summary: { total: 0 } };
+  const tasks = await taskColl.find(query).sort({ nextScheduledAt: 1, createdAt: -1 }).limit(200).toArray();
+  if (!tasks.length) {
+    return { users: [], summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0, dateKey } };
   }
 
-  const userIds = statuses.map(status => status.senderId);
-  const profiles = await profileColl.find({ userId: { $in: userIds } }).toArray();
-  const profileMap = {};
-  profiles.forEach(profile => {
-    profileMap[profile.userId] = profile;
-  });
-
-  const latestMessages = await chatColl.aggregate([
-    { $match: { senderId: { $in: userIds } } },
-    { $sort: { timestamp: -1 } },
-    {
-      $group: {
-        _id: "$senderId",
-        lastMessage: { $first: "$content" },
-        lastTimestamp: { $first: "$timestamp" },
-        lastRole: { $first: "$role" },
-        platform: { $first: "$platform" },
-        botId: { $first: "$botId" }
-      }
-    }
-  ]).toArray();
-  const messageMap = {};
-  latestMessages.forEach(msg => {
-    messageMap[msg._id] = msg;
-  });
-
-  const contextKeys = [...new Set(statuses.map(status => {
-    const contextPlatform = status.platform || 'line';
-    const contextBotId = normalizeFollowUpBotId(status.botId);
+  const contextKeys = [...new Set(tasks.map(task => {
+    const contextPlatform = task.platform || 'line';
+    const contextBotId = normalizeFollowUpBotId(task.botId);
     return `${contextPlatform}:${contextBotId || 'default'}`;
   }))];
 
@@ -1089,15 +1552,23 @@ async function getFollowUpUsers(filter = {}) {
 
   const contextConfigMap = new Map();
   contextConfigEntries.forEach(entry => {
-    contextConfigMap.set(entry.key, entry.config);
+    contextConfigMap.set(entry.key, entry.config || {});
   });
 
-  const users = statuses
-    .map(status => {
-      const profile = profileMap[status.senderId];
-      const lastMessage = messageMap[status.senderId];
-      const contextPlatform = status.platform || lastMessage?.platform || 'line';
-      const contextBotId = normalizeFollowUpBotId(status.botId || lastMessage?.botId);
+  const userIds = [...new Set(tasks.map(task => task.userId))];
+  const profiles = userIds.length > 0
+    ? await profileColl.find({ userId: { $in: userIds } }).toArray()
+    : [];
+  const profileMap = new Map();
+  profiles.forEach(profile => {
+    profileMap.set(profile.userId, profile);
+  });
+
+  const users = tasks
+    .map(task => {
+      const profile = profileMap.get(task.userId);
+      const contextPlatform = task.platform || 'line';
+      const contextBotId = normalizeFollowUpBotId(task.botId);
       const configKey = `${contextPlatform}:${contextBotId || 'default'}`;
       const config = contextConfigMap.get(configKey) || {};
 
@@ -1105,26 +1576,68 @@ async function getFollowUpUsers(filter = {}) {
         return null;
       }
 
+      const rounds = Array.isArray(task.rounds) ? task.rounds : [];
+      const totalRounds = rounds.length;
+      const sentCount = rounds.filter(r => r && r.status === 'sent').length;
+      const hasFailed = rounds.some(r => r && r.status === 'failed');
+      const nextIndex = typeof task.nextRoundIndex === 'number' ? task.nextRoundIndex : 0;
+      const nextRound = nextIndex < rounds.length ? rounds[nextIndex] : null;
+
+      let status = 'active';
+      if (hasFailed) {
+        status = 'failed';
+      }
+      if (task.canceled) {
+        status = 'canceled';
+      } else if (task.completed) {
+        status = 'completed';
+      }
+
+      const displayName = profile?.displayName || `${task.userId.slice(0, 6)}…`;
+      const preview = task.lastUserMessagePreview || '';
+
       return {
-        userId: status.senderId,
-        displayName: profile?.displayName || `${status.senderId.slice(0, 6)}…`,
+        userId: task.userId,
+        displayName,
         pictureUrl: profile?.pictureUrl || null,
-        followUpReason: status.followUpReason || '',
-        followUpUpdatedAt: status.followUpUpdatedAt || status.lastAnalyzedAt || null,
         platform: contextPlatform,
         botId: contextBotId,
-        lastMessage: lastMessage ? sanitizeContentForFollowUp(lastMessage.lastMessage) : '',
-        lastTimestamp: lastMessage?.lastTimestamp || null,
-        config
+        status,
+        lastUserMessagePreview: preview,
+        lastUserMessageAt: task.lastUserMessageAt || null,
+        lastFollowUpAt: task.lastSentAt || null,
+        nextScheduledAt: task.nextScheduledAt || null,
+        nextMessage: nextRound?.message || '',
+        totalRounds,
+        sentRounds: sentCount,
+        rounds: rounds.map(r => ({
+          index: r?.index ?? 0,
+          message: r?.message || '',
+          scheduledAt: r?.scheduledAt || null,
+          sentAt: r?.sentAt || null,
+          status: r?.status || 'pending'
+        })),
+        canceledReason: task.cancelReason || null,
+        dateKey: task.dateKey,
+        lastMessage: preview,
+        followUpReason: task.cancelReason || '',
+        config: {
+          analysisEnabled: config.analysisEnabled !== false,
+          showInDashboard: config.showInDashboard !== false,
+          autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
+          rounds: config.rounds || []
+        }
       };
     })
     .filter(Boolean);
 
   const summary = {
     total: users.length,
-    platform: filter.platform || null,
-    botId: filter.botId ? normalizeFollowUpBotId(filter.botId) : null,
-    contexts: contextKeys.length
+    active: users.filter(user => user.status === 'active').length,
+    completed: users.filter(user => user.status === 'completed').length,
+    canceled: users.filter(user => user.status === 'canceled').length,
+    failed: users.filter(user => user.status === 'failed').length,
+    dateKey
   };
 
   return { users, summary };
@@ -1738,6 +2251,8 @@ server.listen(PORT, async () => {
 
     // ทำให้แน่ใจว่ามีการตั้งค่าเริ่มต้นใน collection settings
     await ensureSettings();
+    await ensureFollowUpIndexes();
+    startFollowUpTaskWorker();
 
     console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
   } catch (err) {
@@ -2227,7 +2742,15 @@ async function ensureSettings() {
     { key: "followUpCooldownMinutes", value: 30 },
     { key: "followUpModel", value: "gpt-5-mini" },
     { key: "followUpShowInChat", value: true },
-    { key: "followUpShowInDashboard", value: true }
+    { key: "followUpShowInDashboard", value: true },
+    { key: "followUpAutoEnabled", value: true },
+    { 
+      key: "followUpRounds",
+      value: [
+        { delayMinutes: 10, message: "ยังสนใจไหม" },
+        { delayMinutes: 20, message: "เหลืออีกเพียงสิบท่าน" }
+      ]
+    }
   ];
   
   for (const setting of defaultSettings) {
@@ -4459,6 +4982,7 @@ app.post('/admin/followup/clear', async (req, res) => {
       console.warn('[FollowUp] Clearing status on hidden page:', platform, botId);
     }
 
+    await cancelFollowUpTasksForUser(userId, null, undefined, { reason: 'manual_clear' });
     await clearFollowUpStatus(userId);
     try {
       if (io) {
@@ -4498,7 +5022,7 @@ app.post('/admin/followup/page-settings', async (req, res) => {
 
     const normalizedBotId = normalizeFollowUpBotId(botId);
     const sanitized = {};
-    const boolKeys = ['analysisEnabled', 'showInChat', 'showInDashboard'];
+    const boolKeys = ['analysisEnabled', 'showInChat', 'showInDashboard', 'autoFollowUpEnabled'];
     const numberKeys = {
       historyLimit: { min: 1, max: 100 },
       cooldownMinutes: { min: 1, max: 1440 }
@@ -4521,6 +5045,10 @@ app.post('/admin/followup/page-settings', async (req, res) => {
 
     if (typeof settings?.model === 'string' && settings.model.trim().length > 0) {
       sanitized.model = settings.model.trim();
+    }
+
+    if (Array.isArray(settings?.rounds)) {
+      sanitized.rounds = normalizeFollowUpRounds(settings.rounds);
     }
 
     const client = await connectDB();

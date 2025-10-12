@@ -380,6 +380,34 @@ h1, h2, h3, h4, h5, h6 {
     gap: 0.5rem;
 }
 
+.followup-status {
+    margin-left: auto;
+}
+
+.followup-section {
+    margin-bottom: 0.75rem;
+}
+
+.followup-section .label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-light);
+    letter-spacing: 0.02em;
+}
+
+.followup-section .value {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-dark);
+}
+
+.followup-section .meta {
+    font-size: 0.8rem;
+    color: var(--text-light);
+}
+
 .followup-card-actions .btn {
     flex: 1;
 }
