@@ -27,7 +27,6 @@
         pageStatus: document.getElementById('followupPageStatus'),
         analysisLabel: document.getElementById('followupAnalysisLabel'),
         analysisSubtitle: document.getElementById('followupAnalysisSubtitle'),
-        settingsBtn: document.getElementById('openFollowupSettingsBtn'),
         modalRoot: document.getElementById('followupSettingsModal'),
         modalAnalysis: document.getElementById('followupModalAnalysis'),
         modalShowChat: document.getElementById('followupModalShowChat'),
