@@ -7,8 +7,8 @@
 }
 
 .settings-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background-color: var(--primary);
+    color: #ffffff;
     padding: 20px;
     border-radius: 10px 10px 0 0;
 }
@@ -24,12 +24,12 @@
 }
 
 .form-control:focus, .form-select:focus {
-    border-color: #667eea;
-    box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 0.2rem rgba(104, 185, 132, 0.25);
 }
 
 .btn-save {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background-color: var(--primary);
     border: none;
     border-radius: 8px;
     padding: 12px 30px;
@@ -39,7 +39,7 @@
 
 .btn-save:hover {
     transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 5px 15px rgba(104, 185, 132, 0.35);
 }
 
 .setting-item {
@@ -76,17 +76,17 @@
 }
 
 .nav-tabs .nav-link.active {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background-color: var(--primary);
+    color: #ffffff;
     border: none;
 }
 
 .back-button {
-    background: #6c757d;
+    background: var(--text-light);
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
-    color: white;
+    color: #ffffff;
     text-decoration: none;
     display: inline-flex;
     align-items: center;
@@ -95,8 +95,8 @@
 }
 
 .back-button:hover {
-    background: #5a6268;
-    color: white;
+    background: var(--text-dark);
+    color: #ffffff;
     text-decoration: none;
     transform: translateX(-2px);
 }

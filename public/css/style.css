@@ -126,6 +126,10 @@ h6 {
   padding: 0.8rem 1.5rem;
 }
 
+.app-navbar {
+  background-color: var(--card-bg);
+}
+
 .navbar-brand {
   color: var(--text-dark);
   font-family: var(--font-family-heading);
@@ -159,6 +163,16 @@ h6 {
 
 .nav-link i {
   margin-right: 0.35rem;
+}
+
+.navbar-nav .notification-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.7rem;
+  margin-left: 0.35rem;
 }
 
 /* ========== Cards ========== */
@@ -196,6 +210,107 @@ h6 {
 .card-body {
   padding: 1.5rem;
   background-color: var(--card-bg);
+}
+
+.dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1.25rem;
+}
+
+.dashboard-metric-card {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1.35rem;
+  background-color: var(--card-bg);
+  border-radius: var(--border-radius);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition);
+  min-height: 120px;
+}
+
+.dashboard-metric-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.dashboard-metric-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.35rem;
+  color: var(--primary);
+  background-color: rgba(104, 185, 132, 0.15);
+}
+
+.dashboard-metric-icon.icon-success {
+  color: var(--success);
+  background-color: rgba(104, 185, 132, 0.18);
+}
+
+.dashboard-metric-icon.icon-info {
+  color: var(--info);
+  background-color: rgba(97, 163, 186, 0.18);
+}
+
+.dashboard-metric-icon.icon-warning {
+  color: var(--warning);
+  background-color: rgba(255, 217, 102, 0.22);
+}
+
+.dashboard-metric-content .metric-label {
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-light);
+  margin-bottom: 0.35rem;
+}
+
+.dashboard-metric-content .metric-value {
+  font-size: var(--font-size-xxl);
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.dashboard-metric-content .metric-meta {
+  color: var(--text-light);
+  font-size: var(--font-size-sm);
+}
+
+.dashboard-metric-content .metric-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.dashboard-metric-content .metric-actions .btn {
+  font-size: var(--font-size-sm);
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+}
+
+.dashboard-metric-content .metric-actions .btn i {
+  margin-right: 0.35rem;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 576px) {
+  .dashboard-metric-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dashboard-metric-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 1.1rem;
+  }
 }
 
 /* Modal Typography */

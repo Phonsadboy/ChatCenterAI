@@ -1,6 +1,4 @@
 /* Chat New UI - Minimal & Clean Design */
-@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap');
-
 /* CSS Variables */
 :root {
     --primary: #68B984;
@@ -141,7 +139,8 @@ h6 { font-size: var(--heading-6-size); }
 /* Main Chat Container */
 .chat-container {
     display: flex;
-    height: calc(100vh - 80px);
+    height: min(calc(100vh - 96px), 900px);
+    min-height: 540px;
     max-width: 1400px;
     margin: 0 auto;
     background-color: var(--bg-white);
@@ -496,6 +495,7 @@ h6 { font-size: var(--heading-6-size); }
 /* Message Input */
 .message-input-container {
     padding: 1.5rem;
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--border-color);
     background-color: var(--bg-light);
 }
@@ -640,53 +640,61 @@ h6 { font-size: var(--heading-6-size); }
 }
 
 /* Responsive Design */
-@media (max-width: 768px) {
+@media (max-width: 991.98px) {
     .chat-container {
-        height: calc(100vh - 70px);
+        flex-direction: column;
+        height: auto;
+        min-height: calc(100vh - 72px);
         border-radius: 0;
     }
-    
+
     .user-sidebar {
         width: 100%;
-        position: absolute;
-        top: 0;
-        left: 0;
-        height: 100%;
-        z-index: 1000;
-        transform: translateX(-100%);
-        transition: transform 0.3s ease;
+        max-height: 320px;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+        z-index: 1;
     }
-    
-    .user-sidebar.show {
-        transform: translateX(0);
+
+    .user-list {
+        max-height: 260px;
+        padding-bottom: 0.5rem;
     }
-    
+
     .chat-main {
         width: 100%;
+        min-height: calc(100vh - 72px);
     }
-    
+
+    .chat-header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+
+    .messages-container {
+        padding: 1.15rem;
+        min-height: 320px;
+    }
+
     .message {
         max-width: 85%;
     }
-    
-    .navbar-nav {
-        display: none;
-    }
-    
-    .sidebar-header {
-        padding: 1rem;
-    }
-    
-    .user-item {
-        padding: 0.75rem 1rem;
-    }
-    
-    .messages-container {
-        padding: 1rem;
-    }
-    
+
     .message-input-container {
-        padding: 1rem;
+        padding: 1.15rem;
+        padding-bottom: calc(1.15rem + env(safe-area-inset-bottom, 0px));
+        position: sticky;
+        bottom: 0;
+        background-color: var(--bg-light);
+        border-top: 1px solid var(--border-color);
+    }
+
+    .navbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
     }
 }
 
@@ -709,6 +717,18 @@ h6 { font-size: var(--heading-6-size); }
         width: 36px;
         height: 36px;
         font-size: 0.9rem;
+    }
+
+    .user-sidebar {
+        max-height: 260px;
+    }
+
+    .user-list {
+        max-height: 200px;
+    }
+
+    .messages-container {
+        min-height: 280px;
     }
 }
 

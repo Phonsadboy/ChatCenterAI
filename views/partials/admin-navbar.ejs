@@ -1,44 +1,48 @@
-<nav class="navbar navbar-expand-lg navbar-light">
-    <div class="container">
-        <a class="navbar-brand" href="/admin/dashboard">
-            <i class="fas fa-robot"></i> จัดการ AI
-        </a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav ms-auto">
-                <li class="nav-item">
-                    <a class="nav-link" href="/admin/dashboard">
-                        <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="/admin/broadcast">
-                        <i class="fas fa-bullhorn"></i> บรอดแคสต์
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="/admin/chat">
-                        <i class="fas fa-comments"></i> แชท
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="/admin/followup">
-                        <i class="fas fa-user-clock"></i> ติดตามลูกค้า
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link active" href="/admin/settings">
-                        <i class="fas fa-cogs"></i> ตั้งค่า
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="/admin">
-                        <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
-                    </a>
-                </li>
-            </ul>
-        </div>
+<%
+  const current = typeof activePage !== 'undefined' ? activePage : '';
+%>
+<nav class="navbar navbar-expand-lg navbar-light app-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/admin/dashboard">
+      <i class="fas fa-robot"></i> จัดการ AI
+    </a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <ul class="navbar-nav ms-auto align-items-lg-center">
+        <li class="nav-item">
+          <a class="nav-link<%= current === 'dashboard' ? ' active' : '' %>" href="/admin/dashboard">
+            <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link<%= current === 'broadcast' ? ' active' : '' %>" href="/admin/broadcast">
+            <i class="fas fa-bullhorn"></i> บรอดแคสต์
+          </a>
+        </li>
+        <li class="nav-item position-relative">
+          <a class="nav-link<%= current === 'chat' ? ' active' : '' %>" href="/admin/chat">
+            <i class="fas fa-comments"></i> แชท
+            <span class="badge bg-danger notification-badge" id="chatNotificationBadge" style="display: none;">0</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link<%= current === 'followup' ? ' active' : '' %>" href="/admin/followup">
+            <i class="fas fa-user-clock"></i> ติดตามลูกค้า
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link<%= current === 'settings' ? ' active' : '' %>" href="/admin/settings">
+            <i class="fas fa-cogs"></i> ตั้งค่า
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/admin">
+            <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
+          </a>
+        </li>
+      </ul>
     </div>
+  </div>
 </nav>
