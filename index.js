@@ -2954,6 +2954,8 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
   const botKind = queueContext.botType || queueContext.platform || 'line';
   const supportsLibrary = hasSelectedLibraries && ['line', 'facebook'].includes(botKind);
 
+  let systemPrompt = '';
+
   if (supportsLibrary) {
     try {
       const client = await connectDB();
@@ -2963,17 +2965,42 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
         date: { $in: queueContext.selectedInstructions }
       }).toArray();
 
-      const libraryPrompt = buildSystemPromptFromLibraries(instructionDocs).trim();
-      if (libraryPrompt) {
-        const baseInstructions = await buildSystemInstructions(history);
-        return `${libraryPrompt}\n\n${baseInstructions}`.trim();
-      }
+      systemPrompt = buildSystemPromptFromLibraries(instructionDocs).trim();
     } catch (error) {
       console.error('[LOG] ไม่สามารถสร้าง system instructions จาก instruction library:', error);
     }
   }
 
-  return await buildSystemInstructions(history);
+  if (!systemPrompt) {
+    try {
+      const defaultInstructionKey = await getSettingValue('defaultInstruction', '');
+      if (defaultInstructionKey) {
+        const client = await connectDB();
+        const db = client.db("chatbot");
+        const libraryColl = db.collection("instruction_library");
+        const defaultLibrary = await libraryColl.findOne({ date: defaultInstructionKey });
+        if (defaultLibrary) {
+          systemPrompt = buildSystemPromptFromLibraries([defaultLibrary]).trim();
+        }
+      }
+    } catch (error) {
+      console.error('[LOG] ไม่สามารถสร้าง system instructions จาก default instruction:', error);
+    }
+  }
+
+  if (!systemPrompt) {
+    return await buildSystemInstructions(history);
+  }
+
+  const assetsText = await getAssetsInstructionsText();
+  if (assetsText) {
+    systemPrompt = `${systemPrompt}\n\n${assetsText}`;
+  }
+
+  const now = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', hour12: false });
+  systemPrompt += `\n\nเวลาปัจจุบัน: ${now}`;
+
+  return systemPrompt.trim();
 }
 
 // ฟังก์ชันสำหรับดึงข้อความจากแท็ก <THAI_REPLY>
