@@ -25,6 +25,7 @@ const multer = require('multer');
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
 const ASSETS_DIR = process.env.ASSETS_DIR || path.join(__dirname, 'public', 'assets', 'instructions');
 const FOLLOWUP_ASSETS_DIR = process.env.FOLLOWUP_ASSETS_DIR || path.join(__dirname, 'public', 'assets', 'followup');
+const DEFAULT_AUDIO_ATTACHMENT_RESPONSE = "ขออภัยค่ะ ขณะนี้ระบบยังไม่รองรับไฟล์เสียง กรุณาพิมพ์ข้อความหรือส่งรูปภาพแทน";
 
 const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -1538,6 +1539,10 @@ function sanitizeContentForFollowUp(rawContent) {
             const label = item.data.text ? String(item.data.text).trim() : 'ลูกค้าส่งรูปภาพ';
             return `[รูปภาพ] ${label}`;
           }
+          if (item.data.type === 'audio') {
+            const label = item.data.text ? String(item.data.text).trim() : 'ลูกค้าส่งไฟล์เสียง';
+            return `[เสียง] ${label}`;
+          }
         }
         if (typeof item === 'string') return item.trim();
         return '';
@@ -1552,6 +1557,10 @@ function sanitizeContentForFollowUp(rawContent) {
       if (parsed.type === 'image') {
         const label = parsed.text ? String(parsed.text).trim() : 'ลูกค้าส่งรูปภาพ';
         return `[รูปภาพ] ${label}`;
+      }
+      if (parsed.type === 'audio') {
+        const label = parsed.description ? String(parsed.description).trim() : 'ลูกค้าส่งไฟล์เสียง';
+        return `[เสียง] ${label}`;
       }
     }
   } catch (_) {
@@ -2607,6 +2616,39 @@ async function handleLineEvent(event, queueOptions = {}) {
         await addToQueue(userId, itemToQueue, { ...queueOptions, platform: 'line' });
       }
 
+    } else if (message.type === 'audio') {
+      console.log(`[LOG] ได้รับไฟล์เสียงจากผู้ใช้: ${userId}`);
+      try {
+        const audioResponseSetting = await getSettingValue('audioAttachmentResponse', DEFAULT_AUDIO_ATTACHMENT_RESPONSE);
+        const replyText = audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
+        const filteredReply = await filterMessage(replyText);
+
+        if (event.replyToken) {
+          try {
+            await sendMessage(event.replyToken, filteredReply, userId, true, channelAccessToken, channelSecret);
+            console.log(`[LOG] ส่งข้อความตอบกลับสำหรับไฟล์เสียงให้ผู้ใช้ ${userId} แล้ว`);
+          } catch (error) {
+            console.error('[LOG] ไม่สามารถส่งข้อความตอบกลับไฟล์เสียงได้:', error);
+          }
+        }
+
+        const audioPayload = {
+          type: 'audio',
+          messageId: message.id || null,
+          duration: message.duration || null,
+          contentProvider: message.contentProvider || null
+        };
+
+        try {
+          await saveChatHistory(userId, audioPayload, filteredReply, 'line', botIdForHistory);
+        } catch (historyError) {
+          console.error('[LOG] ไม่สามารถบันทึกประวัติไฟล์เสียงได้:', historyError);
+        }
+      } catch (audioError) {
+        console.error('[LOG] เกิดข้อผิดพลาดในการจัดการไฟล์เสียง:', audioError);
+      }
+      return;
+
     } else if (message.type === 'video') {
       console.log(`[LOG] ได้รับวิดีโอจากผู้ใช้: ${userId}`);
       itemToQueue.data = {
@@ -3223,6 +3265,7 @@ async function ensureSettings() {
     { key: "followUpShowInChat", value: true },
     { key: "followUpShowInDashboard", value: true },
     { key: "followUpAutoEnabled", value: false },
+    { key: "audioAttachmentResponse", value: DEFAULT_AUDIO_ATTACHMENT_RESPONSE },
     { 
       key: "followUpRounds",
       value: [
@@ -4242,6 +4285,7 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
             const senderId = messagingEvent.sender.id;
             const queueOptions = { ...queueOptionsBase };
             const itemsToQueue = [];
+            const audioAttachments = [];
             const messageText = messagingEvent.message.text;
 
             if (messageText) {
@@ -4265,12 +4309,45 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
                   } catch (imgErr) {
                     console.error(`[Facebook Bot: ${facebookBot.name}] Error fetching image:`, imgErr.message);
                   }
+                } else if (attachment.type === 'audio') {
+                  audioAttachments.push({
+                    type: 'audio',
+                    payload: {
+                      url: attachment.payload?.url || null,
+                      id: attachment.payload?.id || null,
+                      duration: attachment.payload?.duration || null
+                    }
+                  });
                 }
               }
             }
 
+            if (audioAttachments.length > 0) {
+              try {
+                const audioResponseSetting = await getSettingValue('audioAttachmentResponse', DEFAULT_AUDIO_ATTACHMENT_RESPONSE);
+                const replyText = audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
+                const filteredReply = await filterMessage(replyText);
+                await sendFacebookMessage(senderId, filteredReply, facebookBot.accessToken);
+                try {
+                  await saveChatHistory(
+                    senderId,
+                    { type: 'audio', attachments: audioAttachments },
+                    filteredReply,
+                    'facebook',
+                    facebookBot._id ? facebookBot._id.toString() : null
+                  );
+                } catch (historyErr) {
+                  console.error(`[Facebook Bot: ${facebookBot.name}] ไม่สามารถบันทึกประวัติไฟล์เสียงได้:`, historyErr.message || historyErr);
+                }
+              } catch (audioErr) {
+                console.error(`[Facebook Bot: ${facebookBot.name}] Error handling audio attachment:`, audioErr.message || audioErr);
+              }
+            }
+
             if (itemsToQueue.length === 0) {
-              await sendFacebookMessage(senderId, 'ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้', facebookBot.accessToken);
+              if (audioAttachments.length === 0) {
+                await sendFacebookMessage(senderId, 'ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้', facebookBot.accessToken);
+              }
               continue;
             }
 
@@ -6585,6 +6662,7 @@ app.get('/api/settings', async (req, res) => {
       maxQueueMessages: 10,
       enableMessageMerging: true,
       showTokenUsage: false,
+      audioAttachmentResponse: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
       textModel: "gpt-5",
       visionModel: "gpt-5",
       maxImagesPerMessage: 3,
@@ -6626,7 +6704,8 @@ app.post('/api/settings/chat', async (req, res) => {
       showTokenUsage,
       enableFollowUpAnalysis,
       followUpShowInChat,
-      followUpShowInDashboard
+      followUpShowInDashboard,
+      audioAttachmentResponse
     } = req.body;
     
     const client = await connectDB();
@@ -6664,6 +6743,21 @@ app.post('/api/settings/chat', async (req, res) => {
     await coll.updateOne(
       { key: "showTokenUsage" },
       { $set: { value: showTokenUsage } },
+      { upsert: true }
+    );
+
+    const sanitizedAudioResponse = typeof audioAttachmentResponse === 'string'
+      ? audioAttachmentResponse.trim()
+      : '';
+    const finalAudioResponse = sanitizedAudioResponse || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
+
+    if (finalAudioResponse.length > 1000) {
+      return res.status(400).json({ success: false, error: 'ข้อความตอบกลับไฟล์เสียงต้องไม่เกิน 1000 ตัวอักษร' });
+    }
+
+    await coll.updateOne(
+      { key: "audioAttachmentResponse" },
+      { $set: { value: finalAudioResponse } },
       { upsert: true }
     );
 

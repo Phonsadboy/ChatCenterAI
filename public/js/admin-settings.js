@@ -5,6 +5,7 @@ let currentBotId = null;
 let currentBotType = null; // 'line' or 'facebook'
 let currentBotInstructions = [];
 let availableLibraries = [];
+const DEFAULT_AUDIO_ATTACHMENT_RESPONSE = 'ขออภัยค่ะ ขณะนี้ระบบยังไม่รองรับไฟล์เสียง กรุณาพิมพ์ข้อความหรือส่งรูปภาพแทน';
 
 // Initialize page
 document.addEventListener('DOMContentLoaded', function() {
@@ -216,6 +217,15 @@ function populateSettings() {
         if (showTokenUsage) showTokenUsage.checked = false;
     }
 
+    const audioResponseInput = document.getElementById('audioAttachmentResponse');
+    if (audioResponseInput) {
+        if (typeof currentSettings.audioAttachmentResponse === 'string' && currentSettings.audioAttachmentResponse.trim() !== '') {
+            audioResponseInput.value = currentSettings.audioAttachmentResponse;
+        } else {
+            audioResponseInput.value = DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
+        }
+    }
+
     if (currentSettings.enableFollowUpAnalysis !== undefined) {
         const followUpAnalysisEnabled = document.getElementById('followUpAnalysisEnabled');
         if (followUpAnalysisEnabled) followUpAnalysisEnabled.checked = currentSettings.enableFollowUpAnalysis;
@@ -349,13 +359,22 @@ async function saveChatSettings() {
     const maxQueueMessages = document.getElementById('maxQueueMessages');
     const enableMessageMerging = document.getElementById('enableMessageMerging');
     const showTokenUsage = document.getElementById('showTokenUsage');
+    const audioAttachmentResponse = document.getElementById('audioAttachmentResponse');
     const followUpAnalysisEnabled = document.getElementById('followUpAnalysisEnabled');
     const followUpShowInChat = document.getElementById('followUpShowInChat');
     const followUpShowInDashboard = document.getElementById('followUpShowInDashboard');
     
     if (!chatDelaySeconds || !maxQueueMessages || !enableMessageMerging || !showTokenUsage ||
-        !followUpAnalysisEnabled || !followUpShowInChat || !followUpShowInDashboard) {
+        !audioAttachmentResponse || !followUpAnalysisEnabled || !followUpShowInChat || !followUpShowInDashboard) {
         showAlert('ไม่พบฟอร์มการตั้งค่าแชท', 'danger');
+        return;
+    }
+
+    const audioResponseValue = audioAttachmentResponse.value.trim();
+    const normalizedAudioResponse = audioResponseValue || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
+
+    if (normalizedAudioResponse.length > 1000) {
+        showAlert('ข้อความตอบกลับไฟล์เสียงต้องไม่เกิน 1000 ตัวอักษร', 'danger');
         return;
     }
     
@@ -364,6 +383,7 @@ async function saveChatSettings() {
         maxQueueMessages: parseInt(maxQueueMessages.value),
         enableMessageMerging: enableMessageMerging.checked,
         showTokenUsage: showTokenUsage.checked,
+        audioAttachmentResponse: normalizedAudioResponse,
         enableFollowUpAnalysis: followUpAnalysisEnabled.checked,
         followUpShowInChat: followUpShowInChat.checked,
         followUpShowInDashboard: followUpShowInDashboard.checked
