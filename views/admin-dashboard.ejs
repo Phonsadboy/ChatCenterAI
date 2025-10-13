@@ -157,14 +157,6 @@
                                         <option value="table">เฉพาะตาราง</option>
                                     </select>
                                 </div>
-                                <div class="col-12 col-sm-6 col-lg-3">
-                                    <select class="form-select form-select-sm" id="instructionSortSelect">
-                                        <option value="newest">ล่าสุดก่อน</option>
-                                        <option value="oldest">เก่าสุดก่อน</option>
-                                        <option value="title-asc">หัวข้อ ก-ฮ</option>
-                                        <option value="title-desc">หัวข้อ ฮ-ก</option>
-                                    </select>
-                                </div>
                             </div>
                             <div id="instructionItems">
                                 <% if (instructions.length === 0) { %>
@@ -639,8 +631,7 @@
         function setupInstructionDragAndDrop() {
             const items = document.querySelectorAll('.instruction-item');
             const canDrag = instructionFilterState.search.trim() === ''
-                && instructionFilterState.type === 'all'
-                && instructionFilterState.sort === 'newest';
+                && instructionFilterState.type === 'all';
 
             items.forEach(item => {
                 item.classList.remove('dragging', 'drag-over');
@@ -764,16 +755,14 @@
         let instructionDataStore = [];
         const instructionFilterState = {
             search: '',
-            type: 'all',
-            sort: 'newest'
+            type: 'all'
         };
         const instructionDragState = {
             draggingId: null
         };
         const instructionFilterRefs = {
             searchInput: null,
-            typeSelect: null,
-            sortSelect: null
+            typeSelect: null
         };
 
         function debounce(fn, delay = 300) {
@@ -869,24 +858,9 @@
             applyInstructionFilters({ silent: true });
         };
 
-        const sortInstructionList = (list, sortMode) => {
-            const clone = [...list];
-            switch (sortMode) {
-                case 'oldest':
-                    return clone.sort((a, b) => (a.order || 0) - (b.order || 0));
-                case 'title-asc':
-                    return clone.sort((a, b) => a.title.localeCompare(b.title, 'th'));
-                case 'title-desc':
-                    return clone.sort((a, b) => b.title.localeCompare(a.title, 'th'));
-                case 'newest':
-                default:
-                    return clone.sort((a, b) => (b.order || 0) - (a.order || 0));
-            }
-        };
-
         function applyInstructionFilters(options = {}) {
             const { silent = false } = options;
-            let filtered = [...instructionDataStore];
+            let filtered = [...instructionDataStore].sort((a, b) => (a.order || 0) - (b.order || 0));
 
             if (instructionFilterState.type !== 'all') {
                 filtered = filtered.filter(item => item.type === instructionFilterState.type);
@@ -900,7 +874,6 @@
                 });
             }
 
-            filtered = sortInstructionList(filtered, instructionFilterState.sort);
             const toRender = filtered.map(item => item.raw || item);
             updateInstructionsListHTML(toRender);
 
@@ -1371,8 +1344,6 @@
 
             instructionFilterRefs.searchInput = document.getElementById('instructionSearchInput');
             instructionFilterRefs.typeSelect = document.getElementById('instructionTypeFilter');
-            instructionFilterRefs.sortSelect = document.getElementById('instructionSortSelect');
-
             if (instructionFilterRefs.searchInput) {
                 instructionFilterRefs.searchInput.value = instructionFilterState.search;
                 const handleSearchInput = debounce((event) => {
@@ -1387,14 +1358,6 @@
                 instructionFilterRefs.typeSelect.addEventListener('change', (event) => {
                     instructionFilterState.type = event.target.value || 'all';
                     applyInstructionFilters();
-                });
-            }
-
-            if (instructionFilterRefs.sortSelect) {
-                instructionFilterRefs.sortSelect.value = instructionFilterState.sort;
-                instructionFilterRefs.sortSelect.addEventListener('change', (event) => {
-                    instructionFilterState.sort = event.target.value || 'newest';
-                    applyInstructionFilters({ silent: true });
                 });
             }
 
@@ -1711,7 +1674,7 @@
                         const data = await response.json();
                         
                         if (data.success) {
-                            await refreshInstructionsList();
+                await refreshInstructionsList({ silent: true });
                             showNotification(`เลื่อน${direction === 'up' ? 'ขึ้น' : 'ลง'}เรียบร้อยแล้ว`, 'success', 2000);
                         } else {
                             showNotification(data.error || 'ไม่สามารถเลื่อนตำแหน่งได้', 'warning');
