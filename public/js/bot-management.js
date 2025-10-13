@@ -142,13 +142,13 @@ function displayLineBotList(lineBots) {
                             <i class="fas fa-book me-1"></i>Instructions
                         </button>
                         <button class="btn btn-sm btn-outline-secondary" title="แก้ไข" onclick="editLineBot('${bot._id}')">
-                            <i class="fas fa-edit"></i>
+                            <i class="fas fa-edit me-1"></i>แก้ไข
                         </button>
                         <button class="btn btn-sm btn-outline-primary" title="ทดสอบ" onclick="testLineBot('${bot._id}')">
-                            <i class="fas fa-vial"></i>
+                            <i class="fas fa-vial me-1"></i>ทดสอบ
                         </button>
                         <button class="btn btn-sm btn-outline-danger" title="ลบ" onclick="deleteLineBot('${bot._id}')">
-                            <i class="fas fa-trash"></i>
+                            <i class="fas fa-trash me-1"></i>ลบ
                         </button>
                     </div>
                 </td>
@@ -537,13 +537,13 @@ function displayFacebookBotList(facebookBots) {
                             <i class="fas fa-book me-1"></i>Instructions
                         </button>
                         <button class="btn btn-sm btn-outline-secondary" title="แก้ไข" onclick="editFacebookBot('${bot._id}')">
-                            <i class="fas fa-edit"></i>
+                            <i class="fas fa-edit me-1"></i>แก้ไข
                         </button>
                         <button class="btn btn-sm btn-outline-primary" title="ทดสอบ" onclick="testFacebookBot('${bot._id}')">
-                            <i class="fas fa-vial"></i>
+                            <i class="fas fa-vial me-1"></i>ทดสอบ
                         </button>
                         <button class="btn btn-sm btn-outline-danger" title="ลบ" onclick="deleteFacebookBot('${bot._id}')">
-                            <i class="fas fa-trash"></i>
+                            <i class="fas fa-trash me-1"></i>ลบ
                         </button>
                     </div>
                 </td>
