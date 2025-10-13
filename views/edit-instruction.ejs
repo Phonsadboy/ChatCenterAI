@@ -47,7 +47,7 @@
         }
 
         .table-builder-wrapper {
-            max-height: 360px;
+            max-height: none;
             overflow: auto;
         }
 
@@ -65,7 +65,13 @@
         }
 
         .table-cell-input {
-            min-width: 150px;
+            min-width: 200px;
+            min-height: 72px;
+            resize: both;
+            width: 100%;
+            max-width: none;
+            font-family: inherit;
+            line-height: 1.4;
         }
 
         .table-actions-col {
@@ -88,6 +94,21 @@
                 min-height: 160px;
             }
         }
+
+        .json-preview {
+            background-color: #f8f9fa;
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+            overflow: auto;
+            max-height: 480px;
+        }
+
+        .json-preview pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
     </style>
 </head>
 <body>
@@ -100,9 +121,6 @@
                     <i class="fas fa-edit text-primary me-2"></i>
                     แก้ไข Instruction
                 </h2>
-                <small class="text-muted">
-                    ปรับปรุงข้อมูลให้ตรงกับการตอบของ AI • อัปเดตจะมีผลทันทีหลังบันทึก
-                </small>
             </div>
             <div class="col-auto page-header-actions d-flex gap-2">
                 <a href="/admin/dashboard" class="btn btn-outline-secondary">
@@ -150,9 +168,6 @@
                                     name="title"
                                     value="<%= instruction.title || '' %>"
                                     placeholder="เช่น ข้อมูลสินค้า / ขั้นตอนบริการ / โปรโมชั่นล่าสุด">
-                                <div class="form-text">
-                                    ข้อมูลส่วนนี้ช่วยให้ค้นหาและจัดหมวดหมู่ได้รวดเร็วขึ้น
-                                </div>
                             </div>
 
                             <div id="textEditorSection" class="mb-3">
@@ -208,19 +223,13 @@
                                             </table>
                                         </div>
                                         <div class="text-muted small mt-2">
-                                            ดับเบิลคลิกที่ชื่อคอลัมน์เพื่อแก้ไข • ใช้ปุ่ม Tab หรือปุ่มลูกศรเพื่อเลื่อนระหว่างเซลล์ • แถวว่างจะถูกตัดออกอัตโนมัติ
+                                            รองรับการกด Enter เพื่อขึ้นบรรทัดใหม่ • ดับเบิลคลิกที่ชื่อคอลัมน์เพื่อแก้ไข • ใช้ปุ่ม Tab หรือปุ่มลูกศรเพื่อเลื่อนระหว่างเซลล์ • แถวว่างจะถูกตัดออกอัตโนมัติ
                                         </div>
                                     </div>
                                 </div>
                                 <input type="hidden" id="tableDataInput" name="tableData">
                             </div>
 
-                            <div class="alert alert-light border mt-4 mb-0 small d-flex align-items-start gap-2">
-                                <i class="fas fa-circle-info text-primary mt-1"></i>
-                                <div>
-                                    หากปรับโครงสร้างข้อมูลตาราง ระบบจะอัปเดตการตอบกลับของ AI ให้สอดคล้องกับคอลัมน์และแถวที่กำหนดใหม่โดยอัตโนมัติ
-                                </div>
-                            </div>
                         </div>
                     </div>
 
@@ -236,41 +245,6 @@
             </div>
 
             <div class="col-lg-4">
-                <div class="card shadow-sm mb-3 instruction-meta">
-                    <div class="card-header bg-white">
-                        <h6 class="mb-0">
-                            <i class="fas fa-circle-info me-2 text-primary"></i>
-                            ข้อมูลอ้างอิง
-                        </h6>
-                    </div>
-                    <div class="card-body">
-                        <dl class="row g-2 mb-0">
-                            <dt class="col-5">รหัส</dt>
-                            <dd class="col-7 text-break"><%= instruction._id %></dd>
-
-                            <dt class="col-5">ประเภท</dt>
-                            <dd class="col-7" id="metaTypeLabel">
-                                <%= instruction.type === 'text' ? 'ข้อความ' : 'ตาราง' %>
-                            </dd>
-
-                            <dt class="col-5">สร้างเมื่อ</dt>
-                            <dd class="col-7">
-                                <%= instruction.createdAt ? new Date(instruction.createdAt).toLocaleString('th-TH') : '-' %>
-                            </dd>
-
-                            <dt class="col-5">แก้ไขล่าสุด</dt>
-                            <dd class="col-7" id="metaUpdatedAt">
-                                <%= instruction.updatedAt ? new Date(instruction.updatedAt).toLocaleString('th-TH') : '-' %>
-                            </dd>
-
-                            <dt class="col-5">จำนวนข้อมูล</dt>
-                            <dd class="col-7" id="metaDataCount">
-                                <%= instruction.type === 'table' && instruction.data && Array.isArray(instruction.data.rows) ? `${instruction.data.rows.length} แถว` : `${(instruction.content || '').length} อักขระ` %>
-                            </dd>
-                        </dl>
-                    </div>
-                </div>
-
                 <div class="card shadow-sm">
                     <div class="card-header bg-white d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">
@@ -284,7 +258,7 @@
                     <div class="card-body instruction-preview" id="instructionPreview">
                         <div class="empty-preview">
                             <i class="fas fa-search fa-2x mb-2"></i>
-                            <p class="mb-0">แก้ไขข้อมูลด้านซ้ายเพื่อดูตัวอย่างแบบเรียลไทม์</p>
+                            <p class="mb-0">แก้ไขข้อมูลด้านซ้ายเพื่อดูตัวอย่างข้อความหรือ JSON</p>
                         </div>
                     </div>
                 </div>
@@ -296,10 +270,12 @@
     <script>
         const initialInstruction = {
             id: '<%= instruction._id.toString() %>',
+            instructionId: <%- JSON.stringify(instruction.instructionId || '') %>,
             type: '<%= instruction.type %>',
             title: <%- JSON.stringify(instruction.title || '') %>,
             content: <%- JSON.stringify(instruction.content || '') %>,
             data: <%- JSON.stringify(instruction.data || null) %>,
+            version: <%- JSON.stringify(Number.isInteger(instruction.version) ? instruction.version : null) %>,
             createdAt: '<%= instruction.createdAt ? new Date(instruction.createdAt).toISOString() : '' %>',
             updatedAt: '<%= instruction.updatedAt ? new Date(instruction.updatedAt).toISOString() : '' %>'
         };
@@ -410,12 +386,10 @@
                     <tr data-row-index="${rowIndex}">
                         ${row.map((cellValue, colIndex) => `
                             <td>
-                                <input
-                                    type="text"
+                                <textarea
                                     class="form-control form-control-sm table-cell-input"
-                                    value="${escapeHtml(cellValue)}"
                                     data-row-index="${rowIndex}"
-                                    data-col-index="${colIndex}">
+                                    data-col-index="${colIndex}">${escapeHtml(cellValue)}</textarea>
                             </td>
                         `).join('')}
                         <td class="text-center">
@@ -469,7 +443,7 @@
                 rows.push(newRow);
                 render();
                 setTimeout(() => {
-                    const lastInput = refs.bodyRows?.querySelector('tr:last-child input.table-cell-input');
+                    const lastInput = refs.bodyRows?.querySelector('tr:last-child .table-cell-input');
                     if (lastInput) lastInput.focus();
                 }, 0);
                 updatePreview();
@@ -494,7 +468,10 @@
                 return dataRows
                     .map(row => {
                         if (!Array.isArray(row)) return new Array(columns.length).fill('');
-                        const normalized = row.map(cell => String(cell ?? '').trim());
+                        const normalized = row.map(cell => {
+                            if (cell === null || cell === undefined) return '';
+                            return String(cell).replace(/\r\n/g, '\n');
+                        });
                         while (normalized.length < columns.length) {
                             normalized.push('');
                         }
@@ -503,7 +480,7 @@
                         }
                         return normalized;
                     })
-                    .filter(row => row.some(cell => cell !== ''));
+                    .filter(row => row.some(cell => cell.trim() !== ''));
             };
 
             const getPayload = () => {
@@ -545,10 +522,10 @@
                 if (Array.isArray(data.rows) && data.rows.length) {
                     rows = data.rows.map(row => {
                         if (Array.isArray(row)) {
-                            return row.map(cell => String(cell ?? ''));
+                            return row.map(cell => String(cell ?? '').replace(/\r\n/g, '\n'));
                         }
                         if (row && typeof row === 'object') {
-                            return columns.map(col => String(row[col] ?? ''));
+                            return columns.map(col => String(row[col] ?? '').replace(/\r\n/g, '\n'));
                         }
                         return new Array(columns.length).fill('');
                     });
@@ -674,51 +651,79 @@
 
         function renderTablePreview(payload) {
             const preview = document.getElementById('instructionPreview');
+            if (!preview) return;
+            preview.innerHTML = '';
+
             if (!payload || !Array.isArray(payload.columns) || payload.columns.length === 0) {
                 preview.innerHTML = `
                     <div class="empty-preview">
                         <i class="fas fa-table fa-2x mb-2"></i>
-                        <p class="mb-0">ยังไม่มีโครงสร้างตาราง กำหนดคอลัมน์เพื่อเริ่มต้น</p>
+                        <p class="mb-0">ยังไม่มีโครงสร้างตาราง กำหนดคอลัมน์เพื่อดูตัวอย่าง JSON</p>
                     </div>
                 `;
                 return;
             }
 
-            const hasData = Array.isArray(payload.rows) && payload.rows.length > 0;
-            const rowsHtml = hasData
-                ? payload.rows.slice(0, 10).map(row => `
-                    <tr>
-                        ${row.map(cell => `
-                            <td>${escapeHtml(cell || '')}</td>
-                        `).join('')}
-                    </tr>
-                `).join('')
-                : `
-                    <tr>
-                        <td colspan="${payload.columns.length}" class="text-center text-muted">
-                            ยังไม่มีข้อมูลในตาราง
-                        </td>
-                    </tr>
-                `;
+            const titleInput = document.getElementById('instructionTitle');
+            const contentInput = document.getElementById('instructionContent');
+
+            const normalizedRows = Array.isArray(payload.rows)
+                ? payload.rows.map(row => {
+                    if (Array.isArray(row)) {
+                        return row.map(cell => {
+                            if (cell === null || cell === undefined) return '';
+                            return String(cell).replace(/\r\n/g, '\n');
+                        });
+                    }
+                    if (row && typeof row === 'object') {
+                        return payload.columns.map((col, idx) => {
+                            const value = row[col] ?? row[idx] ?? '';
+                            return String(value).replace(/\r\n/g, '\n');
+                        });
+                    }
+                    return [String(row ?? '')];
+                })
+                : [];
+
+            const previewPayload = {
+                instructionId: initialInstruction.instructionId || initialInstruction.id || undefined,
+                version: typeof initialInstruction.version === 'number' ? initialInstruction.version : undefined,
+                type: 'table',
+                title: titleInput ? titleInput.value : undefined,
+                content: contentInput && contentInput.value ? contentInput.value : undefined,
+                createdAt: initialInstruction.createdAt || undefined,
+                updatedAt: initialInstruction.updatedAt || undefined,
+                data: {
+                    columns: payload.columns,
+                    rows: normalizedRows
+                }
+            };
+
+            if (!previewPayload.instructionId) {
+                delete previewPayload.instructionId;
+            }
+            if (!previewPayload.title || !previewPayload.title.trim()) {
+                delete previewPayload.title;
+            }
+            if (!previewPayload.content || !previewPayload.content.trim()) {
+                delete previewPayload.content;
+            }
+            if (typeof previewPayload.version !== 'number') {
+                delete previewPayload.version;
+            }
+            if (!previewPayload.createdAt) {
+                delete previewPayload.createdAt;
+            }
+            if (!previewPayload.updatedAt) {
+                delete previewPayload.updatedAt;
+            }
+
+            const jsonString = JSON.stringify(previewPayload, null, 2);
 
             preview.innerHTML = `
-                <div class="table-responsive">
-                    <table class="table table-sm table-bordered mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                ${payload.columns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${rowsHtml}
-                        </tbody>
-                    </table>
+                <div class="json-preview">
+                    <pre class="mb-0"><code>${escapeHtml(jsonString)}</code></pre>
                 </div>
-                ${hasData && payload.rows.length > 10 ? `
-                    <div class="text-muted small mt-2">
-                        แสดงเพียง 10 แถวแรก • ทั้งหมด ${payload.rows.length} แถว
-                    </div>
-                ` : ''}
             `;
         }
 

@@ -4701,13 +4701,78 @@ async function fetchFacebookImageAsBase64(url) {
 
 // Convert table instruction data to a JSON string
 function tableInstructionToJSON(instruction) {
-  const rows = instruction?.data?.rows || [];
-  if (rows.length === 0) return instruction.content || '';
+  if (!instruction || instruction.type !== 'table') return '';
 
-  const titleLine = instruction.title ? `${instruction.title}\n` : '';
-  const contentLine = instruction.content ? `${instruction.content}\n` : '';
-  const jsonRows = JSON.stringify(rows, null, 2);
-  return `${titleLine}${contentLine}${jsonRows}`;
+  const columns = Array.isArray(instruction?.data?.columns) ? instruction.data.columns : [];
+  const rowSource = Array.isArray(instruction?.data?.rows) ? instruction.data.rows : [];
+
+  const normalizedColumns = columns.map(col => {
+    if (col === null || col === undefined) return '';
+    return String(col);
+  });
+
+  const normalizedRows = rowSource.map(row => {
+    if (Array.isArray(row)) {
+      return row.map(cell => {
+        if (cell === null || cell === undefined) return '';
+        return String(cell).replace(/\r\n/g, '\n');
+      });
+    }
+    if (row && typeof row === 'object') {
+      return normalizedColumns.map((col, idx) => {
+        const key = col && col.trim() ? col : `column_${idx + 1}`;
+        const value = row[col] ?? row[key] ?? row[idx] ?? '';
+        return String(value).replace(/\r\n/g, '\n');
+      });
+    }
+    return [String(row ?? '')];
+  });
+
+  const toIsoString = (value) => {
+    if (!value) return undefined;
+    try {
+      const date = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(date.getTime())) return undefined;
+      return date.toISOString();
+    } catch {
+      return undefined;
+    }
+  };
+
+  const payload = {
+    instructionId: instruction.instructionId || (instruction._id ? instruction._id.toString() : undefined),
+    version: Number.isInteger(instruction.version) ? instruction.version : undefined,
+    type: 'table',
+    title: instruction.title || undefined,
+    content: instruction.content || undefined,
+    createdAt: toIsoString(instruction.createdAt),
+    updatedAt: toIsoString(instruction.updatedAt),
+    data: {
+      columns: normalizedColumns,
+      rows: normalizedRows
+    }
+  };
+
+  if (!payload.instructionId) {
+    delete payload.instructionId;
+  }
+  if (!payload.title || !payload.title.trim()) {
+    delete payload.title;
+  }
+  if (!payload.content || !payload.content.trim()) {
+    delete payload.content;
+  }
+  if (!payload.createdAt) {
+    delete payload.createdAt;
+  }
+  if (!payload.updatedAt) {
+    delete payload.updatedAt;
+  }
+  if (payload.version === undefined) {
+    delete payload.version;
+  }
+
+  return JSON.stringify(payload, null, 2);
 }
 
 // Build system prompt text from selected instruction libraries
