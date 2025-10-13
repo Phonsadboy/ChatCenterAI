@@ -3,164 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>แก้ไข Instruction  - จัดการ AI</title>
+    <title>แก้ไข Instruction - จัดการ AI</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="/css/style.css" rel="stylesheet">
     <style>
-        /* ขยายความกว้างของฟอร์มให้เกือบเต็มจอ */
-        .edit-form-container {
-            max-width: 95vw;
-            width: 95%;
-            margin: 0 auto;
+        .page-header-actions .btn {
+            min-width: 110px;
         }
-        
-        /* Styles for tables with many columns */
-        .table-rows-container {
-            max-width: 100%;
-            overflow-x: auto;
-            overflow-y: visible;
-            padding-bottom: 10px;
-            margin-bottom: 15px;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            background: white;
+
+        .instruction-meta dl {
+            margin-bottom: 0;
         }
-        
-        /* Header container ที่จะ sync กับตาราง */
-        .table-header-container {
-            overflow-x: auto;
-            overflow-y: hidden;
-            border: 1px solid #dee2e6;
-            border-bottom: none;
-            border-radius: 8px 8px 0 0;
-            background: #f8f9fa;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-        
-        .table-row {
-            margin-bottom: 10px;
-            padding: 10px;
-            border-bottom: 1px solid #eee;
-        }
-        
-        .table-row:last-child {
-            border-bottom: none;
-        }
-        
-        .row-content {
-            display: flex;
-            gap: 10px;
-            min-width: fit-content;
-            align-items: flex-start;
-        }
-        
-        .table-cell {
-            min-width: 150px;
-            max-width: 300px;
-            flex-shrink: 0;
-            position: relative;
-        }
-        
-        .table-cell-action {
-            min-width: 100px;
-            flex-shrink: 0;
-            display: flex;
-            align-items: flex-start;
-            gap: 5px;
-            padding-top: 5px;
-        }
-        
-        /* Header row styling */
-        #columnHeaders {
-            display: flex;
-            gap: 10px;
-            padding: 15px 10px;
-            background: #f8f9fa;
-            min-width: fit-content;
-        }
-        
-        .col-header {
-            min-width: 150px;
-            max-width: 300px;
-            flex-shrink: 0;
-        }
-        
-        .col-header-label {
-            min-width: 100px;
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+
+        .instruction-meta dt {
             font-weight: 600;
-            color: #6c757d;
+            color: var(--text-light);
         }
-        
-        /* Row manipulation buttons */
-        .row-controls {
+
+        .instruction-preview {
+            min-height: 200px;
+            background-color: var(--light-bg);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+        }
+
+        .instruction-preview table {
+            font-size: 0.875rem;
+        }
+
+        .instruction-preview .empty-preview {
             display: flex;
             flex-direction: column;
-            gap: 2px;
-        }
-        
-        .column-controls {
-            display: flex;
-            gap: 5px;
-            margin-bottom: 10px;
+            align-items: center;
             justify-content: center;
+            color: var(--text-light);
+            height: 100%;
+            text-align: center;
         }
-        
-        /* Scrollbar styling */
-        .table-rows-container::-webkit-scrollbar,
-        .table-header-container::-webkit-scrollbar {
-            height: 10px;
+
+        .table-builder-toolbar .btn {
+            min-width: 120px;
         }
-        
-        .table-rows-container::-webkit-scrollbar-track,
-        .table-header-container::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 5px;
+
+        .table-builder-wrapper {
+            max-height: 360px;
+            overflow: auto;
         }
-        
-        .table-rows-container::-webkit-scrollbar-thumb,
-        .table-header-container::-webkit-scrollbar-thumb {
-            background: #888;
-            border-radius: 5px;
+
+        .table-builder-wrapper table {
+            min-width: 480px;
         }
-        
-        .table-rows-container::-webkit-scrollbar-thumb:hover,
-        .table-header-container::-webkit-scrollbar-thumb:hover {
-            background: #555;
+
+        .table-header-control {
+            display: flex;
+            align-items: center;
         }
-        
-        /* Table preview enhancement */
-        #previewTable {
-            font-size: 0.9rem;
+
+        .table-header-input {
+            min-width: 150px;
         }
-        
-        #previewTable th,
-        #previewTable td {
-            max-width: 200px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+
+        .table-cell-input {
+            min-width: 150px;
         }
-        
-        #previewTable td:hover {
-            white-space: normal;
-            word-wrap: break-word;
+
+        .table-actions-col {
+            width: 52px;
+            min-width: 52px;
         }
-        
-        /* Responsive adjustments */
-        @media (max-width: 768px) {
-            .table-cell {
-                min-width: 120px;
-            }
-            
-            #columnHeaders .col-header {
-                min-width: 120px;
+
+        .instruction-drag-handle {
+            display: inline-flex;
+            align-items: center;
+            color: var(--text-light);
+        }
+
+        .instruction-preview table thead th {
+            background-color: rgba(104, 185, 132, 0.1);
+        }
+
+        @media (max-width: 991.98px) {
+            .instruction-preview {
+                min-height: 160px;
             }
         }
     </style>
@@ -169,1783 +94,746 @@
     <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
 
     <div class="container-fluid mt-4">
-        <div class="edit-form-container">
-            <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">
-                            <i class="fas fa-edit me-2"></i> แก้ไข Instruction
-                            <% if (instruction.title) { %>
-                                <span class="text-primary">: <%= instruction.title %></span>
-                            <% } else { %>
-                                <span class="text-muted fst-italic"> (ไม่มีหัวข้อ)</span>
-                            <% } %>
-                        </h5>
-                        <small class="text-muted">
-                            <i class="fas fa-tag me-1"></i> 
-                            ประเภท: <%= instruction.type === 'text' ? 'ข้อความ' : 'ตาราง' %>
-                            <span class="ms-3">
-                                <i class="far fa-calendar-alt me-1"></i> 
-                                สร้างเมื่อ: <%= new Date(instruction.createdAt).toLocaleString('th-TH') %>
-                            </span>
-                        </small>
-                    </div>
-                    <div class="card-body">
-                        <form method="POST" action="/admin/instructions/<%= instruction._id %>/edit">
+        <div class="row g-2 align-items-center mb-3">
+            <div class="col">
+                <h2 class="mb-0">
+                    <i class="fas fa-edit text-primary me-2"></i>
+                    แก้ไข Instruction
+                </h2>
+                <small class="text-muted">
+                    ปรับปรุงข้อมูลให้ตรงกับการตอบของ AI • อัปเดตจะมีผลทันทีหลังบันทึก
+                </small>
+            </div>
+            <div class="col-auto page-header-actions d-flex gap-2">
+                <a href="/admin/dashboard" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left me-1"></i> กลับแดชบอร์ด
+                </a>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-8">
+                <form id="editInstructionForm" method="POST" action="/admin/instructions/<%= instruction._id %>/edit" class="needs-validation" novalidate>
+                    <div class="card shadow-sm mb-4">
+                        <div class="card-header bg-white">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h5 class="mb-0">
+                                        <i class="fas fa-pen-to-square me-2 text-primary"></i>
+                                        รายละเอียดข้อมูล
+                                    </h5>
+                                </div>
+                                <span class="badge bg-light text-dark">
+                                    รหัส: <%= instruction._id %>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body">
                             <div class="mb-3">
-                                <label for="type" class="form-label">ประเภท Instruction </label>
-                                <select class="form-select" id="type" name="type" onchange="toggleEditor()" required>
-                                    <option value="text" <%= instruction.type === 'text' ? 'selected' : '' %>>ข้อความธรรมดา</option>
-                                    <option value="table" <%= instruction.type === 'table' ? 'selected' : '' %>>ตารางข้อมูล</option>
+                                <label class="form-label" for="instructionType">
+                                    ประเภทข้อมูล
+                                </label>
+                                <select id="instructionType" name="type" class="form-select" required>
+                                    <option value="text" <%= instruction.type === 'text' ? 'selected' : '' %>>ข้อความ</option>
+                                    <option value="table" <%= instruction.type === 'table' ? 'selected' : '' %>>ตาราง</option>
                                 </select>
                             </div>
-                            
-                            <div class="mb-3">
-                                <label for="title" class="form-label">
-                                    หัวข้อ (ไม่บังคับ)
-                                    <small class="text-muted ms-2">ช่วยให้จำแนกและค้นหา Instruction ได้ง่ายขึ้น</small>
-                                </label>
-                                <input type="text" class="form-control" id="title" name="title" value="<%= instruction.title || '' %>" placeholder="เช่น: ข้อมูลผลิตภัณฑ์, รายการราคา, กฎระเบียบ">
-                            </div>
-                            
-                            <div id="textEditor">
-                                <div class="mb-3">
-                                    <label for="content" class="form-label">
-                                        เนื้อหา Instruction 
-                                        <small class="text-muted ms-2">ข้อมูลที่ AI จะใช้ในการตอบคำถาม</small>
-                                    </label>
-                                    <textarea class="form-control" id="content" name="content" rows="10" placeholder="ใส่เนื้อหา Instruction ที่จะให้ AI ใช้... เช่น กฎระเบียบ, คำแนะนำ, ข้อมูลสำคัญ"><%= instruction.content || '' %></textarea>
-                                    <div class="form-text">
-                                        <i class="fas fa-lightbulb me-1"></i>
-                                        <strong>เคล็ดลับ:</strong> เขียนข้อมูลให้ชัดเจน เฉพาะเจาะจง และครบถ้วน เพื่อให้ AI สามารถตอบคำถามได้ถูกต้อง
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div id="tableEditor">
-                                <label class="form-label">ข้อมูลตาราง</label>
-                                
-                                <!-- Tips for table editing -->
-                                <div class="alert alert-info small py-2 px-3 mb-3">
-                                    <i class="fas fa-info-circle me-1"></i>
-                                    <strong>เคล็ดลับ:</strong>
-                                    <ul class="mb-0 mt-2">
-                                        <li>เลื่อนซ้าย-ขวาเพื่อดูคอลัมน์ทั้งหมด (หัวตารางจะเลื่อนตาม)</li>
-                                        <li>ใช้ปุ่มลูกศรเพื่อย้ายแถว (↑↓) หรือคอลัมน์ (←→)</li>
-                                        <li>หัวตารางจะติดกับข้อมูลเสมอเมื่อเลื่อน</li>
-                                    </ul>
-                                </div>
 
-                                <!-- Header Controls -->
-                                <div class="mb-3">
-                                    <div class="d-flex align-items-center gap-2 mb-2">
-                                        <label class="form-label mb-0">จำนวนคอลัมน์:</label>
-                                        <% const initColumns = (instruction.data && instruction.data.columns) ? instruction.data.columns.length : 2; %>
-                                        <input type="number" id="columnCount" class="form-control" style="width: 80px;" min="1" max="10" value="<%= initColumns %>" onchange="updateTableStructure()">
-                                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="addTableColumn()">
+                            <div class="mb-3">
+                                <label class="form-label" for="instructionTitle">
+                                    หัวข้อ (ไม่บังคับ)
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="instructionTitle"
+                                    name="title"
+                                    value="<%= instruction.title || '' %>"
+                                    placeholder="เช่น ข้อมูลสินค้า / ขั้นตอนบริการ / โปรโมชั่นล่าสุด">
+                                <div class="form-text">
+                                    ข้อมูลส่วนนี้ช่วยให้ค้นหาและจัดหมวดหมู่ได้รวดเร็วขึ้น
+                                </div>
+                            </div>
+
+                            <div id="textEditorSection" class="mb-3">
+                                <label class="form-label" for="instructionContent">
+                                    เนื้อหาข้อความ
+                                </label>
+                                <textarea
+                                    class="form-control"
+                                    id="instructionContent"
+                                    name="content"
+                                    rows="10"
+                                    placeholder="กรอกข้อมูลที่ต้องการให้ AI ใช้ตอบกลับให้ลูกค้า"><%= instruction.content || '' %></textarea>
+                                <div class="form-text d-flex justify-content-between">
+                                    <span>
+                                        <i class="fas fa-lightbulb me-1 text-warning"></i>
+                                        เขียนให้กระชับและเข้าใจง่าย เพื่อให้ AI นำไปใช้ตอบได้แม่นยำ
+                                    </span>
+                                    <span id="contentCharCount">0</span>
+                                </div>
+                            </div>
+
+                            <div id="tableEditorSection" class="mb-3" style="display: none;">
+                                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                                    <div>
+                                        <label class="form-label mb-0">
+                                            ตั้งค่าตารางข้อมูล
+                                        </label>
+                                        <div class="form-text">
+                                            เพิ่ม/ลบคอลัมน์และแถวตามโครงสร้างข้อมูลที่ต้องการ
+                                        </div>
+                                    </div>
+                                    <div class="table-builder-toolbar btn-group btn-group-sm">
+                                        <button type="button" class="btn btn-outline-primary" id="addColumnBtn">
                                             <i class="fas fa-plus me-1"></i> เพิ่มคอลัมน์
                                         </button>
+                                        <button type="button" class="btn btn-outline-primary" id="addRowBtn">
+                                            <i class="fas fa-plus me-1"></i> เพิ่มแถว
+                                        </button>
+                                        <button type="button" class="btn btn-outline-danger" id="clearTableBtn">
+                                            <i class="fas fa-trash me-1"></i> ล้างตาราง
+                                        </button>
                                     </div>
+                                </div>
 
-                                    <!-- Column Headers with Sync Scroll -->
-                                    <div class="table-header-container" id="headerContainer">
-                                        <div id="columnHeaders">
-                                            <% let columns = [];
-                                               if (instruction.data && instruction.data.columns) {
-                                                   columns = instruction.data.columns;
-                                               } else {
-                                                   columns = ['คีย์', 'ค่า'];
-                                               }
-                                            %>
-                                            <% columns.forEach((colName, idx) => { %>
-                                                <div class="col-header">
-                                                    <div class="column-controls">
-                                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveColumn(<%= idx %>, 'left')" title="ย้ายซ้าย">
-                                                            <i class="fas fa-arrow-left"></i>
-                                                        </button>
-                                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveColumn(<%= idx %>, 'right')" title="ย้ายขวา">
-                                                            <i class="fas fa-arrow-right"></i>
-                                                        </button>
-                                                        <% if (columns.length > 1) { %>
-                                                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeColumn(<%= idx %>)" title="ลบคอลัมน์">
-                                                            <i class="fas fa-times"></i>
-                                                        </button>
-                                                        <% } %>
-                                                    </div>
-                                                    <input type="text" class="form-control column-header" placeholder="ชื่อคอลัมน์ <%= idx + 1 %>" value="<%= colName %>" data-column="<%= idx %>">
-                                                </div>
-                                            <% }) %>
-                                            <div class="col-header-label">
-                                                <span class="text-muted">หัวข้อคอลัมน์</span>
-                                            </div>
+                                <div class="card border-0 shadow-sm table-builder-card">
+                                    <div class="card-body">
+                                        <div class="table-responsive table-builder-wrapper">
+                                            <table class="table table-bordered table-sm align-middle" id="instructionTableBuilder">
+                                                <thead class="table-light">
+                                                    <tr id="tableHeaderRow"></tr>
+                                                </thead>
+                                                <tbody id="tableBodyRows"></tbody>
+                                            </table>
+                                        </div>
+                                        <div class="text-muted small mt-2">
+                                            ดับเบิลคลิกที่ชื่อคอลัมน์เพื่อแก้ไข • ใช้ปุ่ม Tab หรือปุ่มลูกศรเพื่อเลื่อนระหว่างเซลล์ • แถวว่างจะถูกตัดออกอัตโนมัติ
                                         </div>
                                     </div>
                                 </div>
-
-                                <!-- Table Rows -->
-                                <!-- Table Rows Container with horizontal scroll for many columns -->
-                                <div id="tableRowsContainer" class="table-rows-container">
-                                    <div id="tableRows">
-                                        <% if (instruction.type === 'table' && instruction.data) { 
-                                                if (instruction.data.rows) { %>
-                                                    <% instruction.data.rows.forEach(row => { %>
-                                                        <div class="table-row">
-                                                            <div class="row-content">
-                                                                <% columns.forEach((colName, idx) => { %>
-                                                                    <div class="table-cell">
-                                                                        <textarea class="form-control" rows="1" placeholder="ข้อมูลคอลัมน์ <%= idx + 1 %>" data-column="<%= idx %>" style="resize: vertical;"><%= row[colName] || '' %></textarea>
-                                                                    </div>
-                                                                <% }) %>
-                                                                <div class="table-cell-action">
-                                                                    <div class="row-controls">
-                                                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveRow(this, 'up')" title="ย้ายขึ้น">
-                                                                            <i class="fas fa-arrow-up"></i>
-                                                                        </button>
-                                                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveRow(this, 'down')" title="ย้ายลง">
-                                                                            <i class="fas fa-arrow-down"></i>
-                                                                        </button>
-                                                                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeTableRow(this)">
-                                                                            <i class="fas fa-minus"></i>
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    <% }) %>
-                                            <% } else if (Array.isArray(instruction.data) && instruction.data.length > 0 && instruction.data[0].key) { %>
-                                                    <% instruction.data.forEach(row => { %>
-                                                        <div class="table-row">
-                                                            <div class="row-content">
-                                                                <div class="table-cell">
-                                                                    <textarea class="form-control" rows="1" placeholder="คีย์" data-column="0" style="resize: vertical;"><%= row.key %></textarea>
-                                                                </div>
-                                                                <div class="table-cell">
-                                                                    <textarea class="form-control" rows="1" placeholder="ค่า" data-column="1" style="resize: vertical;"><%= row.value %></textarea>
-                                                                </div>
-                                                                <div class="table-cell-action">
-                                                                    <div class="row-controls">
-                                                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveRow(this, 'up')" title="ย้ายขึ้น">
-                                                                            <i class="fas fa-arrow-up"></i>
-                                                                        </button>
-                                                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveRow(this, 'down')" title="ย้ายลง">
-                                                                            <i class="fas fa-arrow-down"></i>
-                                                                        </button>
-                                                                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeTableRow(this)">
-                                                                            <i class="fas fa-minus"></i>
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    <% }) %>
-                                            <% } } %>
-
-                                        <!-- ถ้าไม่มีข้อมูล ให้สร้างแถวเปล่าเริ่มต้น -->
-                                        <% if (!(instruction.data && (instruction.data.rows || (Array.isArray(instruction.data) && instruction.data.length)))) { %>
-                                            <div class="table-row">
-                                                <div class="row-content">
-                                                    <% columns.forEach((cn, idx) => { %>
-                                                        <div class="table-cell">
-                                                            <textarea class="form-control" rows="1" placeholder="ข้อมูลคอลัมน์ <%= idx + 1 %>" data-column="<%= idx %>" style="resize: vertical;"></textarea>
-                                                        </div>
-                                                    <% }) %>
-                                                    <div class="table-cell-action">
-                                                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="removeTableRow(this)">
-                                                            <i class="fas fa-minus"></i>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        <% } %>
-                                    </div>
-                                </div>
-
-                                <div class="mt-2">
-                                    <button type="button" class="btn btn-outline-primary btn-sm me-2" onclick="addTableRow()">
-                                        <i class="fas fa-plus me-1"></i> เพิ่มแถว
-                                    </button>
-                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="previewTable()">
-                                        <i class="fas fa-eye me-1"></i> ดูตัวอย่าง
-                                    </button>
-                                </div>
-
-                                <!-- Table Preview -->
-                                <div id="tablePreview" class="mt-3" style="display: none;">
-                                    <h6>ตัวอย่างตาราง:</h6>
-                                    <div class="table-responsive">
-                                        <table class="table table-bordered table-sm" id="previewTable">
-                                            <thead class="table-light"></thead>
-                                            <tbody></tbody>
-                                        </table>
-                                    </div>
-                                </div>
-
-                                <input type="hidden" id="tableData" name="tableData">
-                            </div>
-                            
-                            <!-- Keyboard Shortcuts Info -->
-                            <div class="alert alert-light border mt-4">
-                                <h6 class="mb-2"><i class="fas fa-keyboard me-1"></i> คีย์ลัด</h6>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <small class="text-muted">
-                                            <kbd>Ctrl</kbd> + <kbd>S</kbd> = บันทึก<br>
-                                            <kbd>Ctrl</kbd> + <kbd>Enter</kbd> = ดูตัวอย่างตาราง
-                                        </small>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <small class="text-muted">
-                                            <kbd>Ctrl</kbd> + <kbd>+</kbd> = เพิ่มแถว<br>
-                                            <kbd>Esc</kbd> = ยกเลิก
-                                        </small>
-                                    </div>
-                                </div>
+                                <input type="hidden" id="tableDataInput" name="tableData">
                             </div>
 
-                            <div class="d-flex justify-content-between align-items-center mt-4">
+                            <div class="alert alert-light border mt-4 mb-0 small d-flex align-items-start gap-2">
+                                <i class="fas fa-circle-info text-primary mt-1"></i>
                                 <div>
-                                    <a href="/admin/dashboard" class="btn btn-secondary">
-                                        <i class="fas fa-times me-1"></i> ยกเลิก
-                                    </a>
-                                    <button type="button" class="btn btn-outline-primary ms-2" onclick="loadDraft()">
-                                        <i class="fas fa-history me-1"></i> โหลดแบบร่าง
-                                    </button>
-                                </div>
-                                <div>
-                                    <button type="button" class="btn btn-outline-secondary me-2" onclick="clearForm()">
-                                        <i class="fas fa-eraser me-1"></i> ล้างข้อมูล
-                                    </button>
-                                    <button type="button" class="btn btn-primary" id="saveButton">
-                                        <i class="fas fa-save me-1"></i> บันทึกการแก้ไข
-                                    </button>
+                                    หากปรับโครงสร้างข้อมูลตาราง ระบบจะอัปเดตการตอบกลับของ AI ให้สอดคล้องกับคอลัมน์และแถวที่กำหนดใหม่โดยอัตโนมัติ
                                 </div>
                             </div>
-                        </form>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <a href="/admin/dashboard" class="btn btn-outline-secondary">
+                            <i class="fas fa-times me-1"></i> ยกเลิก
+                        </a>
+                        <button type="submit" class="btn btn-primary" id="saveInstructionBtn">
+                            <i class="fas fa-save me-1"></i> บันทึกการแก้ไข
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card shadow-sm mb-3 instruction-meta">
+                    <div class="card-header bg-white">
+                        <h6 class="mb-0">
+                            <i class="fas fa-circle-info me-2 text-primary"></i>
+                            ข้อมูลอ้างอิง
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <dl class="row g-2 mb-0">
+                            <dt class="col-5">รหัส</dt>
+                            <dd class="col-7 text-break"><%= instruction._id %></dd>
+
+                            <dt class="col-5">ประเภท</dt>
+                            <dd class="col-7" id="metaTypeLabel">
+                                <%= instruction.type === 'text' ? 'ข้อความ' : 'ตาราง' %>
+                            </dd>
+
+                            <dt class="col-5">สร้างเมื่อ</dt>
+                            <dd class="col-7">
+                                <%= instruction.createdAt ? new Date(instruction.createdAt).toLocaleString('th-TH') : '-' %>
+                            </dd>
+
+                            <dt class="col-5">แก้ไขล่าสุด</dt>
+                            <dd class="col-7" id="metaUpdatedAt">
+                                <%= instruction.updatedAt ? new Date(instruction.updatedAt).toLocaleString('th-TH') : '-' %>
+                            </dd>
+
+                            <dt class="col-5">จำนวนข้อมูล</dt>
+                            <dd class="col-7" id="metaDataCount">
+                                <%= instruction.type === 'table' && instruction.data && Array.isArray(instruction.data.rows) ? `${instruction.data.rows.length} แถว` : `${(instruction.content || '').length} อักขระ` %>
+                            </dd>
+                        </dl>
                     </div>
                 </div>
+
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">
+                            <i class="fas fa-eye me-2 text-primary"></i>
+                            ตัวอย่างข้อมูล
+                        </h6>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="refreshPreviewBtn">
+                            <i class="fas fa-rotate-right me-1"></i> รีเฟรช
+                        </button>
+                    </div>
+                    <div class="card-body instruction-preview" id="instructionPreview">
+                        <div class="empty-preview">
+                            <i class="fas fa-search fa-2x mb-2"></i>
+                            <p class="mb-0">แก้ไขข้อมูลด้านซ้ายเพื่อดูตัวอย่างแบบเรียลไทม์</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // ตั้งค่า display เริ่มต้นตาม type
-        document.addEventListener('DOMContentLoaded', function() {
-            const instructionType = '<%= instruction.type %>';
-            toggleEditor();
-            
-            if (instructionType === 'text') {
-                document.getElementById('textEditor').style.display = 'block';
-                document.getElementById('tableEditor').style.display = 'none';
-            } else if (instructionType === 'table') {
-                document.getElementById('textEditor').style.display = 'none';
-                document.getElementById('tableEditor').style.display = 'block';
-            }
-        });
-        
-        function toggleEditor() {
-            const type = document.getElementById('type').value;
-            const textEditor = document.getElementById('textEditor');
-            const tableEditor = document.getElementById('tableEditor');
-            
-            if (type === 'text') {
-                textEditor.style.display = 'block';
-                tableEditor.style.display = 'none';
-            } else if (type === 'table') {
-                textEditor.style.display = 'none';
-                tableEditor.style.display = 'block';
-            }
-        }
-        
-        function addTableRow() {
-            const columnCount = parseInt(document.getElementById('columnCount').value);
-            const tableRows = document.getElementById('tableRows');
-            const newRow = document.createElement('div');
-            newRow.className = 'table-row';
-            let rowHTML = '<div class="row-content">';
-            for (let i = 0; i < columnCount; i++) {
-                rowHTML += `<div class=\"table-cell\"><textarea class=\"form-control\" rows=\"1\" placeholder=\"ข้อมูลคอลัมน์ ${i + 1}\" data-column=\"${i}\" style=\"resize: vertical;\"></textarea></div>`;
-            }
-            rowHTML += '<div class="table-cell-action"><div class="row-controls"><button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveRow(this, \'up\')" title="ย้ายขึ้น"><i class="fas fa-arrow-up"></i></button><button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveRow(this, \'down\')" title="ย้ายลง"><i class="fas fa-arrow-down"></i></button><button type="button" class="btn btn-outline-danger btn-sm" onclick="removeTableRow(this)"><i class="fas fa-minus"></i></button></div></div>';
-            newRow.innerHTML = rowHTML;
-            tableRows.appendChild(newRow);
-            
-            // อัพเดทข้อมูลตารางหลังจากเพิ่มแถว
-            if (document.getElementById('type').value === 'table') {
-                try {
-                    prepareTableData();
-                } catch (error) {
-                    console.warn('Error preparing table data after adding row:', error);
-                }
-            }
-        }
-        
-        function removeTableRow(button) {
-            const tableRows = document.getElementById('tableRows');
-            if (tableRows.children.length > 1) {
-                button.closest('.table-row').remove();
-                
-                // อัพเดทข้อมูลตารางหลังจากลบแถว
-                if (document.getElementById('type').value === 'table') {
-                    try {
-                        prepareTableData();
-                    } catch (error) {
-                        console.warn('Error preparing table data after removing row:', error);
-                    }
-                }
-            }
-        }
-        
-        function prepareTableData() {
-            const type = document.getElementById('type').value;
-            console.log('prepareTableData called, type:', type);
-            
-            if (type !== 'table') {
-                return Promise.resolve(null);
-            }
-            
-            try {
-                const columnHeaders = document.querySelectorAll('.column-header');
-                const tableRows = document.querySelectorAll('#tableRows .table-row');
-                
-                console.log('Found column headers:', columnHeaders.length, 'Found table rows:', tableRows.length);
-                
-                if (columnHeaders.length === 0) {
-                    console.warn('ไม่พบหัวคอลัมน์');
-                    return Promise.resolve({ columns: [], rows: [] });
-                }
-                
-                // สร้างรายชื่อคอลัมน์
-                const columns = Array.from(columnHeaders).map((h, idx) => {
-                    const value = h.value ? h.value.trim() : '';
-                    return value || `คอลัมน์${idx + 1}`;
-                });
-                
-                console.log('Column names:', columns);
-                
-                // สร้างข้อมูลแถว (รวมแถวที่มีข้อมูลบางช่องเท่านั้น)
-                const rows = [];
-                tableRows.forEach((row, rowIdx) => {
-                    const inputs = row.querySelectorAll('.table-cell input, .table-cell select, .table-cell textarea');
-                    const rowObj = {};
-                    let hasAnyData = false;
-                    
-                    inputs.forEach((inp, idx) => {
-                        if (idx < columns.length) { // ป้องกัน index out of bounds
-                            const value = inp.value ? inp.value.trim() : '';
-                            rowObj[columns[idx]] = value; // เก็บทุกค่า รวมทั้งค่าว่าง
-                            
-                            // ตรวจสอบว่ามีข้อมูลอย่างน้อย 1 ช่องหรือไม่
-                            if (value !== '') {
-                                hasAnyData = true;
-                            }
-                        }
-                    });
-                    
-                    // บันทึกแถวที่มีข้อมูลอย่างน้อย 1 ช่อง หรือ แถวแรกๆ เสมอ (เผื่อเป็น template)
-                    if (hasAnyData || rowIdx < 5) {
-                        rows.push(rowObj);
-                        if (rowIdx < 3) { // Log แค่ 3 แถวแรก
-                            console.log(`Row ${rowIdx}:`, rowObj);
-                        }
-                    }
-                });
-                
-                const tableData = { columns: columns, rows: rows };
-                
-                console.log('Table data summary:');
-                console.log('- Columns count:', tableData.columns.length);
-                console.log('- Rows count:', tableData.rows.length);
-                console.log('- Columns:', tableData.columns);
-                console.log('- First 3 rows:', tableData.rows.slice(0, 3));
-                
-                // ตรวจสอบคุณภาพข้อมูล
-                if (tableData.columns.length === 0) {
-                    console.error('❌ No columns found in table data!');
-                    return Promise.resolve({ columns: [], rows: [] });
-                }
-                
-                if (tableData.rows.length === 0) {
-                    console.warn('⚠️ No rows found in table data - but this is OK!');
-                    console.log('💡 Empty table is allowed, will save structure only');
-                }
-                
-                // จัดการ hidden input สำหรับส่งข้อมูล
-                let tableDataElement = document.getElementById('tableData');
-                if (!tableDataElement) {
-                    tableDataElement = document.createElement('input');
-                    tableDataElement.type = 'hidden';
-                    tableDataElement.id = 'tableData';
-                    tableDataElement.name = 'tableData';
-                    
-                    const form = document.querySelector('form');
-                    if (form) {
-                        form.appendChild(tableDataElement);
-                        console.log('✅ Created and appended tableData hidden input to form');
-                    } else {
-                        document.body.appendChild(tableDataElement);
-                        console.warn('⚠️ No form found, appended tableData to body');
-                    }
-                } else {
-                    console.log('✅ Found existing tableData hidden input');
-                }
-                
-                // ตรวจสอบและตั้งค่า attributes
-                if (!tableDataElement.hasAttribute('name')) {
-                    tableDataElement.setAttribute('name', 'tableData');
-                }
-                
-                const jsonString = JSON.stringify(tableData);
-                tableDataElement.value = jsonString;
-                
-                console.log('✅ Table data prepared successfully');
-                console.log('📊 JSON string length:', jsonString.length);
-                console.log('📝 JSON preview:', jsonString.substring(0, 200) + '...');
-                
-                return Promise.resolve(tableData);
-                
-            } catch (error) {
-                console.error('Error in prepareTableData:', error);
-                // ส่งคืนข้อมูลเปล่าแทนที่จะ reject เพื่อป้องกันการสูญหายข้อมูล
-                return Promise.resolve({ columns: [], rows: [] });
-            }
-        }
+        const initialInstruction = {
+            id: '<%= instruction._id.toString() %>',
+            type: '<%= instruction.type %>',
+            title: <%- JSON.stringify(instruction.title || '') %>,
+            content: <%- JSON.stringify(instruction.content || '') %>,
+            data: <%- JSON.stringify(instruction.data || null) %>,
+            createdAt: '<%= instruction.createdAt ? new Date(instruction.createdAt).toISOString() : '' %>',
+            updatedAt: '<%= instruction.updatedAt ? new Date(instruction.updatedAt).toISOString() : '' %>'
+        };
 
-        // ฟังก์ชันสำหรับสร้างข้อมูลตารางแบบ manual กรณีที่ prepareTableData ล้มเหลว
-        function createManualTableData() {
-            console.log('Creating manual table data...');
-            
-            try {
-                // ดึงหัวคอลัมน์
-                const columnHeaders = document.querySelectorAll('.column-header');
-                const columns = [];
-                
-                if (columnHeaders.length === 0) {
-                    // ถ้าไม่มีหัวคอลัมน์ ใช้ค่า default
-                    columns.push('คอลัมน์1', 'คอลัมน์2');
-                } else {
-                    columnHeaders.forEach((header, idx) => {
-                        const value = header.value ? header.value.trim() : '';
-                        columns.push(value || `คอลัมน์${idx + 1}`);
-                    });
-                }
-                
-                // ดึงข้อมูลแถว
-                const tableRows = document.querySelectorAll('#tableRows .table-row');
-                const rows = [];
-                
-                tableRows.forEach((row, rowIdx) => {
-                    const inputs = row.querySelectorAll('.table-cell input, .table-cell select, .table-cell textarea');
-                    const rowObj = {};
-                    let hasData = false;
-                    
-                    inputs.forEach((input, idx) => {
-                        const value = input.value ? input.value.trim() : '';
-                        if (value && columns[idx]) {
-                            rowObj[columns[idx]] = value;
-                            hasData = true;
-                        }
-                    });
-                    
-                    if (hasData) {
-                        rows.push(rowObj);
-                    }
+        const instructionTableBuilder = (() => {
+            let isInitialized = false;
+            let columns = ['คอลัมน์ 1', 'คอลัมน์ 2'];
+            let rows = [
+                ['', ''],
+                ['', ''],
+                ['', '']
+            ];
+
+            const refs = {
+                headerRow: null,
+                bodyRows: null,
+                addColumnBtn: null,
+                addRowBtn: null,
+                clearBtn: null,
+                hiddenInput: null
+            };
+
+            const escapeHtml = (value) => {
+                if (value === null || value === undefined) return '';
+                return String(value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            };
+
+            const ensureColumnDefaults = () => {
+                columns = columns.map((col, index) => {
+                    const name = (col || '').trim();
+                    return name || `คอลัมน์ ${index + 1}`;
                 });
-                
-                const result = { columns, rows };
-                console.log('Manual table data created:', result);
-                return result;
-                
-            } catch (error) {
-                console.error('Error in createManualTableData:', error);
-                return { columns: ['คอลัมน์1', 'คอลัมน์2'], rows: [] };
-            }
-        }
+            };
 
-        /* ====================== ปรับปรุงฟังก์ชันสำหรับตารางหลายคอลัมน์ ====================== */
-        function addTableColumn() {
-            const columnCountEl = document.getElementById('columnCount');
-            columnCountEl.value = parseInt(columnCountEl.value) + 1;
-            updateTableStructure();
-            
-            // อัพเดทข้อมูลตารางหลังจากเพิ่มคอลัมน์
-            if (document.getElementById('type').value === 'table') {
-                try {
-                    prepareTableData();
-                } catch (error) {
-                    console.warn('Error preparing table data after adding column:', error);
-                }
-            }
-        }
+            const ensureRowWidths = () => {
+                rows = rows.map(row => {
+                    const nextRow = Array.isArray(row) ? [...row] : [];
+                    while (nextRow.length < columns.length) {
+                        nextRow.push('');
+                    }
+                    if (nextRow.length > columns.length) {
+                        nextRow.length = columns.length;
+                    }
+                    return nextRow;
+                });
+            };
 
-        function updateTableStructure() {
-            const columnCount = parseInt(document.getElementById('columnCount').value);
-            const columnHeaders = document.getElementById('columnHeaders');
-            const tableRows = document.getElementById('tableRows');
-            
-            // Save existing header values
-            const existingHeaders = Array.from(columnHeaders.querySelectorAll('.column-header')).map(h => h.value);
-            
-            // Save label div
-            const labelDiv = columnHeaders.querySelector('.col-header-label');
-            
-            // Update headers
-            columnHeaders.innerHTML = '';
-            for (let i = 0; i < columnCount; i++) {
-                const colDiv = document.createElement('div');
-                colDiv.className = 'col-header';
-                
-                // สร้างปุ่มควบคุม column
-                const controlsHTML = `
-                    <div class="column-controls">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveColumn(${i}, 'left')" title="ย้ายซ้าย">
-                            <i class="fas fa-arrow-left"></i>
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveColumn(${i}, 'right')" title="ย้ายขวา">
-                            <i class="fas fa-arrow-right"></i>
-                        </button>
-                        ${columnCount > 1 ? `<button type="button" class="btn btn-outline-danger btn-sm" onclick="removeColumn(${i})" title="ลบคอลัมน์"><i class="fas fa-times"></i></button>` : ''}
-                    </div>
+            const renderHeader = () => {
+                if (!refs.headerRow) return;
+                ensureColumnDefaults();
+                refs.headerRow.innerHTML = columns.map((columnName, index) => `
+                    <th scope="col">
+                        <div class="table-header-control">
+                            <input
+                                type="text"
+                                class="form-control form-control-sm table-header-input"
+                                value="${escapeHtml(columnName)}"
+                                data-col-index="${index}"
+                                aria-label="ชื่อคอลัมน์ที่ ${index + 1}">
+                            ${columns.length > 1 ? `
+                                <button type="button" class="btn btn-link btn-sm text-danger p-0 ms-1 remove-column-btn" data-remove-column="${index}" title="ลบคอลัมน์นี้">
+                                    <i class="fas fa-times-circle"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                    </th>
+                `).join('') + `
+                    <th scope="col" class="text-center table-actions-col">
+                        <i class="fas fa-ellipsis-h text-muted"></i>
+                    </th>
                 `;
-                
-                const headerValue = existingHeaders[i] || '';
-                colDiv.innerHTML = `${controlsHTML}<input type="text" class="form-control column-header" placeholder="ชื่อคอลัมน์ ${i + 1}" value="${headerValue}" data-column="${i}">`;
-                columnHeaders.appendChild(colDiv);
-            }
-            
-            // Add label div back
-            if (!labelDiv) {
-                const newLabelDiv = document.createElement('div');
-                newLabelDiv.className = 'col-header-label';
-                newLabelDiv.innerHTML = '<span class="text-muted">หัวข้อคอลัมน์</span>';
-                columnHeaders.appendChild(newLabelDiv);
-            } else {
-                columnHeaders.appendChild(labelDiv);
-            }
 
-            // Update rows
-            const rows = tableRows.querySelectorAll('.table-row');
-            rows.forEach(row => {
-                const rowContent = row.querySelector('.row-content');
-                if (!rowContent) return;
-                
-                // Save existing cell values
-                const existingCells = Array.from(rowContent.querySelectorAll('.table-cell input, .table-cell select, .table-cell textarea')).map(c => c.value);
-                
-                const actionDiv = rowContent.querySelector('.table-cell-action');
-                rowContent.innerHTML = '';
-                
-                for (let i = 0; i < columnCount; i++) {
-                    const cellDiv = document.createElement('div');
-                    cellDiv.className = 'table-cell';
-                    const cellValue = existingCells[i] || '';
-                    cellDiv.innerHTML = `<textarea class="form-control" rows="1" placeholder="ข้อมูลคอลัมน์ ${i + 1}" data-column="${i}" style="resize: vertical;">${cellValue}</textarea>`;
-                    rowContent.appendChild(cellDiv);
-                }
-                
-                if (!actionDiv) {
-                    const newActionDiv = document.createElement('div');
-                    newActionDiv.className = 'table-cell-action';
-                    newActionDiv.innerHTML = `<div class="row-controls"><button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveRow(this, 'up')" title="ย้ายขึ้น"><i class="fas fa-arrow-up"></i></button><button type="button" class="btn btn-outline-secondary btn-sm" onclick="moveRow(this, 'down')" title="ย้ายลง"><i class="fas fa-arrow-down"></i></button><button type="button" class="btn btn-outline-danger btn-sm" onclick="removeTableRow(this)"><i class="fas fa-minus"></i></button></div>`;
-                    rowContent.appendChild(newActionDiv);
-                } else {
-                    rowContent.appendChild(actionDiv);
-                }
-            });
-            
-            // อัพเดทข้อมูลตารางหลังจากเปลี่ยนโครงสร้าง
-            if (document.getElementById('type').value === 'table') {
-                try {
-                    prepareTableData();
-                    console.log('Table data prepared after structure update');
-                } catch (error) {
-                    console.warn('Error preparing table data after structure update:', error);
-                }
-            }
-        }
-
-        function previewTable() {
-            const columnHeaders = document.querySelectorAll('.column-header');
-            const tableRows = document.querySelectorAll('#tableRows .table-row');
-            const previewTable = document.getElementById('previewTable');
-            const previewDiv = document.getElementById('tablePreview');
-            
-            if (!previewTable || !previewDiv) {
-                console.error('Preview elements not found');
-                return;
-            }
-            
-            // สร้าง header
-            let headerHTML = '<tr>';
-            columnHeaders.forEach(h => {
-                const headerText = h.value.trim() || 'คอลัมน์';
-                headerHTML += `<th>${headerText}</th>`;
-            });
-            headerHTML += '</tr>';
-            previewTable.querySelector('thead').innerHTML = headerHTML;
-            
-            // สร้าง body
-            let bodyHTML = '';
-            let hasData = false;
-            
-            tableRows.forEach(row => {
-                const inputs = row.querySelectorAll('.table-cell input, .table-cell select, .table-cell textarea');
-                let rowHTML = '<tr>';
-                let rowHasData = false;
-                
-                inputs.forEach(inp => {
-                    const cellValue = inp.value.trim();
-                    if (cellValue) {
-                        rowHasData = true;
-                        hasData = true;
-                    }
-                    rowHTML += `<td>${cellValue ? cellValue.replace(/\n/g, '<br>') : '-'}</td>`;
-                });
-                
-                rowHTML += '</tr>';
-                if (rowHasData) {
-                    bodyHTML += rowHTML;
-                }
-            });
-            
-            if (!hasData) {
-                bodyHTML = '<tr><td colspan="' + columnHeaders.length + '" class="text-center text-muted">ไม่มีข้อมูล</td></tr>';
-            }
-            
-            previewTable.querySelector('tbody').innerHTML = bodyHTML;
-            previewDiv.style.display = 'block';
-            
-            // Scroll to preview
-            previewDiv.scrollIntoView({ behavior: 'smooth' });
-        }
-
-        /* ====================== ฟังก์ชันสำหรับการย้าย Row และ Column ====================== */
-        
-        // ฟังก์ชันย้าย Row ขึ้น/ลง
-        function moveRow(button, direction) {
-            const currentRow = button.closest('.table-row');
-            const tableRows = document.getElementById('tableRows');
-            const allRows = Array.from(tableRows.children);
-            const currentIndex = allRows.indexOf(currentRow);
-            
-            if (direction === 'up' && currentIndex > 0) {
-                tableRows.insertBefore(currentRow, allRows[currentIndex - 1]);
-            } else if (direction === 'down' && currentIndex < allRows.length - 1) {
-                if (currentIndex + 2 < allRows.length) {
-                    tableRows.insertBefore(currentRow, allRows[currentIndex + 2]);
-                } else {
-                    tableRows.appendChild(currentRow);
-                }
-            }
-            
-            // อัพเดทข้อมูลตารางหลังจากย้ายแถว
-            if (document.getElementById('type').value === 'table') {
-                try {
-                    prepareTableData();
-                } catch (error) {
-                    console.warn('Error preparing table data after moving row:', error);
-                }
-            }
-        }
-        
-        // ฟังก์ชันย้าย Column ซ้าย/ขวา
-        function moveColumn(columnIndex, direction) {
-            const columnHeaders = document.querySelectorAll('.column-header');
-            const totalColumns = columnHeaders.length;
-            let newIndex = columnIndex;
-            
-            if (direction === 'left' && columnIndex > 0) {
-                newIndex = columnIndex - 1;
-            } else if (direction === 'right' && columnIndex < totalColumns - 1) {
-                newIndex = columnIndex + 1;
-            } else {
-                return; // ไม่สามารถย้ายได้
-            }
-            
-            swapColumns(columnIndex, newIndex);
-        }
-        
-        // ฟังก์ชันสลับ Column (ปรับปรุงให้ปลอดภัยขึ้น)
-        function swapColumns(index1, index2) {
-            try {
-                const headerContainer = document.getElementById('columnHeaders');
-                const headers = Array.from(headerContainer.querySelectorAll('.col-header'));
-                const tableRows = document.querySelectorAll('#tableRows .table-row');
-                
-                console.log(`Swapping columns ${index1} and ${index2}`);
-                
-                // ตรวจสอบ index ให้อยู่ในช่วงที่ถูกต้อง
-                if (index1 < 0 || index2 < 0 || index1 >= headers.length || index2 >= headers.length) {
-                    console.warn('Invalid column indexes for swapping');
-                    return;
-                }
-                
-                if (index1 === index2) {
-                    console.log('Same column indexes, no need to swap');
-                    return;
-                }
-                
-                // เก็บค่า header
-                const header1Element = headers[index1].querySelector('.column-header');
-                const header2Element = headers[index2].querySelector('.column-header');
-                
-                if (!header1Element || !header2Element) {
-                    console.error('Column header elements not found');
-                    return;
-                }
-                
-                const header1Value = header1Element.value || '';
-                const header2Value = header2Element.value || '';
-                
-                // เก็บค่า cells ของทุก row
-                const cellData = [];
-                tableRows.forEach((row, rowIndex) => {
-                    const cells = row.querySelectorAll('.table-cell textarea');
-                    if (cells[index1] && cells[index2]) {
-                        cellData.push({
-                            cell1Value: cells[index1].value || '',
-                            cell2Value: cells[index2].value || ''
-                        });
-                    } else {
-                        cellData.push({
-                            cell1Value: '',
-                            cell2Value: ''
-                        });
-                    }
-                });
-                
-                // สลับค่า header
-                header1Element.value = header2Value;
-                header2Element.value = header1Value;
-                
-                // สลับค่า cells
-                tableRows.forEach((row, rowIndex) => {
-                    const cells = row.querySelectorAll('.table-cell textarea');
-                    if (cells[index1] && cells[index2] && cellData[rowIndex]) {
-                        cells[index1].value = cellData[rowIndex].cell2Value;
-                        cells[index2].value = cellData[rowIndex].cell1Value;
-                    }
-                });
-                
-                // อัพเดท onclick handlers ในปุ่มควบคุม
-                updateColumnControls();
-                
-                // อัพเดทข้อมูลตารางหลังจากสลับคอลัมน์ (ไม่ต้องใช้ setTimeout)
-                if (document.getElementById('type').value === 'table') {
-                    prepareTableData().then(() => {
-                        console.log('Table data updated after column swap');
-                    }).catch(error => {
-                        console.warn('Error preparing table data after swapping columns:', error);
+                refs.headerRow.querySelectorAll('.table-header-input').forEach(input => {
+                    input.addEventListener('input', event => {
+                        const colIndex = Number(event.target.getAttribute('data-col-index'));
+                        if (Number.isInteger(colIndex) && colIndex >= 0 && colIndex < columns.length) {
+                            columns[colIndex] = event.target.value;
+                        }
+                        updatePreview();
                     });
-                }
-                
-                console.log(`Successfully swapped columns ${index1} and ${index2}`);
-            } catch (error) {
-                console.error('Error in swapColumns:', error);
-                showNotification('เกิดข้อผิดพลาดในการสลับคอลัมน์ กรุณาลองใหม่', 'error');
-            }
-        }
-        
-        // อัพเดท column indexes
-        function updateColumnIndexes() {
-            const headers = document.querySelectorAll('.column-header');
-            headers.forEach((header, idx) => {
-                header.setAttribute('data-column', idx);
-                header.placeholder = `ชื่อคอลัมน์ ${idx + 1}`;
-            });
-        }
-        
-        function updateCellIndexes() {
-            const tableRows = document.querySelectorAll('#tableRows .table-row');
-            tableRows.forEach(row => {
-                const cells = row.querySelectorAll('.table-cell input, .table-cell select, .table-cell textarea');
-                cells.forEach((cell, idx) => {
-                    cell.setAttribute('data-column', idx);
-                    cell.placeholder = `ข้อมูลคอลัมน์ ${idx + 1}`;
                 });
-            });
-        }
-        
-        // ฟังก์ชันตรวจสอบและแก้ไขลำดับ column index
-        function validateColumnStructure() {
-            updateColumnIndexes();
-            updateCellIndexes();
-            updateColumnControls();
-        }
 
-        function removeColumn(index) {
-            const columnHeaders = document.querySelectorAll('.column-header');
-            const tableRows = document.querySelectorAll('#tableRows .table-row');
-            
-            if (columnHeaders.length <= 1) {
-                alert('ต้องมีอย่างน้อย 1 คอลัมน์');
-                return;
-            }
-
-            if (!confirm('ต้องการลบคอลัมน์นี้หรือไม่?')) {
-                return;
-            }
-
-            // ลดจำนวนคอลัมน์
-            const columnCountEl = document.getElementById('columnCount');
-            columnCountEl.value = parseInt(columnCountEl.value) - 1;
-
-            // อัพเดทโครงสร้างตาราง
-            updateTableStructure();
-            
-            // อัพเดทข้อมูลตารางหลังจากลบคอลัมน์
-            if (document.getElementById('type').value === 'table') {
-                try {
-                    prepareTableData();
-                } catch (error) {
-                    console.warn('Error preparing table data after removing column:', error);
-                }
-            }
-        }
-
-        // ฟังก์ชันอัพเดทปุ่มควบคุม column
-        function updateColumnControls() {
-            const headers = document.querySelectorAll('.col-header');
-            const totalColumns = headers.length;
-            
-            headers.forEach((header, index) => {
-                const controls = header.querySelector('.column-controls');
-                if (controls) {
-                    const leftBtn = controls.querySelector('button:nth-child(1)');
-                    const rightBtn = controls.querySelector('button:nth-child(2)');
-                    const deleteBtn = controls.querySelector('button:nth-child(3)');
-                    
-                    if (leftBtn) leftBtn.onclick = () => moveColumn(index, 'left');
-                    if (rightBtn) rightBtn.onclick = () => moveColumn(index, 'right');
-                    if (deleteBtn) deleteBtn.onclick = () => removeColumn(index);
-                }
-                
-                const input = header.querySelector('.column-header');
-                if (input) {
-                    input.setAttribute('data-column', index);
-                    input.placeholder = `ชื่อคอลัมน์ ${index + 1}`;
-                }
-            });
-        }
-        
-        /* ====================== Synchronized Scrolling ====================== */
-        
-        // เมื่อ document โหลดเสร็จให้เพิ่ม scroll sync
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM Content Loaded - Setting up enhanced functionality...');
-            
-            const headerContainer = document.getElementById('headerContainer');
-            const tableContainer = document.getElementById('tableRowsContainer');
-            
-            if (headerContainer && tableContainer) {
-                // Sync scroll ระหว่าง header และ table
-                tableContainer.addEventListener('scroll', function() {
-                    headerContainer.scrollLeft = tableContainer.scrollLeft;
-                });
-                
-                headerContainer.addEventListener('scroll', function() {
-                    tableContainer.scrollLeft = headerContainer.scrollLeft;
-                });
-            }
-            
-            // เพิ่ม auto-save draft functionality
-            setupAutoSave();
-            
-            // เพิ่ม enhanced form submission
-            setupEnhancedFormSubmission();
-            
-            // อัพเดทปุ่มควบคุม column เมื่อโหลดหน้า
-            updateColumnControls();
-            
-            // เพิ่ม debounced event listener สำหรับการเปลี่ยนแปลงข้อมูลในตาราง
-            let inputTimer;
-            document.addEventListener('input', function(e) {
-                if (e.target.matches('.column-header, .table-cell textarea')) {
-                    if (document.getElementById('type').value === 'table') {
-                        // ใช้ debouncing เพื่อป้องกัน race condition
-                        clearTimeout(inputTimer);
-                        inputTimer = setTimeout(async () => {
-                            try {
-                                await prepareTableData();
-                                console.log('Table data updated after input change');
-                            } catch (error) {
-                                console.warn('Error preparing table data on input:', error);
-                            }
-                        }, 300); // เพิ่มเวลา debounce เป็น 300ms
-                    }
-                }
-            });
-            
-            // เตรียมข้อมูลตารางเมื่อโหลดหน้าเสร็จ
-            if (document.getElementById('type').value === 'table') {
-                setTimeout(async () => {
-                    try {
-                        await prepareTableData();
-                        console.log('Initial table data prepared successfully');
-                        showNotification('ระบบพร้อมใช้งาน', 'success', 2000);
-                    } catch (error) {
-                        console.warn('Error preparing initial table data:', error);
-                        showNotification('เตรียมข้อมูลตารางไม่สำเร็จ อาจต้องบันทึกข้อมูลใหม่', 'warning', 3000);
-                    }
-                }, 500);
-            } else {
-                showNotification('ระบบพร้อมใช้งาน', 'success', 2000);
-            }
-            
-            // เพิ่มการดีบักเพื่อตรวจสอบ event listeners
-            console.log('DOM Content Loaded - All setup complete');
-            
-            // ตรวจสอบว่าปุ่ม save มี event listener หรือไม่
-            setTimeout(() => {
-                const saveButton = document.getElementById('saveButton');
-                if (saveButton) {
-                    console.log('Save button found after setup:', saveButton);
-                    console.log('Save button disabled?', saveButton.disabled);
-                } else {
-                    console.error('Save button NOT found after setup!');
-                }
-            }, 1000);
-            
-            // เพิ่ม CSS animations
-            addNotificationStyles();
-            
-            // เพิ่ม real-time validation
-            setupRealTimeValidation();
-        });
-        
-        /* ====================== Auto-Save และ Validation ====================== */
-        
-        function setupAutoSave() {
-            let autoSaveTimer;
-            const autoSaveDelay = 3000; // 3 วินาที
-            
-            // Auto-save สำหรับ text content
-            const contentField = document.getElementById('content');
-            const titleField = document.getElementById('title');
-            
-            [contentField, titleField].forEach(field => {
-                if (field) {
-                    field.addEventListener('input', function() {
-                        clearTimeout(autoSaveTimer);
-                        autoSaveTimer = setTimeout(saveDraft, autoSaveDelay);
-                        
-                        // แสดงสถานะ
-                        showAutoSaveStatus('กำลังพิมพ์...');
+                refs.headerRow.querySelectorAll('.remove-column-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const colIndex = Number(btn.getAttribute('data-remove-column'));
+                        if (!Number.isInteger(colIndex)) return;
+                        if (columns.length <= 1) {
+                            showAlert('ต้องมีคอลัมน์อย่างน้อย 1 คอลัมน์', 'warning');
+                            return;
+                        }
+                        columns.splice(colIndex, 1);
+                        rows.forEach(row => row.splice(colIndex, 1));
+                        render();
+                        updatePreview();
                     });
-                }
-            });
-            
-            // Auto-save สำหรับ table data
-            document.addEventListener('input', function(e) {
-                if (e.target.matches('.column-header, .table-cell textarea')) {
-                    clearTimeout(autoSaveTimer);
-                    autoSaveTimer = setTimeout(saveDraft, autoSaveDelay);
-                    showAutoSaveStatus('กำลังพิมพ์...');
-                }
-            });
-        }
-        
-        function saveDraft() {
-            try {
-                const formData = {
-                    type: document.getElementById('type').value,
-                    title: document.getElementById('title').value,
-                    content: document.getElementById('content').value,
-                    timestamp: new Date().toISOString()
-                };
-                
-                if (formData.type === 'table') {
-                    try {
-                        prepareTableData();
-                        const tableDataElement = document.getElementById('tableData');
-                        formData.tableData = tableDataElement ? tableDataElement.value : '';
-                        console.log('Draft saved with table data:', formData.tableData.length, 'characters');
-                    } catch (tableError) {
-                        console.warn('Could not prepare table data for draft:', tableError);
-                        // ถ้าเตรียมข้อมูลตารางไม่ได้ ก็ยังบันทึก draft ได้
-                        formData.tableData = '';
-                    }
-                }
-                
-                localStorage.setItem('edit_instruction_draft_<%= instruction._id %>', JSON.stringify(formData));
-                showAutoSaveStatus('บันทึกแบบร่างแล้ว', 'success');
-            } catch (error) {
-                console.error('Auto-save error:', error);
-                showAutoSaveStatus('เกิดข้อผิดพลาดในการบันทึก', 'error');
-            }
-        }
-        
-        function showAutoSaveStatus(message, type = 'info') {
-            let statusElement = document.getElementById('autoSaveStatus');
-            if (!statusElement) {
-                statusElement = document.createElement('div');
-                statusElement.id = 'autoSaveStatus';
-                statusElement.style.cssText = `
-                    position: fixed;
-                    bottom: 20px;
-                    right: 20px;
-                    padding: 8px 16px;
-                    border-radius: 6px;
-                    font-size: 0.9rem;
-                    z-index: 1000;
-                    transition: all 0.3s ease;
-                `;
-                document.body.appendChild(statusElement);
-            }
-            
-            statusElement.textContent = message;
-            statusElement.className = `alert alert-${type === 'success' ? 'success' : type === 'error' ? 'danger' : 'info'} py-2`;
-            statusElement.style.display = 'block';
-            
-            if (type !== 'info') {
+                });
+            };
+
+            const renderBody = () => {
+                if (!refs.bodyRows) return;
+                ensureRowWidths();
+                refs.bodyRows.innerHTML = rows.map((row, rowIndex) => `
+                    <tr data-row-index="${rowIndex}">
+                        ${row.map((cellValue, colIndex) => `
+                            <td>
+                                <input
+                                    type="text"
+                                    class="form-control form-control-sm table-cell-input"
+                                    value="${escapeHtml(cellValue)}"
+                                    data-row-index="${rowIndex}"
+                                    data-col-index="${colIndex}">
+                            </td>
+                        `).join('')}
+                        <td class="text-center">
+                            <button type="button" class="btn btn-link text-danger btn-sm remove-row-btn" data-remove-row="${rowIndex}" title="ลบแถวนี้">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                refs.bodyRows.querySelectorAll('.table-cell-input').forEach(input => {
+                    input.addEventListener('input', event => {
+                        const rowIndex = Number(event.target.getAttribute('data-row-index'));
+                        const colIndex = Number(event.target.getAttribute('data-col-index'));
+                        if (!Number.isInteger(rowIndex) || !Number.isInteger(colIndex)) return;
+                        if (!rows[rowIndex]) rows[rowIndex] = [];
+                        rows[rowIndex][colIndex] = event.target.value;
+                        updatePreview();
+                    });
+                });
+
+                refs.bodyRows.querySelectorAll('.remove-row-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const rowIndex = Number(btn.getAttribute('data-remove-row'));
+                        if (!Number.isInteger(rowIndex)) return;
+                        if (rows.length <= 1) {
+                            rows[0] = new Array(columns.length).fill('');
+                        } else {
+                            rows.splice(rowIndex, 1);
+                        }
+                        render();
+                        updatePreview();
+                    });
+                });
+            };
+
+            const render = () => {
+                renderHeader();
+                renderBody();
+            };
+
+            const addColumn = () => {
+                columns.push(`คอลัมน์ ${columns.length + 1}`);
+                rows.forEach(row => row.push(''));
+                render();
+                updatePreview();
+            };
+
+            const addRow = () => {
+                const newRow = new Array(columns.length).fill('');
+                rows.push(newRow);
+                render();
                 setTimeout(() => {
-                    statusElement.style.display = 'none';
-                }, 2000);
-            }
-        }
-        
-        // ลบฟังก์ชัน setupFormValidation() ออกแล้วเพราะใช้ setupEnhancedFormSubmission() แทน
-        
-        function validateForm() {
-            const type = document.getElementById('type').value;
-            const title = document.getElementById('title').value.trim();
-            const content = document.getElementById('content').value.trim();
-            
-            console.log('Validating form, type:', type);
-            
-            if (type === 'text' && !content) {
-                alert('กรุณาใส่เนื้อหา Instruction');
-                return false;
-            }
-            
-            if (type === 'table') {
-                console.log('Validating table data...');
-                // ตรวจสอบข้อมูลที่เตรียมไว้แล้วใน tableData
-                const tableDataElement = document.getElementById('tableData');
-                console.log('tableData element in validateForm:', tableDataElement);
-                
-                if (!tableDataElement) {
-                    console.error('tableData element not found');
-                    alert('ไม่พบฟิลด์ข้อมูลตาราง กรุณาลองใหม่');
-                    return false;
-                }
-                
-                if (!tableDataElement.value) {
-                    console.error('tableData value is empty');
-                    alert('ข้อมูลตารางว่างเปล่า กรุณาเพิ่มข้อมูลในตาราง');
-                    return false;
-                }
-                
-                try {
-                    console.log('Parsing tableData:', tableDataElement.value);
-                    const tableData = JSON.parse(tableDataElement.value);
-                    console.log('Parsed tableData:', tableData);
-                    
-                    if (!tableData.columns || tableData.columns.length === 0) {
-                        console.error('No columns found in tableData');
-                        alert('กรุณาใส่ชื่อคอลัมน์อย่างน้อย 1 คอลัมน์');
-                        return false;
-                    }
-                    
-                    if (!tableData.rows || tableData.rows.length === 0) {
-                        console.error('No rows found in tableData');
-                        alert('กรุณาใส่ข้อมูลในตารางอย่างน้อย 1 แถว');
-                        return false;
-                    }
-                    
-                    console.log('Table validation passed:', tableData);
-                } catch (error) {
-                    console.error('Table data validation error:', error);
-                    alert('ข้อมูลตารางไม่ถูกต้อง กรุณาตรวจสอบใหม่');
-                    return false;
-                }
-            }
-            
-                         return true;
-         }
-         
-         /* ====================== Keyboard Shortcuts และ Helper Functions ====================== */
-         
-         // Keyboard shortcuts
-         document.addEventListener('keydown', function(e) {
-                         // Ctrl + S = Save
-            if (e.ctrlKey && e.key === 's') {
-                e.preventDefault();
-                console.log('Ctrl+S pressed - triggering save');
-                handleFormSubmission();
-            }
-             
-             // Ctrl + Enter = Preview table
-             if (e.ctrlKey && e.key === 'Enter') {
-                 e.preventDefault();
-                 if (document.getElementById('type').value === 'table') {
-                     previewTable();
-                 }
-             }
-             
-             // Ctrl + Plus = Add row
-             if (e.ctrlKey && (e.key === '+' || e.key === '=')) {
-                 e.preventDefault();
-                 if (document.getElementById('type').value === 'table') {
-                     addTableRow();
-                 }
-             }
-             
-             // Esc = Cancel
-             if (e.key === 'Escape') {
-                 if (confirm('ต้องการยกเลิกการแก้ไขหรือไม่?')) {
-                     window.location.href = '/admin/dashboard';
-                 }
-             }
-         });
-         
-         // Load draft function
-         function loadDraft() {
-             try {
-                 const draftKey = 'edit_instruction_draft_<%= instruction._id %>';
-                 const draftData = localStorage.getItem(draftKey);
-                 
-                 if (draftData) {
-                     const draft = JSON.parse(draftData);
-                     
-                     if (confirm(`พบแบบร่างที่บันทึกไว้เมื่อ ${new Date(draft.timestamp).toLocaleString('th-TH')}\nต้องการโหลดข้อมูลนี้หรือไม่?`)) {
-                         document.getElementById('type').value = draft.type;
-                         document.getElementById('title').value = draft.title || '';
-                         document.getElementById('content').value = draft.content || '';
-                         
-                         if (draft.type === 'table' && draft.tableData) {
-                             // ต้องโหลดข้อมูลตารางด้วย
-                             try {
-                                 const tableData = JSON.parse(draft.tableData);
-                                 // จำลองการโหลดข้อมูลตาราง
-                                 // (ในที่นี้อาจต้องใช้วิธีที่ซับซ้อนกว่า)
-                             } catch (e) {
-                                 console.warn('ไม่สามารถโหลดข้อมูลตารางได้:', e);
-                             }
-                         }
-                         
-                         toggleEditor();
-                         showAutoSaveStatus('โหลดแบบร่างเรียบร้อย', 'success');
-                         
-                         // ลบ draft หลังจากโหลดแล้ว
-                         localStorage.removeItem(draftKey);
-                     }
-                 } else {
-                     alert('ไม่พบแบบร่างที่บันทึกไว้');
-                 }
-             } catch (error) {
-                 console.error('Load draft error:', error);
-                 alert('เกิดข้อผิดพลาดในการโหลดแบบร่าง');
-             }
-         }
-         
-         // Clear form function
-         function clearForm() {
-             if (confirm('ต้องการล้างข้อมูลทั้งหมดหรือไม่?')) {
-                 // Clear text fields
-                 document.getElementById('title').value = '';
-                 document.getElementById('content').value = '';
-                 
-                 // Clear table data
-                 if (document.getElementById('type').value === 'table') {
-                     // Reset table to default state
-                     document.getElementById('columnCount').value = 2;
-                     updateTableStructure();
-                     
-                     // Clear all inputs
-                     document.querySelectorAll('.column-header').forEach(header => {
-                         header.value = '';
-                     });
-                     
-                     document.querySelectorAll('#tableRows .table-cell textarea').forEach(textarea => {
-                         textarea.value = '';
-                     });
-                 }
-                 
-                 showAutoSaveStatus('ล้างข้อมูลเรียบร้อย', 'success');
-             }
-         }
+                    const lastInput = refs.bodyRows?.querySelector('tr:last-child input.table-cell-input');
+                    if (lastInput) lastInput.focus();
+                }, 0);
+                updatePreview();
+            };
 
-        // ===== NOTIFICATION SYSTEM =====
-        function showNotification(message, type = 'info', duration = 5000) {
-            // ลบ notification เก่าก่อน
-            const existingNotification = document.querySelector('.notification-toast');
-            if (existingNotification) {
-                existingNotification.remove();
-            }
+            const clear = () => {
+                columns = ['คอลัมน์ 1', 'คอลัมน์ 2'];
+                rows = [
+                    ['', ''],
+                    ['', ''],
+                    ['', '']
+                ];
+                render();
+                updatePreview();
+                if (refs.hiddenInput) {
+                    refs.hiddenInput.value = '';
+                }
+            };
 
-            // สร้าง notification ใหม่
-            const notification = document.createElement('div');
-            notification.className = `notification-toast alert alert-${type === 'error' ? 'danger' : type === 'success' ? 'success' : 'info'} alert-dismissible fade show`;
-            notification.style.cssText = `
+            const sanitizeRows = (dataRows) => {
+                if (!Array.isArray(dataRows)) return [];
+                return dataRows
+                    .map(row => {
+                        if (!Array.isArray(row)) return new Array(columns.length).fill('');
+                        const normalized = row.map(cell => String(cell ?? '').trim());
+                        while (normalized.length < columns.length) {
+                            normalized.push('');
+                        }
+                        if (normalized.length > columns.length) {
+                            normalized.length = columns.length;
+                        }
+                        return normalized;
+                    })
+                    .filter(row => row.some(cell => cell !== ''));
+            };
+
+            const getPayload = () => {
+                ensureColumnDefaults();
+                ensureRowWidths();
+                const sanitizedColumns = columns.map(col => col.trim());
+                const sanitizedRows = sanitizeRows(rows);
+                return {
+                    columns: sanitizedColumns,
+                    rows: sanitizedRows
+                };
+            };
+
+            const commit = () => {
+                if (!refs.hiddenInput) return { success: false, message: 'ไม่พบข้อมูลตาราง' };
+                const payload = getPayload();
+
+                const hasColumn = payload.columns.some(col => col !== '');
+                if (!hasColumn) {
+                    return { success: false, message: 'กรุณาตั้งชื่อคอลัมน์อย่างน้อย 1 คอลัมน์' };
+                }
+
+                refs.hiddenInput.value = JSON.stringify(payload);
+                return { success: true, payload };
+            };
+
+            const populate = (data) => {
+                if (!data || typeof data !== 'object') {
+                    clear();
+                    return;
+                }
+
+                if (Array.isArray(data.columns) && data.columns.length) {
+                    columns = data.columns.map(col => String(col || ''));
+                } else {
+                    columns = ['คอลัมน์ 1', 'คอลัมน์ 2'];
+                }
+
+                if (Array.isArray(data.rows) && data.rows.length) {
+                    rows = data.rows.map(row => {
+                        if (Array.isArray(row)) {
+                            return row.map(cell => String(cell ?? ''));
+                        }
+                        if (row && typeof row === 'object') {
+                            return columns.map(col => String(row[col] ?? ''));
+                        }
+                        return new Array(columns.length).fill('');
+                    });
+                } else {
+                    rows = [new Array(columns.length).fill('')];
+                }
+
+                ensureColumnDefaults();
+                ensureRowWidths();
+                render();
+                updatePreview();
+            };
+
+            return {
+                init() {
+                    refs.headerRow = document.getElementById('tableHeaderRow');
+                    refs.bodyRows = document.getElementById('tableBodyRows');
+                    refs.addColumnBtn = document.getElementById('addColumnBtn');
+                    refs.addRowBtn = document.getElementById('addRowBtn');
+                    refs.clearBtn = document.getElementById('clearTableBtn');
+                    refs.hiddenInput = document.getElementById('tableDataInput');
+
+                    if (!refs.headerRow || !refs.bodyRows) {
+                        return;
+                    }
+
+                    if (!isInitialized) {
+                        if (refs.addColumnBtn) {
+                            refs.addColumnBtn.addEventListener('click', addColumn);
+                        }
+                        if (refs.addRowBtn) {
+                            refs.addRowBtn.addEventListener('click', addRow);
+                        }
+                        if (refs.clearBtn) {
+                            refs.clearBtn.addEventListener('click', () => {
+                                if (confirm('ต้องการล้างข้อมูลตารางทั้งหมดหรือไม่?')) {
+                                    clear();
+                                }
+                            });
+                        }
+                        isInitialized = true;
+                    }
+
+                    render();
+                    updatePreview();
+                },
+                reset() {
+                    clear();
+                },
+                populateFromExisting(data) {
+                    populate(data);
+                },
+                commitToHiddenInput() {
+                    return commit();
+                },
+                getPayload() {
+                    return getPayload();
+                }
+            };
+        })();
+
+        function showAlert(message, type = 'info') {
+            const existingToast = document.querySelector('.notification-toast');
+            if (existingToast) existingToast.remove();
+
+            const toast = document.createElement('div');
+            toast.className = `notification-toast alert alert-${type === 'error' ? 'danger' : type === 'warning' ? 'warning' : type === 'success' ? 'success' : 'info'} alert-dismissible fade show`;
+            toast.style.cssText = `
                 position: fixed;
                 bottom: 20px;
                 right: 20px;
-                z-index: 9999;
-                max-width: 400px;
-                min-width: 300px;
+                z-index: 1055;
+                max-width: 360px;
                 box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                animation: slideInRight 0.3s ease-out;
             `;
-
-            const icon = type === 'error' ? 'fas fa-exclamation-circle' : 
-                        type === 'success' ? 'fas fa-check-circle' : 
-                        'fas fa-info-circle';
-
-            notification.innerHTML = `
+            toast.innerHTML = `
                 <div class="d-flex align-items-center">
-                    <i class="${icon} me-2"></i>
+                    <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'warning' ? 'fa-exclamation-triangle' : type === 'error' ? 'fa-times-circle' : 'fa-info-circle'} me-2"></i>
                     <span>${message}</span>
                     <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
             `;
-
-            document.body.appendChild(notification);
-
-            // Auto remove หลังจากเวลาที่กำหนด (ถ้าไม่ใช่ loading)
-            if (type !== 'loading' && duration > 0) {
-                setTimeout(() => {
-                    if (notification && notification.parentNode) {
-                        notification.classList.add('fade');
-                        setTimeout(() => {
-                            if (notification.parentNode) {
-                                notification.remove();
-                            }
-                        }, 300);
-                    }
-                }, duration);
-            }
-
-            return notification;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.remove('show');
+                toast.classList.add('hide');
+                setTimeout(() => toast.remove(), 200);
+            }, 4000);
         }
 
-        // ===== LOADING OVERLAY =====
-        function showLoadingOverlay(message = 'กำลังประมวลผล...') {
-            // ลบ overlay เก่าก่อน
-            const existingOverlay = document.querySelector('.loading-overlay');
-            if (existingOverlay) {
-                existingOverlay.remove();
-            }
-
-            const overlay = document.createElement('div');
-            overlay.className = 'loading-overlay';
-            overlay.style.cssText = `
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0,0,0,0.5);
-                z-index: 10000;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                backdrop-filter: blur(2px);
-            `;
-
-            overlay.innerHTML = `
-                <div class="bg-white rounded p-4 text-center" style="min-width: 200px;">
-                    <div class="spinner-border text-primary mb-3" role="status">
-                        <span class="visually-hidden">กำลังโหลด...</span>
-                    </div>
-                    <div class="text-muted">${message}</div>
-                </div>
-            `;
-
-            document.body.appendChild(overlay);
-            return overlay;
-        }
-
-        function hideLoadingOverlay() {
-            const overlay = document.querySelector('.loading-overlay');
-            if (overlay) {
-                overlay.style.opacity = '0';
-                setTimeout(() => {
-                    if (overlay.parentNode) {
-                        overlay.remove();
-                    }
-                }, 300);
-            }
-        }
-
-        // ===== ENHANCED FORM SUBMISSION =====
-        let isSubmitting = false; // ป้องกันการ submit หลายครั้ง
-        
-        function setupEnhancedFormSubmission() {
-            console.log('Setting up enhanced form submission...');
-            
-            const form = document.querySelector('form');
-            const saveButton = document.getElementById('saveButton');
-            
-            if (!form) {
-                console.error('Form not found!');
-                return;
-            }
-            
-            if (!saveButton) {
-                console.error('Save button not found!');
-                return;
-            }
-            
-            console.log('Form found:', form);
-            console.log('Save button found:', saveButton);
-            
-            // เพิ่ม onclick handler สำหรับปุ่ม save
-            saveButton.addEventListener('click', async function(e) {
-                console.log('Save button clicked!');
-                await handleFormSubmission();
-            });
-            
-            // เพิ่ม form submit handler เป็น backup
-            form.addEventListener('submit', async function(e) {
-                console.log('Form submit event triggered - preventing default');
-                e.preventDefault();
-                e.stopPropagation();
-                await handleFormSubmission();
-            });
-        }
-        
-        async function handleFormSubmission() {
-            console.log('handleFormSubmission called');
-            
-            // ป้องกันการ submit หลายครั้ง
-            if (isSubmitting) {
-                console.log('Form is already being submitted, ignoring...');
-                return false;
-            }
-            
-            isSubmitting = true;
-            
-            const form = document.querySelector('form');
-            const saveButton = document.getElementById('saveButton');
-            
-            // เปลี่ยนสถานะปุ่ม
-            if (saveButton) {
-                saveButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> กำลังบันทึก...';
-                saveButton.disabled = true;
-            }
-            
+        function formatDateTime(value) {
+            if (!value) return '-';
             try {
-                // แสดง loading overlay
-                const loadingOverlay = showLoadingOverlay('กำลังบันทึกข้อมูล...');
-                        
-                        let finalTableData = null;
-                        
-                        // เตรียมข้อมูลตารางก่อนส่ง (ปรับปรุงให้มีการป้องกันข้อมูลหาย)
-                        if (document.getElementById('type').value === 'table') {
-                            console.log('Preparing table data for submission...');
-                            
-                            const columnHeaders = document.querySelectorAll('.column-header');
-                            const tableRows = document.querySelectorAll('#tableRows .table-row');
-                            
-                            // ตรวจสอบความถูกต้องของโครงสร้างตาราง
-                            if (columnHeaders.length === 0) {
-                                hideLoadingOverlay();
-                                showNotification('ไม่พบหัวคอลัมน์ กรุณาตรวจสอบข้อมูลตาราง', 'error');
-                                return;
-                            }
-                            
-                            // ตรวจสอบว่ามีข้อมูลในตาราง
-                            let hasAnyData = false;
-                            tableRows.forEach(row => {
-                                const inputs = row.querySelectorAll('.table-cell input, .table-cell select, .table-cell textarea');
-                                inputs.forEach(input => {
-                                    if (input.value && input.value.trim() !== '') {
-                                        hasAnyData = true;
-                                    }
-                                });
-                            });
-                            
-                            if (!hasAnyData) {
-                                hideLoadingOverlay();
-                                if (!confirm('ตารางไม่มีข้อมูล ต้องการบันทึกตารางว่างหรือไม่?')) {
-                                    return;
-                                }
-                            }
-                            
-                            // เตรียมข้อมูลตารางด้วยความระมัดระวัง
-                            try {
-                                console.log('Calling prepareTableData for form submission...');
-                                
-                                // ให้เวลาให้ DOM update หลังจาก column swap
-                                await new Promise(resolve => setTimeout(resolve, 100));
-                                
-                                finalTableData = await prepareTableData();
-                                console.log('Table data prepared successfully:', finalTableData);
-                                
-                                // ตรวจสอบความถูกต้องของข้อมูล
-                                if (!finalTableData || !finalTableData.columns || !finalTableData.rows) {
-                                    console.error('Invalid table data structure:', finalTableData);
-                                    throw new Error('ข้อมูลตารางไม่ถูกต้อง');
-                                }
-                                
-                                if (finalTableData.columns.length === 0) {
-                                    console.error('No columns found in table data');
-                                    throw new Error('ไม่พบคอลัมน์ในตาราง');
-                                }
-                                
-                                if (finalTableData.rows.length === 0) {
-                                    console.warn('No data rows found, but this is acceptable');
-                                    console.log('💡 Saving table structure with empty data');
-                                }
-                                
-                                console.log('Table data validation passed - Columns:', finalTableData.columns.length, 'Rows:', finalTableData.rows.length);
-                                
-                            } catch (prepareError) {
-                                console.error('Primary table data preparation failed:', prepareError);
-                                console.log('Trying manual method as fallback...');
-                                
-                                // ใช้วิธี manual เป็น fallback
-                                try {
-                                    finalTableData = createManualTableData();
-                                    console.log('Manual table data created:', finalTableData);
-                                    
-                                    if (!finalTableData || !finalTableData.columns || finalTableData.columns.length === 0) {
-                                        throw new Error('Manual table data creation also failed');
-                                    }
-                                } catch (manualError) {
-                                    console.error('Manual table data creation failed:', manualError);
-                                    hideLoadingOverlay();
-                                    showNotification('ไม่สามารถเตรียมข้อมูลตารางได้ กรุณาตรวจสอบข้อมูลและลองใหม่', 'error');
-                                    return false; // ใส่ return false เพื่อให้ชัดเจน
-                                }
-                            }
-                            
-                            // บังคับสร้าง/อัพเดท hidden input
-                            let tableDataElement = document.getElementById('tableData');
-                            if (!tableDataElement) {
-                                tableDataElement = document.createElement('input');
-                                tableDataElement.type = 'hidden';
-                                tableDataElement.id = 'tableData';
-                                tableDataElement.name = 'tableData';
-                                form.appendChild(tableDataElement);
-                            }
-                            
-                            const finalTableDataJSON = JSON.stringify(finalTableData);
-                            tableDataElement.value = finalTableDataJSON;
-                            
-                            console.log('Final table data JSON length:', finalTableDataJSON.length);
-                            console.log('Final table data preview:', finalTableDataJSON.substring(0, 300) + '...');
-                            
-                            // ตรวจสอบสุดท้ายก่อนส่ง - ผ่อนคลายเงื่อนไข
-                            if (!finalTableDataJSON || finalTableDataJSON === '{}' || finalTableDataJSON === '[]') {
-                                console.error('Invalid table data JSON:', finalTableDataJSON);
-                                hideLoadingOverlay();
-                                resetSaveButton();
-                                isSubmitting = false;
-                                showNotification('ข้อมูลตารางไม่ถูกต้อง กรุณาตรวจสอบและลองใหม่', 'error');
-                                return;
-                            }
-                            
-                            // ตรวจสอบเฉพาะโครงสร้างพื้นฐาน
-                            try {
-                                const testParse = JSON.parse(finalTableDataJSON);
-                                if (!testParse.columns || !Array.isArray(testParse.columns) || testParse.columns.length === 0) {
-                                    throw new Error('Missing or invalid columns structure');
-                                }
-                                console.log('✅ Table data structure validation passed');
-                            } catch (validationError) {
-                                console.error('Table data structure validation failed:', validationError);
-                                hideLoadingOverlay();
-                                resetSaveButton();
-                                isSubmitting = false;
-                                showNotification('โครงสร้างข้อมูลตารางไม่ถูกต้อง', 'error');
-                                return;
-                            }
-                        }
-                        
-                        // ตรวจสอบความถูกต้องของฟอร์มขั้นสุดท้าย
-                        if (!validateFormEnhanced()) {
-                            hideLoadingOverlay();
-                            return;
-                        }
-                        
-                        // แสดงข้อมูลที่จะส่งไป server (สำหรับ debug)
-                        const formData = new FormData(form);
-                        console.log('Form data to be submitted:');
-                        for (let pair of formData.entries()) {
-                            if (pair[0] === 'tableData') {
-                                console.log(`${pair[0]}: [${pair[1].length} characters]`);
-                                // ตรวจสอบว่าข้อมูลเป็น JSON ที่ถูกต้องหรือไม่
-                                try {
-                                    const parsed = JSON.parse(pair[1]);
-                                    console.log('TableData parsing test - Columns:', parsed.columns ? parsed.columns.length : 'undefined');
-                                    console.log('TableData parsing test - Rows:', parsed.rows ? parsed.rows.length : 'undefined');
-                                    console.log('TableData first column name:', parsed.columns && parsed.columns[0] ? parsed.columns[0] : 'undefined');
-                                    if (parsed.columns && parsed.columns.length > 0) {
-                                        console.log('First few column names:', parsed.columns.slice(0, 3));
-                                    }
-                                } catch (parseError) {
-                                    console.error('TableData is not valid JSON!', parseError);
-                                    console.log('Raw tableData sample:', pair[1].substring(0, 200));
-                                }
-                            } else {
-                                console.log(`${pair[0]}: ${pair[1]}`);
-                            }
-                        }
-                        
-                        // ส่งข้อมูลผ่าน AJAX (application/x-www-form-urlencoded)
-                        const urlEncodedData = new URLSearchParams();
-                        for (let [key, value] of formData.entries()) {
-                            urlEncodedData.append(key, value);
-                        }
-                        
-                        const response = await fetch(form.action, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded'
-                            },
-                            body: urlEncodedData.toString()
-                        });
-                        
-                        hideLoadingOverlay();
-                        
-                        if (response.ok) {
-                            showNotification('บันทึกข้อมูลเรียบร้อยแล้ว!', 'success');
-                            
-                            // ลบ draft หลังจากบันทึกสำเร็จ
-                            try {
-                                const draftKey = 'edit_instruction_draft_<%= instruction._id %>';
-                                localStorage.removeItem(draftKey);
-                            } catch (e) {
-                                console.warn('Could not remove draft:', e);
-                            }
-                            
-                            // รอ 1.5 วินาทีแล้ว redirect
-                            setTimeout(() => {
-                                window.location.href = '/admin/dashboard';
-                            }, 1500);
-                        } else {
-                            const errorText = await response.text();
-                            console.error('Server response error:', errorText);
-                            showNotification('เกิดข้อผิดพลาดในการบันทึก กรุณาลองใหม่', 'error');
-                            
-                            // รีเซ็ตปุ่ม
-                            resetSaveButton();
-                            isSubmitting = false;
-                        }
-                        
-            } catch (error) {
-                hideLoadingOverlay();
-                resetSaveButton();
-                isSubmitting = false;
-                console.error('Form submission error:', error);
-                console.error('Error stack trace:', error.stack);
-                showNotification('เกิดข้อผิดพลาดในการบันทึก: ' + error.message, 'error');
-                
-                return false;
-            }
-        }
-        
-        function resetSaveButton() {
-            const saveButton = document.getElementById('saveButton');
-            if (saveButton) {
-                saveButton.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการแก้ไข';
-                saveButton.disabled = false;
+                return new Date(value).toLocaleString('th-TH');
+            } catch (_) {
+                return '-';
             }
         }
 
-        // ===== ENHANCED FORM VALIDATION =====
-        function validateFormEnhanced() {
-            const type = document.getElementById('type').value;
-            const title = document.getElementById('title').value.trim();
-            const content = document.getElementById('content').value.trim();
-            
-            if (type === 'text' && !content) {
-                showNotification('กรุณาใส่เนื้อหา Instruction', 'error');
-                document.getElementById('content').focus();
-                return false;
-            }
-            
-            if (type === 'table') {
-                const tableDataElement = document.getElementById('tableData');
-                
-                if (!tableDataElement || !tableDataElement.value) {
-                    showNotification('ข้อมูลตารางว่างเปล่า กรุณาเพิ่มข้อมูลในตาราง', 'error');
-                    return false;
-                }
-                
-                try {
-                    const tableData = JSON.parse(tableDataElement.value);
-                    
-                    if (!tableData.columns || tableData.columns.length === 0) {
-                        showNotification('กรุณาใส่ชื่อคอลัมน์อย่างน้อย 1 คอลัมน์', 'error');
-                        return false;
-                    }
-                    
-                    if (!tableData.rows || tableData.rows.length === 0) {
-                        showNotification('กรุณาใส่ข้อมูลในตารางอย่างน้อย 1 แถว', 'error');
-                        return false;
-                    }
-                    
-                } catch (error) {
-                    showNotification('ข้อมูลตารางไม่ถูกต้อง กรุณาตรวจสอบใหม่', 'error');
-                    return false;
-                }
-            }
-            
-            return true;
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = value;
+            return div.innerHTML;
         }
 
-        // ===== CSS ANIMATIONS =====
-        function addNotificationStyles() {
-            // ตรวจสอบว่ามี styles แล้วหรือไม่
-            if (document.querySelector('#notification-styles')) {
+        function renderTextPreview(text) {
+            const preview = document.getElementById('instructionPreview');
+            const safeText = escapeHtml(text || '').trim();
+            if (!safeText) {
+                preview.innerHTML = `
+                    <div class="empty-preview">
+                        <i class="fas fa-align-left fa-2x mb-2"></i>
+                        <p class="mb-0">ยังไม่มีเนื้อหา ลองกรอกข้อมูลด้านซ้ายเพื่อดูตัวอย่าง</p>
+                    </div>
+                `;
+                return;
+            }
+            preview.innerHTML = `
+                <div class="text-break" style="white-space: pre-wrap;">${safeText}</div>
+            `;
+        }
+
+        function renderTablePreview(payload) {
+            const preview = document.getElementById('instructionPreview');
+            if (!payload || !Array.isArray(payload.columns) || payload.columns.length === 0) {
+                preview.innerHTML = `
+                    <div class="empty-preview">
+                        <i class="fas fa-table fa-2x mb-2"></i>
+                        <p class="mb-0">ยังไม่มีโครงสร้างตาราง กำหนดคอลัมน์เพื่อเริ่มต้น</p>
+                    </div>
+                `;
                 return;
             }
 
-            const styles = document.createElement('style');
-            styles.id = 'notification-styles';
-            styles.textContent = `
-                @keyframes slideInRight {
-                    from {
-                        transform: translateX(100%);
-                        opacity: 0;
-                    }
-                    to {
-                        transform: translateX(0);
-                        opacity: 1;
-                    }
-                }
+            const hasData = Array.isArray(payload.rows) && payload.rows.length > 0;
+            const rowsHtml = hasData
+                ? payload.rows.slice(0, 10).map(row => `
+                    <tr>
+                        ${row.map(cell => `
+                            <td>${escapeHtml(cell || '')}</td>
+                        `).join('')}
+                    </tr>
+                `).join('')
+                : `
+                    <tr>
+                        <td colspan="${payload.columns.length}" class="text-center text-muted">
+                            ยังไม่มีข้อมูลในตาราง
+                        </td>
+                    </tr>
+                `;
 
-                @keyframes slideOutRight {
-                    from {
-                        transform: translateX(0);
-                        opacity: 1;
-                    }
-                    to {
-                        transform: translateX(100%);
-                        opacity: 0;
-                    }
-                }
-
-                .notification-toast {
-                    animation: slideInRight 0.3s ease-out;
-                    transition: all 0.3s ease;
-                }
-
-                .notification-toast.fade {
-                    animation: slideOutRight 0.3s ease-in;
-                }
-
-                .loading-overlay {
-                    animation: fadeIn 0.3s ease-out;
-                    transition: opacity 0.3s ease;
-                }
-
-                @keyframes fadeIn {
-                    from { opacity: 0; }
-                    to { opacity: 1; }
-                }
-
-                /* Enhanced table styles */
-                .table-cell textarea:focus {
-                    border-color: var(--primary);
-                    box-shadow: 0 0 0 0.2rem rgba(104, 185, 132, 0.25);
-                    transform: scale(1.02);
-                    transition: all 0.2s ease;
-                }
-
-                .column-header:focus {
-                    border-color: var(--primary);
-                    box-shadow: 0 0 0 0.2rem rgba(104, 185, 132, 0.25);
-                    background-color: rgba(104, 185, 132, 0.05);
-                    transition: all 0.2s ease;
-                }
-
-                /* Button hover effects */
-                .btn:hover {
-                    transform: translateY(-1px);
-                    transition: all 0.2s ease;
-                }
-
-                .btn:active {
-                    transform: translateY(0);
-                }
-
-                /* Form validation styles */
-                .form-control.is-invalid {
-                    border-color: #dc3545;
-                    animation: shake 0.5s ease-in-out;
-                }
-
-                @keyframes shake {
-                    0%, 100% { transform: translateX(0); }
-                    25% { transform: translateX(-5px); }
-                    75% { transform: translateX(5px); }
-                }
-
-                /* Success highlight */
-                .form-control.is-valid {
-                    border-color: #28a745;
-                    animation: glow 1s ease-in-out;
-                }
-
-                @keyframes glow {
-                    0% { box-shadow: 0 0 5px rgba(40, 167, 69, 0.5); }
-                    50% { box-shadow: 0 0 20px rgba(40, 167, 69, 0.8); }
-                    100% { box-shadow: 0 0 5px rgba(40, 167, 69, 0.5); }
-                }
-
-                /* Enhanced loading spinner */
-                .loading-overlay .spinner-border {
-                    width: 3rem;
-                    height: 3rem;
-                    animation: spin 1s linear infinite, pulse 2s ease-in-out infinite;
-                }
-
-                @keyframes pulse {
-                    0%, 100% { transform: scale(1); }
-                    50% { transform: scale(1.1); }
-                }
+            preview.innerHTML = `
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                ${payload.columns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHtml}
+                        </tbody>
+                    </table>
+                </div>
+                ${hasData && payload.rows.length > 10 ? `
+                    <div class="text-muted small mt-2">
+                        แสดงเพียง 10 แถวแรก • ทั้งหมด ${payload.rows.length} แถว
+                    </div>
+                ` : ''}
             `;
-
-            document.head.appendChild(styles);
-            console.log('Notification styles added');
         }
 
-        // ===== ENHANCED INPUT VALIDATION =====
-        function setupRealTimeValidation() {
-            // Real-time validation สำหรับ title
-            const titleField = document.getElementById('title');
-            if (titleField) {
-                titleField.addEventListener('blur', function() {
-                    if (this.value.trim()) {
-                        this.classList.remove('is-invalid');
-                        this.classList.add('is-valid');
-                    } else {
-                        this.classList.remove('is-valid');
-                    }
-                });
+        function updateSidebarMeta() {
+            const metaTypeLabel = document.getElementById('metaTypeLabel');
+            const metaDataCount = document.getElementById('metaDataCount');
+            const type = document.getElementById('instructionType').value;
+
+            if (metaTypeLabel) {
+                metaTypeLabel.textContent = type === 'table' ? 'ตาราง' : 'ข้อความ';
             }
 
-            // Real-time validation สำหรับ content
-            const contentField = document.getElementById('content');
-            if (contentField) {
-                contentField.addEventListener('input', function() {
-                    if (document.getElementById('type').value === 'text') {
-                        if (this.value.trim()) {
-                            this.classList.remove('is-invalid');
-                            this.classList.add('is-valid');
-                        } else {
-                            this.classList.remove('is-valid');
-                            this.classList.add('is-invalid');
-                        }
-                    }
-                });
+            if (metaDataCount) {
+                if (type === 'table') {
+                    const payload = instructionTableBuilder.getPayload();
+                    const rowCount = Array.isArray(payload.rows) ? payload.rows.length : 0;
+                    metaDataCount.textContent = `${rowCount} แถว`;
+                } else {
+                    const text = document.getElementById('instructionContent').value || '';
+                    metaDataCount.textContent = `${text.length} อักขระ`;
+                }
+            }
+        }
+
+        function updatePreview() {
+            const type = document.getElementById('instructionType').value;
+            if (type === 'table') {
+                const payload = instructionTableBuilder.getPayload();
+                renderTablePreview(payload);
+            } else {
+                const text = document.getElementById('instructionContent').value || '';
+                renderTextPreview(text);
+            }
+            updateSidebarMeta();
+        }
+
+        function updateCharCount() {
+            const counter = document.getElementById('contentCharCount');
+            if (!counter) return;
+            const value = document.getElementById('instructionContent').value || '';
+            counter.textContent = `${value.length} อักขระ`;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const typeSelect = document.getElementById('instructionType');
+            const textSection = document.getElementById('textEditorSection');
+            const tableSection = document.getElementById('tableEditorSection');
+            const contentInput = document.getElementById('instructionContent');
+            const titleInput = document.getElementById('instructionTitle');
+            const refreshPreviewBtn = document.getElementById('refreshPreviewBtn');
+
+            const toggleEditorSection = () => {
+                const type = typeSelect.value;
+                if (type === 'table') {
+                    textSection.style.display = 'none';
+                    tableSection.style.display = '';
+                    instructionTableBuilder.init();
+                    updatePreview();
+                } else {
+                    textSection.style.display = '';
+                    tableSection.style.display = 'none';
+                    updatePreview();
+                }
+            };
+
+            instructionTableBuilder.init();
+
+            if (initialInstruction.type === 'table' && initialInstruction.data) {
+                instructionTableBuilder.populateFromExisting(initialInstruction.data);
             }
 
-            // Real-time validation สำหรับ table headers
-            document.addEventListener('input', function(e) {
-                if (e.target.matches('.column-header')) {
-                    if (e.target.value.trim()) {
-                        e.target.classList.remove('is-invalid');
-                        e.target.classList.add('is-valid');
-                    } else {
-                        e.target.classList.remove('is-valid');
-                        e.target.classList.add('is-invalid');
-                    }
+            toggleEditorSection();
+            updateCharCount();
+            updatePreview();
+
+            typeSelect.addEventListener('change', () => {
+                toggleEditorSection();
+                updatePreview();
+            });
+
+            contentInput.addEventListener('input', () => {
+                updateCharCount();
+                updatePreview();
+            });
+
+            titleInput.addEventListener('input', () => {
+                const metaUpdated = document.getElementById('metaUpdatedAt');
+                if (metaUpdated && !initialInstruction.updatedAt) {
+                    metaUpdated.textContent = formatDateTime(new Date().toISOString());
                 }
             });
-        }
+
+            refreshPreviewBtn.addEventListener('click', updatePreview);
+
+            document.getElementById('editInstructionForm').addEventListener('submit', async (event) => {
+                const type = typeSelect.value;
+                if (type === 'table') {
+                    const result = instructionTableBuilder.commitToHiddenInput();
+                    if (!result.success) {
+                        event.preventDefault();
+                        showAlert(result.message || 'ไม่สามารถบันทึกข้อมูลตารางได้', 'warning');
+                        return false;
+                    }
+                    if (contentInput) {
+                        contentInput.value = '';
+                    }
+                } else {
+                    const hidden = document.getElementById('tableDataInput');
+                    if (hidden) {
+                        hidden.value = '';
+                    }
+                }
+                return true;
+            });
+        });
     </script>
 </body>
 </html>

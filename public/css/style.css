@@ -193,6 +193,33 @@ h6 {
   cursor: grab;
 }
 
+.instruction-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-light);
+  transition: color 0.2s ease, opacity 0.2s ease;
+  font-size: 1rem;
+}
+
+.instruction-item[draggable="true"] .instruction-drag-handle {
+  opacity: 1;
+}
+
+.instruction-item[draggable="true"]:hover .instruction-drag-handle {
+  color: var(--primary);
+}
+
+.instruction-item[draggable="false"] .instruction-drag-handle,
+.instruction-item[aria-disabled="true"] .instruction-drag-handle {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.instruction-item.dragging .instruction-drag-handle {
+  cursor: grabbing;
+}
+
 .instruction-item.dragging {
   opacity: 0.6;
   cursor: grabbing;

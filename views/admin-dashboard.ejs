@@ -175,12 +175,17 @@
                                 <% } else { %>
                                     <% instructions.forEach(instruction => { %>
                                         <div class="instruction-item" data-id="<%= instruction._id %>">
-                                            <div class="d-flex justify-content-between align-items-start">
-                                                <div>
-                                                    <span class="instruction-type <%= instruction.type === 'text' ? 'type-text' : 'type-table' %>">
-                                                        <%= instruction.type === 'text' ? 'ข้อความ' : 'ตาราง' %>
+                                            <div class="d-flex align-items-start justify-content-between gap-3">
+                                                <div class="d-flex align-items-start gap-2 flex-grow-1">
+                                                    <span class="instruction-drag-handle" aria-hidden="true">
+                                                        <i class="fas fa-grip-vertical"></i>
                                                     </span>
-                                                    <h6 class="mt-2 mb-0"><%= instruction.title || 'ไม่มีหัวข้อ' %></h6>
+                                                    <div>
+                                                        <span class="instruction-type <%= instruction.type === 'text' ? 'type-text' : 'type-table' %>">
+                                                            <%= instruction.type === 'text' ? 'ข้อความ' : 'ตาราง' %>
+                                                        </span>
+                                                        <h6 class="mt-2 mb-0"><%= instruction.title || 'ไม่มีหัวข้อ' %></h6>
+                                                    </div>
                                                 </div>
                                                 <div class="btn-group">
                                                     <a href="/admin/instructions/<%= instruction._id %>/edit" class="btn btn-sm btn-outline-primary">
@@ -951,12 +956,17 @@
             instructions.forEach(instruction => {
                 html += `
                     <div class="instruction-item" data-id="${instruction._id}">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <span class="instruction-type ${instruction.type === 'text' ? 'type-text' : 'type-table'}">
-                                    ${instruction.type === 'text' ? 'ข้อความ' : 'ตาราง'}
+                        <div class="d-flex align-items-start justify-content-between gap-3">
+                            <div class="d-flex align-items-start gap-2 flex-grow-1">
+                                <span class="instruction-drag-handle" aria-hidden="true">
+                                    <i class="fas fa-grip-vertical"></i>
                                 </span>
-                                <h6 class="mt-2 mb-0">${instruction.title || 'ไม่มีหัวข้อ'}</h6>
+                                <div>
+                                    <span class="instruction-type ${instruction.type === 'text' ? 'type-text' : 'type-table'}">
+                                        ${instruction.type === 'text' ? 'ข้อความ' : 'ตาราง'}
+                                    </span>
+                                    <h6 class="mt-2 mb-0">${instruction.title || 'ไม่มีหัวข้อ'}</h6>
+                                </div>
                             </div>
                             <div class="btn-group">
                                 <a href="/admin/instructions/${instruction._id}/edit" class="btn btn-sm btn-outline-primary">
