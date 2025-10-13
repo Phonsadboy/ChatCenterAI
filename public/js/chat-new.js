@@ -405,8 +405,8 @@ class ChatManager {
 
             // ใช้ข้อมูลที่แปลงแล้วจาก backend
             if (message.displayContent) {
-                // ถ้ามี displayContent ที่แปลงแล้ว ให้ใช้เลย
-                displayContent = message.displayContent;
+                // ถ้ามี displayContent ที่แปลงแล้ว ให้จัดรูปแบบเพิ่มเติมก่อนแสดง
+                displayContent = this.formatDisplayContent(message.displayContent);
             } else {
                 // fallback สำหรับข้อความเก่า
                 if (message.role === 'user') {
@@ -643,16 +643,32 @@ class ChatManager {
 
     escapeHtml(text) {
         if (!text) return '';
-        
+
         // แปลงการเว้นบรรทัดเป็น <br> และ <p>
         const div = document.createElement('div');
         div.textContent = text;
         let html = div.innerHTML;
-        
+
         // แปลง \n เป็น <br> สำหรับการเว้นบรรทัด
         html = html.replace(/\n/g, '<br>');
-        
+
         return html;
+    }
+
+    formatDisplayContent(content) {
+        if (content === null || content === undefined) {
+            return '';
+        }
+
+        const strContent = String(content);
+        const hasHtmlTag = /<\/?[a-z][\s\S]*>/i.test(strContent);
+
+        if (hasHtmlTag) {
+            // คงโครงสร้างเดิมไว้แต่ปรับการเว้นบรรทัดเพิ่มเติม
+            return strContent.replace(/\n/g, '<br>');
+        }
+
+        return `<div class="message-text">${this.escapeHtml(strContent)}</div>`;
     }
 
     escapeAttribute(text) {

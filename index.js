@@ -659,7 +659,30 @@ async function saveChatHistory(userId, userMsg, assistantMsg, platform = 'line',
   }
 
   // Insert assistant message
-  await coll.insertOne({ senderId: userId, role: "assistant", content: assistantMsg, timestamp: new Date(), platform, botId });
+  const assistantTimestamp = new Date();
+  const assistantMessageDoc = {
+    senderId: userId,
+    role: "assistant",
+    content: assistantMsg,
+    timestamp: assistantTimestamp,
+    platform,
+    botId,
+    source: "ai"
+  };
+  await coll.insertOne(assistantMessageDoc);
+
+  try {
+    if (typeof io !== "undefined" && io) {
+      io.emit('newMessage', {
+        userId,
+        message: assistantMessageDoc,
+        sender: 'assistant',
+        timestamp: assistantTimestamp
+      });
+    }
+  } catch (_) {
+    // ไม่ต้องหยุดการทำงานหากไม่สามารถแจ้งเตือนผ่าน socket ได้
+  }
 
   // วิเคราะห์การติดตามลูกค้าหลังจากบันทึกข้อความของผู้ใช้
   const shouldAnalyzeFollowUp = typeof userMsgToSave === 'string' ? userMsgToSave.trim().length > 0 : true;
@@ -1397,11 +1420,12 @@ async function sendFollowUpMessage(task, round, db) {
     if (!fbBot || !fbBot.accessToken) {
       throw new Error('ไม่พบข้อมูล Facebook Bot');
     }
+    const metadata = 'follow_up_auto';
     if (message) {
-      await sendFacebookMessage(task.userId, message, fbBot.accessToken);
+      await sendFacebookMessage(task.userId, message, fbBot.accessToken, { metadata });
     }
     for (const image of images) {
-      await sendFacebookImageMessage(task.userId, image, fbBot.accessToken);
+      await sendFacebookImageMessage(task.userId, image, fbBot.accessToken, { metadata });
     }
   } else {
     await sendLineFollowUpMessage(task.userId, message, task.botId, db, images);
@@ -2432,7 +2456,7 @@ async function processFlushedMessages(userId, mergedContent, queueContext = {}) 
       console.error('[Facebook] ไม่พบ access token สำหรับการส่งข้อความ');
     } else if (filteredMessage) {
       try {
-        await sendFacebookMessage(userId, filteredMessage, facebookAccessToken);
+        await sendFacebookMessage(userId, filteredMessage, facebookAccessToken, { metadata: 'ai_generated' });
         console.log('[Facebook] ส่งข้อความตอบกลับเรียบร้อยแล้ว');
       } catch (error) {
         console.error('[Facebook] ไม่สามารถส่งข้อความตอบกลับได้:', error);
@@ -4225,6 +4249,14 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
             try {
               const targetUserId = messagingEvent.recipient?.id; // ผู้ใช้ปลายทางของข้อความจากเพจ
               const text = messagingEvent.message?.text?.trim();
+              const metadata = messagingEvent.message?.metadata || '';
+
+              // ข้ามข้อความที่ระบบส่งอัตโนมัติ (เช่น AI / follow-up) เพื่อหลีกเลี่ยงการบันทึกซ้ำ
+              const automatedMetadata = ['ai_generated', 'follow_up_auto'];
+              if (metadata && automatedMetadata.includes(metadata)) {
+                console.log(`[Facebook Bot: ${facebookBot.name}] Skip echo for automated message (${metadata}) to ${targetUserId}`);
+                continue;
+              }
 
               if (!targetUserId) {
                 continue;
@@ -4327,7 +4359,7 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
                 const audioResponseSetting = await getSettingValue('audioAttachmentResponse', DEFAULT_AUDIO_ATTACHMENT_RESPONSE);
                 const replyText = audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
                 const filteredReply = await filterMessage(replyText);
-                await sendFacebookMessage(senderId, filteredReply, facebookBot.accessToken);
+                await sendFacebookMessage(senderId, filteredReply, facebookBot.accessToken, { metadata: 'ai_generated' });
                 try {
                   await saveChatHistory(
                     senderId,
@@ -4346,7 +4378,7 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
 
             if (itemsToQueue.length === 0) {
               if (audioAttachments.length === 0) {
-                await sendFacebookMessage(senderId, 'ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้', facebookBot.accessToken);
+                await sendFacebookMessage(senderId, 'ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้', facebookBot.accessToken, { metadata: 'ai_generated' });
               }
               continue;
             }
@@ -4373,7 +4405,8 @@ app.post('/webhook/facebook/:botId', async (req, res) => {
 });
 
 // Helper function to send Facebook message
-async function sendFacebookMessage(recipientId, message, accessToken) {
+async function sendFacebookMessage(recipientId, message, accessToken, options = {}) {
+  const { metadata = null, messagingType = null, tag = null } = options || {};
   // แยกข้อความตามตัวแบ่ง [cut] → จากนั้น parse #[IMAGE:<label>] เป็น segments
   const parts = String(message)
     .split('[cut]')
@@ -4393,10 +4426,21 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
           const chunk = text.slice(i, i + maxLength);
           if (!chunk.trim()) continue;
           try {
-            const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+            const payload = { text: chunk };
+            if (metadata) {
+              payload.metadata = metadata;
+            }
+            const body = {
               recipient: { id: recipientId },
-              message: { text: chunk }
-            }, {
+              message: payload
+            };
+            if (messagingType) {
+              body.messaging_type = messagingType;
+            }
+            if (tag) {
+              body.tag = tag;
+            }
+            const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, body, {
               params: { access_token: accessToken },
               headers: { 'Content-Type': 'application/json' }
             });
@@ -4414,14 +4458,27 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
         const tryUploadFirst = mode === 'upload';
         let sent = false;
         const sendByUrl = async () => {
-          const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+          const messagePayload = {
+            attachment: { type: 'image', payload: { url: seg.url, is_reusable: true } }
+          };
+          if (metadata) {
+            messagePayload.metadata = metadata;
+          }
+          const body = {
             recipient: { id: recipientId },
-            message: { attachment: { type: 'image', payload: { url: seg.url, is_reusable: true } } }
-          }, { params: { access_token: accessToken }, headers: { 'Content-Type': 'application/json' } });
+            message: messagePayload
+          };
+          if (messagingType) {
+            body.messaging_type = messagingType;
+          }
+          if (tag) {
+            body.tag = tag;
+          }
+          const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, body, { params: { access_token: accessToken }, headers: { 'Content-Type': 'application/json' } });
           console.log('Facebook image sent (url):', response.data?.message_id || 'ok', seg.label);
         };
         const sendByUpload = async () => {
-          await sendFacebookImageByUpload(recipientId, seg, accessToken);
+          await sendFacebookImageByUpload(recipientId, seg, accessToken, { metadata, messagingType, tag });
           console.log('Facebook image sent (upload):', seg.label);
         };
         try {
@@ -4436,10 +4493,21 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
             console.error('Facebook image both modes failed:', secondErr?.message || secondErr);
             const alt = seg.alt ? `\n(รูป: ${seg.alt})` : '';
             try {
-              await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+              const fallbackPayload = { text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}` };
+              if (metadata) {
+                fallbackPayload.metadata = metadata;
+              }
+              const body = {
                 recipient: { id: recipientId },
-                message: { text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}` }
-              }, { params: { access_token: accessToken }, headers: { 'Content-Type': 'application/json' } });
+                message: fallbackPayload
+              };
+              if (messagingType) {
+                body.messaging_type = messagingType;
+              }
+              if (tag) {
+                body.tag = tag;
+              }
+              await axios.post(`https://graph.facebook.com/v18.0/me/messages`, body, { params: { access_token: accessToken }, headers: { 'Content-Type': 'application/json' } });
             } catch (_) {}
           }
         }
@@ -4449,24 +4517,36 @@ async function sendFacebookMessage(recipientId, message, accessToken) {
 }
 
 // Upload image to Facebook to obtain attachment_id, then send it
-async function sendFacebookImageMessage(recipientId, image, accessToken) {
+async function sendFacebookImageMessage(recipientId, image, accessToken, options = {}) {
+  const { metadata = null, messagingType = null, tag = null } = options || {};
   if (!image || !image.url) {
     throw new Error('ไม่มี URL สำหรับรูปภาพ');
   }
 
   try {
-    const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
-      recipient: { id: recipientId },
-      message: {
-        attachment: {
-          type: 'image',
-          payload: {
-            url: image.url,
-            is_reusable: true
-          }
+    const messagePayload = {
+      attachment: {
+        type: 'image',
+        payload: {
+          url: image.url,
+          is_reusable: true
         }
       }
-    }, {
+    };
+    if (metadata) {
+      messagePayload.metadata = metadata;
+    }
+    const body = {
+      recipient: { id: recipientId },
+      message: messagePayload
+    };
+    if (messagingType) {
+      body.messaging_type = messagingType;
+    }
+    if (tag) {
+      body.tag = tag;
+    }
+    const response = await axios.post(`https://graph.facebook.com/v18.0/me/messages`, body, {
       params: { access_token: accessToken },
       headers: { 'Content-Type': 'application/json' }
     });
@@ -4479,7 +4559,8 @@ async function sendFacebookImageMessage(recipientId, image, accessToken) {
   }
 }
 
-async function sendFacebookImageByUpload(recipientId, seg, accessToken) {
+async function sendFacebookImageByUpload(recipientId, seg, accessToken, options = {}) {
+  const { metadata = null, messagingType = null, tag = null } = options || {};
   const { buffer, filename, contentType } = await readInstructionAssetBuffer(seg);
 
   const form = new FormData();
@@ -4495,10 +4576,23 @@ async function sendFacebookImageByUpload(recipientId, seg, accessToken) {
   if (!attachment_id) throw new Error('ไม่ได้รับ attachment_id จาก Facebook');
 
   // 2) Send the message referencing attachment_id
-  await axios.post(`https://graph.facebook.com/v18.0/me/messages`, {
+  const messagePayload = {
+    attachment: { type: 'image', payload: { attachment_id } }
+  };
+  if (metadata) {
+    messagePayload.metadata = metadata;
+  }
+  const body = {
     recipient: { id: recipientId },
-    message: { attachment: { type: 'image', payload: { attachment_id } } }
-  }, {
+    message: messagePayload
+  };
+  if (messagingType) {
+    body.messaging_type = messagingType;
+  }
+  if (tag) {
+    body.tag = tag;
+  }
+  await axios.post(`https://graph.facebook.com/v18.0/me/messages`, body, {
     params: { access_token: accessToken },
     headers: { 'Content-Type': 'application/json' }
   });
@@ -6022,7 +6116,7 @@ app.post('/admin/broadcast', async (req, res) => {
         if (!fbBot) continue;
         for (const userId of userIds) {
           try {
-            await sendFacebookMessage(userId, message, fbBot.accessToken);
+            await sendFacebookMessage(userId, message, fbBot.accessToken, { metadata: 'broadcast_auto' });
           } catch (e) {
             console.log(`[Broadcast] Failed to send to Facebook user ${userId}: ${e.message}`);
           }
@@ -6551,7 +6645,7 @@ app.post('/admin/chat/send', async (req, res) => {
         if (botId) {
           const fbBot = await db.collection('facebook_bots').findOne({ _id: new ObjectId(botId) });
           if (fbBot) {
-            await sendFacebookMessage(userId, message, fbBot.accessToken);
+            await sendFacebookMessage(userId, message, fbBot.accessToken, { metadata: 'admin_manual' });
             console.log(`[Admin Chat] ส่งข้อความไปยัง Facebook user ${userId}: ${message.substring(0, 50)}...`);
             // ไม่ insert messageDoc และไม่ emit ที่นี่ ให้รอ Facebook echo บันทึกและกระจาย UI แทน
             return res.json({ success: true, skipEcho: true });
