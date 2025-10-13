@@ -2677,6 +2677,7 @@ server.listen(PORT, async () => {
     scheduleDailyInstructionLibrary();
 
     // ทำให้แน่ใจว่ามีการตั้งค่าเริ่มต้นใน collection settings
+    await ensureInstructionIdentifiers();
     await ensureSettings();
     await ensureFollowUpIndexes();
     startFollowUpTaskWorker();
@@ -2950,24 +2951,22 @@ async function buildSystemInstructions(history) {
 }
 
 async function buildSystemInstructionsWithContext(history, queueContext = {}) {
-  const hasSelectedLibraries = Array.isArray(queueContext.selectedInstructions) && queueContext.selectedInstructions.length > 0;
+  const rawSelections = Array.isArray(queueContext.selectedInstructions) ? queueContext.selectedInstructions : [];
+  const normalizedSelections = normalizeInstructionSelections(rawSelections);
   const botKind = queueContext.botType || queueContext.platform || 'line';
-  const supportsLibrary = hasSelectedLibraries && ['line', 'facebook'].includes(botKind);
+  const supportsCustomSelections = normalizedSelections.length > 0 && ['line', 'facebook'].includes(botKind);
 
   let systemPrompt = '';
+  let client = null;
+  let db = null;
 
-  if (supportsLibrary) {
+  if (supportsCustomSelections) {
     try {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const instructionColl = db.collection("instruction_library");
-      const instructionDocs = await instructionColl.find({
-        date: { $in: queueContext.selectedInstructions }
-      }).toArray();
-
-      systemPrompt = buildSystemPromptFromLibraries(instructionDocs).trim();
+      client = await connectDB();
+      db = client.db("chatbot");
+      systemPrompt = (await buildSystemPromptFromSelections(normalizedSelections, db)).trim();
     } catch (error) {
-      console.error('[LOG] ไม่สามารถสร้าง system instructions จาก instruction library:', error);
+      console.error('[LOG] ไม่สามารถสร้าง system instructions จาก selections:', error);
     }
   }
 
@@ -2975,13 +2974,12 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
     try {
       const defaultInstructionKey = await getSettingValue('defaultInstruction', '');
       if (defaultInstructionKey) {
-        const client = await connectDB();
-        const db = client.db("chatbot");
-        const libraryColl = db.collection("instruction_library");
-        const defaultLibrary = await libraryColl.findOne({ date: defaultInstructionKey });
-        if (defaultLibrary) {
-          systemPrompt = buildSystemPromptFromLibraries([defaultLibrary]).trim();
+        if (!db) {
+          client = await connectDB();
+          db = client.db("chatbot");
         }
+        const fallbackSelections = normalizeInstructionSelections([defaultInstructionKey]);
+        systemPrompt = (await buildSystemPromptFromSelections(fallbackSelections, db)).trim();
       }
     } catch (error) {
       console.error('[LOG] ไม่สามารถสร้าง system instructions จาก default instruction:', error);
@@ -3279,6 +3277,266 @@ async function getInstructions() {
   return coll.find({}).sort({ order: 1, createdAt: 1 }).toArray();
 }
 
+function generateInstructionId() {
+  return `inst_${crypto.randomBytes(6).toString('hex')}`;
+}
+
+function isInstructionSelectionObject(entry) {
+  return !!entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.instructionId === 'string' && entry.instructionId.trim() !== '';
+}
+
+function normalizeInstructionSelections(selections = []) {
+  if (!Array.isArray(selections)) return [];
+  const normalized = [];
+  const seenObjectKeys = new Set();
+  const seenStringKeys = new Set();
+
+  for (const entry of selections) {
+    if (isInstructionSelectionObject(entry)) {
+      const instructionId = entry.instructionId.trim();
+      if (!instructionId) continue;
+      const version = Number.isInteger(entry.version) ? entry.version : null;
+      const key = `${instructionId}::${version === null ? 'latest' : version}`;
+      if (seenObjectKeys.has(key)) continue;
+      seenObjectKeys.add(key);
+      normalized.push({ instructionId, version });
+    } else if (typeof entry === 'string') {
+      const value = entry.trim();
+      if (!value) continue;
+      if (seenStringKeys.has(value)) continue;
+      seenStringKeys.add(value);
+      normalized.push(value);
+    }
+  }
+
+  return normalized;
+}
+
+function sanitizeInstructionForSnapshot(instruction) {
+  if (!instruction || !instruction.instructionId) return null;
+  const now = new Date();
+  return {
+    instructionId: instruction.instructionId,
+    version: Number.isInteger(instruction.version) ? instruction.version : 1,
+    type: instruction.type || 'text',
+    title: instruction.title || '',
+    content: instruction.content || '',
+    data: instruction.type === 'table' ? (instruction.data || null) : null,
+    createdAt: instruction.createdAt || now,
+    updatedAt: instruction.updatedAt || instruction.createdAt || now,
+    snapshotAt: now
+  };
+}
+
+async function recordInstructionVersionSnapshot(instruction, dbInstance = null) {
+  const snapshot = sanitizeInstructionForSnapshot(instruction);
+  if (!snapshot) return null;
+  let db = dbInstance;
+  let client = null;
+  if (!db) {
+    client = await connectDB();
+    db = client.db("chatbot");
+  }
+  const versionColl = db.collection("instruction_versions");
+  await versionColl.updateOne(
+    { instructionId: snapshot.instructionId, version: snapshot.version },
+    { $set: snapshot },
+    { upsert: true }
+  );
+  return snapshot;
+}
+
+async function ensureInstructionVersionSnapshot(instruction, dbInstance = null) {
+  if (!instruction || !instruction.instructionId) return null;
+  let db = dbInstance;
+  let client = null;
+  if (!db) {
+    client = await connectDB();
+    db = client.db("chatbot");
+  }
+  const versionColl = db.collection("instruction_versions");
+  const version = Number.isInteger(instruction.version) ? instruction.version : 1;
+  const existing = await versionColl.findOne({ instructionId: instruction.instructionId, version });
+  if (existing) return existing;
+  return recordInstructionVersionSnapshot(instruction, db);
+}
+
+async function ensureInstructionIdentifiers() {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("instructions");
+  const versionColl = db.collection("instruction_versions");
+
+  try {
+    await versionColl.createIndex({ instructionId: 1, version: -1 }, { unique: true });
+  } catch (err) {
+    console.warn('[Instructions] createIndex error (instruction/version):', err?.message || err);
+  }
+  try {
+    await versionColl.createIndex({ instructionId: 1, snapshotAt: -1 });
+  } catch (err) {
+    console.warn('[Instructions] createIndex error (snapshotAt):', err?.message || err);
+  }
+
+  const docs = await coll.find({}).toArray();
+  for (const doc of docs) {
+    if (!doc) continue;
+    const instructionId = doc.instructionId || `inst_${doc._id?.toString()}`;
+    const version = Number.isInteger(doc.version) ? doc.version : 1;
+    const createdAtFallback = doc.createdAt || (typeof doc._id?.getTimestamp === 'function' ? doc._id.getTimestamp() : new Date());
+    const updatedAtFallback = doc.updatedAt || createdAtFallback;
+    const updateFields = {};
+    if (doc.instructionId !== instructionId) updateFields.instructionId = instructionId;
+    if (!Number.isInteger(doc.version)) updateFields.version = version;
+    if (!doc.createdAt) updateFields.createdAt = createdAtFallback;
+    if (!doc.updatedAt) updateFields.updatedAt = updatedAtFallback;
+
+    if (Object.keys(updateFields).length > 0) {
+      await coll.updateOne({ _id: doc._id }, { $set: updateFields });
+    }
+
+    const hydratedDoc = {
+      ...doc,
+      ...updateFields,
+      instructionId,
+      version,
+      createdAt: updateFields.createdAt || doc.createdAt || createdAtFallback,
+      updatedAt: updateFields.updatedAt || doc.updatedAt || updatedAtFallback
+    };
+
+    await ensureInstructionVersionSnapshot(hydratedDoc, db);
+  }
+}
+
+async function resolveInstructionSelections(selections = [], dbInstance = null) {
+  if (!Array.isArray(selections) || selections.length === 0) return [];
+  const normalized = selections
+    .map(entry => {
+      if (isInstructionSelectionObject(entry)) {
+        return {
+          instructionId: entry.instructionId.trim(),
+          version: Number.isInteger(entry.version) ? entry.version : null
+        };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  if (normalized.length === 0) return [];
+
+  let db = dbInstance;
+  let client = null;
+  if (!db) {
+    client = await connectDB();
+    db = client.db("chatbot");
+  }
+
+  const instructionIds = [...new Set(normalized.map(item => item.instructionId))];
+  const versionCriteria = normalized
+    .filter(item => Number.isInteger(item.version))
+    .map(item => ({ instructionId: item.instructionId, version: item.version }));
+
+  const versionQuery = versionCriteria.length > 0
+    ? { $or: versionCriteria }
+    : { instructionId: { $in: instructionIds } };
+
+  const [currentDocs, versionDocs] = await Promise.all([
+    db.collection("instructions").find({ instructionId: { $in: instructionIds } }).toArray(),
+    db.collection("instruction_versions").find(versionQuery).toArray()
+  ]);
+
+  const currentMap = new Map();
+  currentDocs.forEach(doc => {
+    if (doc && doc.instructionId) currentMap.set(doc.instructionId, doc);
+  });
+
+  const versionMap = new Map();
+  versionDocs.forEach(doc => {
+    if (!doc || !doc.instructionId) return;
+    const key = `${doc.instructionId}::${doc.version}`;
+    versionMap.set(key, doc);
+  });
+
+  const results = [];
+  const seen = new Set();
+
+  for (const entry of normalized) {
+    const key = `${entry.instructionId}::${entry.version === null ? 'latest' : entry.version}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    let doc = null;
+    if (Number.isInteger(entry.version)) {
+      doc = versionMap.get(`${entry.instructionId}::${entry.version}`);
+    }
+    if (!doc) {
+      doc = currentMap.get(entry.instructionId);
+    }
+    if (!doc) continue;
+    if (!doc.instructionId) doc.instructionId = entry.instructionId;
+    if (!Number.isInteger(doc.version)) doc.version = entry.version || doc.version || 1;
+    results.push(doc);
+  }
+
+  return results;
+}
+
+function buildSystemPromptFromInstructionDocs(instructions = []) {
+  if (!Array.isArray(instructions) || instructions.length === 0) return '';
+  const normalize = text => {
+    if (!text) return '';
+    return String(text).replace(/\r\n/g, '\n');
+  };
+
+  const parts = [];
+  for (const instruction of instructions) {
+    if (!instruction) continue;
+    if (instruction.type === 'table') {
+      const tableText = tableInstructionToJSON(instruction);
+      if (tableText && tableText.trim()) {
+        parts.push(tableText.trim());
+      }
+      continue;
+    }
+    const header = instruction.title ? `=== ${instruction.title} ===\n` : '';
+    const body = normalize(instruction.content || '').trim();
+    const chunk = `${header}${body}`.trim();
+    if (chunk) parts.push(chunk);
+  }
+
+  return parts.filter(Boolean).join('\n\n');
+}
+
+async function buildSystemPromptFromSelections(selectedInstructions = [], dbInstance = null) {
+  if (!Array.isArray(selectedInstructions) || selectedInstructions.length === 0) return '';
+  const hasObjectSelections = selectedInstructions.some(isInstructionSelectionObject);
+
+  let db = dbInstance;
+  let client = null;
+  if (!db && hasObjectSelections) {
+    client = await connectDB();
+    db = client.db("chatbot");
+  }
+
+  if (hasObjectSelections) {
+    const docs = await resolveInstructionSelections(selectedInstructions, db);
+    return buildSystemPromptFromInstructionDocs(docs);
+  }
+
+  let localDb = db;
+  if (!localDb) {
+    client = await connectDB();
+    localDb = client.db("chatbot");
+  }
+
+  const instructionColl = localDb.collection("instruction_library");
+  const instructionDocs = await instructionColl.find({
+    date: { $in: selectedInstructions }
+  }).toArray();
+
+  return buildSystemPromptFromLibraries(instructionDocs);
+}
+
 function toObjectId(id) {
   if (!id) return null;
   if (id instanceof ObjectId) return id;
@@ -3418,7 +3676,21 @@ async function saveInstructionsToLibrary(dateStr) {
   const instrColl = db.collection("instructions");
   const libraryColl = db.collection("instruction_library");
 
+  await ensureInstructionIdentifiers();
   const instructions = await instrColl.find({}).toArray();
+  const sanitizedInstructions = [];
+  for (const instruction of instructions) {
+    try {
+      await ensureInstructionVersionSnapshot(instruction, db);
+      const snapshot = sanitizeInstructionForSnapshot(instruction);
+      if (snapshot) {
+        sanitizedInstructions.push(snapshot);
+      }
+    } catch (err) {
+      console.error('[Library] ไม่สามารถสร้าง snapshot ของ instruction:', err?.message || err);
+    }
+  }
+
   const now = new Date();
   const thaiNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
   
@@ -3427,7 +3699,7 @@ async function saveInstructionsToLibrary(dateStr) {
     { 
       $set: { 
         date: dateStr, 
-        instructions, 
+        instructions: sanitizedInstructions, 
         savedAt: new Date(),
         type: 'auto',
         displayDate: dateStr,
@@ -4288,15 +4560,11 @@ async function processFacebookMessageWithAI(contentSequence, userId, facebookBot
     const aiModel = facebookBot.aiModel || 'gpt-5';
 
     let systemPrompt = 'คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้';
-    if (facebookBot.selectedInstructions && facebookBot.selectedInstructions.length > 0) {
-      const instructionColl = db.collection("instruction_library");
-      const instructionDocs = await instructionColl.find({
-        date: { $in: facebookBot.selectedInstructions }
-      }).toArray();
-
-      const prompt = buildSystemPromptFromLibraries(instructionDocs);
+    const fbSelections = normalizeInstructionSelections(facebookBot.selectedInstructions || []);
+    if (fbSelections.length > 0) {
+      const prompt = await buildSystemPromptFromSelections(fbSelections, db);
       if (prompt.trim()) {
-        systemPrompt = prompt;
+        systemPrompt = prompt.trim();
       }
     }
 
@@ -4322,7 +4590,7 @@ async function processFacebookMessageWithAI(contentSequence, userId, facebookBot
     // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
     const finalReply = extractThaiReply(assistantReply);
 
-    await saveChatHistory(userId, contentSequence, assistantReply, 'facebook', facebookBot._id.toString());
+    await saveChatHistory(userId, contentSequence, assistantReply, 'facebook', facebookBot._id ? facebookBot._id.toString() : null);
 
     return finalReply.trim();
   } catch (error) {
@@ -4343,15 +4611,11 @@ async function processMessageWithAI(message, userId, lineBot) {
 
     // ดึง system prompt จาก instructions ที่เลือก
     let systemPrompt = 'คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้';
-    if (lineBot.selectedInstructions && lineBot.selectedInstructions.length > 0) {
-      const instructionColl = db.collection("instruction_library");
-      const instructionDocs = await instructionColl.find({
-        date: { $in: lineBot.selectedInstructions }
-      }).toArray();
-
-      const prompt = buildSystemPromptFromLibraries(instructionDocs);
+    const lineSelections = normalizeInstructionSelections(lineBot.selectedInstructions || []);
+    if (lineSelections.length > 0) {
+      const prompt = await buildSystemPromptFromSelections(lineSelections, db);
       if (prompt.trim()) {
-        systemPrompt = prompt;
+        systemPrompt = prompt.trim();
       }
     }
     
@@ -4450,6 +4714,8 @@ app.post('/api/line-bots', async (req, res) => {
       finalWebhookUrl = `${baseUrl}/webhook/line/${uniqueId}`;
     }
 
+    const normalizedSelections = normalizeInstructionSelections(selectedInstructions || []);
+
     const lineBot = {
       name,
       description: description || '',
@@ -4459,7 +4725,7 @@ app.post('/api/line-bots', async (req, res) => {
       status: status || 'active',
       isDefault: isDefault || false,
       aiModel: 'gpt-5', // AI Model เฉพาะสำหรับ Line Bot นี้
-      selectedInstructions: Array.isArray(selectedInstructions) ? selectedInstructions : [],
+      selectedInstructions: normalizedSelections,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -4591,6 +4857,8 @@ app.put('/api/line-bots/:id/instructions', async (req, res) => {
       return res.status(400).json({ error: 'selectedInstructions ต้องเป็น array' });
     }
 
+    const normalizedSelections = normalizeInstructionSelections(selectedInstructions);
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("line_bots");
@@ -4599,7 +4867,7 @@ app.put('/api/line-bots/:id/instructions', async (req, res) => {
       { _id: new ObjectId(id) },
       { 
         $set: { 
-          selectedInstructions,
+          selectedInstructions: normalizedSelections,
           updatedAt: new Date()
         } 
       }
@@ -4720,6 +4988,8 @@ app.post('/api/facebook-bots', async (req, res) => {
       finalWebhookUrl = `${baseUrl}/webhook/facebook/${uniqueId}`;
     }
 
+    const normalizedSelections = normalizeInstructionSelections(selectedInstructions || []);
+
     const facebookBot = {
       name,
       description: description || '',
@@ -4730,7 +5000,7 @@ app.post('/api/facebook-bots', async (req, res) => {
       status: status || 'active',
       isDefault: isDefault || false,
       aiModel: aiModel || 'gpt-5',
-      selectedInstructions: Array.isArray(selectedInstructions) ? selectedInstructions : [],
+      selectedInstructions: normalizedSelections,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -4862,6 +5132,8 @@ app.put('/api/facebook-bots/:id/instructions', async (req, res) => {
       return res.status(400).json({ error: 'selectedInstructions ต้องเป็น array' });
     }
 
+    const normalizedSelections = normalizeInstructionSelections(selectedInstructions);
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
@@ -4870,7 +5142,7 @@ app.put('/api/facebook-bots/:id/instructions', async (req, res) => {
       { _id: new ObjectId(id) },
       { 
         $set: { 
-          selectedInstructions,
+          selectedInstructions: normalizedSelections,
           updatedAt: new Date()
         } 
       }
@@ -4944,6 +5216,134 @@ app.get('/api/instructions/library/:date/details', async (req, res) => {
   }
 });
 
+// Route: ดึงรายการ instructions พร้อมประวัติเวอร์ชัน
+app.get('/api/instructions', async (req, res) => {
+  try {
+    await ensureInstructionIdentifiers();
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const instrColl = db.collection("instructions");
+    const versionColl = db.collection("instruction_versions");
+
+    const instructions = await instrColl.find({}).sort({ order: 1, title: 1, createdAt: 1 }).toArray();
+    const instructionIds = instructions.map(instr => instr.instructionId).filter(Boolean);
+
+    let versionDocs = [];
+    if (instructionIds.length > 0) {
+      versionDocs = await versionColl.find({ instructionId: { $in: instructionIds } })
+        .sort({ instructionId: 1, version: -1 })
+        .toArray();
+    }
+
+    const versionMap = new Map();
+    for (const doc of versionDocs) {
+      if (!doc || !doc.instructionId) continue;
+      if (!versionMap.has(doc.instructionId)) versionMap.set(doc.instructionId, []);
+      versionMap.get(doc.instructionId).push(doc);
+    }
+
+    const response = instructions.map(instr => {
+      const currentType = instr.type || 'text';
+      const historyDocs = versionMap.get(instr.instructionId) || [];
+      const versionHistory = historyDocs.map(item => ({
+        version: item.version,
+        title: item.title || '',
+        type: item.type || 'text',
+        updatedAt: item.updatedAt || item.snapshotAt || item.createdAt || null,
+        snapshotAt: item.snapshotAt || null
+      }));
+
+      let preview = '';
+      if (currentType === 'table') {
+        const rowCount = instr?.data?.rows ? instr.data.rows.length : 0;
+        const colCount = instr?.data?.columns ? instr.data.columns.length : 0;
+        preview = `ตาราง ${rowCount} แถว ${colCount} คอลัมน์`;
+      } else {
+        const text = (instr?.content || '').toString();
+        preview = text.length > 160 ? `${text.slice(0, 157)}...` : text;
+      }
+
+      return {
+        _id: instr._id,
+        instructionId: instr.instructionId,
+        version: instr.version || 1,
+        title: instr.title || '',
+        type: currentType,
+        content: instr.content || '',
+        data: currentType === 'table' ? (instr.data || null) : null,
+        createdAt: instr.createdAt || null,
+        updatedAt: instr.updatedAt || null,
+        order: instr.order || null,
+        preview,
+        versionHistory
+      };
+    });
+
+    res.json({ success: true, instructions: response });
+  } catch (err) {
+    console.error('Error fetching instructions with versions:', err);
+    res.status(500).json({ success: false, error: 'ไม่สามารถดึงรายการ instructions ได้' });
+  }
+});
+
+// Route: ดึงรายละเอียด instruction ตาม instructionId และเวอร์ชัน
+app.get('/api/instructions/:instructionId/versions/:version', async (req, res) => {
+  try {
+    const { instructionId, version } = req.params;
+    if (!instructionId) {
+      return res.status(400).json({ success: false, error: 'กรุณาระบุ instructionId' });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const instrColl = db.collection("instructions");
+    const versionColl = db.collection("instruction_versions");
+
+    const versionParam = version?.toLowerCase?.() === 'latest' ? 'latest' : version;
+    let doc = null;
+    let source = 'version';
+
+    if (versionParam === 'latest') {
+      doc = await instrColl.findOne({ instructionId });
+      source = 'current';
+    } else {
+      const versionNumber = parseInt(versionParam, 10);
+      if (!Number.isInteger(versionNumber) || versionNumber <= 0) {
+        return res.status(400).json({ success: false, error: 'เวอร์ชันไม่ถูกต้อง' });
+      }
+      doc = await versionColl.findOne({ instructionId, version: versionNumber });
+      if (!doc) {
+        // หากไม่พบในคลังเวอร์ชัน ลองดึงเวอร์ชันปัจจุบันใน instructions
+        doc = await instrColl.findOne({ instructionId, version: versionNumber });
+        if (doc) source = 'current';
+      }
+    }
+
+    if (!doc) {
+      return res.status(404).json({ success: false, error: 'ไม่พบ instruction เวอร์ชันที่ระบุ' });
+    }
+
+    const payload = {
+      instructionId: doc.instructionId || instructionId,
+      version: doc.version || (source === 'current' ? doc.version || 1 : null),
+      title: doc.title || '',
+      type: doc.type || 'text',
+      content: doc.content || '',
+      data: doc.type === 'table' ? (doc.data || null) : null,
+      createdAt: doc.createdAt || null,
+      updatedAt: doc.updatedAt || null,
+      snapshotAt: doc.snapshotAt || null,
+      source
+    };
+
+    res.json({ success: true, instruction: payload });
+  } catch (err) {
+    console.error('Error fetching instruction version detail:', err);
+    res.status(500).json({ success: false, error: 'ไม่สามารถดึงรายละเอียด instruction ได้' });
+  }
+});
+
 // Dashboard
 app.get('/admin/dashboard', async (req, res) => {
   try {
@@ -4984,11 +5384,15 @@ app.post('/admin/instructions', async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions");
 
+    const now = new Date();
     const instr = {
+      instructionId: generateInstructionId(),
+      version: 1,
       type,
       title: title || '',
       content: content || '',
-      createdAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
       order: Date.now()
     };
 
@@ -4998,9 +5402,12 @@ app.post('/admin/instructions', async (req, res) => {
       } catch {
         instr.data = [];
       }
+    } else {
+      delete instr.data;
     }
 
-    await coll.insertOne(instr);
+    const result = await coll.insertOne(instr);
+    await recordInstructionVersionSnapshot({ ...instr, _id: result.insertedId }, db);
     res.redirect('/admin/dashboard');
   } catch (err) {
     res.redirect('/admin/dashboard?error=ไม่สามารถเพิ่มข้อมูลได้');
@@ -5050,21 +5457,29 @@ app.post('/admin/instructions/:id/edit', async (req, res) => {
       return res.redirect('/admin/dashboard?error=ไม่พบข้อมูลที่ต้องการแก้ไข');
     }
 
+    const now = new Date();
+    const baseInstructionId = existingInstruction.instructionId || generateInstructionId();
+    const currentVersion = Number.isInteger(existingInstruction.version) ? existingInstruction.version : 1;
+    const newVersion = currentVersion + 1;
+
     const updateData = {
+      instructionId: baseInstructionId,
+      version: newVersion,
       type,
       title: title || '',
       content: content || '',
-      updatedAt: new Date()
+      updatedAt: now
     };
 
     console.log('[Edit] Request body keys:', Object.keys(req.body));
     console.log('[Edit] Table data received length:', tableData ? tableData.length : 0);
     
+    let unsetData = null;
+
     if (type === 'table') {
       if (tableData && tableData.trim() !== '') {
         try {
           const parsedData = JSON.parse(tableData);
-          // ตรวจสอบว่าข้อมูลที่ parse ได้มีโครงสร้างที่ถูกต้อง
           if (parsedData && typeof parsedData === 'object') {
             updateData.data = parsedData;
             console.log('[Edit] Table data parsed successfully');
@@ -5078,7 +5493,6 @@ app.post('/admin/instructions/:id/edit', async (req, res) => {
           console.error('[Edit] JSON parse error:', parseError);
           console.log('[Edit] Raw table data preview:', tableData.substring(0, 200));
           console.log('[Edit] Keeping existing table data due to parse error');
-          // ใช้ข้อมูลเดิมแทนการตั้งค่าเป็น array ว่าง
           updateData.data = existingInstruction.data || { columns: [], rows: [] };
         }
       } else {
@@ -5086,38 +5500,36 @@ app.post('/admin/instructions/:id/edit', async (req, res) => {
         updateData.data = existingInstruction.data || { columns: [], rows: [] };
       }
     } else {
-      // หากเปลี่ยนจาก table เป็น text ให้ลบ data field
-      updateData.$unset = { data: "" };
+      unsetData = { data: "" };
     }
 
     console.log('[Edit] Updating instruction:', id, 'Type:', type);
     console.log('[Edit] Update data keys:', Object.keys(updateData));
     
-    // จัดการ MongoDB update operation อย่างถูกต้อง
-    let mongoUpdate;
-    if (updateData.$unset) {
-      // แยก $unset ออกจาก updateData
-      const { $unset, ...setData } = updateData;
-      mongoUpdate = { 
-        $set: setData,
-        $unset: $unset
-      };
-      console.log('[Edit] Using $set and $unset operations');
-    } else {
-      mongoUpdate = { $set: updateData };
-      console.log('[Edit] Using only $set operation');
-    }
+    const mongoUpdate = unsetData
+      ? { $set: updateData, $unset: unsetData }
+      : { $set: updateData };
     
     console.log('[Edit] MongoDB update operation:', JSON.stringify(mongoUpdate, null, 2));
     
-    const result = await coll.updateOne({ _id: new ObjectId(id) }, mongoUpdate);
-    console.log('[Edit] Update result:', result);
+    const updateResult = await coll.updateOne({ _id: new ObjectId(id) }, mongoUpdate);
+    console.log('[Edit] Update result:', updateResult);
     
-    if (result.modifiedCount === 1) {
+    if (updateResult.modifiedCount === 1) {
       console.log('[Edit] Instruction updated successfully');
     } else {
       console.warn('[Edit] No documents were modified');
     }
+
+    const updatedInstruction = {
+      ...existingInstruction,
+      ...updateData
+    };
+    if (unsetData) {
+      delete updatedInstruction.data;
+    }
+
+    await recordInstructionVersionSnapshot(updatedInstruction, db);
     
     res.redirect('/admin/dashboard');
   } catch (err) {
