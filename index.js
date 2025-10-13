@@ -5871,6 +5871,51 @@ app.post('/admin/instructions/reorder', async (req, res) => {
   }
 });
 
+app.post('/admin/instructions/reorder/drag', async (req, res) => {
+  try {
+    const { orderedIds } = req.body || {};
+    if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+      return res.json({ success: false, error: 'รูปแบบข้อมูลไม่ถูกต้อง' });
+    }
+
+    const objectIds = orderedIds.map(id => {
+      const objectId = toObjectId(id);
+      if (!objectId) {
+        throw new Error('พบรหัส instruction ที่ไม่ถูกต้อง');
+      }
+      return objectId;
+    });
+
+    const client = await connectDB();
+    const db = client.db('chatbot');
+    const coll = db.collection('instructions');
+
+    const total = await coll.countDocuments();
+    if (total !== objectIds.length) {
+      return res.json({
+        success: false,
+        error: 'จำนวนนับไม่ตรงกับในระบบ กรุณารีเฟรชแล้วลองอีกครั้ง'
+      });
+    }
+
+    const bulkOps = objectIds.map((objectId, index) => ({
+      updateOne: {
+        filter: { _id: objectId },
+        update: { $set: { order: index } }
+      }
+    }));
+
+    if (bulkOps.length > 0) {
+      await coll.bulkWrite(bulkOps, { ordered: true });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Instructions] drag reorder error:', err);
+    res.json({ success: false, error: err.message || 'ไม่สามารถจัดลำดับใหม่ได้' });
+  }
+});
+
 // API endpoint สำหรับดึงรายการ instructions (สำหรับ dynamic updates)
 app.get('/admin/instructions/list', async (req, res) => {
   try {
@@ -5883,6 +5928,7 @@ app.get('/admin/instructions/list', async (req, res) => {
         title: instruction.title,
         content: instruction.content,
         data: instruction.data,
+        order: instruction.order,
         createdAt: instruction.createdAt,
         updatedAt: instruction.updatedAt
       }))
