@@ -12,36 +12,6 @@
             min-width: 110px;
         }
 
-        .instruction-meta dl {
-            margin-bottom: 0;
-        }
-
-        .instruction-meta dt {
-            font-weight: 600;
-            color: var(--text-light);
-        }
-
-        .instruction-preview {
-            min-height: 200px;
-            background-color: var(--light-bg);
-            border-radius: var(--border-radius);
-            padding: 1rem;
-        }
-
-        .instruction-preview table {
-            font-size: 0.875rem;
-        }
-
-        .instruction-preview .empty-preview {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-light);
-            height: 100%;
-            text-align: center;
-        }
-
         .table-builder-toolbar .btn {
             min-width: 120px;
         }
@@ -84,77 +54,26 @@
             align-items: center;
             color: var(--text-light);
         }
-
-        .instruction-preview table thead th {
-            background-color: rgba(104, 185, 132, 0.1);
-        }
-
-        @media (max-width: 991.98px) {
-            .instruction-preview {
-                min-height: 160px;
-            }
-        }
-
-        .json-preview {
-            background-color: #f8f9fa;
-            border: 1px solid rgba(0, 0, 0, 0.05);
-            border-radius: var(--border-radius);
-            padding: 1rem;
-            overflow: auto;
-            max-height: 480px;
-        }
-
-        .json-preview pre {
-            margin: 0;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
     </style>
 </head>
 <body>
     <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
 
     <div class="container-fluid mt-4">
-        <div class="row g-2 align-items-center mb-3">
-            <div class="col">
-                <h2 class="mb-0">
-                    <i class="fas fa-edit text-primary me-2"></i>
-                    แก้ไข Instruction
-                </h2>
-            </div>
-            <div class="col-auto page-header-actions d-flex gap-2">
-                <a href="/admin/dashboard" class="btn btn-outline-secondary">
-                    <i class="fas fa-arrow-left me-1"></i> กลับแดชบอร์ด
-                </a>
-            </div>
+        <div class="d-flex justify-content-end mb-3">
+            <a href="/admin/dashboard" class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left me-1"></i> กลับแดชบอร์ด
+            </a>
         </div>
 
         <div class="row g-4">
-            <div class="col-lg-8">
+            <div class="col-12">
                 <form id="editInstructionForm" method="POST" action="/admin/instructions/<%= instruction._id %>/edit" class="needs-validation" novalidate>
                     <div class="card shadow-sm mb-4">
-                        <div class="card-header bg-white">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <h5 class="mb-0">
-                                        <i class="fas fa-pen-to-square me-2 text-primary"></i>
-                                        รายละเอียดข้อมูล
-                                    </h5>
-                                </div>
-                                <span class="badge bg-light text-dark">
-                                    รหัส: <%= instruction._id %>
-                                </span>
-                            </div>
-                        </div>
                         <div class="card-body">
-                            <div class="mb-3">
-                                <label class="form-label" for="instructionType">
-                                    ประเภทข้อมูล
-                                </label>
-                                <select id="instructionType" name="type" class="form-select" required>
-                                    <option value="text" <%= instruction.type === 'text' ? 'selected' : '' %>>ข้อความ</option>
-                                    <option value="table" <%= instruction.type === 'table' ? 'selected' : '' %>>ตาราง</option>
-                                </select>
+                            <input type="hidden" id="instructionType" name="type" value="<%= instruction.type %>">
+                            <div class="mb-3 text-muted small">
+                                รหัส: <span class="text-break"><%= instruction._id %></span>
                             </div>
 
                             <div class="mb-3">
@@ -222,9 +141,6 @@
                                                 <tbody id="tableBodyRows"></tbody>
                                             </table>
                                         </div>
-                                        <div class="text-muted small mt-2">
-                                            รองรับการกด Enter เพื่อขึ้นบรรทัดใหม่ • ดับเบิลคลิกที่ชื่อคอลัมน์เพื่อแก้ไข • ใช้ปุ่ม Tab หรือปุ่มลูกศรเพื่อเลื่อนระหว่างเซลล์ • แถวว่างจะถูกตัดออกอัตโนมัติ
-                                        </div>
                                     </div>
                                 </div>
                                 <input type="hidden" id="tableDataInput" name="tableData">
@@ -244,25 +160,6 @@
                 </form>
             </div>
 
-            <div class="col-lg-4">
-                <div class="card shadow-sm">
-                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                        <h6 class="mb-0">
-                            <i class="fas fa-eye me-2 text-primary"></i>
-                            ตัวอย่างข้อมูล
-                        </h6>
-                        <button type="button" class="btn btn-sm btn-outline-primary" id="refreshPreviewBtn">
-                            <i class="fas fa-rotate-right me-1"></i> รีเฟรช
-                        </button>
-                    </div>
-                    <div class="card-body instruction-preview" id="instructionPreview">
-                        <div class="empty-preview">
-                            <i class="fas fa-search fa-2x mb-2"></i>
-                            <p class="mb-0">แก้ไขข้อมูลด้านซ้ายเพื่อดูตัวอย่างข้อความหรือ JSON</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -625,108 +522,6 @@
             }
         }
 
-        function escapeHtml(value) {
-            if (value === null || value === undefined) return '';
-            const div = document.createElement('div');
-            div.textContent = value;
-            return div.innerHTML;
-        }
-
-        function renderTextPreview(text) {
-            const preview = document.getElementById('instructionPreview');
-            const safeText = escapeHtml(text || '').trim();
-            if (!safeText) {
-                preview.innerHTML = `
-                    <div class="empty-preview">
-                        <i class="fas fa-align-left fa-2x mb-2"></i>
-                        <p class="mb-0">ยังไม่มีเนื้อหา ลองกรอกข้อมูลด้านซ้ายเพื่อดูตัวอย่าง</p>
-                    </div>
-                `;
-                return;
-            }
-            preview.innerHTML = `
-                <div class="text-break" style="white-space: pre-wrap;">${safeText}</div>
-            `;
-        }
-
-        function renderTablePreview(payload) {
-            const preview = document.getElementById('instructionPreview');
-            if (!preview) return;
-            preview.innerHTML = '';
-
-            if (!payload || !Array.isArray(payload.columns) || payload.columns.length === 0) {
-                preview.innerHTML = `
-                    <div class="empty-preview">
-                        <i class="fas fa-table fa-2x mb-2"></i>
-                        <p class="mb-0">ยังไม่มีโครงสร้างตาราง กำหนดคอลัมน์เพื่อดูตัวอย่าง JSON</p>
-                    </div>
-                `;
-                return;
-            }
-
-            const titleInput = document.getElementById('instructionTitle');
-            const contentInput = document.getElementById('instructionContent');
-
-            const normalizedRows = Array.isArray(payload.rows)
-                ? payload.rows.map(row => {
-                    if (Array.isArray(row)) {
-                        return row.map(cell => {
-                            if (cell === null || cell === undefined) return '';
-                            return String(cell).replace(/\r\n/g, '\n');
-                        });
-                    }
-                    if (row && typeof row === 'object') {
-                        return payload.columns.map((col, idx) => {
-                            const value = row[col] ?? row[idx] ?? '';
-                            return String(value).replace(/\r\n/g, '\n');
-                        });
-                    }
-                    return [String(row ?? '')];
-                })
-                : [];
-
-            const previewPayload = {
-                instructionId: initialInstruction.instructionId || initialInstruction.id || undefined,
-                version: typeof initialInstruction.version === 'number' ? initialInstruction.version : undefined,
-                type: 'table',
-                title: titleInput ? titleInput.value : undefined,
-                content: contentInput && contentInput.value ? contentInput.value : undefined,
-                createdAt: initialInstruction.createdAt || undefined,
-                updatedAt: initialInstruction.updatedAt || undefined,
-                data: {
-                    columns: payload.columns,
-                    rows: normalizedRows
-                }
-            };
-
-            if (!previewPayload.instructionId) {
-                delete previewPayload.instructionId;
-            }
-            if (!previewPayload.title || !previewPayload.title.trim()) {
-                delete previewPayload.title;
-            }
-            if (!previewPayload.content || !previewPayload.content.trim()) {
-                delete previewPayload.content;
-            }
-            if (typeof previewPayload.version !== 'number') {
-                delete previewPayload.version;
-            }
-            if (!previewPayload.createdAt) {
-                delete previewPayload.createdAt;
-            }
-            if (!previewPayload.updatedAt) {
-                delete previewPayload.updatedAt;
-            }
-
-            const jsonString = JSON.stringify(previewPayload, null, 2);
-
-            preview.innerHTML = `
-                <div class="json-preview">
-                    <pre class="mb-0"><code>${escapeHtml(jsonString)}</code></pre>
-                </div>
-            `;
-        }
-
         function updateSidebarMeta() {
             const metaTypeLabel = document.getElementById('metaTypeLabel');
             const metaDataCount = document.getElementById('metaDataCount');
@@ -749,14 +544,6 @@
         }
 
         function updatePreview() {
-            const type = document.getElementById('instructionType').value;
-            if (type === 'table') {
-                const payload = instructionTableBuilder.getPayload();
-                renderTablePreview(payload);
-            } else {
-                const text = document.getElementById('instructionContent').value || '';
-                renderTextPreview(text);
-            }
             updateSidebarMeta();
         }
 
@@ -773,10 +560,9 @@
             const tableSection = document.getElementById('tableEditorSection');
             const contentInput = document.getElementById('instructionContent');
             const titleInput = document.getElementById('instructionTitle');
-            const refreshPreviewBtn = document.getElementById('refreshPreviewBtn');
 
             const toggleEditorSection = () => {
-                const type = typeSelect.value;
+                const type = typeSelect ? typeSelect.value : 'text';
                 if (type === 'table') {
                     textSection.style.display = 'none';
                     tableSection.style.display = '';
@@ -799,10 +585,12 @@
             updateCharCount();
             updatePreview();
 
-            typeSelect.addEventListener('change', () => {
-                toggleEditorSection();
-                updatePreview();
-            });
+            if (typeSelect && typeSelect.tagName === 'SELECT') {
+                typeSelect.addEventListener('change', () => {
+                    toggleEditorSection();
+                    updatePreview();
+                });
+            }
 
             contentInput.addEventListener('input', () => {
                 updateCharCount();
@@ -816,10 +604,8 @@
                 }
             });
 
-            refreshPreviewBtn.addEventListener('click', updatePreview);
-
             document.getElementById('editInstructionForm').addEventListener('submit', async (event) => {
-                const type = typeSelect.value;
+                const type = typeSelect ? typeSelect.value : 'text';
                 if (type === 'table') {
                     const result = instructionTableBuilder.commitToHiddenInput();
                     if (!result.success) {
