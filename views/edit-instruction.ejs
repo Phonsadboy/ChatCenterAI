@@ -36,12 +36,13 @@
 
         .table-cell-input {
             min-width: 200px;
+            width: 220px;
             min-height: 72px;
             resize: both;
-            width: 100%;
             max-width: none;
             font-family: inherit;
             line-height: 1.4;
+            box-sizing: border-box;
         }
 
         .table-actions-col {
@@ -185,6 +186,9 @@
                 ['', ''],
                 ['', '']
             ];
+            const DEFAULT_COLUMN_WIDTH = 220;
+            const MIN_COLUMN_WIDTH = 160;
+            let columnSizes = new Array(columns.length).fill(DEFAULT_COLUMN_WIDTH);
 
             const refs = {
                 headerRow: null,
@@ -210,6 +214,7 @@
                     const name = (col || '').trim();
                     return name || `คอลัมน์ ${index + 1}`;
                 });
+                syncColumnSizesLength();
             };
 
             const ensureRowWidths = () => {
@@ -251,6 +256,12 @@
                 `;
 
                 refs.headerRow.querySelectorAll('.table-header-input').forEach(input => {
+                    const colIndex = Number(input.getAttribute('data-col-index'));
+                    if (!Number.isInteger(colIndex)) return;
+                    applyColumnWidthToElements(colIndex);
+                });
+
+                refs.headerRow.querySelectorAll('.table-header-input').forEach(input => {
                     input.addEventListener('input', event => {
                         const colIndex = Number(event.target.getAttribute('data-col-index'));
                         if (Number.isInteger(colIndex) && colIndex >= 0 && colIndex < columns.length) {
@@ -269,7 +280,11 @@
                             return;
                         }
                         columns.splice(colIndex, 1);
+                        if (columnSizes.length > colIndex) {
+                            columnSizes.splice(colIndex, 1);
+                        }
                         rows.forEach(row => row.splice(colIndex, 1));
+                        syncColumnSizesLength();
                         render();
                         updatePreview();
                     });
@@ -298,6 +313,11 @@
                 `).join('');
 
                 refs.bodyRows.querySelectorAll('.table-cell-input').forEach(input => {
+                    const colIndex = Number(input.getAttribute('data-col-index'));
+                    if (Number.isInteger(colIndex)) {
+                        applyColumnWidthToElements(colIndex);
+                    }
+
                     input.addEventListener('input', event => {
                         const rowIndex = Number(event.target.getAttribute('data-row-index'));
                         const colIndex = Number(event.target.getAttribute('data-col-index'));
@@ -305,6 +325,20 @@
                         if (!rows[rowIndex]) rows[rowIndex] = [];
                         rows[rowIndex][colIndex] = event.target.value;
                         updatePreview();
+                    });
+
+                    input.addEventListener('mouseup', event => {
+                        handleColumnResize(event.target);
+                    });
+
+                    input.addEventListener('keyup', event => {
+                        if (event.key === 'Enter') {
+                            handleColumnResize(event.target);
+                        }
+                    });
+
+                    input.addEventListener('blur', event => {
+                        handleColumnResize(event.target);
                     });
                 });
 
@@ -331,6 +365,7 @@
             const addColumn = () => {
                 columns.push(`คอลัมน์ ${columns.length + 1}`);
                 rows.forEach(row => row.push(''));
+                columnSizes.push(DEFAULT_COLUMN_WIDTH);
                 render();
                 updatePreview();
             };
@@ -353,6 +388,7 @@
                     ['', ''],
                     ['', '']
                 ];
+                columnSizes = new Array(columns.length).fill(DEFAULT_COLUMN_WIDTH);
                 render();
                 updatePreview();
                 if (refs.hiddenInput) {
@@ -378,6 +414,49 @@
                         return normalized;
                     })
                     .filter(row => row.some(cell => cell.trim() !== ''));
+            };
+
+            const syncColumnSizesLength = () => {
+                if (columnSizes.length < columns.length) {
+                    columnSizes = columnSizes.concat(new Array(columns.length - columnSizes.length).fill(DEFAULT_COLUMN_WIDTH));
+                } else if (columnSizes.length > columns.length) {
+                    columnSizes.length = columns.length;
+                }
+            };
+
+            const getStoredColumnWidth = (colIndex) => {
+                const stored = columnSizes[colIndex];
+                if (typeof stored === 'number' && stored > 0) {
+                    return Math.max(stored, MIN_COLUMN_WIDTH);
+                }
+                return DEFAULT_COLUMN_WIDTH;
+            };
+
+            const applyColumnWidthToElements = (colIndex) => {
+                const width = getStoredColumnWidth(colIndex);
+                const px = `${width}px`;
+                if (refs.headerRow) {
+                    refs.headerRow.querySelectorAll(`.table-header-input[data-col-index="${colIndex}"]`).forEach(input => {
+                        input.style.width = px;
+                    });
+                }
+                if (refs.bodyRows) {
+                    refs.bodyRows.querySelectorAll(`.table-cell-input[data-col-index="${colIndex}"]`).forEach(textarea => {
+                        textarea.style.width = px;
+                    });
+                }
+            };
+
+            const handleColumnResize = (element) => {
+                if (!element || !element.classList || !element.classList.contains('table-cell-input')) return;
+                const colIndex = Number(element.getAttribute('data-col-index'));
+                if (!Number.isInteger(colIndex)) return;
+                requestAnimationFrame(() => {
+                    const rect = element.getBoundingClientRect();
+                    const width = Math.max(rect.width, MIN_COLUMN_WIDTH);
+                    columnSizes[colIndex] = width;
+                    applyColumnWidthToElements(colIndex);
+                });
             };
 
             const getPayload = () => {
@@ -415,6 +494,7 @@
                 } else {
                     columns = ['คอลัมน์ 1', 'คอลัมน์ 2'];
                 }
+                columnSizes = new Array(columns.length).fill(DEFAULT_COLUMN_WIDTH);
 
                 if (Array.isArray(data.rows) && data.rows.length) {
                     rows = data.rows.map(row => {
@@ -466,6 +546,7 @@
                         isInitialized = true;
                     }
 
+                    syncColumnSizesLength();
                     render();
                     updatePreview();
                 },

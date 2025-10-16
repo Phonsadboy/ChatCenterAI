@@ -1635,15 +1635,16 @@
                             const response = await fetch(`/admin/instructions/${instructionId}/delete`, {
                                 method: 'POST'
                             });
-
+                            
+                            const data = await response.json();
                             hideLoadingOverlay();
 
-                            if (response.ok) {
+                            if (data.success) {
                                 instructionDataStore = instructionDataStore.filter(item => item._id !== instructionId);
                                 applyInstructionFilters({ silent: true });
                                 showNotification('ลบข้อมูลเรียบร้อยแล้ว', 'success');
                             } else {
-                                showNotification('ไม่สามารถลบข้อมูลได้', 'error');
+                                showNotification(data.error || 'ไม่สามารถลบข้อมูลได้', 'error');
                             }
                         } catch (error) {
                             hideLoadingOverlay();

@@ -2737,10 +2737,6 @@ server.listen(PORT, async () => {
     // ใช้ฟังก์ชันใหม่สำหรับรีเฟรชข้อมูลทุก 1 วัน
     console.log(`[LOG] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติ...`);
     scheduleDailyRefresh();
-    
-    // เริ่มระบบ backup อัตโนมัติประจำวัน
-    console.log(`[LOG] เริ่มระบบ backup อัตโนมัติประจำวัน...`);
-    scheduleDailyInstructionLibrary();
 
     // ทำให้แน่ใจว่ามีการตั้งค่าเริ่มต้นใน collection settings
     await ensureInstructionIdentifiers();
@@ -3737,63 +3733,6 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
 }
 
 // ============================ Instruction Library ============================
-async function saveInstructionsToLibrary(dateStr) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const instrColl = db.collection("instructions");
-  const libraryColl = db.collection("instruction_library");
-
-  await ensureInstructionIdentifiers();
-  const instructions = await instrColl.find({}).toArray();
-  const sanitizedInstructions = [];
-  for (const instruction of instructions) {
-    try {
-      await ensureInstructionVersionSnapshot(instruction, db);
-      const snapshot = sanitizeInstructionForSnapshot(instruction);
-      if (snapshot) {
-        sanitizedInstructions.push(snapshot);
-      }
-    } catch (err) {
-      console.error('[Library] ไม่สามารถสร้าง snapshot ของ instruction:', err?.message || err);
-    }
-  }
-
-  const now = new Date();
-  const thaiNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
-  
-  await libraryColl.updateOne(
-    { date: dateStr },
-    { 
-      $set: { 
-        date: dateStr, 
-        instructions: sanitizedInstructions, 
-        savedAt: new Date(),
-        type: 'auto',
-        displayDate: dateStr,
-        displayTime: thaiNow.toLocaleTimeString('th-TH'),
-        name: `คลัง ${dateStr}`,
-        description: `คลัง instruction ที่บันทึกอัตโนมัติเมื่อวันที่ ${dateStr}`
-      } 
-    },
-    { upsert: true }
-  );
-  console.log(`[Library] บันทึก instructions ลงคลังสำหรับวันที่ ${dateStr} แล้ว`);
-}
-
-function scheduleDailyInstructionLibrary() {
-  console.log('[Library] ตั้งเวลาบันทึก instructions ลงคลังทุกวันเวลา 00:00 น.');
-  let lastLibraryDate = '';
-  setInterval(async () => {
-    const now = new Date();
-    const thaiNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
-    const dateStr = thaiNow.toISOString().split('T')[0];
-    if (thaiNow.getHours() === 0 && thaiNow.getMinutes() === 0 && lastLibraryDate !== dateStr) {
-      await saveInstructionsToLibrary(dateStr);
-      lastLibraryDate = dateStr;
-    }
-  }, 60 * 1000);
-}
-
 // Health check endpoint for Railway
 app.get('/health', (req, res) => {
   res.json({ 
