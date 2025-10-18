@@ -3,333 +3,326 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>จัดการตอบคอมเมนต์โพสต์ Facebook - ChatCenter AI</title>
+  <title>ตอบคอมเมนต์ FB - ChatCenter AI</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link href="/css/style.css" rel="stylesheet">
   <style>
-    body {
-      font-family: 'Sarabun', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      min-height: 100vh;
-      padding: 20px;
+    .page-section {
+      background: var(--card-bg);
+      border-radius: var(--border-radius);
+      box-shadow: var(--shadow-sm);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
     }
-    .container-fluid {
-      max-width: 1400px;
-    }
-    .main-card {
-      background: white;
-      border-radius: 20px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-      overflow: hidden;
-    }
-    .header-section {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 30px;
-    }
-    .header-section h1 {
-      margin: 0;
-      font-size: 2rem;
-      font-weight: 700;
-    }
-    .header-section p {
-      margin: 10px 0 0 0;
-      opacity: 0.9;
-    }
-    .content-section {
-      padding: 30px;
-    }
-    .page-card {
-      border: 2px solid #e9ecef;
-      border-radius: 15px;
-      padding: 20px;
-      margin-bottom: 20px;
-      transition: all 0.3s ease;
-      background: #f8f9fa;
-    }
-    .page-card:hover {
-      border-color: #667eea;
-      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
-    }
-    .page-header {
+
+    .page-section-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 20px;
-      padding-bottom: 15px;
-      border-bottom: 2px solid #dee2e6;
+      padding-bottom: 1rem;
+      border-bottom: 2px solid var(--light-bg);
+      margin-bottom: 1.5rem;
     }
-    .page-info {
+
+    .page-section-title {
       display: flex;
       align-items: center;
-      gap: 15px;
+      gap: 0.75rem;
+      margin: 0;
     }
+
     .page-icon {
-      width: 50px;
-      height: 50px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border-radius: 12px;
+      width: 48px;
+      height: 48px;
+      background: var(--primary);
+      border-radius: 10px;
       display: flex;
       align-items: center;
       justify-content: center;
       color: white;
-      font-size: 24px;
+      font-size: 1.25rem;
     }
-    .page-details h3 {
+
+    .page-info h5 {
       margin: 0;
-      font-size: 1.3rem;
+      color: var(--text-dark);
       font-weight: 600;
-      color: #2d3748;
     }
-    .page-details p {
-      margin: 5px 0 0 0;
-      color: #718096;
-      font-size: 0.9rem;
+
+    .page-info .text-muted {
+      margin: 0;
+      font-size: var(--font-size-sm);
     }
+
     .post-item {
-      background: white;
+      background: var(--light-bg);
       border: 1px solid #e2e8f0;
       border-radius: 10px;
-      padding: 15px;
-      margin-bottom: 15px;
-      position: relative;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      transition: var(--transition);
     }
+
     .post-item:hover {
-      border-color: #667eea;
+      box-shadow: var(--shadow-sm);
+      border-color: var(--primary-light);
     }
+
     .post-header {
       display: flex;
       justify-content: space-between;
       align-items: start;
-      margin-bottom: 12px;
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #e2e8f0;
     }
-    .post-id {
+
+    .post-id-badge {
       font-family: 'Courier New', monospace;
-      color: #4a5568;
-      font-size: 0.85rem;
-      background: #edf2f7;
-      padding: 4px 8px;
-      border-radius: 5px;
+      color: var(--text-dark);
+      font-size: 0.875rem;
+      background: white;
+      padding: 0.375rem 0.75rem;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
     }
-    .post-status {
-      display: inline-block;
-      padding: 4px 12px;
+
+    .status-badge {
+      padding: 0.375rem 0.875rem;
       border-radius: 20px;
-      font-size: 0.8rem;
-      font-weight: 600;
+      font-size: 0.8125rem;
+      font-weight: 500;
     }
+
     .status-active {
-      background: #c6f6d5;
-      color: #22543d;
+      background: #d1fae5;
+      color: #065f46;
     }
+
     .status-inactive {
-      background: #fed7d7;
-      color: #742a2a;
+      background: #fee2e2;
+      color: #991b1b;
     }
-    .post-config {
-      margin-top: 15px;
-      padding-top: 15px;
-      border-top: 1px solid #e2e8f0;
+
+    .config-info {
+      display: grid;
+      gap: 0.75rem;
     }
+
     .config-row {
       display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 10px;
+      align-items: start;
+      gap: 0.75rem;
+      font-size: var(--font-size-sm);
     }
+
     .config-label {
       font-weight: 600;
-      color: #4a5568;
+      color: var(--text-light);
       min-width: 120px;
     }
+
     .config-value {
-      color: #2d3748;
+      color: var(--text-dark);
       flex: 1;
     }
-    .badge-custom {
-      background: #667eea;
-      color: white;
-      padding: 4px 10px;
-      border-radius: 15px;
-      font-size: 0.85rem;
-    }
-    .badge-ai {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 4px 10px;
-      border-radius: 15px;
-      font-size: 0.85rem;
-    }
-    .btn-custom {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border: none;
-      color: white;
-      padding: 8px 20px;
-      border-radius: 8px;
-      font-weight: 600;
-      transition: all 0.3s ease;
-    }
-    .btn-custom:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-      color: white;
-    }
-    .btn-edit {
-      background: #48bb78;
-      color: white;
-      border: none;
-      padding: 6px 15px;
-      border-radius: 6px;
-      font-size: 0.9rem;
-      transition: all 0.2s ease;
-    }
-    .btn-edit:hover {
-      background: #38a169;
-      color: white;
-    }
-    .btn-delete {
-      background: #f56565;
-      color: white;
-      border: none;
-      padding: 6px 15px;
-      border-radius: 6px;
-      font-size: 0.9rem;
-      transition: all 0.2s ease;
-    }
-    .btn-delete:hover {
-      background: #e53e3e;
-      color: white;
-    }
-    .btn-toggle {
-      background: #4299e1;
-      color: white;
-      border: none;
-      padding: 6px 15px;
-      border-radius: 6px;
-      font-size: 0.9rem;
-      transition: all 0.2s ease;
-    }
-    .btn-toggle:hover {
-      background: #3182ce;
-      color: white;
-    }
-    .empty-state {
-      text-align: center;
-      padding: 60px 20px;
-      color: #718096;
-    }
-    .empty-state i {
-      font-size: 4rem;
-      margin-bottom: 20px;
-      color: #cbd5e0;
-    }
-    .modal-header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      border-bottom: none;
-    }
-    .modal-header .btn-close {
-      filter: brightness(0) invert(1);
-    }
-    .form-label {
-      font-weight: 600;
-      color: #4a5568;
-      margin-bottom: 8px;
-    }
-    .form-control:focus, .form-select:focus {
-      border-color: #667eea;
-      box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
-    }
-    .reply-type-card {
-      border: 2px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 15px;
-      margin-bottom: 15px;
-      cursor: pointer;
-      transition: all 0.3s ease;
-    }
-    .reply-type-card:hover {
-      border-color: #667eea;
-      background: #f7fafc;
-    }
-    .reply-type-card.active {
-      border-color: #667eea;
-      background: #edf2f7;
-    }
-    .reply-type-card input[type="radio"] {
-      margin-right: 10px;
-    }
-    .ai-config-section {
-      background: #f7fafc;
-      border-radius: 10px;
-      padding: 20px;
-      margin-top: 15px;
-    }
-    .system-prompt-textarea {
-      font-family: 'Courier New', monospace;
-      font-size: 0.9rem;
-    }
-    .back-link {
-      color: white;
-      text-decoration: none;
+
+    .badge-reply-type {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 15px;
-      opacity: 0.9;
-      transition: opacity 0.2s ease;
+      gap: 0.375rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.8125rem;
+      font-weight: 500;
     }
-    .back-link:hover {
-      opacity: 1;
+
+    .badge-custom {
+      background: var(--info);
       color: white;
     }
-    .alert {
-      border-radius: 10px;
+
+    .badge-ai {
+      background: var(--secondary);
+      color: var(--text-dark);
+    }
+
+    .post-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid #e2e8f0;
+    }
+
+    .btn-post-action {
+      font-size: var(--font-size-sm);
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-weight: 500;
+      transition: var(--transition);
       border: none;
+    }
+
+    .btn-edit-post {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-edit-post:hover {
+      background: var(--primary-dark);
+      color: white;
+      transform: translateY(-1px);
+    }
+
+    .btn-toggle-post {
+      background: var(--info);
+      color: white;
+    }
+
+    .btn-toggle-post:hover {
+      background: #4a8ba5;
+      color: white;
+      transform: translateY(-1px);
+    }
+
+    .btn-delete-post {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-delete-post:hover {
+      background: #e74c3c;
+      color: white;
+      transform: translateY(-1px);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-light);
+    }
+
+    .empty-state i {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      color: var(--primary-light);
+      opacity: 0.5;
+    }
+
+    .empty-state h6 {
+      color: var(--text-dark);
+      margin-bottom: 0.5rem;
+    }
+
+    .reply-type-card {
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+      cursor: pointer;
+      transition: var(--transition);
+      background: var(--card-bg);
+    }
+
+    .reply-type-card:hover {
+      border-color: var(--primary);
+      background: var(--light-bg);
+    }
+
+    .reply-type-card.active {
+      border-color: var(--primary);
+      background: var(--light-bg);
+    }
+
+    .reply-type-card input[type="radio"] {
+      margin-right: 0.75rem;
+    }
+
+    .reply-type-card label {
+      cursor: pointer;
+      margin: 0;
+      width: 100%;
+    }
+
+    .ai-config-section {
+      background: var(--light-bg);
+      border-radius: 8px;
+      padding: 1.25rem;
+      margin-top: 1rem;
+      border: 1px solid #e2e8f0;
+    }
+
+    .system-prompt-textarea {
+      font-family: 'Courier New', Monaco, monospace;
+      font-size: 0.875rem;
+      line-height: 1.6;
+    }
+
+    .info-box {
+      background: #e0f2fe;
+      border-left: 4px solid var(--info);
+      padding: 0.875rem;
+      border-radius: 6px;
+      font-size: var(--font-size-sm);
+      margin-top: 0.5rem;
+    }
+
+    .info-box i {
+      color: var(--info);
+      margin-right: 0.5rem;
     }
   </style>
 </head>
 <body>
-  <div class="container-fluid">
-    <div class="main-card">
-      <div class="header-section">
-        <a href="/admin/dashboard" class="back-link">
-          <i class="fas fa-arrow-left"></i> กลับหน้าหลัก
-        </a>
-        <h1><i class="fas fa-comments"></i> จัดการตอบคอมเมนต์โพสต์ Facebook</h1>
-        <p>ตั้งค่าระบบตอบคอมเมนต์อัตโนมัติแยกตามเพจและโพสต์</p>
-      </div>
+  <%- include('partials/admin-navbar', { activePage: 'facebook-comment' }) %>
 
-      <div class="content-section">
+  <div class="container mt-4 mb-5">
+    <div class="row justify-content-center">
+      <div class="col-lg-10">
+        <!-- Header Section -->
+        <div class="mb-4">
+          <h2 class="mb-2">
+            <i class="fas fa-comment-dots me-2 text-primary"></i>ตอบคอมเมนต์ Facebook
+          </h2>
+          <p class="text-muted mb-0">
+            ตั้งค่าระบบตอบคอมเมนต์อัตโนมัติแยกตามเพจและโพสต์ ด้วย AI หรือข้อความกำหนดเอง
+          </p>
+        </div>
+
+        <!-- Alerts -->
         <% if (typeof success !== 'undefined' && success) { %>
           <div class="alert alert-success alert-dismissible fade show" role="alert">
-            <i class="fas fa-check-circle"></i> <%= success %>
+            <i class="fas fa-check-circle me-2"></i><%= success %>
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
           </div>
         <% } %>
 
         <% if (typeof error !== 'undefined' && error) { %>
           <div class="alert alert-danger alert-dismissible fade show" role="alert">
-            <i class="fas fa-exclamation-circle"></i> <%= error %>
+            <i class="fas fa-exclamation-circle me-2"></i><%= error %>
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
           </div>
         <% } %>
 
+        <!-- Page Cards -->
         <% if (facebookBots && facebookBots.length > 0) { %>
           <% facebookBots.forEach(function(bot) { %>
-            <div class="page-card">
-              <div class="page-header">
-                <div class="page-info">
+            <div class="page-section">
+              <div class="page-section-header">
+                <div class="page-section-title">
                   <div class="page-icon">
                     <i class="fab fa-facebook-f"></i>
                   </div>
-                  <div class="page-details">
-                    <h3><%= bot.name || bot.pageName || 'Facebook Page' %></h3>
-                    <p>Page ID: <%= bot.pageId || 'ไม่ระบุ' %></p>
+                  <div class="page-info">
+                    <h5><%= bot.name || bot.pageName || 'Facebook Page' %></h5>
+                    <p class="text-muted">Page ID: <%= bot.pageId || 'ไม่ระบุ' %></p>
                   </div>
                 </div>
-                <button class="btn btn-custom" onclick="addPostConfig('<%= bot._id %>', '<%= bot.name || bot.pageName || 'Facebook Page' %>')">
-                  <i class="fas fa-plus"></i> เพิ่มการตั้งค่าโพสต์
+                <button class="btn btn-primary" onclick="addPostConfig('<%= bot._id %>', '<%= bot.name || bot.pageName || 'Facebook Page' %>')">
+                  <i class="fas fa-plus me-2"></i>เพิ่มโพสต์
                 </button>
               </div>
 
@@ -341,25 +334,29 @@
                   <div class="post-item">
                     <div class="post-header">
                       <div>
-                        <div class="post-id">
-                          <i class="fas fa-file-alt"></i> Post ID: <%= config.postId %>
-                        </div>
+                        <span class="post-id-badge">
+                          <i class="fas fa-file-alt me-1"></i><%= config.postId %>
+                        </span>
                       </div>
                       <div>
-                        <span class="post-status <%= config.isActive ? 'status-active' : 'status-inactive' %>">
+                        <span class="status-badge <%= config.isActive ? 'status-active' : 'status-inactive' %>">
                           <%= config.isActive ? '🟢 เปิดใช้งาน' : '🔴 ปิดใช้งาน' %>
                         </span>
                       </div>
                     </div>
 
-                    <div class="post-config">
+                    <div class="config-info">
                       <div class="config-row">
                         <span class="config-label">ประเภทการตอบ:</span>
                         <span class="config-value">
                           <% if (config.replyType === 'custom') { %>
-                            <span class="badge-custom"><i class="fas fa-edit"></i> ข้อความกำหนดเอง</span>
+                            <span class="badge-reply-type badge-custom">
+                              <i class="fas fa-edit"></i>ข้อความกำหนดเอง
+                            </span>
                           <% } else if (config.replyType === 'ai') { %>
-                            <span class="badge-ai"><i class="fas fa-robot"></i> AI ตอบอัตโนมัติ</span>
+                            <span class="badge-reply-type badge-ai">
+                              <i class="fas fa-robot"></i>AI ตอบอัตโนมัติ
+                            </span>
                           <% } %>
                         </span>
                       </div>
@@ -374,12 +371,12 @@
                       <% if (config.replyType === 'ai') { %>
                         <div class="config-row">
                           <span class="config-label">โมเดล AI:</span>
-                          <span class="config-value"><%= config.aiModel || 'ไม่ระบุ' %></span>
+                          <span class="config-value"><code><%= config.aiModel || 'ไม่ระบุ' %></code></span>
                         </div>
                         <% if (config.systemPrompt) { %>
                           <div class="config-row">
                             <span class="config-label">System Prompt:</span>
-                            <span class="config-value"><%= config.systemPrompt.substring(0, 80) %><%= config.systemPrompt.length > 80 ? '...' : '' %></span>
+                            <span class="config-value"><%= config.systemPrompt.substring(0, 120) %><%= config.systemPrompt.length > 120 ? '...' : '' %></span>
                           </div>
                         <% } %>
                       <% } %>
@@ -387,20 +384,20 @@
                       <div class="config-row">
                         <span class="config-label">ดึงเข้าแชท:</span>
                         <span class="config-value">
-                          <%= config.pullToChat ? '✅ ดึงเข้าแชทเสมอ' : '❌ ไม่ดึงเข้าแชท' %>
+                          <%= config.pullToChat ? '✅ ดึงเข้าแชทอัตโนมัติ' : '❌ ไม่ดึงเข้าแชท' %>
                         </span>
                       </div>
                     </div>
 
-                    <div class="mt-3 d-flex gap-2">
-                      <button class="btn btn-edit" onclick="editPostConfig('<%= config._id %>')">
-                        <i class="fas fa-edit"></i> แก้ไข
+                    <div class="post-actions">
+                      <button class="btn btn-post-action btn-edit-post" onclick="editPostConfig('<%= config._id %>')">
+                        <i class="fas fa-edit me-1"></i>แก้ไข
                       </button>
-                      <button class="btn btn-toggle" onclick="togglePostConfig('<%= config._id %>', <%= !config.isActive %>)">
-                        <i class="fas fa-power-off"></i> <%= config.isActive ? 'ปิด' : 'เปิด' %>ใช้งาน
+                      <button class="btn btn-post-action btn-toggle-post" onclick="togglePostConfig('<%= config._id %>', <%= !config.isActive %>)">
+                        <i class="fas fa-power-off me-1"></i><%= config.isActive ? 'ปิด' : 'เปิด' %>ใช้งาน
                       </button>
-                      <button class="btn btn-delete" onclick="deletePostConfig('<%= config._id %>')">
-                        <i class="fas fa-trash"></i> ลบ
+                      <button class="btn btn-post-action btn-delete-post" onclick="deletePostConfig('<%= config._id %>')">
+                        <i class="fas fa-trash me-1"></i>ลบ
                       </button>
                     </div>
                   </div>
@@ -408,19 +405,22 @@
               <% } else { %>
                 <div class="empty-state">
                   <i class="fas fa-inbox"></i>
-                  <p>ยังไม่มีการตั้งค่าสำหรับโพสต์ในเพจนี้</p>
+                  <h6>ยังไม่มีการตั้งค่า</h6>
+                  <p class="mb-0">คลิกปุ่ม "เพิ่มโพสต์" เพื่อเริ่มต้นตั้งค่าการตอบคอมเมนต์</p>
                 </div>
               <% } %>
             </div>
           <% }); %>
         <% } else { %>
-          <div class="empty-state">
-            <i class="fas fa-exclamation-triangle"></i>
-            <h3>ยังไม่มี Facebook Page</h3>
-            <p>กรุณาเพิ่ม Facebook Page ก่อนที่จะตั้งค่าระบบตอบคอมเมนต์</p>
-            <a href="/admin/dashboard" class="btn btn-custom mt-3">
-              <i class="fas fa-plus"></i> ไปเพิ่ม Facebook Page
-            </a>
+          <div class="page-section">
+            <div class="empty-state">
+              <i class="fas fa-exclamation-triangle"></i>
+              <h6>ยังไม่มี Facebook Page</h6>
+              <p class="mb-3">กรุณาเพิ่ม Facebook Page ก่อนที่จะตั้งค่าระบบตอบคอมเมนต์</p>
+              <a href="/admin/dashboard" class="btn btn-primary">
+                <i class="fas fa-plus me-2"></i>ไปเพิ่ม Facebook Page
+              </a>
+            </div>
           </div>
         <% } %>
       </div>
@@ -429,11 +429,11 @@
 
   <!-- Modal: Add/Edit Post Config -->
   <div class="modal fade" id="postConfigModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="modalTitle">
-            <i class="fas fa-cog"></i> เพิ่มการตั้งค่าโพสต์
+            <i class="fas fa-cog me-2"></i>เพิ่มการตั้งค่าโพสต์
           </h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
@@ -448,27 +448,46 @@
             </div>
 
             <div class="mb-3">
-              <label for="postId" class="form-label">Post ID <span class="text-danger">*</span></label>
-              <input type="text" class="form-control" id="postId" name="postId" required placeholder="ระบุ Post ID ที่ต้องการตอบคอมเมนต์">
-              <small class="text-muted">ตัวอย่าง: 123456789_987654321</small>
+              <label for="postId" class="form-label">
+                Post ID <span class="text-danger">*</span>
+              </label>
+              <input type="text" class="form-control" id="postId" name="postId" required
+                     placeholder="ระบุ Post ID ที่ต้องการตอบคอมเมนต์">
+              <small class="text-muted">
+                <i class="fas fa-info-circle"></i> ตัวอย่าง: 123456789_987654321
+              </small>
             </div>
 
             <div class="mb-3">
-              <label class="form-label">ประเภทการตอบ <span class="text-danger">*</span></label>
+              <label class="form-label">
+                ประเภทการตอบ <span class="text-danger">*</span>
+              </label>
 
               <div class="reply-type-card" onclick="selectReplyType('custom')">
                 <input type="radio" name="replyType" value="custom" id="replyTypeCustom" required>
-                <label for="replyTypeCustom" style="cursor: pointer; margin: 0;">
-                  <strong><i class="fas fa-edit"></i> ข้อความกำหนดเอง</strong>
-                  <p class="mb-0 mt-1 text-muted" style="font-size: 0.9rem;">ระบบจะตอบคอมเมนต์ด้วยข้อความที่คุณกำหนดไว้</p>
+                <label for="replyTypeCustom">
+                  <div class="d-flex align-items-start">
+                    <div>
+                      <strong><i class="fas fa-edit me-1"></i>ข้อความกำหนดเอง</strong>
+                      <p class="mb-0 mt-1 text-muted small">
+                        ระบบจะตอบคอมเมนต์ด้วยข้อความที่คุณกำหนดไว้
+                      </p>
+                    </div>
+                  </div>
                 </label>
               </div>
 
               <div class="reply-type-card" onclick="selectReplyType('ai')">
                 <input type="radio" name="replyType" value="ai" id="replyTypeAI" required>
-                <label for="replyTypeAI" style="cursor: pointer; margin: 0;">
-                  <strong><i class="fas fa-robot"></i> AI ตอบอัตโนมัติ</strong>
-                  <p class="mb-0 mt-1 text-muted" style="font-size: 0.9rem;">ให้ AI วิเคราะห์และตอบคอมเมนต์ตาม System Prompt ที่กำหนด</p>
+                <label for="replyTypeAI">
+                  <div class="d-flex align-items-start">
+                    <div>
+                      <strong><i class="fas fa-robot me-1"></i>AI ตอบอัตโนมัติ</strong>
+                      <p class="mb-0 mt-1 text-muted small">
+                        ให้ AI วิเคราะห์และตอบคอมเมนต์ตาม System Prompt ที่กำหนด
+                      </p>
+                    </div>
+                  </div>
                 </label>
               </div>
             </div>
@@ -476,8 +495,14 @@
             <!-- Custom Message Section -->
             <div id="customMessageSection" style="display: none;">
               <div class="mb-3">
-                <label for="customMessage" class="form-label">ข้อความตอบกลับ <span class="text-danger">*</span></label>
-                <textarea class="form-control" id="customMessage" name="customMessage" rows="4" placeholder="ระบุข้อความที่ต้องการตอบคอมเมนต์"></textarea>
+                <label for="customMessage" class="form-label">
+                  ข้อความตอบกลับ <span class="text-danger">*</span>
+                </label>
+                <textarea class="form-control" id="customMessage" name="customMessage" rows="4"
+                          placeholder="ระบุข้อความที่ต้องการตอบคอมเมนต์..."></textarea>
+                <small class="text-muted">
+                  <i class="fas fa-lightbulb"></i> ข้อความนี้จะถูกส่งเป็นคำตอบทุกครั้งที่มีคอมเมนต์ใหม่
+                </small>
               </div>
             </div>
 
@@ -485,7 +510,9 @@
             <div id="aiConfigSection" style="display: none;">
               <div class="ai-config-section">
                 <div class="mb-3">
-                  <label for="aiModel" class="form-label">เลือกโมเดล AI <span class="text-danger">*</span></label>
+                  <label for="aiModel" class="form-label">
+                    เลือกโมเดล AI <span class="text-danger">*</span>
+                  </label>
                   <select class="form-select" id="aiModel" name="aiModel">
                     <option value="">-- เลือกโมเดล --</option>
                     <option value="gpt-4o">GPT-4o (แนะนำ)</option>
@@ -495,46 +522,54 @@
                   </select>
                 </div>
 
-                <div class="mb-3">
-                  <label for="systemPrompt" class="form-label">System Prompt <span class="text-danger">*</span></label>
-                  <textarea class="form-control system-prompt-textarea" id="systemPrompt" name="systemPrompt" rows="6">คุณคือผู้ช่วยตอบคอมเมนต์ Facebook ของร้านค้า
+                <div class="mb-0">
+                  <label for="systemPrompt" class="form-label">
+                    System Prompt <span class="text-danger">*</span>
+                  </label>
+                  <textarea class="form-control system-prompt-textarea" id="systemPrompt" name="systemPrompt" rows="8">คุณคือผู้ช่วยตอบคอมเมนต์ Facebook ของร้านค้า
 - ตอบด้วยน้ำเสียงเป็นกันเอง สุภาพ และมีความเป็นมิตร
 - ให้ข้อมูลที่ถูกต้องและเป็นประโยชน์
 - หากมีคำถามที่ซับซ้อน แนะนำให้ติดต่อทีมงานผ่าน Messenger
 - ตอบสั้นกระชับ ไม่เกิน 2-3 ประโยค
 - ใช้ภาษาไทย และเพิ่ม emoji เล็กน้อยเพื่อความเป็นกันเอง</textarea>
-                  <small class="text-muted">
-                    <i class="fas fa-info-circle"></i> System Prompt จะกำหนดบุคลิกและวิธีการตอบของ AI
-                  </small>
+                  <div class="info-box">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>System Prompt</strong> จะกำหนดบุคลิกและวิธีการตอบของ AI ปรับแต่งให้เหมาะกับธุรกิจของคุณ
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div class="mb-3">
+            <div class="mb-3 mt-3">
               <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" id="pullToChat" name="pullToChat" value="true">
                 <label class="form-check-label" for="pullToChat">
-                  <strong>ดึงผู้ใช้เข้าแชท</strong>
-                  <p class="mb-0 mt-1 text-muted" style="font-size: 0.9rem;">
+                  <strong>ดึงผู้ใช้เข้าแชทอัตโนมัติ</strong>
+                  <p class="mb-0 mt-1 text-muted small">
                     เมื่อมีคนคอมเมนต์ ระบบจะดึงคนนั้นเข้าแชทโดยอัตโนมัติ (ถ้ายังไม่เคยดึง)
                   </p>
                 </label>
               </div>
             </div>
 
-            <div class="mb-3">
+            <div class="mb-0">
               <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" id="isActive" name="isActive" value="true">
                 <label class="form-check-label" for="isActive">
-                  <strong>เปิดใช้งาน</strong>
+                  <strong>เปิดใช้งานทันที</strong>
+                  <p class="mb-0 mt-1 text-muted small">
+                    ระบบจะเริ่มตอบคอมเมนต์ทันทีหลังจากบันทึก (แนะนำให้ตรวจสอบการตั้งค่าก่อนเปิดใช้งาน)
+                  </p>
                 </label>
               </div>
             </div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-            <button type="submit" class="btn btn-custom">
-              <i class="fas fa-save"></i> บันทึก
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+              <i class="fas fa-times me-1"></i>ยกเลิก
+            </button>
+            <button type="submit" class="btn btn-primary">
+              <i class="fas fa-save me-1"></i>บันทึกการตั้งค่า
             </button>
           </div>
         </form>
@@ -578,7 +613,7 @@
     }
 
     function addPostConfig(pageId, pageName) {
-      document.getElementById('modalTitle').innerHTML = '<i class="fas fa-plus"></i> เพิ่มการตั้งค่าโพสต์';
+      document.getElementById('modalTitle').innerHTML = '<i class="fas fa-plus me-2"></i>เพิ่มการตั้งค่าโพสต์';
       document.getElementById('postConfigForm').action = '/admin/facebook-comment/create';
       document.getElementById('postConfigForm').reset();
       document.getElementById('configId').value = '';
@@ -587,6 +622,15 @@
       document.getElementById('customMessageSection').style.display = 'none';
       document.getElementById('aiConfigSection').style.display = 'none';
       document.querySelectorAll('.reply-type-card').forEach(card => card.classList.remove('active'));
+
+      // Reset system prompt to default
+      document.getElementById('systemPrompt').value = `คุณคือผู้ช่วยตอบคอมเมนต์ Facebook ของร้านค้า
+- ตอบด้วยน้ำเสียงเป็นกันเอง สุภาพ และมีความเป็นมิตร
+- ให้ข้อมูลที่ถูกต้องและเป็นประโยชน์
+- หากมีคำถามที่ซับซ้อน แนะนำให้ติดต่อทีมงานผ่าน Messenger
+- ตอบสั้นกระชับ ไม่เกิน 2-3 ประโยค
+- ใช้ภาษาไทย และเพิ่ม emoji เล็กน้อยเพื่อความเป็นกันเอง`;
+
       modal.show();
     }
 
@@ -595,7 +639,7 @@
         const response = await fetch(`/admin/facebook-comment/get/${configId}`);
         const config = await response.json();
 
-        document.getElementById('modalTitle').innerHTML = '<i class="fas fa-edit"></i> แก้ไขการตั้งค่าโพสต์';
+        document.getElementById('modalTitle').innerHTML = '<i class="fas fa-edit me-2"></i>แก้ไขการตั้งค่าโพสต์';
         document.getElementById('postConfigForm').action = '/admin/facebook-comment/update';
         document.getElementById('configId').value = config._id;
         document.getElementById('pageId').value = config.pageId;
