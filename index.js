@@ -4424,7 +4424,21 @@ async function getInstructions() {
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection("instructions");
-  return coll.find({}).sort({ order: 1, createdAt: 1 }).toArray();
+  const cursor = coll.find({}).sort({ order: 1, createdAt: 1 });
+  const instructions = await cursor.toArray();
+  return instructions.map((instruction) => {
+    const id = instruction?._id;
+    const stringId =
+      id && typeof id.toHexString === "function"
+        ? id.toHexString()
+        : id && typeof id.toString === "function"
+          ? id.toString()
+          : String(id || "");
+    return {
+      ...instruction,
+      _id: stringId,
+    };
+  });
 }
 
 function generateInstructionId() {
