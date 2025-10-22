@@ -1500,6 +1500,7 @@
         // ===== ENHANCED CONFIRM DIALOG =====
         function showConfirmDialog(title, message) {
             return new Promise((resolve) => {
+                let hasResolved = false;
                 // สร้าง modal dialog
                 const confirmModal = document.createElement('div');
                 confirmModal.className = 'modal fade';
@@ -1533,13 +1534,18 @@
 
                 // Event listeners
                 document.getElementById('confirmButton').addEventListener('click', () => {
+                    if (hasResolved) return;
+                    hasResolved = true;
                     modal.hide();
                     resolve(true);
                 });
 
                 confirmModal.addEventListener('hidden.bs.modal', () => {
                     confirmModal.remove();
-                    resolve(false);
+                    if (!hasResolved) {
+                        hasResolved = true;
+                        resolve(false);
+                    }
                 });
 
                 modal.show();
