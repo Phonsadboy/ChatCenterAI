@@ -7842,7 +7842,23 @@ app.delete("/admin/instructions/:id", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions");
 
-    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    const queryVariants = [];
+    if (ObjectId.isValid(id)) {
+      queryVariants.push({ _id: new ObjectId(id) });
+    }
+    queryVariants.push({ instructionId: id });
+
+    let result = { deletedCount: 0 };
+    if (queryVariants.length === 1) {
+      result = await coll.deleteOne(queryVariants[0]);
+    } else {
+      result = await coll.deleteOne({ $or: queryVariants });
+    }
+
+    if (result.deletedCount === 0 && !ObjectId.isValid(id)) {
+      // รองรับกรณีที่ _id ถูกเก็บเป็นสตริง
+      result = await coll.deleteOne({ _id: id });
+    }
 
     if (result.deletedCount > 0) {
       res.json({ success: true, message: "ลบข้อมูลเรียบร้อยแล้ว" });
@@ -7850,6 +7866,7 @@ app.delete("/admin/instructions/:id", async (req, res) => {
       res.json({ success: false, error: "ไม่พบข้อมูลที่ต้องการลบ" });
     }
   } catch (err) {
+    console.error("Delete instruction error:", err);
     res.json({ success: false, error: "ไม่สามารถลบข้อมูลได้" });
   }
 });
