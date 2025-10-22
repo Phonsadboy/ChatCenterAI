@@ -99,7 +99,7 @@
                                 <p class="mb-0"><i class="fas fa-info-circle me-2"></i> สถานะนี้ควบคุมการทำงานของ AI ในระบบทั้งหมด คลิกสวิตช์เพื่อเปิด/ปิดการทำงาน</p>
                             </div>
                         </div>
-                        
+
                         <div class="d-flex justify-content-between mt-4">
                             <h5>จัดการ AI</h5>
                             <div>
@@ -139,7 +139,7 @@
                                 </div>
                             </div>
                         </div>
-                        
+
                         <div id="instructionsList" class="mt-3">
                             <div class="row g-2 align-items-center mb-3" id="instructionFilters">
                                 <div class="col-12 col-lg-6">
@@ -218,7 +218,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="col-lg-4">
                 <div class="card">
                     <div class="card-header">
@@ -236,7 +236,7 @@
                                 <i class="fas fa-chart-line me-2"></i> ภาพรวมสถานะติดตาม
                             </a>
                         </div>
-                        
+
                         <div class="mt-4">
                             <h6 class="mb-3">คำสั่งพิเศษสำหรับลูกค้า</h6>
                             <div class="bg-light p-3 rounded">
@@ -245,7 +245,7 @@
                                 </div>
                             </div>
                         </div>
-                        
+
                         <!-- คำสั่งสำหรับแอดมิน (ยกเลิกการใช้งานจริง) -->
                     </div>
                 </div>
@@ -270,20 +270,20 @@
                                 <option value="table">ตาราง</option>
                             </select>
                         </div>
-                        
+
                         <div class="mb-3">
                             <label class="form-label">หัวข้อ (ถ้ามี)</label>
                             <input type="text" name="title" class="form-control" placeholder="ระบุหัวข้อของข้อมูล">
                         </div>
-                        
+
                         <div id="textEditor">
                             <div class="mb-3">
                                 <label class="form-label">เนื้อหา</label>
-                                <textarea name="content" rows="8" class="form-control" 
+                                <textarea name="content" rows="8" class="form-control"
                                     placeholder="ใส่เนื้อหาข้อความที่จะให้ AI รับรู้"></textarea>
                             </div>
                         </div>
-                        
+
                         <div id="tableEditor" style="display: none;">
                             <div class="mb-3">
                                 <label class="form-label">คอลัมน์และข้อมูลตาราง</label>
@@ -316,7 +316,7 @@
                                 <input type="hidden" name="tableData" id="tableDataInput">
                             </div>
                         </div>
-                        
+
                         <div class="text-end">
                             <button type="button" class="btn btn-light" data-bs-dismiss="modal">ยกเลิก</button>
                             <button type="submit" class="btn btn-primary">บันทึก</button>
@@ -420,7 +420,7 @@
                     <form id="excelUploadForm" enctype="multipart/form-data">
                         <div class="mb-3">
                             <label class="form-label">เลือกไฟล์ Excel (.xlsx หรือ .xls)</label>
-                            <input type="file" id="excelFileInput" name="excelFile" class="form-control" 
+                            <input type="file" id="excelFileInput" name="excelFile" class="form-control"
                                    accept=".xlsx,.xls" required>
                             <div class="form-text">
                                 ขนาดไฟล์ไม่เกิน 10MB
@@ -429,7 +429,7 @@
 
                         <div id="uploadProgress" class="mb-3" style="display: none;">
                             <div class="progress">
-                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                <div class="progress-bar progress-bar-striped progress-bar-animated"
                                      role="progressbar" style="width: 0%"></div>
                             </div>
                             <small class="text-muted">กำลังประมวลผล...</small>
@@ -597,8 +597,8 @@
                 animation: slideInRight 0.3s ease-out;
             `;
 
-            const icon = type === 'error' ? 'fas fa-exclamation-circle' : 
-                        type === 'success' ? 'fas fa-check-circle' : 
+            const icon = type === 'error' ? 'fas fa-exclamation-circle' :
+                        type === 'success' ? 'fas fa-check-circle' :
                         'fas fa-info-circle';
 
             notification.innerHTML = `
@@ -887,7 +887,7 @@
             try {
                 const response = await fetch('/admin/instructions/list');
                 const data = await response.json();
-                
+
                 if (data.success) {
                     setInstructionData(data.instructions);
                     if (!silent) {
@@ -1283,13 +1283,13 @@
 
         document.addEventListener('DOMContentLoaded', function() {
             console.log('Dashboard loaded - Setting up enhanced functionality...');
-            
+
             // เพิ่ม CSS animations
             addDashboardStyles();
-            
+
             // Setup enhanced event listeners
             setupInstructionEventListeners();
-            
+
             // Toggle type selector
             const typeSelect = document.getElementById('typeSelect');
             const textEditor = document.getElementById('textEditor');
@@ -1366,13 +1366,13 @@
             if (previewBtn) {
                 previewBtn.addEventListener('click', async function() {
                     const loadingOverlay = showLoadingOverlay('กำลังเตรียมตัวอย่าง...');
-                    
+
                     try {
                         const response = await fetch('/admin/instructions/preview');
                         const data = await response.json();
-                        
+
                         hideLoadingOverlay();
-                        
+
                         if (data.success) {
                             const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
                             previewModal.show();
@@ -1396,21 +1396,21 @@
                 toggleAI.addEventListener('change', async function() {
                     const enabled = this.checked;
                     const statusLabel = document.getElementById('statusLabel');
-                    
+
                     // แสดง loading state
                     const originalText = statusLabel.textContent;
                     statusLabel.textContent = 'กำลังอัพเดต...';
                     this.disabled = true;
-                    
+
                     try {
                         const response = await fetch('/admin/ai-toggle', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ enabled })
                         });
-                        
+
                         const data = await response.json();
-                        
+
                         if (data.success) {
                             statusLabel.textContent = enabled ? 'ใช้งาน' : 'ปิดใช้งาน';
                             statusLabel.className = `badge ${enabled ? 'bg-success' : 'bg-danger'}`;
@@ -1530,7 +1530,7 @@
 
                 document.body.appendChild(confirmModal);
                 const modal = new bootstrap.Modal(confirmModal);
-                
+
                 // Event listeners
                 document.getElementById('confirmButton').addEventListener('click', () => {
                     modal.hide();
@@ -1627,15 +1627,15 @@
                 btn.addEventListener('click', async function(e) {
                     e.preventDefault();
                     const instructionId = this.getAttribute('data-id');
-                    
+
                     if (await showConfirmDialog('คุณต้องการลบข้อมูลนี้ใช่หรือไม่?', 'การลบจะไม่สามารถกู้คืนได้')) {
                         const loadingOverlay = showLoadingOverlay('กำลังลบข้อมูล...');
 
                         try {
-                            const response = await fetch(`/admin/instructions/${instructionId}/delete`, {
-                                method: 'POST'
+                            const response = await fetch(`/admin/instructions/${instructionId}`, {
+                                method: 'DELETE'
                             });
-                            
+
                             const data = await response.json();
                             hideLoadingOverlay();
 
@@ -1654,26 +1654,26 @@
                 });
             });
 
-            // Enhanced Move functionality  
+            // Enhanced Move functionality
             document.querySelectorAll('.move-instruction').forEach(btn => {
                 btn.addEventListener('click', async function(e) {
                     e.preventDefault();
                     const instructionId = this.getAttribute('data-id');
                     const direction = this.getAttribute('data-direction');
-                    
+
                     const originalText = this.innerHTML;
                     this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
                     this.disabled = true;
-                    
+
                     try {
                         const response = await fetch('/admin/instructions/reorder', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ instructionId, direction })
                         });
-                        
+
                         const data = await response.json();
-                        
+
                         if (data.success) {
                 await refreshInstructionsList({ silent: true });
                             showNotification(`เลื่อน${direction === 'up' ? 'ขึ้น' : 'ลง'}เรียบร้อยแล้ว`, 'success', 2000);
@@ -1694,13 +1694,13 @@
                 btn.addEventListener('click', async function() {
                     const instructionId = this.getAttribute('data-id');
                     const loadingOverlay = showLoadingOverlay('กำลังโหลดข้อมูล JSON...');
-                    
+
                     try {
                         const response = await fetch(`/admin/instructions/${instructionId}/json`);
                         const data = await response.json();
-                        
+
                         hideLoadingOverlay();
-                        
+
                         if (data.success) {
                             document.getElementById('jsonTitle').textContent = data.title || 'ข้อมูลตาราง';
                             document.getElementById('jsonContent').textContent = JSON.stringify(data.tableData, null, 2);
@@ -1886,7 +1886,7 @@
         // ฟังก์ชันโหลดรายการ instruction library
         async function loadLibraryList() {
             const libraryListContainer = document.getElementById('libraryList');
-            
+
             // แสดง loading state
             libraryListContainer.innerHTML = `
                 <div class="text-center py-3">
@@ -1900,7 +1900,7 @@
             try {
                 const response = await fetch('/admin/instructions/library');
                 const data = await response.json();
-                
+
                 if (data.success) {
                     await loadBotCaches(true);
                     displayLibraryList(data.libraries);
@@ -1926,7 +1926,7 @@
         // ฟังก์ชันแสดงรายการ instruction library
         function displayLibraryList(libraries) {
             const libraryListContainer = document.getElementById('libraryList');
-            
+
             if (libraries.length === 0) {
                 libraryListContainer.innerHTML = `
                     <div class="text-center py-4 bg-light rounded">
@@ -2110,7 +2110,7 @@
         async function createNewLibrary() {
             const createBtn = document.getElementById('createLibraryBtn');
             const originalText = createBtn.innerHTML;
-            
+
             createBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> กำลังสร้าง...';
             createBtn.disabled = true;
 
@@ -2123,9 +2123,9 @@
                         description: `คลัง instruction ที่สร้างด้วยตนเองเมื่อวันที่ ${new Date().toLocaleDateString('th-TH')}`
                     })
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (data.success) {
                     showNotification(data.message, 'success');
                     // รีโหลดรายการ library
@@ -2149,7 +2149,7 @@
             const confirmBtn = document.getElementById('confirmRestoreBtn');
             const originalText = confirmBtn.innerHTML;
             const createLibraryBefore = document.getElementById('createBackupBeforeRestore').checked;
-            
+
             confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> กำลังคืนค่า...';
             confirmBtn.disabled = true;
 
@@ -2159,19 +2159,19 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ createLibraryBefore })
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (data.success) {
                     showNotification(data.message, 'success');
-                    
+
                     // ปิด modal และรีโหลดหน้า
                     const restoreModal = bootstrap.Modal.getInstance(document.getElementById('restoreConfirmModal'));
                     restoreModal.hide();
-                    
+
                     const backupModal = bootstrap.Modal.getInstance(document.getElementById('backupModal'));
                     backupModal.hide();
-                    
+
                     // รีโหลดหน้าหลังจาก 2 วินาที
                     setTimeout(() => {
                         window.location.reload();
@@ -2232,7 +2232,7 @@
             try {
                 const response = await fetch('/admin/chat/unread-count');
                 const data = await response.json();
-                
+
                 if (data.success && data.totalUnread > 0) {
                     const badge = document.getElementById('chatNotificationBadge');
                     badge.textContent = data.totalUnread;
@@ -2250,4 +2250,4 @@
         setInterval(updateUnreadCount, 30000);
     </script>
 </body>
-</html> 
+</html>
