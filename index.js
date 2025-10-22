@@ -3692,12 +3692,56 @@ async function handleFacebookComment(pageId, postId, commentData, accessToken) {
 // ------------------------
 // Start server
 // ------------------------
+// Migration: แปลง label เก่า (ภาษาอังกฤษ) ให้มี slug
+async function migrateInstructionAssetsAddSlug() {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instruction_assets");
+
+    // หา assets ที่ยังไม่มี slug
+    const assetsWithoutSlug = await coll
+      .find({ slug: { $exists: false } })
+      .toArray();
+
+    if (assetsWithoutSlug.length === 0) {
+      console.log("[Migration] ไม่มี assets ที่ต้อง migrate");
+      return;
+    }
+
+    console.log(
+      `[Migration] กำลัง migrate ${assetsWithoutSlug.length} assets...`,
+    );
+
+    for (const asset of assetsWithoutSlug) {
+      const label = asset.label || "";
+      // ถ้า label เดิมเป็นภาษาอังกฤษอยู่แล้ว ให้ใช้เป็น slug ได้เลย
+      const slug = /^[a-z0-9_-]+$/i.test(label)
+        ? label
+        : generateSlugFromLabel(label);
+
+      await coll.updateOne({ _id: asset._id }, { $set: { slug } });
+    }
+
+    console.log(
+      `[Migration] migrate assets สำเร็จ: ${assetsWithoutSlug.length} รายการ`,
+    );
+  } catch (err) {
+    console.error("[Migration] ข้อผิดพลาดในการ migrate assets:", err);
+  }
+}
+
 server.listen(PORT, async () => {
   console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
   try {
     console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
     await connectDB();
     console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
+
+    // รัน migration อัตโนมัติ
+    console.log(`[LOG] กำลังตรวจสอบและ migrate ข้อมูล...`);
+    await migrateInstructionAssetsAddSlug();
+    console.log(`[LOG] Migration เสร็จสิ้น`);
 
     console.log(`[LOG] กำลังดึงข้อมูล instructions จาก Google Doc...`);
     await fetchGoogleDocInstructions();
@@ -4852,9 +4896,9 @@ async function getAssetsInstructionsText() {
   if (!assets || assets.length === 0) return "";
   const lines = [];
   lines.push(
-    'การแทรกรูปภาพในการตอบ: ใช้แท็ก #[IMAGE:<label>] ในตำแหน่งที่ต้องการ เช่น ตัวอย่าง: "ยอดชำระ 500 บาท #[IMAGE:qr-code] ขอบคุณค่ะ" ระบบจะแยกเป็นข้อความ-รูปภาพ-ข้อความโดยอัตโนมัติ',
+    'การแทรกรูปภาพในการตอบ: ใช้แท็ก #[IMAGE:<ชื่อรูปภาพ>] ในตำแหน่งที่ต้องการ เช่น ตัวอย่าง: "ยอดชำระ 500 บาท #[IMAGE:QR Code ชำระเงิน] ขอบคุณค่ะ" หรือ "นี่คือสินค้าของเรา #[IMAGE:สินค้า A] ราคา 199 บาท" ระบบจะแยกเป็นข้อความ-รูปภาพ-ข้อความโดยอัตโนมัติ',
   );
-  lines.push("รายการรูปที่สามารถใช้ได้ (label: คำอธิบาย):");
+  lines.push("รายการรูปที่สามารถใช้ได้ (ชื่อรูปภาพ: คำอธิบาย):");
   for (const a of assets) {
     const label = a.label;
     const desc = a.description || a.alt || "";
@@ -5971,7 +6015,13 @@ async function readInstructionAssetBuffer(seg) {
     const coll = db.collection("instruction_assets");
 
     if (label) {
+      // ค้นหาด้วย label ก่อน (รองรับทั้งภาษาไทยและอังกฤษ)
       assetDoc = await coll.findOne({ label });
+
+      // ถ้าไม่เจอ ลองค้นหาด้วย slug (กรณีที่ส่ง slug มาแทน label)
+      if (!assetDoc) {
+        assetDoc = await coll.findOne({ slug: label });
+      }
     }
     if (!assetDoc && requestedFileName) {
       assetDoc = await coll.findOne({
@@ -7677,6 +7727,74 @@ app.get("/admin/instructions/assets", async (req, res) => {
   }
 });
 
+// Helper: Generate slug from Thai text
+function generateSlugFromLabel(label) {
+  // แผนที่แปลงคำภาษาไทยที่ใช้บ่อย -> ภาษาอังกฤษ
+  const thaiToEng = {
+    สินค้า: "product",
+    ผลิตภัณฑ์: "product",
+    บริการ: "service",
+    เซอร์วิส: "service",
+    ราคา: "price",
+    ค่าใช้จ่าย: "price",
+    โปรโมชั่น: "promotion",
+    โปรโมชัน: "promotion",
+    ติดต่อ: "contact",
+    ติดต่อเรา: "contact",
+    ชำระเงิน: "payment",
+    จ่ายเงิน: "payment",
+    จัดส่ง: "delivery",
+    ส่งของ: "delivery",
+    คิวอาร์: "qr",
+    คิวอาร์โค้ด: "qr-code",
+    โค้ด: "code",
+    รหัส: "code",
+    แคตตาล็อก: "catalog",
+    แคตตาล็อค: "catalog",
+    เมนู: "menu",
+    รายการ: "menu",
+    แผนที่: "map",
+    ตำแหน่ง: "location",
+    เวลา: "time",
+    เปิดปิด: "hours",
+    ส่วนลด: "discount",
+    ลดราคา: "discount",
+  };
+
+  let slug = label.toLowerCase().trim();
+
+  // แทนที่คำภาษาไทยด้วยภาษาอังกฤษ
+  Object.keys(thaiToEng).forEach((thai) => {
+    slug = slug.replace(new RegExp(thai, "g"), thaiToEng[thai]);
+  });
+
+  // แปลงตัวเลขไทยเป็นอารบิก
+  const thaiDigits = ["๐", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙"];
+  thaiDigits.forEach((digit, index) => {
+    slug = slug.replace(new RegExp(digit, "g"), index.toString());
+  });
+
+  // ลบภาษาไทยที่เหลือทั้งหมด
+  slug = slug.replace(/[ก-๙]/g, "");
+
+  // แปลง space และตัวอักษรพิเศษเป็น dash
+  slug = slug.replace(/\s+/g, "-");
+  slug = slug.replace(/[^a-z0-9_-]/g, "-");
+
+  // ลบ dash ซ้ำ
+  slug = slug.replace(/-+/g, "-");
+
+  // ตัด dash หน้า-หลัง
+  slug = slug.replace(/^-+|-+$/g, "");
+
+  // ถ้าว่างเปล่า ให้สร้างจาก timestamp
+  if (!slug) {
+    slug = "asset-" + Date.now();
+  }
+
+  return slug;
+}
+
 // Upload a new instruction asset
 app.post(
   "/admin/instructions/assets",
@@ -7689,11 +7807,16 @@ app.post(
       const overwrite =
         String(req.body.overwrite || "").toLowerCase() === "true";
 
-      if (!label || !/^[a-z0-9_-]+$/i.test(label)) {
+      // ตรวจสอบว่ามี label หรือไม่
+      if (!label) {
         return res
           .status(400)
-          .json({ success: false, error: "label ไม่ถูกต้อง (a-z, 0-9, -, _)" });
+          .json({ success: false, error: "กรุณาระบุชื่อ Label" });
       }
+
+      // สร้าง slug จาก label (รองรับภาษาไทย)
+      const slug = generateSlugFromLabel(label);
+
       if (!req.file) {
         return res
           .status(400)
@@ -7722,8 +7845,8 @@ app.post(
         .update(optimized)
         .digest("hex")
         .slice(0, 16);
-      const fileName = `${label}.jpg`;
-      const thumbName = `${label}_thumb.jpg`;
+      const fileName = `${slug}.jpg`;
+      const thumbName = `${slug}_thumb.jpg`;
 
       const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
       const url = `${urlBase}/assets/instructions/${fileName}`;
@@ -7747,7 +7870,7 @@ app.post(
           { id: existing.fileId },
           { id: existing.thumbFileId },
           { filename: existing.fileName },
-          { filename: existing.thumbFileName || `${label}_thumb.jpg` },
+          { filename: existing.thumbFileName || `${existing.slug}_thumb.jpg` },
         ]);
       }
 
@@ -7756,6 +7879,7 @@ app.post(
           contentType: "image/jpeg",
           metadata: {
             label,
+            slug,
             type: "original",
             width: metadata.width || null,
             height: metadata.height || null,
@@ -7763,12 +7887,13 @@ app.post(
         }),
         uploadBufferToGridFS(bucket, thumbName, thumb, {
           contentType: "image/jpeg",
-          metadata: { label, type: "thumb" },
+          metadata: { label, slug, type: "thumb" },
         }),
       ]);
 
       const doc = {
         label,
+        slug,
         fileName,
         thumbFileName: thumbName,
         fileId,

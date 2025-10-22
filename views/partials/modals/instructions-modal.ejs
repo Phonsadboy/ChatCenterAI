@@ -35,17 +35,15 @@
                                 <input type="file" class="form-control" id="instructionAssetFile" accept="image/*">
                             </div>
                             <div class="mb-2">
-                                <label class="form-label">Label (ใช้อ้างอิงใน AI)</label>
-                                <input type="text" class="form-control" id="instructionAssetLabel" placeholder="เช่น qr-code, product-a">
-                                <div class="form-text">รูปแบบที่แนะนำ: a-z, 0-9, -, _</div>
-                            </div>
-                            <div class="mb-2">
-                                <label class="form-label">Alt Text (สำหรับผู้ใช้)</label>
-                                <input type="text" class="form-control" id="instructionAssetAlt" placeholder="ข้อความอธิบายรูปสำหรับผู้ใช้">
+                                <label class="form-label">ชื่อรูปภาพ (ใช้อ้างอิงใน AI)</label>
+                                <input type="text" class="form-control" id="instructionAssetLabel" placeholder="เช่น สินค้า A, QR Code ชำระเงิน, เมนูอาหาร">
+                                <div class="form-text">
+                                    <i class="fas fa-info-circle me-1"></i>ใช้ภาษาไทยได้ ระบบจะแปลงเป็น slug อัตโนมัติ
+                                </div>
                             </div>
                             <div class="mb-2">
                                 <label class="form-label">คำอธิบายสำหรับ AI</label>
-                                <textarea class="form-control" id="instructionAssetDescription" rows="2" placeholder="คำอธิบายรูป เพื่อให้ AI เข้าใจว่าใช้ในกรณีใด"></textarea>
+                                <textarea class="form-control" id="instructionAssetDescription" rows="3" placeholder="คำอธิบายรูป เพื่อให้ AI เข้าใจว่าใช้ในกรณีใด เช่น 'ใช้เมื่อลูกค้าถามเกี่ยวกับสินค้า A' หรือ 'แสดงเมื่อลูกค้าต้องการชำระเงิน'"></textarea>
                             </div>
                             <div class="form-check mb-3">
                                 <input class="form-check-input" type="checkbox" id="assetOverwrite">
@@ -59,7 +57,8 @@
                                 </button>
                             </div>
                             <div class="small text-muted mt-2">
-                                ใช้ในข้อความ AI ด้วยรูปแบบ: <code>#[IMAGE:&lt;label&gt;]</code>
+                                <i class="fas fa-lightbulb me-1"></i>ใช้ในข้อความ AI ด้วยรูปแบบ: <code>#[IMAGE:ชื่อรูปภาพ]</code><br>
+                                <span class="small">ตัวอย่าง: <code>#[IMAGE:สินค้า A]</code> หรือ <code>#[IMAGE:QR Code ชำระเงิน]</code></span>
                             </div>
                         </div>
                     </div>
@@ -68,7 +67,7 @@
                         <div id="instructionAssetsList" class="row g-2" style="max-height: 420px; overflow-y: auto;"></div>
                     </div>
                 </div>
-                
+
                 <div class="mt-3">
                     <h6><i class="fas fa-info-circle me-2"></i>คำแนะนำ</h6>
                     <ul class="text-muted small">
@@ -76,7 +75,7 @@
                         <li>เลือก instruction ที่ต้องการใช้ใน Line Bot นี้</li>
                         <li>สามารถเปลี่ยนการเลือกใช้ได้ตลอดเวลา</li>
                         <li>การเปลี่ยนแปลงจะมีผลทันทีหลังจากบันทึก</li>
-                        <li>สำหรับรูปภาพ ให้แนบในส่วนด้านบน และอ้างอิงด้วย <code>#[IMAGE:label]</code> ในข้อความ AI</li>
+                        <li>สำหรับรูปภาพ ให้แนบในส่วนด้านบน และอ้างอิงด้วย <code>#[IMAGE:ชื่อรูปภาพ]</code> ในข้อความ AI (ใช้ภาษาไทยได้)</li>
                     </ul>
                 </div>
             </div>
