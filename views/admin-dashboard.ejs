@@ -1630,12 +1630,32 @@
         function setupInstructionEventListeners() {
             // Enhanced Delete functionality
             document.querySelectorAll('.delete-instruction').forEach(btn => {
-                btn.addEventListener('click', async function(e) {
+                btn.addEventListener('click', function(e) {
                     e.preventDefault();
                     const instructionId = this.getAttribute('data-id');
 
-                    if (await showConfirmDialog('คุณต้องการลบข้อมูลนี้ใช่หรือไม่?', 'การลบจะไม่สามารถกู้คืนได้')) {
+                    // ใช้ modal ที่มีอยู่แล้วในหน้า
+                    const deleteModal = document.getElementById('deleteModal');
+                    const deleteForm = document.getElementById('deleteForm');
+
+                    if (!deleteModal || !deleteForm) {
+                        console.error('Delete modal not found');
+                        return;
+                    }
+
+                    // ตั้งค่า action ของ form
+                    deleteForm.action = `/admin/instructions/${instructionId}`;
+
+                    // แสดง modal
+                    const modal = new bootstrap.Modal(deleteModal);
+                    modal.show();
+
+                    // จัดการการ submit form
+                    deleteForm.onsubmit = async function(event) {
+                        event.preventDefault();
+
                         const loadingOverlay = showLoadingOverlay('กำลังลบข้อมูล...');
+                        modal.hide();
 
                         try {
                             const response = await fetch(`/admin/instructions/${instructionId}`, {
@@ -1656,7 +1676,7 @@
                             hideLoadingOverlay();
                             showNotification('เกิดข้อผิดพลาดในการลบข้อมูล', 'error');
                         }
-                    }
+                    };
                 });
             });
 
