@@ -7842,25 +7842,23 @@ app.delete("/admin/instructions/:id", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions");
 
-    const queryVariants = [];
+    const deleteQueries = [];
     if (ObjectId.isValid(id)) {
-      queryVariants.push({ _id: new ObjectId(id) });
+      deleteQueries.push({ _id: new ObjectId(id) });
     }
-    queryVariants.push({ instructionId: id });
+    deleteQueries.push({ _id: id }); // กรณีที่ _id ถูกเก็บเป็นสตริง
+    deleteQueries.push({ instructionId: id });
 
-    let result = { deletedCount: 0 };
-    if (queryVariants.length === 1) {
-      result = await coll.deleteOne(queryVariants[0]);
-    } else {
-      result = await coll.deleteOne({ $or: queryVariants });
-    }
-
-    if (result.deletedCount === 0 && !ObjectId.isValid(id)) {
-      // รองรับกรณีที่ _id ถูกเก็บเป็นสตริง
-      result = await coll.deleteOne({ _id: id });
+    let deleted = 0;
+    for (const condition of deleteQueries) {
+      const result = await coll.deleteOne(condition);
+      if (result.deletedCount > 0) {
+        deleted = result.deletedCount;
+        break;
+      }
     }
 
-    if (result.deletedCount > 0) {
+    if (deleted > 0) {
       res.json({ success: true, message: "ลบข้อมูลเรียบร้อยแล้ว" });
     } else {
       res.json({ success: false, error: "ไม่พบข้อมูลที่ต้องการลบ" });
