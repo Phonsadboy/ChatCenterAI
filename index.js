@@ -97,6 +97,11 @@ app.use(
           "https://cdnjs.cloudflare.com",
           "https://fonts.gstatic.com",
         ],
+        connectSrc: [
+          "'self'",
+          "https://cdn.jsdelivr.net",
+          "https://cdnjs.cloudflare.com",
+        ],
       },
     },
   }),
@@ -5250,12 +5255,10 @@ app.post(
       });
     } catch (error) {
       console.error("[Excel] ข้อผิดพลาดในการดูตัวอย่าง:", error);
-      res
-        .status(400)
-        .json({
-          success: false,
-          error: "ไม่สามารถดูตัวอย่างไฟล์ Excel ได้: " + error.message,
-        });
+      res.status(400).json({
+        success: false,
+        error: "ไม่สามารถดูตัวอย่างไฟล์ Excel ได้: " + error.message,
+      });
     }
   },
 );
@@ -7104,12 +7107,10 @@ app.get(
       res.json({ success: true, instruction: payload });
     } catch (err) {
       console.error("Error fetching instruction version detail:", err);
-      res
-        .status(500)
-        .json({
-          success: false,
-          error: "ไม่สามารถดึงรายละเอียด instruction ได้",
-        });
+      res.status(500).json({
+        success: false,
+        error: "ไม่สามารถดึงรายละเอียด instruction ได้",
+      });
     }
   },
 );
@@ -7385,13 +7386,11 @@ app.get("/admin/instructions/export/json", async (req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.send(JSON.stringify(payload, null, 2));
   } catch (err) {
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: "ไม่สามารถส่งออกข้อมูล JSON ได้",
-        details: err.message,
-      });
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถส่งออกข้อมูล JSON ได้",
+      details: err.message,
+    });
   }
 });
 
@@ -7417,13 +7416,11 @@ app.get("/admin/instructions/export/markdown", async (req, res) => {
     res.setHeader("Content-Type", "text/markdown; charset=utf-8");
     res.send(markdown);
   } catch (err) {
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: "ไม่สามารถส่งออกข้อมูล Markdown ได้",
-        details: err.message,
-      });
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถส่งออกข้อมูล Markdown ได้",
+      details: err.message,
+    });
   }
 });
 
@@ -7521,13 +7518,11 @@ app.get("/admin/instructions/export/excel", async (req, res) => {
     );
     res.send(buffer);
   } catch (err) {
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: "ไม่สามารถส่งออกไฟล์ Excel ได้",
-        details: err.message,
-      });
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถส่งออกไฟล์ Excel ได้",
+      details: err.message,
+    });
   }
 });
 
@@ -7727,12 +7722,10 @@ app.post(
 
       const existing = await coll.findOne({ label });
       if (existing && !overwrite) {
-        return res
-          .status(409)
-          .json({
-            success: false,
-            error: "label นี้มีอยู่แล้ว หากต้องการแทนที่ให้ส่ง overwrite=true",
-          });
+        return res.status(409).json({
+          success: false,
+          error: "label นี้มีอยู่แล้ว หากต้องการแทนที่ให้ส่ง overwrite=true",
+        });
       }
 
       if (existing) {
@@ -7792,12 +7785,10 @@ app.post(
       });
     } catch (err) {
       console.error("[Assets] upload error:", err);
-      res
-        .status(400)
-        .json({
-          success: false,
-          error: err.message || "อัพโหลดรูปภาพไม่สำเร็จ",
-        });
+      res.status(400).json({
+        success: false,
+        error: err.message || "อัพโหลดรูปภาพไม่สำเร็จ",
+      });
     }
   },
 );
@@ -8379,12 +8370,10 @@ app.post(
       res.json({ success: true, assets });
     } catch (error) {
       console.error("[FollowUp] อัพโหลดรูปภาพไม่สำเร็จ:", error);
-      res
-        .status(400)
-        .json({
-          success: false,
-          error: error.message || "อัพโหลดรูปภาพไม่สำเร็จ",
-        });
+      res.status(400).json({
+        success: false,
+        error: error.message || "อัพโหลดรูปภาพไม่สำเร็จ",
+      });
     }
   },
 );
@@ -8777,21 +8766,17 @@ app.post("/api/settings/chat", async (req, res) => {
 
     // Validate input
     if (chatDelaySeconds < 0 || chatDelaySeconds > 60) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "ระยะเวลาดีเลย์ต้องอยู่ระหว่าง 0-60 วินาที",
-        });
+      return res.status(400).json({
+        success: false,
+        error: "ระยะเวลาดีเลย์ต้องอยู่ระหว่าง 0-60 วินาที",
+      });
     }
 
     if (maxQueueMessages < 1 || maxQueueMessages > 20) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "จำนวนข้อความในคิวต้องอยู่ระหว่าง 1-20",
-        });
+      return res.status(400).json({
+        success: false,
+        error: "จำนวนข้อความในคิวต้องอยู่ระหว่าง 1-20",
+      });
     }
 
     // Save settings
@@ -8827,12 +8812,10 @@ app.post("/api/settings/chat", async (req, res) => {
       sanitizedAudioResponse || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
 
     if (finalAudioResponse.length > 1000) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "ข้อความตอบกลับไฟล์เสียงต้องไม่เกิน 1000 ตัวอักษร",
-        });
+      return res.status(400).json({
+        success: false,
+        error: "ข้อความตอบกลับไฟล์เสียงต้องไม่เกิน 1000 ตัวอักษร",
+      });
     }
 
     await coll.updateOne(
