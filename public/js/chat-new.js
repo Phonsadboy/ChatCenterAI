@@ -13,6 +13,23 @@ class ChatManager {
             showInChat: typeof followUpConfig.showInChat === 'boolean' ? followUpConfig.showInChat : true
         };
         
+        // ✅ Initialize performance utilities
+        this.optimizedFetch = new window.performanceUtils.OptimizedFetch();
+        this.lazyLoader = new window.performanceUtils.LazyImageLoader();
+        this.smartPoller = null;
+        
+        // ✅ Debounced search
+        this.debouncedSearch = window.performanceUtils.debounce(
+            this.performSearch.bind(this),
+            300
+        );
+        
+        // ✅ Throttled scroll
+        this.throttledScroll = window.performanceUtils.throttle(
+            this.handleScroll.bind(this),
+            100
+        );
+        
         this.init();
     }
 
@@ -45,13 +62,13 @@ class ChatManager {
                     u.aiEnabled = !!upd.aiEnabled;
                     this.updateChatHeader(u);
                 }
-                this.showToast(desired ? 'เปิด AI สำหรับผู้ใช้นี้แล้ว' : 'ปิด AI สำหรับผู้ใช้นี้ชั่วคราวแล้ว', 'success');
+                window.showSuccess(desired ? 'เปิด AI สำหรับผู้ใช้นี้แล้ว' : 'ปิด AI สำหรับผู้ใช้นี้ชั่วคราวแล้ว');
             } else {
-                this.showToast('ไม่สามารถอัปเดตสถานะ AI ได้: ' + data.error, 'error');
+                window.showError('ไม่สามารถอัปเดตสถานะ AI ได้: ' + data.error);
             }
         } catch (err) {
             console.error('toggleAiForCurrent error', err);
-            this.showToast('เกิดข้อผิดพลาดในการอัปเดตสถานะ AI', 'error');
+            window.errorHandler.handleApiError(err);
         }
     }
 
@@ -67,12 +84,12 @@ class ChatManager {
         
         this.socket.on('connect', () => {
             console.log('เชื่อมต่อ Socket.IO สำเร็จ');
-            this.showToast('เชื่อมต่อสำเร็จ', 'success');
+            window.showSuccess('เชื่อมต่อสำเร็จ');
         });
 
         this.socket.on('disconnect', () => {
             console.log('การเชื่อมต่อ Socket.IO ถูกตัด');
-            this.showToast('การเชื่อมต่อถูกตัด', 'warning');
+            window.showWarning('การเชื่อมต่อถูกตัด');
         });
 
         this.socket.on('newMessage', (data) => {
@@ -152,29 +169,45 @@ class ChatManager {
         if (this.isLoading) return;
         
         this.isLoading = true;
-        this.showLoadingState();
+        const userList = document.getElementById('userList');
+        
+        // ✅ แสดง skeleton loading
+        userList.innerHTML = LoadingStateManager.createSkeleton('userItem', 5);
 
         try {
-            const response = await fetch('/admin/chat/users');
-            const data = await response.json();
+            // ✅ ใช้ optimized fetch พร้อม cache
+            const data = await this.optimizedFetch.fetch('/admin/chat/users');
             
             if (data.success) {
-                this.users = data.users;
-                this.renderUserList();
-                this.updateUserCount();
-                if (this.currentUserId) {
-                    const current = this.users.find(u => u.userId === this.currentUserId);
-                    if (current) {
-                        this.updateChatHeader(current);
+                // ✅ ตรวจสอบว่ามีการเปลี่ยนแปลงหรือไม่
+                const hasChanged = JSON.stringify(this.users) !== JSON.stringify(data.users);
+                
+                if (hasChanged || this.users.length === 0) {
+                    this.users = data.users;
+                    this.renderUserList();
+                    this.updateUserCount();
+                    
+                    if (this.currentUserId) {
+                        const current = this.users.find(u => u.userId === this.currentUserId);
+                        if (current) {
+                            this.updateChatHeader(current);
+                        }
                     }
                 }
             } else {
                 console.error('ไม่สามารถโหลดรายชื่อผู้ใช้ได้:', data.error);
-                this.showToast('ไม่สามารถโหลดรายชื่อผู้ใช้ได้', 'error');
+                userList.innerHTML = LoadingStateManager.createErrorState(
+                    'ไม่สามารถโหลดข้อมูลได้', 
+                    'chatManager.loadUsers()'
+                );
             }
         } catch (error) {
             console.error('ข้อผิดพลาดในการโหลดรายชื่อผู้ใช้:', error);
-            this.showToast('เกิดข้อผิดพลาดในการโหลดข้อมูล', 'error');
+            window.errorHandler.handleApiError(error);
+            userList.innerHTML = LoadingStateManager.createErrorState(
+                'เกิดข้อผิดพลาดในการโหลดข้อมูล',
+                'chatManager.loadUsers()'
+            );
         } finally {
             this.isLoading = false;
         }
@@ -885,10 +918,12 @@ class ChatManager {
     }
 
     setupAutoRefresh() {
-        // Auto-refresh users every 30 seconds
-        setInterval(() => {
-            this.loadUsers();
-        }, 30000);
+        // ✅ ใช้ Smart Poller แทน setInterval
+        this.smartPoller = new window.performanceUtils.SmartPoller(
+            () => this.loadUsers(),
+            30000 // 30 วินาที
+        );
+        this.smartPoller.start();
     }
 }
 
