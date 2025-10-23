@@ -15,13 +15,49 @@
 
     <!-- Main Chat Interface -->
     <div class="chat-container">
+        <!-- Sidebar Overlay for Mobile -->
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+        
         <!-- User List Sidebar -->
-        <div class="user-sidebar">
+        <div class="user-sidebar" id="userSidebar">
             <div class="sidebar-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-users me-2"></i>ผู้ใช้
-                </h5>
-                <div class="user-count" id="userCount">0</div>
+                <div class="d-flex align-items-center justify-content-between w-100">
+                    <h5 class="mb-0">
+                        <i class="fas fa-users me-2"></i>ผู้ใช้
+                    </h5>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="user-count" id="userCount">0</div>
+                        <button class="btn btn-sm btn-link p-0 text-muted d-lg-none" id="toggleSidebar" title="ซ่อน/แสดง">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <!-- Search & Filter -->
+            <div class="sidebar-search">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white border-end-0">
+                        <i class="fas fa-search"></i>
+                    </span>
+                    <input type="text" class="form-control border-start-0" id="userSearch" placeholder="ค้นหาผู้ใช้...">
+                    <button class="btn btn-outline-secondary" type="button" id="filterToggle" title="ตัวกรอง">
+                        <i class="fas fa-filter"></i>
+                    </button>
+                </div>
+                <!-- Filter Options (Hidden by default) -->
+                <div class="filter-options" id="filterOptions" style="display: none;">
+                    <div class="d-flex gap-2 flex-wrap mt-2">
+                        <button class="btn btn-sm btn-outline-primary filter-btn active" data-filter="all">
+                            ทั้งหมด
+                        </button>
+                        <button class="btn btn-sm btn-outline-success filter-btn" data-filter="unread">
+                            <i class="fas fa-circle text-success" style="font-size: 0.5rem;"></i> ยังไม่อ่าน
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning filter-btn" data-filter="followup">
+                            <i class="fas fa-star"></i> ติดตาม
+                        </button>
+                    </div>
+                </div>
             </div>
             <div class="user-list" id="userList">
                 <div class="loading-state">
@@ -68,7 +104,7 @@
             <div class="message-input-container" id="messageInputContainer" style="display: none;">
                 <div class="input-group">
                     <textarea class="form-control" id="messageInput" 
-                              placeholder="พิมพ์ข้อความ... (กด Shift+Enter เพื่อขึ้นบรรทัดใหม่)" 
+                              placeholder="พิมพ์ข้อความ... (Shift+Enter = บรรทัดใหม่)" 
                               maxlength="1000" autocomplete="off" rows="1"></textarea>
                     <button class="btn btn-primary" type="button" id="sendButton">
                         <i class="fas fa-paper-plane"></i>
@@ -76,11 +112,16 @@
                 </div>
                 <div class="input-footer">
                     <small class="text-muted">
-                        <span id="charCount">0</span>/1000 อักขระ • กด Enter เพื่อส่ง • Shift+Enter เพื่อขึ้นบรรทัดใหม่
+                        <span id="charCount">0</span>/1000 • Enter = ส่ง • Shift+Enter = บรรทัดใหม่
                     </small>
                 </div>
             </div>
         </div>
+        
+        <!-- Toggle Sidebar Button (Mobile) -->
+        <button class="sidebar-toggle-btn" id="sidebarToggleBtn">
+            <i class="fas fa-users"></i>
+        </button>
     </div>
 
     <!-- Image Modal -->

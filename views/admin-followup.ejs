@@ -29,33 +29,41 @@
             </div>
           </div>
           <div class="card-body">
-            <div class="row g-3 followup-summary-grid mb-3">
-              <div class="col-sm-6 col-lg-3">
+            <div class="row g-2 followup-summary-grid mb-3">
+              <div class="col-6 col-lg-3">
                 <div class="followup-summary-card">
+                  <div class="summary-icon text-primary">
+                    <i class="fas fa-clock"></i>
+                  </div>
                   <div class="summary-label">กำลังติดตาม</div>
                   <div class="summary-value" id="followupMetricActive">0</div>
-                  <div class="summary-meta" id="followupMetricActiveMeta">รอส่งข้อความถัดไป 0 ราย</div>
                 </div>
               </div>
-              <div class="col-sm-6 col-lg-3">
+              <div class="col-6 col-lg-3">
                 <div class="followup-summary-card">
-                  <div class="summary-label">ส่งครบแล้ววันนี้</div>
+                  <div class="summary-icon text-success">
+                    <i class="fas fa-check-circle"></i>
+                  </div>
+                  <div class="summary-label">ส่งครบแล้ว</div>
                   <div class="summary-value text-success" id="followupMetricCompleted">0</div>
-                  <div class="summary-meta" id="followupMetricCompletedMeta">ทั้งหมด 0 รอบ</div>
                 </div>
               </div>
-              <div class="col-sm-6 col-lg-3">
+              <div class="col-6 col-lg-3">
                 <div class="followup-summary-card">
+                  <div class="summary-icon text-muted">
+                    <i class="fas fa-ban"></i>
+                  </div>
                   <div class="summary-label">ยกเลิกแล้ว</div>
                   <div class="summary-value text-muted" id="followupMetricCanceled">0</div>
-                  <div class="summary-meta" id="followupMetricCanceledMeta">ผู้ใช้กลับมาคุยก่อนถึงเวลา</div>
                 </div>
               </div>
-              <div class="col-sm-6 col-lg-3">
+              <div class="col-6 col-lg-3">
                 <div class="followup-summary-card">
-                  <div class="summary-label">ส่งไม่สำเร็จ</div>
+                  <div class="summary-icon text-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                  </div>
+                  <div class="summary-label">ล้มเหลว</div>
                   <div class="summary-value text-danger" id="followupMetricFailed">0</div>
-                  <div class="summary-meta" id="followupMetricFailedMeta">ตรวจสอบรายละเอียดในบันทึก</div>
                 </div>
               </div>
             </div>
@@ -97,27 +105,37 @@
               <div id="followupSchedulePreview" class="followup-schedule-preview-list mt-3"></div>
             </div>
 
-            <div class="followup-filters mt-4 d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2">
-              <div class="btn-group followup-filter-group" role="group" aria-label="ตัวกรองสถานะการติดตาม">
-                <button type="button" class="btn btn-outline-secondary followup-filter-btn active" data-status="all">
-                  ทั้งหมด
-                </button>
-                <button type="button" class="btn btn-outline-secondary followup-filter-btn" data-status="active">
-                  กำลังติดตาม
-                </button>
-                <button type="button" class="btn btn-outline-secondary followup-filter-btn" data-status="completed">
-                  ส่งครบแล้ว
-                </button>
-                <button type="button" class="btn btn-outline-secondary followup-filter-btn" data-status="canceled">
-                  ยกเลิกแล้ว
-                </button>
-                <button type="button" class="btn btn-outline-secondary followup-filter-btn" data-status="failed">
-                  ส่งไม่สำเร็จ
+            <div class="followup-filters mt-3">
+              <div class="d-flex flex-column flex-md-row align-items-stretch gap-2 mb-3">
+                <div class="input-group followup-search flex-grow-1">
+                  <span class="input-group-text bg-white border-end-0">
+                    <i class="fas fa-search"></i>
+                  </span>
+                  <input type="text" class="form-control border-start-0" id="followupSearch" placeholder="ค้นหาด้วยชื่อลูกค้า...">
+                </div>
+                <button type="button" class="btn btn-outline-secondary" id="toggleFilters">
+                  <i class="fas fa-filter me-1"></i>
+                  <span class="d-none d-md-inline">ตัวกรอง</span>
                 </button>
               </div>
-              <div class="input-group followup-search">
-                <span class="input-group-text"><i class="fas fa-search"></i></span>
-                <input type="text" class="form-control" id="followupSearch" placeholder="ค้นหาด้วยชื่อ ลูกค้า หรือข้อความถัดไป">
+              
+              <!-- Collapsible Filters -->
+              <div class="filter-pills" id="filterPills">
+                <button type="button" class="filter-pill active" data-status="all">
+                  <i class="fas fa-list"></i> ทั้งหมด
+                </button>
+                <button type="button" class="filter-pill" data-status="active">
+                  <i class="fas fa-clock"></i> กำลังติดตาม
+                </button>
+                <button type="button" class="filter-pill" data-status="completed">
+                  <i class="fas fa-check-circle"></i> ส่งครบแล้ว
+                </button>
+                <button type="button" class="filter-pill" data-status="canceled">
+                  <i class="fas fa-ban"></i> ยกเลิกแล้ว
+                </button>
+                <button type="button" class="filter-pill" data-status="failed">
+                  <i class="fas fa-exclamation-triangle"></i> ล้มเหลว
+                </button>
               </div>
             </div>
 

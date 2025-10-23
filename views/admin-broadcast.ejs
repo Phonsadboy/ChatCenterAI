@@ -15,43 +15,74 @@
     <div class="row justify-content-center">
       <div class="col-lg-8">
         <div class="card">
-          <div class="card-header">
-            <i class="fas fa-bullhorn"></i> ส่งข้อความบรอดแคสต์
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              <i class="fas fa-bullhorn"></i> ส่งข้อความบรอดแคสต์
+            </span>
+            <span class="badge bg-info" id="audienceCount">เลือกกลุ่มเป้าหมาย</span>
           </div>
           <div class="card-body">
             <% if (typeof error !== 'undefined') { %>
-              <div class="alert alert-danger"><%= error %></div>
+              <div class="alert alert-danger alert-dismissible fade show">
+                <i class="fas fa-exclamation-circle me-2"></i><%= error %>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
             <% } %>
             <% if (typeof success !== 'undefined') { %>
-              <div class="alert alert-success"><%= success %></div>
+              <div class="alert alert-success alert-dismissible fade show">
+                <i class="fas fa-check-circle me-2"></i><%= success %>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+              </div>
             <% } %>
 
-            <form method="POST" action="/admin/broadcast">
+            <form method="POST" action="/admin/broadcast" id="broadcastForm">
               <div class="mb-3">
-                <label for="message" class="form-label">ข้อความ</label>
-                <textarea id="message" name="message" rows="5" class="form-control" 
-                  placeholder="พิมพ์ข้อความที่ต้องการส่งถึงผู้ใช้ที่นี่..." required></textarea>
+                <label for="message" class="form-label">
+                  ข้อความ <span class="text-danger">*</span>
+                  <small class="text-muted float-end">
+                    <span id="messageCharCount">0</span>/1000 อักขระ
+                  </small>
+                </label>
+                <textarea id="message" name="message" rows="6" class="form-control" 
+                  placeholder="พิมพ์ข้อความที่ต้องการส่งถึงผู้ใช้ที่นี่..." maxlength="1000" required></textarea>
+                <small class="text-muted">
+                  <i class="fas fa-lightbulb"></i> เคล็ดลับ: ใช้ข้อความสั้นกระชับและชัดเจน เพื่อผลลัพธ์ที่ดีที่สุด
+                </small>
               </div>
 
               <div class="mb-4">
-                <label class="form-label">กลุ่มเป้าหมาย</label>
-                <div class="card bg-light-info rounded p-3">
-                  <div class="form-check mb-2">
+                <label class="form-label">
+                  กลุ่มเป้าหมาย <span class="text-danger">*</span>
+                </label>
+                <div class="audience-options">
+                  <div class="audience-card" onclick="selectAudience('all', this)">
                     <input class="form-check-input" type="radio" name="audience" id="audAll" value="all" checked>
-                    <label class="form-check-label" for="audAll">
-                      <i class="fas fa-users text-info me-1"></i> ผู้ใช้ทุกคน
+                    <label class="form-check-label w-100" for="audAll">
+                      <div class="audience-icon">
+                        <i class="fas fa-users"></i>
+                      </div>
+                      <div class="audience-title">ผู้ใช้ทุกคน</div>
+                      <div class="audience-desc">ส่งถึงผู้ใช้ทั้งหมดในระบบ</div>
                     </label>
                   </div>
-                  <div class="form-check mb-2">
+                  <div class="audience-card" onclick="selectAudience('tagged', this)">
                     <input class="form-check-input" type="radio" name="audience" id="audTagged" value="tagged">
-                    <label class="form-check-label" for="audTagged">
-                      <i class="fas fa-star text-warning me-1"></i> เฉพาะผู้ใช้ที่ติดแท็ก follow_up
+                    <label class="form-check-label w-100" for="audTagged">
+                      <div class="audience-icon">
+                        <i class="fas fa-star"></i>
+                      </div>
+                      <div class="audience-title">กลุ่มติดตาม</div>
+                      <div class="audience-desc">เฉพาะผู้ใช้ที่ติดแท็ก follow_up</div>
                     </label>
                   </div>
-                  <div class="form-check">
+                  <div class="audience-card" onclick="selectAudience('untagged', this)">
                     <input class="form-check-input" type="radio" name="audience" id="audUntagged" value="untagged">
-                    <label class="form-check-label" for="audUntagged">
-                      <i class="fas fa-user-plus text-success me-1"></i> ทุกคน ยกเว้นผู้ใช้ที่ติดแท็ก follow_up
+                    <label class="form-check-label w-100" for="audUntagged">
+                      <div class="audience-icon">
+                        <i class="fas fa-user-plus"></i>
+                      </div>
+                      <div class="audience-title">ผู้ใช้ทั่วไป</div>
+                      <div class="audience-desc">ยกเว้นผู้ใช้ที่ติดแท็ก follow_up</div>
                     </label>
                   </div>
                 </div>
@@ -89,13 +120,35 @@
                 </div>
               </div>
 
-              <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+              <!-- Preview Section -->
+              <div class="broadcast-preview mb-4" id="broadcastPreview" style="display: none;">
+                <div class="alert alert-info">
+                  <div class="d-flex justify-content-between align-items-start mb-2">
+                    <strong><i class="fas fa-eye me-2"></i>ตัวอย่างข้อความ</strong>
+                    <button type="button" class="btn-close btn-sm" onclick="document.getElementById('broadcastPreview').style.display='none'"></button>
+                  </div>
+                  <div class="preview-message" id="previewMessage">
+                    พิมพ์ข้อความเพื่อดูตัวอย่าง...
+                  </div>
+                  <hr>
+                  <small class="text-muted">
+                    <i class="fas fa-info-circle"></i> นี่คือตัวอย่างว่าผู้รับจะเห็นข้อความอย่างไร
+                  </small>
+                </div>
+              </div>
+
+              <div class="d-grid gap-2 d-md-flex justify-content-md-between">
                 <a href="/admin/dashboard" class="btn btn-light">
-                  <i class="fas fa-arrow-left"></i> กลับ
+                  <i class="fas fa-arrow-left me-1"></i> กลับ
                 </a>
-                <button type="submit" class="btn btn-primary">
-                  <i class="fas fa-paper-plane"></i> ส่งข้อความ
-                </button>
+                <div class="d-flex gap-2">
+                  <button type="button" class="btn btn-outline-primary" id="previewBtn">
+                    <i class="fas fa-eye me-1"></i> ดูตัวอย่าง
+                  </button>
+                  <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-paper-plane me-1"></i> ส่งข้อความ
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -105,5 +158,61 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Character counter
+    const messageInput = document.getElementById('message');
+    const charCount = document.getElementById('messageCharCount');
+    const previewMessage = document.getElementById('previewMessage');
+    const previewBtn = document.getElementById('previewBtn');
+    const broadcastPreview = document.getElementById('broadcastPreview');
+
+    messageInput.addEventListener('input', function() {
+      charCount.textContent = this.value.length;
+      if (this.value.length > 0) {
+        previewMessage.textContent = this.value;
+      } else {
+        previewMessage.textContent = 'พิมพ์ข้อความเพื่อดูตัวอย่าง...';
+      }
+    });
+
+    // Preview toggle
+    previewBtn.addEventListener('click', function() {
+      if (broadcastPreview.style.display === 'none') {
+        broadcastPreview.style.display = 'block';
+        previewBtn.innerHTML = '<i class="fas fa-eye-slash me-1"></i> ซ่อนตัวอย่าง';
+      } else {
+        broadcastPreview.style.display = 'none';
+        previewBtn.innerHTML = '<i class="fas fa-eye me-1"></i> ดูตัวอย่าง';
+      }
+    });
+
+    // Audience card selection
+    function selectAudience(value, card) {
+      document.querySelectorAll('.audience-card').forEach(c => c.classList.remove('active'));
+      card.classList.add('active');
+      updateAudienceCount(value);
+    }
+
+    function updateAudienceCount(audience) {
+      const badge = document.getElementById('audienceCount');
+      let text = '';
+      switch(audience) {
+        case 'all':
+          text = 'ผู้ใช้ทั้งหมด';
+          break;
+        case 'tagged':
+          text = 'กลุ่มติดตาม';
+          break;
+        case 'untagged':
+          text = 'ผู้ใช้ทั่วไป';
+          break;
+      }
+      badge.textContent = text;
+    }
+
+    // Initialize first card as active
+    document.querySelector('.audience-card').classList.add('active');
+    updateAudienceCount('all');
+  </script>
 </body>
 </html> 
