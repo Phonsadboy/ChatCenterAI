@@ -115,31 +115,76 @@
                         <small>กำหนดคำสำคัญที่แอดมินสามารถใช้เพื่อควบคุมระบบได้ทันที เมื่อพิมพ์คำเหล่านี้ในแชท</small>
                     </div>
 
-                    <div class="mb-3">
-                        <label for="facebookKeywordEnableAI" class="form-label">
-                            <i class="fas fa-check-circle text-success me-1"></i>คีย์เวิร์ดเปิด AI
-                        </label>
-                        <input type="text" class="form-control" id="facebookKeywordEnableAI" name="keywordEnableAI" 
-                               placeholder="เช่น: แอดมิน VIVA ยินดีดูแลลูกค้าค่ะ">
-                        <div class="form-text">เมื่อแอดมินพิมพ์คำนี้ ระบบจะเปิด AI สำหรับผู้ใช้คนนั้นทันที</div>
+                    <!-- Enable AI Keyword -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-success-subtle">
+                            <i class="fas fa-check-circle text-success me-2"></i><strong>คีย์เวิร์ดเปิด AI</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="facebookKeywordEnableAI" class="form-label">คีย์เวิร์ด</label>
+                                <input type="text" class="form-control" id="facebookKeywordEnableAI" name="keywordEnableAI" 
+                                       placeholder="เช่น: แอดมิน VIVA ยินดีดูแลลูกค้าค่ะ">
+                            </div>
+                            <div class="mb-3">
+                                <label for="facebookKeywordEnableAIResponse" class="form-label">ข้อความตอบกลับ</label>
+                                <textarea class="form-control" id="facebookKeywordEnableAIResponse" name="keywordEnableAIResponse" rows="2"
+                                          placeholder="เช่น: ✅ เปิดระบบ AI แล้วค่ะ (ว่างเปล่า = ใช้ข้อความเริ่มต้น)"></textarea>
+                                <div class="form-text">ข้อความที่จะบันทึกในแชท (แสดงเฉพาะแอดมิน)</div>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="facebookKeywordEnableAISend" name="keywordEnableAISend" checked>
+                                <label class="form-check-label" for="facebookKeywordEnableAISend">ส่งข้อความตอบกลับ</label>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label for="facebookKeywordDisableAI" class="form-label">
-                            <i class="fas fa-pause-circle text-warning me-1"></i>คีย์เวิร์ดปิด AI
-                        </label>
-                        <input type="text" class="form-control" id="facebookKeywordDisableAI" name="keywordDisableAI" 
-                               placeholder="เช่น: แอดมิน VIVA รอให้คำปรึกษาค่ะ">
-                        <div class="form-text">เมื่อแอดมินพิมพ์คำนี้ ระบบจะปิด AI สำหรับผู้ใช้คนนั้นทันที</div>
+                    <!-- Disable AI Keyword -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-warning-subtle">
+                            <i class="fas fa-pause-circle text-warning me-2"></i><strong>คีย์เวิร์ดปิด AI</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="facebookKeywordDisableAI" class="form-label">คีย์เวิร์ด</label>
+                                <input type="text" class="form-control" id="facebookKeywordDisableAI" name="keywordDisableAI" 
+                                       placeholder="เช่น: แอดมิน VIVA รอให้คำปรึกษาค่ะ">
+                            </div>
+                            <div class="mb-3">
+                                <label for="facebookKeywordDisableAIResponse" class="form-label">ข้อความตอบกลับ</label>
+                                <textarea class="form-control" id="facebookKeywordDisableAIResponse" name="keywordDisableAIResponse" rows="2"
+                                          placeholder="เช่น: ⏸️ ปิดระบบ AI แล้วค่ะ (ว่างเปล่า = ใช้ข้อความเริ่มต้น)"></textarea>
+                                <div class="form-text">ข้อความที่จะบันทึกในแชท (แสดงเฉพาะแอดมิน)</div>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="facebookKeywordDisableAISend" name="keywordDisableAISend" checked>
+                                <label class="form-check-label" for="facebookKeywordDisableAISend">ส่งข้อความตอบกลับ</label>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label for="facebookKeywordDisableFollowUp" class="form-label">
-                            <i class="fas fa-bell-slash text-danger me-1"></i>คีย์เวิร์ดปิดระบบติดตาม
-                        </label>
-                        <input type="text" class="form-control" id="facebookKeywordDisableFollowUp" name="keywordDisableFollowUp" 
-                               placeholder="เช่น: #รับออเดอร์">
-                        <div class="form-text">เมื่อแอดมินพิมพ์คำนี้ ระบบจะยกเลิกการติดตามอัตโนมัติสำหรับผู้ใช้คนนั้น</div>
+                    <!-- Disable Follow-up Keyword -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-danger-subtle">
+                            <i class="fas fa-bell-slash text-danger me-2"></i><strong>คีย์เวิร์ดปิดระบบติดตาม</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="facebookKeywordDisableFollowUp" class="form-label">คีย์เวิร์ด</label>
+                                <input type="text" class="form-control" id="facebookKeywordDisableFollowUp" name="keywordDisableFollowUp" 
+                                       placeholder="เช่น: #รับออเดอร์">
+                            </div>
+                            <div class="mb-3">
+                                <label for="facebookKeywordDisableFollowUpResponse" class="form-label">ข้อความตอบกลับ</label>
+                                <textarea class="form-control" id="facebookKeywordDisableFollowUpResponse" name="keywordDisableFollowUpResponse" rows="2"
+                                          placeholder="เช่น: 🔕 ปิดระบบติดตามแล้วค่ะ (ว่างเปล่า = ใช้ข้อความเริ่มต้น)"></textarea>
+                                <div class="form-text">ข้อความที่จะบันทึกในแชท (แสดงเฉพาะแอดมิน)</div>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="facebookKeywordDisableFollowUpSend" name="keywordDisableFollowUpSend" checked>
+                                <label class="form-check-label" for="facebookKeywordDisableFollowUpSend">ส่งข้อความตอบกลับ</label>
+                            </div>
+                        </div>
                     </div>
                 </form>
             </div>

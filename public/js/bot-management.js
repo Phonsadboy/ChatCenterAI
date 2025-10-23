@@ -306,13 +306,39 @@ async function editLineBot(botId) {
             if (lineBotDefault) lineBotDefault.checked = bot.isDefault;
             
             // Load keyword settings
-            const lineKeywordEnableAI = document.getElementById('lineKeywordEnableAI');
-            const lineKeywordDisableAI = document.getElementById('lineKeywordDisableAI');
-            const lineKeywordDisableFollowUp = document.getElementById('lineKeywordDisableFollowUp');
+            const normalizeKeywordSetting = (setting) => {
+                if (!setting) return { keyword: '', response: '', sendResponse: true };
+                if (typeof setting === 'string') return { keyword: setting, response: '', sendResponse: true };
+                return setting;
+            };
             
-            if (lineKeywordEnableAI) lineKeywordEnableAI.value = bot.keywordSettings?.enableAI || '';
-            if (lineKeywordDisableAI) lineKeywordDisableAI.value = bot.keywordSettings?.disableAI || '';
-            if (lineKeywordDisableFollowUp) lineKeywordDisableFollowUp.value = bot.keywordSettings?.disableFollowUp || '';
+            const enableAI = normalizeKeywordSetting(bot.keywordSettings?.enableAI);
+            const disableAI = normalizeKeywordSetting(bot.keywordSettings?.disableAI);
+            const disableFollowUp = normalizeKeywordSetting(bot.keywordSettings?.disableFollowUp);
+            
+            const lineKeywordEnableAI = document.getElementById('lineKeywordEnableAI');
+            const lineKeywordEnableAIResponse = document.getElementById('lineKeywordEnableAIResponse');
+            const lineKeywordEnableAISend = document.getElementById('lineKeywordEnableAISend');
+            
+            const lineKeywordDisableAI = document.getElementById('lineKeywordDisableAI');
+            const lineKeywordDisableAIResponse = document.getElementById('lineKeywordDisableAIResponse');
+            const lineKeywordDisableAISend = document.getElementById('lineKeywordDisableAISend');
+            
+            const lineKeywordDisableFollowUp = document.getElementById('lineKeywordDisableFollowUp');
+            const lineKeywordDisableFollowUpResponse = document.getElementById('lineKeywordDisableFollowUpResponse');
+            const lineKeywordDisableFollowUpSend = document.getElementById('lineKeywordDisableFollowUpSend');
+            
+            if (lineKeywordEnableAI) lineKeywordEnableAI.value = enableAI.keyword || '';
+            if (lineKeywordEnableAIResponse) lineKeywordEnableAIResponse.value = enableAI.response || '';
+            if (lineKeywordEnableAISend) lineKeywordEnableAISend.checked = enableAI.sendResponse !== false;
+            
+            if (lineKeywordDisableAI) lineKeywordDisableAI.value = disableAI.keyword || '';
+            if (lineKeywordDisableAIResponse) lineKeywordDisableAIResponse.value = disableAI.response || '';
+            if (lineKeywordDisableAISend) lineKeywordDisableAISend.checked = disableAI.sendResponse !== false;
+            
+            if (lineKeywordDisableFollowUp) lineKeywordDisableFollowUp.value = disableFollowUp.keyword || '';
+            if (lineKeywordDisableFollowUpResponse) lineKeywordDisableFollowUpResponse.value = disableFollowUp.response || '';
+            if (lineKeywordDisableFollowUpSend) lineKeywordDisableFollowUpSend.checked = disableFollowUp.sendResponse !== false;
             
             const addLineBotModalLabel = document.getElementById('addLineBotModalLabel');
             if (addLineBotModalLabel) {
@@ -403,9 +429,21 @@ async function saveLineBot() {
     // Save keyword settings if bot already exists
     if (botId) {
         const keywordSettings = {
-            enableAI: formData.get('keywordEnableAI') || '',
-            disableAI: formData.get('keywordDisableAI') || '',
-            disableFollowUp: formData.get('keywordDisableFollowUp') || ''
+            enableAI: {
+                keyword: formData.get('keywordEnableAI') || '',
+                response: formData.get('keywordEnableAIResponse') || '',
+                sendResponse: formData.get('keywordEnableAISend') === 'on'
+            },
+            disableAI: {
+                keyword: formData.get('keywordDisableAI') || '',
+                response: formData.get('keywordDisableAIResponse') || '',
+                sendResponse: formData.get('keywordDisableAISend') === 'on'
+            },
+            disableFollowUp: {
+                keyword: formData.get('keywordDisableFollowUp') || '',
+                response: formData.get('keywordDisableFollowUpResponse') || '',
+                sendResponse: formData.get('keywordDisableFollowUpSend') === 'on'
+            }
         };
         
         // Save keyword settings separately
@@ -673,13 +711,39 @@ async function editFacebookBot(botId) {
             if (facebookBotDefault) facebookBotDefault.checked = bot.isDefault || false;
             
             // Load keyword settings
-            const facebookKeywordEnableAI = document.getElementById('facebookKeywordEnableAI');
-            const facebookKeywordDisableAI = document.getElementById('facebookKeywordDisableAI');
-            const facebookKeywordDisableFollowUp = document.getElementById('facebookKeywordDisableFollowUp');
+            const normalizeKeywordSetting = (setting) => {
+                if (!setting) return { keyword: '', response: '', sendResponse: true };
+                if (typeof setting === 'string') return { keyword: setting, response: '', sendResponse: true };
+                return setting;
+            };
             
-            if (facebookKeywordEnableAI) facebookKeywordEnableAI.value = bot.keywordSettings?.enableAI || '';
-            if (facebookKeywordDisableAI) facebookKeywordDisableAI.value = bot.keywordSettings?.disableAI || '';
-            if (facebookKeywordDisableFollowUp) facebookKeywordDisableFollowUp.value = bot.keywordSettings?.disableFollowUp || '';
+            const enableAI = normalizeKeywordSetting(bot.keywordSettings?.enableAI);
+            const disableAI = normalizeKeywordSetting(bot.keywordSettings?.disableAI);
+            const disableFollowUp = normalizeKeywordSetting(bot.keywordSettings?.disableFollowUp);
+            
+            const facebookKeywordEnableAI = document.getElementById('facebookKeywordEnableAI');
+            const facebookKeywordEnableAIResponse = document.getElementById('facebookKeywordEnableAIResponse');
+            const facebookKeywordEnableAISend = document.getElementById('facebookKeywordEnableAISend');
+            
+            const facebookKeywordDisableAI = document.getElementById('facebookKeywordDisableAI');
+            const facebookKeywordDisableAIResponse = document.getElementById('facebookKeywordDisableAIResponse');
+            const facebookKeywordDisableAISend = document.getElementById('facebookKeywordDisableAISend');
+            
+            const facebookKeywordDisableFollowUp = document.getElementById('facebookKeywordDisableFollowUp');
+            const facebookKeywordDisableFollowUpResponse = document.getElementById('facebookKeywordDisableFollowUpResponse');
+            const facebookKeywordDisableFollowUpSend = document.getElementById('facebookKeywordDisableFollowUpSend');
+            
+            if (facebookKeywordEnableAI) facebookKeywordEnableAI.value = enableAI.keyword || '';
+            if (facebookKeywordEnableAIResponse) facebookKeywordEnableAIResponse.value = enableAI.response || '';
+            if (facebookKeywordEnableAISend) facebookKeywordEnableAISend.checked = enableAI.sendResponse !== false;
+            
+            if (facebookKeywordDisableAI) facebookKeywordDisableAI.value = disableAI.keyword || '';
+            if (facebookKeywordDisableAIResponse) facebookKeywordDisableAIResponse.value = disableAI.response || '';
+            if (facebookKeywordDisableAISend) facebookKeywordDisableAISend.checked = disableAI.sendResponse !== false;
+            
+            if (facebookKeywordDisableFollowUp) facebookKeywordDisableFollowUp.value = disableFollowUp.keyword || '';
+            if (facebookKeywordDisableFollowUpResponse) facebookKeywordDisableFollowUpResponse.value = disableFollowUp.response || '';
+            if (facebookKeywordDisableFollowUpSend) facebookKeywordDisableFollowUpSend.checked = disableFollowUp.sendResponse !== false;
 
             const addFacebookBotModalLabel = document.getElementById('addFacebookBotModalLabel');
             if (addFacebookBotModalLabel) {
@@ -772,9 +836,21 @@ async function saveFacebookBot() {
     // Save keyword settings if bot already exists
     if (botId) {
         const keywordSettings = {
-            enableAI: formData.get('keywordEnableAI') || '',
-            disableAI: formData.get('keywordDisableAI') || '',
-            disableFollowUp: formData.get('keywordDisableFollowUp') || ''
+            enableAI: {
+                keyword: formData.get('keywordEnableAI') || '',
+                response: formData.get('keywordEnableAIResponse') || '',
+                sendResponse: formData.get('keywordEnableAISend') === 'on'
+            },
+            disableAI: {
+                keyword: formData.get('keywordDisableAI') || '',
+                response: formData.get('keywordDisableAIResponse') || '',
+                sendResponse: formData.get('keywordDisableAISend') === 'on'
+            },
+            disableFollowUp: {
+                keyword: formData.get('keywordDisableFollowUp') || '',
+                response: formData.get('keywordDisableFollowUpResponse') || '',
+                sendResponse: formData.get('keywordDisableFollowUpSend') === 'on'
+            }
         };
         
         // Save keyword settings separately

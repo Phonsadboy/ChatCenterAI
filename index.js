@@ -844,51 +844,74 @@ async function setUserStatus(userId, aiEnabled) {
  * @param {string} platform - แพลตฟอร์ม (line/facebook)
  * @param {string} botId - Bot ID
  * @param {boolean} isFromAdmin - เป็นข้อความจากแอดมินหรือไม่
- * @returns {Promise<{action: string|null, message: string}>} - action ที่ดำเนินการและข้อความตอบกลับ
+ * @returns {Promise<{action: string|null, message: string, sendResponse: boolean}>} - action ที่ดำเนินการและข้อความตอบกลับ
  */
 async function detectKeywordAction(message, keywordSettings, userId, platform, botId, isFromAdmin = false) {
   // ต้องเป็นข้อความจากแอดมินเท่านั้น
   if (!isFromAdmin) {
-    return { action: null, message: "" };
+    return { action: null, message: "", sendResponse: false };
   }
 
   if (!keywordSettings || !message) {
-    return { action: null, message: "" };
+    return { action: null, message: "", sendResponse: false };
   }
 
   const trimmedMessage = message.trim();
   
+  // รองรับทั้งรูปแบบเก่า (string) และรูปแบบใหม่ (object)
+  const normalizeKeywordSetting = (setting) => {
+    if (!setting) return { keyword: "", response: "", sendResponse: true };
+    if (typeof setting === 'string') {
+      return { keyword: setting, response: "", sendResponse: true };
+    }
+    return {
+      keyword: setting.keyword || "",
+      response: setting.response || "",
+      sendResponse: setting.sendResponse !== false
+    };
+  };
+
+  const enableAI = normalizeKeywordSetting(keywordSettings.enableAI);
+  const disableAI = normalizeKeywordSetting(keywordSettings.disableAI);
+  const disableFollowUp = normalizeKeywordSetting(keywordSettings.disableFollowUp);
+  
   // ตรวจสอบ keyword สำหรับเปิด AI
-  if (keywordSettings.enableAI && trimmedMessage === keywordSettings.enableAI.trim()) {
+  if (enableAI.keyword && trimmedMessage === enableAI.keyword.trim()) {
     await setUserStatus(userId, true);
     console.log(`[Keyword] เปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    const responseMessage = enableAI.response.trim() || `✅ เปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`;
     return { 
       action: "enableAI", 
-      message: `✅ เปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`
+      message: responseMessage,
+      sendResponse: enableAI.sendResponse
     };
   }
 
   // ตรวจสอบ keyword สำหรับปิด AI
-  if (keywordSettings.disableAI && trimmedMessage === keywordSettings.disableAI.trim()) {
+  if (disableAI.keyword && trimmedMessage === disableAI.keyword.trim()) {
     await setUserStatus(userId, false);
     console.log(`[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    const responseMessage = disableAI.response.trim() || `⏸️ ปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`;
     return { 
       action: "disableAI", 
-      message: `⏸️ ปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`
+      message: responseMessage,
+      sendResponse: disableAI.sendResponse
     };
   }
 
   // ตรวจสอบ keyword สำหรับปิดระบบติดตาม
-  if (keywordSettings.disableFollowUp && trimmedMessage === keywordSettings.disableFollowUp.trim()) {
+  if (disableFollowUp.keyword && trimmedMessage === disableFollowUp.keyword.trim()) {
     await cancelFollowUpTasksForUser(userId, platform, botId, { reason: "keyword_cancel" });
     console.log(`[Keyword] ปิดระบบติดตามสำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    const responseMessage = disableFollowUp.response.trim() || `🔕 ปิดระบบติดตามสำหรับผู้ใช้นี้แล้ว`;
     return { 
       action: "disableFollowUp", 
-      message: `🔕 ปิดระบบติดตามสำหรับผู้ใช้นี้แล้ว`
+      message: responseMessage,
+      sendResponse: disableFollowUp.sendResponse
     };
   }
 
-  return { action: null, message: "" };
+  return { action: null, message: "", sendResponse: false };
 }
 
 /**
@@ -5770,31 +5793,33 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
               );
 
               if (keywordResult.action) {
-                // ถ้ามี keyword action ให้บันทึกข้อความและแจ้งเตือน
-                const controlDoc = {
-                  senderId: targetUserId,
-                  role: "assistant",
-                  content: `[ระบบ] ${keywordResult.message}`,
-                  timestamp: new Date(),
-                  source: "admin_chat",
-                  platform: "facebook",
-                  botId: facebookBot?._id?.toString?.() || null,
-                };
-                await coll.insertOne(controlDoc);
+                // ถ้ามี keyword action และต้องการส่งข้อความตอบกลับ
+                if (keywordResult.sendResponse && keywordResult.message) {
+                  const controlDoc = {
+                    senderId: targetUserId,
+                    role: "assistant",
+                    content: `[ระบบ] ${keywordResult.message}`,
+                    timestamp: new Date(),
+                    source: "admin_chat",
+                    platform: "facebook",
+                    botId: facebookBot?._id?.toString?.() || null,
+                  };
+                  await coll.insertOne(controlDoc);
 
-                try {
-                  await resetUserUnreadCount(targetUserId);
-                } catch (_) {}
+                  try {
+                    await resetUserUnreadCount(targetUserId);
+                  } catch (_) {}
 
-                // แจ้ง UI แอดมินแบบเรียลไทม์
-                try {
-                  io.emit("newMessage", {
-                    userId: targetUserId,
-                    message: controlDoc,
-                    sender: "assistant",
-                    timestamp: controlDoc.timestamp,
-                  });
-                } catch (_) {}
+                  // แจ้ง UI แอดมินแบบเรียลไทม์
+                  try {
+                    io.emit("newMessage", {
+                      userId: targetUserId,
+                      message: controlDoc,
+                      sender: "assistant",
+                      timestamp: controlDoc.timestamp,
+                    });
+                  } catch (_) {}
+                }
                 continue;
               }
 
@@ -6723,9 +6748,9 @@ app.post("/api/line-bots", async (req, res) => {
       aiModel: "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
       selectedInstructions: normalizedSelections,
       keywordSettings: {
-        enableAI: "",
-        disableAI: "",
-        disableFollowUp: ""
+        enableAI: { keyword: "", response: "", sendResponse: true },
+        disableAI: { keyword: "", response: "", sendResponse: true },
+        disableFollowUp: { keyword: "", response: "", sendResponse: true }
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -7089,9 +7114,9 @@ app.post("/api/facebook-bots", async (req, res) => {
       aiModel: aiModel || "gpt-5",
       selectedInstructions: normalizedSelections,
       keywordSettings: {
-        enableAI: "",
-        disableAI: "",
-        disableFollowUp: ""
+        enableAI: { keyword: "", response: "", sendResponse: true },
+        disableAI: { keyword: "", response: "", sendResponse: true },
+        disableFollowUp: { keyword: "", response: "", sendResponse: true }
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -9346,33 +9371,44 @@ app.post("/admin/chat/send", async (req, res) => {
     );
 
     if (keywordResult.action) {
-      // ถ้ามี keyword action ให้บันทึกข้อความและแจ้งเตือน
-      const controlDoc = {
-        senderId: userId,
-        role: "assistant",
-        content: `[ระบบ] ${keywordResult.message}`,
-        timestamp: new Date(),
-        source: "admin_chat",
-        platform,
-        botId,
-      };
-      await coll.insertOne(controlDoc);
-      await resetUserUnreadCount(userId);
+      // ถ้ามี keyword action และต้องการส่งข้อความตอบกลับ
+      if (keywordResult.sendResponse && keywordResult.message) {
+        const controlDoc = {
+          senderId: userId,
+          role: "assistant",
+          content: `[ระบบ] ${keywordResult.message}`,
+          timestamp: new Date(),
+          source: "admin_chat",
+          platform,
+          botId,
+        };
+        await coll.insertOne(controlDoc);
+        await resetUserUnreadCount(userId);
 
-      // Emit เพื่ออัปเดต UI ของแอดมิน
-      io.emit("newMessage", {
-        userId: userId,
-        message: controlDoc,
-        sender: "assistant",
-        timestamp: controlDoc.timestamp,
-      });
+        // Emit เพื่ออัปเดต UI ของแอดมิน
+        io.emit("newMessage", {
+          userId: userId,
+          message: controlDoc,
+          sender: "assistant",
+          timestamp: controlDoc.timestamp,
+        });
 
-      return res.json({
-        success: true,
-        control: true,
-        displayMessage: keywordResult.message,
-        skipEcho: true,
-      });
+        return res.json({
+          success: true,
+          control: true,
+          displayMessage: keywordResult.message,
+          skipEcho: true,
+        });
+      } else {
+        // ไม่ส่งข้อความตอบกลับ แต่ดำเนินการสำเร็จ
+        return res.json({
+          success: true,
+          control: true,
+          displayMessage: "ดำเนินการเรียบร้อยแล้ว (ไม่ส่งข้อความตอบกลับ)",
+          skipEcho: true,
+          silent: true
+        });
+      }
     }
 
     // กรณีเป็นคำสั่ง [ปิด] / [เปิด] (legacy)
