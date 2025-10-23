@@ -2866,7 +2866,10 @@ async function processFlushedMessages(
           userId,
           filteredMessage,
           facebookAccessToken,
-          { metadata: "ai_generated" },
+          { 
+            metadata: "ai_generated",
+            selectedImageCollections: queueContext.selectedImageCollections || null
+          },
         );
         console.log("[Facebook] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
       } catch (error) {
@@ -3731,6 +3734,118 @@ async function migrateInstructionAssetsAddSlug() {
   }
 }
 
+// Migration: แปลง assets เดิม → สร้าง Default Collection และ assign ให้ทุกเพจ
+async function migrateAssetsToCollections() {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const assetsColl = db.collection("instruction_assets");
+    const collectionsColl = db.collection("image_collections");
+    const lineBotsColl = db.collection("line_bots");
+    const facebookBotsColl = db.collection("facebook_bots");
+
+    // เช็คว่ามี default collection อยู่แล้วหรือไม่
+    const existingDefault = await collectionsColl.findOne({ isDefault: true });
+    if (existingDefault) {
+      console.log(
+        "[Migration] มี default collection อยู่แล้ว ข้าม migration นี้",
+      );
+      return;
+    }
+
+    // ดึง assets ทั้งหมดจากระบบเดิม
+    const allAssets = await assetsColl.find({}).toArray();
+
+    if (allAssets.length === 0) {
+      console.log("[Migration] ไม่มี assets ในระบบ ข้าม migration นี้");
+      return;
+    }
+
+    console.log(`[Migration] พบ ${allAssets.length} รูปภาพในระบบเดิม`);
+
+    // สร้าง Default Collection
+    const defaultCollectionId = "default-collection-" + Date.now();
+    const imageList = allAssets.map((asset) => ({
+      label: asset.label,
+      slug: asset.slug || asset.label,
+      url: asset.url,
+      thumbUrl: asset.thumbUrl || asset.url,
+      description: asset.description || asset.alt || "",
+      fileName: asset.fileName,
+      assetId: asset._id.toString(),
+    }));
+
+    const defaultCollection = {
+      _id: defaultCollectionId,
+      name: "รูปภาพทั้งหมด (ระบบเดิม)",
+      description: "รูปภาพทั้งหมดจากระบบเดิม - สร้างอัตโนมัติเมื่อ migrate",
+      images: imageList,
+      isDefault: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    await collectionsColl.insertOne(defaultCollection);
+    console.log(
+      `[Migration] สร้าง default collection สำเร็จ: "${defaultCollection.name}"`,
+    );
+
+    // Assign collection นี้ให้ทุก bot
+    const lineBots = await lineBotsColl.find({}).toArray();
+    const facebookBots = await facebookBotsColl.find({}).toArray();
+
+    let assignedCount = 0;
+
+    // Assign ให้ LINE bots
+    for (const bot of lineBots) {
+      const currentCollections = bot.selectedImageCollections || [];
+      if (!currentCollections.includes(defaultCollectionId)) {
+        await lineBotsColl.updateOne(
+          { _id: bot._id },
+          {
+            $set: {
+              selectedImageCollections: [
+                defaultCollectionId,
+                ...currentCollections,
+              ],
+            },
+          },
+        );
+        assignedCount++;
+      }
+    }
+
+    // Assign ให้ Facebook bots
+    for (const bot of facebookBots) {
+      const currentCollections = bot.selectedImageCollections || [];
+      if (!currentCollections.includes(defaultCollectionId)) {
+        await facebookBotsColl.updateOne(
+          { _id: bot._id },
+          {
+            $set: {
+              selectedImageCollections: [
+                defaultCollectionId,
+                ...currentCollections,
+              ],
+            },
+          },
+        );
+        assignedCount++;
+      }
+    }
+
+    console.log(
+      `[Migration] assign default collection ให้ ${assignedCount} bots สำเร็จ`,
+    );
+    console.log(`[Migration] ระบบ Image Collections พร้อมใช้งาน!`);
+  } catch (err) {
+    console.error(
+      "[Migration] ข้อผิดพลาดในการ migrate assets to collections:",
+      err,
+    );
+  }
+}
+
 server.listen(PORT, async () => {
   console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
   try {
@@ -3741,6 +3856,7 @@ server.listen(PORT, async () => {
     // รัน migration อัตโนมัติ
     console.log(`[LOG] กำลังตรวจสอบและ migrate ข้อมูล...`);
     await migrateInstructionAssetsAddSlug();
+    await migrateAssetsToCollections();
     console.log(`[LOG] Migration เสร็จสิ้น`);
 
     console.log(`[LOG] กำลังดึงข้อมูล instructions จาก Google Doc...`);
@@ -4100,6 +4216,7 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
   let systemPrompt = "";
   let client = null;
   let db = null;
+  let selectedImageCollections = null;
 
   if (supportsCustomSelections) {
     try {
@@ -4146,7 +4263,28 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
     return await buildSystemInstructions(history);
   }
 
-  const assetsText = await getAssetsInstructionsText();
+  // ดึง selectedImageCollections จาก bot config
+  try {
+    if (queueContext.botId) {
+      if (!db) {
+        client = await connectDB();
+        db = client.db("chatbot");
+      }
+      
+      const botCollection = botKind === "facebook" ? "facebook_bots" : "line_bots";
+      const botDoc = await db.collection(botCollection).findOne({ 
+        _id: queueContext.botId 
+      });
+      
+      if (botDoc && botDoc.selectedImageCollections) {
+        selectedImageCollections = botDoc.selectedImageCollections;
+      }
+    }
+  } catch (error) {
+    console.error("[LOG] ไม่สามารถดึง selectedImageCollections:", error);
+  }
+
+  const assetsText = await getAssetsInstructionsText(selectedImageCollections);
   if (assetsText) {
     systemPrompt = `${systemPrompt}\n\n${assetsText}`;
   }
@@ -4891,8 +5029,18 @@ async function getInstructionAssetsMap() {
   return map;
 }
 
-async function getAssetsInstructionsText() {
-  const assets = await getInstructionAssets();
+// ฟังก์ชันใหม่: ดึงรูปภาพจาก collections ที่เลือก (สำหรับ bot context)
+async function getAssetsInstructionsText(selectedCollectionIds = null) {
+  let assets = [];
+
+  // ถ้ามีการเลือก collections ให้ใช้รูปจาก collections
+  if (selectedCollectionIds && Array.isArray(selectedCollectionIds) && selectedCollectionIds.length > 0) {
+    assets = await getImagesFromSelectedCollections(selectedCollectionIds);
+  } else {
+    // fallback: ใช้รูปทั้งหมด (backward compatible)
+    assets = await getInstructionAssets();
+  }
+
   if (!assets || assets.length === 0) return "";
   const lines = [];
   lines.push(
@@ -4905,6 +5053,23 @@ async function getAssetsInstructionsText() {
     lines.push(`- ${label}: ${desc}`);
   }
   return lines.join("\n");
+}
+
+// ฟังก์ชันใหม่: สร้าง assets map จาก collections ที่เลือก
+async function getAssetsMapForBot(selectedCollectionIds = null) {
+  let assets = [];
+
+  if (selectedCollectionIds && Array.isArray(selectedCollectionIds) && selectedCollectionIds.length > 0) {
+    assets = await getImagesFromSelectedCollections(selectedCollectionIds);
+  } else {
+    assets = await getInstructionAssets();
+  }
+
+  const map = {};
+  for (const a of assets) {
+    if (a && a.label) map[a.label] = a;
+  }
+  return map;
 }
 
 // Parse assistant reply into segments of text and images based on #[IMAGE:label]
@@ -5382,6 +5547,7 @@ app.post("/webhook/line/:botId", async (req, res) => {
       channelSecret: lineBot.channelSecret,
       aiModel: lineBot.aiModel || null,
       selectedInstructions: lineBot.selectedInstructions || [],
+      selectedImageCollections: lineBot.selectedImageCollections || null,
     };
 
     for (const event of events) {
@@ -5471,6 +5637,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
       facebookAccessToken: facebookBot.accessToken,
       aiModel: facebookBot.aiModel || null,
       selectedInstructions: facebookBot.selectedInstructions || [],
+      selectedImageCollections: facebookBot.selectedImageCollections || null,
     };
 
     // Respond immediately to avoid Facebook retries
@@ -5731,14 +5898,14 @@ async function sendFacebookMessage(
   accessToken,
   options = {},
 ) {
-  const { metadata = null, messagingType = null, tag = null } = options || {};
+  const { metadata = null, messagingType = null, tag = null, selectedImageCollections = null } = options || {};
   // แยกข้อความตามตัวแบ่ง [cut] → จากนั้น parse #[IMAGE:<label>] เป็น segments
   const parts = String(message)
     .split("[cut]")
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
 
-  const assetsMap = await getInstructionAssetsMap();
+  const assetsMap = await getAssetsMapForBot(selectedImageCollections);
   const maxLength = 2000;
 
   for (const part of parts) {
@@ -7972,6 +8139,282 @@ app.delete("/admin/instructions/assets/:label", async (req, res) => {
     res.status(500).json({ success: false, error: "ลบรูปภาพไม่สำเร็จ" });
   }
 });
+
+// ==================== IMAGE COLLECTIONS API ====================
+
+// Helper: ดึง Image Collections ทั้งหมด
+async function getImageCollections() {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("image_collections");
+    const collections = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    return collections;
+  } catch (e) {
+    console.error("[Collections] Error fetching collections:", e);
+    return [];
+  }
+}
+
+// Helper: ดึงรูปภาพจาก collections ที่เลือก (สำหรับ bot)
+async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
+  try {
+    if (!Array.isArray(selectedCollectionIds) || selectedCollectionIds.length === 0) {
+      return [];
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("image_collections");
+    
+    const collections = await coll.find({ 
+      _id: { $in: selectedCollectionIds } 
+    }).toArray();
+
+    // รวมรูปภาพจากทุก collection
+    const allImages = [];
+    const seenLabels = new Set();
+
+    for (const collection of collections) {
+      if (Array.isArray(collection.images)) {
+        for (const img of collection.images) {
+          // ป้องกันรูปซ้ำ (ใช้ label เป็น key)
+          if (img.label && !seenLabels.has(img.label)) {
+            allImages.push(img);
+            seenLabels.add(img.label);
+          }
+        }
+      }
+    }
+
+    return allImages;
+  } catch (e) {
+    console.error("[Collections] Error getting images from collections:", e);
+    return [];
+  }
+}
+
+// GET: ดึงรายการ Image Collections ทั้งหมด
+app.get("/admin/image-collections", async (req, res) => {
+  try {
+    const collections = await getImageCollections();
+    res.json({ success: true, collections });
+  } catch (err) {
+    console.error("[Collections] list error:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: "ไม่สามารถดึงรายการ Image Collections ได้" 
+    });
+  }
+});
+
+// GET: ดึง Image Collection เดียว
+app.get("/admin/image-collections/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("image_collections");
+    
+    const collection = await coll.findOne({ _id: id });
+    
+    if (!collection) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "ไม่พบ Image Collection" 
+      });
+    }
+    
+    res.json({ success: true, collection });
+  } catch (err) {
+    console.error("[Collections] get error:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: "ไม่สามารถดึงข้อมูล Image Collection ได้" 
+    });
+  }
+});
+
+// POST: สร้าง Image Collection ใหม่
+app.post("/admin/image-collections", async (req, res) => {
+  try {
+    const { name, description, imageLabels } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "กรุณาระบุชื่อ Collection" 
+      });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const collectionsColl = db.collection("image_collections");
+    const assetsColl = db.collection("instruction_assets");
+
+    // ดึงข้อมูลรูปภาพจาก labels ที่เลือก
+    const selectedAssets = await assetsColl.find({
+      label: { $in: imageLabels || [] }
+    }).toArray();
+
+    const images = selectedAssets.map(asset => ({
+      label: asset.label,
+      slug: asset.slug || asset.label,
+      url: asset.url,
+      thumbUrl: asset.thumbUrl || asset.url,
+      description: asset.description || asset.alt || "",
+      fileName: asset.fileName,
+      assetId: asset._id.toString()
+    }));
+
+    const newCollection = {
+      _id: "collection-" + Date.now() + "-" + Math.random().toString(36).slice(2, 9),
+      name: name.trim(),
+      description: (description || "").trim(),
+      images: images,
+      isDefault: false,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    await collectionsColl.insertOne(newCollection);
+
+    res.json({ 
+      success: true, 
+      collection: newCollection,
+      message: `สร้าง Collection "${newCollection.name}" สำเร็จ (${images.length} รูป)` 
+    });
+  } catch (err) {
+    console.error("[Collections] create error:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: "ไม่สามารถสร้าง Image Collection ได้" 
+    });
+  }
+});
+
+// PUT: แก้ไข Image Collection
+app.put("/admin/image-collections/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, imageLabels } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "กรุณาระบุชื่อ Collection" 
+      });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const collectionsColl = db.collection("image_collections");
+    const assetsColl = db.collection("instruction_assets");
+
+    // ตรวจสอบว่า collection มีอยู่หรือไม่
+    const existing = await collectionsColl.findOne({ _id: id });
+    if (!existing) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "ไม่พบ Image Collection" 
+      });
+    }
+
+    // ดึงข้อมูลรูปภาพจาก labels ที่เลือก
+    const selectedAssets = await assetsColl.find({
+      label: { $in: imageLabels || [] }
+    }).toArray();
+
+    const images = selectedAssets.map(asset => ({
+      label: asset.label,
+      slug: asset.slug || asset.label,
+      url: asset.url,
+      thumbUrl: asset.thumbUrl || asset.url,
+      description: asset.description || asset.alt || "",
+      fileName: asset.fileName,
+      assetId: asset._id.toString()
+    }));
+
+    await collectionsColl.updateOne(
+      { _id: id },
+      { 
+        $set: {
+          name: name.trim(),
+          description: (description || "").trim(),
+          images: images,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    const updated = await collectionsColl.findOne({ _id: id });
+
+    res.json({ 
+      success: true, 
+      collection: updated,
+      message: `แก้ไข Collection "${updated.name}" สำเร็จ (${images.length} รูป)` 
+    });
+  } catch (err) {
+    console.error("[Collections] update error:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: "ไม่สามารถแก้ไข Image Collection ได้" 
+    });
+  }
+});
+
+// DELETE: ลบ Image Collection
+app.delete("/admin/image-collections/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("image_collections");
+
+    // ตรวจสอบว่าเป็น default collection หรือไม่
+    const collection = await coll.findOne({ _id: id });
+    if (!collection) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "ไม่พบ Image Collection" 
+      });
+    }
+
+    if (collection.isDefault) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "ไม่สามารถลบ Default Collection ได้" 
+      });
+    }
+
+    // ลบ collection reference จาก bots
+    await db.collection("line_bots").updateMany(
+      { selectedImageCollections: id },
+      { $pull: { selectedImageCollections: id } }
+    );
+
+    await db.collection("facebook_bots").updateMany(
+      { selectedImageCollections: id },
+      { $pull: { selectedImageCollections: id } }
+    );
+
+    // ลบ collection
+    await coll.deleteOne({ _id: id });
+
+    res.json({ 
+      success: true,
+      message: `ลบ Collection "${collection.name}" สำเร็จ` 
+    });
+  } catch (err) {
+    console.error("[Collections] delete error:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: "ไม่สามารถลบ Image Collection ได้" 
+    });
+  }
+});
+
+// ==================== END IMAGE COLLECTIONS API ====================
 
 // Enhanced delete instruction with JSON response
 app.delete("/admin/instructions/:id", async (req, res) => {
