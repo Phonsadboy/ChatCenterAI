@@ -324,9 +324,9 @@ function removeLibrarySelection(date) {
 // Load keyword settings to form
 function loadKeywordSettingsToForm(keywordSettings) {
   const normalizeKeywordSetting = (setting) => {
-    if (!setting) return { keyword: '', response: '', sendResponse: true };
-    if (typeof setting === 'string') return { keyword: setting, response: '', sendResponse: true };
-    return setting;
+    if (!setting) return { keyword: '', response: '' };
+    if (typeof setting === 'string') return { keyword: setting, response: '' };
+    return { keyword: setting.keyword || '', response: setting.response || '' };
   };
   
   const enableAI = normalizeKeywordSetting(keywordSettings?.enableAI);
@@ -335,27 +335,21 @@ function loadKeywordSettingsToForm(keywordSettings) {
   
   const keywordEnableAI = document.getElementById('instructionsKeywordEnableAI');
   const keywordEnableAIResponse = document.getElementById('instructionsKeywordEnableAIResponse');
-  const keywordEnableAISend = document.getElementById('instructionsKeywordEnableAISend');
   
   const keywordDisableAI = document.getElementById('instructionsKeywordDisableAI');
   const keywordDisableAIResponse = document.getElementById('instructionsKeywordDisableAIResponse');
-  const keywordDisableAISend = document.getElementById('instructionsKeywordDisableAISend');
   
   const keywordDisableFollowUp = document.getElementById('instructionsKeywordDisableFollowUp');
   const keywordDisableFollowUpResponse = document.getElementById('instructionsKeywordDisableFollowUpResponse');
-  const keywordDisableFollowUpSend = document.getElementById('instructionsKeywordDisableFollowUpSend');
   
   if (keywordEnableAI) keywordEnableAI.value = enableAI.keyword || '';
   if (keywordEnableAIResponse) keywordEnableAIResponse.value = enableAI.response || '';
-  if (keywordEnableAISend) keywordEnableAISend.checked = enableAI.sendResponse !== false;
   
   if (keywordDisableAI) keywordDisableAI.value = disableAI.keyword || '';
   if (keywordDisableAIResponse) keywordDisableAIResponse.value = disableAI.response || '';
-  if (keywordDisableAISend) keywordDisableAISend.checked = disableAI.sendResponse !== false;
   
   if (keywordDisableFollowUp) keywordDisableFollowUp.value = disableFollowUp.keyword || '';
   if (keywordDisableFollowUpResponse) keywordDisableFollowUpResponse.value = disableFollowUp.response || '';
-  if (keywordDisableFollowUpSend) keywordDisableFollowUpSend.checked = disableFollowUp.sendResponse !== false;
 }
 
 async function saveSelectedInstructions() {
@@ -384,31 +378,25 @@ async function saveSelectedInstructions() {
     // Save keyword settings
     const keywordEnableAI = document.getElementById('instructionsKeywordEnableAI');
     const keywordEnableAIResponse = document.getElementById('instructionsKeywordEnableAIResponse');
-    const keywordEnableAISend = document.getElementById('instructionsKeywordEnableAISend');
     
     const keywordDisableAI = document.getElementById('instructionsKeywordDisableAI');
     const keywordDisableAIResponse = document.getElementById('instructionsKeywordDisableAIResponse');
-    const keywordDisableAISend = document.getElementById('instructionsKeywordDisableAISend');
     
     const keywordDisableFollowUp = document.getElementById('instructionsKeywordDisableFollowUp');
     const keywordDisableFollowUpResponse = document.getElementById('instructionsKeywordDisableFollowUpResponse');
-    const keywordDisableFollowUpSend = document.getElementById('instructionsKeywordDisableFollowUpSend');
     
     const keywordSettings = {
       enableAI: {
-        keyword: keywordEnableAI?.value || '',
-        response: keywordEnableAIResponse?.value || '',
-        sendResponse: keywordEnableAISend?.checked !== false
+        keyword: keywordEnableAI?.value?.trim() || '',
+        response: keywordEnableAIResponse?.value?.trim() || ''
       },
       disableAI: {
-        keyword: keywordDisableAI?.value || '',
-        response: keywordDisableAIResponse?.value || '',
-        sendResponse: keywordDisableAISend?.checked !== false
+        keyword: keywordDisableAI?.value?.trim() || '',
+        response: keywordDisableAIResponse?.value?.trim() || ''
       },
       disableFollowUp: {
-        keyword: keywordDisableFollowUp?.value || '',
-        response: keywordDisableFollowUpResponse?.value || '',
-        sendResponse: keywordDisableFollowUpSend?.checked !== false
+        keyword: keywordDisableFollowUp?.value?.trim() || '',
+        response: keywordDisableFollowUpResponse?.value?.trim() || ''
       }
     };
 

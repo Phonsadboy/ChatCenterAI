@@ -860,14 +860,13 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
   
   // รองรับทั้งรูปแบบเก่า (string) และรูปแบบใหม่ (object)
   const normalizeKeywordSetting = (setting) => {
-    if (!setting) return { keyword: "", response: "", sendResponse: true };
+    if (!setting) return { keyword: "", response: "" };
     if (typeof setting === 'string') {
-      return { keyword: setting, response: "", sendResponse: true };
+      return { keyword: setting, response: "" };
     }
     return {
       keyword: setting.keyword || "",
-      response: setting.response || "",
-      sendResponse: setting.sendResponse !== false
+      response: setting.response || ""
     };
   };
 
@@ -879,11 +878,12 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
   if (enableAI.keyword && trimmedMessage === enableAI.keyword.trim()) {
     await setUserStatus(userId, true);
     console.log(`[Keyword] เปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
-    const responseMessage = enableAI.response.trim() || `✅ เปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`;
+    const responseMessage = enableAI.response.trim();
+    const sendResponse = responseMessage.length > 0;
     return { 
       action: "enableAI", 
-      message: responseMessage,
-      sendResponse: enableAI.sendResponse
+      message: responseMessage || `✅ เปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`,
+      sendResponse: sendResponse
     };
   }
 
@@ -891,11 +891,12 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
   if (disableAI.keyword && trimmedMessage === disableAI.keyword.trim()) {
     await setUserStatus(userId, false);
     console.log(`[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
-    const responseMessage = disableAI.response.trim() || `⏸️ ปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`;
+    const responseMessage = disableAI.response.trim();
+    const sendResponse = responseMessage.length > 0;
     return { 
       action: "disableAI", 
-      message: responseMessage,
-      sendResponse: disableAI.sendResponse
+      message: responseMessage || `⏸️ ปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`,
+      sendResponse: sendResponse
     };
   }
 
@@ -903,11 +904,12 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
   if (disableFollowUp.keyword && trimmedMessage === disableFollowUp.keyword.trim()) {
     await cancelFollowUpTasksForUser(userId, platform, botId, { reason: "keyword_cancel" });
     console.log(`[Keyword] ปิดระบบติดตามสำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
-    const responseMessage = disableFollowUp.response.trim() || `🔕 ปิดระบบติดตามสำหรับผู้ใช้นี้แล้ว`;
+    const responseMessage = disableFollowUp.response.trim();
+    const sendResponse = responseMessage.length > 0;
     return { 
       action: "disableFollowUp", 
-      message: responseMessage,
-      sendResponse: disableFollowUp.sendResponse
+      message: responseMessage || `🔕 ปิดระบบติดตามสำหรับผู้ใช้นี้แล้ว`,
+      sendResponse: sendResponse
     };
   }
 
@@ -6748,9 +6750,9 @@ app.post("/api/line-bots", async (req, res) => {
       aiModel: "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
       selectedInstructions: normalizedSelections,
       keywordSettings: {
-        enableAI: { keyword: "", response: "", sendResponse: true },
-        disableAI: { keyword: "", response: "", sendResponse: true },
-        disableFollowUp: { keyword: "", response: "", sendResponse: true }
+        enableAI: { keyword: "", response: "" },
+        disableAI: { keyword: "", response: "" },
+        disableFollowUp: { keyword: "", response: "" }
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -7114,9 +7116,9 @@ app.post("/api/facebook-bots", async (req, res) => {
       aiModel: aiModel || "gpt-5",
       selectedInstructions: normalizedSelections,
       keywordSettings: {
-        enableAI: { keyword: "", response: "", sendResponse: true },
-        disableAI: { keyword: "", response: "", sendResponse: true },
-        disableFollowUp: { keyword: "", response: "", sendResponse: true }
+        enableAI: { keyword: "", response: "" },
+        disableAI: { keyword: "", response: "" },
+        disableFollowUp: { keyword: "", response: "" }
       },
       createdAt: new Date(),
       updatedAt: new Date(),
