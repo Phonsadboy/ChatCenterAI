@@ -1010,8 +1010,17 @@ function sanitizeFollowUpImage(image) {
 }
 
 function sanitizeFollowUpImages(images) {
-  if (!Array.isArray(images)) return [];
-  return images.map(sanitizeFollowUpImage).filter(Boolean);
+  if (!Array.isArray(images)) {
+    console.log("[FollowUp Debug] sanitizeFollowUpImages: not an array", typeof images);
+    return [];
+  }
+  const result = images.map(sanitizeFollowUpImage).filter(Boolean);
+  console.log("[FollowUp Debug] sanitizeFollowUpImages:", {
+    inputCount: images.length,
+    outputCount: result.length,
+    sample: result[0]
+  });
+  return result;
 }
 
 function summarizeFollowUpRound(round) {
@@ -1037,6 +1046,16 @@ function normalizeFollowUpRounds(rounds) {
     const delay = Number(item.delayMinutes);
     const message = typeof item.message === "string" ? item.message.trim() : "";
     const images = sanitizeFollowUpImages(item.images || item.media);
+    
+    // Debug log
+    console.log(`[FollowUp Debug] Normalizing round ${idx}:`, {
+      hasItem: !!item,
+      delay,
+      messageLength: message.length,
+      rawImages: item.images || item.media,
+      imagesCount: images.length
+    });
+    
     if (!Number.isFinite(delay) || delay < 1) return;
     if (!message && images.length === 0) return;
     normalized.push({
@@ -1430,11 +1449,21 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       const scheduledMoment = baseMoment
         .clone()
         .add(round.delayMinutes, "minutes");
+      const sanitizedImages = sanitizeFollowUpImages(round.images);
+      
+      // Debug log
+      console.log(`[FollowUp Debug] Creating round ${index}:`, {
+        hasImages: !!round.images,
+        imageCount: Array.isArray(round.images) ? round.images.length : 0,
+        sanitizedCount: sanitizedImages.length,
+        sampleImage: sanitizedImages[0]
+      });
+      
       return {
         index,
         delayMinutes: round.delayMinutes,
         message: typeof round.message === "string" ? round.message : "",
-        images: sanitizeFollowUpImages(round.images),
+        images: sanitizedImages,
         scheduledAt: scheduledMoment.toDate(),
         sentAt: null,
         status: "pending",
@@ -1603,6 +1632,16 @@ async function handleFollowUpTask(task, db) {
     task.contextKey ||
     `${task.platform || "line"}:${normalizeFollowUpBotId(task.botId) || "default"}`;
 
+  // Debug log
+  console.log("[FollowUp Debug] Task rounds:", {
+    taskId: task._id,
+    totalRounds: rounds.length,
+    currentIndex,
+    hasRound: !!round,
+    roundHasImages: !!round?.images,
+    roundImagesCount: Array.isArray(round?.images) ? round.images.length : 0
+  });
+
   if (!round) {
     await coll.updateOne(
       { _id: task._id },
@@ -1688,6 +1727,15 @@ async function sendFollowUpMessage(task, round, db) {
   const message =
     typeof round?.message === "string" ? round.message.trim() : "";
   const images = sanitizeFollowUpImages(round?.images || []);
+  
+  // Debug log
+  console.log("[FollowUp Debug] Round data:", {
+    hasRound: !!round,
+    roundImages: round?.images,
+    sanitizedImages: images,
+    imageCount: images.length
+  });
+  
   if (!message && images.length === 0) {
     throw new Error("ไม่มีเนื้อหาสำหรับการติดตาม");
   }
