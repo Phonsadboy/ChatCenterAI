@@ -88,6 +88,9 @@ async function manageInstructions(botId) {
     if (botResponse.ok) {
       const bot = await botResponse.json();
       currentBotInstructions = bot.selectedInstructions || [];
+      
+      // Load keyword settings
+      loadKeywordSettingsToForm(bot.keywordSettings);
     }
 
     // Load available instruction libraries
@@ -141,6 +144,9 @@ async function manageFacebookInstructions(botId) {
     if (botResponse.ok) {
       const bot = await botResponse.json();
       currentBotInstructions = bot.selectedInstructions || [];
+      
+      // Load keyword settings
+      loadKeywordSettingsToForm(bot.keywordSettings);
     }
 
     // Load available instruction libraries
@@ -315,6 +321,43 @@ function removeLibrarySelection(date) {
 }
 
 // Save selected instructions
+// Load keyword settings to form
+function loadKeywordSettingsToForm(keywordSettings) {
+  const normalizeKeywordSetting = (setting) => {
+    if (!setting) return { keyword: '', response: '', sendResponse: true };
+    if (typeof setting === 'string') return { keyword: setting, response: '', sendResponse: true };
+    return setting;
+  };
+  
+  const enableAI = normalizeKeywordSetting(keywordSettings?.enableAI);
+  const disableAI = normalizeKeywordSetting(keywordSettings?.disableAI);
+  const disableFollowUp = normalizeKeywordSetting(keywordSettings?.disableFollowUp);
+  
+  const keywordEnableAI = document.getElementById('instructionsKeywordEnableAI');
+  const keywordEnableAIResponse = document.getElementById('instructionsKeywordEnableAIResponse');
+  const keywordEnableAISend = document.getElementById('instructionsKeywordEnableAISend');
+  
+  const keywordDisableAI = document.getElementById('instructionsKeywordDisableAI');
+  const keywordDisableAIResponse = document.getElementById('instructionsKeywordDisableAIResponse');
+  const keywordDisableAISend = document.getElementById('instructionsKeywordDisableAISend');
+  
+  const keywordDisableFollowUp = document.getElementById('instructionsKeywordDisableFollowUp');
+  const keywordDisableFollowUpResponse = document.getElementById('instructionsKeywordDisableFollowUpResponse');
+  const keywordDisableFollowUpSend = document.getElementById('instructionsKeywordDisableFollowUpSend');
+  
+  if (keywordEnableAI) keywordEnableAI.value = enableAI.keyword || '';
+  if (keywordEnableAIResponse) keywordEnableAIResponse.value = enableAI.response || '';
+  if (keywordEnableAISend) keywordEnableAISend.checked = enableAI.sendResponse !== false;
+  
+  if (keywordDisableAI) keywordDisableAI.value = disableAI.keyword || '';
+  if (keywordDisableAIResponse) keywordDisableAIResponse.value = disableAI.response || '';
+  if (keywordDisableAISend) keywordDisableAISend.checked = disableAI.sendResponse !== false;
+  
+  if (keywordDisableFollowUp) keywordDisableFollowUp.value = disableFollowUp.keyword || '';
+  if (keywordDisableFollowUpResponse) keywordDisableFollowUpResponse.value = disableFollowUp.response || '';
+  if (keywordDisableFollowUpSend) keywordDisableFollowUpSend.checked = disableFollowUp.sendResponse !== false;
+}
+
 async function saveSelectedInstructions() {
   if (!currentBotId || !currentBotType) {
     showAlert("ไม่พบ Bot ID", "danger");
@@ -322,12 +365,13 @@ async function saveSelectedInstructions() {
   }
 
   try {
-    const url =
+    // Save instructions
+    const instructionsUrl =
       currentBotType === "facebook"
         ? `/api/facebook-bots/${currentBotId}/instructions`
         : `/api/line-bots/${currentBotId}/instructions`;
 
-    const response = await fetch(url, {
+    const instructionsResponse = await fetch(instructionsUrl, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -337,8 +381,52 @@ async function saveSelectedInstructions() {
       }),
     });
 
-    if (response.ok) {
-      showAlert("บันทึกการเลือกใช้ instructions เรียบร้อยแล้ว", "success");
+    // Save keyword settings
+    const keywordEnableAI = document.getElementById('instructionsKeywordEnableAI');
+    const keywordEnableAIResponse = document.getElementById('instructionsKeywordEnableAIResponse');
+    const keywordEnableAISend = document.getElementById('instructionsKeywordEnableAISend');
+    
+    const keywordDisableAI = document.getElementById('instructionsKeywordDisableAI');
+    const keywordDisableAIResponse = document.getElementById('instructionsKeywordDisableAIResponse');
+    const keywordDisableAISend = document.getElementById('instructionsKeywordDisableAISend');
+    
+    const keywordDisableFollowUp = document.getElementById('instructionsKeywordDisableFollowUp');
+    const keywordDisableFollowUpResponse = document.getElementById('instructionsKeywordDisableFollowUpResponse');
+    const keywordDisableFollowUpSend = document.getElementById('instructionsKeywordDisableFollowUpSend');
+    
+    const keywordSettings = {
+      enableAI: {
+        keyword: keywordEnableAI?.value || '',
+        response: keywordEnableAIResponse?.value || '',
+        sendResponse: keywordEnableAISend?.checked !== false
+      },
+      disableAI: {
+        keyword: keywordDisableAI?.value || '',
+        response: keywordDisableAIResponse?.value || '',
+        sendResponse: keywordDisableAISend?.checked !== false
+      },
+      disableFollowUp: {
+        keyword: keywordDisableFollowUp?.value || '',
+        response: keywordDisableFollowUpResponse?.value || '',
+        sendResponse: keywordDisableFollowUpSend?.checked !== false
+      }
+    };
+
+    const keywordsUrl =
+      currentBotType === "facebook"
+        ? `/api/facebook-bots/${currentBotId}/keywords`
+        : `/api/line-bots/${currentBotId}/keywords`;
+
+    const keywordsResponse = await fetch(keywordsUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ keywordSettings }),
+    });
+
+    if (instructionsResponse.ok && keywordsResponse.ok) {
+      showAlert("บันทึก instructions และ keyword settings เรียบร้อยแล้ว", "success");
 
       // Refresh bot list
       if (currentBotType === "facebook") {
@@ -353,11 +441,11 @@ async function saveSelectedInstructions() {
       );
       if (modal) modal.hide();
     } else {
-      showAlert("ไม่สามารถบันทึกการเลือกใช้ instructions ได้", "danger");
+      showAlert("ไม่สามารถบันทึกข้อมูลได้", "danger");
     }
   } catch (error) {
-    console.error("Error saving instructions:", error);
-    showAlert("เกิดข้อผิดพลาดในการบันทึกการเลือกใช้ instructions", "danger");
+    console.error("Error saving instructions and keywords:", error);
+    showAlert("เกิดข้อผิดพลาดในการบันทึกข้อมูล", "danger");
   }
 }
 
