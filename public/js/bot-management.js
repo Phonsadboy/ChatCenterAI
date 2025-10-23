@@ -305,6 +305,15 @@ async function editLineBot(botId) {
             if (lineBotAiModel) lineBotAiModel.value = bot.aiModel || 'gpt-5';
             if (lineBotDefault) lineBotDefault.checked = bot.isDefault;
             
+            // Load keyword settings
+            const lineKeywordEnableAI = document.getElementById('lineKeywordEnableAI');
+            const lineKeywordDisableAI = document.getElementById('lineKeywordDisableAI');
+            const lineKeywordDisableFollowUp = document.getElementById('lineKeywordDisableFollowUp');
+            
+            if (lineKeywordEnableAI) lineKeywordEnableAI.value = bot.keywordSettings?.enableAI || '';
+            if (lineKeywordDisableAI) lineKeywordDisableAI.value = bot.keywordSettings?.disableAI || '';
+            if (lineKeywordDisableFollowUp) lineKeywordDisableFollowUp.value = bot.keywordSettings?.disableFollowUp || '';
+            
             const addLineBotModalLabel = document.getElementById('addLineBotModalLabel');
             if (addLineBotModalLabel) {
                 addLineBotModalLabel.innerHTML = '<i class="fab fa-line me-2"></i>แก้ไข Line Bot';
@@ -390,6 +399,29 @@ async function saveLineBot() {
     };
 
     const botId = formData.get('id');
+    
+    // Save keyword settings if bot already exists
+    if (botId) {
+        const keywordSettings = {
+            enableAI: formData.get('keywordEnableAI') || '',
+            disableAI: formData.get('keywordDisableAI') || '',
+            disableFollowUp: formData.get('keywordDisableFollowUp') || ''
+        };
+        
+        // Save keyword settings separately
+        try {
+            await fetch(`/api/line-bots/${botId}/keywords`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ keywordSettings })
+            });
+        } catch (error) {
+            console.error('Error saving keyword settings:', error);
+        }
+    }
+    
     const url = botId ? `/api/line-bots/${botId}` : '/api/line-bots';
     const method = botId ? 'PUT' : 'POST';
 
@@ -639,6 +671,15 @@ async function editFacebookBot(botId) {
             if (facebookVerifyToken) facebookVerifyToken.value = bot.verifyToken || '';
             if (facebookBotAiModel) facebookBotAiModel.value = bot.aiModel || 'gpt-5';
             if (facebookBotDefault) facebookBotDefault.checked = bot.isDefault || false;
+            
+            // Load keyword settings
+            const facebookKeywordEnableAI = document.getElementById('facebookKeywordEnableAI');
+            const facebookKeywordDisableAI = document.getElementById('facebookKeywordDisableAI');
+            const facebookKeywordDisableFollowUp = document.getElementById('facebookKeywordDisableFollowUp');
+            
+            if (facebookKeywordEnableAI) facebookKeywordEnableAI.value = bot.keywordSettings?.enableAI || '';
+            if (facebookKeywordDisableAI) facebookKeywordDisableAI.value = bot.keywordSettings?.disableAI || '';
+            if (facebookKeywordDisableFollowUp) facebookKeywordDisableFollowUp.value = bot.keywordSettings?.disableFollowUp || '';
 
             const addFacebookBotModalLabel = document.getElementById('addFacebookBotModalLabel');
             if (addFacebookBotModalLabel) {
@@ -727,6 +768,29 @@ async function saveFacebookBot() {
     };
 
     const botId = formData.get('id');
+    
+    // Save keyword settings if bot already exists
+    if (botId) {
+        const keywordSettings = {
+            enableAI: formData.get('keywordEnableAI') || '',
+            disableAI: formData.get('keywordDisableAI') || '',
+            disableFollowUp: formData.get('keywordDisableFollowUp') || ''
+        };
+        
+        // Save keyword settings separately
+        try {
+            await fetch(`/api/facebook-bots/${botId}/keywords`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ keywordSettings })
+            });
+        } catch (error) {
+            console.error('Error saving keyword settings:', error);
+        }
+    }
+    
     // enforce verification first
     const verifiedToggle = document.getElementById('fbVerifiedToggle');
     if (!verifiedToggle || !verifiedToggle.checked) {

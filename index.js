@@ -837,6 +837,61 @@ async function setUserStatus(userId, aiEnabled) {
 }
 
 /**
+ * ตรวจจับและดำเนินการตาม keyword ที่ตั้งไว้
+ * @param {string} message - ข้อความที่จะตรวจสอบ
+ * @param {object} keywordSettings - การตั้งค่า keywords จาก bot config
+ * @param {string} userId - User ID ของผู้รับข้อความ
+ * @param {string} platform - แพลตฟอร์ม (line/facebook)
+ * @param {string} botId - Bot ID
+ * @param {boolean} isFromAdmin - เป็นข้อความจากแอดมินหรือไม่
+ * @returns {Promise<{action: string|null, message: string}>} - action ที่ดำเนินการและข้อความตอบกลับ
+ */
+async function detectKeywordAction(message, keywordSettings, userId, platform, botId, isFromAdmin = false) {
+  // ต้องเป็นข้อความจากแอดมินเท่านั้น
+  if (!isFromAdmin) {
+    return { action: null, message: "" };
+  }
+
+  if (!keywordSettings || !message) {
+    return { action: null, message: "" };
+  }
+
+  const trimmedMessage = message.trim();
+  
+  // ตรวจสอบ keyword สำหรับเปิด AI
+  if (keywordSettings.enableAI && trimmedMessage === keywordSettings.enableAI.trim()) {
+    await setUserStatus(userId, true);
+    console.log(`[Keyword] เปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    return { 
+      action: "enableAI", 
+      message: `✅ เปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`
+    };
+  }
+
+  // ตรวจสอบ keyword สำหรับปิด AI
+  if (keywordSettings.disableAI && trimmedMessage === keywordSettings.disableAI.trim()) {
+    await setUserStatus(userId, false);
+    console.log(`[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    return { 
+      action: "disableAI", 
+      message: `⏸️ ปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`
+    };
+  }
+
+  // ตรวจสอบ keyword สำหรับปิดระบบติดตาม
+  if (keywordSettings.disableFollowUp && trimmedMessage === keywordSettings.disableFollowUp.trim()) {
+    await cancelFollowUpTasksForUser(userId, platform, botId, { reason: "keyword_cancel" });
+    console.log(`[Keyword] ปิดระบบติดตามสำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    return { 
+      action: "disableFollowUp", 
+      message: `🔕 ปิดระบบติดตามสำหรับผู้ใช้นี้แล้ว`
+    };
+  }
+
+  return { action: null, message: "" };
+}
+
+/**
  * ฟังก์ชันสำหรับลบประวัติการสนทนาทั้งหมดของ user
  */
 async function clearUserChatHistory(userId) {
@@ -5704,7 +5759,46 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
               const db = client.db("chatbot");
               const coll = db.collection("chat_history");
 
-              // คำสั่งควบคุม [ปิด]/[เปิด]
+              // ตรวจสอบ keyword actions ก่อน (เช่น เปิด/ปิด AI, ปิดระบบติดตาม)
+              const keywordResult = await detectKeywordAction(
+                text,
+                facebookBot.keywordSettings || {},
+                targetUserId,
+                "facebook",
+                facebookBot._id?.toString?.() || null,
+                true // isFromAdmin = true
+              );
+
+              if (keywordResult.action) {
+                // ถ้ามี keyword action ให้บันทึกข้อความและแจ้งเตือน
+                const controlDoc = {
+                  senderId: targetUserId,
+                  role: "assistant",
+                  content: `[ระบบ] ${keywordResult.message}`,
+                  timestamp: new Date(),
+                  source: "admin_chat",
+                  platform: "facebook",
+                  botId: facebookBot?._id?.toString?.() || null,
+                };
+                await coll.insertOne(controlDoc);
+
+                try {
+                  await resetUserUnreadCount(targetUserId);
+                } catch (_) {}
+
+                // แจ้ง UI แอดมินแบบเรียลไทม์
+                try {
+                  io.emit("newMessage", {
+                    userId: targetUserId,
+                    message: controlDoc,
+                    sender: "assistant",
+                    timestamp: controlDoc.timestamp,
+                  });
+                } catch (_) {}
+                continue;
+              }
+
+              // คำสั่งควบคุม [ปิด]/[เปิด] (legacy)
               if (text === "[ปิด]" || text === "[เปิด]") {
                 const enable = text === "[เปิด]";
                 await setUserStatus(targetUserId, enable);
@@ -6628,6 +6722,11 @@ app.post("/api/line-bots", async (req, res) => {
       isDefault: isDefault || false,
       aiModel: "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
       selectedInstructions: normalizedSelections,
+      keywordSettings: {
+        enableAI: "",
+        disableAI: "",
+        disableFollowUp: ""
+      },
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -6804,6 +6903,51 @@ app.put("/api/line-bots/:id/instructions", async (req, res) => {
   }
 });
 
+// Route: อัปเดต keyword settings สำหรับ Line Bot
+app.put("/api/line-bots/:id/keywords", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { keywordSettings } = req.body;
+
+    if (!keywordSettings || typeof keywordSettings !== 'object') {
+      return res
+        .status(400)
+        .json({ error: "keywordSettings ต้องเป็น object" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+
+    const normalizedSettings = {
+      enableAI: (keywordSettings.enableAI || "").trim(),
+      disableAI: (keywordSettings.disableAI || "").trim(),
+      disableFollowUp: (keywordSettings.disableFollowUp || "").trim()
+    };
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          keywordSettings: normalizedSettings,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
+    }
+
+    res.json({ message: "อัปเดต keyword settings เรียบร้อยแล้ว", keywordSettings: normalizedSettings });
+  } catch (err) {
+    console.error("Error updating line bot keyword settings:", err);
+    res
+      .status(500)
+      .json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
+  }
+});
+
 // ============================ Facebook Bot API Endpoints ============================
 
 // Initialize a Facebook Bot stub for webhook verification
@@ -6944,6 +7088,11 @@ app.post("/api/facebook-bots", async (req, res) => {
       isDefault: isDefault || false,
       aiModel: aiModel || "gpt-5",
       selectedInstructions: normalizedSelections,
+      keywordSettings: {
+        enableAI: "",
+        disableAI: "",
+        disableFollowUp: ""
+      },
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -7119,6 +7268,51 @@ app.put("/api/facebook-bots/:id/instructions", async (req, res) => {
     res
       .status(500)
       .json({ error: "ไม่สามารถอัปเดต instruction ที่เลือกใช้ได้" });
+  }
+});
+
+// Route: อัปเดต keyword settings สำหรับ Facebook Bot
+app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { keywordSettings } = req.body;
+
+    if (!keywordSettings || typeof keywordSettings !== 'object') {
+      return res
+        .status(400)
+        .json({ error: "keywordSettings ต้องเป็น object" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+
+    const normalizedSettings = {
+      enableAI: (keywordSettings.enableAI || "").trim(),
+      disableAI: (keywordSettings.disableAI || "").trim(),
+      disableFollowUp: (keywordSettings.disableFollowUp || "").trim()
+    };
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          keywordSettings: normalizedSettings,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+    }
+
+    res.json({ message: "อัปเดต keyword settings เรียบร้อยแล้ว", keywordSettings: normalizedSettings });
+  } catch (err) {
+    console.error("Error updating facebook bot keyword settings:", err);
+    res
+      .status(500)
+      .json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
   }
 });
 
@@ -9129,7 +9323,59 @@ app.post("/admin/chat/send", async (req, res) => {
     const platform = lastChat?.platform || "line";
     const botId = lastChat?.botId || null;
 
-    // กรณีเป็นคำสั่ง [ปิด] / [เปิด]
+    // ดึงข้อมูล bot เพื่อตรวจสอบ keyword settings
+    let keywordSettings = {};
+    if (botId && ObjectId.isValid(botId)) {
+      const botColl = platform === "facebook" 
+        ? db.collection("facebook_bots") 
+        : db.collection("line_bots");
+      const bot = await botColl.findOne({ _id: new ObjectId(botId) });
+      if (bot && bot.keywordSettings) {
+        keywordSettings = bot.keywordSettings;
+      }
+    }
+
+    // ตรวจสอบ keyword actions ก่อน (เช่น เปิด/ปิด AI, ปิดระบบติดตาม)
+    const keywordResult = await detectKeywordAction(
+      trimmed,
+      keywordSettings,
+      userId,
+      platform,
+      botId,
+      true // isFromAdmin = true
+    );
+
+    if (keywordResult.action) {
+      // ถ้ามี keyword action ให้บันทึกข้อความและแจ้งเตือน
+      const controlDoc = {
+        senderId: userId,
+        role: "assistant",
+        content: `[ระบบ] ${keywordResult.message}`,
+        timestamp: new Date(),
+        source: "admin_chat",
+        platform,
+        botId,
+      };
+      await coll.insertOne(controlDoc);
+      await resetUserUnreadCount(userId);
+
+      // Emit เพื่ออัปเดต UI ของแอดมิน
+      io.emit("newMessage", {
+        userId: userId,
+        message: controlDoc,
+        sender: "assistant",
+        timestamp: controlDoc.timestamp,
+      });
+
+      return res.json({
+        success: true,
+        control: true,
+        displayMessage: keywordResult.message,
+        skipEcho: true,
+      });
+    }
+
+    // กรณีเป็นคำสั่ง [ปิด] / [เปิด] (legacy)
     if (trimmed === "[ปิด]" || trimmed === "[เปิด]") {
       const enable = trimmed === "[เปิด]";
       await setUserStatus(userId, enable);
