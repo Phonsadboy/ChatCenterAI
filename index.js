@@ -6946,10 +6946,22 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("line_bots");
 
+    // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response)
+    const normalizeKeywordSetting = (setting) => {
+      if (!setting) return { keyword: "", response: "" };
+      if (typeof setting === 'string') {
+        return { keyword: setting.trim(), response: "" };
+      }
+      return {
+        keyword: (setting.keyword || "").trim(),
+        response: (setting.response || "").trim()
+      };
+    };
+
     const normalizedSettings = {
-      enableAI: (keywordSettings.enableAI || "").trim(),
-      disableAI: (keywordSettings.disableAI || "").trim(),
-      disableFollowUp: (keywordSettings.disableFollowUp || "").trim()
+      enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
+      disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
+      disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp)
     };
 
     const result = await coll.updateOne(
@@ -7314,10 +7326,22 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
 
+    // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response)
+    const normalizeKeywordSetting = (setting) => {
+      if (!setting) return { keyword: "", response: "" };
+      if (typeof setting === 'string') {
+        return { keyword: setting.trim(), response: "" };
+      }
+      return {
+        keyword: (setting.keyword || "").trim(),
+        response: (setting.response || "").trim()
+      };
+    };
+
     const normalizedSettings = {
-      enableAI: (keywordSettings.enableAI || "").trim(),
-      disableAI: (keywordSettings.disableAI || "").trim(),
-      disableFollowUp: (keywordSettings.disableFollowUp || "").trim()
+      enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
+      disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
+      disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp)
     };
 
     const result = await coll.updateOne(

@@ -117,7 +117,7 @@ async function manageInstructions(botId) {
     );
     if (manageInstructionsModalLabel) {
       manageInstructionsModalLabel.innerHTML =
-        '<i class="fas fa-book me-2"></i>จัดการ Instructions สำหรับ Line Bot';
+        '<i class="fab fa-line me-2"></i>จัดการ Instructions - Line Bot';
     }
 
     const modal = new bootstrap.Modal(
@@ -173,7 +173,7 @@ async function manageFacebookInstructions(botId) {
     );
     if (manageInstructionsModalLabel) {
       manageInstructionsModalLabel.innerHTML =
-        '<i class="fas fa-book me-2"></i>จัดการ Instructions สำหรับ Facebook Bot';
+        '<i class="fab fa-facebook me-2"></i>จัดการ Instructions - Facebook Bot';
     }
 
     const modal = new bootstrap.Modal(
