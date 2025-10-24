@@ -18,17 +18,17 @@ class ChatManager {
         this.lazyLoader = new window.performanceUtils.LazyImageLoader();
         this.smartPoller = null;
         
-        // ✅ Debounced search
-        this.debouncedSearch = window.performanceUtils.debounce(
-            this.performSearch.bind(this),
-            300
-        );
+        // ✅ Debounced search - Comment out until methods are implemented
+        // this.debouncedSearch = window.performanceUtils.debounce(
+        //     this.performSearch.bind(this),
+        //     300
+        // );
         
-        // ✅ Throttled scroll
-        this.throttledScroll = window.performanceUtils.throttle(
-            this.handleScroll.bind(this),
-            100
-        );
+        // ✅ Throttled scroll - Comment out until methods are implemented
+        // this.throttledScroll = window.performanceUtils.throttle(
+        //     this.handleScroll.bind(this),
+        //     100
+        // );
         
         this.init();
     }

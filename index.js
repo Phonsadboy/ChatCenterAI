@@ -1747,14 +1747,38 @@ async function handleFollowUpTask(task, db) {
 async function sendFollowUpMessage(task, round, db) {
   const message =
     typeof round?.message === "string" ? round.message.trim() : "";
-  const images = sanitizeFollowUpImages(round?.images || []);
+  let images = sanitizeFollowUpImages(round?.images || []);
+  
+  // ถ้า PUBLIC_BASE_URL ไม่ได้ตั้งค่า ให้เตือน
+  if (!PUBLIC_BASE_URL) {
+    console.warn("[FollowUp Warning] PUBLIC_BASE_URL is not set. Images with relative URLs may fail.");
+  }
+  
+  // แปลง relative URLs เป็น absolute URLs ถ้า PUBLIC_BASE_URL มี
+  if (PUBLIC_BASE_URL) {
+    images = images.map(img => {
+      const fixed = { ...img };
+      if (img.url && img.url.startsWith("/")) {
+        fixed.url = PUBLIC_BASE_URL.replace(/\/$/, "") + img.url;
+      }
+      if (img.previewUrl && img.previewUrl.startsWith("/")) {
+        fixed.previewUrl = PUBLIC_BASE_URL.replace(/\/$/, "") + img.previewUrl;
+      }
+      if (img.thumbUrl && img.thumbUrl.startsWith("/")) {
+        fixed.thumbUrl = PUBLIC_BASE_URL.replace(/\/$/, "") + img.thumbUrl;
+      }
+      return fixed;
+    });
+  }
   
   // Debug log
   console.log("[FollowUp Debug] Round data:", {
     hasRound: !!round,
     roundImages: round?.images,
     sanitizedImages: images,
-    imageCount: images.length
+    imageCount: images.length,
+    hasPublicBaseUrl: !!PUBLIC_BASE_URL,
+    sampleUrl: images[0]?.url
   });
   
   if (!message && images.length === 0) {
