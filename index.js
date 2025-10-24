@@ -1820,12 +1820,28 @@ async function sendLineFollowUpMessage(
   images = [],
 ) {
   try {
+    console.log("[FollowUp Debug] sendLineFollowUpMessage called:", {
+      userId,
+      hasMessage: !!message,
+      imageCount: Array.isArray(images) ? images.length : 0,
+      botId,
+    });
+
     const payloads = [];
     const trimmed = typeof message === "string" ? message.trim() : "";
     if (trimmed) {
       payloads.push({ type: "text", text: trimmed });
     }
     const media = sanitizeFollowUpImages(images);
+    console.log("[FollowUp Debug] Sanitized images:", {
+      inputCount: Array.isArray(images) ? images.length : 0,
+      outputCount: media.length,
+      urls: media.map((img) => ({
+        url: img.url,
+        previewUrl: img.previewUrl,
+      })),
+    });
+
     media.forEach((image) => {
       payloads.push({
         type: "image",
@@ -1838,14 +1854,25 @@ async function sendLineFollowUpMessage(
       throw new Error("ไม่มีเนื้อหาสำหรับการติดตาม");
     }
 
+    console.log("[FollowUp Debug] Payloads to send:", {
+      count: payloads.length,
+      types: payloads.map((p) => p.type),
+    });
+
     const chunks = [];
     for (let i = 0; i < payloads.length; i += 5) {
       chunks.push(payloads.slice(i, i + 5));
     }
 
     const sendChunks = async (client) => {
-      for (const chunk of chunks) {
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        console.log(`[FollowUp Debug] Sending chunk ${i + 1}/${chunks.length}:`, {
+          itemCount: chunk.length,
+          types: chunk.map((item) => item.type),
+        });
         await client.pushMessage(userId, chunk.length === 1 ? chunk[0] : chunk);
+        console.log(`[FollowUp Debug] Chunk ${i + 1} sent successfully`);
       }
     };
 
@@ -1857,18 +1884,27 @@ async function sendLineFollowUpMessage(
       if (!botDoc || !botDoc.channelAccessToken || !botDoc.channelSecret) {
         throw new Error("ไม่พบข้อมูล Line Bot สำหรับการส่งข้อความ");
       }
+      console.log("[FollowUp Debug] Using bot-specific LINE client");
       const client = createLineClient(
         botDoc.channelAccessToken,
         botDoc.channelSecret,
       );
       await sendChunks(client);
+      console.log("[FollowUp Debug] All chunks sent successfully");
       return;
     }
     if (!lineClient) {
       throw new Error("Line Client ยังไม่ถูกตั้งค่า");
     }
+    console.log("[FollowUp Debug] Using default LINE client");
     await sendChunks(lineClient);
+    console.log("[FollowUp Debug] All chunks sent successfully");
   } catch (error) {
+    console.error("[FollowUp Error] Failed to send LINE message:", {
+      error: error.message,
+      userId,
+      botId,
+    });
     throw new Error(error.message || "ไม่สามารถส่งข้อความผ่าน LINE ได้");
   }
 }
@@ -9162,7 +9198,9 @@ app.post(
       const db = client.db("chatbot");
       const coll = db.collection("follow_up_assets");
       const bucket = new GridFSBucket(db, { bucketName: "followupAssets" });
-      const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
+      const urlBase = PUBLIC_BASE_URL 
+        ? PUBLIC_BASE_URL.replace(/\/$/, "") 
+        : (req.get("host") ? `https://${req.get("host")}` : "");
 
       const assets = [];
       for (const file of files) {
