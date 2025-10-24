@@ -130,114 +130,10 @@ try {
   console.warn("[Static] Could not ensure asset directories:", e?.message || e);
 }
 
-app.get("/assets/instructions/:fileName", async (req, res, next) => {
-  try {
-    const { fileName } = req.params;
-    if (!fileName) return next();
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instruction_assets");
-    const doc = await coll.findOne({
-      $or: [
-        { fileName },
-        { thumbFileName: fileName },
-        { label: fileName.replace(/\.[^/.]+$/, "") },
-        { label: fileName.replace(/_thumb\.[^/.]+$/, "") },
-      ],
-    });
-
-    if (!doc) return next();
-
-    const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
-    const isThumb =
-      fileName === doc.thumbFileName ||
-      fileName.endsWith("_thumb.jpg") ||
-      fileName.endsWith("_thumb.jpeg");
-    const targetName = isThumb
-      ? doc.thumbFileName || `${doc.label}_thumb.jpg`
-      : doc.fileName || `${doc.label}.jpg`;
-    const targetId = isThumb ? doc.thumbFileId : doc.fileId;
-    if (!targetName) return next();
-    let fileObjectId = toObjectId(targetId);
-
-    if (!fileObjectId) {
-      const files = await bucket
-        .find({ filename: targetName })
-        .sort({ uploadDate: -1 })
-        .limit(1)
-        .toArray();
-      if (!files.length) return next();
-      fileObjectId = files[0]._id;
-    }
-
-    const stream = bucket.openDownloadStream(fileObjectId);
-
-    res.set("Content-Type", doc.mime || "image/jpeg");
-    res.set("Cache-Control", "public, max-age=604800, immutable");
-    stream.on("error", (err) => {
-      if (err.code === "FileNotFound") return next();
-      next(err);
-    });
-    stream.pipe(res);
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/assets/followup/:fileName", async (req, res, next) => {
-  try {
-    const { fileName } = req.params;
-    if (!fileName) return next();
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_assets");
-    const doc = await coll.findOne({
-      $or: [{ fileName }, { thumbName: fileName }, { thumbFileName: fileName }],
-    });
-
-    if (!doc) return next();
-
-    const bucket = new GridFSBucket(db, { bucketName: "followupAssets" });
-    const isThumb =
-      fileName === doc.thumbName ||
-      fileName === doc.thumbFileName ||
-      fileName.endsWith("_thumb.jpg") ||
-      fileName.endsWith("_thumb.jpeg");
-    const targetName = isThumb
-      ? doc.thumbFileName || doc.thumbName
-      : doc.fileName;
-    const targetId = isThumb ? doc.thumbFileId || null : doc.fileId || null;
-    if (!targetName) return next();
-    let fileObjectId = toObjectId(targetId);
-
-    if (!fileObjectId) {
-      const files = await bucket
-        .find({ filename: targetName })
-        .sort({ uploadDate: -1 })
-        .limit(1)
-        .toArray();
-      if (!files.length) return next();
-      fileObjectId = files[0]._id;
-    }
-
-    const stream = bucket.openDownloadStream(fileObjectId);
-
-    res.set("Content-Type", doc.mime || "image/jpeg");
-    res.set("Cache-Control", "public, max-age=604800, immutable");
-    stream.on("error", (err) => {
-      if (err.code === "FileNotFound") return next();
-      next(err);
-    });
-    stream.pipe(res);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Avoid favicon 404s in environments without a favicon
-app.get("/favicon.ico", (req, res) => res.sendStatus(204));
+// Asset routes moved to /routes/assets.routes.js
+// - GET /assets/instructions/:fileName
+// - GET /assets/followup/:fileName
+// - GET /favicon.ico
 
 // View engine setup
 app.set("view engine", "ejs");
@@ -4101,6 +3997,101 @@ async function migrateAssetsToCollections() {
   }
 }
 
+// ============================ Import Route Modules ============================
+// Import separated route modules (Phase 1 refactoring)
+const assetsRoutes = require("./routes/assets.routes");
+const webhookRoutes = require("./routes/webhook.routes");
+const apiRoutes = require("./routes/api.routes");
+const adminRoutes = require("./routes/admin.routes");
+
+// Initialize route modules with dependencies
+assetsRoutes.initAssetRoutes({
+  connectDB,
+  toObjectId,
+});
+
+webhookRoutes.initWebhookRoutes({
+  connectDB,
+  handleLineEvent,
+  handleFacebookComment,
+  detectKeywordAction,
+  setUserStatus,
+  resetUserUnreadCount,
+  io,
+  getSettingValue,
+  DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+  addToQueue,
+  filterMessage,
+  saveChatHistory,
+  toObjectId,
+  streamToBuffer,
+  ASSETS_DIR,
+  getAssetsMapForBot,
+  normalizeInstructionSelections,
+  buildSystemPromptFromSelections,
+  getAssetsInstructionsText,
+  getAIHistory,
+  getAssistantResponseMultimodal,
+  getAssistantResponseTextOnly,
+  extractThaiReply,
+});
+
+apiRoutes.initApiRoutes({
+  connectDB,
+  normalizeInstructionSelections,
+  resolveInstructionSelections,
+  ensureInstructionVersionSnapshot,
+  getInstructionAssets,
+  getSettingValue,
+  DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+  resetFollowUpConfigCache,
+  testMessageFiltering,
+});
+
+adminRoutes.initAdminRoutes({
+  connectDB,
+  getInstructions,
+  getAiEnabled,
+  setAiEnabled,
+  processExcelToInstructions,
+  buildInstructionText,
+  getSettingValue,
+  buildFollowUpOverview,
+  getFollowUpUsers,
+  getFollowUpConfigForContext,
+  normalizeFollowUpBotId,
+  clearFollowUpStatus,
+  listFollowUpPageSettings,
+  getNormalizedChatUsers,
+  getNormalizedChatHistory,
+  getUserStatus,
+  setUserStatus,
+  sendMessage,
+  clearUserChatHistory,
+  io,
+  resetUserUnreadCount,
+  getInstructionAssets,
+  normalizeInstructionSelections,
+  generateInstructionId,
+  XLSX,
+  GridFSBucket,
+  toObjectId,
+  streamToBuffer,
+  uploadBufferToGridFS,
+  deleteGridFsEntries,
+  sharp,
+});
+
+// Use route modules (order matters for route precedence)
+app.use("/", assetsRoutes.router);
+app.use("/", webhookRoutes.router);
+app.use("/", apiRoutes.router);
+app.use("/admin", adminRoutes.router);
+
+console.log("[Routes] Loaded routes from separate modules");
+
+// ============================ Server Startup ============================
+
 server.listen(PORT, async () => {
   console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
   try {
@@ -5364,24 +5355,25 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
   return segments;
 }
 
-// ============================ Instruction Library ============================
-// Health check endpoint for Railway
-app.get("/health", (req, res) => {
-  res.json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    service: "ChatCenter AI",
-    version: "1.0.0",
-  });
-});
+// ============================ Instruction Library & Admin Routes ============================
+// Routes moved to /routes/admin.routes.js:
+// - GET /health (moved to api.routes.js)
+// - GET / (redirect - moved to admin.routes.js)
+// - GET /admin/instructions/library
+// - GET /admin/instructions/library/:date
+// - POST /admin/instructions/library-now
+// - PUT /admin/instructions/library/:date
+// - DELETE /admin/instructions/library/:date
+// - POST /admin/instructions/restore/:date
+// - POST /admin/instructions/upload-excel
+// - POST /admin/instructions/preview-excel
+// - GET /admin (redirect)
 
-// Root redirects to admin dashboard
-app.get("/", (req, res) => {
-  res.redirect("/admin/dashboard");
-});
+// ============================ Line Bot Management API ============================
 
-// Route: list all instruction libraries
-app.get("/admin/instructions/library", async (req, res) => {
+// LINE webhook routes moved to /routes/webhook.routes.js
+// Dynamic Line Bot webhook handler - MOVED TO /routes/webhook.routes.js
+/* app.post("/webhook/line/:botId", async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
