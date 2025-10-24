@@ -1741,6 +1741,13 @@ async function sendFollowUpMessage(task, round, db) {
   }
 
   if (task.platform === "facebook") {
+    console.log("[FollowUp Debug] Sending Facebook follow-up:", {
+      userId: task.userId,
+      hasMessage: !!message,
+      imageCount: images.length,
+      botId: task.botId,
+    });
+
     if (!task.botId) {
       throw new Error("ไม่พบ Facebook Bot สำหรับการส่งข้อความ");
     }
@@ -1752,16 +1759,55 @@ async function sendFollowUpMessage(task, round, db) {
       throw new Error("ไม่พบข้อมูล Facebook Bot");
     }
     const metadata = "follow_up_auto";
-    if (message) {
-      await sendFacebookMessage(task.userId, message, fbBot.accessToken, {
-        metadata,
-      });
+    
+    // สร้างข้อความรวม text และรูปภาพ ในรูปแบบที่ sendFacebookMessage รองรับ
+    let combinedMessage = message || "";
+    
+    // เพิ่ม [cut] เพื่อแยกข้อความถ้ามีทั้ง text และรูป
+    if (message && images.length > 0) {
+      combinedMessage += "[cut]";
     }
-    for (const image of images) {
-      await sendFacebookImageMessage(task.userId, image, fbBot.accessToken, {
-        metadata,
-      });
+    
+    // เพิ่ม #[IMAGE:...] token สำหรับแต่ละรูป
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      const label = image.fileName || image.alt || `รูปที่ ${i + 1}`;
+      combinedMessage += `#[IMAGE:${label}]`;
+      if (i < images.length - 1) {
+        combinedMessage += "[cut]";
+      }
     }
+    
+    console.log("[FollowUp Debug] Combined message:", {
+      hasText: !!message,
+      imageCount: images.length,
+      messageLength: combinedMessage.length,
+    });
+    
+    // สร้าง assetsMap จากรูปภาพที่มี
+    const assetsMap = {};
+    images.forEach((image, i) => {
+      const label = image.fileName || image.alt || `รูปที่ ${i + 1}`;
+      assetsMap[label] = {
+        url: image.url,
+        thumbUrl: image.previewUrl || image.thumbUrl || image.url,
+        alt: image.alt || "",
+        fileName: image.fileName || "",
+      };
+    });
+    
+    console.log("[FollowUp Debug] Assets map:", {
+      labels: Object.keys(assetsMap),
+      urls: Object.values(assetsMap).map(a => a.url),
+    });
+    
+    // ใช้ sendFacebookMessage ที่มี upload/url mode และ fallback
+    await sendFacebookMessage(task.userId, combinedMessage, fbBot.accessToken, {
+      metadata,
+      selectedImageCollections: null, // ไม่ใช้ collections แต่ใช้ assetsMap ที่สร้างเอง
+    }, assetsMap);
+    
+    console.log("[FollowUp Debug] Facebook follow-up sent successfully");
   } else {
     await sendLineFollowUpMessage(task.userId, message, task.botId, db, images);
   }
@@ -6102,6 +6148,7 @@ async function sendFacebookMessage(
   message,
   accessToken,
   options = {},
+  customAssetsMap = null,
 ) {
   const { metadata = null, messagingType = null, tag = null, selectedImageCollections = null } = options || {};
   // แยกข้อความตามตัวแบ่ง [cut] → จากนั้น parse #[IMAGE:<label>] เป็น segments
@@ -6110,7 +6157,8 @@ async function sendFacebookMessage(
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
 
-  const assetsMap = await getAssetsMapForBot(selectedImageCollections);
+  // ใช้ customAssetsMap ถ้ามี ไม่เช่นนั้นดึงจาก database
+  const assetsMap = customAssetsMap || await getAssetsMapForBot(selectedImageCollections);
   const maxLength = 2000;
 
   for (const part of parts) {
@@ -6276,6 +6324,13 @@ async function sendFacebookImageMessage(
     throw new Error("ไม่มี URL สำหรับรูปภาพ");
   }
 
+  console.log("[FollowUp Debug] Sending Facebook image:", {
+    recipientId,
+    imageUrl: image.url,
+    previewUrl: image.previewUrl || image.thumbUrl,
+    hasMetadata: !!metadata,
+  });
+
   try {
     const messagePayload = {
       attachment: {
@@ -6308,15 +6363,23 @@ async function sendFacebookImageMessage(
       },
     );
     console.log(
-      "Facebook follow-up image sent:",
+      "[FollowUp Debug] Facebook image sent successfully:",
       response.data?.message_id || "ok",
     );
   } catch (error) {
     const status = error.response?.status;
     const fbMessage = error.response?.data?.error?.message || error.message;
+    const fbErrorCode = error.response?.data?.error?.code;
     const conciseError = status
       ? `Facebook API ${status}: ${fbMessage}`
       : fbMessage;
+    console.error("[FollowUp Error] Facebook image send failed:", {
+      recipientId,
+      imageUrl: image.url,
+      status,
+      errorCode: fbErrorCode,
+      message: fbMessage,
+    });
     throw new Error(conciseError);
   }
 }
