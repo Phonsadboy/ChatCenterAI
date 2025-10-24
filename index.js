@@ -958,14 +958,24 @@ function getDateKey(date = new Date()) {
 
 function sanitizeFollowUpImage(image) {
   if (!image) return null;
-  const url = typeof image.url === "string" ? image.url.trim() : "";
+  let url = typeof image.url === "string" ? image.url.trim() : "";
   if (!url) return null;
+
+  // แปลง relative URL เป็น absolute URL
+  if (url.startsWith("/") && PUBLIC_BASE_URL) {
+    url = PUBLIC_BASE_URL.replace(/\/$/, "") + url;
+  }
 
   const previewCandidates = [
     typeof image.previewUrl === "string" ? image.previewUrl.trim() : "",
     typeof image.thumbUrl === "string" ? image.thumbUrl.trim() : "",
   ];
-  const previewUrl = previewCandidates.find((value) => value) || url;
+  let previewUrl = previewCandidates.find((value) => value) || url;
+
+  // แปลง relative preview URL เป็น absolute URL
+  if (previewUrl.startsWith("/") && PUBLIC_BASE_URL) {
+    previewUrl = PUBLIC_BASE_URL.replace(/\/$/, "") + previewUrl;
+  }
 
   const sanitized = {
     url,
@@ -973,7 +983,12 @@ function sanitizeFollowUpImage(image) {
   };
 
   if (typeof image.thumbUrl === "string" && image.thumbUrl.trim()) {
-    sanitized.thumbUrl = image.thumbUrl.trim();
+    let thumbUrl = image.thumbUrl.trim();
+    // แปลง relative thumb URL เป็น absolute URL
+    if (thumbUrl.startsWith("/") && PUBLIC_BASE_URL) {
+      thumbUrl = PUBLIC_BASE_URL.replace(/\/$/, "") + thumbUrl;
+    }
+    sanitized.thumbUrl = thumbUrl;
   }
 
   const assignTrimmed = (field, value) => {
@@ -1018,7 +1033,13 @@ function sanitizeFollowUpImages(images) {
   console.log("[FollowUp Debug] sanitizeFollowUpImages:", {
     inputCount: images.length,
     outputCount: result.length,
-    sample: result[0]
+    sample: result[0],
+    allUrls: result.map(img => ({
+      url: img.url,
+      isAbsolute: img.url.startsWith("http"),
+      previewUrl: img.previewUrl,
+      previewIsAbsolute: img.previewUrl?.startsWith("http"),
+    }))
   });
   return result;
 }
