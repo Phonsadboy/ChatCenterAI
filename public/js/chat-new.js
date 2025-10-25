@@ -31,6 +31,28 @@ class ChatManager {
         // ✅ Debounced search
         this.debouncedSearch = this.debounce(this.performSearch.bind(this), 300);
         
+        // ✅ NEW: Quick Replies & Templates
+        this.quickReplies = [];
+        this.currentEditingTemplateId = null;
+        
+        // ✅ NEW: Chat Search
+        this.chatSearchResults = [];
+        this.currentSearchResultIndex = -1;
+        
+        // ✅ NEW: Message Selection for Forwarding
+        this.selectedMessages = new Set();
+        this.isSelectionMode = false;
+        
+        // ✅ NEW: Keyboard Shortcuts
+        this.shortcuts = {
+            'ctrl+k': () => this.openChatSearch(),
+            'ctrl+shift+f': () => this.openForwardModal(),
+            'ctrl+shift+s': () => this.openStatisticsModal(),
+            'ctrl+shift+e': () => this.openExportModal(),
+            'ctrl+/': () => this.openShortcutsModal(),
+            'esc': () => this.handleEscapeKey()
+        };
+        
         this.init();
     }
 
@@ -127,6 +149,16 @@ class ChatManager {
         this.loadUsers();
         this.loadAvailableTags();
         this.setupAutoRefresh();
+        
+        // ✅ NEW: Setup new features
+        this.setupTemplateListeners();
+        this.setupChatSearchListeners();
+        this.setupForwardListeners();
+        this.setupAssignmentListeners();
+        this.setupStatisticsListeners();
+        this.setupExportListeners();
+        this.setupKeyboardShortcuts();
+        this.loadQuickReplies();
     }
 
     initializeSocket() {
@@ -198,6 +230,13 @@ class ChatManager {
         });
 
         messageInput.addEventListener('keydown', (e) => {
+            // ✅ NEW: Listen for '/' key to open template modal
+            if (e.key === '/' && messageInput.value === '') {
+                e.preventDefault();
+                this.openTemplateModal();
+                return;
+            }
+            
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 this.sendMessage();
@@ -207,6 +246,14 @@ class ChatManager {
         sendButton.addEventListener('click', () => {
             this.sendMessage();
         });
+
+        // ✅ NEW: Template button
+        const templateBtn = document.getElementById('templateBtn');
+        if (templateBtn) {
+            templateBtn.addEventListener('click', () => {
+                this.openTemplateModal();
+            });
+        }
 
         // Image modal events
         document.getElementById('downloadImage').addEventListener('click', () => {
@@ -1528,6 +1575,991 @@ class ChatManager {
             30000 // 30 วินาที
         );
         this.smartPoller.start();
+    }
+
+    // ==================== NEW FEATURES ====================
+
+    // ========== 1. Quick Replies & Templates ==========
+    
+    setupTemplateListeners() {
+        // Template Modal - Save button
+        const saveTemplateBtn = document.getElementById('saveTemplateBtn');
+        if (saveTemplateBtn) {
+            saveTemplateBtn.addEventListener('click', () => {
+                this.saveTemplate();
+            });
+        }
+
+        // Add Template Modal - Confirm button
+        const confirmAddTemplateBtn = document.getElementById('confirmAddTemplateBtn');
+        if (confirmAddTemplateBtn) {
+            confirmAddTemplateBtn.addEventListener('click', () => {
+                this.confirmAddTemplate();
+            });
+        }
+
+        // Template search input
+        const templateSearch = document.getElementById('templateSearch');
+        if (templateSearch) {
+            templateSearch.addEventListener('input', (e) => {
+                this.filterTemplates(e.target.value);
+            });
+        }
+
+        // Listen for modal close to reset form
+        const addTemplateModal = document.getElementById('addTemplateModal');
+        if (addTemplateModal) {
+            addTemplateModal.addEventListener('hidden.bs.modal', () => {
+                this.resetTemplateForm();
+            });
+        }
+    }
+
+    async loadQuickReplies() {
+        try {
+            const response = await fetch('/admin/chat/templates');
+            if (!response.ok) throw new Error('Failed to load templates');
+            
+            const data = await response.json();
+            this.quickReplies = data.templates || [];
+            this.renderQuickReplies();
+            this.renderTemplateList();
+        } catch (error) {
+            console.error('Error loading quick replies:', error);
+            // Use default templates if server fails
+            this.quickReplies = this.getDefaultTemplates();
+            this.renderQuickReplies();
+            this.renderTemplateList();
+        }
+    }
+
+    getDefaultTemplates() {
+        return [
+            { id: 'welcome', title: 'ทักทาย', message: 'สวัสดีครับ! ยินดีให้บริการครับ 😊' },
+            { id: 'thanks', title: 'ขอบคุณ', message: 'ขอบคุณมากครับที่ติดต่อเรา' },
+            { id: 'wait', title: 'รอสักครู่', message: 'กรุณารอสักครู่นะครับ กำลังตรวจสอบข้อมูลให้' },
+            { id: 'confirm', title: 'รับทราบ', message: 'รับทราบข้อมูลแล้วครับ จะดำเนินการให้เร็วที่สุด' }
+        ];
+    }
+
+    renderQuickReplies() {
+        const quickRepliesBar = document.getElementById('quickRepliesBar');
+        if (!quickRepliesBar || !this.currentUserId) {
+            return;
+        }
+
+        const scrollContainer = quickRepliesBar.querySelector('.quick-replies-scroll');
+        if (!scrollContainer) return;
+
+        // Clear existing buttons except the first one (add template button)
+        const addBtn = scrollContainer.querySelector('.quick-reply-btn');
+        scrollContainer.innerHTML = '';
+        if (addBtn) {
+            scrollContainer.appendChild(addBtn);
+        }
+
+        // Add quick reply buttons
+        this.quickReplies.forEach(template => {
+            const btn = document.createElement('button');
+            btn.className = 'quick-reply-btn';
+            btn.textContent = template.title;
+            btn.onclick = () => this.useQuickReply(template.message);
+            scrollContainer.appendChild(btn);
+        });
+
+        // Show the quick replies bar
+        quickRepliesBar.style.display = 'flex';
+    }
+
+    useQuickReply(message) {
+        const messageInput = document.getElementById('messageInput');
+        if (messageInput) {
+            messageInput.value = message;
+            messageInput.focus();
+            // Update character count
+            const charCount = document.getElementById('charCount');
+            if (charCount) {
+                charCount.textContent = message.length;
+            }
+        }
+    }
+
+    openTemplateModal() {
+        const modal = new bootstrap.Modal(document.getElementById('templateModal'));
+        modal.show();
+        this.renderTemplateList();
+    }
+
+    renderTemplateList() {
+        const list = document.getElementById('templateList');
+        if (!list) return;
+
+        if (this.quickReplies.length === 0) {
+            list.innerHTML = '<div class="text-center text-muted py-4">ยังไม่มี Template</div>';
+            return;
+        }
+
+        list.innerHTML = this.quickReplies.map(template => `
+            <div class="template-item" data-id="${template.id}">
+                <div class="template-content">
+                    <div class="template-title">${this.escapeHtml(template.title)}</div>
+                    <div class="template-preview">${this.escapeHtml(template.message)}</div>
+                </div>
+                <div class="template-actions">
+                    <button class="btn btn-sm btn-outline-primary" onclick="chatManager.editTemplate('${template.id}')">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="chatManager.deleteTemplate('${template.id}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    filterTemplates(searchTerm) {
+        const items = document.querySelectorAll('.template-item');
+        const term = searchTerm.toLowerCase();
+
+        items.forEach(item => {
+            const title = item.querySelector('.template-title').textContent.toLowerCase();
+            const preview = item.querySelector('.template-preview').textContent.toLowerCase();
+            
+            if (title.includes(term) || preview.includes(term)) {
+                item.style.display = '';
+            } else {
+                item.style.display = 'none';
+            }
+        });
+    }
+
+    openAddTemplateModal() {
+        this.currentEditingTemplateId = null;
+        document.getElementById('addTemplateModalLabel').textContent = 'เพิ่ม Template ใหม่';
+        document.getElementById('templateTitleInput').value = '';
+        document.getElementById('templateMessageInput').value = '';
+        
+        const addModal = new bootstrap.Modal(document.getElementById('addTemplateModal'));
+        addModal.show();
+    }
+
+    editTemplate(templateId) {
+        const template = this.quickReplies.find(t => t.id === templateId);
+        if (!template) return;
+
+        this.currentEditingTemplateId = templateId;
+        document.getElementById('addTemplateModalLabel').textContent = 'แก้ไข Template';
+        document.getElementById('templateTitleInput').value = template.title;
+        document.getElementById('templateMessageInput').value = template.message;
+
+        // Close template modal and open add/edit modal
+        const templateModal = bootstrap.Modal.getInstance(document.getElementById('templateModal'));
+        if (templateModal) templateModal.hide();
+
+        const addModal = new bootstrap.Modal(document.getElementById('addTemplateModal'));
+        addModal.show();
+    }
+
+    async deleteTemplate(templateId) {
+        if (!confirm('ต้องการลบ Template นี้หรือไม่?')) return;
+
+        try {
+            const response = await fetch(`/admin/chat/templates/${templateId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                this.quickReplies = this.quickReplies.filter(t => t.id !== templateId);
+                this.renderQuickReplies();
+                this.renderTemplateList();
+                window.showSuccess('ลบ Template สำเร็จ');
+            } else {
+                throw new Error('Failed to delete template');
+            }
+        } catch (error) {
+            console.error('Error deleting template:', error);
+            // Fallback: delete locally
+            this.quickReplies = this.quickReplies.filter(t => t.id !== templateId);
+            this.renderQuickReplies();
+            this.renderTemplateList();
+            window.showSuccess('ลบ Template สำเร็จ');
+        }
+    }
+
+    async confirmAddTemplate() {
+        const title = document.getElementById('templateTitleInput').value.trim();
+        const message = document.getElementById('templateMessageInput').value.trim();
+
+        if (!title || !message) {
+            window.showError('กรุณากรอกข้อมูลให้ครบถ้วน');
+            return;
+        }
+
+        const templateData = {
+            id: this.currentEditingTemplateId || 'template_' + Date.now(),
+            title,
+            message
+        };
+
+        try {
+            const url = this.currentEditingTemplateId 
+                ? `/admin/chat/templates/${this.currentEditingTemplateId}`
+                : '/admin/chat/templates';
+            
+            const response = await fetch(url, {
+                method: this.currentEditingTemplateId ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(templateData)
+            });
+
+            if (response.ok) {
+                if (this.currentEditingTemplateId) {
+                    const index = this.quickReplies.findIndex(t => t.id === this.currentEditingTemplateId);
+                    if (index !== -1) {
+                        this.quickReplies[index] = templateData;
+                    }
+                } else {
+                    this.quickReplies.push(templateData);
+                }
+                
+                this.renderQuickReplies();
+                this.renderTemplateList();
+                
+                const addModal = bootstrap.Modal.getInstance(document.getElementById('addTemplateModal'));
+                if (addModal) addModal.hide();
+                
+                window.showSuccess(this.currentEditingTemplateId ? 'แก้ไข Template สำเร็จ' : 'เพิ่ม Template สำเร็จ');
+            } else {
+                throw new Error('Failed to save template');
+            }
+        } catch (error) {
+            console.error('Error saving template:', error);
+            // Fallback: save locally
+            if (this.currentEditingTemplateId) {
+                const index = this.quickReplies.findIndex(t => t.id === this.currentEditingTemplateId);
+                if (index !== -1) {
+                    this.quickReplies[index] = templateData;
+                }
+            } else {
+                this.quickReplies.push(templateData);
+            }
+            
+            this.renderQuickReplies();
+            this.renderTemplateList();
+            
+            const addModal = bootstrap.Modal.getInstance(document.getElementById('addTemplateModal'));
+            if (addModal) addModal.hide();
+            
+            window.showSuccess(this.currentEditingTemplateId ? 'แก้ไข Template สำเร็จ' : 'เพิ่ม Template สำเร็จ');
+        }
+    }
+
+    saveTemplate() {
+        // This method is not used anymore, kept for backward compatibility
+        const modal = bootstrap.Modal.getInstance(document.getElementById('templateModal'));
+        if (modal) modal.hide();
+    }
+
+    resetTemplateForm() {
+        this.currentEditingTemplateId = null;
+        document.getElementById('templateTitleInput').value = '';
+        document.getElementById('templateMessageInput').value = '';
+    }
+
+    // ========== 2. Chat Search ==========
+    
+    setupChatSearchListeners() {
+        const searchChatBtn = document.getElementById('searchChatBtn');
+        if (searchChatBtn) {
+            searchChatBtn.addEventListener('click', () => {
+                this.openChatSearch();
+            });
+        }
+
+        const chatSearchInput = document.getElementById('chatSearchInput');
+        if (chatSearchInput) {
+            chatSearchInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    this.performChatSearch();
+                }
+            });
+        }
+
+        const prevResultBtn = document.getElementById('prevResultBtn');
+        if (prevResultBtn) {
+            prevResultBtn.addEventListener('click', () => {
+                this.navigateChatSearchResults(-1);
+            });
+        }
+
+        const nextResultBtn = document.getElementById('nextResultBtn');
+        if (nextResultBtn) {
+            nextResultBtn.addEventListener('click', () => {
+                this.navigateChatSearchResults(1);
+            });
+        }
+    }
+
+    openChatSearch() {
+        if (!this.currentUserId) {
+            window.showError('กรุณาเลือกแชทก่อน');
+            return;
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('chatSearchModal'));
+        modal.show();
+        
+        // Focus on search input
+        setTimeout(() => {
+            const input = document.getElementById('chatSearchInput');
+            if (input) input.focus();
+        }, 300);
+    }
+
+    performChatSearch() {
+        const searchTerm = document.getElementById('chatSearchInput').value.trim();
+        if (!searchTerm) {
+            window.showError('กรุณาใส่คำค้นหา');
+            return;
+        }
+
+        const messages = this.chatHistory[this.currentUserId] || [];
+        this.chatSearchResults = [];
+
+        messages.forEach((msg, index) => {
+            if (msg.text && msg.text.toLowerCase().includes(searchTerm.toLowerCase())) {
+                this.chatSearchResults.push({ message: msg, index });
+            }
+        });
+
+        const resultsCount = document.getElementById('searchResultsCount');
+        if (this.chatSearchResults.length > 0) {
+            this.currentSearchResultIndex = 0;
+            resultsCount.textContent = `พบ ${this.chatSearchResults.length} ผลลัพธ์`;
+            this.highlightSearchResult(this.currentSearchResultIndex);
+            this.updateSearchNavigation();
+        } else {
+            resultsCount.textContent = 'ไม่พบผลลัพธ์';
+            this.currentSearchResultIndex = -1;
+            this.updateSearchNavigation();
+        }
+    }
+
+    navigateChatSearchResults(direction) {
+        if (this.chatSearchResults.length === 0) return;
+
+        this.currentSearchResultIndex += direction;
+        
+        if (this.currentSearchResultIndex < 0) {
+            this.currentSearchResultIndex = this.chatSearchResults.length - 1;
+        } else if (this.currentSearchResultIndex >= this.chatSearchResults.length) {
+            this.currentSearchResultIndex = 0;
+        }
+
+        this.highlightSearchResult(this.currentSearchResultIndex);
+        this.updateSearchNavigation();
+    }
+
+    highlightSearchResult(resultIndex) {
+        const result = this.chatSearchResults[resultIndex];
+        if (!result) return;
+
+        // Scroll to the message
+        const messagesContainer = document.getElementById('messagesContainer');
+        const messageElements = messagesContainer.querySelectorAll('.message-item');
+        
+        // Remove previous highlights
+        messageElements.forEach(el => el.classList.remove('search-highlight'));
+
+        // Add highlight to current result
+        if (messageElements[result.index]) {
+            messageElements[result.index].classList.add('search-highlight');
+            messageElements[result.index].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+
+    updateSearchNavigation() {
+        const prevBtn = document.getElementById('prevResultBtn');
+        const nextBtn = document.getElementById('nextResultBtn');
+        const resultsCount = document.getElementById('searchResultsCount');
+
+        if (this.chatSearchResults.length === 0) {
+            if (prevBtn) prevBtn.disabled = true;
+            if (nextBtn) nextBtn.disabled = true;
+        } else {
+            if (prevBtn) prevBtn.disabled = false;
+            if (nextBtn) nextBtn.disabled = false;
+            resultsCount.textContent = `${this.currentSearchResultIndex + 1} / ${this.chatSearchResults.length}`;
+        }
+    }
+
+    // ========== 3. Message Forwarding ==========
+    
+    setupForwardListeners() {
+        const forwardMessageBtn = document.getElementById('forwardMessageBtn');
+        if (forwardMessageBtn) {
+            forwardMessageBtn.addEventListener('click', () => {
+                this.openForwardModal();
+            });
+        }
+
+        const confirmForwardBtn = document.getElementById('confirmForwardBtn');
+        if (confirmForwardBtn) {
+            confirmForwardBtn.addEventListener('click', () => {
+                this.confirmForward();
+            });
+        }
+
+        const forwardUserSearch = document.getElementById('forwardUserSearch');
+        if (forwardUserSearch) {
+            forwardUserSearch.addEventListener('input', (e) => {
+                this.filterForwardUsers(e.target.value);
+            });
+        }
+    }
+
+    openForwardModal() {
+        if (!this.currentUserId) {
+            window.showError('กรุณาเลือกแชทก่อน');
+            return;
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('forwardModal'));
+        modal.show();
+        this.renderForwardUserList();
+    }
+
+    renderForwardUserList() {
+        const list = document.getElementById('forwardUserList');
+        if (!list) return;
+
+        const otherUsers = this.allUsers.filter(u => u.userId !== this.currentUserId);
+
+        if (otherUsers.length === 0) {
+            list.innerHTML = '<div class="text-center text-muted py-4">ไม่มีผู้ใช้อื่น</div>';
+            return;
+        }
+
+        list.innerHTML = otherUsers.map(user => `
+            <div class="forward-user-item" data-userid="${user.userId}">
+                <input type="checkbox" class="form-check-input" id="forward_${user.userId}" value="${user.userId}">
+                <label class="form-check-label" for="forward_${user.userId}">
+                    <div class="d-flex align-items-center">
+                        <div class="user-avatar me-2">
+                            ${user.displayName ? user.displayName.charAt(0).toUpperCase() : '?'}
+                        </div>
+                        <div>
+                            <div>${this.escapeHtml(user.displayName || 'ไม่ทราบชื่อ')}</div>
+                            <small class="text-muted">${user.userId}</small>
+                        </div>
+                    </div>
+                </label>
+            </div>
+        `).join('');
+    }
+
+    filterForwardUsers(searchTerm) {
+        const items = document.querySelectorAll('.forward-user-item');
+        const term = searchTerm.toLowerCase();
+
+        items.forEach(item => {
+            const label = item.querySelector('label').textContent.toLowerCase();
+            item.style.display = label.includes(term) ? '' : 'none';
+        });
+    }
+
+    async confirmForward() {
+        const selectedCheckboxes = document.querySelectorAll('#forwardUserList input[type="checkbox"]:checked');
+        const targetUserIds = Array.from(selectedCheckboxes).map(cb => cb.value);
+
+        if (targetUserIds.length === 0) {
+            window.showError('กรุณาเลือกผู้ใช้ที่จะส่งต่อข้อความ');
+            return;
+        }
+
+        const messageToForward = document.getElementById('forwardMessagePreview').value.trim();
+        if (!messageToForward) {
+            // Get the last message from current chat
+            const messages = this.chatHistory[this.currentUserId] || [];
+            if (messages.length === 0) {
+                window.showError('ไม่มีข้อความให้ส่งต่อ');
+                return;
+            }
+        }
+
+        try {
+            const response = await fetch('/admin/chat/forward', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fromUserId: this.currentUserId,
+                    toUserIds: targetUserIds,
+                    message: messageToForward
+                })
+            });
+
+            if (response.ok) {
+                window.showSuccess(`ส่งต่อข้อความถึง ${targetUserIds.length} ผู้ใช้สำเร็จ`);
+                const modal = bootstrap.Modal.getInstance(document.getElementById('forwardModal'));
+                if (modal) modal.hide();
+            } else {
+                throw new Error('Failed to forward message');
+            }
+        } catch (error) {
+            console.error('Error forwarding message:', error);
+            window.showError('ไม่สามารถส่งต่อข้อความได้');
+        }
+    }
+
+    // ========== 4. Chat Assignment ==========
+    
+    setupAssignmentListeners() {
+        const assignChatBtn = document.getElementById('assignChatBtn');
+        if (assignChatBtn) {
+            assignChatBtn.addEventListener('click', () => {
+                this.openAssignmentModal();
+            });
+        }
+
+        const confirmAssignBtn = document.getElementById('confirmAssignBtn');
+        if (confirmAssignBtn) {
+            confirmAssignBtn.addEventListener('click', () => {
+                this.confirmAssignment();
+            });
+        }
+    }
+
+    openAssignmentModal() {
+        if (!this.currentUserId) {
+            window.showError('กรุณาเลือกแชทก่อน');
+            return;
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('assignmentModal'));
+        modal.show();
+        this.loadAdminList();
+    }
+
+    async loadAdminList() {
+        const list = document.getElementById('assignAdminList');
+        if (!list) return;
+
+        try {
+            const response = await fetch('/admin/users');
+            if (response.ok) {
+                const data = await response.json();
+                const admins = data.admins || [];
+                
+                if (admins.length === 0) {
+                    list.innerHTML = '<div class="text-center text-muted py-4">ไม่มีผู้ดูแลระบบ</div>';
+                    return;
+                }
+
+                list.innerHTML = admins.map(admin => `
+                    <div class="admin-item">
+                        <input type="radio" class="form-check-input" name="assignAdmin" id="admin_${admin._id}" value="${admin._id}">
+                        <label class="form-check-label" for="admin_${admin._id}">
+                            <div class="d-flex align-items-center">
+                                <div class="user-avatar me-2">
+                                    ${admin.username.charAt(0).toUpperCase()}
+                                </div>
+                                <div>
+                                    <div>${this.escapeHtml(admin.username)}</div>
+                                    <small class="text-muted">${admin.email || ''}</small>
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                `).join('');
+            } else {
+                throw new Error('Failed to load admins');
+            }
+        } catch (error) {
+            console.error('Error loading admin list:', error);
+            list.innerHTML = '<div class="text-center text-muted py-4">ไม่สามารถโหลดรายการผู้ดูแลได้</div>';
+        }
+    }
+
+    async confirmAssignment() {
+        const selectedRadio = document.querySelector('input[name="assignAdmin"]:checked');
+        if (!selectedRadio) {
+            window.showError('กรุณาเลือกผู้ดูแลระบบ');
+            return;
+        }
+
+        const adminId = selectedRadio.value;
+
+        try {
+            const response = await fetch('/admin/chat/assign', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: this.currentUserId,
+                    adminId: adminId
+                })
+            });
+
+            if (response.ok) {
+                window.showSuccess('มอบหมายแชทสำเร็จ');
+                const modal = bootstrap.Modal.getInstance(document.getElementById('assignmentModal'));
+                if (modal) modal.hide();
+            } else {
+                throw new Error('Failed to assign chat');
+            }
+        } catch (error) {
+            console.error('Error assigning chat:', error);
+            window.showError('ไม่สามารถมอบหมายแชทได้');
+        }
+    }
+
+    // ========== 5. Chat Statistics ==========
+    
+    setupStatisticsListeners() {
+        const showStatsBtn = document.getElementById('showStatsBtn');
+        if (showStatsBtn) {
+            showStatsBtn.addEventListener('click', () => {
+                this.openStatisticsModal();
+            });
+        }
+    }
+
+    openStatisticsModal() {
+        if (!this.currentUserId) {
+            window.showError('กรุณาเลือกแชทก่อน');
+            return;
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('statisticsModal'));
+        modal.show();
+        this.calculateStatistics();
+    }
+
+    calculateStatistics() {
+        const messages = this.chatHistory[this.currentUserId] || [];
+        
+        const stats = {
+            totalMessages: messages.length,
+            userMessages: messages.filter(m => m.isUser).length,
+            adminMessages: messages.filter(m => !m.isUser).length,
+            firstMessageDate: messages.length > 0 ? new Date(messages[0].timestamp) : null,
+            lastMessageDate: messages.length > 0 ? new Date(messages[messages.length - 1].timestamp) : null,
+            avgResponseTime: this.calculateAvgResponseTime(messages),
+            imagesCount: messages.filter(m => m.hasImage || (m.text && m.text.includes('data:image'))).length
+        };
+
+        this.renderStatistics(stats);
+    }
+
+    calculateAvgResponseTime(messages) {
+        const responseTimes = [];
+        
+        for (let i = 1; i < messages.length; i++) {
+            if (messages[i - 1].isUser && !messages[i].isUser) {
+                const prevTime = new Date(messages[i - 1].timestamp);
+                const currentTime = new Date(messages[i].timestamp);
+                const diff = (currentTime - prevTime) / 1000 / 60; // in minutes
+                responseTimes.push(diff);
+            }
+        }
+
+        if (responseTimes.length === 0) return 0;
+        
+        const avg = responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length;
+        return Math.round(avg * 10) / 10; // round to 1 decimal
+    }
+
+    renderStatistics(stats) {
+        const content = document.getElementById('statisticsContent');
+        if (!content) return;
+
+        const formatDate = (date) => {
+            if (!date) return '-';
+            return date.toLocaleDateString('th-TH', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        };
+
+        content.innerHTML = `
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-comments"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">${stats.totalMessages}</div>
+                        <div class="stat-label">ข้อความทั้งหมด</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-user"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">${stats.userMessages}</div>
+                        <div class="stat-label">ข้อความจากผู้ใช้</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-user-tie"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">${stats.adminMessages}</div>
+                        <div class="stat-label">ข้อความจากแอดมิน</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-image"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">${stats.imagesCount}</div>
+                        <div class="stat-label">รูปภาพ</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">${stats.avgResponseTime} นาที</div>
+                        <div class="stat-label">เวลาตอบกลับเฉลี่ย</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-calendar-alt"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-value">${formatDate(stats.firstMessageDate)}</div>
+                        <div class="stat-label">ข้อความแรก</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // ========== 6. Export Chat ==========
+    
+    setupExportListeners() {
+        const exportChatBtn = document.getElementById('exportChatBtn');
+        if (exportChatBtn) {
+            exportChatBtn.addEventListener('click', () => {
+                this.openExportModal();
+            });
+        }
+
+        const confirmExportBtn = document.getElementById('confirmExportBtn');
+        if (confirmExportBtn) {
+            confirmExportBtn.addEventListener('click', () => {
+                this.confirmExport();
+            });
+        }
+    }
+
+    openExportModal() {
+        if (!this.currentUserId) {
+            window.showError('กรุณาเลือกแชทก่อน');
+            return;
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('exportModal'));
+        modal.show();
+    }
+
+    async confirmExport() {
+        const format = document.querySelector('input[name="exportFormat"]:checked');
+        if (!format) {
+            window.showError('กรุณาเลือกรูปแบบการส่งออก');
+            return;
+        }
+
+        const exportFormat = format.value;
+        const messages = this.chatHistory[this.currentUserId] || [];
+
+        if (messages.length === 0) {
+            window.showError('ไม่มีข้อความให้ส่งออก');
+            return;
+        }
+
+        const user = this.users.find(u => u.userId === this.currentUserId);
+        const fileName = `chat_${user ? user.displayName : this.currentUserId}_${Date.now()}`;
+
+        try {
+            switch (exportFormat) {
+                case 'pdf':
+                    await this.exportAsPDF(messages, fileName, user);
+                    break;
+                case 'text':
+                    this.exportAsText(messages, fileName, user);
+                    break;
+                case 'json':
+                    this.exportAsJSON(messages, fileName, user);
+                    break;
+            }
+
+            window.showSuccess('ส่งออกแชทสำเร็จ');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('exportModal'));
+            if (modal) modal.hide();
+        } catch (error) {
+            console.error('Error exporting chat:', error);
+            window.showError('ไม่สามารถส่งออกแชทได้');
+        }
+    }
+
+    async exportAsPDF(messages, fileName, user) {
+        // For PDF export, we'll create a simple HTML version and use the browser's print function
+        // In a production environment, you might want to use a library like jsPDF or pdfmake
+        
+        const printWindow = window.open('', '', 'height=600,width=800');
+        printWindow.document.write('<html><head><title>Export Chat</title>');
+        printWindow.document.write('<style>');
+        printWindow.document.write(`
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            h1 { color: #333; }
+            .message { margin: 10px 0; padding: 10px; border-radius: 8px; }
+            .user { background: #e3f2fd; text-align: right; }
+            .admin { background: #f5f5f5; }
+            .timestamp { font-size: 0.8em; color: #666; margin-top: 5px; }
+        `);
+        printWindow.document.write('</style></head><body>');
+        printWindow.document.write(`<h1>ประวัติการสนทนา - ${this.escapeHtml(user ? user.displayName : this.currentUserId)}</h1>`);
+        
+        messages.forEach(msg => {
+            const time = new Date(msg.timestamp).toLocaleString('th-TH');
+            const cssClass = msg.isUser ? 'user' : 'admin';
+            const sender = msg.isUser ? 'ผู้ใช้' : 'แอดมิน';
+            
+            printWindow.document.write(`
+                <div class="message ${cssClass}">
+                    <div><strong>${sender}:</strong> ${this.escapeHtml(msg.text || '')}</div>
+                    <div class="timestamp">${time}</div>
+                </div>
+            `);
+        });
+        
+        printWindow.document.write('</body></html>');
+        printWindow.document.close();
+        
+        setTimeout(() => {
+            printWindow.print();
+        }, 500);
+    }
+
+    exportAsText(messages, fileName, user) {
+        let text = `ประวัติการสนทนา - ${user ? user.displayName : this.currentUserId}\n`;
+        text += `สร้างเมื่อ: ${new Date().toLocaleString('th-TH')}\n`;
+        text += '=' .repeat(60) + '\n\n';
+
+        messages.forEach(msg => {
+            const time = new Date(msg.timestamp).toLocaleString('th-TH');
+            const sender = msg.isUser ? 'ผู้ใช้' : 'แอดมิน';
+            text += `[${time}] ${sender}: ${msg.text || ''}\n`;
+        });
+
+        this.downloadFile(text, `${fileName}.txt`, 'text/plain');
+    }
+
+    exportAsJSON(messages, fileName, user) {
+        const exportData = {
+            user: {
+                userId: this.currentUserId,
+                displayName: user ? user.displayName : 'Unknown',
+                platform: user ? user.platform : 'Unknown'
+            },
+            exportDate: new Date().toISOString(),
+            messageCount: messages.length,
+            messages: messages.map(msg => ({
+                timestamp: msg.timestamp,
+                sender: msg.isUser ? 'user' : 'admin',
+                text: msg.text,
+                hasImage: msg.hasImage || false
+            }))
+        };
+
+        const json = JSON.stringify(exportData, null, 2);
+        this.downloadFile(json, `${fileName}.json`, 'application/json');
+    }
+
+    downloadFile(content, fileName, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // ========== 7. Keyboard Shortcuts ==========
+    
+    setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            // Build shortcut key combination
+            const keys = [];
+            if (e.ctrlKey || e.metaKey) keys.push('ctrl');
+            if (e.shiftKey) keys.push('shift');
+            if (e.altKey) keys.push('alt');
+            
+            // Add the actual key (lowercase)
+            if (e.key !== 'Control' && e.key !== 'Shift' && e.key !== 'Alt' && e.key !== 'Meta') {
+                keys.push(e.key.toLowerCase());
+            }
+
+            const shortcut = keys.join('+');
+
+            // Check if this shortcut exists
+            if (this.shortcuts[shortcut]) {
+                e.preventDefault();
+                this.shortcuts[shortcut]();
+            }
+        });
+
+        // Add shortcut button in header
+        const shortcutsBtn = document.getElementById('shortcutsBtn');
+        if (shortcutsBtn) {
+            shortcutsBtn.addEventListener('click', () => {
+                this.openShortcutsModal();
+            });
+        }
+    }
+
+    openShortcutsModal() {
+        const modal = new bootstrap.Modal(document.getElementById('shortcutsModal'));
+        modal.show();
+    }
+
+    handleEscapeKey() {
+        // Close any open modals
+        const openModals = document.querySelectorAll('.modal.show');
+        openModals.forEach(modalEl => {
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+        });
+
+        // Exit selection mode if active
+        if (this.isSelectionMode) {
+            this.exitSelectionMode();
+        }
+    }
+
+    exitSelectionMode() {
+        this.isSelectionMode = false;
+        this.selectedMessages.clear();
+        // Update UI to reflect exit from selection mode
+        const messages = document.querySelectorAll('.message-item.selected');
+        messages.forEach(msg => msg.classList.remove('selected'));
     }
 }
 

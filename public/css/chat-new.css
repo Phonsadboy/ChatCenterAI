@@ -1742,4 +1742,639 @@ textarea:focus {
     scrollbar-color: var(--border-primary) transparent;
 }
 
+/* ==================== NEW FEATURES STYLES ==================== */
+
+/* ========== 1. Quick Replies Bar ========== */
+.quick-replies-bar {
+    padding: 12px 16px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-secondary);
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-shrink: 0;
+}
+
+.quick-replies-scroll {
+    display: flex;
+    gap: 8px;
+    min-height: 36px;
+}
+
+.quick-reply-btn {
+    padding: 8px 16px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-full);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.quick-reply-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--primary);
+    color: var(--primary);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-card);
+}
+
+.quick-reply-btn:active {
+    transform: translateY(0);
+}
+
+.quick-reply-btn i {
+    font-size: 0.875em;
+}
+
+/* ========== 2. Template Management ========== */
+.template-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+    transition: var(--transition-fast);
+}
+
+.template-item:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-primary);
+    box-shadow: var(--shadow-card);
+}
+
+.template-content {
+    flex: 1;
+    min-width: 0;
+    margin-right: 12px;
+}
+
+.template-title {
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    font-size: var(--font-size-base);
+}
+
+.template-preview {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.template-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.template-actions .btn {
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    transition: var(--transition-fast);
+}
+
+.template-actions .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-card);
+}
+
+/* ========== 3. Chat Search ========== */
+.search-highlight {
+    background-color: #FFF9C4 !important;
+    border: 2px solid #FFD54F !important;
+    animation: pulse-highlight 0.5s ease-in-out;
+}
+
+@keyframes pulse-highlight {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.02);
+    }
+}
+
+.search-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.search-controls .btn {
+    padding: 6px 12px;
+    min-width: 36px;
+    border-radius: var(--radius-md);
+}
+
+#searchResultsCount {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    min-width: 80px;
+    text-align: center;
+}
+
+/* ========== 4. Forward Modal ========== */
+.forward-user-item,
+.admin-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+    transition: var(--transition-fast);
+    cursor: pointer;
+}
+
+.forward-user-item:hover,
+.admin-item:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-primary);
+    box-shadow: var(--shadow-card);
+}
+
+.forward-user-item input[type="checkbox"],
+.admin-item input[type="radio"] {
+    margin-right: 12px;
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
+.forward-user-item label,
+.admin-item label {
+    cursor: pointer;
+    margin: 0;
+    flex: 1;
+}
+
+.forward-user-item .user-avatar,
+.admin-item .user-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--avatar-gradient-1);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-base);
+}
+
+/* ========== 5. Statistics Modal ========== */
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-top: 20px;
+}
+
+.stat-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: var(--transition-fast);
+}
+
+.stat-card:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-primary);
+    box-shadow: var(--shadow-card);
+    transform: translateY(-2px);
+}
+
+.stat-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-md);
+    background: var(--primary-gradient);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.stat-info {
+    flex: 1;
+}
+
+.stat-value {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    line-height: 1.2;
+}
+
+.stat-label {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+/* ========== 6. Export Modal ========== */
+.export-option {
+    padding: 16px;
+    background: var(--bg-primary);
+    border: 2px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.export-option:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-primary);
+    box-shadow: var(--shadow-card);
+}
+
+.export-option input[type="radio"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.export-option input[type="radio"]:checked ~ label {
+    color: var(--primary);
+    font-weight: var(--font-weight-semibold);
+}
+
+.export-option label {
+    cursor: pointer;
+    margin: 0;
+    flex: 1;
+    font-size: var(--font-size-base);
+}
+
+.export-option i {
+    font-size: 1.5rem;
+    color: var(--text-secondary);
+}
+
+.export-option:has(input[type="radio"]:checked) {
+    background: var(--bg-active);
+    border-color: var(--primary);
+}
+
+.export-option:has(input[type="radio"]:checked) i {
+    color: var(--primary);
+}
+
+/* ========== 7. Keyboard Shortcuts Modal ========== */
+.shortcuts-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.shortcut-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    transition: var(--transition-fast);
+}
+
+.shortcut-item:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-primary);
+    box-shadow: var(--shadow-card);
+}
+
+.shortcut-action {
+    font-size: var(--font-size-base);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
+}
+
+.shortcut-keys {
+    display: flex;
+    gap: 4px;
+}
+
+.shortcut-key {
+    display: inline-block;
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    font-family: 'Courier New', monospace;
+    min-width: 28px;
+    text-align: center;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* ========== 8. Modal Enhancements ========== */
+.modal-header {
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border-secondary);
+    padding: 16px 20px;
+}
+
+.modal-title {
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-footer {
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border-secondary);
+    padding: 12px 20px;
+}
+
+.modal-content {
+    border-radius: var(--radius-lg);
+    border: none;
+    box-shadow: var(--shadow-dialog);
+}
+
+/* ========== 9. Form Improvements ========== */
+.form-label {
+    font-weight: var(--font-weight-medium);
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.form-control,
+.form-select {
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    font-size: var(--font-size-base);
+    transition: var(--transition-fast);
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0, 132, 255, 0.1);
+}
+
+textarea.form-control {
+    resize: vertical;
+    min-height: 100px;
+}
+
+/* ========== 10. Button Enhancements ========== */
+.btn {
+    border-radius: var(--radius-md);
+    padding: 10px 20px;
+    font-weight: var(--font-weight-medium);
+    font-size: var(--font-size-base);
+    transition: var(--transition-fast);
+    border: none;
+}
+
+.btn-primary {
+    background: var(--primary-gradient);
+    color: white;
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-hover);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+.btn-outline-primary {
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    background: transparent;
+}
+
+.btn-outline-primary:hover {
+    background: var(--primary);
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-card);
+}
+
+.btn-outline-danger {
+    border: 1px solid #F02849;
+    color: #F02849;
+    background: transparent;
+}
+
+.btn-outline-danger:hover {
+    background: #F02849;
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-card);
+}
+
+.btn-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+    background: var(--bg-hover);
+    transform: translateY(-1px);
+}
+
+/* ========== 11. Loading & Empty States ========== */
+.loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    gap: 16px;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border-secondary);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+}
+
+.empty-state i {
+    font-size: 4rem;
+    color: var(--text-tertiary);
+    margin-bottom: 16px;
+}
+
+.empty-state-title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.empty-state-text {
+    font-size: var(--font-size-base);
+    color: var(--text-secondary);
+}
+
+/* ========== 12. Responsive Enhancements for New Features ========== */
+@media (max-width: 768px) {
+    .quick-replies-bar {
+        padding: 8px 12px;
+    }
+
+    .quick-reply-btn {
+        padding: 6px 12px;
+        font-size: var(--font-size-xs);
+    }
+
+    .stat-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .stat-card {
+        padding: 16px;
+    }
+
+    .stat-icon {
+        width: 40px;
+        height: 40px;
+        font-size: 1.25rem;
+    }
+
+    .shortcuts-list {
+        grid-template-columns: 1fr;
+    }
+
+    .template-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .template-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+}
+
+/* ========== 13. Animation Improvements ========== */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.slide-in {
+    animation: slideIn 0.3s ease-out;
+}
+
+/* ========== 14. Accessibility Improvements ========== */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+/* Focus visible for keyboard navigation */
+.btn:focus-visible,
+.form-control:focus-visible,
+.form-select:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .btn,
+    .template-item,
+    .stat-card,
+    .export-option,
+    .shortcut-item {
+        border-width: 2px;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
 /* End of Facebook Business Suite Style CSS */
