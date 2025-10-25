@@ -842,21 +842,39 @@ h6 {
   box-shadow: 0 0 0 0.2rem rgba(104, 185, 132, 0.25);
 }
 
-/* ========== Alert ========== */
+/* ========== Alert System ========== */
 .alert {
-  border-radius: 8px;
   border: none;
-  padding: 0.875rem 1rem;
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
 }
 
 .alert-success {
-  background-color: rgba(104, 185, 132, 0.15);
-  color: var(--primary-dark);
+  background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+  color: #155724;
 }
 
 .alert-danger {
-  background-color: rgba(255, 104, 104, 0.15);
-  color: #A61F1F;
+  background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+  color: #721c24;
+}
+
+.alert-warning {
+  background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+  color: #856404;
+}
+
+.alert-info {
+  background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
+  color: #0c5460;
+}
+
+.alert-primary {
+  background: linear-gradient(135deg, rgba(var(--info-rgb), 0.15) 0%, rgba(var(--info-rgb), 0.25) 100%);
+  color: var(--info);
+  border: 1px solid rgba(var(--info-rgb), 0.3);
 }
 
 .alert-toast-container {
@@ -1492,6 +1510,190 @@ h6 {
   }
 }
 
+/* ========================================
+   MODAL SYSTEM
+   ======================================== */
+
+/* Modal Header Variants */
+.modal-header.bg-primary,
+.modal-header.bg-success,
+.modal-header.bg-info,
+.modal-header.bg-warning,
+.modal-header.bg-danger {
+  color: white;
+}
+
+.modal-header.bg-warning {
+  color: var(--text-dark);
+}
+
+.modal-header .btn-close-white {
+  filter: brightness(0) invert(1);
+}
+
+/* Modal Alert Boxes */
+.modal-body .alert {
+  border-radius: 10px;
+  border: 1px solid;
+}
+
+.modal-body .alert-primary {
+  background: rgba(var(--info-rgb), 0.1);
+  border-color: rgba(var(--info-rgb), 0.3);
+  color: var(--info);
+}
+
+.modal-body .alert-warning {
+  background: rgba(255, 193, 7, 0.1);
+  border-color: rgba(255, 193, 7, 0.3);
+  color: #856404;
+}
+
+.modal-body .alert-info {
+  background: rgba(var(--info-rgb), 0.1);
+  border-color: rgba(var(--info-rgb), 0.3);
+  color: var(--info);
+}
+
+.modal-body .alert-success {
+  background: rgba(var(--success-rgb), 0.1);
+  border-color: rgba(var(--success-rgb), 0.3);
+  color: var(--success);
+}
+
+/* Modal Cards */
+.modal-body .card {
+  border-radius: 10px;
+  transition: var(--transition);
+}
+
+.modal-body .card.border-0 {
+  box-shadow: var(--shadow-sm);
+}
+
+.modal-body .card.bg-light {
+  background: var(--light-bg) !important;
+}
+
+.modal-body .card-header {
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-body .card-header.bg-success-subtle {
+  background: rgba(var(--success-rgb), 0.1) !important;
+  border-bottom-color: rgba(var(--success-rgb), 0.2);
+}
+
+.modal-body .card-header.bg-warning-subtle {
+  background: rgba(255, 193, 7, 0.1) !important;
+  border-bottom-color: rgba(255, 193, 7, 0.2);
+}
+
+.modal-body .card-header.bg-danger-subtle {
+  background: rgba(var(--danger-rgb), 0.1) !important;
+  border-bottom-color: rgba(var(--danger-rgb), 0.2);
+}
+
+/* Modal Footer */
+.modal-footer {
+  border-top: 1px solid var(--border-color);
+  background: var(--light-bg);
+}
+
+/* Modal Scrollable Content */
+.modal-dialog-scrollable .modal-body {
+  max-height: calc(100vh - 200px);
+}
+
+/* Modal Forms */
+.modal-body .form-label {
+  font-weight: 600;
+  font-size: var(--label-size);
+  color: var(--text-dark);
+  margin-bottom: 0.5rem;
+}
+
+.modal-body .form-text {
+  font-size: var(--font-size-xs);
+  color: var(--text-light);
+  margin-top: 0.25rem;
+}
+
+.modal-body .form-check-label {
+  font-size: var(--font-size-sm);
+}
+
+/* Modal Specific Components */
+.modal-body .border.rounded {
+  border-color: var(--border-color) !important;
+  border-radius: 10px !important;
+}
+
+.modal-body .bg-light.p-3.rounded {
+  background: var(--light-bg) !important;
+  border-radius: 10px !important;
+}
+
+/* Modal Table Builder */
+.table-builder-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+}
+
+.table-builder-wrapper {
+  max-height: 400px;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+/* Modal Responsive */
+@media (max-width: 575.98px) {
+  .modal-dialog {
+    margin: 0.5rem;
+  }
+  
+  .modal-dialog-lg,
+  .modal-dialog-xl {
+    max-width: 100%;
+  }
+  
+  .modal-body {
+    padding: 1rem;
+  }
+  
+  .modal-header,
+  .modal-footer {
+    padding: 0.75rem 1rem;
+  }
+  
+  .modal-body .row.g-3 > .col-md-6,
+  .modal-body .row.g-3 > .col-md-5,
+  .modal-body .row.g-3 > .col-md-7,
+  .modal-body .row.g-4 > .col-md-6 {
+    margin-bottom: 1rem;
+  }
+  
+  .modal-footer {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .modal-footer.d-flex.justify-content-between {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  
+  .modal-footer .btn {
+    width: 100%;
+  }
+  
+  .modal-footer.d-flex.justify-content-between .btn {
+    width: auto;
+    flex: 1;
+  }
+}
+
 /* ========== Utilities ========== */
 .bg-light-success {
   background-color: rgba(var(--success-rgb), 0.15);
@@ -1827,33 +2029,6 @@ h6 {
     font-weight: 600;
     color: #495057;
     margin-bottom: 8px;
-}
-
-/* Enhanced alerts */
-.alert {
-    border: none;
-    border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-}
-
-.alert-success {
-    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-    color: #155724;
-}
-
-.alert-danger {
-    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-    color: #721c24;
-}
-
-.alert-warning {
-    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-    color: #856404;
-}
-
-.alert-info {
-    background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
-    color: #0c5460;
 }
 
 /* Smooth animations */
