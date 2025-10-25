@@ -7071,6 +7071,42 @@ app.delete("/api/line-bots/:id", async (req, res) => {
   }
 });
 
+// Toggle Line Bot Status (Quick Enable/Disable)
+app.patch("/api/line-bots/:id/toggle-status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+
+    // Get current bot
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
+    }
+
+    // Toggle status: active <-> inactive
+    const newStatus = bot.status === "active" ? "inactive" : "active";
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: newStatus, updatedAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
+    }
+
+    res.json({ 
+      message: `เปลี่ยนสถานะ Line Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
+      status: newStatus
+    });
+  } catch (err) {
+    console.error("Error toggling line bot status:", err);
+    res.status(500).json({ error: "ไม่สามารถเปลี่ยนสถานะ Line Bot ได้" });
+  }
+});
+
 // Test Line Bot
 app.post("/api/line-bots/:id/test", async (req, res) => {
   try {
@@ -7446,6 +7482,42 @@ app.delete("/api/facebook-bots/:id", async (req, res) => {
   } catch (err) {
     console.error("Error deleting facebook bot:", err);
     res.status(500).json({ error: "ไม่สามารถลบ Facebook Bot ได้" });
+  }
+});
+
+// Toggle Facebook Bot Status (Quick Enable/Disable)
+app.patch("/api/facebook-bots/:id/toggle-status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+
+    // Get current bot
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+    }
+
+    // Toggle status: active <-> inactive
+    const newStatus = bot.status === "active" ? "inactive" : "active";
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: newStatus, updatedAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+    }
+
+    res.json({ 
+      message: `เปลี่ยนสถานะ Facebook Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
+      status: newStatus
+    });
+  } catch (err) {
+    console.error("Error toggling facebook bot status:", err);
+    res.status(500).json({ error: "ไม่สามารถเปลี่ยนสถานะ Facebook Bot ได้" });
   }
 });
 

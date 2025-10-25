@@ -92,16 +92,9 @@ function displayLineBotList(lineBots) {
     }
 
     const rowsHtml = lineBots.map(bot => {
-        const statusClass = bot.status === 'active'
-            ? 'success'
-            : bot.status === 'maintenance'
-                ? 'warning'
-                : 'secondary';
-        const statusText = bot.status === 'active'
-            ? 'เปิดใช้งาน'
-            : bot.status === 'maintenance'
-                ? 'บำรุงรักษา'
-                : 'ปิดใช้งาน';
+        const isActive = bot.status === 'active';
+        const statusClass = isActive ? 'success' : 'secondary';
+        const statusText = isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
         const defaultBadge = bot.isDefault ? '<span class="badge bg-primary-soft text-primary ms-2">หลัก</span>' : '';
         const instructionsCount = Array.isArray(bot.selectedInstructions) ? bot.selectedInstructions.length : 0;
         const hasWebhook = typeof bot.webhookUrl === 'string' && bot.webhookUrl.trim();
@@ -129,7 +122,20 @@ function displayLineBotList(lineBots) {
                     <div class="text-muted small">Instructions: ${instructionsCount} รายการ</div>
                 </td>
                 <td class="bot-overview-status" data-label="สถานะ">
-                    <span class="badge bg-${statusClass}">${statusText}</span>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input bot-status-toggle" 
+                                   type="checkbox" 
+                                   role="switch" 
+                                   id="lineBot_${bot._id}" 
+                                   ${isActive ? 'checked' : ''}
+                                   onchange="toggleLineBotStatus('${bot._id}')"
+                                   title="${isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}">
+                            <label class="form-check-label" for="lineBot_${bot._id}">
+                                <span class="badge bg-${statusClass}">${statusText}</span>
+                            </label>
+                        </div>
+                    </div>
                     <div class="text-muted small mt-1">อัปเดต: ${updatedDisplay}</div>
                 </td>
                 <td class="bot-overview-connection" data-label="การเชื่อมต่อ">
@@ -487,16 +493,9 @@ function displayFacebookBotList(facebookBots) {
     }
 
     const rowsHtml = facebookBots.map(bot => {
-        const statusClass = bot.status === 'active'
-            ? 'success'
-            : bot.status === 'inactive'
-                ? 'warning'
-                : 'secondary';
-        const statusText = bot.status === 'active'
-            ? 'เปิดใช้งาน'
-            : bot.status === 'inactive'
-                ? 'ปิดใช้งาน'
-                : 'บำรุงรักษา';
+        const isActive = bot.status === 'active';
+        const statusClass = isActive ? 'success' : 'secondary';
+        const statusText = isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
         const defaultBadge = bot.isDefault ? '<span class="badge bg-primary-soft text-primary ms-2">หลัก</span>' : '';
         const instructionsCount = Array.isArray(bot.selectedInstructions) ? bot.selectedInstructions.length : 0;
         const pageId = typeof bot.pageId === 'string' ? bot.pageId.trim() : '';
@@ -524,7 +523,20 @@ function displayFacebookBotList(facebookBots) {
                     <div class="text-muted small">Instructions: ${instructionsCount} รายการ</div>
                 </td>
                 <td class="bot-overview-status" data-label="สถานะ">
-                    <span class="badge bg-${statusClass}">${statusText}</span>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input bot-status-toggle" 
+                                   type="checkbox" 
+                                   role="switch" 
+                                   id="facebookBot_${bot._id}" 
+                                   ${isActive ? 'checked' : ''}
+                                   onchange="toggleFacebookBotStatus('${bot._id}')"
+                                   title="${isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}">
+                            <label class="form-check-label" for="facebookBot_${bot._id}">
+                                <span class="badge bg-${statusClass}">${statusText}</span>
+                            </label>
+                        </div>
+                    </div>
                     <div class="text-muted small mt-1">อัปเดต: ${updatedDisplay}</div>
                 </td>
                 <td class="bot-overview-connection" data-label="การเชื่อมต่อ">
@@ -766,6 +778,76 @@ async function saveFacebookBot() {
     }
 }
 
+// Toggle Line Bot Status (Quick Enable/Disable)
+async function toggleLineBotStatus(botId) {
+    const toggle = document.getElementById(`lineBot_${botId}`);
+    const originalState = toggle.checked;
+    
+    try {
+        // Disable toggle during request
+        toggle.disabled = true;
+        
+        const response = await fetch(`/api/line-bots/${botId}/toggle-status`, {
+            method: 'PATCH'
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            showAlert(result.message, 'success');
+            // Reload bot list to update all UI elements
+            await loadLineBotSettings();
+        } else {
+            const error = await response.json();
+            showAlert(error.error || 'ไม่สามารถเปลี่ยนสถานะ Line Bot ได้', 'danger');
+            // Revert toggle state on error
+            toggle.checked = originalState;
+        }
+    } catch (error) {
+        console.error('Error toggling line bot status:', error);
+        showAlert('เกิดข้อผิดพลาดในการเปลี่ยนสถานะ Line Bot', 'danger');
+        // Revert toggle state on error
+        toggle.checked = originalState;
+    } finally {
+        // Re-enable toggle (will be replaced by reload anyway)
+        if (toggle) toggle.disabled = false;
+    }
+}
+
+// Toggle Facebook Bot Status (Quick Enable/Disable)
+async function toggleFacebookBotStatus(botId) {
+    const toggle = document.getElementById(`facebookBot_${botId}`);
+    const originalState = toggle.checked;
+    
+    try {
+        // Disable toggle during request
+        toggle.disabled = true;
+        
+        const response = await fetch(`/api/facebook-bots/${botId}/toggle-status`, {
+            method: 'PATCH'
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            showAlert(result.message, 'success');
+            // Reload bot list to update all UI elements
+            await loadFacebookBotSettings();
+        } else {
+            const error = await response.json();
+            showAlert(error.error || 'ไม่สามารถเปลี่ยนสถานะ Facebook Bot ได้', 'danger');
+            // Revert toggle state on error
+            toggle.checked = originalState;
+        }
+    } catch (error) {
+        console.error('Error toggling facebook bot status:', error);
+        showAlert('เกิดข้อผิดพลาดในการเปลี่ยนสถานะ Facebook Bot', 'danger');
+        // Revert toggle state on error
+        toggle.checked = originalState;
+    } finally {
+        // Re-enable toggle (will be replaced by reload anyway)
+        if (toggle) toggle.disabled = false;
+    }
+}
+
 // Export functions for use in other modules
 window.botManagement = {
     loadLineBotSettings,
@@ -780,5 +862,7 @@ window.botManagement = {
     deleteFacebookBot,
     testFacebookBot,
     saveFacebookBot,
-    refreshLineBotList
+    refreshLineBotList,
+    toggleLineBotStatus,
+    toggleFacebookBotStatus
 };

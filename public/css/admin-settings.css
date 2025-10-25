@@ -546,3 +546,71 @@
         padding: 1rem;
     }
 }
+
+/* Bot Status Toggle Switch Styles */
+.bot-status-toggle {
+    cursor: pointer;
+    width: 3rem;
+    height: 1.5rem;
+    min-width: 3rem;
+}
+
+.bot-status-toggle:focus {
+    border-color: rgba(104, 185, 132, 0.5);
+    box-shadow: 0 0 0 0.25rem rgba(104, 185, 132, 0.25);
+}
+
+.bot-status-toggle:checked {
+    background-color: #28a745;
+    border-color: #28a745;
+}
+
+.bot-status-toggle:not(:checked) {
+    background-color: #6c757d;
+    border-color: #6c757d;
+}
+
+.bot-status-toggle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.form-check-label {
+    cursor: pointer;
+    user-select: none;
+}
+
+.bot-overview-status .form-check {
+    padding-left: 0;
+}
+
+.bot-overview-status .form-check-input {
+    margin-left: 0;
+    margin-right: 0.5rem;
+}
+
+/* Smooth transition for toggle */
+.bot-status-toggle {
+    transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Badge styling in toggle context */
+.form-check-label .badge {
+    font-size: 0.75rem;
+    padding: 0.35rem 0.6rem;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+}
+
+/* Responsive adjustments for toggle */
+@media (max-width: 768px) {
+    .bot-status-toggle {
+        width: 2.5rem;
+        height: 1.25rem;
+        min-width: 2.5rem;
+    }
+    
+    .bot-overview-status .d-flex {
+        gap: 0.5rem !important;
+    }
+}
