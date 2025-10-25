@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>แชท - ChatCenter AI</title>
+    
+    <!-- CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/css/chat-modern.css" rel="stylesheet">
+    
+    <!-- Preconnect for better performance -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+</head>
+<body>
+    <!-- Navigation -->
+    <%- include('partials/admin-navbar', { activePage: 'chat' }) %>
+
+    <!-- Main Container -->
+    <div class="chat-modern-container">
+        <!-- Sidebar -->
+        <aside class="chat-sidebar" id="chatSidebar">
+            <!-- Sidebar Header -->
+            <div class="sidebar-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-comments me-2"></i>
+                    การสนทนา
+                </h5>
+                <button class="btn-close-sidebar d-lg-none" id="closeSidebar" aria-label="ปิด">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <!-- Search & Filter -->
+            <div class="sidebar-search">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" 
+                           id="searchUsers" 
+                           placeholder="ค้นหาการสนทนา..." 
+                           autocomplete="off"
+                           aria-label="ค้นหาผู้ใช้">
+                </div>
+                
+                <!-- Quick Filters -->
+                <div class="quick-filters">
+                    <button class="filter-chip active" data-filter="all" aria-pressed="true">
+                        <i class="fas fa-inbox"></i>
+                        ทั้งหมด
+                    </button>
+                    <button class="filter-chip" data-filter="unread" aria-pressed="false">
+                        <i class="fas fa-circle-dot"></i>
+                        ยังไม่อ่าน
+                    </button>
+                    <button class="filter-chip" data-filter="starred" aria-pressed="false">
+                        <i class="fas fa-star"></i>
+                        ติดดาว
+                    </button>
+                </div>
+            </div>
+
+            <!-- User List -->
+            <div class="user-list" id="userList" role="list">
+                <!-- Loading State -->
+                <div class="loading-users">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">กำลังโหลด...</span>
+                    </div>
+                    <p>กำลังโหลดรายการ...</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Chat Area -->
+        <main class="chat-main" id="chatMain">
+            <!-- Empty State -->
+            <div class="chat-empty-state" id="emptyState">
+                <div class="empty-icon">
+                    <i class="fas fa-comments"></i>
+                </div>
+                <h5>เลือกการสนทนา</h5>
+                <p>เลือกผู้ใช้จากรายการด้านซ้ายเพื่อเริ่มแชท</p>
+            </div>
+
+            <!-- Chat Content (Hidden by default) -->
+            <div class="chat-content" id="chatContent" style="display: none;">
+                <!-- Chat Header -->
+                <header class="chat-header" id="chatHeader">
+                    <div class="header-left">
+                        <button class="btn-toggle-sidebar d-lg-none" id="toggleSidebar" aria-label="เปิดเมนู">
+                            <i class="fas fa-bars"></i>
+                        </button>
+                        
+                        <div class="user-avatar" id="headerAvatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        
+                        <div class="user-info">
+                            <h6 class="user-name" id="headerUserName">ชื่อผู้ใช้</h6>
+                            <small class="user-status" id="headerUserStatus">
+                                <span class="status-dot"></span>
+                                ออนไลน์
+                            </small>
+                        </div>
+                    </div>
+
+                    <div class="header-actions">
+                        <button class="btn-icon" id="btnSearch" title="ค้นหาในแชท" aria-label="ค้นหา">
+                            <i class="fas fa-search"></i>
+                        </button>
+                        <button class="btn-icon" id="btnUserInfo" title="ข้อมูลผู้ใช้" aria-label="ข้อมูล">
+                            <i class="fas fa-info-circle"></i>
+                        </button>
+                        <div class="dropdown">
+                            <button class="btn-icon" 
+                                    id="btnMoreActions" 
+                                    data-bs-toggle="dropdown" 
+                                    aria-expanded="false"
+                                    aria-label="ตัวเลือกเพิ่มเติม">
+                                <i class="fas fa-ellipsis-v"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li>
+                                    <a class="dropdown-item" href="#" id="btnClearChat">
+                                        <i class="fas fa-trash me-2"></i>ล้างประวัติ
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item" href="#" id="btnExportChat">
+                                        <i class="fas fa-download me-2"></i>ส่งออกแชท
+                                    </a>
+                                </li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li>
+                                    <a class="dropdown-item" href="#" id="btnBlockUser">
+                                        <i class="fas fa-ban me-2"></i>บล็อกผู้ใช้
+                                    </a>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </header>
+
+                <!-- Messages Container -->
+                <div class="messages-container" id="messagesContainer">
+                    <!-- Messages will be rendered here -->
+                </div>
+
+                <!-- Quick Actions Bar -->
+                <div class="quick-actions-bar" id="quickActionsBar" style="display: none;">
+                    <div class="actions-scroll">
+                        <button class="action-btn" data-action="template">
+                            <i class="fas fa-magic"></i>
+                            <span>เทมเพลต</span>
+                        </button>
+                        <button class="action-btn" data-action="image">
+                            <i class="fas fa-image"></i>
+                            <span>รูปภาพ</span>
+                        </button>
+                        <button class="action-btn" data-action="file">
+                            <i class="fas fa-paperclip"></i>
+                            <span>ไฟล์</span>
+                        </button>
+                        <button class="action-btn" data-action="emoji">
+                            <i class="fas fa-smile"></i>
+                            <span>อิโมจิ</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Message Input -->
+                <div class="message-input-container">
+                    <div class="input-wrapper">
+                        <button class="btn-input-action" id="btnAttach" title="แนบไฟล์" aria-label="แนบไฟล์">
+                            <i class="fas fa-plus-circle"></i>
+                        </button>
+                        
+                        <div class="input-field">
+                            <textarea 
+                                id="messageInput" 
+                                placeholder="พิมพ์ข้อความ..." 
+                                rows="1"
+                                maxlength="2000"
+                                aria-label="ข้อความ"></textarea>
+                        </div>
+                        
+                        <button class="btn-input-action" id="btnEmoji" title="อิโมจิ" aria-label="อิโมจิ">
+                            <i class="fas fa-smile"></i>
+                        </button>
+                        
+                        <button class="btn-send" id="btnSend" title="ส่งข้อความ" aria-label="ส่ง">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="input-footer">
+                        <small class="text-muted">
+                            <span id="charCount">0</span>/2000
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- User Info Panel (Slidable) -->
+        <aside class="user-info-panel" id="userInfoPanel">
+            <div class="panel-header">
+                <h6>ข้อมูลผู้ใช้</h6>
+                <button class="btn-close-panel" id="closeUserInfo" aria-label="ปิด">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="panel-content" id="userInfoContent">
+                <!-- User info will be loaded here -->
+            </div>
+        </aside>
+    </div>
+
+    <!-- Overlay for mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Modals -->
+    
+    <!-- Search in Chat Modal -->
+    <div class="modal fade" id="searchChatModal" tabindex="-1" aria-labelledby="searchChatModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="searchChatModalLabel">
+                        <i class="fas fa-search me-2"></i>ค้นหาในแชท
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="ปิด"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" 
+                           class="form-control" 
+                           id="searchInChat" 
+                           placeholder="ค้นหาข้อความ..."
+                           aria-label="ค้นหาข้อความ">
+                    <div class="search-results mt-3" id="searchResults">
+                        <!-- Search results will appear here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Viewer Modal -->
+    <div class="modal fade" id="imageViewerModal" tabindex="-1" aria-labelledby="imageViewerLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="imageViewerLabel">รูปภาพ</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="ปิด"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <img id="imageViewerImg" src="" alt="รูปภาพ" class="img-fluid">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" id="btnDownloadImage">
+                        <i class="fas fa-download me-2"></i>ดาวน์โหลด
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 9999;">
+        <div id="liveToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+                <i class="fas fa-info-circle text-primary me-2"></i>
+                <strong class="me-auto">แจ้งเตือน</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="ปิด"></button>
+            </div>
+            <div class="toast-body" id="toastMessage">
+                ข้อความแจ้งเตือน
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Pass server config to client
+        window.chatCenterFollowUpConfig = {
+            analysisEnabled: <%= (followUpConfig && followUpConfig.analysisEnabled) ? 'true' : 'false' %>,
+            showInChat: <%= (followUpConfig && followUpConfig.showInChat) ? 'true' : 'false' %>
+        };
+    </script>
+    <script src="/js/chat-modern.js"></script>
+</body>
+</html>
+
