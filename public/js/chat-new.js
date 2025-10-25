@@ -14,6 +14,9 @@ class ChatManager {
             tags: [],
             search: ''
         };
+        this.closeSidebarForMobile = () => {};
+        this.mobileMediaQuery = null;
+        this.updateAppHeight = this.updateAppHeight.bind(this);
         const followUpConfig = window.chatCenterFollowUpConfig || {};
         this.followUpOptions = {
             analysisEnabled: typeof followUpConfig.analysisEnabled === 'boolean' ? followUpConfig.analysisEnabled : true,
@@ -42,6 +45,32 @@ class ChatManager {
             clearTimeout(timeout);
             timeout = setTimeout(later, wait);
         };
+    }
+
+    setupViewportHeightObserver() {
+        this.updateAppHeight();
+
+        window.addEventListener('resize', this.updateAppHeight);
+        window.addEventListener('focusin', this.updateAppHeight);
+        window.addEventListener('focusout', this.updateAppHeight);
+
+        window.addEventListener('orientationchange', () => {
+            window.setTimeout(this.updateAppHeight, 150);
+        });
+
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', this.updateAppHeight, { passive: true });
+            window.visualViewport.addEventListener('scroll', this.updateAppHeight, { passive: true });
+        }
+    }
+
+    updateAppHeight() {
+        window.requestAnimationFrame(() => {
+            const height = window.innerHeight;
+            if (height && height > 0) {
+                document.documentElement.style.setProperty('--app-height', `${height}px`);
+            }
+        });
     }
 
     async toggleAiForCurrent() {
@@ -84,6 +113,7 @@ class ChatManager {
     }
 
     init() {
+        this.setupViewportHeightObserver();
         this.initializeSocket();
         this.setupEventListeners();
         this.setupFilterListeners();
@@ -229,27 +259,72 @@ class ChatManager {
         const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
         const userSidebar = document.getElementById('userSidebar');
         const sidebarOverlay = document.getElementById('sidebarOverlay');
-        
+        const sidebarCloseBtn = document.getElementById('toggleSidebar');
+
+        const mediaQuery = window.matchMedia('(max-width: 991.98px)');
+        this.mobileMediaQuery = mediaQuery;
+        const isMobile = () => mediaQuery.matches;
+
+        const setToggleAria = (isOpen) => {
+            if (!sidebarToggleBtn) return;
+            sidebarToggleBtn.setAttribute('aria-expanded', String(isOpen));
+            sidebarToggleBtn.setAttribute('aria-label', isOpen ? 'ปิดรายการแชท' : 'เปิดรายการแชท');
+        };
+
+        const openSidebar = () => {
+            if (!userSidebar || !isMobile()) return;
+            userSidebar.classList.add('show');
+            if (sidebarOverlay) sidebarOverlay.classList.add('show');
+            document.body.classList.add('sidebar-open');
+            setToggleAria(true);
+        };
+
+        const closeSidebar = () => {
+            if (!userSidebar) return;
+            userSidebar.classList.remove('show');
+            if (sidebarOverlay) sidebarOverlay.classList.remove('show');
+            document.body.classList.remove('sidebar-open');
+            setToggleAria(false);
+        };
+
+        this.closeSidebarForMobile = closeSidebar;
+
         if (sidebarToggleBtn && userSidebar) {
+            sidebarToggleBtn.setAttribute('aria-haspopup', 'true');
+            setToggleAria(false);
             sidebarToggleBtn.addEventListener('click', () => {
-                userSidebar.classList.add('show');
-                if (sidebarOverlay) sidebarOverlay.classList.add('show');
+                if (userSidebar.classList.contains('show')) {
+                    closeSidebar();
+                } else {
+                    openSidebar();
+                }
             });
         }
 
         if (sidebarOverlay && userSidebar) {
-            sidebarOverlay.addEventListener('click', () => {
-                userSidebar.classList.remove('show');
-                sidebarOverlay.classList.remove('show');
-            });
+            sidebarOverlay.addEventListener('click', closeSidebar);
         }
 
-        const toggleSidebar = document.getElementById('toggleSidebar');
-        if (toggleSidebar && userSidebar && sidebarOverlay) {
-            toggleSidebar.addEventListener('click', () => {
-                userSidebar.classList.remove('show');
-                sidebarOverlay.classList.remove('show');
-            });
+        if (sidebarCloseBtn && userSidebar) {
+            sidebarCloseBtn.addEventListener('click', closeSidebar);
+        }
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && userSidebar && userSidebar.classList.contains('show')) {
+                closeSidebar();
+            }
+        });
+
+        const handleViewportChange = (event) => {
+            if (!event.matches) {
+                closeSidebar();
+            }
+        };
+
+        if (typeof mediaQuery.addEventListener === 'function') {
+            mediaQuery.addEventListener('change', handleViewportChange);
+        } else if (typeof mediaQuery.addListener === 'function') {
+            mediaQuery.addListener(handleViewportChange);
         }
     }
 
@@ -782,7 +857,7 @@ class ChatManager {
         if (this.currentUserId === userId) return;
         
         this.currentUserId = userId;
-        
+
         // Update UI: toggle active state using data attribute selector
         document.querySelectorAll('.user-item').forEach(item => {
             item.classList.remove('active');
@@ -791,7 +866,12 @@ class ChatManager {
         if (currentItem) {
             currentItem.classList.add('active');
         }
-        
+
+        const mobileQuery = this.mobileMediaQuery || window.matchMedia('(max-width: 991.98px)');
+        if (mobileQuery.matches) {
+            this.closeSidebarForMobile();
+        }
+
         // Update chat header
         const user = this.users.find(u => u.userId === userId);
         if (user) {

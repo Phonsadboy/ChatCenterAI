@@ -35,19 +35,21 @@
 /* 2. Improved Sidebar for Mobile */
 @media (max-width: 991.98px) {
     .user-sidebar {
-        width: 90%;
-        max-width: 380px;
-        height: 100vh;
-        top: 0;
-        transform: translateX(-100%);
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        width: min(90%, 340px);
+        max-width: 360px;
+        height: calc(var(--app-height, 100vh) - var(--safe-area-top, 0px) - var(--safe-area-bottom, 0px));
+        top: var(--safe-area-top, 0px);
+        left: var(--safe-area-left, 0px);
+        bottom: var(--safe-area-bottom, 0px);
+        transform: translateX(-110%);
+        transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
         will-change: transform;
         -webkit-overflow-scrolling: touch;
     }
     
     .user-sidebar.show {
         transform: translateX(0);
-        box-shadow: 0 0 30px rgba(0, 0, 0, 0.3);
+        box-shadow: 16px 0 32px rgba(0, 0, 0, 0.18);
     }
     
     /* Backdrop ชัดขึ้น */
@@ -62,9 +64,9 @@
     .message-input-container {
         padding: 0.875rem;
         /* รองรับ iPhone notch */
-        padding-bottom: calc(0.875rem + env(safe-area-inset-bottom));
-        background: var(--bg-white);
-        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+        padding-bottom: calc(0.875rem + var(--safe-area-bottom, 0px));
+        background: var(--bg-primary);
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.06);
     }
     
     #messageInput {
@@ -89,7 +91,7 @@
 @media (max-width: 575.98px) {
     .messages-container {
         padding: 1rem 0.75rem;
-        padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+        padding-bottom: calc(1rem + var(--safe-area-bottom, 0px));
     }
     
     .message {
@@ -187,26 +189,21 @@
 /* 8. Landscape Mode */
 @media (max-width: 926px) and (orientation: landscape) {
     .chat-container {
-        height: 100vh;
+        min-height: var(--app-height, 100vh);
     }
     
     .messages-container {
-        max-height: calc(100vh - 120px);
+        max-height: calc(var(--app-height, 100vh) - 120px);
     }
 }
 
 /* 9. iPhone X/11/12/13/14/15 Notch Support */
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
-    .message-input-container {
-        padding-bottom: calc(0.875rem + env(safe-area-inset-bottom));
-    }
-    
-    .user-sidebar {
-        padding-bottom: env(safe-area-inset-bottom);
-    }
-    
-    body {
-        padding-bottom: env(safe-area-inset-bottom);
+    :root {
+        --safe-area-top: env(safe-area-inset-top);
+        --safe-area-right: env(safe-area-inset-right);
+        --safe-area-bottom: env(safe-area-inset-bottom);
+        --safe-area-left: env(safe-area-inset-left);
     }
 }
 
@@ -304,4 +301,3 @@
         font-size: 0.9375rem;
     }
 }
-

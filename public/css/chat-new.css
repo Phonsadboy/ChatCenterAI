@@ -43,13 +43,21 @@
     --shadow-hover: 0 2px 8px rgba(0, 0, 0, 0.12);
     --shadow-active: 0 4px 16px rgba(0, 0, 0, 0.16);
     --shadow-dialog: 0 12px 28px 0 rgba(0, 0, 0, 0.2), 0 2px 4px 0 rgba(0, 0, 0, 0.1);
-    
+
     /* Border Radius */
     --radius-sm: 6px;
     --radius-md: 8px;
     --radius-lg: 12px;
     --radius-xl: 16px;
     --radius-full: 9999px;
+
+    /* Layout helpers */
+    --navbar-height: 57px;
+    --app-height: 100vh;
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
     
     /* Transitions */
     --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -102,6 +110,13 @@ body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    min-height: var(--app-height);
+    display: flex;
+    flex-direction: column;
+}
+
+body.sidebar-open {
+    overflow: hidden;
 }
 
 p {
@@ -229,16 +244,19 @@ h6 { font-size: var(--font-size-sm); }
 
 /* Main Chat Container - Facebook Style */
 .chat-container {
-    display: flex;
-    height: calc(100vh - 57px);
-    max-height: none;
-    min-height: 600px;
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    gap: 0;
+    min-height: calc(var(--app-height, 100vh) - var(--navbar-height, 0px));
     max-width: 100%;
+    width: 100%;
     margin: 0;
     background-color: var(--bg-primary);
     border-radius: 0;
     box-shadow: none;
     overflow: hidden;
+    flex: 1;
 }
 
 /* User Sidebar - Facebook Style */
@@ -249,6 +267,8 @@ h6 { font-size: var(--font-size-sm); }
     display: flex;
     flex-direction: column;
     box-shadow: var(--shadow-card);
+    height: 100%;
+    min-height: 0;
 }
 
 .sidebar-header {
@@ -532,10 +552,12 @@ h6 { font-size: var(--font-size-sm); }
 
 /* Chat Main Area */
 .chat-main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
     background-color: var(--bg-primary);
+    min-height: 0;
+    height: 100%;
+    position: relative;
 }
 
 /* Chat Header - Facebook Style */
@@ -603,12 +625,13 @@ h6 { font-size: var(--font-size-sm); }
 
 /* Messages Container - Facebook Style */
 .messages-container {
-    flex: 1;
     overflow-y: auto;
     padding: 1.5rem;
     background-color: var(--bg-primary);
     display: flex;
     flex-direction: column;
+    gap: 0.5rem;
+    min-height: 0;
 }
 
 /* Empty State - Facebook Style */
@@ -1338,9 +1361,9 @@ h6 { font-size: var(--font-size-sm); }
 .sidebar-toggle-btn {
     display: none;
     position: fixed;
-    bottom: 5rem;
-    left: 1rem;
-    z-index: 1000;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 1100;
     width: 56px;
     height: 56px;
     border-radius: var(--radius-full);
@@ -1363,7 +1386,10 @@ h6 { font-size: var(--font-size-sm); }
 
 /* Responsive Design - Mobile Optimized */
 @media (max-width: 991.98px) {
-    /* Hide navbar on mobile to save space */
+    :root {
+        --navbar-height: 0px;
+    }
+
     .navbar {
         display: none;
     }
@@ -1375,36 +1401,26 @@ h6 { font-size: var(--font-size-sm); }
     }
 
     .chat-container {
-        flex-direction: column;
-        height: 100vh;
-        height: 100dvh; /* Dynamic viewport height for mobile */
+        grid-template-columns: 1fr;
+        min-height: var(--app-height, 100vh);
         border-radius: 0;
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        margin: 0;
-        overflow: hidden;
     }
 
     .user-sidebar {
         position: fixed;
-        top: 0;
-        left: 0;
-        width: 85%;
+        top: var(--safe-area-top, 0px);
+        left: var(--safe-area-left, 0px);
+        bottom: var(--safe-area-bottom, 0px);
+        width: min(90%, 340px);
         max-width: 360px;
-        height: 100vh;
-        height: 100dvh;
+        height: calc(var(--app-height, 100vh) - var(--safe-area-top, 0px) - var(--safe-area-bottom, 0px));
         border-right: 1px solid var(--border-secondary);
-        transform: translateX(-100%);
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        z-index: 1000;
-        box-shadow: 4px 0 20px rgba(0, 0, 0, 0.2);
-        backdrop-filter: blur(8px);
+        transform: translateX(-110%);
+        transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 1300;
+        box-shadow: 16px 0 32px rgba(0, 0, 0, 0.18);
+        backdrop-filter: blur(6px);
         background-color: var(--bg-primary);
-        display: flex;
-        flex-direction: column;
     }
 
     .user-sidebar.show {
@@ -1414,19 +1430,15 @@ h6 { font-size: var(--font-size-sm); }
     .sidebar-overlay {
         display: none;
         position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100vh;
-        height: 100dvh;
-        background: rgba(0, 0, 0, 0.6);
-        z-index: 999;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 1200;
         backdrop-filter: blur(2px);
     }
 
     .sidebar-overlay.show {
         display: block;
-        animation: fadeIn 0.3s ease;
+        animation: fadeIn 0.2s ease;
     }
 
     @keyframes fadeIn {
@@ -1439,37 +1451,24 @@ h6 { font-size: var(--font-size-sm); }
     }
 
     .user-list {
-        flex: 1;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
     }
 
-    .sidebar-toggle-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        position: fixed;
-        bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-        left: 1rem;
-        z-index: 100;
-    }
-
     .chat-main {
-        width: 100%;
-        height: 100vh;
-        height: 100dvh;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
+        grid-template-rows: auto 1fr auto;
+        height: calc(var(--app-height, 100vh) - var(--safe-area-top, 0px));
+        padding-top: var(--safe-area-top, 0px);
     }
 
     .chat-header {
-        position: relative;
+        position: sticky;
         top: 0;
         z-index: 10;
         padding: 1rem;
         box-shadow: var(--shadow-card);
-        flex-shrink: 0;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
     }
 
     .user-info .user-avatar {
@@ -1489,26 +1488,20 @@ h6 { font-size: var(--font-size-sm); }
     }
 
     .messages-container {
-        flex: 1;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
         padding: 1rem;
-        padding-bottom: 0.5rem;
+        padding-bottom: 0.75rem;
+        -webkit-overflow-scrolling: touch;
     }
 
     .message {
-        max-width: 85%;
+        max-width: 90%;
     }
 
     .message-input-container {
-        padding: 0.875rem 1rem;
-        padding-bottom: calc(0.875rem + env(safe-area-inset-bottom, 0px));
-        position: relative;
-        bottom: 0;
-        background-color: var(--bg-primary);
+        padding: 0.75rem 1rem;
+        padding-bottom: calc(0.75rem + var(--safe-area-bottom, 0px));
         border-top: 1px solid var(--border-secondary);
-        box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
-        flex-shrink: 0;
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.06);
     }
 
     .input-group {
@@ -1523,7 +1516,22 @@ h6 { font-size: var(--font-size-sm); }
 
     .form-control {
         min-height: 40px;
-        font-size: 16px; /* Prevent zoom on iOS */
+        font-size: 16px;
+    }
+
+    .sidebar-toggle-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        bottom: calc(1rem + var(--safe-area-bottom, 0px));
+        right: calc(1rem + var(--safe-area-right, 0px));
+        z-index: 1100;
+    }
+
+    .sidebar-overlay.show ~ .sidebar-toggle-btn {
+        opacity: 0;
+        pointer-events: none;
     }
 }
 
@@ -1550,8 +1558,7 @@ h6 { font-size: var(--font-size-sm); }
     }
 
     .user-sidebar {
-        width: 90%;
-        max-width: 100%;
+        width: min(92%, 360px);
     }
 
     .sidebar-header {
@@ -1586,7 +1593,7 @@ h6 { font-size: var(--font-size-sm); }
 
     .message-input-container {
         padding: 0.75rem;
-        padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+        padding-bottom: calc(0.75rem + var(--safe-area-bottom, 0px));
     }
 
     .input-group {
@@ -1608,8 +1615,8 @@ h6 { font-size: var(--font-size-sm); }
     .sidebar-toggle-btn {
         width: 56px;
         height: 56px;
-        bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
-        left: 1rem;
+        bottom: calc(1.25rem + var(--safe-area-bottom, 0px));
+        right: calc(1rem + var(--safe-area-right, 0px));
         font-size: 1.5rem;
     }
 
