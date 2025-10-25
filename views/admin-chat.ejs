@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>แชท - ChatCenter AI</title>
+    <title>แชท | จัดการ AI</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/css/style.css" rel="stylesheet">
     <link href="/css/chat-redesign.css" rel="stylesheet">
 </head>
 <body>
@@ -13,176 +14,180 @@
     <%- include('partials/admin-navbar', { activePage: 'chat' }) %>
 
     <!-- Main Chat Container -->
-    <div class="chat-app">
-        <!-- Sidebar Overlay (Mobile) -->
-        <div class="sidebar-overlay" id="sidebarOverlay"></div>
-        
-        <!-- Left Sidebar - User List -->
-        <aside class="chat-sidebar" id="chatSidebar">
-            <!-- Sidebar Header -->
-            <div class="sidebar-header">
-                <div class="sidebar-header-content">
-                    <h5 class="sidebar-title">
-                        <i class="fas fa-comments"></i>
-                        แชท
-                    </h5>
-                    <div class="user-count-badge" id="userCountBadge">0</div>
-                </div>
-                <button class="btn-close-sidebar d-lg-none" id="closeSidebar" title="ปิด">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-
-            <!-- Search Bar -->
-            <div class="search-container">
-                <div class="search-input-wrapper">
-                    <i class="fas fa-search search-icon"></i>
-                    <input type="text" class="search-input" id="userSearch" placeholder="ค้นหาผู้ใช้...">
-                    <button class="btn-filter" id="filterToggle" title="ตัวกรอง">
-                        <i class="fas fa-filter"></i>
-                        <span class="filter-badge" id="filterBadge" style="display: none;">0</span>
-                    </button>
-                </div>
-            </div>
-
-            <!-- Filter Panel (Collapsible) -->
-            <div class="filter-panel" id="filterPanel" style="display: none;">
-                <div class="filter-header">
-                    <span class="filter-title">ตัวกรอง</span>
-                    <button class="btn-clear-filter" id="clearFilters">ล้างทั้งหมด</button>
-                </div>
+    <div class="chat-app-wrapper">
+        <div class="container-fluid">
+            <div class="chat-app">
+                <!-- Sidebar Overlay (Mobile) -->
+                <div class="sidebar-overlay" id="sidebarOverlay"></div>
                 
-                <!-- Status Filters -->
-                <div class="filter-section">
-                    <div class="filter-section-title">สถานะ</div>
-                    <div class="filter-buttons">
-                        <button class="filter-btn active" data-filter="all">
-                            <i class="fas fa-list"></i>
-                            ทั้งหมด
-                        </button>
-                        <button class="filter-btn" data-filter="unread">
-                            <i class="fas fa-circle"></i>
-                            ยังไม่อ่าน
-                        </button>
-                        <button class="filter-btn" data-filter="followup">
-                            <i class="fas fa-star"></i>
-                            ติดตาม
-                        </button>
-                        <button class="filter-btn" data-filter="purchased">
-                            <i class="fas fa-shopping-cart"></i>
-                            ซื้อแล้ว
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Tag Filters -->
-                <div class="filter-section">
-                    <div class="filter-section-title">แท็ก</div>
-                    <div class="tag-filters" id="tagFilters">
-                        <span class="no-tags">ไม่มีแท็ก</span>
-                    </div>
-                </div>
-
-                <!-- Filter Summary -->
-                <div class="filter-summary">
-                    <span id="filteredCount">0</span> ผู้ใช้
-                </div>
-            </div>
-
-            <!-- User List -->
-            <div class="user-list" id="userList">
-                <div class="loading-placeholder">
-                    <div class="spinner"></div>
-                    <span>กำลังโหลด...</span>
-                </div>
-            </div>
-        </aside>
-
-        <!-- Main Chat Area -->
-        <main class="chat-main">
-            <!-- Chat Header -->
-            <header class="chat-header" id="chatHeader">
-                <div class="chat-header-left">
-                    <button class="btn-toggle-sidebar d-lg-none" id="toggleSidebar">
-                        <i class="fas fa-bars"></i>
-                    </button>
-                    <div class="chat-user-info">
-                        <div class="chat-avatar" id="chatAvatar">
-                            <i class="fas fa-user"></i>
+                <!-- Left Sidebar - User List -->
+                <aside class="chat-sidebar" id="chatSidebar">
+                    <!-- Sidebar Header -->
+                    <div class="sidebar-header">
+                        <div class="sidebar-header-content">
+                            <h5 class="sidebar-title">
+                                <i class="fas fa-comments"></i>
+                                แชท
+                            </h5>
+                            <div class="user-count-badge" id="userCountBadge">0</div>
                         </div>
-                        <div class="chat-user-details">
-                            <h6 class="chat-user-name" id="chatUserName">เลือกแชทเพื่อเริ่มสนทนา</h6>
-                            <div class="chat-user-meta" id="chatUserMeta">
-                                <span class="meta-item">
-                                    <i class="fas fa-comment"></i>
-                                    <span id="messageCount">0</span> ข้อความ
-                                </span>
+                        <button class="btn-close-sidebar d-lg-none" id="closeSidebar" title="ปิด">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+
+                    <!-- Search Bar -->
+                    <div class="search-container">
+                        <div class="search-input-wrapper">
+                            <i class="fas fa-search search-icon"></i>
+                            <input type="text" class="search-input" id="userSearch" placeholder="ค้นหาผู้ใช้...">
+                            <button class="btn-filter" id="filterToggle" title="ตัวกรอง">
+                                <i class="fas fa-filter"></i>
+                                <span class="filter-badge" id="filterBadge" style="display: none;">0</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Filter Panel (Collapsible) -->
+                    <div class="filter-panel" id="filterPanel" style="display: none;">
+                        <div class="filter-header">
+                            <span class="filter-title">ตัวกรอง</span>
+                            <button class="btn-clear-filter" id="clearFilters">ล้างทั้งหมด</button>
+                        </div>
+                        
+                        <!-- Status Filters -->
+                        <div class="filter-section">
+                            <div class="filter-section-title">สถานะ</div>
+                            <div class="filter-buttons">
+                                <button class="filter-btn active" data-filter="all">
+                                    <i class="fas fa-list"></i>
+                                    ทั้งหมด
+                                </button>
+                                <button class="filter-btn" data-filter="unread">
+                                    <i class="fas fa-circle"></i>
+                                    ยังไม่อ่าน
+                                </button>
+                                <button class="filter-btn" data-filter="followup">
+                                    <i class="fas fa-star"></i>
+                                    ติดตาม
+                                </button>
+                                <button class="filter-btn" data-filter="purchased">
+                                    <i class="fas fa-shopping-cart"></i>
+                                    ซื้อแล้ว
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Tag Filters -->
+                        <div class="filter-section">
+                            <div class="filter-section-title">แท็ก</div>
+                            <div class="tag-filters" id="tagFilters">
+                                <span class="no-tags">ไม่มีแท็ก</span>
+                            </div>
+                        </div>
+
+                        <!-- Filter Summary -->
+                        <div class="filter-summary">
+                            <span id="filteredCount">0</span> ผู้ใช้
+                        </div>
+                    </div>
+
+                    <!-- User List -->
+                    <div class="user-list" id="userList">
+                        <div class="loading-placeholder">
+                            <div class="spinner"></div>
+                            <span>กำลังโหลด...</span>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Main Chat Area -->
+                <main class="chat-main">
+                    <!-- Chat Header -->
+                    <header class="chat-header" id="chatHeader">
+                        <div class="chat-header-left">
+                            <button class="btn-toggle-sidebar d-lg-none" id="toggleSidebar">
+                                <i class="fas fa-bars"></i>
+                            </button>
+                            <div class="chat-user-info">
+                                <div class="chat-avatar" id="chatAvatar">
+                                    <i class="fas fa-user"></i>
+                                </div>
+                                <div class="chat-user-details">
+                                    <h6 class="chat-user-name" id="chatUserName">เลือกแชทเพื่อเริ่มสนทนา</h6>
+                                    <div class="chat-user-meta" id="chatUserMeta">
+                                        <span class="meta-item">
+                                            <i class="fas fa-comment"></i>
+                                            <span id="messageCount">0</span> ข้อความ
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chat-header-right" id="chatHeaderActions" style="display: none;">
+                            <button class="btn-header-action" id="btnTogglePurchase" title="สถานะการซื้อ">
+                                <i class="fas fa-shopping-cart"></i>
+                            </button>
+                            <button class="btn-header-action" id="btnManageTags" title="จัดการแท็ก">
+                                <i class="fas fa-tags"></i>
+                            </button>
+                            <button class="btn-header-action" id="btnToggleAI" title="เปิด/ปิด AI">
+                                <i class="fas fa-robot"></i>
+                            </button>
+                            <div class="header-divider"></div>
+                            <button class="btn-header-action btn-danger" id="btnClearChat" title="ล้างแชท">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </header>
+
+                    <!-- Messages Container -->
+                    <div class="messages-wrapper" id="messagesWrapper">
+                        <div class="messages-container" id="messagesContainer">
+                            <!-- Empty State -->
+                            <div class="empty-state" id="emptyState">
+                                <div class="empty-icon">
+                                    <i class="fab fa-facebook-messenger"></i>
+                                </div>
+                                <h5>เลือกแชทเพื่อเริ่มการสนทนา</h5>
+                                <p>เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที</p>
                             </div>
                         </div>
                     </div>
-                </div>
-                <div class="chat-header-right" id="chatHeaderActions" style="display: none;">
-                    <button class="btn-header-action" id="btnTogglePurchase" title="สถานะการซื้อ">
-                        <i class="fas fa-shopping-cart"></i>
-                    </button>
-                    <button class="btn-header-action" id="btnManageTags" title="จัดการแท็ก">
-                        <i class="fas fa-tags"></i>
-                    </button>
-                    <button class="btn-header-action" id="btnToggleAI" title="เปิด/ปิด AI">
-                        <i class="fas fa-robot"></i>
-                    </button>
-                    <div class="header-divider"></div>
-                    <button class="btn-header-action btn-danger" id="btnClearChat" title="ล้างแชท">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </div>
-            </header>
 
-            <!-- Messages Container -->
-            <div class="messages-wrapper" id="messagesWrapper">
-                <div class="messages-container" id="messagesContainer">
-                    <!-- Empty State -->
-                    <div class="empty-state" id="emptyState">
-                        <div class="empty-icon">
-                            <i class="fab fa-facebook-messenger"></i>
+                    <!-- Message Input Area (Fixed at bottom) -->
+                    <div class="message-input-area" id="messageInputArea" style="display: none;">
+                        <div class="message-input-container">
+                            <button class="btn-input-action" id="btnTemplate" title="Templates">
+                                <i class="fas fa-magic"></i>
+                            </button>
+                            <div class="message-input-wrapper">
+                                <textarea 
+                                    class="message-input" 
+                                    id="messageInput" 
+                                    placeholder="พิมพ์ข้อความ..." 
+                                    rows="1"
+                                    maxlength="1000"></textarea>
+                            </div>
+                            <button class="btn-input-action" id="btnEmoji" title="อิโมจิ">
+                                <i class="far fa-smile"></i>
+                            </button>
+                            <button class="btn-send" id="btnSend" title="ส่ง">
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
                         </div>
-                        <h5>เลือกแชทเพื่อเริ่มการสนทนา</h5>
-                        <p>เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที</p>
+                        <div class="message-input-footer">
+                            <span class="char-counter">
+                                <span id="charCount">0</span>/1000
+                            </span>
+                            <span class="input-hints">
+                                Enter เพื่อส่ง • Shift+Enter ขึ้นบรรทัดใหม่
+                            </span>
+                        </div>
                     </div>
-                </div>
+                </main>
             </div>
-
-            <!-- Message Input Area (Fixed at bottom) -->
-            <div class="message-input-area" id="messageInputArea" style="display: none;">
-                <div class="message-input-container">
-                    <button class="btn-input-action" id="btnTemplate" title="Templates">
-                        <i class="fas fa-magic"></i>
-                    </button>
-                    <div class="message-input-wrapper">
-                        <textarea 
-                            class="message-input" 
-                            id="messageInput" 
-                            placeholder="พิมพ์ข้อความ..." 
-                            rows="1"
-                            maxlength="1000"></textarea>
-                    </div>
-                    <button class="btn-input-action" id="btnEmoji" title="อิโมจิ">
-                        <i class="far fa-smile"></i>
-                    </button>
-                    <button class="btn-send" id="btnSend" title="ส่ง">
-                        <i class="fas fa-paper-plane"></i>
-                    </button>
-                </div>
-                <div class="message-input-footer">
-                    <span class="char-counter">
-                        <span id="charCount">0</span>/1000
-                    </span>
-                    <span class="input-hints">
-                        Enter เพื่อส่ง • Shift+Enter ขึ้นบรรทัดใหม่
-                    </span>
-                </div>
-            </div>
-        </main>
+        </div>
     </div>
 
     <!-- Image Modal -->
