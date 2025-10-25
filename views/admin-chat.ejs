@@ -121,37 +121,43 @@
             <div class="messages-container" id="messagesContainer">
                 <div class="empty-state">
                     <div class="empty-icon">
-                        <i class="fas fa-comments"></i>
+                        <i class="fab fa-facebook-messenger"></i>
                     </div>
-                    <h5>ยินดีต้อนรับสู่ระบบแชท ChatCenter AI</h5>
-                    <p>เลือกผู้ใช้จากรายชื่อด้านซ้ายเพื่อเริ่มการสนทนา หรือค้นหาผู้ใช้ที่ต้องการติดต่อ</p>
+                    <h5>เลือกแชทเพื่อเริ่มการสนทนา</h5>
+                    <p>เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที</p>
                 </div>
             </div>
 
-            <!-- Message Input -->
+            <!-- Message Input - Facebook Style -->
             <div class="message-input-container" id="messageInputContainer" style="display: none;">
                 <div class="input-group">
+                    <button class="btn" type="button" title="แนบไฟล์" style="color: var(--primary);">
+                        <i class="fas fa-plus-circle"></i>
+                    </button>
                     <textarea class="form-control" id="messageInput" 
-                              placeholder="พิมพ์ข้อความ... (Shift+Enter = บรรทัดใหม่)" 
+                              placeholder="Aa" 
                               maxlength="1000" autocomplete="off" rows="1"></textarea>
-                    <button class="btn btn-primary" type="button" id="sendButton">
+                    <button class="btn" type="button" title="อิโมจิ" style="color: var(--primary);">
+                        <i class="far fa-smile"></i>
+                    </button>
+                    <button class="btn btn-primary" type="button" id="sendButton" title="ส่ง">
                         <i class="fas fa-paper-plane"></i>
                     </button>
                 </div>
                 <div class="input-footer">
                     <small>
-                        <span id="charCount">0</span>/1000
+                        <span id="charCount">0</span>/1000 ตัวอักษร
                     </small>
                     <small>
-                        Enter = ส่ง • Shift+Enter = บรรทัดใหม่
+                        Enter เพื่อส่ง • Shift+Enter เพื่อขึ้นบรรทัดใหม่
                     </small>
                 </div>
             </div>
         </div>
         
-        <!-- Toggle Sidebar Button (Mobile) -->
-        <button class="sidebar-toggle-btn" id="sidebarToggleBtn">
-            <i class="fas fa-users"></i>
+        <!-- Toggle Sidebar Button (Mobile) - Facebook Style -->
+        <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="เปิดรายการแชท">
+            <i class="fas fa-comments"></i>
         </button>
     </div>
 

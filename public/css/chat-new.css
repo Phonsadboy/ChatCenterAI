@@ -830,6 +830,10 @@ h6 { font-size: var(--font-size-sm); }
     border-radius: var(--radius-full);
     transition: var(--transition-base);
     overflow: hidden;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem;
 }
 
 .input-group:focus-within {
@@ -841,20 +845,22 @@ h6 { font-size: var(--font-size-sm); }
 .form-control {
     border: none;
     border-radius: var(--radius-full);
-    padding: 0.75rem 1rem;
+    padding: 0.625rem 0.875rem;
     font-family: var(--font-family-base);
     font-size: var(--font-size-base);
     transition: var(--transition-fast);
     background-color: transparent;
     resize: none;
-    min-height: 44px;
+    min-height: 40px;
     max-height: 120px;
     overflow-y: auto;
     color: var(--text-primary);
+    flex: 1;
 }
 
 .form-control::placeholder {
     color: var(--text-placeholder);
+    font-weight: var(--font-weight-normal);
 }
 
 /* สำหรับ textarea ใน input group */
@@ -862,15 +868,41 @@ h6 { font-size: var(--font-size-sm); }
     border-radius: var(--radius-full);
 }
 
+/* Input action buttons (emoji, attach, etc.) */
 .input-group .btn {
     border-radius: var(--radius-full);
     border: none;
-    min-width: 44px;
-    height: 44px;
+    min-width: 36px;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
     margin: 0;
+    padding: 0;
+    background-color: transparent;
+    color: var(--text-secondary);
+    transition: var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.input-group .btn:hover:not(.btn-primary) {
+    background-color: var(--bg-hover);
+    color: var(--primary);
+    transform: scale(1.1);
+}
+
+.input-group .btn.btn-primary {
+    background: var(--primary-gradient);
+    color: white;
+    width: 36px;
+    height: 36px;
+    box-shadow: 0 2px 4px rgba(0, 132, 255, 0.3);
+}
+
+.input-group .btn.btn-primary:hover {
+    box-shadow: 0 2px 8px rgba(0, 132, 255, 0.4);
+    transform: scale(1.05);
 }
 
 .form-control:focus {
