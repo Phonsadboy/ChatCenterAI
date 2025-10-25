@@ -100,9 +100,10 @@ async function manageInstructions(botId) {
       availableLibraries = result.libraries || [];
     }
 
-    // Display data
-    displayInstructionLibraries();
-    displaySelectedInstructions();
+  // Display data
+  displayInstructionLibraries();
+  displaySelectedInstructions();
+  updateInstructionCounts();
 
     // Load assets and bind upload handler
     await loadInstructionAssets();
@@ -156,9 +157,10 @@ async function manageFacebookInstructions(botId) {
       availableLibraries = result.libraries || [];
     }
 
-    // Display data
-    displayInstructionLibraries();
-    displaySelectedInstructions();
+  // Display data
+  displayInstructionLibraries();
+  displaySelectedInstructions();
+  updateInstructionCounts();
 
     // Load assets and bind upload handler
     await loadInstructionAssets();
@@ -186,7 +188,7 @@ async function manageFacebookInstructions(botId) {
   }
 }
 
-// Display available instruction libraries
+// Display available instruction libraries (Single-Select UI)
 function displayInstructionLibraries() {
   const container = document.getElementById("instructionLibraries");
   if (!container) return;
@@ -201,23 +203,27 @@ function displayInstructionLibraries() {
     return;
   }
 
-  let html = "";
+  let html = '<div class="mb-2 text-muted small"><i class="fas fa-info-circle me-1"></i>คลิกเพื่อเลือก instruction (เลือกได้เพียง 1 อัน)</div>';
   availableLibraries.forEach((library) => {
     const isSelected = currentBotInstructions.includes(library.date);
     const selectedClass = isSelected
-      ? "border-success bg-light"
+      ? "border-primary bg-light shadow-sm"
       : "border-secondary";
     const selectedIcon = isSelected
-      ? '<i class="fas fa-check-circle text-success me-2"></i>'
-      : '<i class="fas fa-circle text-muted me-2"></i>';
+      ? '<i class="fas fa-dot-circle text-primary me-2"></i>'
+      : '<i class="far fa-circle text-muted me-2"></i>';
+    const selectedBadge = isSelected 
+      ? '<span class="badge bg-primary ms-2"><i class="fas fa-check me-1"></i>ใช้งานอยู่</span>' 
+      : '';
 
     html += `
-            <div class="card mb-2 ${selectedClass} library-item" data-date="${library.date}" style="cursor: pointer;">
+            <div class="card mb-2 ${selectedClass} library-item" data-date="${library.date}" style="cursor: pointer; transition: all 0.2s;">
                 <div class="card-body p-2">
                     <div class="d-flex justify-content-between align-items-start">
-                        <div>
+                        <div class="flex-grow-1">
                             ${selectedIcon}
                             <strong>${library.name || library.displayDate}</strong>
+                            ${selectedBadge}
                             <br>
                             <small class="text-muted">${library.description || "ไม่มีคำอธิบาย"}</small>
                             <br>
@@ -237,16 +243,29 @@ function displayInstructionLibraries() {
 
   container.innerHTML = html;
 
-  // Add click events
+  // Add click events with hover effect
   document.querySelectorAll(".library-item").forEach((item) => {
     item.addEventListener("click", function () {
       const date = this.dataset.date;
       toggleLibrarySelection(date);
     });
+    
+    // Add hover effect
+    item.addEventListener("mouseenter", function() {
+      if (!this.classList.contains("bg-light")) {
+        this.style.backgroundColor = "#f8f9fa";
+      }
+    });
+    
+    item.addEventListener("mouseleave", function() {
+      if (!this.classList.contains("bg-light")) {
+        this.style.backgroundColor = "";
+      }
+    });
   });
 }
 
-// Display selected instructions
+// Display selected instructions (Single-Select UI)
 function displaySelectedInstructions() {
   const container = document.getElementById("selectedInstructions");
   if (!container) return;
@@ -255,53 +274,79 @@ function displaySelectedInstructions() {
     container.innerHTML = `
             <div class="alert alert-warning">
                 <i class="fas fa-exclamation-triangle me-2"></i>
-                ยังไม่ได้เลือก instructions จากคลัง
+                ยังไม่ได้เลือก instruction จากคลัง
+                <div class="small mt-2 text-muted">
+                    <i class="fas fa-lightbulb me-1"></i>คลิกที่รายการด้านซ้ายเพื่อเลือก instruction ที่ต้องการใช้
+                </div>
             </div>
         `;
     return;
   }
 
-  let html = '<div class="mb-2"><strong>คลังที่เลือกใช้:</strong></div>';
-  currentBotInstructions.forEach((date) => {
-    const library = availableLibraries.find((lib) => lib.date === date);
-    if (library) {
-      html += `
-                <div class="card mb-2 border-success bg-light">
-                    <div class="card-body p-2">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <i class="fas fa-check-circle text-success me-2"></i>
-                                <strong>${library.name || library.displayDate}</strong>
-                                <br>
-                                <small class="text-muted">${library.description || "ไม่มีคำอธิบาย"}</small>
+  let html = '<div class="mb-2"><strong>Instruction ที่เลือกใช้:</strong></div>';
+  
+  // Since single-select, only show the first (and only) item
+  const date = currentBotInstructions[0];
+  const library = availableLibraries.find((lib) => lib.date === date);
+  
+  if (library) {
+    html += `
+            <div class="card border-primary shadow-sm">
+                <div class="card-body p-3">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="fas fa-check-circle text-primary me-2"></i>
+                                <strong class="text-primary">${library.name || library.displayDate}</strong>
+                                <span class="badge bg-primary ms-2">กำลังใช้งาน</span>
                             </div>
-                            <button class="btn btn-sm btn-outline-danger" onclick="removeLibrarySelection('${date}')">
-                                <i class="fas fa-times"></i>
-                            </button>
+                            <div class="text-muted small mb-2">
+                                ${library.description || "ไม่มีคำอธิบาย"}
+                            </div>
+                            <div class="text-muted small">
+                                <i class="fas fa-calendar me-1"></i>${library.displayDate}
+                                <i class="fas fa-clock me-1 ms-2"></i>${library.displayTime}
+                            </div>
                         </div>
+                        <button class="btn btn-sm btn-outline-danger" onclick="removeLibrarySelection('${date}')" title="ยกเลิกการเลือก">
+                            <i class="fas fa-times me-1"></i>ยกเลิก
+                        </button>
                     </div>
                 </div>
-            `;
-    }
-  });
+            </div>
+            <div class="alert alert-info mt-2 mb-0 small">
+                <i class="fas fa-info-circle me-1"></i>
+                <strong>หมายเหตุ:</strong> เลือกได้เพียง 1 instruction ต่อ 1 เพจ/ไลน์ หากต้องการเปลี่ยน กรุณาคลิกเลือก instruction ใหม่ทางด้านซ้าย
+            </div>
+        `;
+  } else {
+    // Fallback if library not found
+    html += `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-circle me-2"></i>
+                ไม่พบข้อมูล instruction ที่เลือก
+            </div>
+        `;
+  }
 
   container.innerHTML = html;
 }
 
-// Toggle library selection
+// Toggle library selection (Single-Select Mode)
 function toggleLibrarySelection(date) {
-  const index = currentBotInstructions.indexOf(date);
-  if (index > -1) {
-    // Remove if already selected
-    currentBotInstructions.splice(index, 1);
+  // Single-select mode: Replace the current selection with new one
+  if (currentBotInstructions.length === 1 && currentBotInstructions[0] === date) {
+    // If clicking the already selected item, deselect it
+    currentBotInstructions = [];
   } else {
-    // Add if not selected
-    currentBotInstructions.push(date);
+    // Replace with new selection (only one item)
+    currentBotInstructions = [date];
   }
 
   // Refresh display
   displayInstructionLibraries();
   displaySelectedInstructions();
+  updateInstructionCounts();
   refreshInstructionAssetUsage().catch((err) =>
     console.error("refreshInstructionAssetUsage error:", err),
   );
@@ -314,9 +359,34 @@ function removeLibrarySelection(date) {
     currentBotInstructions.splice(index, 1);
     displayInstructionLibraries();
     displaySelectedInstructions();
+    updateInstructionCounts();
     refreshInstructionAssetUsage().catch((err) =>
       console.error("refreshInstructionAssetUsage error:", err),
     );
+  }
+}
+
+// Update instruction counts in badges
+function updateInstructionCounts() {
+  // Update libraries count
+  const librariesCountEl = document.getElementById('librariesCount');
+  if (librariesCountEl) {
+    librariesCountEl.textContent = availableLibraries.length;
+  }
+  
+  // Update selected count
+  const selectedCountEl = document.getElementById('selectedCount');
+  if (selectedCountEl) {
+    const count = currentBotInstructions.length;
+    selectedCountEl.textContent = `${count} / 1`;
+    
+    // Change badge color based on selection
+    selectedCountEl.className = 'badge';
+    if (count === 0) {
+      selectedCountEl.classList.add('bg-secondary');
+    } else {
+      selectedCountEl.classList.add('bg-primary');
+    }
   }
 }
 
@@ -815,6 +885,7 @@ window.instructionsManagement = {
   toggleLibrarySelection,
   removeLibrarySelection,
   saveSelectedInstructions,
+  updateInstructionCounts,
   loadOverviewData,
   displayLineBotOverview,
   displayFacebookBotOverview,
