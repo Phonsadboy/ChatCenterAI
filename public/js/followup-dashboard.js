@@ -30,8 +30,6 @@
         modalAnalysis: document.getElementById('followupModalAnalysis'),
         modalShowChat: document.getElementById('followupModalShowChat'),
         modalShowDashboard: document.getElementById('followupModalShowDashboard'),
-        modalHistoryLimit: document.getElementById('followupModalHistoryLimit'),
-        modalCooldown: document.getElementById('followupModalCooldown'),
         modalModel: document.getElementById('followupModalModel'),
         modalUpdatedAt: document.getElementById('followupModalUpdatedAt'),
         modalAutoSend: document.getElementById('followupModalAutoSend'),
@@ -58,10 +56,13 @@
     const modalInstance = el.modalRoot ? new bootstrap.Modal(el.modalRoot) : null;
 
     const MODEL_OPTIONS = [
-        'gpt-5-mini',
-        'gpt-4o-mini',
-        'gpt-5',
-        'gpt-4.1-mini'
+        { value: 'gpt-5-nano', label: 'GPT-5 Nano (ค่าเริ่มต้น - ประหยัดสุด)' },
+        { value: 'gpt-5-mini', label: 'GPT-5 Mini (แนะนำ)' },
+        { value: 'gpt-5', label: 'GPT-5' },
+        { value: 'gpt-5-chat-latest', label: 'GPT-5 Chat Latest' },
+        { value: 'gpt-4.1', label: 'GPT-4.1' },
+        { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+        { value: 'o3', label: 'O3 (ทรงพลังสุด)' }
     ];
 
     const normalizeId = (value) => {
@@ -524,12 +525,10 @@
             } else if (config.autoFollowUpEnabled === false) {
                 el.analysisSubtitle.textContent = 'ระบบจะไม่ส่งข้อความอัตโนมัติจนกว่าจะเปิดใช้งาน';
             } else {
-                const parts = ['ระบบจะนับเวลาจากข้อความล่าสุดของลูกค้า'];
-                if (typeof config.historyLimit === 'number') {
-                    parts.push(`ใช้ประวัติล่าสุด ${config.historyLimit} ข้อความ`);
-                }
-                if (typeof config.cooldownMinutes === 'number') {
-                    parts.push(`วิเคราะห์ซ้ำทุก ${config.cooldownMinutes} นาที`);
+                const parts = ['AI จะวิเคราะห์ว่าลูกค้าซื้อแล้วหรือยัง ถ้าซื้อแล้วจะหยุดส่งข้อความติดตามอัตโนมัติ'];
+                if (config.model) {
+                    const modelInfo = MODEL_OPTIONS.find(m => m.value === config.model);
+                    parts.push(`โมเดล: ${modelInfo ? modelInfo.label : config.model}`);
                 }
                 el.analysisSubtitle.textContent = parts.join(' • ');
             }
@@ -1401,7 +1400,7 @@
 
     const populateModalOptions = () => {
         if (!el.modalModel) return;
-        el.modalModel.innerHTML = MODEL_OPTIONS.map(model => `<option value="${model}">${model}</option>`).join('');
+        el.modalModel.innerHTML = MODEL_OPTIONS.map(model => `<option value="${model.value}">${model.label}</option>`).join('');
     };
 
     const openSettingsModal = () => {
@@ -1414,9 +1413,7 @@
         if (el.modalAutoSend) el.modalAutoSend.checked = cfg.autoFollowUpEnabled !== false;
         if (el.modalShowChat) el.modalShowChat.checked = cfg.showInChat !== false;
         if (el.modalShowDashboard) el.modalShowDashboard.checked = cfg.showInDashboard !== false;
-        if (el.modalHistoryLimit) el.modalHistoryLimit.value = cfg.historyLimit ?? 10;
-        if (el.modalCooldown) el.modalCooldown.value = cfg.cooldownMinutes ?? 30;
-        if (el.modalModel) el.modalModel.value = cfg.model || MODEL_OPTIONS[0];
+        if (el.modalModel) el.modalModel.value = cfg.model || MODEL_OPTIONS[0].value;
         state.modalRounds = Array.isArray(cfg.rounds)
             ? cfg.rounds.map(round => ({
                 delayMinutes: Number(round.delayMinutes) || '',
@@ -1451,8 +1448,6 @@
                 autoFollowUpEnabled: !!(el.modalAutoSend && el.modalAutoSend.checked),
                 showInChat: !!(el.modalShowChat && el.modalShowChat.checked),
                 showInDashboard: !!(el.modalShowDashboard && el.modalShowDashboard.checked),
-                historyLimit: el.modalHistoryLimit ? Number(el.modalHistoryLimit.value) : undefined,
-                cooldownMinutes: el.modalCooldown ? Number(el.modalCooldown.value) : undefined,
                 model: el.modalModel ? el.modalModel.value : undefined
             }
         };

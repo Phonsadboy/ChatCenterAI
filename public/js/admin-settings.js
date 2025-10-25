@@ -226,30 +226,6 @@ function populateSettings() {
         }
     }
 
-    if (currentSettings.enableFollowUpAnalysis !== undefined) {
-        const followUpAnalysisEnabled = document.getElementById('followUpAnalysisEnabled');
-        if (followUpAnalysisEnabled) followUpAnalysisEnabled.checked = currentSettings.enableFollowUpAnalysis;
-    } else {
-        const followUpAnalysisEnabled = document.getElementById('followUpAnalysisEnabled');
-        if (followUpAnalysisEnabled) followUpAnalysisEnabled.checked = true;
-    }
-
-    if (currentSettings.followUpShowInChat !== undefined) {
-        const followUpShowInChat = document.getElementById('followUpShowInChat');
-        if (followUpShowInChat) followUpShowInChat.checked = currentSettings.followUpShowInChat;
-    } else {
-        const followUpShowInChat = document.getElementById('followUpShowInChat');
-        if (followUpShowInChat) followUpShowInChat.checked = true;
-    }
-
-    if (currentSettings.followUpShowInDashboard !== undefined) {
-        const followUpShowInDashboard = document.getElementById('followUpShowInDashboard');
-        if (followUpShowInDashboard) followUpShowInDashboard.checked = currentSettings.followUpShowInDashboard;
-    } else {
-        const followUpShowInDashboard = document.getElementById('followUpShowInDashboard');
-        if (followUpShowInDashboard) followUpShowInDashboard.checked = true;
-    }
-
     // AI settings
     if (currentSettings.textModel) {
         const textModel = document.getElementById('textModel');
@@ -360,12 +336,9 @@ async function saveChatSettings() {
     const enableMessageMerging = document.getElementById('enableMessageMerging');
     const showTokenUsage = document.getElementById('showTokenUsage');
     const audioAttachmentResponse = document.getElementById('audioAttachmentResponse');
-    const followUpAnalysisEnabled = document.getElementById('followUpAnalysisEnabled');
-    const followUpShowInChat = document.getElementById('followUpShowInChat');
-    const followUpShowInDashboard = document.getElementById('followUpShowInDashboard');
     
     if (!chatDelaySeconds || !maxQueueMessages || !enableMessageMerging || !showTokenUsage ||
-        !audioAttachmentResponse || !followUpAnalysisEnabled || !followUpShowInChat || !followUpShowInDashboard) {
+        !audioAttachmentResponse) {
         showAlert('ไม่พบฟอร์มการตั้งค่าแชท', 'danger');
         return;
     }
@@ -383,10 +356,7 @@ async function saveChatSettings() {
         maxQueueMessages: parseInt(maxQueueMessages.value),
         enableMessageMerging: enableMessageMerging.checked,
         showTokenUsage: showTokenUsage.checked,
-        audioAttachmentResponse: normalizedAudioResponse,
-        enableFollowUpAnalysis: followUpAnalysisEnabled.checked,
-        followUpShowInChat: followUpShowInChat.checked,
-        followUpShowInDashboard: followUpShowInDashboard.checked
+        audioAttachmentResponse: normalizedAudioResponse
     };
 
     try {

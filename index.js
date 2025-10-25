@@ -1118,8 +1118,6 @@ async function getFollowUpBaseConfig() {
   const coll = db.collection("settings");
   const keys = [
     "enableFollowUpAnalysis",
-    "followUpHistoryLimit",
-    "followUpCooldownMinutes",
     "followUpModel",
     "followUpShowInChat",
     "followUpShowInDashboard",
@@ -1137,15 +1135,7 @@ async function getFollowUpBaseConfig() {
       typeof map.enableFollowUpAnalysis === "boolean"
         ? map.enableFollowUpAnalysis
         : true,
-    historyLimit:
-      typeof map.followUpHistoryLimit === "number"
-        ? map.followUpHistoryLimit
-        : 10,
-    cooldownMinutes:
-      typeof map.followUpCooldownMinutes === "number"
-        ? map.followUpCooldownMinutes
-        : 30,
-    model: map.followUpModel || "gpt-5-mini",
+    model: map.followUpModel || "gpt-5-nano",
     showInChat:
       typeof map.followUpShowInChat === "boolean"
         ? map.followUpShowInChat
@@ -2082,20 +2072,24 @@ function sanitizeContentForFollowUp(rawContent) {
   return trimmed;
 }
 
-async function getRecentChatHistoryForFollowUp(userId, limit = 10) {
+async function getRecentChatHistoryForFollowUp(userId, limit = null) {
   const enableChatHistory = await getSettingValue("enableChatHistory", true);
   if (!enableChatHistory) return [];
 
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection("chat_history");
-  const docs = await coll
-    .find({ senderId: userId })
-    .sort({ timestamp: -1 })
-    .limit(limit)
-    .toArray();
+  
+  let query = coll.find({ senderId: userId }).sort({ timestamp: 1 });
+  
+  // ไม่จำกัดจำนวนข้อความถ้าไม่ได้ระบุ limit
+  if (limit && limit > 0) {
+    query = query.limit(limit);
+  }
+  
+  const docs = await query.toArray();
 
-  return docs.reverse().map((doc) => ({
+  return docs.map((doc) => ({
     role: doc.role || "user",
     content: sanitizeContentForFollowUp(doc.content),
     timestamp: doc.timestamp,
@@ -2143,31 +2137,27 @@ async function analyzeChatHistoryForFollowUp(
   }
 
   const followUpModel =
-    modelOverride || (await getSettingValue("followUpModel", "gpt-5-mini"));
+    modelOverride || (await getSettingValue("followUpModel", "gpt-5-nano"));
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
+  // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่ (บนลงล่าง)
   const formattedConversation = history
-    .map((entry) => {
-      const speaker = entry.role === "user" ? "ลูกค้า" : "ผู้ช่วย";
-      return `${speaker}: ${entry.content}`;
+    .map((entry, index) => {
+      const speaker = entry.role === "user" ? "ลูกค้า" : "เรา";
+      const seq = index + 1;
+      return `${seq}. ${speaker}: ${entry.content}`;
     })
     .join("\n");
 
-  const systemPrompt = [
-    "คุณคือผู้ช่วยที่ตรวจสอบประวัติการสนทนาระหว่างลูกค้ากับร้านค้า",
-    "หน้าที่ของคุณคือบอกว่ามีการสั่งซื้อหรือการขายสินค้าที่ตกลงแน่นอนแล้วหรือไม่",
-    "ให้พิจารณาเฉพาะกรณีที่มีการยืนยันสั่งซื้อ การให้ที่อยู่จัดส่ง",
-    "อย่าถือว่าเป็นการสั่งซื้อถ้าลูกค้าถามราคาเฉยๆ ต่อรอง หรือยังลังเล",
-    'ตอบกลับเป็น JSON เท่านั้นในรูปแบบ {"hasFollowUp": boolean, "reason": "ข้อความสั้นๆ ภาษาไทย"}',
-    "อย่าเพิ่มคำอธิบายอื่นนอกเหนือจาก JSON",
-  ].join("\n");
+  const systemPrompt = `วิเคราะห์บทสนทนาว่าลูกค้าตัดสินใจซื้อสินค้าแล้วหรือยัง
 
-  const userPrompt = [
-    "ประวัติการสนทนาล่าสุด (เรียงจากเก่าไปใหม่):",
-    formattedConversation,
-    "",
-    "โปรดวิเคราะห์และตอบกลับเป็น JSON ตามรูปแบบที่กำหนด",
-  ].join("\n");
+เกณฑ์การพิจารณา:
+✅ ถือว่าซื้อ = ยืนยันสั่งซื้อชัดเจน, ให้ที่อยู่จัดส่ง, โอนเงินแล้ว
+❌ ไม่ถือว่าซื้อ = ถามราคา, ต่อรอง, ลังเล, พิจารณาอยู่
+
+ตอบเป็น JSON เท่านั้น: {"hasFollowUp": true/false, "reason": "เหตุผลสั้นๆ"}`;
+
+  const userPrompt = `บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์:`;
 
   try {
     const response = await openai.chat.completions.create({
@@ -2219,19 +2209,8 @@ async function maybeAnalyzeFollowUp(userId, platform = "line", botId = null) {
       return; // ติดแท็กแล้วไม่ต้องประมวลผลซ้ำ
     }
 
-    const cooldownMinutes =
-      typeof config.cooldownMinutes === "number" ? config.cooldownMinutes : 30;
-    if (status?.lastAnalyzedAt) {
-      const last = new Date(status.lastAnalyzedAt);
-      const diffMinutes = (Date.now() - last.getTime()) / 60000;
-      if (diffMinutes < cooldownMinutes) {
-        return;
-      }
-    }
-
-    const historyLimit =
-      typeof config.historyLimit === "number" ? config.historyLimit : 10;
-    const history = await getRecentChatHistoryForFollowUp(userId, historyLimit);
+    // ดึงประวัติการสนทนาทั้งหมด (ไม่จำกัดจำนวน)
+    const history = await getRecentChatHistoryForFollowUp(userId, null);
     if (!history || history.length === 0) return;
 
     const newest = history[history.length - 1];
@@ -4847,9 +4826,7 @@ async function ensureSettings() {
     { key: "showTokenUsage", value: false },
     { key: "facebookImageSendMode", value: "upload" },
     { key: "enableFollowUpAnalysis", value: true },
-    { key: "followUpHistoryLimit", value: 10 },
-    { key: "followUpCooldownMinutes", value: 30 },
-    { key: "followUpModel", value: "gpt-5-mini" },
+    { key: "followUpModel", value: "gpt-5-nano" },
     { key: "followUpShowInChat", value: true },
     { key: "followUpShowInDashboard", value: true },
     { key: "followUpAutoEnabled", value: false },
@@ -9258,10 +9235,7 @@ app.post("/admin/followup/page-settings", async (req, res) => {
       "showInDashboard",
       "autoFollowUpEnabled",
     ];
-    const numberKeys = {
-      historyLimit: { min: 1, max: 100 },
-      cooldownMinutes: { min: 1, max: 1440 },
-    };
+    const numberKeys = {};
 
     boolKeys.forEach((key) => {
       if (typeof settings?.[key] === "boolean") {
@@ -9881,9 +9855,7 @@ app.get("/api/settings", async (req, res) => {
       replacementText: "[ข้อความถูกซ่อน]",
       enableStrictFiltering: true,
       enableFollowUpAnalysis: true,
-      followUpHistoryLimit: 10,
-      followUpCooldownMinutes: 30,
-      followUpModel: "gpt-5-mini",
+      followUpModel: "gpt-5-nano",
       followUpShowInChat: true,
       followUpShowInDashboard: true,
     };
