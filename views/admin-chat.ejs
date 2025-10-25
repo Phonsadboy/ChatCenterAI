@@ -47,20 +47,41 @@
                     <input type="text" class="form-control border-start-0" id="userSearch" placeholder="ค้นหาผู้ใช้...">
                     <button class="btn btn-outline-secondary" type="button" id="filterToggle" title="ตัวกรอง">
                         <i class="fas fa-filter"></i>
+                        <span class="filter-active-badge" id="filterActiveBadge" style="display: none;"></span>
                     </button>
                 </div>
                 <!-- Filter Options (Hidden by default) -->
                 <div class="filter-options" id="filterOptions" style="display: none;">
-                    <div class="d-flex gap-2 flex-wrap mt-2">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <small class="text-muted fw-bold">สถานะ</small>
+                        <button class="btn btn-sm btn-link p-0 text-decoration-none" id="clearFilters">
+                            <small>ล้างทั้งหมด</small>
+                        </button>
+                    </div>
+                    <div class="d-flex gap-2 flex-wrap mb-3">
                         <button class="btn btn-sm btn-outline-primary filter-btn active" data-filter="all">
-                            ทั้งหมด
+                            <i class="fas fa-list"></i> ทั้งหมด
                         </button>
                         <button class="btn btn-sm btn-outline-success filter-btn" data-filter="unread">
-                            <i class="fas fa-circle text-success" style="font-size: 0.5rem;"></i> ยังไม่อ่าน
+                            <i class="fas fa-circle" style="font-size: 0.5rem;"></i> ยังไม่อ่าน
                         </button>
                         <button class="btn btn-sm btn-outline-warning filter-btn" data-filter="followup">
                             <i class="fas fa-star"></i> ติดตาม
                         </button>
+                        <button class="btn btn-sm btn-outline-info filter-btn" data-filter="purchased">
+                            <i class="fas fa-shopping-cart"></i> เคยซื้อแล้ว
+                        </button>
+                    </div>
+                    <div class="mb-2">
+                        <small class="text-muted fw-bold">กรองตามแท็ก</small>
+                    </div>
+                    <div id="tagFilters" class="d-flex gap-2 flex-wrap">
+                        <span class="text-muted small">ไม่มีแท็กในระบบ</span>
+                    </div>
+                    <div class="mt-2 pt-2 border-top">
+                        <small class="text-muted">
+                            <span id="filteredUserCount">0</span> ผู้ใช้
+                        </small>
                     </div>
                 </div>
             </div>
@@ -159,6 +180,54 @@
                 <div class="modal-body text-center">
                     <i class="fas fa-spinner fa-spin fa-2x text-primary mb-2"></i>
                     <p class="mb-0">กำลังโหลด...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tag Management Modal -->
+    <div class="modal fade" id="tagModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-tags me-2"></i>จัดการแท็ก
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">ผู้ใช้:</label>
+                        <div id="tagModalUserName" class="text-muted"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">แท็กปัจจุบัน:</label>
+                        <div id="currentTags" class="d-flex flex-wrap gap-2 mb-2">
+                            <span class="text-muted small">ยังไม่มีแท็ก</span>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">เพิ่มแท็กใหม่:</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="newTagInput" 
+                                   placeholder="พิมพ์ชื่อแท็ก..." maxlength="50">
+                            <button class="btn btn-primary" type="button" id="addTagBtn">
+                                <i class="fas fa-plus me-1"></i>เพิ่ม
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">แท็กที่ใช้บ่อย:</label>
+                        <div id="popularTags" class="d-flex flex-wrap gap-2">
+                            <span class="text-muted small">กำลังโหลด...</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
                 </div>
             </div>
         </div>

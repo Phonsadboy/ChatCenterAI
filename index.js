@@ -9863,6 +9863,138 @@ app.delete("/admin/chat/clear/:userId", async (req, res) => {
   }
 });
 
+// ========== Tag Management APIs ==========
+
+// Get tags for a specific user
+app.get("/admin/chat/tags/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const tagsColl = db.collection("user_tags");
+
+    const userTags = await tagsColl.findOne({ userId });
+    
+    res.json({ 
+      success: true, 
+      tags: userTags ? userTags.tags : [] 
+    });
+  } catch (err) {
+    console.error("Error getting user tags:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Set tags for a specific user
+app.post("/admin/chat/tags/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { tags } = req.body;
+
+    if (!Array.isArray(tags)) {
+      return res.json({ success: false, error: "tags ต้องเป็น array" });
+    }
+
+    // ตรวจสอบและทำความสะอาด tags
+    const cleanTags = tags
+      .map(tag => String(tag).trim())
+      .filter(tag => tag.length > 0 && tag.length <= 50)
+      .slice(0, 20); // จำกัดไม่เกิน 20 tags ต่อคน
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const tagsColl = db.collection("user_tags");
+
+    await tagsColl.updateOne(
+      { userId },
+      { 
+        $set: { 
+          tags: cleanTags, 
+          updatedAt: new Date() 
+        } 
+      },
+      { upsert: true }
+    );
+
+    // Emit to socket clients
+    io.emit("userTagsUpdated", { userId, tags: cleanTags });
+
+    res.json({ success: true, tags: cleanTags });
+  } catch (err) {
+    console.error("Error setting user tags:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Get all available tags in the system
+app.get("/admin/chat/available-tags", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const tagsColl = db.collection("user_tags");
+
+    // ดึงแท็กทั้งหมดจากผู้ใช้ทั้งหมด
+    const allUserTags = await tagsColl.find({}).toArray();
+    
+    // รวมแท็กทั้งหมดและนับจำนวนการใช้งาน
+    const tagCount = {};
+    allUserTags.forEach(userTag => {
+      if (userTag.tags && Array.isArray(userTag.tags)) {
+        userTag.tags.forEach(tag => {
+          tagCount[tag] = (tagCount[tag] || 0) + 1;
+        });
+      }
+    });
+
+    // แปลงเป็น array และเรียงตามความนิยม
+    const availableTags = Object.entries(tagCount)
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 50); // เอาแค่ 50 tags ที่นิยมสุด
+
+    res.json({ success: true, tags: availableTags });
+  } catch (err) {
+    console.error("Error getting available tags:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Toggle purchase status
+app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { hasPurchased } = req.body;
+
+    if (typeof hasPurchased !== 'boolean') {
+      return res.json({ success: false, error: "hasPurchased ต้องเป็น boolean" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const statusColl = db.collection("user_purchase_status");
+
+    await statusColl.updateOne(
+      { userId },
+      { 
+        $set: { 
+          hasPurchased,
+          updatedAt: new Date(),
+          updatedBy: "admin"
+        } 
+      },
+      { upsert: true }
+    );
+
+    // Emit to socket clients
+    io.emit("userPurchaseStatusUpdated", { userId, hasPurchased });
+
+    res.json({ success: true, hasPurchased });
+  } catch (err) {
+    console.error("Error setting purchase status:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // Get total unread count for all users
 app.get("/admin/chat/unread-count", async (req, res) => {
   try {
@@ -10882,6 +11014,28 @@ async function getNormalizedChatUsers() {
       followMap[status.senderId] = status;
     });
 
+    // ดึงข้อมูลแท็ก
+    const tagsColl = db.collection("user_tags");
+    const userTags =
+      userIds.length > 0
+        ? await tagsColl.find({ userId: { $in: userIds } }).toArray()
+        : [];
+    const tagsMap = {};
+    userTags.forEach((userTag) => {
+      tagsMap[userTag.userId] = userTag.tags || [];
+    });
+
+    // ดึงข้อมูลสถานะการซื้อ
+    const purchaseColl = db.collection("user_purchase_status");
+    const purchaseStatuses =
+      userIds.length > 0
+        ? await purchaseColl.find({ userId: { $in: userIds } }).toArray()
+        : [];
+    const purchaseMap = {};
+    purchaseStatuses.forEach((status) => {
+      purchaseMap[status.userId] = status.hasPurchased;
+    });
+
     const contextCache = new Map();
 
     // แปลงข้อมูลผู้ใช้แต่ละคน
@@ -10933,6 +11087,19 @@ async function getNormalizedChatUsers() {
             followStatus.lastAnalyzedAt ||
             null
           : null;
+
+        // ดึงแท็กของผู้ใช้
+        const tags = tagsMap[user._id] || [];
+
+        // ดึงสถานะการซื้อ (ถ้ามี manual override ให้ใช้ ถ้าไม่ ให้ใช้จาก follow-up)
+        let hasPurchased = false;
+        if (typeof purchaseMap[user._id] === 'boolean') {
+          hasPurchased = purchaseMap[user._id];
+        } else {
+          // ใช้ข้อมูลจาก follow-up status
+          hasPurchased = hasFollowUp;
+        }
+
         return {
           userId: user._id,
           displayName: userProfile
@@ -10951,6 +11118,8 @@ async function getNormalizedChatUsers() {
           hasFollowUp,
           followUpReason,
           followUpUpdatedAt,
+          tags,
+          hasPurchased,
           followUp: {
             analysisEnabled: config.analysisEnabled !== false,
             showInChat: showFollowUp,

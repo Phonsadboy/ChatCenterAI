@@ -5,8 +5,15 @@ class ChatManager {
         this.socket = null;
         this.currentUserId = null;
         this.users = [];
+        this.allUsers = []; // เก็บข้อมูลผู้ใช้ทั้งหมดก่อนการกรอง
         this.chatHistory = {};
         this.isLoading = false;
+        this.availableTags = []; // เก็บแท็กที่มีในระบบ
+        this.currentFilters = {
+            status: 'all',
+            tags: [],
+            search: ''
+        };
         const followUpConfig = window.chatCenterFollowUpConfig || {};
         this.followUpOptions = {
             analysisEnabled: typeof followUpConfig.analysisEnabled === 'boolean' ? followUpConfig.analysisEnabled : true,
@@ -18,19 +25,23 @@ class ChatManager {
         this.lazyLoader = new window.performanceUtils.LazyImageLoader();
         this.smartPoller = null;
         
-        // ✅ Debounced search - Comment out until methods are implemented
-        // this.debouncedSearch = window.performanceUtils.debounce(
-        //     this.performSearch.bind(this),
-        //     300
-        // );
-        
-        // ✅ Throttled scroll - Comment out until methods are implemented
-        // this.throttledScroll = window.performanceUtils.throttle(
-        //     this.handleScroll.bind(this),
-        //     100
-        // );
+        // ✅ Debounced search
+        this.debouncedSearch = this.debounce(this.performSearch.bind(this), 300);
         
         this.init();
+    }
+
+    // Debounce utility
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
     }
 
     async toggleAiForCurrent() {
@@ -75,7 +86,10 @@ class ChatManager {
     init() {
         this.initializeSocket();
         this.setupEventListeners();
+        this.setupFilterListeners();
+        this.setupTagModalListeners();
         this.loadUsers();
+        this.loadAvailableTags();
         this.setupAutoRefresh();
     }
 
@@ -107,6 +121,23 @@ class ChatManager {
                 this.clearChatDisplay();
             }
             this.loadUsers();
+        });
+
+        // Listen for tag and purchase status updates
+        this.socket.on('userTagsUpdated', (data) => {
+            const user = this.allUsers.find(u => u.userId === data.userId);
+            if (user) {
+                user.tags = data.tags || [];
+                this.applyFilters();
+            }
+        });
+
+        this.socket.on('userPurchaseStatusUpdated', (data) => {
+            const user = this.allUsers.find(u => u.userId === data.userId);
+            if (user) {
+                user.hasPurchased = data.hasPurchased;
+                this.applyFilters();
+            }
         });
     }
 
@@ -151,6 +182,95 @@ class ChatManager {
         });
     }
 
+    setupFilterListeners() {
+        // Search input
+        const userSearch = document.getElementById('userSearch');
+        if (userSearch) {
+            userSearch.addEventListener('input', (e) => {
+                this.currentFilters.search = e.target.value.trim();
+                this.debouncedSearch();
+            });
+        }
+
+        // Filter toggle button
+        const filterToggle = document.getElementById('filterToggle');
+        const filterOptions = document.getElementById('filterOptions');
+        if (filterToggle && filterOptions) {
+            filterToggle.addEventListener('click', () => {
+                const isVisible = filterOptions.style.display !== 'none';
+                filterOptions.style.display = isVisible ? 'none' : 'block';
+            });
+        }
+
+        // Clear filters button
+        const clearFilters = document.getElementById('clearFilters');
+        if (clearFilters) {
+            clearFilters.addEventListener('click', () => {
+                this.clearAllFilters();
+            });
+        }
+
+        // Status filter buttons
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const filter = btn.getAttribute('data-filter');
+                if (filter) {
+                    // Toggle active class
+                    filterBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    this.currentFilters.status = filter;
+                    this.applyFilters();
+                }
+            });
+        });
+
+        // Sidebar toggle for mobile
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        const userSidebar = document.getElementById('userSidebar');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+        
+        if (sidebarToggleBtn && userSidebar) {
+            sidebarToggleBtn.addEventListener('click', () => {
+                userSidebar.classList.add('show');
+                if (sidebarOverlay) sidebarOverlay.classList.add('show');
+            });
+        }
+
+        if (sidebarOverlay && userSidebar) {
+            sidebarOverlay.addEventListener('click', () => {
+                userSidebar.classList.remove('show');
+                sidebarOverlay.classList.remove('show');
+            });
+        }
+
+        const toggleSidebar = document.getElementById('toggleSidebar');
+        if (toggleSidebar && userSidebar && sidebarOverlay) {
+            toggleSidebar.addEventListener('click', () => {
+                userSidebar.classList.remove('show');
+                sidebarOverlay.classList.remove('show');
+            });
+        }
+    }
+
+    setupTagModalListeners() {
+        const addTagBtn = document.getElementById('addTagBtn');
+        const newTagInput = document.getElementById('newTagInput');
+
+        if (addTagBtn && newTagInput) {
+            addTagBtn.addEventListener('click', () => {
+                this.addNewTag();
+            });
+
+            newTagInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.addNewTag();
+                }
+            });
+        }
+    }
+
     autoResizeTextarea(textarea) {
         // รีเซ็ตความสูงก่อน
         textarea.style.height = 'auto';
@@ -179,19 +299,16 @@ class ChatManager {
             const data = await this.optimizedFetch.fetch('/admin/chat/users');
             
             if (data.success) {
-                // ✅ ตรวจสอบว่ามีการเปลี่ยนแปลงหรือไม่
-                const hasChanged = JSON.stringify(this.users) !== JSON.stringify(data.users);
+                // เก็บข้อมูลผู้ใช้ทั้งหมด
+                this.allUsers = data.users || [];
                 
-                if (hasChanged || this.users.length === 0) {
-                    this.users = data.users;
-                    this.renderUserList();
-                    this.updateUserCount();
-                    
-                    if (this.currentUserId) {
-                        const current = this.users.find(u => u.userId === this.currentUserId);
-                        if (current) {
-                            this.updateChatHeader(current);
-                        }
+                // ใช้ filters
+                this.applyFilters();
+                
+                if (this.currentUserId) {
+                    const current = this.allUsers.find(u => u.userId === this.currentUserId);
+                    if (current) {
+                        this.updateChatHeader(current);
                     }
                 }
             } else {
@@ -257,25 +374,50 @@ class ChatManager {
                     lastMsg = tempDiv.textContent || tempDiv.innerText || '';
                 } else {
                     lastMsg = user.lastMessage;
-            }
+                }
             }
             
-            const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-2">AI เปิด</span>` : `<span class="badge bg-secondary ms-2">AI ปิด</span>`;
+            const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-1" style="font-size: 0.65rem;">AI</span>` : '';
             const followUpBadge = (showFollowUp && user.hasFollowUp) 
-                ? `<span class="badge followup-badge ms-2" title="${this.escapeAttribute(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว')}">ติดตาม</span>`
+                ? `<span class="badge followup-badge ms-1" style="font-size: 0.65rem;" title="${this.escapeAttribute(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว')}">ติดตาม</span>`
                 : '';
+            
+            const purchasedIcon = user.hasPurchased 
+                ? `<i class="fas fa-shopping-cart text-success ms-1" title="เคยซื้อแล้ว"></i>` 
+                : '';
+            
+            // แสดงแท็ก (สูงสุด 2 tags)
+            let tagsHtml = '';
+            if (user.tags && user.tags.length > 0) {
+                const displayTags = user.tags.slice(0, 2);
+                tagsHtml = displayTags.map(tag => {
+                    const colorClass = this.getTagColorClass(tag);
+                    return `<span class="badge ${colorClass} ms-1" style="font-size: 0.6rem;">${this.escapeHtml(tag)}</span>`;
+                }).join('');
+                if (user.tags.length > 2) {
+                    tagsHtml += `<span class="badge bg-secondary ms-1" style="font-size: 0.6rem;">+${user.tags.length - 2}</span>`;
+                }
+            }
+            
             const initials = displayName.charAt(0).toUpperCase();
 
             return `
-                <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" 
+                <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''} ${user.hasPurchased ? 'purchased' : ''}" 
                      onclick="chatManager.selectUser('${user.userId}')">
                     <div class="user-item-content">
-                        <div class="user-avatar">
+                        <div class="user-avatar ${user.hasPurchased ? 'purchased-avatar' : ''}">
                             ${this.escapeHtml(initials)}
+                            ${user.hasPurchased ? '<i class="fas fa-check-circle purchased-check"></i>' : ''}
                         </div>
                         <div class="user-details">
-                            <div class="user-name">${this.escapeHtml(displayName)} ${aiBadge} ${followUpBadge}</div>
+                            <div class="user-name">
+                                ${this.escapeHtml(displayName)}
+                                ${purchasedIcon}
+                                ${aiBadge}
+                                ${followUpBadge}
+                            </div>
                             <div class="user-last-message">${this.escapeHtml(lastMsg.substring(0, 50))}${lastMsg.length > 50 ? '...' : ''}</div>
+                            <div class="user-tags-row">${tagsHtml}</div>
                             <div class="user-timestamp">${this.formatTimestamp(user.lastTimestamp)}</div>
                         </div>
                         ${hasUnread ? `<div class="unread-badge">${user.unreadCount}</div>` : ''}
@@ -290,6 +432,350 @@ class ChatManager {
     updateUserCount() {
         const userCount = document.getElementById('userCount');
         userCount.textContent = this.users.length;
+        
+        const filteredUserCount = document.getElementById('filteredUserCount');
+        if (filteredUserCount) {
+            filteredUserCount.textContent = this.users.length;
+        }
+    }
+
+    // ========== Filter & Search Methods ==========
+
+    performSearch() {
+        this.applyFilters();
+    }
+
+    applyFilters() {
+        let filtered = [...this.allUsers];
+
+        // Apply search filter
+        if (this.currentFilters.search) {
+            const searchLower = this.currentFilters.search.toLowerCase();
+            filtered = filtered.filter(user => {
+                const name = (user.displayName || '').toLowerCase();
+                const userId = (user.userId || '').toLowerCase();
+                return name.includes(searchLower) || userId.includes(searchLower);
+            });
+        }
+
+        // Apply status filter
+        if (this.currentFilters.status === 'unread') {
+            filtered = filtered.filter(user => user.unreadCount > 0);
+        } else if (this.currentFilters.status === 'followup') {
+            filtered = filtered.filter(user => user.hasFollowUp);
+        } else if (this.currentFilters.status === 'purchased') {
+            filtered = filtered.filter(user => user.hasPurchased);
+        }
+
+        // Apply tag filters (OR logic)
+        if (this.currentFilters.tags.length > 0) {
+            filtered = filtered.filter(user => {
+                if (!user.tags || user.tags.length === 0) return false;
+                return this.currentFilters.tags.some(tag => user.tags.includes(tag));
+            });
+        }
+
+        this.users = filtered;
+        this.renderUserList();
+        this.updateUserCount();
+        this.updateFilterBadge();
+    }
+
+    clearAllFilters() {
+        this.currentFilters = {
+            status: 'all',
+            tags: [],
+            search: ''
+        };
+
+        // Reset UI
+        const userSearch = document.getElementById('userSearch');
+        if (userSearch) userSearch.value = '';
+
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        filterBtns.forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.getAttribute('data-filter') === 'all') {
+                btn.classList.add('active');
+            }
+        });
+
+        // Clear tag filters
+        const tagFilterBtns = document.querySelectorAll('.tag-filter-btn');
+        tagFilterBtns.forEach(btn => btn.classList.remove('active'));
+
+        this.applyFilters();
+    }
+
+    updateFilterBadge() {
+        const badge = document.getElementById('filterActiveBadge');
+        if (!badge) return;
+
+        let activeCount = 0;
+        if (this.currentFilters.status !== 'all') activeCount++;
+        if (this.currentFilters.tags.length > 0) activeCount += this.currentFilters.tags.length;
+        if (this.currentFilters.search) activeCount++;
+
+        if (activeCount > 0) {
+            badge.textContent = activeCount;
+            badge.style.display = 'inline-block';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    toggleTagFilter(tag) {
+        const index = this.currentFilters.tags.indexOf(tag);
+        if (index > -1) {
+            this.currentFilters.tags.splice(index, 1);
+        } else {
+            this.currentFilters.tags.push(tag);
+        }
+        this.applyFilters();
+    }
+
+    // ========== Tag Management Methods ==========
+
+    async loadAvailableTags() {
+        try {
+            const response = await fetch('/admin/chat/available-tags');
+            const data = await response.json();
+            
+            if (data.success) {
+                this.availableTags = data.tags || [];
+                this.renderTagFilters();
+            }
+        } catch (error) {
+            console.error('Error loading available tags:', error);
+        }
+    }
+
+    renderTagFilters() {
+        const tagFilters = document.getElementById('tagFilters');
+        if (!tagFilters) return;
+
+        if (this.availableTags.length === 0) {
+            tagFilters.innerHTML = '<span class="text-muted small">ไม่มีแท็กในระบบ</span>';
+            return;
+        }
+
+        const html = this.availableTags.slice(0, 10).map(tagInfo => {
+            const isActive = this.currentFilters.tags.includes(tagInfo.tag);
+            const colorClass = this.getTagColorClass(tagInfo.tag);
+            return `
+                <button class="btn btn-sm btn-outline-secondary tag-filter-btn ${isActive ? 'active' : ''}" 
+                        data-tag="${this.escapeAttribute(tagInfo.tag)}"
+                        onclick="chatManager.toggleTagFilter('${this.escapeAttribute(tagInfo.tag)}')">
+                    <i class="fas fa-tag"></i> ${this.escapeHtml(tagInfo.tag)} (${tagInfo.count})
+                </button>
+            `;
+        }).join('');
+
+        tagFilters.innerHTML = html;
+    }
+
+    async openTagModal(userId) {
+        const user = this.allUsers.find(u => u.userId === userId);
+        if (!user) return;
+
+        this.currentUserId = userId;
+
+        // Update modal content
+        const modalUserName = document.getElementById('tagModalUserName');
+        if (modalUserName) {
+            modalUserName.textContent = user.displayName || userId;
+        }
+
+        // Load current tags
+        try {
+            const response = await fetch(`/admin/chat/tags/${userId}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                this.renderCurrentTags(data.tags || []);
+            }
+        } catch (error) {
+            console.error('Error loading user tags:', error);
+        }
+
+        // Load popular tags
+        this.renderPopularTags();
+
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('tagModal'));
+        modal.show();
+    }
+
+    renderCurrentTags(tags) {
+        const container = document.getElementById('currentTags');
+        if (!container) return;
+
+        if (tags.length === 0) {
+            container.innerHTML = '<span class="text-muted small">ยังไม่มีแท็ก</span>';
+            return;
+        }
+
+        const html = tags.map(tag => {
+            const colorClass = this.getTagColorClass(tag);
+            return `
+                <span class="badge ${colorClass} tag-pill">
+                    ${this.escapeHtml(tag)}
+                    <i class="fas fa-times ms-1 cursor-pointer" 
+                       onclick="chatManager.removeTag('${this.escapeAttribute(tag)}')"></i>
+                </span>
+            `;
+        }).join('');
+
+        container.innerHTML = html;
+    }
+
+    renderPopularTags() {
+        const container = document.getElementById('popularTags');
+        if (!container) return;
+
+        if (this.availableTags.length === 0) {
+            container.innerHTML = '<span class="text-muted small">ไม่มีแท็กที่ใช้บ่อย</span>';
+            return;
+        }
+
+        const html = this.availableTags.slice(0, 8).map(tagInfo => {
+            const colorClass = this.getTagColorClass(tagInfo.tag);
+            return `
+                <button class="btn btn-sm ${colorClass} tag-suggestion"
+                        onclick="chatManager.quickAddTag('${this.escapeAttribute(tagInfo.tag)}')">
+                    <i class="fas fa-plus-circle me-1"></i>${this.escapeHtml(tagInfo.tag)}
+                </button>
+            `;
+        }).join('');
+
+        container.innerHTML = html;
+    }
+
+    async addNewTag() {
+        const input = document.getElementById('newTagInput');
+        if (!input) return;
+
+        const tagName = input.value.trim();
+        if (!tagName) return;
+
+        await this.quickAddTag(tagName);
+        input.value = '';
+    }
+
+    async quickAddTag(tagName) {
+        if (!this.currentUserId) return;
+
+        try {
+            // Get current tags
+            const response = await fetch(`/admin/chat/tags/${this.currentUserId}`);
+            const data = await response.json();
+            
+            if (!data.success) {
+                this.showToast('ไม่สามารถโหลดแท็กได้', 'error');
+                return;
+            }
+
+            const currentTags = data.tags || [];
+            if (currentTags.includes(tagName)) {
+                this.showToast('มีแท็กนี้อยู่แล้ว', 'warning');
+                return;
+            }
+
+            const newTags = [...currentTags, tagName];
+            await this.saveTags(newTags);
+        } catch (error) {
+            console.error('Error adding tag:', error);
+            this.showToast('เกิดข้อผิดพลาด', 'error');
+        }
+    }
+
+    async removeTag(tagName) {
+        if (!this.currentUserId) return;
+
+        try {
+            const response = await fetch(`/admin/chat/tags/${this.currentUserId}`);
+            const data = await response.json();
+            
+            if (!data.success) return;
+
+            const currentTags = data.tags || [];
+            const newTags = currentTags.filter(t => t !== tagName);
+            await this.saveTags(newTags);
+        } catch (error) {
+            console.error('Error removing tag:', error);
+            this.showToast('เกิดข้อผิดพลาด', 'error');
+        }
+    }
+
+    async saveTags(tags) {
+        if (!this.currentUserId) return;
+
+        try {
+            const response = await fetch(`/admin/chat/tags/${this.currentUserId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tags })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                this.renderCurrentTags(data.tags || []);
+                this.loadUsers(); // Refresh user list
+                this.loadAvailableTags(); // Refresh available tags
+                this.showToast('บันทึกแท็กเรียบร้อย', 'success');
+            } else {
+                this.showToast('ไม่สามารถบันทึกแท็กได้', 'error');
+            }
+        } catch (error) {
+            console.error('Error saving tags:', error);
+            this.showToast('เกิดข้อผิดพลาด', 'error');
+        }
+    }
+
+    async togglePurchaseStatus(userId) {
+        const user = this.allUsers.find(u => u.userId === userId);
+        if (!user) return;
+
+        const newStatus = !user.hasPurchased;
+
+        try {
+            const response = await fetch(`/admin/chat/purchase-status/${userId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hasPurchased: newStatus })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                user.hasPurchased = newStatus;
+                this.applyFilters();
+                if (this.currentUserId === userId) {
+                    this.updateChatHeader(user);
+                }
+                this.showToast(
+                    newStatus ? 'ทำเครื่องหมายว่าเคยซื้อแล้ว' : 'ยกเลิกเครื่องหมายการซื้อ', 
+                    'success'
+                );
+            } else {
+                this.showToast('ไม่สามารถอัปเดตสถานะได้', 'error');
+            }
+        } catch (error) {
+            console.error('Error toggling purchase status:', error);
+            this.showToast('เกิดข้อผิดพลาด', 'error');
+        }
+    }
+
+    getTagColorClass(tag) {
+        // สุ่มสีตามชื่อแท็ก (consistent)
+        const colors = [
+            'bg-primary', 'bg-success', 'bg-info', 'bg-warning', 
+            'bg-danger', 'bg-secondary', 'bg-dark'
+        ];
+        let hash = 0;
+        for (let i = 0; i < tag.length; i++) {
+            hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return colors[Math.abs(hash) % colors.length];
     }
 
     async selectUser(userId) {
@@ -340,6 +826,26 @@ class ChatManager {
             ? user.followUp.showInChat
             : this.followUpOptions.showInChat;
         const shouldShowFollowUp = showFollowUp && user.hasFollowUp;
+        
+        // Purchase status
+        const purchasedBtnClass = user.hasPurchased ? 'btn-success' : 'btn-outline-secondary';
+        const purchasedIcon = user.hasPurchased ? 'fa-check-circle' : 'fa-shopping-cart';
+        const purchasedText = user.hasPurchased ? 'เคยซื้อแล้ว' : 'ยังไม่ซื้อ';
+
+        // Tags display
+        let tagsHtml = '';
+        if (user.tags && user.tags.length > 0) {
+            tagsHtml = `<div class="user-tags mt-1">`;
+            user.tags.slice(0, 5).forEach(tag => {
+                const colorClass = this.getTagColorClass(tag);
+                tagsHtml += `<span class="badge ${colorClass} me-1" style="font-size: 0.7rem;">${this.escapeHtml(tag)}</span>`;
+            });
+            if (user.tags.length > 5) {
+                tagsHtml += `<span class="badge bg-secondary me-1" style="font-size: 0.7rem;">+${user.tags.length - 5}</span>`;
+            }
+            tagsHtml += `</div>`;
+        }
+
         const followUpInfo = shouldShowFollowUp ? `
             <div class="followup-info mt-1">
                 <span class="badge followup-badge me-2">ติดตามลูกค้า</span>
@@ -353,21 +859,33 @@ class ChatManager {
         chatHeader.innerHTML = `
             <div class="header-content">
                 <div class="user-info">
-                    <div class="user-avatar">
+                    <div class="user-avatar ${user.hasPurchased ? 'purchased-avatar' : ''}">
                         ${this.escapeHtml(initials)}
+                        ${user.hasPurchased ? '<i class="fas fa-check-circle purchased-check"></i>' : ''}
                     </div>
                     <div class="user-details">
                         <h6 class="mb-0">${this.escapeHtml(displayName)}</h6>
                         <small class="text-muted">${messageCount} ข้อความ • <span id="aiStatusLabel">${aiLabel}</span></small>
+                        ${tagsHtml}
                         ${followUpInfo}
                     </div>
                 </div>
                 <div class="header-actions" id="headerActions">
+                    <button class="btn btn-sm ${purchasedBtnClass} me-2" 
+                            onclick="chatManager.togglePurchaseStatus('${user.userId}')" 
+                            title="สลับสถานะการซื้อ">
+                        <i class="fas ${purchasedIcon} me-1"></i>${purchasedText}
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary me-2" 
+                            onclick="chatManager.openTagModal('${user.userId}')" 
+                            title="จัดการแท็ก">
+                        <i class="fas fa-tags me-1"></i>แท็ก
+                    </button>
                     <button class="btn btn-sm ${aiBtnClass} me-2" id="toggleAiBtn" title="สลับสถานะ AI">
                         <i class="fas ${aiIcon} me-1"></i><span id="toggleAiText">${aiOn ? 'ปิด AI' : 'เปิด AI'}</span>
                     </button>
                     <button class="btn btn-sm btn-outline-danger" onclick="chatManager.clearUserChat()">
-                        <i class="fas fa-trash me-1"></i>ล้างประวัติ
+                        <i class="fas fa-trash me-1"></i>ล้าง
                     </button>
                 </div>
             </div>

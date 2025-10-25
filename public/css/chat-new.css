@@ -725,6 +725,242 @@ h6 { font-size: var(--heading-6-size); }
     border-top: 1px solid var(--border-color);
 }
 
+/* ========== Tag Styles ========== */
+.user-tags-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.25rem;
+    margin-bottom: 0.15rem;
+}
+
+.user-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.tag-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: default;
+    transition: var(--transition);
+}
+
+.tag-pill:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.tag-pill i {
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.tag-pill i:hover {
+    opacity: 1;
+}
+
+.tag-filter-btn {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: 16px;
+    transition: all 0.2s ease;
+    border: 1px solid var(--border-color);
+}
+
+.tag-filter-btn.active {
+    background-color: var(--primary) !important;
+    color: white !important;
+    border-color: var(--primary) !important;
+}
+
+.tag-filter-btn:hover:not(.active) {
+    background-color: var(--bg-light);
+    transform: translateY(-1px);
+}
+
+.tag-suggestion {
+    font-size: 0.75rem;
+    padding: 0.35rem 0.7rem;
+    border-radius: 16px;
+    transition: var(--transition);
+}
+
+.tag-suggestion:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+/* ========== Filter Badge ========== */
+.filter-active-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background-color: #DC3545;
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.1rem 0.35rem;
+    border-radius: 10px;
+    min-width: 16px;
+    text-align: center;
+}
+
+/* ========== Purchased Status Styles ========== */
+.user-item.purchased {
+    border-left: 3px solid #10b981;
+    background-color: rgba(16, 185, 129, 0.03);
+}
+
+.user-item.purchased:hover {
+    background-color: rgba(16, 185, 129, 0.08);
+}
+
+.purchased-avatar {
+    position: relative;
+    background: linear-gradient(135deg, #10b981 0%, #34d399 100%) !important;
+}
+
+.purchased-check {
+    position: absolute;
+    bottom: -2px;
+    right: -2px;
+    font-size: 0.75rem;
+    background-color: white;
+    border-radius: 50%;
+    padding: 2px;
+    color: #10b981;
+}
+
+/* ========== Enhanced Filter Options ========== */
+.filter-options {
+    padding: 0.75rem;
+    background-color: var(--bg-light);
+    border-radius: var(--border-radius);
+    margin-top: 0.5rem;
+    animation: fadeInUp 0.3s ease;
+}
+
+.filter-options .btn {
+    white-space: nowrap;
+}
+
+/* ========== Mobile Touch Improvements ========== */
+@media (pointer: coarse) {
+    /* Larger touch targets */
+    .btn {
+        min-height: 44px;
+        min-width: 44px;
+    }
+
+    .btn-sm {
+        min-height: 38px;
+        font-size: 0.875rem;
+    }
+
+    .user-item {
+        padding: 0.85rem 0.75rem;
+        min-height: 72px;
+    }
+
+    .filter-btn,
+    .tag-filter-btn,
+    .tag-suggestion {
+        padding: 0.45rem 0.75rem;
+        font-size: 0.8125rem;
+    }
+
+    /* Better tap feedback */
+    .user-item:active {
+        transform: scale(0.98);
+        background-color: rgba(104, 185, 132, 0.15);
+    }
+
+    .btn:active {
+        transform: scale(0.95);
+    }
+
+    /* Smooth scrolling */
+    .user-list,
+    .messages-container {
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
+    }
+}
+
+/* ========== Cursor Pointer ========== */
+.cursor-pointer {
+    cursor: pointer;
+}
+
+/* ========== Swipe Gesture Hints ========== */
+.user-sidebar.swipe-hint::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 4px;
+    height: 60px;
+    background: linear-gradient(90deg, transparent 0%, var(--primary) 50%, transparent 100%);
+    animation: swipeHint 2s ease-in-out infinite;
+}
+
+@keyframes swipeHint {
+    0%, 100% {
+        opacity: 0;
+        transform: translateY(-50%) translateX(0);
+    }
+    50% {
+        opacity: 1;
+        transform: translateY(-50%) translateX(10px);
+    }
+}
+
+/* ========== Loading & Transition Animations ========== */
+.fade-in {
+    animation: fadeInUp 0.3s ease;
+}
+
+.slide-in {
+    animation: slideInRight 0.3s ease;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: -1000px 0;
+    }
+    100% {
+        background-position: 1000px 0;
+    }
+}
+
+.skeleton-loading {
+    background: linear-gradient(
+        90deg,
+        var(--bg-light) 0%,
+        #e0e0e0 50%,
+        var(--bg-light) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 2s infinite;
+}
+
+/* ========== Smooth Transitions ========== */
+.user-item,
+.btn,
+.badge,
+.filter-btn,
+.tag-filter-btn {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* Toggle Sidebar on Mobile */
 .sidebar-toggle-btn {
     display: none;
@@ -739,6 +975,16 @@ h6 { font-size: var(--heading-6-size); }
     color: white;
     border: none;
     box-shadow: 0 4px 12px rgba(104, 185, 132, 0.3);
+    transition: all 0.3s ease;
+}
+
+.sidebar-toggle-btn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(104, 185, 132, 0.4);
+}
+
+.sidebar-toggle-btn:active {
+    transform: scale(0.95);
 }
 
 /* Responsive Design */
