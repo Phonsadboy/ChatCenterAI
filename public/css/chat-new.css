@@ -824,7 +824,7 @@ h6 { font-size: var(--heading-6-size); }
     }
 }
 
-@media (max-width: 576px) {
+@media (max-width: 575.98px) {
     .message {
         max-width: 90%;
     }

@@ -400,7 +400,7 @@
     gap: 0.5rem;
 }
 
-@media (max-width: 992px) {
+@media (max-width: 991.98px) {
     .bot-overview-table thead {
         display: none;
     }
@@ -612,7 +612,7 @@
 }
 
 /* Mobile: Show toggle next to bot name, hide in status column */
-@media (max-width: 992px) {
+@media (max-width: 991.98px) {
     .bot-toggle-desktop {
         display: none;
     }

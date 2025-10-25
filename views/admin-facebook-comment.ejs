@@ -7,274 +7,6 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <link href="/css/style.css" rel="stylesheet">
-  <style>
-    .page-section {
-      background: var(--card-bg);
-      border-radius: var(--border-radius);
-      box-shadow: var(--shadow-sm);
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
-    }
-
-    .page-section-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding-bottom: 1rem;
-      border-bottom: 2px solid var(--light-bg);
-      margin-bottom: 1.5rem;
-    }
-
-    .page-section-title {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      margin: 0;
-    }
-
-    .page-icon {
-      width: 48px;
-      height: 48px;
-      background: var(--primary);
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-size: 1.25rem;
-    }
-
-    .page-info h5 {
-      margin: 0;
-      color: var(--text-dark);
-      font-weight: 600;
-    }
-
-    .page-info .text-muted {
-      margin: 0;
-      font-size: var(--font-size-sm);
-    }
-
-    .post-item {
-      background: var(--light-bg);
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 1.25rem;
-      margin-bottom: 1rem;
-      transition: var(--transition);
-    }
-
-    .post-item:hover {
-      box-shadow: var(--shadow-sm);
-      border-color: var(--primary-light);
-    }
-
-    .post-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
-      margin-bottom: 1rem;
-      padding-bottom: 1rem;
-      border-bottom: 1px solid #e2e8f0;
-    }
-
-    .post-id-badge {
-      font-family: 'Courier New', monospace;
-      color: var(--text-dark);
-      font-size: 0.875rem;
-      background: white;
-      padding: 0.375rem 0.75rem;
-      border-radius: 6px;
-      border: 1px solid #e2e8f0;
-    }
-
-    .status-badge {
-      padding: 0.375rem 0.875rem;
-      border-radius: 20px;
-      font-size: 0.8125rem;
-      font-weight: 500;
-    }
-
-    .status-active {
-      background: #d1fae5;
-      color: #065f46;
-    }
-
-    .status-inactive {
-      background: #fee2e2;
-      color: #991b1b;
-    }
-
-    .config-info {
-      display: grid;
-      gap: 0.75rem;
-    }
-
-    .config-row {
-      display: flex;
-      align-items: start;
-      gap: 0.75rem;
-      font-size: var(--font-size-sm);
-    }
-
-    .config-label {
-      font-weight: 600;
-      color: var(--text-light);
-      min-width: 120px;
-    }
-
-    .config-value {
-      color: var(--text-dark);
-      flex: 1;
-    }
-
-    .badge-reply-type {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.375rem;
-      padding: 0.25rem 0.75rem;
-      border-radius: 6px;
-      font-size: 0.8125rem;
-      font-weight: 500;
-    }
-
-    .badge-custom {
-      background: var(--info);
-      color: white;
-    }
-
-    .badge-ai {
-      background: var(--secondary);
-      color: var(--text-dark);
-    }
-
-    .post-actions {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-      margin-top: 1rem;
-      padding-top: 1rem;
-      border-top: 1px solid #e2e8f0;
-    }
-
-    .btn-post-action {
-      font-size: var(--font-size-sm);
-      padding: 0.5rem 1rem;
-      border-radius: 6px;
-      font-weight: 500;
-      transition: var(--transition);
-      border: none;
-    }
-
-    .btn-edit-post {
-      background: var(--primary);
-      color: white;
-    }
-
-    .btn-edit-post:hover {
-      background: var(--primary-dark);
-      color: white;
-      transform: translateY(-1px);
-    }
-
-    .btn-toggle-post {
-      background: var(--info);
-      color: white;
-    }
-
-    .btn-toggle-post:hover {
-      background: #4a8ba5;
-      color: white;
-      transform: translateY(-1px);
-    }
-
-    .btn-delete-post {
-      background: var(--danger);
-      color: white;
-    }
-
-    .btn-delete-post:hover {
-      background: #e74c3c;
-      color: white;
-      transform: translateY(-1px);
-    }
-
-    .empty-state {
-      text-align: center;
-      padding: 3rem 1rem;
-      color: var(--text-light);
-    }
-
-    .empty-state i {
-      font-size: 3rem;
-      margin-bottom: 1rem;
-      color: var(--primary-light);
-      opacity: 0.5;
-    }
-
-    .empty-state h6 {
-      color: var(--text-dark);
-      margin-bottom: 0.5rem;
-    }
-
-    .reply-type-card {
-      border: 2px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 1rem;
-      margin-bottom: 0.75rem;
-      cursor: pointer;
-      transition: var(--transition);
-      background: var(--card-bg);
-    }
-
-    .reply-type-card:hover {
-      border-color: var(--primary);
-      background: var(--light-bg);
-    }
-
-    .reply-type-card.active {
-      border-color: var(--primary);
-      background: var(--light-bg);
-    }
-
-    .reply-type-card input[type="radio"] {
-      margin-right: 0.75rem;
-    }
-
-    .reply-type-card label {
-      cursor: pointer;
-      margin: 0;
-      width: 100%;
-    }
-
-    .ai-config-section {
-      background: var(--light-bg);
-      border-radius: 8px;
-      padding: 1.25rem;
-      margin-top: 1rem;
-      border: 1px solid #e2e8f0;
-    }
-
-    .system-prompt-textarea {
-      font-family: 'Courier New', Monaco, monospace;
-      font-size: 0.875rem;
-      line-height: 1.6;
-    }
-
-    .info-box {
-      background: #e0f2fe;
-      border-left: 4px solid var(--info);
-      padding: 0.875rem;
-      border-radius: 6px;
-      font-size: var(--font-size-sm);
-      margin-top: 0.5rem;
-    }
-
-    .info-box i {
-      color: var(--info);
-      margin-right: 0.5rem;
-    }
-  </style>
 </head>
 <body>
   <%- include('partials/admin-navbar', { activePage: 'facebook-comment' }) %>
@@ -310,13 +42,13 @@
         <!-- Page Cards -->
         <% if (facebookBots && facebookBots.length > 0) { %>
           <% facebookBots.forEach(function(bot) { %>
-            <div class="page-section">
-              <div class="page-section-header">
-                <div class="page-section-title">
-                  <div class="page-icon">
+            <div class="component-card">
+              <div class="component-card-header">
+                <div class="component-card-title">
+                  <div class="component-card-icon">
                     <i class="fab fa-facebook-f"></i>
                   </div>
-                  <div class="page-info">
+                  <div class="component-card-info">
                     <h5><%= bot.name || bot.pageName || 'Facebook Page' %></h5>
                     <p class="text-muted">Page ID: <%= bot.pageId || 'ไม่ระบุ' %></p>
                   </div>
@@ -339,7 +71,7 @@
                         </span>
                       </div>
                       <div>
-                        <span class="status-badge <%= config.isActive ? 'status-active' : 'status-inactive' %>">
+                        <span class="badge-status <%= config.isActive ? 'badge-active' : 'badge-inactive' %>">
                           <%= config.isActive ? '🟢 เปิดใช้งาน' : '🔴 ปิดใช้งาน' %>
                         </span>
                       </div>
@@ -390,13 +122,13 @@
                     </div>
 
                     <div class="post-actions">
-                      <button class="btn btn-post-action btn-edit-post" onclick="editPostConfig('<%= config._id %>')">
+                      <button class="btn btn-post-action btn-edit" onclick="editPostConfig('<%= config._id %>')">
                         <i class="fas fa-edit me-1"></i>แก้ไข
                       </button>
-                      <button class="btn btn-post-action btn-toggle-post" onclick="togglePostConfig('<%= config._id %>', <%= !config.isActive %>)">
+                      <button class="btn btn-post-action btn-toggle" onclick="togglePostConfig('<%= config._id %>', <%= !config.isActive %>)">
                         <i class="fas fa-power-off me-1"></i><%= config.isActive ? 'ปิด' : 'เปิด' %>ใช้งาน
                       </button>
-                      <button class="btn btn-post-action btn-delete-post" onclick="deletePostConfig('<%= config._id %>')">
+                      <button class="btn btn-post-action btn-delete" onclick="deletePostConfig('<%= config._id %>')">
                         <i class="fas fa-trash me-1"></i>ลบ
                       </button>
                     </div>
@@ -412,11 +144,13 @@
             </div>
           <% }); %>
         <% } else { %>
-          <div class="page-section">
+          <div class="component-card">
             <div class="empty-state">
-              <i class="fas fa-exclamation-triangle"></i>
-              <h6>ยังไม่มี Facebook Page</h6>
-              <p class="mb-3">กรุณาเพิ่ม Facebook Page ก่อนที่จะตั้งค่าระบบตอบคอมเมนต์</p>
+              <div class="empty-state-icon">
+                <i class="fas fa-exclamation-triangle"></i>
+              </div>
+              <h6 class="empty-state-title">ยังไม่มี Facebook Page</h6>
+              <p class="empty-state-description mb-3">กรุณาเพิ่ม Facebook Page ก่อนที่จะตั้งค่าระบบตอบคอมเมนต์</p>
               <a href="/admin/dashboard" class="btn btn-primary">
                 <i class="fas fa-plus me-2"></i>ไปเพิ่ม Facebook Page
               </a>
@@ -463,7 +197,7 @@
                 ประเภทการตอบ <span class="text-danger">*</span>
               </label>
 
-              <div class="reply-type-card" onclick="selectReplyType('custom', event)">
+              <div class="selection-card" onclick="selectReplyType('custom', event)">
                 <input type="radio" name="replyType" value="custom" id="replyTypeCustom" required>
                 <label for="replyTypeCustom">
                   <div class="d-flex align-items-start">
@@ -477,7 +211,7 @@
                 </label>
               </div>
 
-              <div class="reply-type-card" onclick="selectReplyType('ai', event)">
+              <div class="selection-card" onclick="selectReplyType('ai', event)">
                 <input type="radio" name="replyType" value="ai" id="replyTypeAI" required>
                 <label for="replyTypeAI">
                   <div class="d-flex align-items-start">
@@ -612,7 +346,7 @@
       }
 
       // Update card active state
-      document.querySelectorAll('.reply-type-card').forEach(card => {
+      document.querySelectorAll('.selection-card').forEach(card => {
         card.classList.remove('active');
       });
       
@@ -621,7 +355,7 @@
         event.currentTarget.classList.add('active');
       } else {
         // If no event, find and activate the correct card based on type
-        const cards = document.querySelectorAll('.reply-type-card');
+        const cards = document.querySelectorAll('.selection-card');
         cards.forEach(card => {
           const radio = card.querySelector('input[type="radio"]');
           if (radio && radio.value === type) {
@@ -640,7 +374,7 @@
       document.getElementById('pageName').value = pageName;
       document.getElementById('customMessageSection').style.display = 'none';
       document.getElementById('aiConfigSection').style.display = 'none';
-      document.querySelectorAll('.reply-type-card').forEach(card => card.classList.remove('active'));
+      document.querySelectorAll('.selection-card').forEach(card => card.classList.remove('active'));
 
       // Reset system prompt to default
       document.getElementById('systemPrompt').value = `คุณคือผู้ช่วยตอบคอมเมนต์ Facebook ของร้านค้า

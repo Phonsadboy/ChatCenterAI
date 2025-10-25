@@ -8,7 +8,7 @@
     --touch-target-min: 44px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     /* ปรับปุ่มทั้งหมดให้กดง่ายบนมือถือ */
     .btn {
         min-height: var(--touch-target-min);
@@ -58,7 +58,7 @@
 }
 
 /* 3. Chat Input - Fixed Height & Auto-resize */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     .message-input-container {
         padding: 0.875rem;
         /* รองรับ iPhone notch */
@@ -86,7 +86,7 @@
 }
 
 /* 4. Message Bubbles - Better Spacing */
-@media (max-width: 576px) {
+@media (max-width: 575.98px) {
     .messages-container {
         padding: 1rem 0.75rem;
         padding-bottom: calc(1rem + env(safe-area-inset-bottom));
@@ -113,7 +113,7 @@
 }
 
 /* 5. Chat Header - Sticky with Blur */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     .chat-header {
         position: sticky;
         top: 0;
@@ -138,7 +138,7 @@
 }
 
 /* 6. User List - Optimized */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     .user-item {
         padding: 0.875rem 1rem;
         min-height: 72px;
@@ -165,7 +165,7 @@
 }
 
 /* 7. Horizontal Scroll Protection */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     body {
         overflow-x: hidden;
         -webkit-overflow-scrolling: touch;
@@ -211,7 +211,7 @@
 }
 
 /* 10. Performance Optimizations */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     /* ใช้ GPU acceleration */
     .user-sidebar,
     .sidebar-overlay,
@@ -237,7 +237,7 @@
 }
 
 /* 11. Better Form Controls on Mobile */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     input[type="text"],
     input[type="email"],
     input[type="tel"],
@@ -257,7 +257,7 @@
 }
 
 /* 12. Improved Filter Buttons */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     .filter-options {
         margin-top: 0.75rem;
     }
@@ -270,7 +270,7 @@
 }
 
 /* 13. Better Modal on Mobile */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     .modal-dialog {
         margin: 0.5rem;
     }
@@ -290,7 +290,7 @@
 }
 
 /* 14. Improve Navbar on Mobile */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
     .navbar {
         padding: 0.5rem 1rem;
     }
