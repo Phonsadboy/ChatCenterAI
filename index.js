@@ -3501,7 +3501,7 @@ async function getCommentReplyConfig(pageId, postId) {
 // Helper function to send reply to comment
 async function sendCommentReply(commentId, message, accessToken) {
   try {
-    const url = `https://graph.facebook.com/v18.0/${commentId}/comments`;
+    const url = `https://graph.facebook.com/v22.0/${commentId}/comments`;
     const response = await axios.post(
       url,
       {
@@ -3524,7 +3524,7 @@ async function sendCommentReply(commentId, message, accessToken) {
 // Helper function to send private message from comment
 async function sendPrivateMessageFromComment(commentId, message, accessToken) {
   try {
-    const url = `https://graph.facebook.com/v18.0/${commentId}/private_replies`;
+    const url = `https://graph.facebook.com/v22.0/${commentId}/private_replies`;
     const response = await axios.post(
       url,
       {
@@ -3546,27 +3546,80 @@ async function sendPrivateMessageFromComment(commentId, message, accessToken) {
 
 // Helper function to process comment with AI
 async function processCommentWithAI(commentText, systemPrompt, aiModel) {
+  const startTime = Date.now();
+  
   try {
+    // ตรวจสอบ API Key
+    if (!OPENAI_API_KEY) {
+      console.error("[Facebook Comment AI] OPENAI_API_KEY not configured");
+      return "ขอบคุณสำหรับความสนใจครับ 😊 ทีมงานจะติดต่อกลับในเร็วๆ นี้ครับ";
+    }
+
+    // ตรวจสอบ input
+    if (!commentText || commentText.trim().length === 0) {
+      console.warn("[Facebook Comment AI] Empty comment text");
+      return "ขอบคุณที่ติดต่อเรานะครับ 🙏";
+    }
+
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const messages = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: systemPrompt || "คุณคือผู้ช่วยตอบคอมเมนต์ Facebook อย่างเป็นมิตร" },
       { role: "user", content: commentText },
     ];
+
+    console.log("[Facebook Comment AI] Calling OpenAI:", {
+      model: aiModel || "gpt-4o-mini",
+      commentLength: commentText.length
+    });
 
     const completion = await openai.chat.completions.create({
       model: aiModel || "gpt-4o-mini",
       messages: messages,
-      temperature: 0.7,
-      max_tokens: 500,
     });
 
-    return (
-      completion.choices[0]?.message?.content || "ขออภัย ไม่สามารถประมวลผลได้"
-    );
+    const reply = completion.choices[0]?.message?.content;
+    
+    if (!reply || reply.trim().length === 0) {
+      console.error("[Facebook Comment AI] Empty response from AI");
+      return "ขอบคุณสำหรับความสนใจครับ 😊 ทีมงานจะติดต่อกลับในเร็วๆ นี้ครับ";
+    }
+
+    const processingTime = Date.now() - startTime;
+    console.log("[Facebook Comment AI] Success:", {
+      model: completion.model,
+      tokensUsed: completion.usage?.total_tokens,
+      processingTime: `${processingTime}ms`
+    });
+
+    return reply.trim();
   } catch (error) {
-    console.error("[Facebook Comment AI] Error:", error.message);
-    throw error;
+    const processingTime = Date.now() - startTime;
+    
+    console.error("[Facebook Comment AI] Error:", {
+      message: error.message,
+      code: error.code,
+      processingTime: `${processingTime}ms`
+    });
+
+    // จัดการ error ตามประเภท
+    if (error.code === 'insufficient_quota') {
+      console.error("[Facebook Comment AI] OpenAI quota exceeded");
+      return "ขอบคุณสำหรับความสนใจครับ 🙏 กรุณาติดต่อทีมงานผ่าน Messenger นะครับ";
+    }
+    
+    if (error.code === 'rate_limit_exceeded') {
+      console.error("[Facebook Comment AI] Rate limit exceeded");
+      return "ได้รับความสนใจจากลูกค้าเป็นอย่างมาก 😊 ทีมงานจะติดต่อกลับเร็วๆ นี้ครับ";
+    }
+
+    if (error.code === 'invalid_api_key') {
+      console.error("[Facebook Comment AI] Invalid API key");
+      return "ขอบคุณสำหรับความสนใจครับ 😊 ทีมงานจะติดต่อกลับในเร็วๆ นี้ครับ";
+    }
+
+    // Fallback message ทั่วไป
+    return "ขอบคุณสำหรับความสนใจครับ 😊 ทีมงานจะติดต่อกลับในเร็วๆ นี้ครับ";
   }
 }
 
@@ -6477,7 +6530,7 @@ async function sendFacebookImageByUpload(
   if (tag) {
     body.tag = tag;
   }
-  await axios.post(`https://graph.facebook.com/v18.0/me/messages`, body, {
+  await axios.post(`https://graph.facebook.com/v22.0/me/messages`, body, {
     params: { access_token: accessToken },
     headers: { "Content-Type": "application/json" },
   });
