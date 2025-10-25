@@ -525,9 +525,16 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted small">
-                        เลือกเพจที่จะใช้คลังนี้ ระบบจะไม่ลบข้อมูลเล่มใด ๆ เพียงเพิ่ม/ลดการเลือกใช้ของแต่ละเพจเท่านั้น
-                    </p>
+                    <!-- Alert: Single Selection Mode -->
+                    <div class="alert alert-warning border-warning" role="alert">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-exclamation-triangle fa-lg me-3"></i>
+                            <div>
+                                <strong>โหมดเลือกเดี่ยว (Single-Select Mode)</strong>
+                                <div class="small mt-1">แต่ละเพจสามารถเลือก Instruction Library ได้เพียง <strong>1 อัน</strong> เท่านั้น - หากเลือกคลังใหม่ ระบบจะถามยืนยันเพื่อยกเลิกคลังเก่าและแทนที่ด้วยคลังใหม่</div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="row g-4">
                         <div class="col-md-6">
                             <h6><i class="fab fa-line text-success me-2"></i>Line Bots</h6>
@@ -1801,12 +1808,25 @@
             } else {
                 lineContainer.innerHTML = lineBotsCache.map(bot => {
                     const isChecked = Array.isArray(bot.selectedInstructions) && bot.selectedInstructions.includes(currentAssignLibraryDate);
+                    const currentLibraryCount = (bot.selectedInstructions || []).length;
+                    const currentLibraryName = currentLibraryCount > 0 ? bot.selectedInstructions[0] : '';
+                    
+                    // Find library name for display
+                    let libraryDisplayText = '';
+                    if (currentLibraryCount > 0 && currentLibraryName) {
+                        const lib = lineBotsCache.librariesData?.find(l => l.date === currentLibraryName);
+                        libraryDisplayText = lib ? (lib.name || lib.displayDate || currentLibraryName) : currentLibraryName;
+                    }
+                    
+                    const badgeClass = currentLibraryCount > 0 ? 'bg-success text-white' : 'bg-light text-dark';
+                    const badgeText = currentLibraryCount > 0 ? `✓ ${libraryDisplayText.substring(0, 20)}${libraryDisplayText.length > 20 ? '...' : ''}` : 'ไม่มี';
+                    
                     return `
                         <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="assign-line-${bot._id}" data-bot-id="${bot._id}" ${isChecked ? 'checked' : ''}>
+                            <input class="form-check-input assign-checkbox" type="checkbox" id="assign-line-${bot._id}" data-bot-id="${bot._id}" data-bot-type="line" data-bot-name="${bot.name || 'ไม่ระบุชื่อ'}" data-has-library="${currentLibraryCount > 0 ? 'true' : 'false'}" data-current-library="${currentLibraryName}" ${isChecked ? 'checked' : ''}>
                             <label class="form-check-label" for="assign-line-${bot._id}">
                                 <strong>${bot.name || 'ไม่ระบุชื่อ'}</strong>
-                                <span class="badge bg-light text-dark ms-2">${(bot.selectedInstructions || []).length} คลัง</span>
+                                <span class="badge ${badgeClass} ms-2">${badgeText}</span>
                                 <div class="text-muted small">${bot.description || 'ไม่มีคำอธิบาย'}</div>
                             </label>
                         </div>
@@ -1819,18 +1839,70 @@
             } else {
                 facebookContainer.innerHTML = facebookBotsCache.map(bot => {
                     const isChecked = Array.isArray(bot.selectedInstructions) && bot.selectedInstructions.includes(currentAssignLibraryDate);
+                    const currentLibraryCount = (bot.selectedInstructions || []).length;
+                    const currentLibraryName = currentLibraryCount > 0 ? bot.selectedInstructions[0] : '';
+                    
+                    // Find library name for display
+                    let libraryDisplayText = '';
+                    if (currentLibraryCount > 0 && currentLibraryName) {
+                        const lib = facebookBotsCache.librariesData?.find(l => l.date === currentLibraryName);
+                        libraryDisplayText = lib ? (lib.name || lib.displayDate || currentLibraryName) : currentLibraryName;
+                    }
+                    
+                    const badgeClass = currentLibraryCount > 0 ? 'bg-success text-white' : 'bg-light text-dark';
+                    const badgeText = currentLibraryCount > 0 ? `✓ ${libraryDisplayText.substring(0, 20)}${libraryDisplayText.length > 20 ? '...' : ''}` : 'ไม่มี';
+                    
                     return `
                         <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="assign-fb-${bot._id}" data-bot-id="${bot._id}" ${isChecked ? 'checked' : ''}>
+                            <input class="form-check-input assign-checkbox" type="checkbox" id="assign-fb-${bot._id}" data-bot-id="${bot._id}" data-bot-type="facebook" data-bot-name="${bot.name || 'ไม่ระบุชื่อ'}" data-has-library="${currentLibraryCount > 0 ? 'true' : 'false'}" data-current-library="${currentLibraryName}" ${isChecked ? 'checked' : ''}>
                             <label class="form-check-label" for="assign-fb-${bot._id}">
                                 <strong>${bot.name || 'ไม่ระบุชื่อ'}</strong>
-                                <span class="badge bg-light text-dark ms-2">${(bot.selectedInstructions || []).length} คลัง</span>
+                                <span class="badge ${badgeClass} ms-2">${badgeText}</span>
                                 <div class="text-muted small">${bot.description || 'ไม่มีคำอธิบาย'}</div>
                             </label>
                         </div>
                     `;
                 }).join('');
             }
+            
+            // Add event listeners to checkboxes for single-select validation
+            attachCheckboxValidation();
+        }
+
+        // Function to attach checkbox validation for single-select mode
+        function attachCheckboxValidation() {
+            document.querySelectorAll('.assign-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', function(event) {
+                    const isChecking = this.checked;
+                    const hasLibrary = this.getAttribute('data-has-library') === 'true';
+                    const currentLibrary = this.getAttribute('data-current-library');
+                    const botName = this.getAttribute('data-bot-name');
+                    
+                    // If trying to check (assign library) and bot already has a different library
+                    if (isChecking && hasLibrary && currentLibrary !== currentAssignLibraryDate) {
+                        // Prevent the check temporarily
+                        event.preventDefault();
+                        this.checked = false;
+                        
+                        // Show confirmation dialog
+                        const confirmed = confirm(
+                            `⚠️ เพจ "${botName}" มี Instruction Library อยู่แล้ว\n\n` +
+                            `คลังปัจจุบัน: ${currentLibrary}\n\n` +
+                            `คุณต้องการยกเลิกคลังเก่าและแทนที่ด้วยคลังใหม่หรือไม่?\n\n` +
+                            `✓ กด OK = แทนที่ด้วยคลังใหม่\n` +
+                            `✗ กด Cancel = ไม่เปลี่ยนแปลง`
+                        );
+                        
+                        if (confirmed) {
+                            // User confirmed - allow the check
+                            this.checked = true;
+                        } else {
+                            // User cancelled - keep unchecked
+                            this.checked = false;
+                        }
+                    }
+                });
+            });
         }
 
         async function openAssignLibraryModal(libraryDate, libraryDisplay) {
@@ -1859,14 +1931,15 @@
             const tasks = [];
             const errors = [];
 
+            // Single-select mode: Each bot can have only ONE library
             for (const bot of lineBotsCache) {
                 const shouldHave = selectedLineIds.includes(bot._id);
                 const has = Array.isArray(bot.selectedInstructions) && bot.selectedInstructions.includes(currentAssignLibraryDate);
+                
                 if (shouldHave !== has) {
-                    const nextSet = new Set(Array.isArray(bot.selectedInstructions) ? bot.selectedInstructions : []);
-                    if (shouldHave) nextSet.add(currentAssignLibraryDate);
-                    else nextSet.delete(currentAssignLibraryDate);
-                    const payload = Array.from(nextSet);
+                    // Single-select: Replace entire array with either [currentLibrary] or []
+                    const payload = shouldHave ? [currentAssignLibraryDate] : [];
+                    
                     tasks.push(
                         fetch(`/api/line-bots/${bot._id}/instructions`, {
                             method: 'PUT',
@@ -1880,14 +1953,15 @@
                 }
             }
 
+            // Single-select mode: Each bot can have only ONE library
             for (const bot of facebookBotsCache) {
                 const shouldHave = selectedFacebookIds.includes(bot._id);
                 const has = Array.isArray(bot.selectedInstructions) && bot.selectedInstructions.includes(currentAssignLibraryDate);
+                
                 if (shouldHave !== has) {
-                    const nextSet = new Set(Array.isArray(bot.selectedInstructions) ? bot.selectedInstructions : []);
-                    if (shouldHave) nextSet.add(currentAssignLibraryDate);
-                    else nextSet.delete(currentAssignLibraryDate);
-                    const payload = Array.from(nextSet);
+                    // Single-select: Replace entire array with either [currentLibrary] or []
+                    const payload = shouldHave ? [currentAssignLibraryDate] : [];
+                    
                     tasks.push(
                         fetch(`/api/facebook-bots/${bot._id}/instructions`, {
                             method: 'PUT',
@@ -1913,7 +1987,7 @@
             if (errors.length > 0) {
                 showNotification(errors.join('<br>'), 'error', 6000);
             } else {
-                showNotification('บันทึกการเลือกใช้คลังให้แต่ละเพจเรียบร้อยแล้ว', 'success');
+                showNotification('บันทึกการเลือกใช้คลังให้แต่ละเพจเรียบร้อยแล้ว (โหมดเลือกเดี่ยว)', 'success');
                 const modal = bootstrap.Modal.getInstance(document.getElementById('assignLibraryModal'));
                 if (modal) modal.hide();
                 await loadLibraryList();

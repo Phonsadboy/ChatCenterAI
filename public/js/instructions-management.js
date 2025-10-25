@@ -364,48 +364,14 @@ function displaySelectedInstructions() {
 
 // Toggle library selection (Single-Select Mode)
 function toggleLibrarySelection(date) {
-  console.log('toggleLibrarySelection called with date:', date);
-  console.log('Current selections before:', JSON.stringify(currentBotInstructions));
-  
   // Single-select mode: Replace the current selection with new one
   if (currentBotInstructions.length === 1 && currentBotInstructions[0] === date) {
     // If clicking the already selected item, deselect it
-    console.log('Deselecting current item');
     currentBotInstructions = [];
-  } else if (currentBotInstructions.length >= 1 && !currentBotInstructions.includes(date)) {
-    // If there's already a selection and user clicks a different one, confirm first
-    const currentLibrary = availableLibraries.find(lib => lib.date === currentBotInstructions[0]);
-    const newLibrary = availableLibraries.find(lib => lib.date === date);
-    
-    const currentName = currentLibrary ? (currentLibrary.name || currentLibrary.displayDate) : 'ไม่ทราบชื่อ';
-    const newName = newLibrary ? (newLibrary.name || newLibrary.displayDate) : 'ไม่ทราบชื่อ';
-    
-    console.log('Showing confirmation dialog');
-    const confirmed = confirm(
-      `⚠️ การเปลี่ยน Instruction\n\n` +
-      `เพจนี้มี Instruction เลือกอยู่แล้ว:\n` +
-      `"${currentName}"\n\n` +
-      `คุณต้องการยกเลิกอันเก่าและเลือกใช้:\n` +
-      `"${newName}"\n\n` +
-      `แทนใช่หรือไม่?`
-    );
-    
-    if (!confirmed) {
-      // User cancelled, don't change anything
-      console.log('User cancelled change');
-      return;
-    }
-    
-    // User confirmed, replace with new selection
-    console.log('User confirmed, replacing selection');
-    currentBotInstructions = [date];
   } else {
-    // No current selection, just add the new one
-    console.log('No current selection, adding new one');
+    // Replace with new selection (only one item)
     currentBotInstructions = [date];
   }
-  
-  console.log('Current selections after:', JSON.stringify(currentBotInstructions));
 
   // Refresh display
   displayInstructionLibraries();
