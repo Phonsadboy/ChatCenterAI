@@ -108,12 +108,25 @@ function displayLineBotList(lineBots) {
         return `
             <tr class="bot-overview-row">
                 <td class="bot-overview-info" data-label="บอท">
-                    <div class="bot-overview-name">
-                        <i class="fab fa-line text-success me-2"></i>
-                        <span>${bot.name}</span>
-                        ${defaultBadge}
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <div class="flex-grow-1">
+                            <div class="bot-overview-name">
+                                <i class="fab fa-line text-success me-2"></i>
+                                <span>${bot.name}</span>
+                                ${defaultBadge}
+                            </div>
+                            <div class="bot-overview-description text-muted small">${description}</div>
+                        </div>
+                        <div class="form-check form-switch mb-0 bot-toggle-mobile">
+                            <input class="form-check-input bot-status-toggle" 
+                                   type="checkbox" 
+                                   role="switch" 
+                                   id="lineBot_${bot._id}" 
+                                   ${isActive ? 'checked' : ''}
+                                   onchange="toggleLineBotStatus('${bot._id}')"
+                                   title="${isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}">
+                        </div>
                     </div>
-                    <div class="bot-overview-description text-muted small">${description}</div>
                 </td>
                 <td class="bot-overview-ai" data-label="AI & Instructions">
                     <div class="bot-overview-badge">
@@ -123,15 +136,15 @@ function displayLineBotList(lineBots) {
                 </td>
                 <td class="bot-overview-status" data-label="สถานะ">
                     <div class="d-flex align-items-center gap-2">
-                        <div class="form-check form-switch mb-0">
+                        <div class="form-check form-switch mb-0 bot-toggle-desktop">
                             <input class="form-check-input bot-status-toggle" 
                                    type="checkbox" 
                                    role="switch" 
-                                   id="lineBot_${bot._id}" 
+                                   id="lineBot_desktop_${bot._id}" 
                                    ${isActive ? 'checked' : ''}
                                    onchange="toggleLineBotStatus('${bot._id}')"
                                    title="${isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}">
-                            <label class="form-check-label" for="lineBot_${bot._id}">
+                            <label class="form-check-label" for="lineBot_desktop_${bot._id}">
                                 <span class="badge bg-${statusClass}">${statusText}</span>
                             </label>
                         </div>
@@ -509,12 +522,25 @@ function displayFacebookBotList(facebookBots) {
         return `
             <tr class="bot-overview-row">
                 <td class="bot-overview-info" data-label="บอท">
-                    <div class="bot-overview-name">
-                        <i class="fab fa-facebook text-primary me-2"></i>
-                        <span>${bot.name}</span>
-                        ${defaultBadge}
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <div class="flex-grow-1">
+                            <div class="bot-overview-name">
+                                <i class="fab fa-facebook text-primary me-2"></i>
+                                <span>${bot.name}</span>
+                                ${defaultBadge}
+                            </div>
+                            <div class="bot-overview-description text-muted small">${description}</div>
+                        </div>
+                        <div class="form-check form-switch mb-0 bot-toggle-mobile">
+                            <input class="form-check-input bot-status-toggle" 
+                                   type="checkbox" 
+                                   role="switch" 
+                                   id="facebookBot_${bot._id}" 
+                                   ${isActive ? 'checked' : ''}
+                                   onchange="toggleFacebookBotStatus('${bot._id}')"
+                                   title="${isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}">
+                        </div>
                     </div>
-                    <div class="bot-overview-description text-muted small">${description}</div>
                 </td>
                 <td class="bot-overview-ai" data-label="AI & Instructions">
                     <div class="bot-overview-badge">
@@ -524,15 +550,15 @@ function displayFacebookBotList(facebookBots) {
                 </td>
                 <td class="bot-overview-status" data-label="สถานะ">
                     <div class="d-flex align-items-center gap-2">
-                        <div class="form-check form-switch mb-0">
+                        <div class="form-check form-switch mb-0 bot-toggle-desktop">
                             <input class="form-check-input bot-status-toggle" 
                                    type="checkbox" 
                                    role="switch" 
-                                   id="facebookBot_${bot._id}" 
+                                   id="facebookBot_desktop_${bot._id}" 
                                    ${isActive ? 'checked' : ''}
                                    onchange="toggleFacebookBotStatus('${bot._id}')"
                                    title="${isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}">
-                            <label class="form-check-label" for="facebookBot_${bot._id}">
+                            <label class="form-check-label" for="facebookBot_desktop_${bot._id}">
                                 <span class="badge bg-${statusClass}">${statusText}</span>
                             </label>
                         </div>
@@ -780,12 +806,19 @@ async function saveFacebookBot() {
 
 // Toggle Line Bot Status (Quick Enable/Disable)
 async function toggleLineBotStatus(botId) {
-    const toggle = document.getElementById(`lineBot_${botId}`);
+    // Get both mobile and desktop toggles
+    const toggleMobile = document.getElementById(`lineBot_${botId}`);
+    const toggleDesktop = document.getElementById(`lineBot_desktop_${botId}`);
+    const toggle = toggleMobile || toggleDesktop;
+    
+    if (!toggle) return;
+    
     const originalState = toggle.checked;
     
     try {
-        // Disable toggle during request
-        toggle.disabled = true;
+        // Disable both toggles during request
+        if (toggleMobile) toggleMobile.disabled = true;
+        if (toggleDesktop) toggleDesktop.disabled = true;
         
         const response = await fetch(`/api/line-bots/${botId}/toggle-status`, {
             method: 'PATCH'
@@ -800,27 +833,37 @@ async function toggleLineBotStatus(botId) {
             const error = await response.json();
             showAlert(error.error || 'ไม่สามารถเปลี่ยนสถานะ Line Bot ได้', 'danger');
             // Revert toggle state on error
-            toggle.checked = originalState;
+            if (toggleMobile) toggleMobile.checked = originalState;
+            if (toggleDesktop) toggleDesktop.checked = originalState;
         }
     } catch (error) {
         console.error('Error toggling line bot status:', error);
         showAlert('เกิดข้อผิดพลาดในการเปลี่ยนสถานะ Line Bot', 'danger');
         // Revert toggle state on error
-        toggle.checked = originalState;
+        if (toggleMobile) toggleMobile.checked = originalState;
+        if (toggleDesktop) toggleDesktop.checked = originalState;
     } finally {
-        // Re-enable toggle (will be replaced by reload anyway)
-        if (toggle) toggle.disabled = false;
+        // Re-enable toggles (will be replaced by reload anyway)
+        if (toggleMobile) toggleMobile.disabled = false;
+        if (toggleDesktop) toggleDesktop.disabled = false;
     }
 }
 
 // Toggle Facebook Bot Status (Quick Enable/Disable)
 async function toggleFacebookBotStatus(botId) {
-    const toggle = document.getElementById(`facebookBot_${botId}`);
+    // Get both mobile and desktop toggles
+    const toggleMobile = document.getElementById(`facebookBot_${botId}`);
+    const toggleDesktop = document.getElementById(`facebookBot_desktop_${botId}`);
+    const toggle = toggleMobile || toggleDesktop;
+    
+    if (!toggle) return;
+    
     const originalState = toggle.checked;
     
     try {
-        // Disable toggle during request
-        toggle.disabled = true;
+        // Disable both toggles during request
+        if (toggleMobile) toggleMobile.disabled = true;
+        if (toggleDesktop) toggleDesktop.disabled = true;
         
         const response = await fetch(`/api/facebook-bots/${botId}/toggle-status`, {
             method: 'PATCH'
@@ -835,16 +878,19 @@ async function toggleFacebookBotStatus(botId) {
             const error = await response.json();
             showAlert(error.error || 'ไม่สามารถเปลี่ยนสถานะ Facebook Bot ได้', 'danger');
             // Revert toggle state on error
-            toggle.checked = originalState;
+            if (toggleMobile) toggleMobile.checked = originalState;
+            if (toggleDesktop) toggleDesktop.checked = originalState;
         }
     } catch (error) {
         console.error('Error toggling facebook bot status:', error);
         showAlert('เกิดข้อผิดพลาดในการเปลี่ยนสถานะ Facebook Bot', 'danger');
         // Revert toggle state on error
-        toggle.checked = originalState;
+        if (toggleMobile) toggleMobile.checked = originalState;
+        if (toggleDesktop) toggleDesktop.checked = originalState;
     } finally {
-        // Re-enable toggle (will be replaced by reload anyway)
-        if (toggle) toggle.disabled = false;
+        // Re-enable toggles (will be replaced by reload anyway)
+        if (toggleMobile) toggleMobile.disabled = false;
+        if (toggleDesktop) toggleDesktop.disabled = false;
     }
 }
 

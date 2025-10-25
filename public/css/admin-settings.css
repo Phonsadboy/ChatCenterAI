@@ -602,15 +602,36 @@
     letter-spacing: 0.3px;
 }
 
-/* Responsive adjustments for toggle */
-@media (max-width: 768px) {
+/* Desktop: Show toggle in status column, hide in mobile position */
+.bot-toggle-desktop {
+    display: block;
+}
+
+.bot-toggle-mobile {
+    display: none;
+}
+
+/* Mobile: Show toggle next to bot name, hide in status column */
+@media (max-width: 992px) {
+    .bot-toggle-desktop {
+        display: none;
+    }
+    
+    .bot-toggle-mobile {
+        display: block;
+    }
+    
     .bot-status-toggle {
         width: 2.5rem;
         height: 1.25rem;
         min-width: 2.5rem;
     }
     
-    .bot-overview-status .d-flex {
-        gap: 0.5rem !important;
+    .bot-overview-info .d-flex {
+        align-items: flex-start;
+    }
+    
+    .bot-overview-status {
+        display: none !important;
     }
 }
