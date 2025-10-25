@@ -74,6 +74,26 @@ async function refreshInstructionAssetUsage() {
   renderInstructionAssets(instructionAssetsCache, instructionImageLabelsInUse);
 }
 
+// Clean up modal backdrops
+function cleanupModalBackdrop() {
+  setTimeout(() => {
+    const backdrops = document.querySelectorAll('.modal-backdrop');
+    backdrops.forEach(backdrop => backdrop.remove());
+    document.body.classList.remove('modal-open');
+    document.body.style.overflow = '';
+    document.body.style.paddingRight = '';
+  }, 300);
+}
+
+// Setup modal event listeners
+function setupModalEventListeners() {
+  const modalElement = document.getElementById("manageInstructionsModal");
+  if (modalElement && !modalElement.hasAttribute('data-listeners-attached')) {
+    modalElement.addEventListener('hidden.bs.modal', cleanupModalBackdrop);
+    modalElement.setAttribute('data-listeners-attached', 'true');
+  }
+}
+
 // Manage Instructions for Line Bot
 async function manageInstructions(botId) {
   currentBotType = "line";
@@ -81,6 +101,9 @@ async function manageInstructions(botId) {
   currentBotInstructions = [];
   instructionLibraryDetailsCache.clear();
   instructionImageLabelsInUse = new Set();
+  
+  // Setup modal cleanup listeners
+  setupModalEventListeners();
 
   try {
     // Load Line Bot details
@@ -121,9 +144,11 @@ async function manageInstructions(botId) {
         '<i class="fab fa-line me-2"></i>จัดการ Instructions - Line Bot';
     }
 
-    const modal = new bootstrap.Modal(
-      document.getElementById("manageInstructionsModal"),
-    );
+    const modalElement = document.getElementById("manageInstructionsModal");
+    let modal = bootstrap.Modal.getInstance(modalElement);
+    if (!modal) {
+      modal = new bootstrap.Modal(modalElement);
+    }
     modal.show();
   } catch (error) {
     console.error("Error loading instruction data:", error);
@@ -138,6 +163,9 @@ async function manageFacebookInstructions(botId) {
   currentBotInstructions = [];
   instructionLibraryDetailsCache.clear();
   instructionImageLabelsInUse = new Set();
+  
+  // Setup modal cleanup listeners
+  setupModalEventListeners();
 
   try {
     // Load Facebook Bot details
@@ -178,9 +206,11 @@ async function manageFacebookInstructions(botId) {
         '<i class="fab fa-facebook me-2"></i>จัดการ Instructions - Facebook Bot';
     }
 
-    const modal = new bootstrap.Modal(
-      document.getElementById("manageInstructionsModal"),
-    );
+    const modalElement = document.getElementById("manageInstructionsModal");
+    let modal = bootstrap.Modal.getInstance(modalElement);
+    if (!modal) {
+      modal = new bootstrap.Modal(modalElement);
+    }
     modal.show();
   } catch (error) {
     console.error("Error loading facebook instruction data:", error);
@@ -334,14 +364,48 @@ function displaySelectedInstructions() {
 
 // Toggle library selection (Single-Select Mode)
 function toggleLibrarySelection(date) {
+  console.log('toggleLibrarySelection called with date:', date);
+  console.log('Current selections before:', JSON.stringify(currentBotInstructions));
+  
   // Single-select mode: Replace the current selection with new one
   if (currentBotInstructions.length === 1 && currentBotInstructions[0] === date) {
     // If clicking the already selected item, deselect it
+    console.log('Deselecting current item');
     currentBotInstructions = [];
+  } else if (currentBotInstructions.length >= 1 && !currentBotInstructions.includes(date)) {
+    // If there's already a selection and user clicks a different one, confirm first
+    const currentLibrary = availableLibraries.find(lib => lib.date === currentBotInstructions[0]);
+    const newLibrary = availableLibraries.find(lib => lib.date === date);
+    
+    const currentName = currentLibrary ? (currentLibrary.name || currentLibrary.displayDate) : 'ไม่ทราบชื่อ';
+    const newName = newLibrary ? (newLibrary.name || newLibrary.displayDate) : 'ไม่ทราบชื่อ';
+    
+    console.log('Showing confirmation dialog');
+    const confirmed = confirm(
+      `⚠️ การเปลี่ยน Instruction\n\n` +
+      `เพจนี้มี Instruction เลือกอยู่แล้ว:\n` +
+      `"${currentName}"\n\n` +
+      `คุณต้องการยกเลิกอันเก่าและเลือกใช้:\n` +
+      `"${newName}"\n\n` +
+      `แทนใช่หรือไม่?`
+    );
+    
+    if (!confirmed) {
+      // User cancelled, don't change anything
+      console.log('User cancelled change');
+      return;
+    }
+    
+    // User confirmed, replace with new selection
+    console.log('User confirmed, replacing selection');
+    currentBotInstructions = [date];
   } else {
-    // Replace with new selection (only one item)
+    // No current selection, just add the new one
+    console.log('No current selection, adding new one');
     currentBotInstructions = [date];
   }
+  
+  console.log('Current selections after:', JSON.stringify(currentBotInstructions));
 
   // Refresh display
   displayInstructionLibraries();
@@ -497,7 +561,10 @@ async function saveSelectedInstructions() {
       const modal = bootstrap.Modal.getInstance(
         document.getElementById("manageInstructionsModal"),
       );
-      if (modal) modal.hide();
+      if (modal) {
+        modal.hide();
+        // Cleanup will be handled by the hidden.bs.modal event listener
+      }
     } else {
       showAlert("ไม่สามารถบันทึกข้อมูลได้", "danger");
     }
