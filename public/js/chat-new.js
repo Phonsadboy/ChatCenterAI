@@ -66,9 +66,15 @@ class ChatManager {
 
     updateAppHeight() {
         window.requestAnimationFrame(() => {
-            const height = window.innerHeight;
+            const viewport = window.visualViewport || null;
+            const height = viewport ? viewport.height : window.innerHeight;
             if (height && height > 0) {
                 document.documentElement.style.setProperty('--app-height', `${height}px`);
+            }
+
+            const nav = document.querySelector('.app-navbar');
+            if (nav) {
+                document.documentElement.style.setProperty('--navbar-height', `${nav.offsetHeight}px`);
             }
         });
     }

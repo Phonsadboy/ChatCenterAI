@@ -259,6 +259,23 @@ h6 { font-size: var(--font-size-sm); }
     flex: 1;
 }
 
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1200;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.sidebar-overlay.show {
+    display: block;
+    pointer-events: auto;
+    opacity: 1;
+}
+
 /* User Sidebar - Facebook Style */
 .user-sidebar {
     width: 360px;
@@ -1428,16 +1445,11 @@ h6 { font-size: var(--font-size-sm); }
     }
 
     .sidebar-overlay {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.55);
-        z-index: 1200;
         backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
     }
 
     .sidebar-overlay.show {
-        display: block;
         animation: fadeIn 0.2s ease;
     }
 
