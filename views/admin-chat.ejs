@@ -6,169 +6,183 @@
     <title>แชท - ChatCenter AI</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <link href="/css/style.css" rel="stylesheet">
-    <link href="/css/chat-new.css" rel="stylesheet">
-    <!-- ✅ New CSS Files -->
-    <link href="/css/mobile-improvements.css" rel="stylesheet">
-    <link href="/css/loading-states.css" rel="stylesheet">
-    <link href="/css/error-handler.css" rel="stylesheet">
-    <link href="/css/animations.css" rel="stylesheet">
+    <link href="/css/chat-redesign.css" rel="stylesheet">
 </head>
 <body>
     <!-- Navigation -->
     <%- include('partials/admin-navbar', { activePage: 'chat' }) %>
 
-    <!-- Main Chat Interface -->
-    <div class="chat-container">
-        <!-- Sidebar Overlay for Mobile -->
+    <!-- Main Chat Container -->
+    <div class="chat-app">
+        <!-- Sidebar Overlay (Mobile) -->
         <div class="sidebar-overlay" id="sidebarOverlay"></div>
         
-        <!-- User List Sidebar - Facebook Business Suite Style -->
-        <div class="user-sidebar" id="userSidebar">
+        <!-- Left Sidebar - User List -->
+        <aside class="chat-sidebar" id="chatSidebar">
+            <!-- Sidebar Header -->
             <div class="sidebar-header">
-                <div class="d-flex align-items-center justify-content-between w-100">
-                    <div>
-                        <h4 class="mb-0">
-                            <i class="fas fa-comments me-2"></i>แชท
-                        </h4>
-                    </div>
-                    <div class="d-flex align-items-center gap-2">
-                        <div class="user-count" id="userCount">0</div>
-                        <button class="btn btn-sm btn-link p-0 d-lg-none" id="toggleSidebar" title="ปิด" style="font-size: 1.25rem; color: var(--text-secondary);">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
+                <div class="sidebar-header-content">
+                    <h5 class="sidebar-title">
+                        <i class="fas fa-comments"></i>
+                        แชท
+                    </h5>
+                    <div class="user-count-badge" id="userCountBadge">0</div>
                 </div>
+                <button class="btn-close-sidebar d-lg-none" id="closeSidebar" title="ปิด">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
-            <!-- Search & Filter -->
-            <div class="sidebar-search">
-                <div class="input-group">
-                    <span class="input-group-text">
-                        <i class="fas fa-search"></i>
-                    </span>
-                    <input type="text" class="form-control" id="userSearch" placeholder="ค้นหาผู้ใช้...">
-                    <button class="btn" type="button" id="filterToggle" title="ตัวกรอง">
+
+            <!-- Search Bar -->
+            <div class="search-container">
+                <div class="search-input-wrapper">
+                    <i class="fas fa-search search-icon"></i>
+                    <input type="text" class="search-input" id="userSearch" placeholder="ค้นหาผู้ใช้...">
+                    <button class="btn-filter" id="filterToggle" title="ตัวกรอง">
                         <i class="fas fa-filter"></i>
-                        <span class="filter-active-badge" id="filterActiveBadge" style="display: none;"></span>
+                        <span class="filter-badge" id="filterBadge" style="display: none;">0</span>
                     </button>
                 </div>
-                <!-- Filter Options (Hidden by default) -->
-                <div class="filter-options" id="filterOptions" style="display: none;">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <small class="text-muted fw-bold">สถานะ</small>
-                        <button class="btn btn-sm btn-link p-0 text-decoration-none" id="clearFilters">
-                            <small>ล้างทั้งหมด</small>
-                        </button>
-                    </div>
-                    <div class="d-flex gap-2 flex-wrap mb-3">
+            </div>
+
+            <!-- Filter Panel (Collapsible) -->
+            <div class="filter-panel" id="filterPanel" style="display: none;">
+                <div class="filter-header">
+                    <span class="filter-title">ตัวกรอง</span>
+                    <button class="btn-clear-filter" id="clearFilters">ล้างทั้งหมด</button>
+                </div>
+                
+                <!-- Status Filters -->
+                <div class="filter-section">
+                    <div class="filter-section-title">สถานะ</div>
+                    <div class="filter-buttons">
                         <button class="filter-btn active" data-filter="all">
-                            <i class="fas fa-list"></i> ทั้งหมด
+                            <i class="fas fa-list"></i>
+                            ทั้งหมด
                         </button>
                         <button class="filter-btn" data-filter="unread">
-                            <i class="fas fa-circle" style="font-size: 0.5rem;"></i> ยังไม่อ่าน
+                            <i class="fas fa-circle"></i>
+                            ยังไม่อ่าน
                         </button>
                         <button class="filter-btn" data-filter="followup">
-                            <i class="fas fa-star"></i> ติดตาม
+                            <i class="fas fa-star"></i>
+                            ติดตาม
                         </button>
                         <button class="filter-btn" data-filter="purchased">
-                            <i class="fas fa-shopping-cart"></i> เคยซื้อแล้ว
+                            <i class="fas fa-shopping-cart"></i>
+                            ซื้อแล้ว
                         </button>
                     </div>
-                    <div class="mb-2">
-                        <small class="text-muted fw-bold">กรองตามแท็ก</small>
-                    </div>
-                    <div id="tagFilters" class="d-flex gap-2 flex-wrap">
-                        <span class="text-muted small">ไม่มีแท็กในระบบ</span>
-                    </div>
-                    <div class="mt-2 pt-2 border-top">
-                        <small class="text-muted">
-                            <span id="filteredUserCount">0</span> ผู้ใช้
-                        </small>
+                </div>
+
+                <!-- Tag Filters -->
+                <div class="filter-section">
+                    <div class="filter-section-title">แท็ก</div>
+                    <div class="tag-filters" id="tagFilters">
+                        <span class="no-tags">ไม่มีแท็ก</span>
                     </div>
                 </div>
+
+                <!-- Filter Summary -->
+                <div class="filter-summary">
+                    <span id="filteredCount">0</span> ผู้ใช้
+                </div>
             </div>
+
+            <!-- User List -->
             <div class="user-list" id="userList">
-                <div class="loading-state">
-                    <i class="fas fa-spinner fa-spin"></i>
+                <div class="loading-placeholder">
+                    <div class="spinner"></div>
                     <span>กำลังโหลด...</span>
                 </div>
             </div>
-        </div>
+        </aside>
 
-        <!-- Chat Area -->
-        <div class="chat-main">
+        <!-- Main Chat Area -->
+        <main class="chat-main">
             <!-- Chat Header -->
-            <div class="chat-header" id="chatHeader">
-                <div class="header-content">
-                    <div class="user-info">
-                        <div class="user-avatar">
+            <header class="chat-header" id="chatHeader">
+                <div class="chat-header-left">
+                    <button class="btn-toggle-sidebar d-lg-none" id="toggleSidebar">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <div class="chat-user-info">
+                        <div class="chat-avatar" id="chatAvatar">
                             <i class="fas fa-user"></i>
                         </div>
-                        <div class="user-details">
-                            <h6>เลือกผู้ใช้เพื่อเริ่มการสนทนา</h6>
-                            <small>0 ข้อความ</small>
+                        <div class="chat-user-details">
+                            <h6 class="chat-user-name" id="chatUserName">เลือกแชทเพื่อเริ่มสนทนา</h6>
+                            <div class="chat-user-meta" id="chatUserMeta">
+                                <span class="meta-item">
+                                    <i class="fas fa-comment"></i>
+                                    <span id="messageCount">0</span> ข้อความ
+                                </span>
+                            </div>
                         </div>
                     </div>
-                    <div class="header-actions" id="headerActions" style="display: none;">
-                        <button class="btn btn-sm btn-outline-danger" onclick="clearUserChat()">
-                            <i class="fas fa-trash me-1"></i>ล้าง
-                        </button>
-                    </div>
                 </div>
-            </div>
-
-            <!-- Messages Area -->
-            <div class="messages-container" id="messagesContainer">
-                <div class="empty-state">
-                    <div class="empty-icon">
-                        <i class="fab fa-facebook-messenger"></i>
-                    </div>
-                    <h5>เลือกแชทเพื่อเริ่มการสนทนา</h5>
-                    <p>เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที</p>
-                </div>
-            </div>
-
-            <!-- Quick Replies Bar (NEW) -->
-            <div class="quick-replies-bar" id="quickRepliesBar" style="display: none;">
-                <div class="quick-replies-scroll">
-                    <button class="quick-reply-btn" onclick="chatManager.openTemplateModal()">
-                        <i class="fas fa-plus-circle me-1"></i>เพิ่ม Template
+                <div class="chat-header-right" id="chatHeaderActions" style="display: none;">
+                    <button class="btn-header-action" id="btnTogglePurchase" title="สถานะการซื้อ">
+                        <i class="fas fa-shopping-cart"></i>
                     </button>
-                    <!-- Quick reply buttons will be rendered here -->
+                    <button class="btn-header-action" id="btnManageTags" title="จัดการแท็ก">
+                        <i class="fas fa-tags"></i>
+                    </button>
+                    <button class="btn-header-action" id="btnToggleAI" title="เปิด/ปิด AI">
+                        <i class="fas fa-robot"></i>
+                    </button>
+                    <div class="header-divider"></div>
+                    <button class="btn-header-action btn-danger" id="btnClearChat" title="ล้างแชท">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Messages Container -->
+            <div class="messages-wrapper" id="messagesWrapper">
+                <div class="messages-container" id="messagesContainer">
+                    <!-- Empty State -->
+                    <div class="empty-state" id="emptyState">
+                        <div class="empty-icon">
+                            <i class="fab fa-facebook-messenger"></i>
+                        </div>
+                        <h5>เลือกแชทเพื่อเริ่มการสนทนา</h5>
+                        <p>เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที</p>
+                    </div>
                 </div>
             </div>
 
-            <!-- Message Input - Facebook Style -->
-            <div class="message-input-container" id="messageInputContainer" style="display: none;">
-                <div class="input-group">
-                    <button class="btn" type="button" id="templateBtn" title="Templates" style="color: var(--primary);">
+            <!-- Message Input Area (Fixed at bottom) -->
+            <div class="message-input-area" id="messageInputArea" style="display: none;">
+                <div class="message-input-container">
+                    <button class="btn-input-action" id="btnTemplate" title="Templates">
                         <i class="fas fa-magic"></i>
                     </button>
-                    <textarea class="form-control" id="messageInput" 
-                              placeholder="Aa" 
-                              maxlength="1000" autocomplete="off" rows="1"></textarea>
-                    <button class="btn" type="button" title="อิโมจิ" style="color: var(--primary);">
+                    <div class="message-input-wrapper">
+                        <textarea 
+                            class="message-input" 
+                            id="messageInput" 
+                            placeholder="พิมพ์ข้อความ..." 
+                            rows="1"
+                            maxlength="1000"></textarea>
+                    </div>
+                    <button class="btn-input-action" id="btnEmoji" title="อิโมจิ">
                         <i class="far fa-smile"></i>
                     </button>
-                    <button class="btn btn-primary" type="button" id="sendButton" title="ส่ง">
+                    <button class="btn-send" id="btnSend" title="ส่ง">
                         <i class="fas fa-paper-plane"></i>
                     </button>
                 </div>
-                <div class="input-footer">
-                    <small>
-                        <span id="charCount">0</span>/1000 ตัวอักษร
-                    </small>
-                    <small>
-                        Enter เพื่อส่ง • Shift+Enter เพื่อขึ้นบรรทัดใหม่ • / สำหรับ Templates
-                    </small>
+                <div class="message-input-footer">
+                    <span class="char-counter">
+                        <span id="charCount">0</span>/1000
+                    </span>
+                    <span class="input-hints">
+                        Enter เพื่อส่ง • Shift+Enter ขึ้นบรรทัดใหม่
+                    </span>
                 </div>
             </div>
-        </div>
-        
-        <!-- Toggle Sidebar Button (Mobile) - Facebook Style -->
-        <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="เปิดรายการแชท">
-            <i class="fas fa-comments"></i>
-        </button>
+        </main>
     </div>
 
     <!-- Image Modal -->
@@ -183,24 +197,9 @@
                     <img id="modalImage" src="" alt="รูปภาพ" class="img-fluid">
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-outline-primary" id="downloadImage">
-                        <i class="fas fa-download me-1"></i>ดาวน์โหลด
+                    <button type="button" class="btn btn-primary" id="downloadImage">
+                        <i class="fas fa-download me-2"></i>ดาวน์โหลด
                     </button>
-                    <button type="button" class="btn btn-outline-secondary" id="copyImage">
-                        <i class="fas fa-copy me-1"></i>คัดลอก
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Loading Modal -->
-    <div class="modal fade" id="loadingModal" tabindex="-1">
-        <div class="modal-dialog modal-sm modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-body text-center">
-                    <i class="fas fa-spinner fa-spin fa-2x text-primary mb-2"></i>
-                    <p class="mb-0">กำลังโหลด...</p>
                 </div>
             </div>
         </div>
@@ -221,402 +220,73 @@
                         <label class="form-label fw-bold">ผู้ใช้:</label>
                         <div id="tagModalUserName" class="text-muted"></div>
                     </div>
-
                     <div class="mb-3">
                         <label class="form-label fw-bold">แท็กปัจจุบัน:</label>
-                        <div id="currentTags" class="d-flex flex-wrap gap-2 mb-2">
-                            <span class="text-muted small">ยังไม่มีแท็ก</span>
+                        <div id="currentTags" class="tag-list">
+                            <span class="text-muted">ไม่มีแท็ก</span>
                         </div>
                     </div>
-
                     <div class="mb-3">
                         <label class="form-label fw-bold">เพิ่มแท็กใหม่:</label>
                         <div class="input-group">
-                            <input type="text" class="form-control" id="newTagInput" 
-                                   placeholder="พิมพ์ชื่อแท็ก..." maxlength="50">
-                            <button class="btn btn-primary" type="button" id="addTagBtn">
-                                <i class="fas fa-plus me-1"></i>เพิ่ม
+                            <input type="text" class="form-control" id="newTagInput" placeholder="ชื่อแท็ก...">
+                            <button class="btn btn-primary" id="addTagBtn">
+                                <i class="fas fa-plus"></i> เพิ่ม
                             </button>
                         </div>
                     </div>
-
-                    <div class="mb-3">
+                    <div>
                         <label class="form-label fw-bold">แท็กที่ใช้บ่อย:</label>
-                        <div id="popularTags" class="d-flex flex-wrap gap-2">
-                            <span class="text-muted small">กำลังโหลด...</span>
+                        <div id="popularTags" class="tag-list">
+                            <span class="text-muted">ไม่มีแท็ก</span>
                         </div>
                     </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Template Management Modal (NEW) -->
+    <!-- Template Modal -->
     <div class="modal fade" id="templateModal" tabindex="-1">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-magic me-2"></i>จัดการ Templates
+                        <i class="fas fa-magic me-2"></i>Templates
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <!-- Search Templates -->
                     <div class="mb-3">
-                        <input type="text" class="form-control" id="templateSearch" 
-                               placeholder="ค้นหา template...">
+                        <input type="text" class="form-control" id="templateSearch" placeholder="ค้นหา template...">
                     </div>
-
-                    <!-- Templates List -->
-                    <div id="templatesList" class="templates-list">
-                        <div class="text-center text-muted py-4">
-                            <i class="fas fa-inbox fa-2x mb-2"></i>
-                            <p>ยังไม่มี template</p>
-                        </div>
+                    <div id="templateList" class="template-list">
+                        <div class="text-muted text-center py-3">ไม่มี template</div>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-primary" onclick="chatManager.openAddTemplateModal()">
-                        <i class="fas fa-plus me-1"></i>เพิ่ม Template
+                    <button type="button" class="btn btn-primary" id="createTemplateBtn">
+                        <i class="fas fa-plus me-2"></i>สร้าง Template ใหม่
                     </button>
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Add/Edit Template Modal (NEW) -->
-    <div class="modal fade" id="addTemplateModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-plus-circle me-2"></i><span id="templateModalTitle">เพิ่ม Template</span>
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <input type="hidden" id="editTemplateId" value="">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">ชื่อ Template:</label>
-                        <input type="text" class="form-control" id="templateName" 
-                               placeholder="เช่น: ทักทาย, ขอบคุณ, สอบถามข้อมูล" maxlength="50">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">หมวดหมู่:</label>
-                        <select class="form-select" id="templateCategory">
-                            <option value="general">ทั่วไป</option>
-                            <option value="greeting">ทักทาย</option>
-                            <option value="thankyou">ขอบคุณ</option>
-                            <option value="inquiry">สอบถาม</option>
-                            <option value="followup">ติดตาม</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">ข้อความ:</label>
-                        <textarea class="form-control" id="templateContent" rows="4" 
-                                  placeholder="พิมพ์ข้อความ template..." maxlength="1000"></textarea>
-                        <small class="text-muted">
-                            <span id="templateCharCount">0</span>/1000 ตัวอักษร
-                        </small>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Shortcut Key (ไม่บังคับ):</label>
-                        <input type="text" class="form-control" id="templateShortcut" 
-                               placeholder="เช่น: /hello, /thanks" maxlength="20">
-                        <small class="text-muted">พิมพ์ shortcut นี้ในช่องแชทเพื่อใช้งาน template</small>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-primary" onclick="chatManager.saveTemplate()">
-                        <i class="fas fa-save me-1"></i>บันทึก
-                    </button>
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Chat Search Modal (NEW) -->
-    <div class="modal fade" id="chatSearchModal" tabindex="-1">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-search me-2"></i>ค้นหาในการสนทนา
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <input type="text" class="form-control" id="chatSearchInput" 
-                               placeholder="พิมพ์คำค้นหา..." autocomplete="off">
-                    </div>
-                    <div id="chatSearchResults" class="chat-search-results">
-                        <div class="text-center text-muted py-4">
-                            <i class="fas fa-search fa-2x mb-2"></i>
-                            <p>พิมพ์คำค้นหาเพื่อเริ่มค้นหา</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Message Forward Modal (NEW) -->
-    <div class="modal fade" id="forwardModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-share me-2"></i>ส่งต่อข้อความ
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">ข้อความที่จะส่งต่อ:</label>
-                        <div id="forwardMessagePreview" class="forward-message-preview"></div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">ส่งถึง:</label>
-                        <input type="text" class="form-control mb-2" id="forwardUserSearch" 
-                               placeholder="ค้นหาผู้ใช้...">
-                        <div id="forwardUserList" class="forward-user-list">
-                            <div class="text-muted small">ค้นหาผู้ใช้ที่ต้องการส่งต่อข้อความ</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-primary" onclick="chatManager.confirmForward()">
-                        <i class="fas fa-paper-plane me-1"></i>ส่งต่อ
-                    </button>
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Chat Assignment Modal (NEW) -->
-    <div class="modal fade" id="assignmentModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-user-tag me-2"></i>มอบหมายแชท
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">ผู้ใช้:</label>
-                        <div id="assignmentUserName" class="text-muted"></div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">มอบหมายให้:</label>
-                        <select class="form-select" id="assignmentAdmin">
-                            <option value="">ไม่ระบุ</option>
-                            <option value="admin1">Admin 1</option>
-                            <option value="admin2">Admin 2</option>
-                            <option value="admin3">Admin 3</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">หมายเหตุ (ไม่บังคับ):</label>
-                        <textarea class="form-control" id="assignmentNote" rows="2" 
-                                  placeholder="เพิ่มหมายเหตุ..." maxlength="200"></textarea>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-primary" onclick="chatManager.confirmAssignment()">
-                        <i class="fas fa-check me-1"></i>มอบหมาย
-                    </button>
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Chat Statistics Modal (NEW) -->
-    <div class="modal fade" id="statisticsModal" tabindex="-1">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-chart-bar me-2"></i>สถิติการแชท
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div id="statisticsContent" class="statistics-content">
-                        <div class="row g-3 mb-4">
-                            <div class="col-6 col-md-3">
-                                <div class="stat-card">
-                                    <div class="stat-icon text-primary">
-                                        <i class="fas fa-comments"></i>
-                                    </div>
-                                    <div class="stat-label">จำนวนข้อความ</div>
-                                    <div class="stat-value" id="statTotalMessages">0</div>
-                                </div>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <div class="stat-card">
-                                    <div class="stat-icon text-success">
-                                        <i class="fas fa-clock"></i>
-                                    </div>
-                                    <div class="stat-label">เวลาตอบเฉลี่ย</div>
-                                    <div class="stat-value" id="statAvgResponse">-</div>
-                                </div>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <div class="stat-card">
-                                    <div class="stat-icon text-info">
-                                        <i class="fas fa-calendar"></i>
-                                    </div>
-                                    <div class="stat-label">แชทครั้งแรก</div>
-                                    <div class="stat-value" id="statFirstChat">-</div>
-                                </div>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <div class="stat-card">
-                                    <div class="stat-icon text-warning">
-                                        <i class="fas fa-history"></i>
-                                    </div>
-                                    <div class="stat-label">แชทล่าสุด</div>
-                                    <div class="stat-value" id="statLastChat">-</div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <h6>กิจกรรมของลูกค้า</h6>
-                            <div id="activityTimeline" class="activity-timeline">
-                                <!-- Timeline will be rendered here -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Export Chat Modal (NEW) -->
-    <div class="modal fade" id="exportModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-download me-2"></i>ส่งออกการสนทนา
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">รูปแบบไฟล์:</label>
-                        <div class="d-grid gap-2">
-                            <button class="btn btn-outline-danger" onclick="chatManager.exportChat('pdf')">
-                                <i class="fas fa-file-pdf me-2"></i>PDF
-                            </button>
-                            <button class="btn btn-outline-primary" onclick="chatManager.exportChat('txt')">
-                                <i class="fas fa-file-alt me-2"></i>Text
-                            </button>
-                            <button class="btn btn-outline-secondary" onclick="chatManager.exportChat('json')">
-                                <i class="fas fa-file-code me-2"></i>JSON
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Keyboard Shortcuts Modal (NEW) -->
-    <div class="modal fade" id="shortcutsModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-keyboard me-2"></i>คีย์ลัด
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="shortcuts-list">
-                        <div class="shortcut-item">
-                            <div class="shortcut-keys">
-                                <kbd>Ctrl</kbd> + <kbd>K</kbd>
-                            </div>
-                            <div class="shortcut-description">ค้นหาผู้ใช้</div>
-                        </div>
-                        <div class="shortcut-item">
-                            <div class="shortcut-keys">
-                                <kbd>Ctrl</kbd> + <kbd>F</kbd>
-                            </div>
-                            <div class="shortcut-description">ค้นหาในการสนทนา</div>
-                        </div>
-                        <div class="shortcut-item">
-                            <div class="shortcut-keys">
-                                <kbd>Ctrl</kbd> + <kbd>/</kbd>
-                            </div>
-                            <div class="shortcut-description">แสดงคีย์ลัด</div>
-                        </div>
-                        <div class="shortcut-item">
-                            <div class="shortcut-keys">
-                                <kbd>Esc</kbd>
-                            </div>
-                            <div class="shortcut-description">ปิด modal/sidebar</div>
-                        </div>
-                        <div class="shortcut-item">
-                            <div class="shortcut-keys">
-                                <kbd>↑</kbd> <kbd>↓</kbd>
-                            </div>
-                            <div class="shortcut-description">เลือกผู้ใช้</div>
-                        </div>
-                        <div class="shortcut-item">
-                            <div class="shortcut-keys">
-                                <kbd>Enter</kbd>
-                            </div>
-                            <div class="shortcut-description">เปิดแชท / ส่งข้อความ</div>
-                        </div>
-                        <div class="shortcut-item">
-                            <div class="shortcut-keys">
-                                <kbd>/</kbd>
-                            </div>
-                            <div class="shortcut-description">เปิด Templates</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Toast Container -->
-    <div class="toast-container position-fixed bottom-0 end-0 p-3">
-        <div id="toast" class="toast" role="alert">
-            <div class="toast-header">
-                <i class="fas fa-info-circle text-primary me-2"></i>
-                <strong class="me-auto">แจ้งเตือน</strong>
-                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
-            </div>
-            <div class="toast-body" id="toastBody"></div>
-        </div>
-    </div>
-
+    <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        window.chatCenterFollowUpConfig = {
-            analysisEnabled: <%= (followUpConfig && followUpConfig.analysisEnabled) ? 'true' : 'false' %>,
-            showInChat: <%= (followUpConfig && followUpConfig.showInChat) ? 'true' : 'false' %>
-        };
-    </script>
     <script src="/socket.io/socket.io.js"></script>
-    <!-- ✅ New JS Files - Load before chat-new.js -->
-    <script src="/js/performance-utils.js"></script>
-    <script src="/js/loading-states.js"></script>
-    <script src="/js/error-handler.js"></script>
-    <script src="/js/chat-new.js"></script>
+    <script src="/js/chat-redesign.js"></script>
+    
+    <script>
+        // Initialize chat manager
+        const chatManager = new ChatManager();
+        
+        // Pass follow-up config from server
+        <% if (typeof chatCenterFollowUpConfig !== 'undefined') { %>
+        chatManager.followUpConfig = <%- JSON.stringify(chatCenterFollowUpConfig) %>;
+        <% } %>
+    </script>
 </body>
 </html>
+
