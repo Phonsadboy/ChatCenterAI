@@ -463,7 +463,7 @@
                 ประเภทการตอบ <span class="text-danger">*</span>
               </label>
 
-              <div class="reply-type-card" onclick="selectReplyType('custom')">
+              <div class="reply-type-card" onclick="selectReplyType('custom', event)">
                 <input type="radio" name="replyType" value="custom" id="replyTypeCustom" required>
                 <label for="replyTypeCustom">
                   <div class="d-flex align-items-start">
@@ -477,7 +477,7 @@
                 </label>
               </div>
 
-              <div class="reply-type-card" onclick="selectReplyType('ai')">
+              <div class="reply-type-card" onclick="selectReplyType('ai', event)">
                 <input type="radio" name="replyType" value="ai" id="replyTypeAI" required>
                 <label for="replyTypeAI">
                   <div class="d-flex align-items-start">
@@ -587,7 +587,7 @@
   <script>
     const modal = new bootstrap.Modal(document.getElementById('postConfigModal'));
 
-    function selectReplyType(type) {
+    function selectReplyType(type, event) {
       const customRadio = document.getElementById('replyTypeCustom');
       const aiRadio = document.getElementById('replyTypeAI');
       const customSection = document.getElementById('customMessageSection');
@@ -615,7 +615,20 @@
       document.querySelectorAll('.reply-type-card').forEach(card => {
         card.classList.remove('active');
       });
-      event.currentTarget.classList.add('active');
+      
+      // Add active class to clicked card (if event is provided)
+      if (event && event.currentTarget) {
+        event.currentTarget.classList.add('active');
+      } else {
+        // If no event, find and activate the correct card based on type
+        const cards = document.querySelectorAll('.reply-type-card');
+        cards.forEach(card => {
+          const radio = card.querySelector('input[type="radio"]');
+          if (radio && radio.value === type) {
+            card.classList.add('active');
+          }
+        });
+      }
     }
 
     function addPostConfig(pageId, pageName) {
