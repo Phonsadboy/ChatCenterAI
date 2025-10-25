@@ -9523,7 +9523,7 @@ app.get("/admin/chat", async (req, res) => {
       true,
     );
     const showInChat = await getSettingValue("followUpShowInChat", true);
-    res.render("admin-chat-modern", {
+    res.render("admin-chat", {
       followUpConfig: {
         analysisEnabled,
         showInChat,
@@ -9531,7 +9531,7 @@ app.get("/admin/chat", async (req, res) => {
     });
   } catch (error) {
     console.error("[FollowUp] ไม่สามารถโหลดหน้าจัดการแชทได้:", error);
-    res.render("admin-chat-modern", {
+    res.render("admin-chat", {
       followUpConfig: {
         analysisEnabled: false,
         showInChat: false,
