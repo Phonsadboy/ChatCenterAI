@@ -164,11 +164,12 @@ h6 { font-size: var(--heading-6-size); }
     background-color: var(--bg-light);
 }
 
+.sidebar-header h4,
 .sidebar-header h5 {
     color: var(--text-dark);
     font-weight: 600;
     margin: 0;
-    font-size: 1rem;
+    font-size: var(--heading-4-size); /* 1.125rem / 18px - สอดคล้องกับหน้าอื่น */
 }
 
 .user-count {
@@ -386,10 +387,12 @@ h6 { font-size: var(--heading-6-size); }
     font-size: 1rem;
 }
 
+.user-details h5,
 .user-details h6 {
     color: var(--text-dark);
     font-weight: 600;
     margin-bottom: 0.25rem;
+    font-size: var(--font-size-base); /* 16px - consistent size */
 }
 
 /* Messages Container */
@@ -423,6 +426,7 @@ h6 { font-size: var(--heading-6-size); }
     color: var(--text-dark);
     font-weight: 600;
     margin-bottom: 0.5rem;
+    font-size: var(--heading-4-size); /* 1.125rem / 18px - consistent with other pages */
 }
 
 .empty-state p {
