@@ -9594,17 +9594,7 @@ app.post(
 
       res.json({
         success: true,
-        asset: {
-          ...savedAsset,
-          fileId: savedAsset.fileId?.toString?.() || savedAsset.fileId,
-          thumbFileId:
-            savedAsset.thumbFileId?.toString?.() || savedAsset.thumbFileId,
-          url: resolveInstructionAssetUrl(savedAsset.url, savedAsset.fileName),
-          thumbUrl: resolveInstructionAssetUrl(
-            savedAsset.thumbUrl || savedAsset.url,
-            savedAsset.thumbFileName || savedAsset.fileName,
-          ),
-        },
+        asset: mapInstructionAssetResponse(savedAsset),
       });
     } catch (err) {
       console.error("[Assets] upload error:", err);
@@ -9615,6 +9605,59 @@ app.post(
     }
   },
 );
+
+app.put("/admin/instructions/assets/:label", async (req, res) => {
+  try {
+    const originalLabel = req.params.label;
+    let { label: newLabel, description } = req.body || {};
+    newLabel = typeof newLabel === "string" ? newLabel.trim() : "";
+    description = typeof description === "string" ? description.trim() : "";
+
+    if (!newLabel) {
+      return res
+        .status(400)
+        .json({ success: false, error: "กรุณาระบุชื่อรูปภาพ" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instruction_assets");
+
+    const doc = await coll.findOne({ label: originalLabel });
+    if (!doc) {
+      return res
+        .status(404)
+        .json({ success: false, error: "ไม่พบรูปภาพที่ต้องการแก้ไข" });
+    }
+
+    if (newLabel !== originalLabel) {
+      const exists = await coll.findOne({ label: newLabel });
+      if (exists) {
+        return res
+          .status(409)
+          .json({ success: false, error: "มีชื่อรูปภาพนี้อยู่แล้ว" });
+      }
+    }
+
+    const update = {
+      label: newLabel,
+      description,
+      alt: description,
+      updatedAt: new Date(),
+    };
+
+    await coll.updateOne({ _id: doc._id }, { $set: update });
+    const updatedDoc = await coll.findOne({ _id: doc._id });
+    await syncInstructionAssetToCollections(db, updatedDoc);
+
+    res.json({ success: true, asset: mapInstructionAssetResponse(updatedDoc) });
+  } catch (err) {
+    console.error("[Assets] update error:", err);
+    res
+      .status(500)
+      .json({ success: false, error: "ไม่สามารถแก้ไขรูปภาพได้" });
+  }
+});
 
 // Delete an instruction asset by label
 app.delete("/admin/instructions/assets/:label", async (req, res) => {
@@ -9627,35 +9670,70 @@ app.delete("/admin/instructions/assets/:label", async (req, res) => {
     if (!doc)
       return res.status(404).json({ success: false, error: "ไม่พบ asset" });
 
-    await removeInstructionAssetFromCollections(db, doc);
-
-    await coll.deleteOne({ label });
-
-    const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
-    await deleteGridFsEntries(bucket, [
-      { id: doc.fileId },
-      { id: doc.thumbFileId },
-      { filename: doc.fileName },
-      { filename: doc.thumbFileName || `${label}_thumb.jpg` },
-    ]);
-
-    // Remove files on disk if exist (legacy fallback)
-    const baseDir = ASSETS_DIR;
-    const thumbName = doc.thumbFileName || `${label}_thumb.jpg`;
-    const files = [
-      path.join(baseDir, doc.fileName || ""),
-      path.join(baseDir, thumbName),
-    ];
-    files.forEach((p) => {
-      try {
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      } catch (_) {}
-    });
+    await performInstructionAssetDeletion(db, doc);
 
     res.json({ success: true });
   } catch (err) {
     console.error("[Assets] delete error:", err);
     res.status(500).json({ success: false, error: "ลบรูปภาพไม่สำเร็จ" });
+  }
+});
+
+app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
+  try {
+    const labels = Array.isArray(req.body?.labels)
+      ? Array.from(
+          new Set(
+            req.body.labels
+              .map((label) => (typeof label === "string" ? label.trim() : ""))
+              .filter((label) => !!label),
+          ),
+        )
+      : [];
+
+    if (labels.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, error: "กรุณาระบุชื่อรูปภาพที่ต้องการลบ" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instruction_assets");
+
+    const deleted = [];
+    const failed = [];
+
+    for (const label of labels) {
+      try {
+        const doc = await coll.findOne({ label });
+        if (!doc) {
+          failed.push({ label, error: "ไม่พบรูปภาพ" });
+          continue;
+        }
+
+        await performInstructionAssetDeletion(db, doc);
+        deleted.push(label);
+      } catch (err) {
+        failed.push({ label, error: err.message || "ลบไม่สำเร็จ" });
+      }
+    }
+
+    const success = deleted.length > 0;
+    if (!success) {
+      return res.status(400).json({
+        success: false,
+        error: "ไม่สามารถลบรูปภาพได้",
+        failed,
+      });
+    }
+
+    res.json({ success: true, deleted, failed });
+  } catch (err) {
+    console.error("[Assets] bulk delete error:", err);
+    res
+      .status(500)
+      .json({ success: false, error: "ไม่สามารถลบรูปภาพที่เลือกได้" });
   }
 });
 
@@ -9954,6 +10032,50 @@ async function removeInstructionAssetFromCollections(db, asset) {
       );
     }
   }
+}
+
+async function performInstructionAssetDeletion(db, asset) {
+  if (!db || !asset) return false;
+  const coll = db.collection("instruction_assets");
+  await coll.deleteOne({ _id: asset._id });
+
+  await removeInstructionAssetFromCollections(db, asset);
+
+  const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
+  await deleteGridFsEntries(bucket, [
+    { id: asset.fileId },
+    { id: asset.thumbFileId },
+    { filename: asset.fileName },
+    { filename: asset.thumbFileName || `${asset.label}_thumb.jpg` },
+  ]);
+
+  const baseDir = ASSETS_DIR;
+  const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
+  const files = [
+    path.join(baseDir, asset.fileName || ""),
+    path.join(baseDir, thumbName),
+  ];
+  files.forEach((p) => {
+    try {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    } catch (_) {}
+  });
+
+  return true;
+}
+
+function mapInstructionAssetResponse(asset) {
+  if (!asset || typeof asset !== "object") return null;
+  return {
+    ...asset,
+    fileId: asset.fileId?.toString?.() || asset.fileId,
+    thumbFileId: asset.thumbFileId?.toString?.() || asset.thumbFileId,
+    url: resolveInstructionAssetUrl(asset.url, asset.fileName),
+    thumbUrl: resolveInstructionAssetUrl(
+      asset.thumbUrl || asset.url,
+      asset.thumbFileName || asset.fileName,
+    ),
+  };
 }
 
 // GET: ดึงรายการ Image Collections ทั้งหมด

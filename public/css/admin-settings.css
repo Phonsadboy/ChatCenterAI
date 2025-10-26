@@ -277,6 +277,17 @@
     font-size: 0.75rem;
 }
 
+.asset-selection-toolbar {
+    border: 1px dashed rgba(37, 99, 235, 0.2);
+    border-radius: 8px;
+    padding: 0.4rem 0.6rem;
+    background: rgba(37, 99, 235, 0.05);
+}
+
+.asset-selection-toolbar .asset-selection-actions .btn {
+    font-size: 0.75rem;
+}
+
 .image-assets-list {
     border: 1px solid #eef2f6;
     border-radius: 8px;
@@ -305,6 +316,16 @@
     box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
 }
 
+.image-asset-item.selected {
+    border-color: #2563eb;
+    box-shadow: 0 2px 8px rgba(37,99,235,0.2);
+}
+
+.image-asset-item.editing {
+    border-color: #93c5fd;
+    box-shadow: 0 2px 6px rgba(59,130,246,0.15);
+}
+
 .image-asset-thumb {
     width: 60px;
     height: 60px;
@@ -327,6 +348,15 @@
 .image-asset-thumb-placeholder {
     color: #94a3b8;
     font-size: 1.25rem;
+}
+
+.asset-select {
+    align-self: flex-start;
+    margin-right: 0.25rem;
+}
+
+.asset-select .form-check-input {
+    margin-top: 0.35rem;
 }
 
 .image-asset-info {
@@ -371,6 +401,22 @@
 .image-asset-actions .btn {
     font-size: 0.75rem;
     padding: 0.3rem 0.5rem;
+}
+
+.image-asset-edit-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.image-asset-edit-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.image-asset-edit-actions .btn {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.6rem;
 }
 
 .upload-queue-toolbar {
@@ -494,6 +540,16 @@
 .queue-label-input.is-duplicate {
     border-color: #fbbf24;
     box-shadow: 0 0 0 0.15rem rgba(251,191,36,0.25);
+}
+
+.asset-edit-label-input.is-duplicate {
+    border-color: #fbbf24;
+    box-shadow: 0 0 0 0.15rem rgba(251,191,36,0.25);
+}
+
+.asset-edit-label-input.is-invalid {
+    border-color: #f87171;
+    box-shadow: 0 0 0 0.15rem rgba(248,113,113,0.25);
 }
 
 .collection-filter-group .btn {

@@ -13,7 +13,9 @@
         editingBot: null,
         collectionUsageFilter: 'all',
         uploadQueue: [],
-        isUploading: false
+        isUploading: false,
+        selectedAssetLabels: new Set(),
+        assetEdits: new Map()
     };
 
     const elements = {
@@ -141,6 +143,9 @@
         elements.startUploadQueueBtn = document.getElementById('startUploadQueueBtn');
         elements.uploadQueueSummary = document.getElementById('uploadQueueSummary');
         elements.uploadQueueList = document.getElementById('imageAssetQueue');
+        elements.assetSelectionToolbar = document.getElementById('assetSelectionToolbar');
+        elements.assetSelectionCount = elements.assetSelectionToolbar?.querySelector('.asset-selection-count') || null;
+        elements.bulkDeleteAssetsBtn = document.getElementById('bulkDeleteAssetsBtn');
         elements.lineAssignments = document.getElementById('lineBotCollectionsList');
         elements.facebookAssignments = document.getElementById('facebookBotCollectionsList');
         elements.collectionModal = document.getElementById('imageCollectionModal');
@@ -234,6 +239,10 @@
             elements.uploadQueueList.addEventListener('click', handleQueueListClick);
         }
 
+        if (elements.bulkDeleteAssetsBtn) {
+            elements.bulkDeleteAssetsBtn.addEventListener('click', bulkDeleteSelectedAssets);
+        }
+
         if (elements.assetsSearch) {
             elements.assetsSearch.addEventListener('input', (event) => {
                 state.assetFilter = event.target.value.trim().toLowerCase();
@@ -242,7 +251,9 @@
         }
 
         if (elements.assetsList) {
-            elements.assetsList.addEventListener('click', handleAssetListAction);
+            elements.assetsList.addEventListener('click', handleAssetsListClick);
+            elements.assetsList.addEventListener('change', handleAssetsListChange);
+            elements.assetsList.addEventListener('input', handleAssetsListInput);
         }
 
         if (elements.collectionsSearch) {
@@ -676,6 +687,7 @@
 
         if (assets.length === 0) {
             elements.assetsList.innerHTML = '<div class="empty-state"><i class="fas fa-image mb-2"></i><div>ยังไม่มีรูปภาพ</div><small class="text-muted">อัปโหลดรูปเพื่อใช้ร่วมกับ AI ได้ทันที</small></div>';
+            renderAssetSelectionToolbar();
             return;
         }
 
@@ -689,6 +701,7 @@
 
         if (filtered.length === 0) {
             elements.assetsList.innerHTML = '<div class="empty-state"><i class="fas fa-search mb-2"></i><div>ไม่พบรูปภาพที่ตรงกับคำค้น</div></div>';
+            renderAssetSelectionToolbar();
             return;
         }
 
@@ -696,6 +709,7 @@
             .map((asset) => {
                 const label = asset.label || asset.fileName || 'unnamed';
                 const escapedLabel = escapeHtml(label);
+                const labelAttr = escapeAttribute(label);
                 const description = escapeHtml(asset.description || asset.alt || '');
                 const token = `#[IMAGE:${label}]`;
                 const sizeText = formatFileSize(asset.size);
@@ -704,9 +718,82 @@
                     ? '<span class="badge bg-success-soft text-success ms-2"><i class="fas fa-check me-1"></i>ใช้งานในคอลเลกชัน</span>'
                     : '';
                 const updated = formatTimestamp(asset.updatedAt || asset.createdAt);
+                const isSelected = state.selectedAssetLabels.has(label);
+                const editState = state.assetEdits.get(label);
+                const editingClass = editState ? ' editing' : '';
+                const selectedClass = isSelected ? ' selected' : '';
+                const itemClasses = `${editingClass}${selectedClass}`;
+
+                if (editState) {
+                    const saving = editState.saving;
+                    const isBlank = !editState.label || !editState.label.trim();
+                    const isDuplicateLabel = isLabelDuplicate(editState.label, editState.originalLabel);
+                    const labelClasses = `${!saving && isBlank ? ' is-invalid' : ''}${!saving && isDuplicateLabel ? ' is-duplicate' : ''}`;
+                    const labelValue = escapeHtml(editState.label || '');
+                    const descriptionValue = escapeHtml(editState.description || '');
+                    const saveBtnLabel = saving
+                        ? '<span class="spinner-border spinner-border-sm me-1"></span>กำลังบันทึก'
+                        : '<i class="fas fa-save me-1"></i>บันทึก';
+                    const errorHtml = editState.error
+                        ? `<div class="text-danger small">${escapeHtml(editState.error)}</div>`
+                        : '';
+                    const duplicateHtml = !saving && isDuplicateLabel && !editState.error
+                        ? '<div class="text-warning small">มีชื่อรูปภาพนี้อยู่แล้ว กรุณาใช้ชื่ออื่น</div>'
+                        : '';
+                    const blankHtml = !saving && isBlank && !editState.error
+                        ? '<div class="text-danger small">กรุณาระบุชื่อรูปภาพ</div>'
+                        : '';
+
+                    return `
+                        <div class="image-asset-item${itemClasses}" data-label="${labelAttr}">
+                            <div class="asset-select form-check">
+                                <input class="form-check-input asset-select-checkbox" type="checkbox" data-label="${labelAttr}" ${isSelected ? 'checked' : ''} ${saving ? 'disabled' : ''}>
+                            </div>
+                            <div class="image-asset-thumb">
+                                ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
+                            </div>
+                            <div class="image-asset-info">
+                                <div class="image-asset-edit-form">
+                                    <input type="text" class="form-control form-control-sm asset-edit-label-input${labelClasses}" placeholder="ชื่อรูปภาพ" value="${labelValue}" data-original-label="${escapeAttribute(editState.originalLabel)}" ${saving ? 'disabled' : ''}>
+                                    <textarea class="form-control form-control-sm asset-edit-description-input" rows="2" placeholder="คำอธิบาย (ไม่บังคับ)" data-original-label="${escapeAttribute(editState.originalLabel)}" ${saving ? 'disabled' : ''}>${descriptionValue}</textarea>
+                                    ${blankHtml}
+                                    ${duplicateHtml}
+                                    ${errorHtml}
+                                </div>
+                                <div class="queue-meta small text-muted">
+                                    <span><i class="fas fa-file me-1"></i>${escapeHtml(asset.fileName || asset.label || '')}</span>
+                                    <span class="dot">•</span>
+                                    <span>${sizeText}</span>
+                                </div>
+                            </div>
+                            <div class="image-asset-edit-actions">
+                                <button type="button" class="btn btn-sm btn-primary asset-save-btn" data-original-label="${escapeAttribute(editState.originalLabel)}" ${saving ? 'disabled' : ''}>${saveBtnLabel}</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary asset-cancel-btn" data-original-label="${escapeAttribute(editState.originalLabel)}" ${saving ? 'disabled' : ''}>
+                                    <i class="fas fa-times me-1"></i>ยกเลิก
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                const normalDescription = description || '<span class="text-muted">ไม่มีคำอธิบาย</span>';
+                const actionsHtml = `
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-action="copy" data-label="${labelAttr}">
+                        <i class="fas fa-copy me-1"></i>โทเคน
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-label="${labelAttr}">
+                        <i class="fas fa-edit me-1"></i>แก้ไข
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-danger asset-delete-btn" data-action="delete" data-label="${labelAttr}">
+                        <i class="fas fa-trash me-1"></i>ลบ
+                    </button>
+                `;
 
                 return `
-                    <div class="image-asset-item" data-label="${escapeAttribute(label)}">
+                    <div class="image-asset-item${itemClasses}" data-label="${labelAttr}">
+                        <div class="asset-select form-check">
+                            <input class="form-check-input asset-select-checkbox" type="checkbox" data-label="${labelAttr}" ${isSelected ? 'checked' : ''}>
+                        </div>
                         <div class="image-asset-thumb">
                             ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
                         </div>
@@ -715,7 +802,7 @@
                                 <strong>${escapedLabel}</strong>
                                 ${usedBadge}
                             </div>
-                            <div class="image-asset-description">${description || '<span class="text-muted">ไม่มีคำอธิบาย</span>'}</div>
+                            <div class="image-asset-description">${normalDescription}</div>
                             <div class="image-asset-meta">
                                 <span class="token">token: <code>${escapeHtml(token)}</code></span>
                                 <span class="dot">•</span>
@@ -725,12 +812,7 @@
                             </div>
                         </div>
                         <div class="image-asset-actions">
-                            <button type="button" class="btn btn-sm btn-outline-secondary" data-action="copy" data-label="${escapedLabel}">
-                                <i class="fas fa-copy me-1"></i>โทเคน
-                            </button>
-                            <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-label="${escapedLabel}">
-                                <i class="fas fa-trash me-1"></i>ลบ
-                            </button>
+                            ${actionsHtml}
                         </div>
                     </div>
                 `;
@@ -738,6 +820,51 @@
             .join('');
 
         elements.assetsList.innerHTML = html;
+        renderAssetSelectionToolbar();
+    };
+
+    const renderAssetSelectionToolbar = () => {
+        if (!elements.assetSelectionToolbar) return;
+        const count = state.selectedAssetLabels.size;
+        if (count === 0) {
+            elements.assetSelectionToolbar.style.display = 'none';
+            if (elements.assetSelectionCount) elements.assetSelectionCount.textContent = '';
+            if (elements.bulkDeleteAssetsBtn) elements.bulkDeleteAssetsBtn.disabled = true;
+            return;
+        }
+
+        elements.assetSelectionToolbar.style.display = 'flex';
+        if (elements.assetSelectionCount) {
+            elements.assetSelectionCount.textContent = `เลือก ${count} รูป`; 
+        }
+        if (elements.bulkDeleteAssetsBtn) {
+            elements.bulkDeleteAssetsBtn.disabled = state.isUploading;
+        }
+    };
+
+    const toggleAssetSelection = (label, selected) => {
+        if (!label) return;
+        if (selected) {
+            state.selectedAssetLabels.add(label);
+        } else {
+            state.selectedAssetLabels.delete(label);
+        }
+        renderAssetsList();
+    };
+
+    const pruneSelectionsAndEdits = () => {
+        const labelsSet = new Set(state.assets.map((asset) => asset.label));
+        state.selectedAssetLabels.forEach((label) => {
+            if (!labelsSet.has(label)) {
+                state.selectedAssetLabels.delete(label);
+            }
+        });
+        state.assetEdits.forEach((_, key) => {
+            if (!labelsSet.has(key)) {
+                state.assetEdits.delete(key);
+            }
+        });
+        renderAssetSelectionToolbar();
     };
 
     const copyAssetToken = async (label) => {
@@ -751,7 +878,7 @@
         }
     };
 
-    const deleteAsset = async (label) => {
+    const performSingleAssetDelete = async (label) => {
         if (!label) return;
         if (!confirm(`ยืนยันการลบรูปภาพ: ${label}?`)) return;
         try {
@@ -762,6 +889,9 @@
             if (!response.ok || !data.success) {
                 throw new Error(data.error || 'ไม่สามารถลบรูปภาพได้');
             }
+            state.selectedAssetLabels.delete(label);
+            state.assetEdits.delete(label);
+            renderAssetSelectionToolbar();
             showAlert('ลบรูปภาพสำเร็จ', 'success');
             await fetchAssets();
             await fetchCollections();
@@ -771,15 +901,190 @@
         }
     };
 
-    const handleAssetListAction = (event) => {
+    const bulkDeleteSelectedAssets = async () => {
+        const labels = Array.from(state.selectedAssetLabels);
+        if (labels.length === 0) {
+            showAlert('กรุณาเลือกรูปอย่างน้อย 1 รูปก่อนลบ', 'warning');
+            return;
+        }
+        if (!confirm(`ยืนยันการลบรูปภาพ ${labels.length} รูป?`)) return;
+        try {
+            if (elements.bulkDeleteAssetsBtn) {
+                elements.bulkDeleteAssetsBtn.disabled = true;
+                elements.bulkDeleteAssetsBtn.classList.add('disabled');
+            }
+            const response = await fetch('/admin/instructions/assets/bulk-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ labels })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'ไม่สามารถลบรูปภาพที่เลือกได้');
+            }
+            const deletedCount = data.deleted?.length || 0;
+            showAlert(`ลบรูปภาพสำเร็จ ${deletedCount} รูป`, 'success');
+            if (data.failed && data.failed.length > 0) {
+                const failedList = data.failed
+                    .map((item) => item.label)
+                    .filter(Boolean)
+                    .slice(0, 5)
+                    .join(', ');
+                showAlert(`ไม่สามารถลบบางรูปได้: ${failedList || 'ไม่ทราบชื่อ'}`, 'warning');
+            }
+            state.selectedAssetLabels.clear();
+            renderAssetSelectionToolbar();
+            await fetchAssets();
+            await fetchCollections();
+        } catch (err) {
+            console.error('bulk delete assets error:', err);
+            showAlert(err.message || 'เกิดข้อผิดพลาดในการลบรูปภาพที่เลือก', 'danger');
+        } finally {
+            if (elements.bulkDeleteAssetsBtn) {
+                elements.bulkDeleteAssetsBtn.disabled = false;
+                elements.bulkDeleteAssetsBtn.classList.remove('disabled');
+            }
+        }
+    };
+
+    const findAssetByLabel = (label) => state.assets.find((asset) => asset.label === label);
+
+    const enterAssetEdit = (label) => {
+        if (!label) return;
+        if (state.assetEdits.has(label)) return;
+        const asset = findAssetByLabel(label);
+        if (!asset) {
+            showAlert('ไม่พบรูปภาพที่ต้องการแก้ไข', 'warning');
+            return;
+        }
+        state.assetEdits.set(label, {
+            originalLabel: label,
+            label,
+            description: asset.description || asset.alt || '',
+            saving: false,
+            error: null,
+        });
+        renderAssetsList();
+    };
+
+    const cancelAssetEdit = (originalLabel) => {
+        if (!originalLabel) return;
+        state.assetEdits.delete(originalLabel);
+        renderAssetsList();
+    };
+
+    const isLabelDuplicate = (candidate, originalLabel = '') => {
+        if (!candidate) return false;
+        const trimmed = candidate.trim().toLowerCase();
+        if (!trimmed) return false;
+        const original = originalLabel.trim().toLowerCase();
+        if (trimmed === original) return false;
+        return state.assets.some((asset) => (asset.label || '').trim().toLowerCase() === trimmed);
+    };
+
+    const saveAssetEdit = async (originalLabel) => {
+        if (!originalLabel) return;
+        const editState = state.assetEdits.get(originalLabel);
+        if (!editState) return;
+
+        const newLabel = (editState.label || '').trim();
+        const description = (editState.description || '').trim();
+
+        if (!newLabel) {
+            editState.error = 'กรุณาระบุชื่อรูปภาพ';
+            renderAssetsList();
+            return;
+        }
+
+        if (isLabelDuplicate(newLabel, originalLabel)) {
+            editState.error = 'มีชื่อรูปภาพนี้อยู่แล้ว กรุณาใช้ชื่ออื่น';
+            renderAssetsList();
+            return;
+        }
+
+        editState.saving = true;
+        editState.error = null;
+        renderAssetsList();
+
+        try {
+            const response = await fetch(`/admin/instructions/assets/${encodeURIComponent(originalLabel)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label: newLabel, description }),
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'ไม่สามารถแก้ไขข้อมูลรูปภาพได้');
+            }
+
+            state.assetEdits.delete(originalLabel);
+            if (state.selectedAssetLabels.has(originalLabel)) {
+                state.selectedAssetLabels.delete(originalLabel);
+                state.selectedAssetLabels.add(newLabel);
+            }
+
+            showAlert('บันทึกข้อมูลรูปภาพเรียบร้อยแล้ว', 'success');
+            await fetchAssets();
+            await fetchCollections();
+        } catch (err) {
+            console.error('update asset error:', err);
+            editState.saving = false;
+            editState.error = err.message || 'เกิดข้อผิดพลาดในการบันทึก';
+            renderAssetsList();
+        }
+    };
+
+    const handleAssetsListInput = (event) => {
+        const input = event.target;
+        if (input.classList.contains('asset-edit-label-input')) {
+            const { originalLabel } = input.dataset || {};
+            if (!originalLabel) return;
+            const editState = state.assetEdits.get(originalLabel);
+            if (!editState) return;
+            editState.label = input.value;
+            input.classList.toggle('is-invalid', !input.value.trim() && !editState.saving);
+            input.classList.toggle('is-duplicate', isLabelDuplicate(input.value, originalLabel));
+        } else if (input.classList.contains('asset-edit-description-input')) {
+            const { originalLabel } = input.dataset || {};
+            if (!originalLabel) return;
+            const editState = state.assetEdits.get(originalLabel);
+            if (!editState) return;
+            editState.description = input.value;
+        }
+    };
+
+    const handleAssetsListChange = (event) => {
+        const checkbox = event.target.closest('.asset-select-checkbox');
+        if (!checkbox) return;
+        const label = checkbox.dataset.label;
+        toggleAssetSelection(label, checkbox.checked);
+    };
+
+    const handleAssetsListClick = (event) => {
+        const saveBtn = event.target.closest('.asset-save-btn');
+        if (saveBtn) {
+            const { originalLabel } = saveBtn.dataset || {};
+            if (originalLabel) saveAssetEdit(originalLabel);
+            return;
+        }
+        const cancelBtn = event.target.closest('.asset-cancel-btn');
+        if (cancelBtn) {
+            const { originalLabel } = cancelBtn.dataset || {};
+            if (originalLabel) cancelAssetEdit(originalLabel);
+            return;
+        }
+
         const actionBtn = event.target.closest('[data-action]');
         if (!actionBtn) return;
         const { action, label } = actionBtn.dataset;
         if (!label) return;
+
         if (action === 'copy') {
             copyAssetToken(label);
         } else if (action === 'delete') {
-            deleteAsset(label);
+            performSingleAssetDelete(label);
+        } else if (action === 'edit') {
+            enterAssetEdit(label);
         }
     };
 
@@ -826,12 +1131,14 @@
             const data = await response.json();
             state.assets = Array.isArray(data.assets) ? data.assets : [];
             updateAssetsCount();
+            pruneSelectionsAndEdits();
             renderAssetsList();
         } catch (err) {
             console.error('fetchAssets error:', err);
             showAlert('โหลดรายการรูปภาพไม่สำเร็จ', 'danger');
             state.assets = [];
             updateAssetsCount();
+            pruneSelectionsAndEdits();
             renderAssetsList();
         }
     };
