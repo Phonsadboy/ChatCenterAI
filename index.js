@@ -2292,7 +2292,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
     return null;
   }
 
-  const orderModel = modelOverride || (await getSettingValue("orderModel", "gpt-4o-mini"));
+  const orderModel = modelOverride || (await getSettingValue("orderModel", "gpt-4.1-mini"));
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
   // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่
@@ -2313,7 +2313,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
 ข้อมูลที่ต้องสกัด:
 - items: รายการสินค้า [{product: "ชื่อสินค้า", quantity: จำนวน, price: ราคาต่อชิ้น}]
 - totalAmount: ยอดรวมทั้งหมด (ถ้าไม่ระบุให้คำนวณจาก items)
-- shippingAddress: ที่อยู่จัดส่ง (ถ้าไม่ระบุให้เป็น null)
+- shippingAddress: ที่อยู่จัดส่ง (จำเป็นต้องมี ถ้าไม่มีให้สรุปว่าไม่มีออเดอร์)
 - phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
 - paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
 
@@ -2327,7 +2327,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
     "paymentMethod": "วิธีชำระหรือ null"
   },
   "confidence": 0.0-1.0,
-  "reason": "เหตุผลสั้นๆ"
+  "reason": "เหตุผลสั้นๆ (หากไม่มีที่อยู่ให้สรุปว่าไม่มีออเดอร์)"
 }`;
 
   const userPrompt = `บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์และสกัดข้อมูลออเดอร์:`;
@@ -2339,7 +2339,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      temperature: 0.1, // ลดความสุ่มเพื่อความแม่นยำ
+      temperature: 0.0, // ลดความสุ่มเพื่อความแม่นยำ
     });
 
     const content = response.choices?.[0]?.message?.content || "";
@@ -2379,6 +2379,12 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
         }
       }
 
+      // ต้องมีที่อยู่จัดส่ง
+      if (!shippingAddress || typeof shippingAddress !== "string" || !shippingAddress.trim()) {
+        console.warn("[Order] ไม่มีที่อยู่จัดส่ง");
+        return { hasOrder: false, orderData: null, confidence: 0, reason: "ไม่มีที่อยู่จัดส่ง" };
+      }
+
       // คำนวณยอดรวมถ้าไม่ระบุ
       let calculatedTotal = totalAmount;
       if (!calculatedTotal || calculatedTotal <= 0) {
@@ -2390,7 +2396,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
         orderData: {
           items: items,
           totalAmount: calculatedTotal,
-          shippingAddress: shippingAddress || null,
+          shippingAddress: shippingAddress.trim(),
           phone: phone || null,
           paymentMethod: paymentMethod || "เก็บเงินปลายทาง"
         },
