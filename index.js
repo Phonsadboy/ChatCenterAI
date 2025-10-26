@@ -6064,15 +6064,65 @@ async function getAssetsInstructionsText(selectedCollectionIds = null) {
 
 // ฟังก์ชันใหม่: สร้าง assets map จาก collections ที่เลือก
 async function getAssetsMapForBot(selectedCollectionIds = null) {
-  let assets = [];
+  const hasSelections =
+    Array.isArray(selectedCollectionIds) && selectedCollectionIds.length > 0;
+  const map = {};
+  let primaryAssets = [];
 
-  if (selectedCollectionIds && Array.isArray(selectedCollectionIds) && selectedCollectionIds.length > 0) {
-    assets = await getImagesFromSelectedCollections(selectedCollectionIds);
-  } else {
-    assets = await getInstructionAssets();
+  if (hasSelections) {
+    try {
+      primaryAssets = await getImagesFromSelectedCollections(
+        selectedCollectionIds,
+      );
+    } catch (err) {
+      console.error(
+        "[Assets] Error fetching selected collection assets:",
+        err?.message || err,
+      );
+    }
   }
 
-  return buildAssetsLookup(assets);
+  if (Array.isArray(primaryAssets) && primaryAssets.length > 0) {
+    for (const asset of primaryAssets) {
+      addAssetToLookup(map, asset);
+    }
+  }
+
+  let fallbackAssets = [];
+  try {
+    fallbackAssets = await getInstructionAssets();
+  } catch (err) {
+    console.error(
+      "[Assets] Error fetching fallback instruction assets:",
+      err?.message || err,
+    );
+  }
+
+  if (Array.isArray(fallbackAssets) && fallbackAssets.length > 0) {
+    const missingLabels =
+      hasSelections && Object.keys(map).length > 0 ? new Set() : null;
+    for (const asset of fallbackAssets) {
+      if (!asset) continue;
+      const alreadyResolvable =
+        !hasSelections ||
+        !missingLabels ||
+        !!findAssetInLookup(map, asset.label || asset.slug || asset.fileName);
+      addAssetToLookup(map, asset);
+      if (missingLabels && !alreadyResolvable && asset.label) {
+        missingLabels.add(asset.label);
+      }
+    }
+    if (missingLabels && missingLabels.size > 0) {
+      const sample = Array.from(missingLabels).slice(0, 5);
+      console.warn(
+        "[Assets] Some instruction assets are not linked to selected collections:",
+        sample.join(", "),
+        missingLabels.size > sample.length ? `(+${missingLabels.size - sample.length})` : "",
+      );
+    }
+  }
+
+  return map;
 }
 
 // Parse assistant reply into segments of text and images based on #[IMAGE:label]
@@ -9375,12 +9425,25 @@ app.post(
 
       await coll.updateOne({ label }, { $set: doc }, { upsert: true });
 
+      const savedAsset = await coll.findOne({ label });
+      if (!savedAsset) {
+        throw new Error("ไม่สามารถบันทึกข้อมูลรูปภาพได้");
+      }
+
+      await syncInstructionAssetToCollections(db, savedAsset);
+
       res.json({
         success: true,
         asset: {
-          ...doc,
-          fileId: doc.fileId?.toString?.() || doc.fileId,
-          thumbFileId: doc.thumbFileId?.toString?.() || doc.thumbFileId,
+          ...savedAsset,
+          fileId: savedAsset.fileId?.toString?.() || savedAsset.fileId,
+          thumbFileId:
+            savedAsset.thumbFileId?.toString?.() || savedAsset.thumbFileId,
+          url: resolveInstructionAssetUrl(savedAsset.url, savedAsset.fileName),
+          thumbUrl: resolveInstructionAssetUrl(
+            savedAsset.thumbUrl || savedAsset.url,
+            savedAsset.thumbFileName || savedAsset.fileName,
+          ),
         },
       });
     } catch (err) {
@@ -9403,6 +9466,8 @@ app.delete("/admin/instructions/assets/:label", async (req, res) => {
     const doc = await coll.findOne({ label });
     if (!doc)
       return res.status(404).json({ success: false, error: "ไม่พบ asset" });
+
+    await removeInstructionAssetFromCollections(db, doc);
 
     await coll.deleteOne({ label });
 
@@ -9532,6 +9597,202 @@ async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
   } catch (e) {
     console.error("[Collections] Error getting images from collections:", e);
     return [];
+  }
+}
+
+function buildCollectionImageEntryFromAsset(asset) {
+  if (!asset || typeof asset !== "object") return null;
+  const label = typeof asset.label === "string" ? asset.label.trim() : "";
+  if (!label) return null;
+  const slug =
+    typeof asset.slug === "string" && asset.slug.trim()
+      ? asset.slug.trim()
+      : label;
+  const fileName =
+    typeof asset.fileName === "string" && asset.fileName.trim()
+      ? asset.fileName.trim()
+      : null;
+  const thumbFileName =
+    typeof asset.thumbFileName === "string" && asset.thumbFileName.trim()
+      ? asset.thumbFileName.trim()
+      : null;
+
+  const resolvedUrl = resolveInstructionAssetUrl(asset.url, fileName);
+  const resolvedThumbUrl = resolveInstructionAssetUrl(
+    asset.thumbUrl || resolvedUrl,
+    thumbFileName || fileName,
+  );
+
+  return {
+    label,
+    slug,
+    url: resolvedUrl,
+    thumbUrl: resolvedThumbUrl,
+    description:
+      typeof asset.description === "string" && asset.description.trim()
+        ? asset.description.trim()
+        : typeof asset.alt === "string"
+          ? asset.alt.trim()
+          : "",
+    fileName: fileName || undefined,
+    assetId: asset._id
+      ? asset._id.toString()
+      : asset.assetId
+        ? String(asset.assetId)
+        : undefined,
+  };
+}
+
+async function syncInstructionAssetToCollections(db, asset) {
+  if (!db || !asset) return;
+  const collectionEntry = buildCollectionImageEntryFromAsset(asset);
+  if (!collectionEntry) return;
+
+  const collectionsColl = db.collection("image_collections");
+  const orConditions = [];
+  if (collectionEntry.assetId) {
+    orConditions.push({ "images.assetId": collectionEntry.assetId });
+  }
+  orConditions.push({ "images.label": collectionEntry.label });
+  orConditions.push({ isDefault: true });
+
+  const query =
+    orConditions.length === 1 ? orConditions[0] : { $or: orConditions };
+  const collections = await collectionsColl.find(query).toArray();
+
+  let defaultUpdated = false;
+
+  for (const collection of collections) {
+    const currentImages = Array.isArray(collection.images)
+      ? [...collection.images]
+      : [];
+    let changed = false;
+    const matchIndex = currentImages.findIndex((img) => {
+      if (!img) return false;
+      if (
+        collectionEntry.assetId &&
+        img.assetId &&
+        String(img.assetId) === collectionEntry.assetId
+      ) {
+        return true;
+      }
+      return img.label === collectionEntry.label;
+    });
+
+    if (matchIndex >= 0) {
+      currentImages[matchIndex] = {
+        ...currentImages[matchIndex],
+        ...collectionEntry,
+      };
+      changed = true;
+    } else if (collection.isDefault) {
+      currentImages.unshift(collectionEntry);
+      changed = true;
+      defaultUpdated = true;
+    }
+
+    if (collection.isDefault) {
+      defaultUpdated = true;
+    }
+
+    if (changed) {
+      await collectionsColl.updateOne(
+        { _id: collection._id },
+        {
+          $set: {
+            images: currentImages,
+            updatedAt: new Date(),
+          },
+        },
+      );
+    }
+  }
+
+  if (!defaultUpdated) {
+    const defaultCollection = await collectionsColl.findOne({ isDefault: true });
+    if (defaultCollection) {
+      const images = Array.isArray(defaultCollection.images)
+        ? [collectionEntry, ...defaultCollection.images.filter(Boolean)]
+        : [collectionEntry];
+      await collectionsColl.updateOne(
+        { _id: defaultCollection._id },
+        {
+          $set: {
+            images,
+            updatedAt: new Date(),
+          },
+        },
+      );
+    } else {
+      const assetsColl = db.collection("instruction_assets");
+      const allAssets = await assetsColl.find({}).sort({ createdAt: -1 }).toArray();
+      const imageEntries = [];
+      for (const assetDoc of allAssets) {
+        const entry = buildCollectionImageEntryFromAsset(assetDoc);
+        if (entry) {
+          imageEntries.push(entry);
+        }
+      }
+      const defaultId = `default-collection-${Date.now()}`;
+      await collectionsColl.insertOne({
+        _id: defaultId,
+        name: "รูปภาพทั้งหมด (สร้างอัตโนมัติ)",
+        description:
+          "ระบบสร้างคอลเลกชันเริ่มต้นขึ้นใหม่ เนื่องจากไม่พบข้อมูลเดิม",
+        images: imageEntries,
+        isDefault: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      console.warn(
+        "[Assets] Default image collection was missing. A new collection has been created automatically.",
+      );
+    }
+  }
+}
+
+async function removeInstructionAssetFromCollections(db, asset) {
+  if (!db || !asset) return;
+  const label =
+    typeof asset.label === "string" && asset.label.trim()
+      ? asset.label.trim()
+      : null;
+  const assetId = asset._id ? asset._id.toString() : asset.assetId || null;
+  if (!label && !assetId) return;
+
+  const collectionsColl = db.collection("image_collections");
+  const filters = [];
+  if (assetId) {
+    filters.push({ "images.assetId": assetId });
+  }
+  if (label) {
+    filters.push({ "images.label": label });
+  }
+  if (filters.length === 0) return;
+
+  const query = filters.length === 1 ? filters[0] : { $or: filters };
+  const collections = await collectionsColl.find(query).toArray();
+
+  for (const collection of collections) {
+    const before = Array.isArray(collection.images) ? collection.images : [];
+    const filtered = before.filter((img) => {
+      if (!img) return false;
+      const matchById =
+        assetId && img.assetId && String(img.assetId) === String(assetId);
+      const matchByLabel = label && img.label === label;
+      return !matchById && !matchByLabel;
+    });
+    if (filtered.length !== before.length) {
+      await collectionsColl.updateOne(
+        { _id: collection._id },
+        {
+          $set: {
+            images: filtered,
+            updatedAt: new Date(),
+          },
+        },
+      );
+    }
   }
 }
 
