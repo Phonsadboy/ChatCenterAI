@@ -46,6 +46,32 @@ const GOOGLE_DOC_ID = "1U-2OPVVI_Gz0-uFonrRNrcFopDqmPGUcJ4qJ1RdAqxY";
 const SPREADSHEET_ID = "15nU46XyAh0zLAyD_5DJPfZ2Gog6IOsoedSCCMpnjEJo";
 // FLOW_TEXT และรายละเอียด flow ต่าง ๆ ถูกลบออก เนื่องจากไม่ได้ใช้งานแล้ว
 
+function resolveInstructionAssetUrl(url, fallbackFileName) {
+  const base = typeof PUBLIC_BASE_URL === "string"
+    ? PUBLIC_BASE_URL.replace(/\/$/, "")
+    : "";
+  const candidate = (() => {
+    if (typeof url === "string" && url.trim()) {
+      return url.trim();
+    }
+    if (fallbackFileName) {
+      return `/assets/instructions/${fallbackFileName}`;
+    }
+    return null;
+  })();
+  if (!candidate) return null;
+  if (/^https?:\/\//i.test(candidate)) {
+    return candidate;
+  }
+  const pathPart = candidate.startsWith("/")
+    ? candidate
+    : `/assets/instructions/${candidate}`;
+  if (base) {
+    return `${base}${pathPart}`;
+  }
+  return pathPart;
+}
+
 // Line Client จะถูกสร้างเมื่อต้องการใช้งานจริง (ไม่สร้างตั้งแต่เริ่มต้น)
 let lineClient = null;
 
@@ -5895,6 +5921,11 @@ async function getInstructionAssets() {
     const assets = await coll.find({}).sort({ createdAt: -1 }).toArray();
     return assets.map((asset) => ({
       ...asset,
+      url: resolveInstructionAssetUrl(asset.url, asset.fileName),
+      thumbUrl: resolveInstructionAssetUrl(
+        asset.thumbUrl || asset.url,
+        asset.thumbFileName || asset.fileName,
+      ),
       fileId: asset?.fileId ? asset.fileId.toString() : undefined,
       thumbFileId: asset?.thumbFileId
         ? asset.thumbFileId.toString()
@@ -6050,6 +6081,13 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
     return [{ type: "text", text: "" }];
   const segments = [];
   const regex = /#\[\s*IMAGE\s*:\s*([^\]]*?)\s*\]/gi;
+  const uniquePush = (arr, value) => {
+    const candidate = typeof value === "string" ? value.trim() : "";
+    if (!candidate) return;
+    if (!arr.includes(candidate)) {
+      arr.push(candidate);
+    }
+  };
   let lastIndex = 0;
   let match;
   while ((match = regex.exec(message)) !== null) {
@@ -6057,13 +6095,43 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
     const prev = message.slice(lastIndex, idx);
     if (prev && prev.trim() !== "") segments.push({ type: "text", text: prev });
     let rawLabel = (match[1] || "").trim();
-    // normalize trailing colon (e.g., qr-code:)
-    if (rawLabel.endsWith(":")) rawLabel = rawLabel.slice(0, -1).trim();
-    const asset = findAssetInLookup(assetsMap, rawLabel);
+    let cleanedLabel = rawLabel.replace(/^[“”"'`]+/, "").replace(/[“”"'`]+$/, "");
+    const candidates = [];
+    uniquePush(candidates, cleanedLabel);
+    if (cleanedLabel.endsWith(":")) {
+      uniquePush(candidates, cleanedLabel.slice(0, -1));
+    }
+    const bulletStripped = cleanedLabel.replace(/^[\s]*[-*•●]+\s*/, "");
+    if (bulletStripped !== cleanedLabel) {
+      uniquePush(candidates, bulletStripped);
+    }
+    const numberStripped = cleanedLabel.replace(/^[\s]*\d+\s*[\).:-]\s*/, "");
+    if (numberStripped !== cleanedLabel) {
+      uniquePush(candidates, numberStripped);
+    }
+    if (cleanedLabel.includes(":")) {
+      uniquePush(candidates, cleanedLabel.split(":")[0]);
+    }
+    if (cleanedLabel.includes(" - ")) {
+      uniquePush(candidates, cleanedLabel.split(" - ")[0]);
+    }
+    if (cleanedLabel.includes("\n")) {
+      uniquePush(candidates, cleanedLabel.split("\n")[0]);
+    }
+
+    let asset = null;
+    let matchedLabel = null;
+    for (const candidate of candidates) {
+      asset = findAssetInLookup(assetsMap, candidate);
+      if (asset) {
+        matchedLabel = candidate;
+        break;
+      }
+    }
     if (asset) {
       segments.push({
         type: "image",
-        label: rawLabel,
+        label: asset.label || matchedLabel || rawLabel,
         url: asset.url,
         thumbUrl: asset.thumbUrl || asset.url,
         alt: asset.alt || "",
@@ -9392,10 +9460,49 @@ async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("image_collections");
-    
-    const collections = await coll.find({ 
-      _id: { $in: selectedCollectionIds } 
-    }).toArray();
+
+    const stringIds = new Set();
+    const objectIds = [];
+    for (const rawId of selectedCollectionIds) {
+      if (!rawId) continue;
+      if (typeof rawId === "string") {
+        const trimmed = rawId.trim();
+        if (!trimmed) continue;
+        stringIds.add(trimmed);
+        if (ObjectId.isValid(trimmed)) {
+          objectIds.push(new ObjectId(trimmed));
+        }
+      } else if (rawId instanceof ObjectId) {
+        objectIds.push(rawId);
+      } else if (rawId && typeof rawId === "object" && rawId._id) {
+        const nestedId = rawId._id;
+        if (nestedId instanceof ObjectId) {
+          objectIds.push(nestedId);
+        } else if (typeof nestedId === "string" && nestedId.trim()) {
+          stringIds.add(nestedId.trim());
+          if (ObjectId.isValid(nestedId.trim())) {
+            objectIds.push(new ObjectId(nestedId.trim()));
+          }
+        }
+      }
+    }
+
+    const queries = [];
+    if (stringIds.size > 0) {
+      queries.push({ _id: { $in: Array.from(stringIds) } });
+    }
+    if (objectIds.length > 0) {
+      queries.push({ _id: { $in: objectIds } });
+    }
+
+    const findQuery =
+      queries.length === 0
+        ? { _id: { $in: Array.from(stringIds) } }
+        : queries.length === 1
+          ? queries[0]
+          : { $or: queries };
+
+    const collections = await coll.find(findQuery).toArray();
 
     // รวมรูปภาพจากทุก collection
     const allImages = [];
@@ -9406,7 +9513,15 @@ async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
         for (const img of collection.images) {
           // ป้องกันรูปซ้ำ (ใช้ label เป็น key)
           if (img.label && !seenLabels.has(img.label)) {
-            allImages.push(img);
+            const resolvedImage = {
+              ...img,
+              url: resolveInstructionAssetUrl(img.url, img.fileName),
+              thumbUrl: resolveInstructionAssetUrl(
+                img.thumbUrl || img.url,
+                img.thumbFileName || img.fileName,
+              ),
+            };
+            allImages.push(resolvedImage);
             seenLabels.add(img.label);
           }
         }
