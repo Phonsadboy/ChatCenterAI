@@ -1836,14 +1836,24 @@ async function sendFollowUpMessage(task, round, db) {
       combinedMessage += "[cut]";
     }
     
+    const followUpAssets = [];
+    const followUpLabels = [];
     // เพิ่ม #[IMAGE:...] token สำหรับแต่ละรูป
     for (let i = 0; i < images.length; i++) {
       const image = images[i];
-      const label = image.fileName || image.alt || `รูปที่ ${i + 1}`;
-      combinedMessage += `#[IMAGE:${label}]`;
+      const labelSource =
+        typeof image.label === "string" && image.label.trim()
+          ? image.label.trim()
+          : image.fileName || image.alt || `รูปที่ ${i + 1}`;
+      combinedMessage += `#[IMAGE:${labelSource}]`;
       if (i < images.length - 1) {
         combinedMessage += "[cut]";
       }
+      followUpLabels.push(labelSource);
+      followUpAssets.push({
+        ...image,
+        label: labelSource,
+      });
     }
     
     console.log("[FollowUp Debug] Combined message:", {
@@ -1853,20 +1863,17 @@ async function sendFollowUpMessage(task, round, db) {
     });
     
     // สร้าง assetsMap จากรูปภาพที่มี
-    const assetsMap = {};
-    images.forEach((image, i) => {
-      const label = image.fileName || image.alt || `รูปที่ ${i + 1}`;
-      assetsMap[label] = {
-        url: image.url,
-        thumbUrl: image.previewUrl || image.thumbUrl || image.url,
-        alt: image.alt || "",
-        fileName: image.fileName || "",
-      };
-    });
+    const assetsMap = buildAssetsLookup(
+      followUpAssets.map((asset) => ({
+        ...asset,
+        thumbUrl: asset.previewUrl || asset.thumbUrl || asset.url,
+        fileName: asset.fileName || "",
+      })),
+    );
     
     console.log("[FollowUp Debug] Assets map:", {
-      labels: Object.keys(assetsMap),
-      urls: Object.values(assetsMap).map(a => a.url),
+      labels: followUpLabels,
+      urls: followUpAssets.map((asset) => asset.url),
     });
     
     // ใช้ sendFacebookMessage ที่มี upload/url mode และ fallback
@@ -5899,13 +5906,103 @@ async function getInstructionAssets() {
   }
 }
 
-async function getInstructionAssetsMap() {
-  const assets = await getInstructionAssets();
+function stripAssetExtension(name) {
+  if (!name || typeof name !== "string") return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const lastDot = trimmed.lastIndexOf(".");
+  if (lastDot > 0) {
+    return trimmed.slice(0, lastDot).trim();
+  }
+  return trimmed;
+}
+
+function normalizeAssetKey(value) {
+  if (!value || typeof value !== "string") return null;
+  const normalized = value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || null;
+}
+
+function addAssetToLookup(map, asset) {
+  if (!map || !asset || typeof asset !== "object") return;
+  const candidates = new Map();
+  const register = (text, prefer = false) => {
+    if (!text || typeof text !== "string") return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (!candidates.has(trimmed)) candidates.set(trimmed, prefer);
+    if (prefer) candidates.set(trimmed, true);
+    const withoutExt = stripAssetExtension(trimmed);
+    if (withoutExt && !candidates.has(withoutExt)) {
+      candidates.set(withoutExt, prefer);
+    } else if (withoutExt && prefer) {
+      candidates.set(withoutExt, true);
+    }
+  };
+
+  register(asset.label, true);
+  register(asset.slug);
+  register(asset.fileName);
+  register(asset.alt);
+  if (Array.isArray(asset.aliases)) {
+    for (const alias of asset.aliases) {
+      register(alias);
+    }
+  }
+  if (Array.isArray(asset.tags)) {
+    for (const tag of asset.tags) {
+      register(tag);
+    }
+  }
+
+  for (const [key, prefer] of candidates.entries()) {
+    if (prefer || !map[key]) {
+      map[key] = asset;
+    }
+    const normalizedKey = normalizeAssetKey(key);
+    if (normalizedKey && (prefer || !map[normalizedKey])) {
+      map[normalizedKey] = asset;
+    }
+  }
+}
+
+function buildAssetsLookup(assets = []) {
   const map = {};
-  for (const a of assets) {
-    if (a && a.label) map[a.label] = a;
+  for (const asset of assets) {
+    if (!asset) continue;
+    addAssetToLookup(map, asset);
   }
   return map;
+}
+
+function findAssetInLookup(map, query) {
+  if (!map || !query) return null;
+  if (map[query]) return map[query];
+  if (typeof query === "string") {
+    const trimmed = query.trim();
+    if (trimmed && map[trimmed]) return map[trimmed];
+    const normalized = normalizeAssetKey(trimmed);
+    if (normalized && map[normalized]) return map[normalized];
+    const withoutExt = stripAssetExtension(trimmed);
+    if (withoutExt) {
+      if (map[withoutExt]) return map[withoutExt];
+      const normalizedWithoutExt = normalizeAssetKey(withoutExt);
+      if (normalizedWithoutExt && map[normalizedWithoutExt]) {
+        return map[normalizedWithoutExt];
+      }
+    }
+  }
+  return null;
+}
+
+async function getInstructionAssetsMap() {
+  const assets = await getInstructionAssets();
+  return buildAssetsLookup(assets);
 }
 
 // ฟังก์ชันใหม่: ดึงรูปภาพจาก collections ที่เลือก (สำหรับ bot context)
@@ -5944,11 +6041,7 @@ async function getAssetsMapForBot(selectedCollectionIds = null) {
     assets = await getInstructionAssets();
   }
 
-  const map = {};
-  for (const a of assets) {
-    if (a && a.label) map[a.label] = a;
-  }
-  return map;
+  return buildAssetsLookup(assets);
 }
 
 // Parse assistant reply into segments of text and images based on #[IMAGE:label]
@@ -5966,7 +6059,7 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
     let rawLabel = (match[1] || "").trim();
     // normalize trailing colon (e.g., qr-code:)
     if (rawLabel.endsWith(":")) rawLabel = rawLabel.slice(0, -1).trim();
-    const asset = assetsMap[rawLabel];
+    const asset = findAssetInLookup(assetsMap, rawLabel);
     if (asset) {
       segments.push({
         type: "image",
