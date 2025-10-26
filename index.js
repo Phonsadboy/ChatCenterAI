@@ -2243,6 +2243,44 @@ function normalizeShippingCostValue(rawCost) {
   return 0;
 }
 
+function buildOrderQuery(params = {}) {
+  const query = {};
+  const status = params.status;
+  if (status && status !== "all") {
+    query.status = status;
+  }
+
+  const timezone = "Asia/Bangkok";
+  let startMoment = null;
+  let endMoment = null;
+
+  if (params.todayOnly === "true") {
+    startMoment = moment().tz(timezone).startOf("day");
+    endMoment = moment().tz(timezone).endOf("day");
+  } else {
+    if (params.startDate) {
+      const parsedStart = moment.tz(params.startDate, timezone);
+      if (parsedStart.isValid()) {
+        startMoment = parsedStart.startOf("day");
+      }
+    }
+    if (params.endDate) {
+      const parsedEnd = moment.tz(params.endDate, timezone);
+      if (parsedEnd.isValid()) {
+        endMoment = parsedEnd.endOf("day");
+      }
+    }
+  }
+
+  if (startMoment || endMoment) {
+    query.extractedAt = {};
+    if (startMoment) query.extractedAt.$gte = startMoment.toDate();
+    if (endMoment) query.extractedAt.$lte = endMoment.toDate();
+  }
+
+  return { query, dateRange: { start: startMoment, end: endMoment } };
+}
+
 async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
   if (!OPENAI_API_KEY) {
     console.warn("[Order] ไม่มี OPENAI_API_KEY ข้ามการวิเคราะห์ออเดอร์");
@@ -9825,6 +9863,15 @@ app.get("/admin/chat", async (req, res) => {
   }
 });
 
+app.get("/admin/orders", async (req, res) => {
+  try {
+    res.render("admin-orders");
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถโหลดหน้าออเดอร์ได้:", error);
+    res.render("admin-orders");
+  }
+});
+
 // Get users who have chatted
 app.get("/admin/chat/users", async (req, res) => {
   try {
@@ -10889,6 +10936,200 @@ app.post("/api/settings/filter", async (req, res) => {
   } catch (err) {
     console.error("Error saving filter settings:", err);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/admin/orders/data", async (req, res) => {
+  try {
+    const { query } = buildOrderQuery(req.query || {});
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const skip = (page - 1) * limit;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const ordersCursor = coll
+      .find(query)
+      .sort({ extractedAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const [orders, totalCount, statusAgg, totalsAgg] = await Promise.all([
+      ordersCursor.toArray(),
+      coll.countDocuments(query),
+      coll
+        .aggregate([
+          { $match: query },
+          { $group: { _id: "$status", count: { $sum: 1 } } },
+        ])
+        .toArray(),
+      coll
+        .aggregate([
+          { $match: query },
+          {
+            $group: {
+              _id: null,
+              totalAmount: {
+                $sum: { $ifNull: ["$orderData.totalAmount", 0] },
+              },
+              totalShipping: {
+                $sum: { $ifNull: ["$orderData.shippingCost", 0] },
+              },
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+
+    const userIds = Array.from(
+      new Set(orders.map((order) => order.userId).filter(Boolean)),
+    );
+    let profiles = [];
+    if (userIds.length) {
+      profiles = await db
+        .collection("user_profiles")
+        .find({ userId: { $in: userIds } })
+        .project({ userId: 1, displayName: 1 })
+        .toArray();
+    }
+
+    const profileMap = {};
+    profiles.forEach((profile) => {
+      profileMap[profile.userId] = profile.displayName;
+    });
+
+    const formattedOrders = orders.map((order) => {
+      const orderData = order.orderData || {};
+      return {
+        id: order._id?.toString?.() || "",
+        userId: order.userId || "",
+        displayName: profileMap[order.userId] || "",
+        platform: order.platform || "line",
+        status: order.status || "pending",
+        totalAmount: orderData.totalAmount || 0,
+        shippingCost: orderData.shippingCost || 0,
+        paymentMethod: orderData.paymentMethod || null,
+        shippingAddress: orderData.shippingAddress || null,
+        phone: orderData.phone || null,
+        items: Array.isArray(orderData.items) ? orderData.items : [],
+        extractedAt: order.extractedAt || null,
+        notes: order.notes || "",
+        isManualExtraction: !!order.isManualExtraction,
+        extractedFrom: order.extractedFrom || null,
+      };
+    });
+
+    const statusCounts = {};
+    statusAgg.forEach((entry) => {
+      statusCounts[entry._id || "unknown"] = entry.count;
+    });
+
+    const totalsEntry = totalsAgg[0] || { totalAmount: 0, totalShipping: 0 };
+
+    res.json({
+      success: true,
+      orders: formattedOrders,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        pages: Math.ceil(totalCount / limit) || 1,
+      },
+      summary: {
+        totalOrders: totalCount,
+        totalAmount: totalsEntry.totalAmount || 0,
+        totalShipping: totalsEntry.totalShipping || 0,
+      },
+      statusCounts,
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถดึงข้อมูลออเดอร์ได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get("/admin/orders/export", async (req, res) => {
+  try {
+    const { query } = buildOrderQuery(req.query || {});
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const orders = await coll
+      .find(query)
+      .sort({ extractedAt: -1 })
+      .limit(5000)
+      .toArray();
+
+    const userIds = Array.from(
+      new Set(orders.map((order) => order.userId).filter(Boolean)),
+    );
+    let profiles = [];
+    if (userIds.length) {
+      profiles = await db
+        .collection("user_profiles")
+        .find({ userId: { $in: userIds } })
+        .project({ userId: 1, displayName: 1 })
+        .toArray();
+    }
+
+    const profileMap = {};
+    profiles.forEach((profile) => {
+      profileMap[profile.userId] = profile.displayName;
+    });
+
+    const timezone = "Asia/Bangkok";
+    const exportRows = orders.map((order, index) => {
+      const orderData = order.orderData || {};
+      const items = Array.isArray(orderData.items) ? orderData.items : [];
+      const itemsText = items
+        .map(
+          (item, idx) =>
+            `${idx + 1}. ${item.product} x${item.quantity} @ ${item.price}`,
+        )
+        .join("\n");
+
+      return {
+        ลำดับ: index + 1,
+        วันที่: order.extractedAt
+          ? moment(order.extractedAt).tz(timezone).format("YYYY-MM-DD HH:mm:ss")
+          : "",
+        ผู้ใช้: order.userId || "",
+        ชื่อ: profileMap[order.userId] || "",
+        แพลตฟอร์ม: order.platform || "line",
+        สถานะ: order.status || "pending",
+        ยอดรวม: orderData.totalAmount || 0,
+        ค่าส่ง: orderData.shippingCost || 0,
+        วิธีชำระ: orderData.paymentMethod || "",
+        ที่อยู่: orderData.shippingAddress || "",
+        เบอร์โทร: orderData.phone || "",
+        รายการสินค้า: itemsText,
+        หมายเหตุ: order.notes || "",
+        ประเภท: order.isManualExtraction ? "Manual" : "Automatic",
+      };
+    });
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Orders");
+
+    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
+    const filename = `orders_${moment().tz("Asia/Bangkok").format("YYYYMMDD_HHmmss")}.xlsx`;
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`,
+    );
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.send(buffer);
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถส่งออกออเดอร์ได้:", error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

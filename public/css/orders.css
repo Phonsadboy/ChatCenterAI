@@ -1,0 +1,167 @@
+.orders-wrapper {
+  background-color: #f5f6fa;
+  min-height: 100vh;
+}
+
+.page-title {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.summary-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+  height: 100%;
+}
+
+.summary-label {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin-bottom: 0.25rem;
+}
+
+.summary-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.orders-loading .spinner-border {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.orders-empty-state i {
+  font-size: 2.75rem;
+  color: #d1d5db;
+}
+
+.orders-empty-state h5 {
+  font-weight: 600;
+  color: #111827;
+}
+
+#ordersTable thead {
+  background-color: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+#ordersTable th {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  color: #6b7280;
+  letter-spacing: 0.04em;
+}
+
+#ordersTable tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+#ordersTable tbody tr:hover {
+  background-color: #f4f5f7;
+}
+
+.status-badge {
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  text-transform: capitalize;
+}
+
+.status-badge.pending {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
+.status-badge.confirmed {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+.status-badge.shipped {
+  background: rgba(6, 182, 212, 0.12);
+  color: #0e7490;
+}
+
+.status-badge.completed {
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+}
+
+.status-badge.cancelled {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.order-items-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.order-items-list li + li {
+  margin-top: 0.25rem;
+}
+
+.order-meta-small {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.orders-wrapper .card {
+  border: none;
+  border-radius: 16px;
+}
+
+.orders-wrapper .card-header,
+.orders-wrapper .card-body {
+  border-radius: 16px;
+}
+
+#ordersPagination .btn {
+  min-width: 110px;
+}
+
+@media (max-width: 767.98px) {
+  .orders-wrapper {
+    padding-bottom: 2rem;
+  }
+
+  #ordersTable thead {
+    display: none;
+  }
+
+  #ordersTable tbody tr {
+    display: block;
+    margin-bottom: 1.25rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 1rem;
+  }
+
+  #ordersTable tbody td {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.35rem 0;
+    border-bottom: 1px dashed #e5e7eb;
+  }
+
+  #ordersTable tbody td:last-child {
+    border-bottom: none;
+  }
+
+  #ordersTable tbody td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: #6b7280;
+    margin-right: 1rem;
+  }
+}
