@@ -11225,6 +11225,7 @@ function processQueueMessageForDisplay(content) {
         displayContent =
           '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
         contentType = "error";
+        plainText = "";
       }
     }
     // ถ้าเป็น object เดี่ยว
@@ -11236,13 +11237,16 @@ function processQueueMessageForDisplay(content) {
           const textWithBreaks = data.text.replace(/\n/g, "<br>");
           displayContent = `<div class="message-text">${textWithBreaks}</div>`;
           contentType = "text";
+          plainText = data.text;
         } else if (data.type === "image" && data.base64) {
           displayContent = createImageHTML(data);
           contentType = "image";
+          plainText = "";
         } else {
           displayContent =
             '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
           contentType = "error";
+          plainText = "";
         }
       } else {
         // ถ้าไม่มี data field ให้ลองแปลงเป็น string
@@ -11250,10 +11254,12 @@ function processQueueMessageForDisplay(content) {
           const contentStr = JSON.stringify(content);
           displayContent = `<div class="message-text">${contentStr}</div>`;
           contentType = "text";
+          plainText = contentStr;
         } catch {
           displayContent =
             '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
           contentType = "error";
+          plainText = "";
         }
       }
     }
@@ -11352,12 +11358,14 @@ function processQueueMessageForDisplayV2(content) {
         const textWithBreaks = content.content.replace(/\n/g, "<br>");
         displayContent = `<div class="message-text">${textWithBreaks}</div>`;
         contentType = "text";
+        plainText = content.content;
       } else if (content.type === "image" && content.content) {
         displayContent = createImageHTML({
           base64: content.content,
           description: content.description || "ผู้ใช้ส่งรูปภาพมา",
         });
         contentType = "image";
+        plainText = "";
       }
       // รองรับรูปแบบเก่า
       else if (content.data) {
