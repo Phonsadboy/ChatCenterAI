@@ -10,7 +10,8 @@
         collectionAssetFilter: '',
         botCollectionFilter: '',
         editingCollectionId: null,
-        editingBot: null
+        editingBot: null,
+        collectionUsageFilter: 'all'
     };
 
     const elements = {
@@ -18,9 +19,11 @@
         collectionsList: null,
         collectionsCount: null,
         collectionsSearch: null,
+        collectionFilterButtons: null,
         addCollectionBtn: null,
         refreshCollectionsBtn: null,
         assetsManagerBtn: null,
+        copyTestMessageBtn: null,
         assetsCount: null,
         assetsSearch: null,
         assetsList: null,
@@ -78,6 +81,16 @@
             .replace(/'/g, '&#39;');
     };
 
+    const escapeAttribute = (value) => {
+        if (value === null || value === undefined) return '';
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    };
+
     const formatFileSize = (bytes) => {
         const size = Number(bytes);
         if (!Number.isFinite(size) || size <= 0) return '-';
@@ -114,9 +127,11 @@
         elements.collectionsList = document.getElementById('imageCollectionsList');
         elements.collectionsCount = document.getElementById('imageCollectionsCount');
         elements.collectionsSearch = document.getElementById('imageCollectionsSearch');
+        elements.collectionFilterButtons = document.querySelectorAll('[data-usage-filter]');
         elements.addCollectionBtn = document.getElementById('createImageCollectionBtn');
         elements.refreshCollectionsBtn = document.getElementById('refreshImageCollectionsBtn');
         elements.assetsManagerBtn = document.getElementById('openAssetsManagerBtn');
+        elements.copyTestMessageBtn = document.getElementById('copyImageTestMessageBtn');
         elements.assetsCount = document.getElementById('imageAssetsCount');
         elements.assetsSearch = document.getElementById('imageAssetsSearch');
         elements.assetsList = document.getElementById('imageAssetsList');
@@ -163,6 +178,10 @@
             });
         }
 
+        if (elements.copyTestMessageBtn) {
+            elements.copyTestMessageBtn.addEventListener('click', copySampleImageMessage);
+        }
+
         if (elements.assetUploadForm) {
             elements.assetUploadForm.addEventListener('submit', (event) => {
                 event.preventDefault();
@@ -189,6 +208,18 @@
             elements.collectionsSearch.addEventListener('input', (event) => {
                 state.collectionFilter = event.target.value.trim().toLowerCase();
                 renderCollectionsList();
+            });
+        }
+
+        if (elements.collectionFilterButtons && elements.collectionFilterButtons.length > 0) {
+            elements.collectionFilterButtons.forEach((button) => {
+                button.addEventListener('click', () => {
+                    const { usageFilter } = button.dataset;
+                    if (!usageFilter || usageFilter === state.collectionUsageFilter) return;
+                    state.collectionUsageFilter = usageFilter;
+                    elements.collectionFilterButtons.forEach((btn) => btn.classList.toggle('active', btn === button));
+                    renderCollectionsList();
+                });
             });
         }
 
@@ -305,7 +336,7 @@
                 const updated = formatTimestamp(asset.updatedAt || asset.createdAt);
 
                 return `
-                    <div class="image-asset-item" data-label="${escapedLabel}">
+                    <div class="image-asset-item" data-label="${escapeAttribute(label)}">
                         <div class="image-asset-thumb">
                             ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
                         </div>
@@ -436,6 +467,20 @@
         }
     };
 
+    const copySampleImageMessage = async () => {
+        const sampleLabel = state.assets.length > 0 && state.assets[0].label
+            ? state.assets[0].label
+            : 'ชื่อรูปภาพ';
+        const message = `ลองส่งข้อความตัวอย่าง: สวัสดีค่ะ #[IMAGE:${sampleLabel}] เพื่อทดสอบการส่งรูป`; 
+        try {
+            await navigator.clipboard?.writeText(message);
+            showAlert('คัดลอกข้อความทดสอบเรียบร้อยแล้ว', 'success');
+        } catch (err) {
+            console.warn('copy sample message failed:', err);
+            window.prompt('คัดลอกข้อความทดสอบด้วยตนเอง:', message);
+        }
+    };
+
     const refreshAll = async () => {
         try {
             await Promise.all([
@@ -558,7 +603,19 @@
             })
             : state.collections;
 
-        if (filtered.length === 0) {
+        const usageFiltered = filtered.filter((collection) => {
+            const usage = computeCollectionUsage(collection._id);
+            const totalUsage = usage.line + usage.facebook;
+            if (state.collectionUsageFilter === 'assigned') {
+                return totalUsage > 0;
+            }
+            if (state.collectionUsageFilter === 'unassigned') {
+                return totalUsage === 0;
+            }
+            return true;
+        });
+
+        if (usageFiltered.length === 0) {
             elements.collectionsList.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-search mb-2"></i>
@@ -568,12 +625,13 @@
             return;
         }
 
-        const html = filtered
+        const html = usageFiltered
             .map((collection) => {
                 const imagesCount = Array.isArray(collection.images) ? collection.images.length : 0;
                 const usage = computeCollectionUsage(collection._id);
                 const isDefault = !!collection.isDefault;
-                const description = collection.description ? collection.description : 'ไม่มีคำอธิบาย';
+                const safeName = escapeHtml(collection.name || collection._id);
+                const description = collection.description ? escapeHtml(collection.description) : 'ไม่มีคำอธิบาย';
                 const updatedText = formatTimestamp(collection.updatedAt || collection.createdAt);
                 const badge = isDefault ? '<span class="badge bg-success-soft text-success ms-2">ค่าเริ่มต้น</span>' : '';
                 const usageBadges = `
@@ -584,7 +642,7 @@
                 const previewHtml = previewImages
                     .map((img) => {
                         const src = img.thumbUrl || img.url || '';
-                        const alt = img.label || 'preview';
+                        const alt = escapeHtml(img.label || 'preview');
                         if (!src) return '';
                         return `<div class="collection-preview-thumb" title="${alt}"><img src="${src}" alt="${alt}"></div>`;
                     })
@@ -597,7 +655,7 @@
                         <div class="collection-header">
                             <div>
                                 <div class="collection-title">
-                                    <strong>${collection.name || collection._id}</strong>
+                                    <strong>${safeName}</strong>
                                     ${badge}
                                 </div>
                                 <div class="text-muted small">${description}</div>
@@ -644,7 +702,7 @@
                 return;
             }
             if (modalLabel) {
-                modalLabel.innerHTML = `<i class="fas fa-images me-2"></i>แก้ไขคลังรูปภาพ: ${collection.name}`;
+                modalLabel.innerHTML = `<i class="fas fa-images me-2"></i>แก้ไขคลังรูปภาพ: ${escapeHtml(collection.name || '')}`;
             }
             elements.collectionId.value = collection._id;
             elements.collectionName.value = collection.name || '';
@@ -708,18 +766,21 @@
         const html = filteredAssets
             .map((asset, index) => {
                 const id = `collection-asset-${index}`;
-                const checked = selectedLabels.has(asset.label) ? 'checked' : '';
+                const label = asset.label || '';
+                const checked = selectedLabels.has(label) ? 'checked' : '';
                 const thumb = asset.thumbUrl || asset.url || '';
                 const description = asset.description || asset.alt || '';
+                const safeLabel = escapeHtml(label);
+                const safeDescription = description ? escapeHtml(description) : 'ไม่มีคำอธิบาย';
                 return `
                     <label class="collection-asset-item" for="${id}">
-                        <input type="checkbox" class="form-check-input" id="${id}" value="${asset.label}" ${checked}>
+                        <input type="checkbox" class="form-check-input" id="${id}" value="${escapeAttribute(label)}" ${checked}>
                         <span class="collection-asset-thumb">
-                            <img src="${thumb}" alt="${asset.label}">
+                            <img src="${thumb}" alt="${safeLabel}">
                         </span>
                         <span class="collection-asset-info">
-                            <strong>${asset.label}</strong>
-                            <small class="text-muted">${description || 'ไม่มีคำอธิบาย'}</small>
+                            <strong>${safeLabel}</strong>
+                            <small class="text-muted">${safeDescription}</small>
                         </span>
                     </label>
                 `;

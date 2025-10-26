@@ -158,9 +158,12 @@ function displayLineBotList(lineBots) {
                     <div class="bot-overview-ellipsis" title="${hasWebhook ? bot.webhookUrl : 'ไม่ระบุ'}">${webhookDisplay}</div>
                 </td>
                 <td class="bot-overview-actions text-end" data-label="การจัดการ">
-                    <div class="d-flex flex-wrap gap-2 justify-content-end">
+                <div class="d-flex flex-wrap gap-2 justify-content-end">
                         <button class="btn btn-sm btn-outline-info" title="จัดการ Instructions" onclick="manageInstructions('${bot._id}')">
                             <i class="fas fa-book me-1"></i>Instructions
+                        </button>
+                        <button class="btn btn-sm btn-outline-success" title="เลือกคลังรูปภาพ" onclick="openBotCollections('line','${bot._id}')">
+                            <i class="fas fa-images me-1"></i>แกลเลอรี
                         </button>
                         <button class="btn btn-sm btn-outline-secondary" title="แก้ไข" onclick="editLineBot('${bot._id}')">
                             <i class="fas fa-edit me-1"></i>แก้ไข
@@ -574,9 +577,12 @@ function displayFacebookBotList(facebookBots) {
                     <div class="bot-overview-ellipsis" title="${pageId || 'ไม่ระบุ'}">${pageIdDisplay}</div>
                 </td>
                 <td class="bot-overview-actions text-end" data-label="การจัดการ">
-                    <div class="d-flex flex-wrap gap-2 justify-content-end">
+                <div class="d-flex flex-wrap gap-2 justify-content-end">
                         <button class="btn btn-sm btn-outline-info" title="จัดการ Instructions" onclick="manageFacebookInstructions('${bot._id}')">
                             <i class="fas fa-book me-1"></i>Instructions
+                        </button>
+                        <button class="btn btn-sm btn-outline-success" title="เลือกคลังรูปภาพ" onclick="openBotCollections('facebook','${bot._id}')">
+                            <i class="fas fa-images me-1"></i>แกลเลอรี
                         </button>
                         <button class="btn btn-sm btn-outline-secondary" title="แก้ไข" onclick="editFacebookBot('${bot._id}')">
                             <i class="fas fa-edit me-1"></i>แก้ไข
@@ -898,6 +904,14 @@ async function toggleFacebookBotStatus(botId) {
     }
 }
 
+function openBotCollections(botType, botId) {
+    if (window.imageCollectionsManager && typeof window.imageCollectionsManager.openBotImageCollectionsModal === 'function') {
+        window.imageCollectionsManager.openBotImageCollectionsModal(botType, botId);
+    } else {
+        showAlert('กรุณาโหลดส่วนจัดการคลังรูปภาพก่อน แล้วลองใหม่อีกครั้ง', 'warning');
+    }
+}
+
 // Export functions for use in other modules
 window.botManagement = {
     loadLineBotSettings,
@@ -914,5 +928,6 @@ window.botManagement = {
     saveFacebookBot,
     refreshLineBotList,
     toggleLineBotStatus,
-    toggleFacebookBotStatus
+    toggleFacebookBotStatus,
+    openBotCollections
 };

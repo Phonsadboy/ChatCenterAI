@@ -207,6 +207,30 @@
     box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
 }
 
+.gallery-step-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.65rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #334155;
+}
+
+.gallery-step-label .step-number {
+    background: #2563eb;
+    color: #ffffff;
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.gallery-step-label .step-text {
+    font-weight: 600;
+}
+
 .image-assets-card .card-body {
     padding: 1rem;
 }
@@ -314,6 +338,18 @@
 .image-asset-actions .btn {
     font-size: 0.75rem;
     padding: 0.3rem 0.5rem;
+}
+
+.collection-filter-group .btn {
+    font-size: 0.75rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+}
+
+.collection-filter-group .btn.active {
+    background: #2563eb;
+    color: #ffffff;
+    border-color: #2563eb;
 }
 
 .image-collections-list {

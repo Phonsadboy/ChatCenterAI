@@ -79,7 +79,11 @@
             <div class="bot-ai-section__body">
                 <div class="row g-3">
                     <div class="col-lg-5">
-                        <div class="card image-assets-card mb-3">
+                        <div class="gallery-step-label">
+                            <span class="step-number">ขั้นตอนที่ 1</span>
+                            <span class="step-text">อัปโหลดรูปเข้าสู่ระบบ</span>
+                        </div>
+                        <div class="card image-assets-card mb-4">
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-center mb-3">
                                     <div>
@@ -120,6 +124,10 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="gallery-step-label mt-4">
+                            <span class="step-number">ขั้นตอนที่ 2</span>
+                            <span class="step-text">จัดรูปเป็นชุด (Collections)</span>
+                        </div>
                         <div class="card image-collections-card">
                             <div class="card-body d-flex flex-column">
                                 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -128,6 +136,17 @@
                                         <small class="text-muted">รวมรูปเป็นหมวดหมู่เพื่อเลือกให้แต่ละบอท</small>
                                     </div>
                                     <span class="badge bg-primary-soft text-primary" id="imageCollectionsCount">0 ชุด</span>
+                                </div>
+                                <div class="d-flex gap-2 mb-3 collection-filter-group">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary active" data-usage-filter="all">
+                                        ทั้งหมด
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" data-usage-filter="assigned">
+                                        ใช้งานอยู่
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" data-usage-filter="unassigned">
+                                        ยังไม่ถูกเลือก
+                                    </button>
                                 </div>
                                 <div class="input-group input-group-sm mb-3">
                                     <span class="input-group-text bg-light"><i class="fas fa-search"></i></span>
@@ -140,6 +159,10 @@
                         </div>
                     </div>
                     <div class="col-lg-7">
+                        <div class="gallery-step-label mb-2">
+                            <span class="step-number">ขั้นตอนที่ 3</span>
+                            <span class="step-text">เลือกชุดรูปให้แต่ละบอทใช้งาน</span>
+                        </div>
                         <div class="card image-collections-assignment-card h-100">
                             <div class="card-body d-flex flex-column">
                                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
@@ -147,9 +170,14 @@
                                         <h6 class="mb-1">เลือกคลังรูปภาพให้แต่ละบอท</h6>
                                         <small class="text-muted">หากไม่เลือกระบบจะใช้รูปทั้งหมดเป็นค่าเริ่มต้น</small>
                                     </div>
-                                    <button type="button" class="btn btn-sm btn-outline-primary" id="openAssetsManagerBtn">
-                                        <i class="fas fa-photo-video me-1"></i>ดูโทเคนรูปภาพ
-                                    </button>
+                                    <div class="d-flex gap-2">
+                                        <button type="button" class="btn btn-sm btn-outline-info" id="copyImageTestMessageBtn">
+                                            <i class="fas fa-magic me-1"></i>คัดลอกข้อความทดสอบ
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-primary" id="openAssetsManagerBtn">
+                                            <i class="fas fa-photo-video me-1"></i>ดูโทเคนรูปภาพ
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="assignment-group">
                                     <div class="assignment-group-header">
