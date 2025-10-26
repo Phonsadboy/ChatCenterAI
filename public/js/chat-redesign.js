@@ -314,7 +314,17 @@ class ChatManager {
             const data = await response.json();
             
             if (data.success) {
-                this.allUsers = data.users || [];
+                this.allUsers = (data.users || []).map(user => {
+                    const normalizedUser = { ...user };
+                    if (user.lastMessage) {
+                        const previewText = this.extractDisplayText({
+                            content: user.lastMessage,
+                            displayContent: user.lastMessage,
+                        });
+                        normalizedUser.lastMessage = previewText || user.lastMessage;
+                    }
+                    return normalizedUser;
+                });
                 this.applyFilters();
             } else {
                 this.showToast('ไม่สามารถโหลดรายชื่อผู้ใช้ได้', 'error');
@@ -521,7 +531,17 @@ class ChatManager {
             const data = await response.json();
             
             if (data.success) {
-                this.chatHistory[userId] = data.messages || [];
+                this.chatHistory[userId] = (data.messages || []).map(msg => {
+                    const normalized = { ...msg };
+                    const sanitizedText = this.extractDisplayText(normalized);
+                    if (sanitizedText) {
+                        normalized.content = sanitizedText;
+                        if (!normalized.displayContent || typeof normalized.displayContent !== 'string') {
+                            normalized.displayContent = sanitizedText;
+                        }
+                    }
+                    return normalized;
+                });
                 this.renderMessages();
             } else {
                 this.showToast('ไม่สามารถโหลดประวัติการสนทนาได้', 'error');
@@ -559,7 +579,10 @@ class ChatManager {
     
     renderMessage(message) {
         const role = message.role || 'user';
-        const content = this.escapeHtml(message.content || '');
+        const displayText = this.extractDisplayText(message);
+        const hasImages = Array.isArray(message.images) && message.images.length > 0;
+        const textForRender = displayText || (hasImages ? '[ไฟล์แนบ]' : '');
+        const content = this.escapeHtml(textForRender);
         const time = message.timestamp ? this.formatTime(message.timestamp) : '';
         
         const roleLabels = {
@@ -984,13 +1007,23 @@ class ChatManager {
     
     handleNewMessage(data) {
         const { userId, message } = data;
-        
+        const normalizedMessage = {
+            ...message,
+        };
+        const sanitizedText = this.extractDisplayText(normalizedMessage);
+        if (sanitizedText) {
+            normalizedMessage.content = sanitizedText;
+            if (!normalizedMessage.displayContent || typeof normalizedMessage.displayContent !== 'string') {
+                normalizedMessage.displayContent = sanitizedText;
+            }
+        }
+
         // Add to chat history
         if (!this.chatHistory[userId]) {
             this.chatHistory[userId] = [];
         }
-        this.chatHistory[userId].push(message);
-        
+        this.chatHistory[userId].push(normalizedMessage);
+
         // Update UI if this is the current chat
         if (userId === this.currentUserId) {
             this.renderMessages();
@@ -1081,6 +1114,80 @@ class ChatManager {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    extractDisplayText(message) {
+        if (!message) return '';
+
+        if (typeof message.displayContent === 'string' && message.displayContent.trim()) {
+            const textFromHtml = this.stripHtmlToText(message.displayContent);
+            if (textFromHtml) {
+                return textFromHtml;
+            }
+        }
+
+        const rawContent = message?.content;
+        if (typeof rawContent === 'string') {
+            const trimmed = rawContent.trim();
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                try {
+                    const parsed = JSON.parse(trimmed);
+                    const extracted = this.extractPlainTextFromStructured(parsed);
+                    if (extracted) return extracted;
+                } catch (_) {
+                    // ignore parse errors and fall back to raw string
+                }
+            }
+            return rawContent;
+        }
+
+        if (Array.isArray(rawContent) || (rawContent && typeof rawContent === 'object')) {
+            const extracted = this.extractPlainTextFromStructured(rawContent);
+            if (extracted) return extracted;
+        }
+
+        return '';
+    }
+
+    extractPlainTextFromStructured(content) {
+        if (!content) return '';
+
+        if (Array.isArray(content)) {
+            return content
+                .map(item => this.extractPlainTextFromStructured(item))
+                .filter(text => typeof text === 'string' && text.trim().length > 0)
+                .join('\n');
+        }
+
+        if (typeof content === 'object') {
+            if (typeof content.text === 'string' && content.text.trim().length > 0) {
+                return content.text;
+            }
+            if (
+                typeof content.content === 'string' &&
+                content.content.trim().length > 0 &&
+                content.type === 'text'
+            ) {
+                return content.content;
+            }
+            if (content.data) {
+                return this.extractPlainTextFromStructured(content.data);
+            }
+        }
+
+        if (typeof content === 'string') {
+            return content;
+        }
+
+        return '';
+    }
+
+    stripHtmlToText(html) {
+        if (!html) return '';
+        const temp = document.createElement('div');
+        temp.innerHTML = String(html).replace(/<br\s*\/?>/gi, '\n');
+        const text = temp.textContent || temp.innerText || '';
+        return text.replace(/\u00a0/g, ' ');
     }
     
     truncateText(text, maxLength) {
