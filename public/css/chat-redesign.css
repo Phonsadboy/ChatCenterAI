@@ -557,6 +557,364 @@
     background: var(--chat-bg-chat);
 }
 
+/* ========================================
+   Order Sidebar (Right Panel)
+   ======================================== */
+
+.order-sidebar {
+    width: 320px;
+    background: var(--chat-bg-sidebar);
+    border-left: 1px solid var(--chat-border-color);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.order-sidebar-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--chat-border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: var(--chat-header-height);
+    background: var(--chat-bg-sidebar);
+}
+
+.order-sidebar-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--chat-text-primary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--font-family-heading, 'Prompt', sans-serif);
+}
+
+.order-sidebar-title i {
+    color: var(--chat-warning);
+}
+
+.order-count-badge {
+    background: var(--chat-warning);
+    color: var(--chat-text-primary);
+    padding: 0.25rem 0.625rem;
+    border-radius: 12px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+}
+
+.order-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 1rem;
+}
+
+.order-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.order-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.order-content::-webkit-scrollbar-thumb {
+    background: var(--chat-border-color);
+    border-radius: 3px;
+}
+
+.order-content::-webkit-scrollbar-thumb:hover {
+    background: var(--chat-text-tertiary);
+}
+
+/* Order Empty State */
+.order-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    text-align: center;
+    height: 100%;
+}
+
+.order-empty-icon {
+    font-size: 3rem;
+    color: var(--chat-text-tertiary);
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.order-empty-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--chat-text-primary);
+    margin-bottom: 0.5rem;
+}
+
+.order-empty-description {
+    font-size: 0.8125rem;
+    color: var(--chat-text-secondary);
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* Order Card */
+.order-card {
+    background: var(--chat-bg-app);
+    border: 1px solid var(--chat-border-color);
+    border-radius: var(--chat-border-radius);
+    padding: 0.875rem;
+    margin-bottom: 0.75rem;
+    transition: var(--chat-transition);
+    cursor: pointer;
+}
+
+.order-card:hover {
+    border-color: var(--chat-primary);
+    box-shadow: var(--chat-shadow);
+}
+
+.order-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.order-status-badge {
+    font-size: 0.6875rem;
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.order-status-badge.pending {
+    background: var(--chat-warning);
+    color: var(--chat-text-primary);
+}
+
+.order-status-badge.confirmed {
+    background: var(--chat-info);
+    color: white;
+}
+
+.order-status-badge.shipped {
+    background: var(--chat-primary);
+    color: white;
+}
+
+.order-status-badge.completed {
+    background: var(--chat-success);
+    color: white;
+}
+
+.order-status-badge.cancelled {
+    background: var(--chat-danger);
+    color: white;
+}
+
+.order-date {
+    font-size: 0.6875rem;
+    color: var(--chat-text-tertiary);
+}
+
+.order-items {
+    margin-bottom: 0.75rem;
+}
+
+.order-item {
+    font-size: 0.8125rem;
+    color: var(--chat-text-primary);
+    margin-bottom: 0.25rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.375rem;
+}
+
+.order-item-name {
+    flex: 1;
+    font-weight: 500;
+}
+
+.order-item-quantity {
+    color: var(--chat-text-secondary);
+    font-size: 0.75rem;
+}
+
+.order-item-price {
+    color: var(--chat-primary);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.order-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--chat-border-color);
+    font-weight: 600;
+}
+
+.order-total-label {
+    font-size: 0.875rem;
+    color: var(--chat-text-secondary);
+}
+
+.order-total-amount {
+    font-size: 1rem;
+    color: var(--chat-success);
+}
+
+.order-meta {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--chat-border-color);
+    font-size: 0.75rem;
+    color: var(--chat-text-secondary);
+    line-height: 1.5;
+}
+
+.order-meta-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.375rem;
+    margin-bottom: 0.25rem;
+}
+
+.order-meta-item i {
+    margin-top: 2px;
+    font-size: 0.6875rem;
+}
+
+.order-meta-label {
+    font-weight: 600;
+    min-width: 65px;
+}
+
+.order-actions {
+    display: flex;
+    gap: 0.375rem;
+    margin-top: 0.75rem;
+}
+
+.btn-order-action {
+    flex: 1;
+    background: none;
+    border: 1px solid var(--chat-border-color);
+    color: var(--chat-text-secondary);
+    padding: 0.375rem 0.5rem;
+    border-radius: var(--chat-border-radius);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: var(--chat-transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+}
+
+.btn-order-action:hover {
+    background: var(--chat-bg-hover);
+    border-color: var(--chat-primary);
+    color: var(--chat-primary);
+}
+
+.btn-order-action.btn-delete {
+    border-color: var(--chat-danger);
+    color: var(--chat-danger);
+}
+
+.btn-order-action.btn-delete:hover {
+    background: var(--chat-danger);
+    color: white;
+}
+
+/* Order Badge in User Item */
+.user-item .badge-has-order {
+    background: var(--chat-warning);
+    color: var(--chat-text-primary);
+}
+
+/* Order Form in Modal */
+.order-form-group {
+    margin-bottom: 1rem;
+}
+
+.order-form-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--chat-text-primary);
+    margin-bottom: 0.5rem;
+}
+
+.order-form-control {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--chat-border-color);
+    border-radius: var(--chat-border-radius);
+    font-size: 0.875rem;
+    color: var(--chat-text-primary);
+    background: var(--chat-bg-app);
+    transition: var(--chat-transition);
+    font-family: var(--font-family-base, 'Prompt', sans-serif);
+}
+
+.order-form-control:focus {
+    outline: none;
+    border-color: var(--chat-primary);
+    background: white;
+}
+
+.order-item-edit {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+    background: var(--chat-bg-app);
+    border-radius: var(--chat-border-radius);
+}
+
+.order-item-edit input {
+    flex: 1;
+    padding: 0.375rem 0.5rem;
+    border: 1px solid var(--chat-border-color);
+    border-radius: var(--chat-border-radius);
+    font-size: 0.8125rem;
+}
+
+.order-item-edit button {
+    background: var(--chat-danger);
+    border: none;
+    color: white;
+    padding: 0.375rem 0.5rem;
+    border-radius: var(--chat-border-radius);
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.btn-add-item {
+    width: 100%;
+    background: var(--chat-primary);
+    border: none;
+    color: white;
+    padding: 0.5rem;
+    border-radius: var(--chat-border-radius);
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: var(--chat-transition);
+}
+
+.btn-add-item:hover {
+    background: var(--chat-primary-dark);
+}
+
 /* Chat Header */
 .chat-header {
     height: var(--chat-header-height);
@@ -1082,6 +1440,7 @@
     color: var(--chat-text-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
@@ -1131,6 +1490,10 @@
     
     .chat-sidebar.show {
         left: 0;
+    }
+    
+    .order-sidebar {
+        display: none;
     }
     
     .message-bubble {
