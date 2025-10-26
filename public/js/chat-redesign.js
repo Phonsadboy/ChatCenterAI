@@ -615,8 +615,9 @@ class ChatManager {
         const messageInput = document.getElementById('messageInput');
         if (!messageInput || !this.currentUserId) return;
         
-        const message = messageInput.value.trim();
-        if (!message) return;
+        const rawMessage = messageInput.value;
+        if (!rawMessage.trim()) return;
+        const message = rawMessage.replace(/\r\n/g, '\n');
         
         try {
             const response = await fetch('/admin/chat/send', {
@@ -1542,4 +1543,3 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
-

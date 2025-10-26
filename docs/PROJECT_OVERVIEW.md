@@ -588,7 +588,6 @@
 - `{ category: "system", key: "aiEnabled", value: true }`
 - `{ category: "ai", key: "textModel", value: "gpt-5" }`
 - `{ category: "ai", key: "visionModel", value: "gpt-5" }`
-- `{ category: "ai", key: "followUpModel", value: "gpt-5-nano" }`
 - `{ category: "chat", key: "enableChatHistory", value: true }`
 - `{ category: "chat", key: "aiHistoryLimit", value: 30 }`
 - `{ category: "followup", key: "enableFollowUpAnalysis", value: true }`
@@ -1232,4 +1231,3 @@ Response:
 **เวอร์ชัน:** 1.0.0  
 **อัพเดทล่าสุด:** ตุลาคม 2025  
 **Node.js:** >= 18.0.0
-

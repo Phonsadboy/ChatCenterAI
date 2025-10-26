@@ -1125,7 +1125,6 @@ async function getFollowUpBaseConfig() {
   const coll = db.collection("settings");
   const keys = [
     "enableFollowUpAnalysis",
-    "followUpModel",
     "followUpShowInChat",
     "followUpShowInDashboard",
     "followUpAutoEnabled",
@@ -1142,7 +1141,6 @@ async function getFollowUpBaseConfig() {
       typeof map.enableFollowUpAnalysis === "boolean"
         ? map.enableFollowUpAnalysis
         : true,
-    model: map.followUpModel || "gpt-5-nano",
     showInChat:
       typeof map.followUpShowInChat === "boolean"
         ? map.followUpShowInChat
@@ -2079,31 +2077,6 @@ function sanitizeContentForFollowUp(rawContent) {
   return trimmed;
 }
 
-async function getRecentChatHistoryForFollowUp(userId, limit = null) {
-  const enableChatHistory = await getSettingValue("enableChatHistory", true);
-  if (!enableChatHistory) return [];
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("chat_history");
-  
-  let query = coll.find({ senderId: userId }).sort({ timestamp: 1 });
-  
-  // ไม่จำกัดจำนวนข้อความถ้าไม่ได้ระบุ limit
-  if (limit && limit > 0) {
-    query = query.limit(limit);
-  }
-  
-  const docs = await query.toArray();
-
-  return docs.map((doc) => ({
-    role: doc.role || "user",
-    content: sanitizeContentForFollowUp(doc.content),
-    timestamp: doc.timestamp,
-    platform: doc.platform || "line",
-  }));
-}
-
 async function getFollowUpStatus(userId) {
   const client = await connectDB();
   const db = client.db("chatbot");
@@ -2133,152 +2106,95 @@ async function updateFollowUpStatus(userId, fields) {
   await coll.updateOne({ senderId: userId }, updateDoc, { upsert: true });
 }
 
-async function analyzeChatHistoryForFollowUp(
+async function maybeAnalyzeFollowUp(
   userId,
-  history,
-  modelOverride = null,
+  platform = "line",
+  botId = null,
+  options = {},
 ) {
-  if (!OPENAI_API_KEY) {
-    console.warn("[FollowUp] ไม่มี OPENAI_API_KEY ข้ามการวิเคราะห์");
-    return null;
-  }
-
-  const followUpModel =
-    modelOverride || (await getSettingValue("followUpModel", "gpt-5-nano"));
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-  // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่ (บนลงล่าง)
-  const formattedConversation = history
-    .map((entry, index) => {
-      const speaker = entry.role === "user" ? "ลูกค้า" : "เรา";
-      const seq = index + 1;
-      return `${seq}. ${speaker}: ${entry.content}`;
-    })
-    .join("\n");
-
-  const systemPrompt = `วิเคราะห์บทสนทนาว่าลูกค้าตัดสินใจซื้อสินค้าแล้วหรือยัง
-
-เกณฑ์การพิจารณา:
-✅ ถือว่าซื้อ = ยืนยันสั่งซื้อชัดเจน, ให้ที่อยู่จัดส่ง, โอนเงินแล้ว
-❌ ไม่ถือว่าซื้อ = ถามราคา, ต่อรอง, ลังเล, พิจารณาอยู่
-
-ตอบเป็น JSON เท่านั้น: {"hasFollowUp": true/false, "reason": "เหตุผลสั้นๆ"}`;
-
-  const userPrompt = `บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์:`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: followUpModel,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    });
-
-    const content = response.choices?.[0]?.message?.content || "";
-    const trimmed = content.trim();
-    let parsed = null;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch (_) {
-      // พยายามดึง JSON จากข้อความที่มีคำอื่นปะปน
-      const match = trimmed.match(/\{[\s\S]*\}/);
-      if (match) {
-        parsed = JSON.parse(match[0]);
-      }
-    }
-
-    if (!parsed || typeof parsed.hasFollowUp === "undefined") {
-      console.warn("[FollowUp] รูปแบบคำตอบไม่ถูกต้อง:", trimmed);
-      return null;
-    }
-
-    return {
-      hasFollowUp: !!parsed.hasFollowUp,
-      reason: typeof parsed.reason === "string" ? parsed.reason.trim() : "",
-    };
-  } catch (error) {
-    console.error("[FollowUp] เกิดข้อผิดพลาดในการเรียก OpenAI:", error.message);
-    return null;
-  }
-}
-
-async function maybeAnalyzeFollowUp(userId, platform = "line", botId = null) {
   try {
     const normalizedPlatform = platform || "line";
-    const config = await getFollowUpConfigForContext(normalizedPlatform, botId);
-    if (!config.analysisEnabled) {
+    const normalizedBotId = normalizeFollowUpBotId(botId);
+    const config = await getFollowUpConfigForContext(
+      normalizedPlatform,
+      normalizedBotId,
+    );
+    const {
+      reasonOverride,
+      followUpUpdatedAt: providedTimestamp,
+      forceUpdate = false,
+    } = options || {};
+
+    if (!config || (!forceUpdate && !config.analysisEnabled)) {
       return;
     }
 
     const status = await getFollowUpStatus(userId);
-    if (status?.hasFollowUp) {
-      return; // ติดแท็กแล้วไม่ต้องประมวลผลซ้ำ
-    }
-
-    // ดึงประวัติการสนทนาทั้งหมด (ไม่จำกัดจำนวน)
-    const history = await getRecentChatHistoryForFollowUp(userId, null);
-    if (!history || history.length === 0) return;
-
-    const newest = history[history.length - 1];
-    if (!newest || !newest.content) return;
-
-    const analysis = await analyzeChatHistoryForFollowUp(
-      userId,
-      history,
-      config.model,
-    );
-    const normalizedBotIdForCancel = normalizeFollowUpBotId(botId);
     const payloadBase = {
       platform: normalizedPlatform,
-      botId: normalizedBotIdForCancel,
+      botId: normalizedBotId,
     };
 
-    if (!analysis) {
+    const existingOrders = await getUserOrders(userId);
+    const latestOrder =
+      existingOrders && existingOrders.length > 0 ? existingOrders[0] : null;
+    const hasOrders = !!latestOrder;
+
+    if (!hasOrders) {
+      const previousUpdatedAt = status?.followUpUpdatedAt || null;
       await updateFollowUpStatus(userId, {
-        hasFollowUp: status?.hasFollowUp || false,
-        followUpReason: status?.followUpReason || "",
-        followUpUpdatedAt: status?.followUpUpdatedAt || null,
+        hasFollowUp: false,
+        followUpReason: "",
+        followUpUpdatedAt: previousUpdatedAt,
         ...payloadBase,
       });
       return;
     }
 
-    if (analysis.hasFollowUp) {
-      const followUpUpdatedAt = new Date();
-      await updateFollowUpStatus(userId, {
-        hasFollowUp: true,
-        followUpReason: analysis.reason || "ลูกค้ายืนยันสั่งซื้อ",
-        followUpUpdatedAt,
-        ...payloadBase,
-      });
-      await cancelFollowUpTasksForUser(
-        userId,
-        normalizedPlatform,
-        normalizedBotIdForCancel,
-        { reason: "purchased" },
-      );
+    const reasonCandidates = [
+      typeof reasonOverride === "string" ? reasonOverride.trim() : "",
+      typeof latestOrder.notes === "string" ? latestOrder.notes.trim() : "",
+    ].filter(Boolean);
 
-      try {
-        if (io) {
-          io.emit("followUpTagged", {
-            userId,
-            hasFollowUp: true,
-            followUpReason: analysis.reason || "ลูกค้ายืนยันสั่งซื้อ",
-            followUpUpdatedAt,
-            platform: normalizedPlatform,
-            botId: normalizeFollowUpBotId(botId),
-          });
-        }
-      } catch (_) {}
-    } else {
-      await updateFollowUpStatus(userId, {
-        hasFollowUp: false,
-        followUpReason: "",
-        followUpUpdatedAt: status?.followUpUpdatedAt || null,
-        ...payloadBase,
-      });
-    }
+    const reason =
+      reasonCandidates.length > 0 ? reasonCandidates[0] : "ลูกค้ามีออเดอร์แล้ว";
+
+    const followUpUpdatedAt = (() => {
+      if (providedTimestamp) {
+        return new Date(providedTimestamp);
+      }
+      if (latestOrder.extractedAt) {
+        return new Date(latestOrder.extractedAt);
+      }
+      return new Date();
+    })();
+
+    await updateFollowUpStatus(userId, {
+      hasFollowUp: true,
+      followUpReason: reason,
+      followUpUpdatedAt,
+      ...payloadBase,
+    });
+
+    await cancelFollowUpTasksForUser(
+      userId,
+      normalizedPlatform,
+      normalizedBotId,
+      { reason: "order_detected" },
+    );
+
+    try {
+      if (io) {
+        io.emit("followUpTagged", {
+          userId,
+          hasFollowUp: true,
+          followUpReason: reason,
+          followUpUpdatedAt,
+          platform: normalizedPlatform,
+          botId: normalizedBotId,
+        });
+      }
+    } catch (_) {}
   } catch (error) {
     console.error("[FollowUp] วิเคราะห์ไม่สำเร็จ:", error.message);
   }
@@ -2339,7 +2255,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      temperature: 0.0, // ลดความสุ่มเพื่อความแม่นยำ
+      temperature: 0.1, // ลดความสุ่มเพื่อความแม่นยำ
     });
 
     const content = response.choices?.[0]?.message?.content || "";
@@ -2474,7 +2390,9 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
     }
 
     // ดึงประวัติการสนทนาล่าสุด (ไม่เกิน 20 ข้อความล่าสุด)
-    const messages = await getNormalizedChatHistory(userId);
+    const messages = await getNormalizedChatHistory(userId, {
+      applyFilter: true,
+    });
     if (!messages || messages.length === 0) return;
 
     // ตรวจสอบว่ามีออเดอร์ใหม่หรือไม่ (วิเคราะห์เฉพาะข้อความล่าสุด 5 ข้อความ)
@@ -2504,6 +2422,10 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
 
     if (isDuplicate) {
       console.log(`[Order] พบออเดอร์ซ้ำสำหรับผู้ใช้ ${userId}`);
+      await maybeAnalyzeFollowUp(userId, platform, botId, {
+        reasonOverride: analysis.reason,
+        forceUpdate: true,
+      });
       return;
     }
 
@@ -2521,6 +2443,12 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
       console.error(`[Order] ไม่สามารถบันทึกออเดอร์สำหรับผู้ใช้ ${userId}`);
       return;
     }
+
+    await maybeAnalyzeFollowUp(userId, platform, botId, {
+      reasonOverride: analysis.reason,
+      followUpUpdatedAt: new Date(),
+      forceUpdate: true,
+    });
 
     // Emit socket event
     try {
@@ -5093,7 +5021,6 @@ async function ensureSettings() {
     { key: "showTokenUsage", value: false },
     { key: "facebookImageSendMode", value: "upload" },
     { key: "enableFollowUpAnalysis", value: true },
-    { key: "followUpModel", value: "gpt-5-nano" },
     { key: "followUpShowInChat", value: true },
     { key: "followUpShowInDashboard", value: true },
     { key: "followUpAutoEnabled", value: false },
@@ -9811,7 +9738,7 @@ app.get("/admin/chat", async (req, res) => {
 app.get("/admin/chat/users", async (req, res) => {
   try {
     // ใช้ฟังก์ชันตัวกรองข้อมูลใหม่
-    const users = await getNormalizedChatUsers();
+    const users = await getNormalizedChatUsers({ applyFilter: true });
 
     res.json({ success: true, users: users });
   } catch (err) {
@@ -10261,6 +10188,12 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
       return res.json({ success: false, error: "ไม่สามารถบันทึกออเดอร์ได้" });
     }
 
+    await maybeAnalyzeFollowUp(userId, platform, botId, {
+      reasonOverride: analysis.reason,
+      followUpUpdatedAt: new Date(),
+      forceUpdate: true,
+    });
+
     // Emit socket event
     try {
       if (io) {
@@ -10388,6 +10321,10 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
         });
       }
     } catch (_) {}
+
+    await maybeAnalyzeFollowUp(order.userId, order.platform, order.botId, {
+      forceUpdate: true,
+    });
 
     res.json({ 
       success: true, 
@@ -10569,7 +10506,6 @@ app.get("/api/settings", async (req, res) => {
       replacementText: "[ข้อความถูกซ่อน]",
       enableStrictFiltering: true,
       enableFollowUpAnalysis: true,
-      followUpModel: "gpt-5-nano",
       followUpShowInChat: true,
       followUpShowInDashboard: true,
     };
@@ -10961,38 +10897,84 @@ async function resetUserUnreadCount(userId) {
 
 // ============================ Message Filtering Functions ============================
 
-// ฟังก์ชันสำหรับกรองข้อความตามการตั้งค่า
-async function filterMessage(message) {
+async function loadMessageFilterConfig() {
   try {
-    // ตรวจสอบว่าการกรองเปิดใช้งานหรือไม่
-    const enableFiltering = await getSettingValue(
-      "enableMessageFiltering",
-      true,
-    );
+    const [
+      enableFiltering,
+      hiddenWords,
+      replacementText,
+      enableStrictFiltering,
+    ] = await Promise.all([
+      getSettingValue("enableMessageFiltering", true),
+      getSettingValue("hiddenWords", ""),
+      getSettingValue("replacementText", "[ข้อความถูกซ่อน]"),
+      getSettingValue("enableStrictFiltering", true),
+    ]);
+
+    return {
+      enableFiltering: enableFiltering !== false,
+      hiddenWords,
+      replacementText: replacementText || "[ข้อความถูกซ่อน]",
+      enableStrictFiltering: enableStrictFiltering !== false,
+    };
+  } catch (error) {
+    console.error("[Filter] ข้อผิดพลาดในการโหลดการตั้งค่าการกรอง:", error);
+    return {
+      enableFiltering: true,
+      hiddenWords: "",
+      replacementText: "[ข้อความถูกซ่อน]",
+      enableStrictFiltering: true,
+    };
+  }
+}
+
+// ฟังก์ชันสำหรับกรองข้อความตามการตั้งค่า
+async function filterMessage(message, options = {}) {
+  try {
+    if (typeof message !== "string" || message.length === 0) {
+      return message;
+    }
+
+    const { config: providedConfig } = options || {};
+
+    const config =
+      providedConfig && typeof providedConfig === "object"
+        ? providedConfig
+        : await loadMessageFilterConfig();
+
+    const enableFiltering =
+      typeof config.enableFiltering === "boolean"
+        ? config.enableFiltering
+        : true;
     if (!enableFiltering) {
       return message; // ไม่กรอง ถ้าไม่ได้เปิดใช้งาน
     }
 
-    // ดึงการตั้งค่าการกรอง
-    const hiddenWords = await getSettingValue("hiddenWords", "");
-    const replacementText = await getSettingValue(
-      "replacementText",
-      "[ข้อความถูกซ่อน]",
-    );
-    const enableStrictFiltering = await getSettingValue(
-      "enableStrictFiltering",
-      true,
-    );
+    const hiddenWordsSource =
+      config.hiddenWords !== undefined ? config.hiddenWords : "";
+    const replacementText =
+      typeof config.replacementText === "string" &&
+      config.replacementText.trim().length > 0
+        ? config.replacementText
+        : "[ข้อความถูกซ่อน]";
+    const enableStrictFiltering =
+      typeof config.enableStrictFiltering === "boolean"
+        ? config.enableStrictFiltering
+        : true;
 
-    if (!hiddenWords || hiddenWords.trim() === "") {
+    if (!hiddenWordsSource || String(hiddenWordsSource).trim() === "") {
       return message; // ไม่กรอง ถ้าไม่มีคำที่ซ่อน
     }
 
-    // แยกคำที่ซ่อนเป็นรายการ
-    const wordsToHide = hiddenWords
-      .split("\n")
-      .map((word) => word.trim())
-      .filter((word) => word.length > 0);
+    // ตรวจสอบว่าการกรองเปิดใช้งานหรือไม่
+    const wordsToHide = Array.isArray(hiddenWordsSource)
+      ? hiddenWordsSource
+          .map((word) => (typeof word === "string" ? word.trim() : ""))
+          .filter((word) => word.length > 0)
+      : String(hiddenWordsSource)
+          .split("\n")
+          .map((word) => word.trim())
+          .filter((word) => word.length > 0);
 
     if (wordsToHide.length === 0) {
       return message; // ไม่กรอง ถ้าไม่มีคำที่ซ่อน
@@ -11107,9 +11089,11 @@ function normalizeMessageForFrontend(message) {
     }
 
     // แปลง content
-    let content = message.content;
+    const originalContent = message.content;
+    let content = originalContent;
     let displayContent = "";
     let contentType = "text";
+    let richDisplayContent = "";
 
     // ตรวจสอบประเภทของ content และแปลงให้เหมาะสม
     if (typeof content === "string") {
@@ -11119,7 +11103,13 @@ function normalizeMessageForFrontend(message) {
           const parsed = JSON.parse(content);
           const processed = processQueueMessageForDisplayV2(parsed);
           displayContent = processed.displayContent;
+          richDisplayContent = processed.displayContent;
           contentType = processed.contentType;
+          if (typeof processed.plainText === "string") {
+            content = processed.plainText;
+          } else if (typeof displayContent === "string") {
+            content = displayContent;
+          }
         } catch (parseError) {
           // ถ้า parse JSON ไม่ได้ ให้ใช้เป็นข้อความธรรมดา
           displayContent = content;
@@ -11134,12 +11124,24 @@ function normalizeMessageForFrontend(message) {
       // ถ้าเป็น array (เช่น ข้อความจากคิว)
       const processed = processQueueMessageForDisplayV2(content);
       displayContent = processed.displayContent;
+      richDisplayContent = processed.displayContent;
       contentType = processed.contentType;
+      if (typeof processed.plainText === "string") {
+        content = processed.plainText;
+      } else {
+        content = displayContent;
+      }
     } else if (content && typeof content === "object") {
       // ถ้าเป็น object
       const processed = processQueueMessageForDisplayV2(content);
       displayContent = processed.displayContent;
+      richDisplayContent = processed.displayContent;
       contentType = processed.contentType;
+      if (typeof processed.plainText === "string") {
+        content = processed.plainText;
+      } else {
+        content = displayContent;
+      }
     } else {
       // กรณีอื่น ๆ
       displayContent = "ข้อความไม่สามารถแสดงผลได้";
@@ -11152,9 +11154,11 @@ function normalizeMessageForFrontend(message) {
       timestamp: timestamp,
       source: message.source || "ai",
       displayContent: displayContent,
+      richDisplayContent,
       contentType: contentType,
       platform: message.platform || "line",
       botId: message.botId || null,
+      rawContent: originalContent,
     };
   } catch (error) {
     console.error("[Normalize] ข้อผิดพลาดในการแปลงข้อความ:", error);
@@ -11454,8 +11458,9 @@ function createImageHTML(imageData, index = 0) {
  * @param {string} userId - ID ของผู้ใช้
  * @returns {Array} รายการข้อความที่แปลงแล้ว
  */
-async function getNormalizedChatHistory(userId) {
+async function getNormalizedChatHistory(userId, options = {}) {
   try {
+    const { applyFilter = false } = options || {};
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("chat_history");
@@ -11466,9 +11471,46 @@ async function getNormalizedChatHistory(userId) {
       .limit(200)
       .toArray();
 
+    let filterConfig = null;
+    if (applyFilter) {
+      filterConfig = await loadMessageFilterConfig();
+
+      if (
+        !filterConfig.enableFiltering ||
+        !filterConfig.hiddenWords ||
+        String(filterConfig.hiddenWords).trim() === ""
+      ) {
+        filterConfig = null;
+      }
+    }
+
     // แปลงข้อความแต่ละข้อความ
-    const normalizedMessages = messages.map((message) =>
-      normalizeMessageForFrontend(message),
+    const normalizedMessages = await Promise.all(
+      messages.map(async (message) => {
+        const normalized = normalizeMessageForFrontend(message);
+
+        if (
+          filterConfig &&
+          normalized.role === "user" &&
+          normalized.contentType === "text" &&
+          typeof normalized.content === "string" &&
+          normalized.content.length > 0
+        ) {
+          const filtered = await filterMessage(normalized.content, {
+            config: filterConfig,
+          });
+
+          if (filtered !== normalized.content) {
+            normalized.originalContent = normalized.content;
+          }
+          normalized.content = filtered;
+          if (normalized.contentType === "text") {
+            normalized.displayContent = filtered;
+          }
+        }
+
+        return normalized;
+      }),
     );
 
     return normalizedMessages;
@@ -11485,8 +11527,9 @@ async function getNormalizedChatHistory(userId) {
  * ฟังก์ชันสำหรับดึงรายชื่อผู้ใช้พร้อมข้อความล่าสุดที่แปลงแล้ว
  * @returns {Array} รายการผู้ใช้พร้อมข้อมูลที่แปลงแล้ว
  */
-async function getNormalizedChatUsers() {
+async function getNormalizedChatUsers(options = {}) {
   try {
+    const { applyFilter = false } = options || {};
     const client = await connectDB();
     const db = client.db("chatbot");
     const chatColl = db.collection("chat_history");
@@ -11562,6 +11605,18 @@ async function getNormalizedChatUsers() {
 
     const contextCache = new Map();
 
+    let filterConfig = null;
+    if (applyFilter) {
+      filterConfig = await loadMessageFilterConfig();
+      if (
+        !filterConfig.enableFiltering ||
+        !filterConfig.hiddenWords ||
+        String(filterConfig.hiddenWords).trim() === ""
+      ) {
+        filterConfig = null;
+      }
+    }
+
     // แปลงข้อมูลผู้ใช้แต่ละคน
     const normalizedUsers = await Promise.all(
       users.map(async (user) => {
@@ -11591,6 +11646,26 @@ async function getNormalizedChatUsers() {
           role: "user",
           timestamp: user.lastTimestamp,
         });
+
+        if (
+          filterConfig &&
+          normalizedLastMessage &&
+          typeof normalizedLastMessage.content === "string" &&
+          normalizedLastMessage.content.length > 0
+        ) {
+          const filteredLastMessage = await filterMessage(
+            normalizedLastMessage.content,
+            { config: filterConfig },
+          );
+          if (filteredLastMessage !== normalizedLastMessage.content) {
+            normalizedLastMessage.originalContent =
+              normalizedLastMessage.content;
+          }
+          normalizedLastMessage.content = filteredLastMessage;
+          if (normalizedLastMessage.contentType === "text") {
+            normalizedLastMessage.displayContent = filteredLastMessage;
+          }
+        }
 
         // ดึงสถานะ AI ต่อผู้ใช้
         let aiEnabled = true;

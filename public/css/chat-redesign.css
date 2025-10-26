@@ -1141,7 +1141,7 @@
 }
 
 .message-bubble {
-    max-width: 70%;
+    max-width: min(70%, 520px);
     padding: 0.625rem 0.875rem;
     border-radius: var(--chat-border-radius);
 }
@@ -1187,6 +1187,7 @@
     font-size: 0.9375rem;
     line-height: 1.4;
     word-wrap: break-word;
+    white-space: pre-wrap;
 }
 
 .message-time {
@@ -1497,7 +1498,7 @@
     }
     
     .message-bubble {
-        max-width: 85%;
+        max-width: min(85%, 520px);
     }
 }
 
@@ -1523,7 +1524,7 @@
     }
     
     .message-bubble {
-        max-width: 90%;
+        max-width: min(90%, 520px);
     }
     
     .user-item {
@@ -1562,4 +1563,3 @@
         overflow: visible;
     }
 }
-
