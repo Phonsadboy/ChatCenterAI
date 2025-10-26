@@ -754,11 +754,39 @@ async function saveChatHistory(
 
   try {
     if (typeof io !== "undefined" && io) {
+      let emittedUserMessage = userMessageDoc;
+      try {
+        const normalizedForEmit = normalizeMessageForFrontend(userMessageDoc);
+        if (
+          normalizedForEmit &&
+          normalizedForEmit.role === "user" &&
+          normalizedForEmit.contentType === "text" &&
+          typeof normalizedForEmit.content === "string" &&
+          normalizedForEmit.content.length > 0
+        ) {
+          const filteredContent = await filterMessage(
+            normalizedForEmit.content,
+          );
+          if (filteredContent !== normalizedForEmit.content) {
+            normalizedForEmit.originalContent = normalizedForEmit.content;
+          }
+          normalizedForEmit.content = filteredContent;
+          normalizedForEmit.displayContent = filteredContent;
+        }
+
+        emittedUserMessage = {
+          ...userMessageDoc,
+          ...normalizedForEmit,
+        };
+      } catch (formatError) {
+        emittedUserMessage = { ...userMessageDoc };
+      }
+
       io.emit("newMessage", {
         userId: userId,
-        message: userMessageDoc,
+        message: emittedUserMessage,
         sender: "user",
-        timestamp: userTimestamp,
+        timestamp: emittedUserMessage.timestamp || userTimestamp,
       });
     }
   } catch (_) {
@@ -11148,6 +11176,10 @@ function normalizeMessageForFrontend(message) {
       contentType = "error";
     }
 
+    if (!richDisplayContent) {
+      richDisplayContent = displayContent;
+    }
+
     return {
       content: content,
       role: message.role || "user",
@@ -11169,6 +11201,7 @@ function normalizeMessageForFrontend(message) {
       source: "system",
       displayContent: "เกิดข้อผิดพลาดในการประมวลผลข้อความ",
       contentType: "error",
+      richDisplayContent: "เกิดข้อผิดพลาดในการประมวลผลข้อความ",
     };
   }
 }
@@ -11268,11 +11301,13 @@ function processQueueMessageForDisplay(content) {
       displayContent =
         '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
       contentType = "error";
+      plainText = "";
     }
 
     return {
       displayContent: displayContent,
       contentType: contentType,
+      plainText,
     };
   } catch (error) {
     console.error(
@@ -11283,6 +11318,7 @@ function processQueueMessageForDisplay(content) {
       displayContent:
         '<div class="message-text text-danger">เกิดข้อผิดพลาดในการประมวลผลข้อความ</div>',
       contentType: "error",
+      plainText: "",
     };
   }
 }
@@ -11329,6 +11365,7 @@ function processQueueMessageForDisplayV2(content) {
         // รวมข้อความและรักษาการเว้นบรรทัด
         const combinedText = textParts.join("\n");
         displayContent += `<div class="message-text">${combinedText.replace(/\n/g, "<br>")}</div>`;
+        plainText = combinedText;
       }
 
       if (imageParts.length > 0) {
@@ -11348,6 +11385,7 @@ function processQueueMessageForDisplayV2(content) {
         displayContent =
           '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
         contentType = "error";
+        plainText = "";
       }
     }
     // ถ้าเป็น object เดี่ยว
@@ -11375,13 +11413,16 @@ function processQueueMessageForDisplayV2(content) {
           const textWithBreaks = data.text.replace(/\n/g, "<br>");
           displayContent = `<div class="message-text">${textWithBreaks}</div>`;
           contentType = "text";
+          plainText = data.text;
         } else if (data.type === "image" && data.base64) {
           displayContent = createImageHTML(data);
           contentType = "image";
+          plainText = "";
         } else {
           displayContent =
             '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
           contentType = "error";
+          plainText = "";
         }
       } else {
         // ถ้าไม่มี data field ให้ลองแปลงเป็น string
@@ -11389,10 +11430,12 @@ function processQueueMessageForDisplayV2(content) {
           const contentStr = JSON.stringify(content);
           displayContent = `<div class="message-text">${contentStr}</div>`;
           contentType = "text";
+          plainText = contentStr;
         } catch {
           displayContent =
             '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
           contentType = "error";
+          plainText = "";
         }
       }
     }
@@ -11401,11 +11444,13 @@ function processQueueMessageForDisplayV2(content) {
       displayContent =
         '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
       contentType = "error";
+      plainText = "";
     }
 
     return {
       displayContent: displayContent,
       contentType: contentType,
+      plainText,
     };
   } catch (error) {
     console.error(
@@ -11416,6 +11461,7 @@ function processQueueMessageForDisplayV2(content) {
       displayContent:
         '<div class="message-text text-danger">เกิดข้อผิดพลาดในการประมวลผลข้อความ</div>',
       contentType: "error",
+      plainText: "",
     };
   }
 }
