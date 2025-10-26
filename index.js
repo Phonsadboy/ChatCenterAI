@@ -5576,6 +5576,39 @@ function normalizeInstructionSelections(selections = []) {
   return normalized;
 }
 
+function normalizeImageCollectionSelections(collectionIds = []) {
+  if (!Array.isArray(collectionIds)) return [];
+  const normalized = [];
+  const seen = new Set();
+  for (const entry of collectionIds) {
+    let value = null;
+    if (!entry) continue;
+    if (typeof entry === "string") {
+      value = entry.trim();
+    } else if (entry instanceof ObjectId) {
+      value = entry.toHexString();
+    } else if (
+      typeof entry === "object" &&
+      entry._id &&
+      typeof entry._id === "string"
+    ) {
+      value = entry._id.trim();
+    } else if (
+      typeof entry === "object" &&
+      entry._id &&
+      entry._id instanceof ObjectId
+    ) {
+      value = entry._id.toHexString();
+    }
+    if (!value) continue;
+    if (!seen.has(value)) {
+      seen.add(value);
+      normalized.push(value);
+    }
+  }
+  return normalized;
+}
+
 function sanitizeInstructionForSnapshot(instruction) {
   if (!instruction || !instruction.instructionId) return null;
   const now = new Date();
@@ -7735,6 +7768,7 @@ app.post("/api/line-bots", async (req, res) => {
       status,
       isDefault,
       selectedInstructions,
+      selectedImageCollections,
     } = req.body;
 
     if (!name || !channelAccessToken || !channelSecret) {
@@ -7765,6 +7799,9 @@ app.post("/api/line-bots", async (req, res) => {
     const normalizedSelections = normalizeInstructionSelections(
       selectedInstructions || [],
     );
+    const normalizedCollections = normalizeImageCollectionSelections(
+      selectedImageCollections || [],
+    );
 
     const lineBot = {
       name,
@@ -7776,6 +7813,7 @@ app.post("/api/line-bots", async (req, res) => {
       isDefault: isDefault || false,
       aiModel: "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
       selectedInstructions: normalizedSelections,
+      selectedImageCollections: normalizedCollections,
       keywordSettings: {
         enableAI: { keyword: "", response: "" },
         disableAI: { keyword: "", response: "" },
@@ -7807,6 +7845,7 @@ app.put("/api/line-bots/:id", async (req, res) => {
       webhookUrl,
       status,
       isDefault,
+      selectedImageCollections,
     } = req.body;
 
     if (!name || !channelAccessToken || !channelSecret) {
@@ -7838,6 +7877,14 @@ app.put("/api/line-bots/:id", async (req, res) => {
       aiModel: req.body.aiModel || "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
       updatedAt: new Date(),
     };
+
+    if (Array.isArray(selectedImageCollections)) {
+      updateData.selectedImageCollections = normalizeImageCollectionSelections(
+        selectedImageCollections,
+      );
+    } else if (selectedImageCollections === null) {
+      updateData.selectedImageCollections = [];
+    }
 
     const result = await coll.updateOne(
       { _id: new ObjectId(id) },
@@ -7993,6 +8040,55 @@ app.put("/api/line-bots/:id/instructions", async (req, res) => {
   }
 });
 
+app.put("/api/line-bots/:id/image-collections", async (req, res) => {
+  try {
+    const { id } = req.params;
+    let { selectedImageCollections } = req.body;
+
+    if (selectedImageCollections === null) {
+      selectedImageCollections = [];
+    }
+
+    if (!Array.isArray(selectedImageCollections)) {
+      return res
+        .status(400)
+        .json({ error: "selectedImageCollections ต้องเป็น array หรือ null" });
+    }
+
+    const normalizedCollections = normalizeImageCollectionSelections(
+      selectedImageCollections,
+    );
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          selectedImageCollections: normalizedCollections,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
+    }
+
+    res.json({
+      message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
+      selectedImageCollections: normalizedCollections,
+    });
+  } catch (err) {
+    console.error("Error updating line bot image collections:", err);
+    res
+      .status(500)
+      .json({ error: "ไม่สามารถอัปเดตคลังรูปภาพของ Line Bot ได้" });
+  }
+});
+
 // Route: อัปเดต keyword settings สำหรับ Line Bot
 app.put("/api/line-bots/:id/keywords", async (req, res) => {
   try {
@@ -8078,6 +8174,7 @@ app.post("/api/facebook-bots/init", async (req, res) => {
       isDefault: false,
       aiModel: "gpt-5",
       selectedInstructions: [],
+      selectedImageCollections: [],
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -8148,6 +8245,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       isDefault,
       aiModel,
       selectedInstructions,
+      selectedImageCollections,
     } = req.body;
 
     if (!name || !pageId || !accessToken) {
@@ -8178,6 +8276,9 @@ app.post("/api/facebook-bots", async (req, res) => {
     const normalizedSelections = normalizeInstructionSelections(
       selectedInstructions || [],
     );
+    const normalizedCollections = normalizeImageCollectionSelections(
+      selectedImageCollections || [],
+    );
 
     const facebookBot = {
       name,
@@ -8190,6 +8291,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       isDefault: isDefault || false,
       aiModel: aiModel || "gpt-5",
       selectedInstructions: normalizedSelections,
+      selectedImageCollections: normalizedCollections,
       keywordSettings: {
         enableAI: { keyword: "", response: "" },
         disableAI: { keyword: "", response: "" },
@@ -8223,6 +8325,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       status,
       isDefault,
       aiModel,
+      selectedImageCollections,
     } = req.body;
 
     if (!name || !pageId || !accessToken) {
@@ -8252,6 +8355,14 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       aiModel: aiModel || "gpt-5",
       updatedAt: new Date(),
     };
+
+    if (Array.isArray(selectedImageCollections)) {
+      updateData.selectedImageCollections = normalizeImageCollectionSelections(
+        selectedImageCollections,
+      );
+    } else if (selectedImageCollections === null) {
+      updateData.selectedImageCollections = [];
+    }
 
     const result = await coll.updateOne(
       { _id: new ObjectId(id) },
@@ -8406,6 +8517,55 @@ app.put("/api/facebook-bots/:id/instructions", async (req, res) => {
     res
       .status(500)
       .json({ error: "ไม่สามารถอัปเดต instruction ที่เลือกใช้ได้" });
+  }
+});
+
+app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
+  try {
+    const { id } = req.params;
+    let { selectedImageCollections } = req.body;
+
+    if (selectedImageCollections === null) {
+      selectedImageCollections = [];
+    }
+
+    if (!Array.isArray(selectedImageCollections)) {
+      return res
+        .status(400)
+        .json({ error: "selectedImageCollections ต้องเป็น array หรือ null" });
+    }
+
+    const normalizedCollections = normalizeImageCollectionSelections(
+      selectedImageCollections,
+    );
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          selectedImageCollections: normalizedCollections,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+    }
+
+    res.json({
+      message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
+      selectedImageCollections: normalizedCollections,
+    });
+  } catch (err) {
+    console.error("Error updating facebook bot image collections:", err);
+    res
+      .status(500)
+      .json({ error: "ไม่สามารถอัปเดตคลังรูปภาพของ Facebook Bot ได้" });
   }
 });
 
@@ -9806,6 +9966,19 @@ app.get("/admin/image-collections", async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: "ไม่สามารถดึงรายการ Image Collections ได้" 
+    });
+  }
+});
+
+app.get("/api/image-collections", async (req, res) => {
+  try {
+    const collections = await getImageCollections();
+    res.json({ success: true, collections });
+  } catch (err) {
+    console.error("[Collections] API list error:", err);
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถดึงรายการ Image Collections ได้",
     });
   }
 });

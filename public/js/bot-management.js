@@ -97,6 +97,7 @@ function displayLineBotList(lineBots) {
         const statusText = isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
         const defaultBadge = bot.isDefault ? '<span class="badge bg-primary-soft text-primary ms-2">หลัก</span>' : '';
         const instructionsCount = Array.isArray(bot.selectedInstructions) ? bot.selectedInstructions.length : 0;
+        const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
         const hasWebhook = typeof bot.webhookUrl === 'string' && bot.webhookUrl.trim();
         const webhookDisplay = hasWebhook
             ? (bot.webhookUrl.trim().split('/').filter(Boolean).pop() || bot.webhookUrl.trim())
@@ -133,6 +134,7 @@ function displayLineBotList(lineBots) {
                         <span class="badge bg-info text-dark">${aiModel}</span>
                     </div>
                     <div class="text-muted small">Instructions: ${instructionsCount} รายการ</div>
+                    <div class="text-muted small">แกลเลอรี: ${collectionCount > 0 ? `${collectionCount} ชุด` : 'ทุกภาพ'}</div>
                 </td>
                 <td class="bot-overview-status" data-label="สถานะ">
                     <div class="d-flex align-items-center gap-2">
@@ -511,6 +513,7 @@ function displayFacebookBotList(facebookBots) {
         const statusText = isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
         const defaultBadge = bot.isDefault ? '<span class="badge bg-primary-soft text-primary ms-2">หลัก</span>' : '';
         const instructionsCount = Array.isArray(bot.selectedInstructions) ? bot.selectedInstructions.length : 0;
+        const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
         const pageId = typeof bot.pageId === 'string' ? bot.pageId.trim() : '';
         const pageIdDisplay = pageId
             ? (pageId.length > 14 ? `${pageId.slice(0, 6)}…${pageId.slice(-4)}` : pageId)
@@ -547,6 +550,7 @@ function displayFacebookBotList(facebookBots) {
                         <span class="badge bg-info text-dark">${aiModel}</span>
                     </div>
                     <div class="text-muted small">Instructions: ${instructionsCount} รายการ</div>
+                    <div class="text-muted small">แกลเลอรี: ${collectionCount > 0 ? `${collectionCount} ชุด` : 'ทุกภาพ'}</div>
                 </td>
                 <td class="bot-overview-status" data-label="สถานะ">
                     <div class="d-flex align-items-center gap-2">

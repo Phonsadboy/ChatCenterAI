@@ -59,5 +59,87 @@
                 </div>
             </div>
         </section>
+
+        <!-- Image Collections Section -->
+        <section class="bot-ai-section" id="imageCollectionsSection">
+            <div class="bot-ai-section__header flex-column flex-lg-row align-items-lg-center">
+                <div class="mb-3 mb-lg-0">
+                    <h5 class="mb-1"><i class="fas fa-images me-2 text-primary"></i>คลังรูปภาพ & การกำหนดให้บอท</h5>
+                    <p class="text-muted mb-0 small">จัดชุดรูปภาพสำหรับ AI แล้วเลือกให้แต่ละบอทใช้งานได้ตรงกับเพจหรือแชแนลที่ต้องการ</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-sm btn-primary" id="createImageCollectionBtn">
+                        <i class="fas fa-plus me-1"></i>เพิ่มคลังรูปภาพ
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshImageCollectionsBtn">
+                        <i class="fas fa-sync-alt me-1"></i>รีเฟรช
+                    </button>
+                </div>
+            </div>
+            <div class="bot-ai-section__body">
+                <div class="row g-3">
+                    <div class="col-lg-5">
+                        <div class="card image-collections-card h-100">
+                            <div class="card-body d-flex flex-column">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <div>
+                                        <h6 class="mb-1">คลังรูปภาพทั้งหมด</h6>
+                                        <small class="text-muted">ดึงรูปจาก Instruction Assets อัตโนมัติ</small>
+                                    </div>
+                                    <span class="badge bg-primary-soft text-primary" id="imageCollectionsCount">0 ชุด</span>
+                                </div>
+                                <div class="input-group input-group-sm mb-3">
+                                    <span class="input-group-text bg-light"><i class="fas fa-search"></i></span>
+                                    <input type="text" class="form-control" id="imageCollectionsSearch" placeholder="ค้นหาชื่อหรือคำอธิบาย">
+                                </div>
+                                <div class="image-collections-list flex-grow-1" id="imageCollectionsList">
+                                    <div class="text-muted small">กำลังโหลดรายการคลังรูปภาพ...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-7">
+                        <div class="card image-collections-assignment-card h-100">
+                            <div class="card-body d-flex flex-column">
+                                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                                    <div>
+                                        <h6 class="mb-1">เลือกคลังรูปภาพให้แต่ละบอท</h6>
+                                        <small class="text-muted">หากไม่เลือกระบบจะใช้รูปทั้งหมดเป็นค่าเริ่มต้น</small>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-outline-primary" id="openAssetsManagerBtn">
+                                        <i class="fas fa-photo-video me-1"></i>ดูโทเคนรูปภาพ
+                                    </button>
+                                </div>
+                                <div class="assignment-group">
+                                    <div class="assignment-group-header">
+                                        <span class="assignment-icon line"><i class="fab fa-line"></i></span>
+                                        <div>
+                                            <strong>LINE Bots</strong>
+                                            <div class="text-muted small">จัดชุดรูปภาพแยกตามเพจหรือร้าน</div>
+                                        </div>
+                                    </div>
+                                    <div class="assignment-list" id="lineBotCollectionsList">
+                                        <div class="text-muted small py-3">กำลังโหลดข้อมูลบอท...</div>
+                                    </div>
+                                </div>
+                                <hr class="my-4">
+                                <div class="assignment-group">
+                                    <div class="assignment-group-header">
+                                        <span class="assignment-icon facebook"><i class="fab fa-facebook-f"></i></span>
+                                        <div>
+                                            <strong>Facebook Bots</strong>
+                                            <div class="text-muted small">เลือกคลังรูปภาพที่เหมาะกับเพจ</div>
+                                        </div>
+                                    </div>
+                                    <div class="assignment-list" id="facebookBotCollectionsList">
+                                        <div class="text-muted small py-3">กำลังโหลดข้อมูลบอท...</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
     </div>
 </div>
