@@ -11,7 +11,9 @@
         botCollectionFilter: '',
         editingCollectionId: null,
         editingBot: null,
-        collectionUsageFilter: 'all'
+        collectionUsageFilter: 'all',
+        uploadQueue: [],
+        isUploading: false
     };
 
     const elements = {
@@ -22,17 +24,16 @@
         collectionFilterButtons: null,
         addCollectionBtn: null,
         refreshCollectionsBtn: null,
-        assetsManagerBtn: null,
-        copyTestMessageBtn: null,
         assetsCount: null,
         assetsSearch: null,
         assetsList: null,
-        assetUploadForm: null,
+        uploadDropzone: null,
+        uploadSelectBtn: null,
         assetFile: null,
-        assetLabel: null,
-        assetDescription: null,
-        assetOverwrite: null,
-        assetUploadBtn: null,
+        clearUploadQueueBtn: null,
+        startUploadQueueBtn: null,
+        uploadQueueSummary: null,
+        uploadQueueList: null,
         lineAssignments: null,
         facebookAssignments: null,
         collectionModal: null,
@@ -130,17 +131,16 @@
         elements.collectionFilterButtons = document.querySelectorAll('[data-usage-filter]');
         elements.addCollectionBtn = document.getElementById('createImageCollectionBtn');
         elements.refreshCollectionsBtn = document.getElementById('refreshImageCollectionsBtn');
-        elements.assetsManagerBtn = document.getElementById('openAssetsManagerBtn');
-        elements.copyTestMessageBtn = document.getElementById('copyImageTestMessageBtn');
         elements.assetsCount = document.getElementById('imageAssetsCount');
         elements.assetsSearch = document.getElementById('imageAssetsSearch');
         elements.assetsList = document.getElementById('imageAssetsList');
-        elements.assetUploadForm = document.getElementById('imageAssetUploadForm');
+        elements.uploadDropzone = document.getElementById('imageAssetDropzone');
+        elements.uploadSelectBtn = document.getElementById('triggerImageAssetSelect');
         elements.assetFile = document.getElementById('imageAssetFile');
-        elements.assetLabel = document.getElementById('imageAssetLabel');
-        elements.assetDescription = document.getElementById('imageAssetDescription');
-        elements.assetOverwrite = document.getElementById('imageAssetOverwrite');
-        elements.assetUploadBtn = document.getElementById('uploadImageAssetBtn');
+        elements.clearUploadQueueBtn = document.getElementById('clearUploadQueueBtn');
+        elements.startUploadQueueBtn = document.getElementById('startUploadQueueBtn');
+        elements.uploadQueueSummary = document.getElementById('uploadQueueSummary');
+        elements.uploadQueueList = document.getElementById('imageAssetQueue');
         elements.lineAssignments = document.getElementById('lineBotCollectionsList');
         elements.facebookAssignments = document.getElementById('facebookBotCollectionsList');
         elements.collectionModal = document.getElementById('imageCollectionModal');
@@ -172,25 +172,66 @@
             elements.refreshCollectionsBtn.addEventListener('click', refreshAll);
         }
 
-        if (elements.assetsManagerBtn) {
-            elements.assetsManagerBtn.addEventListener('click', () => {
-                elements.section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (elements.uploadDropzone) {
+            ['dragenter', 'dragover'].forEach((eventName) => {
+                elements.uploadDropzone.addEventListener(eventName, (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    elements.uploadDropzone.classList.add('is-drag-over');
+                });
             });
-        }
 
-        if (elements.copyTestMessageBtn) {
-            elements.copyTestMessageBtn.addEventListener('click', copySampleImageMessage);
-        }
+            ['dragleave', 'dragend'].forEach((eventName) => {
+                elements.uploadDropzone.addEventListener(eventName, (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    elements.uploadDropzone.classList.remove('is-drag-over');
+                });
+            });
 
-        if (elements.assetUploadForm) {
-            elements.assetUploadForm.addEventListener('submit', (event) => {
+            elements.uploadDropzone.addEventListener('drop', (event) => {
                 event.preventDefault();
-                handleAssetUpload();
+                elements.uploadDropzone.classList.remove('is-drag-over');
+                if (event.dataTransfer?.files?.length) {
+                    addFilesToQueue(event.dataTransfer.files);
+                }
+            });
+
+            elements.uploadDropzone.addEventListener('click', () => {
+                elements.assetFile?.click();
             });
         }
 
-        if (elements.assetUploadBtn) {
-            elements.assetUploadBtn.addEventListener('click', handleAssetUpload);
+        if (elements.uploadSelectBtn) {
+            elements.uploadSelectBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                elements.assetFile?.click();
+            });
+        }
+
+        if (elements.assetFile) {
+            elements.assetFile.addEventListener('change', (event) => {
+                const files = event.target.files;
+                if (files && files.length > 0) {
+                    addFilesToQueue(files);
+                    elements.assetFile.value = '';
+                }
+            });
+        }
+
+        if (elements.clearUploadQueueBtn) {
+            elements.clearUploadQueueBtn.addEventListener('click', clearUploadQueue);
+        }
+
+        if (elements.startUploadQueueBtn) {
+            elements.startUploadQueueBtn.addEventListener('click', startUploadQueue);
+        }
+
+        if (elements.uploadQueueList) {
+            elements.uploadQueueList.addEventListener('input', handleQueueListInput);
+            elements.uploadQueueList.addEventListener('change', handleQueueListChange);
+            elements.uploadQueueList.addEventListener('click', handleQueueListClick);
         }
 
         if (elements.assetsSearch) {
@@ -266,6 +307,7 @@
         cacheElements();
         if (!elements.section) return;
         bindEvents();
+        renderUploadQueue();
         refreshAll();
     };
 
@@ -295,6 +337,334 @@
             }
         });
         return labels;
+    };
+
+    const deriveLabelFromFilename = (name = '') => {
+        if (!name) return '';
+        const dotIndex = name.lastIndexOf('.');
+        const withoutExt = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+        return withoutExt
+            .replace(/[_\-]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    };
+
+    const createQueueItem = (file) => {
+        const id = `queue-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        const previewUrl = URL.createObjectURL(file);
+        return {
+            id,
+            file,
+            previewUrl,
+            label: deriveLabelFromFilename(file.name),
+            description: '',
+            overwrite: false,
+            status: 'pending',
+            error: null,
+            progress: 0,
+        };
+    };
+
+    const revokeQueuePreview = (item) => {
+        if (item?.previewUrl) {
+            try {
+                URL.revokeObjectURL(item.previewUrl);
+            } catch (err) {
+                console.warn('revoke preview error:', err);
+            }
+        }
+    };
+
+    const addFilesToQueue = (fileList) => {
+        if (!fileList || fileList.length === 0) return;
+        const files = Array.from(fileList).filter((file) => file.type?.startsWith('image/'));
+        if (files.length === 0) {
+            showAlert('กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'warning');
+            return;
+        }
+
+        files.forEach((file) => {
+            state.uploadQueue.push(createQueueItem(file));
+        });
+
+        renderUploadQueue();
+    };
+
+    const clearUploadQueue = () => {
+        if (state.isUploading) return;
+        state.uploadQueue.forEach(revokeQueuePreview);
+        state.uploadQueue = [];
+        renderUploadQueue();
+    };
+
+    const getDuplicateLabelIds = () => {
+        const labelMap = new Map();
+        const duplicates = new Set();
+        state.uploadQueue.forEach((item) => {
+            const key = item.label?.trim().toLowerCase();
+            if (!key) return;
+            if (labelMap.has(key)) {
+                duplicates.add(labelMap.get(key));
+                duplicates.add(item.id);
+            } else {
+                labelMap.set(key, item.id);
+            }
+        });
+        return duplicates;
+    };
+
+    const validateUploadQueue = () => {
+        const invalidIds = new Set();
+        state.uploadQueue.forEach((item) => {
+            if (!item.label || !item.label.trim()) {
+                invalidIds.add(item.id);
+            }
+        });
+        const duplicateIds = getDuplicateLabelIds();
+
+        if (elements.uploadQueueList) {
+            elements.uploadQueueList.querySelectorAll('.queue-label-input').forEach((input) => {
+                const { queueId } = input.dataset;
+                const hasInvalid = invalidIds.has(queueId);
+                const hasDuplicate = duplicateIds.has(queueId);
+                input.classList.toggle('is-invalid', hasInvalid);
+                input.classList.toggle('is-duplicate', hasDuplicate && !hasInvalid);
+            });
+        }
+
+        return { invalidIds, duplicateIds };
+    };
+
+    const updateQueueSummary = () => {
+        if (!elements.uploadQueueSummary) return;
+        const total = state.uploadQueue.length;
+        if (total === 0) {
+            elements.uploadQueueSummary.textContent = 'ยังไม่มีไฟล์ในคิว';
+            return;
+        }
+        const pending = state.uploadQueue.filter((item) => item.status === 'pending').length;
+        const errors = state.uploadQueue.filter((item) => item.status === 'error').length;
+        const { duplicateIds } = validateUploadQueue();
+        const parts = [];
+        parts.push(`${total} ไฟล์ในคิว`);
+        if (pending > 0) {
+            parts.push(`รออัปโหลด ${pending}`);
+        }
+        if (errors > 0) {
+            parts.push(`อัปโหลดไม่สำเร็จ ${errors}`);
+        }
+        if (duplicateIds.size > 0) {
+            parts.push(`พบชื่อซ้ำ ${duplicateIds.size}`);
+        }
+        elements.uploadQueueSummary.textContent = parts.join(' • ');
+    };
+
+    const updateQueueButtons = () => {
+        const hasItems = state.uploadQueue.length > 0;
+        const pendingOrError = state.uploadQueue.some((item) => item.status === 'pending' || item.status === 'error');
+        if (elements.clearUploadQueueBtn) {
+            elements.clearUploadQueueBtn.disabled = state.isUploading || !hasItems;
+        }
+        if (elements.startUploadQueueBtn) {
+            const { invalidIds, duplicateIds } = validateUploadQueue();
+            const canUpload = hasItems && pendingOrError && invalidIds.size === 0 && duplicateIds.size === 0 && !state.isUploading;
+            elements.startUploadQueueBtn.disabled = !canUpload;
+            elements.startUploadQueueBtn.innerHTML = state.isUploading
+                ? '<span class="spinner-border spinner-border-sm me-1"></span>กำลังอัปโหลด...'
+                : '<i class="fas fa-upload me-1"></i>อัปโหลดทั้งหมด';
+        }
+    };
+
+    const renderUploadQueue = () => {
+        if (!elements.uploadQueueList) return;
+        if (state.uploadQueue.length === 0) {
+            elements.uploadQueueList.innerHTML = `
+                <div class="empty-state small text-muted text-center py-3">
+                    <i class="fas fa-images me-1"></i>เพิ่มรูปภาพเพื่อเตรียมตั้งชื่อและคำอธิบายได้ที่นี่
+                </div>
+            `;
+            return;
+        }
+
+        const html = state.uploadQueue
+            .map((item) => {
+                const escapedLabel = escapeHtml(item.label || '');
+                const escapedDescription = escapeHtml(item.description || '');
+                const statusClass = `status-${item.status}`;
+                const statusText = (() => {
+                    if (item.status === 'uploading') return 'กำลังอัปโหลด...';
+                    if (item.status === 'success') return 'อัปโหลดสำเร็จ';
+                    if (item.status === 'error') return `ผิดพลาด: ${escapeHtml(item.error || 'ไม่ทราบสาเหตุ')}`;
+                    return 'พร้อมอัปโหลด';
+                })();
+                const progressBar = item.status === 'uploading'
+                    ? `<div class="queue-progress"><div style="width:${Math.max(10, item.progress || 0)}%"></div></div>`
+                    : '';
+                const sizeText = formatFileSize(item.file.size);
+                const disableInputs = state.isUploading && item.status === 'uploading';
+
+                return `
+                    <div class="upload-queue-item ${statusClass}" data-queue-id="${item.id}">
+                        <div class="queue-thumb">
+                            <img src="${item.previewUrl}" alt="${escapedLabel || 'preview'}">
+                        </div>
+                        <div class="queue-main">
+                            <div class="queue-header">
+                                <input type="text" class="form-control form-control-sm queue-label-input" placeholder="ชื่อรูปภาพ" value="${escapedLabel}" data-queue-id="${item.id}" ${disableInputs ? 'disabled' : ''}>
+                                <div class="queue-actions">
+                                    <div class="form-check form-switch form-switch-sm">
+                                        <input class="form-check-input queue-overwrite-checkbox" type="checkbox" data-queue-id="${item.id}" ${item.overwrite ? 'checked' : ''} ${disableInputs ? 'disabled' : ''}>
+                                        <label class="form-check-label small">แทนที่</label>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-outline-danger queue-remove-btn" data-queue-id="${item.id}" ${state.isUploading ? 'disabled' : ''}>
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <textarea class="form-control form-control-sm queue-description-input" rows="2" placeholder="คำอธิบาย (ไม่บังคับ)" data-queue-id="${item.id}" ${disableInputs ? 'disabled' : ''}>${escapedDescription}</textarea>
+                            <div class="queue-meta small text-muted">
+                                <span><i class="fas fa-file me-1"></i>${escapeHtml(item.file.name)}</span>
+                                <span class="dot">•</span>
+                                <span>${sizeText}</span>
+                                ${item.status === 'error' ? '<span class="dot">•</span><span class="text-danger">โปรดแก้ไขแล้วลองใหม่</span>' : ''}
+                            </div>
+                            <div class="queue-status small ${item.status === 'error' ? 'text-danger' : item.status === 'success' ? 'text-success' : 'text-muted'}">${statusText}</div>
+                            ${progressBar}
+                        </div>
+                    </div>
+                `;
+            })
+            .join('');
+
+        elements.uploadQueueList.innerHTML = html;
+        validateUploadQueue();
+        updateQueueSummary();
+        updateQueueButtons();
+    };
+
+    const handleQueueListInput = (event) => {
+        const { queueId } = event.target.dataset || {};
+        if (!queueId) return;
+        const item = state.uploadQueue.find((entry) => entry.id === queueId);
+        if (!item) return;
+        if (event.target.classList.contains('queue-label-input')) {
+            item.label = event.target.value;
+            updateQueueSummary();
+            updateQueueButtons();
+        } else if (event.target.classList.contains('queue-description-input')) {
+            item.description = event.target.value;
+        }
+    };
+
+    const handleQueueListChange = (event) => {
+        const { queueId } = event.target.dataset || {};
+        if (!queueId) return;
+        const item = state.uploadQueue.find((entry) => entry.id === queueId);
+        if (!item) return;
+        if (event.target.classList.contains('queue-overwrite-checkbox')) {
+            item.overwrite = !!event.target.checked;
+        }
+    };
+
+    const handleQueueListClick = (event) => {
+        const button = event.target.closest('.queue-remove-btn');
+        if (!button) return;
+        const queueId = button.dataset.queueId;
+        if (!queueId) return;
+        if (button.classList.contains('queue-remove-btn')) {
+            if (state.isUploading) return;
+            const index = state.uploadQueue.findIndex((entry) => entry.id === queueId);
+            if (index >= 0) {
+                revokeQueuePreview(state.uploadQueue[index]);
+                state.uploadQueue.splice(index, 1);
+                renderUploadQueue();
+                updateQueueSummary();
+                updateQueueButtons();
+            }
+        }
+    };
+
+    const startUploadQueue = async () => {
+        if (state.isUploading) return;
+        const uploadTargets = state.uploadQueue.filter((item) => item.status === 'pending' || item.status === 'error');
+        if (uploadTargets.length === 0) return;
+
+        const { invalidIds, duplicateIds } = validateUploadQueue();
+        if (invalidIds.size > 0) {
+            showAlert('กรุณาระบุชื่อรูปภาพให้ครบถ้วนก่อนอัปโหลด', 'warning');
+            return;
+        }
+        if (duplicateIds.size > 0) {
+            showAlert('พบชื่อรูปภาพซ้ำกัน กรุณาปรับให้ไม่ซ้ำก่อนอัปโหลด', 'warning');
+            return;
+        }
+
+        state.isUploading = true;
+        updateQueueButtons();
+
+        let hasSuccess = false;
+        try {
+            for (const item of uploadTargets) {
+                item.status = 'uploading';
+                item.error = null;
+                item.progress = 0;
+                renderUploadQueue();
+
+                await uploadQueueItem(item);
+                if (item.status === 'success') {
+                    hasSuccess = true;
+                }
+            }
+        } finally {
+            state.isUploading = false;
+            renderUploadQueue();
+        }
+
+        if (hasSuccess) {
+            await fetchAssets();
+            await fetchCollections();
+            const remaining = [];
+            let successCount = 0;
+            state.uploadQueue.forEach((item) => {
+                if (item.status === 'success') {
+                    revokeQueuePreview(item);
+                    successCount += 1;
+                } else {
+                    remaining.push(item);
+                }
+            });
+            state.uploadQueue = remaining;
+            renderUploadQueue();
+            if (successCount > 0) {
+                showAlert(`อัปโหลดรูปภาพสำเร็จ ${successCount} ไฟล์`, 'success');
+            }
+        }
+    };
+
+    const uploadQueueItem = async (item) => {
+        const form = new FormData();
+        form.append('image', item.file, item.file.name);
+        form.append('label', item.label?.trim() || '');
+        form.append('description', item.description?.trim() || '');
+        form.append('overwrite', item.overwrite ? 'true' : 'false');
+
+        try {
+            const response = await fetch('/admin/instructions/assets', {
+                method: 'POST',
+                body: form,
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'อัปโหลดรูปภาพไม่สำเร็จ');
+            }
+            item.status = 'success';
+            item.error = null;
+            item.progress = 100;
+        } catch (err) {
+            item.status = 'error';
+            item.error = err.message || 'อัปโหลดไม่สำเร็จ';
+            item.progress = 0;
+        }
     };
 
     const renderAssetsList = () => {
@@ -370,60 +740,6 @@
         elements.assetsList.innerHTML = html;
     };
 
-    const resetAssetForm = () => {
-        if (elements.assetFile) elements.assetFile.value = '';
-        if (elements.assetLabel) elements.assetLabel.value = '';
-        if (elements.assetDescription) elements.assetDescription.value = '';
-        if (elements.assetOverwrite) elements.assetOverwrite.checked = false;
-    };
-
-    const handleAssetUpload = async () => {
-        const file = elements.assetFile?.files?.[0] || null;
-        const label = elements.assetLabel?.value?.trim();
-        const description = elements.assetDescription?.value?.trim() || '';
-        const overwrite = !!elements.assetOverwrite?.checked;
-
-        if (!file || !label) {
-            showAlert('กรุณาเลือกไฟล์และระบุชื่อรูปภาพ', 'warning');
-            return;
-        }
-
-        const form = new FormData();
-        form.append('image', file);
-        form.append('label', label);
-        form.append('description', description);
-        form.append('overwrite', overwrite ? 'true' : 'false');
-
-        try {
-            if (elements.assetUploadBtn) {
-                elements.assetUploadBtn.disabled = true;
-                elements.assetUploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังอัปโหลด';
-            }
-
-            const response = await fetch('/admin/instructions/assets', {
-                method: 'POST',
-                body: form
-            });
-            const data = await response.json();
-            if (!response.ok || !data.success) {
-                throw new Error(data.error || 'ไม่สามารถอัปโหลดรูปภาพได้');
-            }
-
-            showAlert('อัปโหลดรูปภาพสำเร็จ', 'success');
-            resetAssetForm();
-            await fetchAssets();
-            await fetchCollections();
-        } catch (err) {
-            console.error('upload asset error:', err);
-            showAlert(err.message || 'เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ', 'danger');
-        } finally {
-            if (elements.assetUploadBtn) {
-                elements.assetUploadBtn.disabled = false;
-                elements.assetUploadBtn.innerHTML = '<i class="fas fa-upload me-1"></i>อัปโหลดรูป';
-            }
-        }
-    };
-
     const copyAssetToken = async (label) => {
         const token = `#[IMAGE:${label}]`;
         try {
@@ -464,20 +780,6 @@
             copyAssetToken(label);
         } else if (action === 'delete') {
             deleteAsset(label);
-        }
-    };
-
-    const copySampleImageMessage = async () => {
-        const sampleLabel = state.assets.length > 0 && state.assets[0].label
-            ? state.assets[0].label
-            : 'ชื่อรูปภาพ';
-        const message = `ลองส่งข้อความตัวอย่าง: สวัสดีค่ะ #[IMAGE:${sampleLabel}] เพื่อทดสอบการส่งรูป`; 
-        try {
-            await navigator.clipboard?.writeText(message);
-            showAlert('คัดลอกข้อความทดสอบเรียบร้อยแล้ว', 'success');
-        } catch (err) {
-            console.warn('copy sample message failed:', err);
-            window.prompt('คัดลอกข้อความทดสอบด้วยตนเอง:', message);
         }
     };
 

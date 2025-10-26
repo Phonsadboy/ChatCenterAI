@@ -92,29 +92,32 @@
                                     </div>
                                     <span class="badge bg-secondary-soft text-secondary" id="imageAssetsCount">0 รูป</span>
                                 </div>
-                                <form id="imageAssetUploadForm" class="image-asset-upload">
-                                    <div class="mb-2">
-                                        <label class="form-label small mb-1">ไฟล์รูปภาพ</label>
-                                        <input type="file" class="form-control form-control-sm" id="imageAssetFile" accept="image/*">
-                                    </div>
-                                    <div class="mb-2">
-                                        <label class="form-label small mb-1">ชื่อรูปภาพ (สำหรับโทเคน)</label>
-                                        <input type="text" class="form-control form-control-sm" id="imageAssetLabel" placeholder="เช่น สินค้า A, QR Code ชำระเงิน">
-                                    </div>
-                                    <div class="mb-2">
-                                        <label class="form-label small mb-1">คำอธิบาย</label>
-                                        <textarea class="form-control form-control-sm" id="imageAssetDescription" rows="2" placeholder="ช่วยให้ทีมจำบริบทของรูปได้เร็วขึ้น"></textarea>
-                                    </div>
-                                    <div class="d-flex justify-content-between align-items-center mb-3">
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" id="imageAssetOverwrite">
-                                            <label class="form-check-label small" for="imageAssetOverwrite">แทนที่รูปเดิมหากชื่อซ้ำ</label>
-                                        </div>
-                                        <button type="button" class="btn btn-sm btn-primary" id="uploadImageAssetBtn">
-                                            <i class="fas fa-upload me-1"></i>อัปโหลดรูป
+                                <div class="image-upload-dropzone" id="imageAssetDropzone">
+                                    <div class="dropzone-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                                    <div class="dropzone-text">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก</div>
+                                    <div class="dropzone-subtext text-muted">รองรับการเลือกหลายไฟล์พร้อมกัน (JPEG/PNG/WebP)</div>
+                                    <input type="file" id="imageAssetFile" accept="image/*" multiple hidden>
+                                    <button type="button" class="btn btn-sm btn-outline-primary mt-3" id="triggerImageAssetSelect">
+                                        <i class="fas fa-folder-open me-1"></i>เลือกไฟล์จากเครื่อง
+                                    </button>
+                                </div>
+                                <div class="upload-queue-toolbar d-flex justify-content-between align-items-center mt-3">
+                                    <div class="small text-muted" id="uploadQueueSummary">ยังไม่มีไฟล์ในคิว</div>
+                                    <div class="d-flex gap-2">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="clearUploadQueueBtn" disabled>
+                                            <i class="fas fa-times me-1"></i>ล้างคิว
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-primary" id="startUploadQueueBtn" disabled>
+                                            <i class="fas fa-upload me-1"></i>อัปโหลดทั้งหมด
                                         </button>
                                     </div>
-                                </form>
+                                </div>
+                                <div class="upload-queue-list mt-3" id="imageAssetQueue">
+                                    <div class="empty-state small text-muted text-center py-3">
+                                        <i class="fas fa-images me-1"></i>เพิ่มรูปภาพเพื่อเตรียมตั้งชื่อและคำอธิบายได้ที่นี่
+                                    </div>
+                                </div>
+                                <hr class="my-4">
                                 <div class="input-group input-group-sm mb-3">
                                     <span class="input-group-text bg-light"><i class="fas fa-search"></i></span>
                                     <input type="text" class="form-control" id="imageAssetsSearch" placeholder="ค้นหาชื่อหรือคำอธิบายรูป">
