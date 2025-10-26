@@ -760,6 +760,21 @@
     font-weight: 600;
 }
 
+.order-total.order-shipping {
+    font-weight: 500;
+    color: var(--chat-text-secondary);
+}
+
+.order-total.order-shipping .order-total-amount {
+    color: var(--chat-text-primary);
+    font-size: 0.9375rem;
+}
+
+.order-total.order-shipping .order-total-amount.free {
+    color: var(--chat-success);
+    font-weight: 600;
+}
+
 .order-total-label {
     font-size: 0.875rem;
     color: var(--chat-text-secondary);

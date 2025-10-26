@@ -2230,6 +2230,19 @@ async function maybeAnalyzeFollowUp(
 
 // ============================ Order Analysis Functions ============================
 
+function normalizeShippingCostValue(rawCost) {
+  if (typeof rawCost === "number" && Number.isFinite(rawCost) && rawCost >= 0) {
+    return rawCost;
+  }
+  if (typeof rawCost === "string") {
+    const parsed = parseFloat(rawCost.replace(/[^\d.,-]/g, "").replace(/,/g, ""));
+    if (!Number.isNaN(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return 0;
+}
+
 async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
   if (!OPENAI_API_KEY) {
     console.warn("[Order] ไม่มี OPENAI_API_KEY ข้ามการวิเคราะห์ออเดอร์");
@@ -2248,7 +2261,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
     })
     .join("\n");
 
-  const systemPrompt = `วิเคราะห์บทสนทนาเพื่อสกัดข้อมูลออเดอร์
+  const systemPrompt = `วิเคราะห์บทสนทนาเพื่อสกัดข้อมูลออเดอร์ โดยให้ความสำคัญกับการสรุปยอดล่าสุดที่สุดในบทสนทนา (ถ้ามีหลายรอบให้ใช้ข้อมูลจากรอบล่าสุดเท่านั้น)
 
 เกณฑ์การพิจารณา:
 ✅ ถือว่ามีออเดอร์ = ลูกค้าสั่งซื้อสินค้าชัดเจน พร้อมระบุรายละเอียด
@@ -2260,6 +2273,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
 - shippingAddress: ที่อยู่จัดส่ง (จำเป็นต้องมี ถ้าไม่มีให้สรุปว่าไม่มีออเดอร์)
 - phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
 - paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
+- shippingCost: ค่าส่ง (ตัวเลข; หากไม่ระบุให้ใช้ 0 และถือว่าส่งฟรี)
 
 ตอบเป็น JSON เท่านั้น: {
   "hasOrder": true/false,
@@ -2268,7 +2282,8 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
     "totalAmount": จำนวน,
     "shippingAddress": "ที่อยู่หรือ null",
     "phone": "เบอร์โทรหรือ null",
-    "paymentMethod": "วิธีชำระหรือ null"
+    "paymentMethod": "วิธีชำระหรือ null",
+    "shippingCost": จำนวน
   },
   "confidence": 0.0-1.0,
   "reason": "เหตุผลสั้นๆ (หากไม่มีที่อยู่ให้สรุปว่าไม่มีออเดอร์)"
@@ -2307,7 +2322,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
 
     // ตรวจสอบความถูกต้องของข้อมูล
     if (parsed.hasOrder && parsed.orderData) {
-      const { items, totalAmount, shippingAddress, phone, paymentMethod } = parsed.orderData;
+      const { items, totalAmount, shippingAddress, phone, paymentMethod, shippingCost } = parsed.orderData;
       
       // ตรวจสอบ items
       if (!Array.isArray(items) || items.length === 0) {
@@ -2335,6 +2350,8 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
         calculatedTotal = items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
       }
 
+      const normalizedShippingCost = normalizeShippingCostValue(shippingCost);
+
       return {
         hasOrder: true,
         orderData: {
@@ -2342,7 +2359,8 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
           totalAmount: calculatedTotal,
           shippingAddress: shippingAddress.trim(),
           phone: phone || null,
-          paymentMethod: paymentMethod || "เก็บเงินปลายทาง"
+          paymentMethod: paymentMethod || "เก็บเงินปลายทาง",
+          shippingCost: normalizedShippingCost
         },
         confidence: parsed.confidence || 0.8,
         reason: parsed.reason || "พบออเดอร์ในบทสนทนา"
@@ -2368,11 +2386,16 @@ async function saveOrderToDatabase(userId, platform, botId, orderData, extracted
     const db = client.db("chatbot");
     const coll = db.collection("orders");
 
+    const normalizedOrderData = {
+      ...(orderData || {}),
+      shippingCost: normalizeShippingCostValue(orderData?.shippingCost),
+    };
+
     const orderDoc = {
       userId,
       platform: platform || "line",
       botId: botId || null,
-      orderData,
+      orderData: normalizedOrderData,
       status: "pending",
       extractedAt: new Date(),
       extractedFrom,
@@ -2423,8 +2446,8 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
     });
     if (!messages || messages.length === 0) return;
 
-    // ตรวจสอบว่ามีออเดอร์ใหม่หรือไม่ (วิเคราะห์เฉพาะข้อความล่าสุด 5 ข้อความ)
-    const recentMessages = messages.slice(-5);
+    // ตรวจสอบว่ามีออเดอร์ใหม่หรือไม่ (วิเคราะห์เฉพาะข้อความล่าสุด 20 ข้อความ)
+    const recentMessages = messages.slice(-20);
     const analysis = await analyzeOrderFromChat(userId, recentMessages);
     
     if (!analysis || !analysis.hasOrder) {
@@ -10269,7 +10292,10 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     };
 
     if (orderData) {
-      updateDoc.orderData = orderData;
+      updateDoc.orderData = {
+        ...orderData,
+        shippingCost: normalizeShippingCostValue(orderData.shippingCost),
+      };
     }
     if (status) {
       updateDoc.status = status;

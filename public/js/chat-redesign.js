@@ -1325,6 +1325,17 @@ class ChatManager {
         const orderData = order.orderData || {};
         const items = orderData.items || [];
         const totalAmount = orderData.totalAmount || 0;
+        let shippingCost = 0;
+        if (typeof orderData.shippingCost === 'number' && isFinite(orderData.shippingCost)) {
+            shippingCost = Math.max(0, orderData.shippingCost);
+        } else if (typeof orderData.shippingCost === 'string') {
+            const parsed = parseFloat(orderData.shippingCost);
+            if (!isNaN(parsed) && parsed >= 0) {
+                shippingCost = parsed;
+            }
+        }
+        const shippingLabel = shippingCost > 0 ? `฿${this.formatNumber(shippingCost)}` : 'ส่งฟรี';
+        const shippingAmountClass = shippingCost > 0 ? '' : 'free';
         
         const itemsHtml = items.map(item => `
             <div class="order-item">
@@ -1380,6 +1391,11 @@ class ChatManager {
                 
                 <div class="order-items">
                     ${itemsHtml}
+                </div>
+
+                <div class="order-total order-shipping">
+                    <span class="order-total-label">ค่าส่ง:</span>
+                    <span class="order-total-amount ${shippingAmountClass}">${shippingLabel}</span>
                 </div>
                 
                 <div class="order-total">
@@ -1460,6 +1476,19 @@ class ChatManager {
         document.getElementById('editShippingAddress').value = orderData.shippingAddress || '';
         document.getElementById('editPhone').value = orderData.phone || '';
         document.getElementById('editPaymentMethod').value = orderData.paymentMethod || 'เก็บเงินปลายทาง';
+        const shippingCostInput = document.getElementById('editShippingCost');
+        if (shippingCostInput) {
+            let shippingCost = 0;
+            if (typeof orderData.shippingCost === 'number' && isFinite(orderData.shippingCost)) {
+                shippingCost = Math.max(0, orderData.shippingCost);
+            } else if (typeof orderData.shippingCost === 'string') {
+                const parsed = parseFloat(orderData.shippingCost);
+                if (!isNaN(parsed) && parsed >= 0) {
+                    shippingCost = parsed;
+                }
+            }
+            shippingCostInput.value = shippingCost;
+        }
         
         // Render order items
         const editOrderItems = document.getElementById('editOrderItems');
@@ -1570,8 +1599,17 @@ class ChatManager {
             return;
         }
         
-        // Calculate total
-        const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+        const shippingCostInput = document.getElementById('editShippingCost');
+        let shippingCost = 0;
+        if (shippingCostInput) {
+            const parsed = parseFloat(shippingCostInput.value);
+            if (!isNaN(parsed) && parsed >= 0) {
+                shippingCost = parsed;
+            }
+        }
+        
+        // Calculate total (รวมค่าส่ง)
+        const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.price), 0) + shippingCost;
         
         // Collect other data
         const orderData = {
@@ -1579,7 +1617,8 @@ class ChatManager {
             totalAmount,
             shippingAddress: document.getElementById('editShippingAddress').value.trim() || null,
             phone: document.getElementById('editPhone').value.trim() || null,
-            paymentMethod: document.getElementById('editPaymentMethod').value || null
+            paymentMethod: document.getElementById('editPaymentMethod').value || null,
+            shippingCost
         };
         
         const status = document.getElementById('editOrderStatus').value;
