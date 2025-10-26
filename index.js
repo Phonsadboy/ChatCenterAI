@@ -11182,6 +11182,7 @@ function processQueueMessageForDisplay(content) {
   try {
     let displayContent = "";
     let contentType = "text";
+    let plainText = "";
 
     // ถ้าเป็น array (ข้อความจากคิว)
     if (Array.isArray(content)) {
