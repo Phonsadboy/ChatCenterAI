@@ -45,6 +45,9 @@ async function manageInstructions(botId) {
     if (libraryResponse.ok) {
       const result = await libraryResponse.json();
       availableLibraries = result.libraries || [];
+      if (window.adminSettings && typeof window.adminSettings.setInstructionLibraryCache === "function") {
+        window.adminSettings.setInstructionLibraryCache(availableLibraries);
+      }
     }
 
   // Display data
@@ -98,6 +101,9 @@ async function manageFacebookInstructions(botId) {
     if (libraryResponse.ok) {
       const result = await libraryResponse.json();
       availableLibraries = result.libraries || [];
+      if (window.adminSettings && typeof window.adminSettings.setInstructionLibraryCache === "function") {
+        window.adminSettings.setInstructionLibraryCache(availableLibraries);
+      }
     }
 
   // Display data

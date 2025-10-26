@@ -237,6 +237,9 @@ async function loadLineBotAiModelInfo() {
         const response = await fetch('/api/line-bots');
         if (response.ok) {
             const lineBots = await response.json();
+            if (window.adminSettings && typeof window.adminSettings.setLineBotCache === 'function') {
+                window.adminSettings.setLineBotCache(lineBots);
+            }
             displayLineBotAiModelInfo(lineBots);
         }
     } catch (error) {
@@ -476,6 +479,9 @@ async function loadFacebookBotSettings() {
         const response = await fetch('/api/facebook-bots');
         if (response.ok) {
             const facebookBots = await response.json();
+            if (window.adminSettings && typeof window.adminSettings.setFacebookBotCache === 'function') {
+                window.adminSettings.setFacebookBotCache(facebookBots);
+            }
             displayFacebookBotList(facebookBots);
         } else {
             showAlert('ไม่สามารถโหลดข้อมูล Facebook Bot ได้', 'danger');

@@ -1,15 +1,172 @@
 // Admin Settings JavaScript
 // Global variables
 let currentSettings = {};
+let settingsCache = null;
+let instructionLibraryCache = null;
+let lineBotCache = null;
+let facebookBotCache = null;
+let activeSettingsRequestId = 0;
+let latestSettingsRequestId = 0;
+let latestInstructionRequestId = 0;
+let latestLineBotRequestId = 0;
+let latestFacebookRequestId = 0;
 let currentBotId = null;
 let currentBotType = null; // 'line' or 'facebook'
 let currentBotInstructions = [];
 let availableLibraries = [];
 const DEFAULT_AUDIO_ATTACHMENT_RESPONSE = 'ขออภัยค่ะ ขณะนี้ระบบยังไม่รองรับไฟล์เสียง กรุณาพิมพ์ข้อความหรือส่งรูปภาพแทน';
 
+const TAB_RESOURCE_REQUIREMENTS = {
+    'line-ai-tab': { instructions: true, lineBots: true, facebookBots: true },
+    'chat-tab': { instructions: true },
+    'system-tab': {},
+    'filter-tab': {}
+};
+
+function getActiveSettingsTabId() {
+    const activeTab = document.querySelector('#settingsTabs .nav-link.active');
+    return activeTab ? activeTab.id : 'line-ai-tab';
+}
+
+function resolveTabRequirements(tabId) {
+    return TAB_RESOURCE_REQUIREMENTS[tabId] || TAB_RESOURCE_REQUIREMENTS['line-ai-tab'];
+}
+
+function setSettingsLoadingState(isLoading) {
+    const indicator = document.getElementById('settingsRefreshIndicator');
+    if (!indicator) return;
+    indicator.style.display = isLoading ? 'inline-flex' : 'none';
+}
+
+function populateInstructionOptionsFromCache() {
+    const select = document.getElementById('defaultInstruction');
+    if (!select) return;
+
+    const libraries = Array.isArray(instructionLibraryCache) ? instructionLibraryCache : [];
+    const currentValue = select.value;
+
+    select.innerHTML = '<option value="">ไม่เลือก</option>';
+    libraries.forEach(lib => {
+        const option = document.createElement('option');
+        option.value = lib.date;
+        option.textContent = lib.name || lib.displayDate;
+        select.appendChild(option);
+    });
+
+    const desiredValue = currentSettings.defaultInstruction || currentValue || '';
+    if (desiredValue) {
+        select.value = desiredValue;
+    } else {
+        select.value = '';
+    }
+}
+
+function applyLineBotCacheToView() {
+    if (typeof displayLineBotAiModelInfo === 'function' && Array.isArray(lineBotCache)) {
+        displayLineBotAiModelInfo(lineBotCache);
+    }
+}
+
+function applyFacebookBotCacheToView() {
+    if (typeof displayFacebookBotList === 'function' && Array.isArray(facebookBotCache)) {
+        displayFacebookBotList(facebookBotCache);
+    }
+}
+
+function handleDataFetchError(resourceLabel, error, hasCache) {
+    console.error(`Error loading ${resourceLabel}:`, error);
+    if (!hasCache) {
+        showAlert(`ไม่สามารถโหลด${resourceLabel}ได้`, 'danger');
+    }
+}
+
+async function refreshSettingsData(requestId) {
+    try {
+        const response = await fetch('/api/settings');
+        if (!response.ok) {
+            throw new Error('ไม่สามารถโหลดการตั้งค่าได้');
+        }
+        const data = await response.json();
+        if (requestId < latestSettingsRequestId) {
+            return;
+        }
+        latestSettingsRequestId = requestId;
+        settingsCache = { ...data };
+        if (requestId === activeSettingsRequestId) {
+            currentSettings = { ...data };
+            populateSettings();
+        }
+    } catch (error) {
+        handleDataFetchError('การตั้งค่า', error, !!settingsCache);
+    }
+}
+
+async function refreshInstructionOptions(requestId) {
+    try {
+        const response = await fetch('/api/instructions/library');
+        if (!response.ok) {
+            throw new Error('ไม่สามารถโหลดคลัง Instructions ได้');
+        }
+        const result = await response.json();
+        if (requestId < latestInstructionRequestId) {
+            return;
+        }
+        latestInstructionRequestId = requestId;
+        instructionLibraryCache = Array.isArray(result.libraries) ? [...result.libraries] : [];
+        if (requestId === activeSettingsRequestId) {
+            populateInstructionOptionsFromCache();
+        }
+    } catch (error) {
+        const hasCache = Array.isArray(instructionLibraryCache) && instructionLibraryCache.length > 0;
+        handleDataFetchError('คลัง Instructions', error, hasCache);
+    }
+}
+
+async function refreshLineBotOverview(requestId) {
+    try {
+        const response = await fetch('/api/line-bots');
+        if (!response.ok) {
+            throw new Error('ไม่สามารถโหลดข้อมูล Line Bot ได้');
+        }
+        const bots = await response.json();
+        if (requestId < latestLineBotRequestId) {
+            return;
+        }
+        latestLineBotRequestId = requestId;
+        lineBotCache = Array.isArray(bots) ? [...bots] : [];
+        if (requestId === activeSettingsRequestId) {
+            applyLineBotCacheToView();
+        }
+    } catch (error) {
+        const hasCache = Array.isArray(lineBotCache) && lineBotCache.length > 0;
+        handleDataFetchError('ข้อมูล Line Bot', error, hasCache);
+    }
+}
+
+async function refreshFacebookBotOverview(requestId) {
+    try {
+        const response = await fetch('/api/facebook-bots');
+        if (!response.ok) {
+            throw new Error('ไม่สามารถโหลดข้อมูล Facebook Bot ได้');
+        }
+        const bots = await response.json();
+        if (requestId < latestFacebookRequestId) {
+            return;
+        }
+        latestFacebookRequestId = requestId;
+        facebookBotCache = Array.isArray(bots) ? [...bots] : [];
+        if (requestId === activeSettingsRequestId) {
+            applyFacebookBotCacheToView();
+        }
+    } catch (error) {
+        const hasCache = Array.isArray(facebookBotCache) && facebookBotCache.length > 0;
+        handleDataFetchError('ข้อมูล Facebook Bot', error, hasCache);
+    }
+}
+
 // Initialize page
 document.addEventListener('DOMContentLoaded', function() {
-    loadSettings();
+    loadSettings({ useCacheFirst: false, tabId: getActiveSettingsTabId() });
     loadLineBotSettings();
     setupEventListeners();
 });
@@ -92,8 +249,8 @@ function setupEventListeners() {
     // Tab change event
     document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
         tab.addEventListener('shown.bs.tab', function(e) {
-            // Refresh settings when tab changes
-            loadSettings();
+            const tabId = e.target ? e.target.id : getActiveSettingsTabId();
+            loadSettings({ tabId, useCacheFirst: true });
         });
     });
 
@@ -127,50 +284,51 @@ function setupEventListeners() {
     }
 }
 
-// Load current settings
-async function loadSettings() {
-    try {
-        const response = await fetch('/api/settings');
-        if (response.ok) {
-            currentSettings = await response.json();
+// Load current settings with cache-first strategy
+async function loadSettings(options = {}) {
+    const tabId = options.tabId || getActiveSettingsTabId();
+    const useCacheFirst = options.useCacheFirst !== false;
+    const requirements = resolveTabRequirements(tabId);
+    const requestId = ++activeSettingsRequestId;
+
+    if (useCacheFirst) {
+        if (settingsCache) {
+            currentSettings = { ...settingsCache };
             populateSettings();
-            await loadInstructionOptions();
-        } else {
-            showAlert('ไม่สามารถโหลดการตั้งค่าได้', 'danger');
         }
-
-        // โหลดข้อมูล AI Model ของ Line Bot
-        await loadLineBotAiModelInfo();
-
-        // โหลดข้อมูล Facebook Bot
-        await loadFacebookBotSettings();
-
-    } catch (error) {
-        console.error('Error loading settings:', error);
-        showAlert('เกิดข้อผิดพลาดในการโหลดการตั้งค่า', 'danger');
+        if (requirements.instructions && Array.isArray(instructionLibraryCache)) {
+            populateInstructionOptionsFromCache();
+        }
+        if (requirements.lineBots) {
+            applyLineBotCacheToView();
+        }
+        if (requirements.facebookBots) {
+            applyFacebookBotCacheToView();
+        }
     }
-}
 
-async function loadInstructionOptions() {
+    setSettingsLoadingState(true);
+
+    const tasks = [refreshSettingsData(requestId)];
+
+    if (requirements.instructions) {
+        tasks.push(refreshInstructionOptions(requestId));
+    }
+
+    if (requirements.lineBots) {
+        tasks.push(refreshLineBotOverview(requestId));
+    }
+
+    if (requirements.facebookBots) {
+        tasks.push(refreshFacebookBotOverview(requestId));
+    }
+
     try {
-        const response = await fetch('/api/instructions/library');
-        const select = document.getElementById('defaultInstruction');
-        if (!select) return;
-        if (response.ok) {
-            const result = await response.json();
-            select.innerHTML = '<option value="">ไม่เลือก</option>';
-            (result.libraries || []).forEach(lib => {
-                const opt = document.createElement('option');
-                opt.value = lib.date;
-                opt.textContent = lib.name || lib.displayDate;
-                select.appendChild(opt);
-            });
-            if (currentSettings.defaultInstruction) {
-                select.value = currentSettings.defaultInstruction;
-            }
+        await Promise.all(tasks);
+    } finally {
+        if (requestId === activeSettingsRequestId) {
+            setSettingsLoadingState(false);
         }
-    } catch (error) {
-        console.error('Error loading instruction libraries:', error);
     }
 }
 
@@ -370,7 +528,7 @@ async function saveChatSettings() {
 
         if (response.ok) {
             showAlert('บันทึกการตั้งค่าแชทเรียบร้อยแล้ว', 'success');
-            await loadSettings(); // Reload settings
+            await loadSettings({ tabId: getActiveSettingsTabId(), useCacheFirst: true });
         } else {
             showAlert('ไม่สามารถบันทึกการตั้งค่าแชทได้', 'danger');
         }
@@ -410,7 +568,7 @@ async function saveAISettings() {
 
         if (response.ok) {
             showAlert('บันทึกการตั้งค่า AI เรียบร้อยแล้ว', 'success');
-            await loadSettings(); // Reload settings
+            await loadSettings({ tabId: getActiveSettingsTabId(), useCacheFirst: true });
         } else {
             showAlert('ไม่สามารถบันทึกการตั้งค่า AI ได้', 'danger');
         }
@@ -450,7 +608,7 @@ async function saveSystemSettings() {
 
         if (response.ok) {
             showAlert('บันทึกการตั้งค่าระบบเรียบร้อยแล้ว', 'success');
-            await loadSettings(); // Reload settings
+            await loadSettings({ tabId: getActiveSettingsTabId(), useCacheFirst: true });
         } else {
             showAlert('ไม่สามารถบันทึกการตั้งค่าระบบได้', 'danger');
         }
@@ -490,7 +648,7 @@ async function saveFilterSettings() {
 
         if (response.ok) {
             showAlert('บันทึกการตั้งค่าการกรองเรียบร้อยแล้ว', 'success');
-            await loadSettings(); // Reload settings
+            await loadSettings({ tabId: getActiveSettingsTabId(), useCacheFirst: true });
         } else {
             showAlert('ไม่สามารถบันทึกการตั้งค่าการกรองได้', 'danger');
         }
@@ -635,6 +793,27 @@ function showAlert(message, type = 'info') {
     });
 }
 
+function setInstructionLibraryCache(libraries) {
+    instructionLibraryCache = Array.isArray(libraries) ? [...libraries] : [];
+    if (activeSettingsRequestId > latestInstructionRequestId) {
+        latestInstructionRequestId = activeSettingsRequestId;
+    }
+}
+
+function setLineBotCache(bots) {
+    lineBotCache = Array.isArray(bots) ? [...bots] : [];
+    if (activeSettingsRequestId > latestLineBotRequestId) {
+        latestLineBotRequestId = activeSettingsRequestId;
+    }
+}
+
+function setFacebookBotCache(bots) {
+    facebookBotCache = Array.isArray(bots) ? [...bots] : [];
+    if (activeSettingsRequestId > latestFacebookRequestId) {
+        latestFacebookRequestId = activeSettingsRequestId;
+    }
+}
+
 // Export functions for use in other modules
 window.adminSettings = {
     loadSettings,
@@ -644,5 +823,8 @@ window.adminSettings = {
     saveFilterSettings,
     testFiltering,
     showAlert,
-    updateHiddenWordsCount
+    updateHiddenWordsCount,
+    setInstructionLibraryCache,
+    setLineBotCache,
+    setFacebookBotCache
 };
