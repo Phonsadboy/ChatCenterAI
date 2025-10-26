@@ -669,13 +669,12 @@ class ChatManager {
         const newStatus = !user.hasPurchased;
         
         try {
-            const response = await fetch('/admin/chat/purchase-status', {
+            const response = await fetch(`/admin/chat/purchase-status/${this.currentUserId}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    userId: this.currentUserId,
                     hasPurchased: newStatus
                 })
             });
@@ -770,11 +769,12 @@ class ChatManager {
     
     async loadAvailableTags() {
         try {
-            const response = await fetch('/admin/chat/tags');
+            const response = await fetch('/admin/chat/available-tags');
             const data = await response.json();
             
             if (data.success) {
-                this.availableTags = data.tags || [];
+                // API returns array of {tag, count} objects
+                this.availableTags = data.tags ? data.tags.map(t => t.tag || t) : [];
                 this.renderTagFilters();
             }
         } catch (error) {
@@ -882,13 +882,12 @@ class ChatManager {
         tags.push(tag);
         
         try {
-            const response = await fetch('/admin/chat/tags', {
+            const response = await fetch(`/admin/chat/tags/${this.currentUserId}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    userId: this.currentUserId,
                     tags: tags
                 })
             });
@@ -918,13 +917,12 @@ class ChatManager {
         const tags = (user.tags || []).filter(t => t !== tag);
         
         try {
-            const response = await fetch('/admin/chat/tags', {
+            const response = await fetch(`/admin/chat/tags/${this.currentUserId}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    userId: this.currentUserId,
                     tags: tags
                 })
             });
