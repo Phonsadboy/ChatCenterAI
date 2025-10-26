@@ -765,7 +765,7 @@ class ChatManager {
         
         try {
             const response = await fetch(`/admin/chat/clear/${this.currentUserId}`, {
-                method: 'POST'
+                method: 'DELETE'
             });
             
             const data = await response.json();
