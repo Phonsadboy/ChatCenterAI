@@ -127,7 +127,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const extractedAt = order.extractedAt
           ? formatDateTime(order.extractedAt)
           : '-';
-        const customerName = order.displayName || order.userId || '-';
+        const customerName =
+          order.customerName || order.displayName || order.userId || '-';
         const platform = order.platform || '-';
         const status = order.status || 'pending';
         const itemsHtml = renderOrderItems(order.items || []);

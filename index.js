@@ -2243,6 +2243,95 @@ function normalizeShippingCostValue(rawCost) {
   return 0;
 }
 
+function normalizeCustomerName(rawName) {
+  if (typeof rawName !== "string") {
+    return null;
+  }
+  const trimmed = rawName.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function findDuplicateOrder(existingOrders, newOrderData) {
+  if (!Array.isArray(existingOrders) || !newOrderData) {
+    return null;
+  }
+
+  const newItems = Array.isArray(newOrderData.items) ? newOrderData.items : [];
+  if (!newItems.length) {
+    return null;
+  }
+
+  return (
+    existingOrders.find((order) => {
+      const existingItems = Array.isArray(order.orderData?.items)
+        ? order.orderData.items
+        : [];
+      if (existingItems.length !== newItems.length) return false;
+
+      return existingItems.every((existingItem, index) => {
+        const newItem = newItems[index];
+        if (!newItem) return false;
+        return (
+          existingItem.product === newItem.product &&
+          Number(existingItem.quantity) === Number(newItem.quantity) &&
+          Number(existingItem.price) === Number(newItem.price)
+        );
+      });
+    }) || null
+  );
+}
+
+async function markMessagesAsOrderExtracted(userId, messageIds, extractionRoundId, orderId = null) {
+  if (!Array.isArray(messageIds) || messageIds.length === 0) {
+    return;
+  }
+
+  const objectIds = messageIds
+    .map((id) => {
+      if (!id) return null;
+      try {
+        return new ObjectId(id);
+      } catch (error) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  if (!objectIds.length) {
+    return;
+  }
+
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("chat_history");
+
+    const updateDoc = {
+      orderExtractionRoundId: extractionRoundId,
+      orderExtractionMarkedAt: new Date(),
+    };
+
+    if (orderId) {
+      try {
+        updateDoc.orderId =
+          typeof orderId === "string" ? new ObjectId(orderId) : orderId;
+      } catch (error) {
+        updateDoc.orderId = orderId;
+      }
+    }
+
+    await coll.updateMany(
+      {
+        _id: { $in: objectIds },
+        senderId: userId,
+      },
+      { $set: updateDoc },
+    );
+  } catch (error) {
+    console.error("[Order] ไม่สามารถมาร์กข้อความที่สกัดแล้วได้:", error.message);
+  }
+}
+
 function buildOrderQuery(params = {}) {
   const query = {};
   const status = params.status;
@@ -2281,11 +2370,17 @@ function buildOrderQuery(params = {}) {
   return { query, dateRange: { start: startMoment, end: endMoment } };
 }
 
-async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
+async function analyzeOrderFromChat(userId, messages, options = {}) {
   if (!OPENAI_API_KEY) {
     console.warn("[Order] ไม่มี OPENAI_API_KEY ข้ามการวิเคราะห์ออเดอร์");
     return null;
   }
+
+  const {
+    modelOverride = null,
+    previousAddress = null,
+    previousCustomerName = null,
+  } = options || {};
 
   const orderModel = modelOverride || (await getSettingValue("orderModel", "gpt-4.1-mini"));
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -2312,6 +2407,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
 - phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
 - paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
 - shippingCost: ค่าส่ง (ตัวเลข; หากไม่ระบุให้ใช้ 0 และถือว่าส่งฟรี)
+- หากได้รับข้อมูลที่อยู่หรือชื่อลูกค้าจากออเดอร์ก่อนหน้า ให้ใช้เป็นค่าเริ่มต้นเมื่อไม่มีข้อมูลใหม่
 
 ตอบเป็น JSON เท่านั้น: {
   "hasOrder": true/false,
@@ -2327,7 +2423,18 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
   "reason": "เหตุผลสั้นๆ (หากไม่มีที่อยู่ให้สรุปว่าไม่มีออเดอร์)"
 }`;
 
-  const userPrompt = `บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์และสกัดข้อมูลออเดอร์:`;
+  const previousContextLines = [];
+  if (previousCustomerName) {
+    previousContextLines.push(`- ชื่อลูกค้ารอบก่อน: ${previousCustomerName}`);
+  }
+  if (previousAddress) {
+    previousContextLines.push(`- ที่อยู่รอบก่อน: ${previousAddress}`);
+  }
+  const previousContextText = previousContextLines.length
+    ? `ข้อมูลจากออเดอร์ก่อนหน้า:\n${previousContextLines.join("\n")}\nหากลูกค้าไม่ได้ระบุชื่อหรือที่อยู่ใหม่ให้ใช้ข้อมูลก่อนหน้าเป็นค่าเริ่มต้น\n\n`
+    : "";
+
+  const userPrompt = `${previousContextText}บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์และสกัดข้อมูลออเดอร์:`;
 
   try {
     const response = await openai.chat.completions.create({
@@ -2360,7 +2467,15 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
 
     // ตรวจสอบความถูกต้องของข้อมูล
     if (parsed.hasOrder && parsed.orderData) {
-      const { items, totalAmount, shippingAddress, phone, paymentMethod, shippingCost } = parsed.orderData;
+      const {
+        items,
+        totalAmount,
+        shippingAddress,
+        phone,
+        paymentMethod,
+        shippingCost,
+        customerName,
+      } = parsed.orderData;
       
       // ตรวจสอบ items
       if (!Array.isArray(items) || items.length === 0) {
@@ -2429,6 +2544,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
       }
 
       const normalizedShippingCost = normalizeShippingCostValue(shippingCost);
+      const normalizedCustomerName = normalizeCustomerName(customerName);
 
       return {
         hasOrder: true,
@@ -2438,7 +2554,8 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
           shippingAddress: shippingAddress.trim(),
           phone: phone || null,
           paymentMethod: paymentMethod || "เก็บเงินปลายทาง",
-          shippingCost: normalizedShippingCost
+          shippingCost: normalizedShippingCost,
+          customerName: normalizedCustomerName,
         },
         confidence: parsed.confidence || 0.8,
         reason: parsed.reason || "พบออเดอร์ในบทสนทนา"
@@ -2467,6 +2584,7 @@ async function saveOrderToDatabase(userId, platform, botId, orderData, extracted
     const normalizedOrderData = {
       ...(orderData || {}),
       shippingCost: normalizeShippingCostValue(orderData?.shippingCost),
+      customerName: normalizeCustomerName(orderData?.customerName),
     };
 
     const orderDoc = {
@@ -2518,39 +2636,52 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
       return;
     }
 
-    // ดึงประวัติการสนทนาล่าสุด (ไม่เกิน 20 ข้อความล่าสุด)
     const messages = await getNormalizedChatHistory(userId, {
       applyFilter: true,
     });
     if (!messages || messages.length === 0) return;
 
-    // ตรวจสอบว่ามีออเดอร์ใหม่หรือไม่ (วิเคราะห์เฉพาะข้อความล่าสุด 20 ข้อความ)
-    const recentMessages = messages.slice(-20);
-    const analysis = await analyzeOrderFromChat(userId, recentMessages);
-    
+    const unprocessedMessages = messages.filter(
+      (msg) => !msg.orderExtractionRoundId,
+    );
+    if (!unprocessedMessages.length) {
+      return;
+    }
+
+    const targetMessages = unprocessedMessages.slice(-20);
+    const messageIds = targetMessages
+      .map((msg) => msg.messageId)
+      .filter(Boolean);
+    if (!messageIds.length) {
+      return;
+    }
+
+    const existingOrders = await getUserOrders(userId);
+    const latestOrder = existingOrders?.[0];
+
+    const analysis = await analyzeOrderFromChat(userId, targetMessages, {
+      previousAddress: latestOrder?.orderData?.shippingAddress || null,
+      previousCustomerName: latestOrder?.orderData?.customerName || null,
+    });
+
     if (!analysis || !analysis.hasOrder) {
       return;
     }
 
-    // ตรวจสอบว่ามีออเดอร์คล้ายกันอยู่แล้วหรือไม่ (เพื่อป้องกันการสกัดซ้ำ)
-    const existingOrders = await getUserOrders(userId);
-    const isDuplicate = existingOrders.some(order => {
-      const existingItems = order.orderData?.items || [];
-      const newItems = analysis.orderData?.items || [];
-      
-      // เปรียบเทียบรายการสินค้า
-      if (existingItems.length !== newItems.length) return false;
-      
-      return existingItems.every((existingItem, index) => {
-        const newItem = newItems[index];
-        return existingItem.product === newItem.product && 
-               existingItem.quantity === newItem.quantity &&
-               existingItem.price === newItem.price;
-      });
-    });
+    const duplicateOrder = findDuplicateOrder(
+      existingOrders,
+      analysis.orderData,
+    );
 
-    if (isDuplicate) {
+    if (duplicateOrder) {
       console.log(`[Order] พบออเดอร์ซ้ำสำหรับผู้ใช้ ${userId}`);
+      const extractionRoundId = new ObjectId().toString();
+      await markMessagesAsOrderExtracted(
+        userId,
+        messageIds,
+        extractionRoundId,
+        duplicateOrder?._id?.toString?.() || null,
+      );
       await maybeAnalyzeFollowUp(userId, platform, botId, {
         reasonOverride: analysis.reason,
         forceUpdate: true,
@@ -2572,6 +2703,14 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
       console.error(`[Order] ไม่สามารถบันทึกออเดอร์สำหรับผู้ใช้ ${userId}`);
       return;
     }
+
+    const extractionRoundId = new ObjectId().toString();
+    await markMessagesAsOrderExtracted(
+      userId,
+      messageIds,
+      extractionRoundId,
+      orderId?.toString?.() || orderId,
+    );
 
     await maybeAnalyzeFollowUp(userId, platform, botId, {
       reasonOverride: analysis.reason,
@@ -10285,46 +10424,101 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
       return res.json({ success: false, error: "userId จำเป็น" });
     }
 
-    // ดึงประวัติการสนทนาทั้งหมด
-    const messages = await getNormalizedChatHistory(userId);
+    const messages = await getNormalizedChatHistory(userId, {
+      applyFilter: true,
+    });
     if (!messages || messages.length === 0) {
       return res.json({ success: false, error: "ไม่พบประวัติการสนทนา" });
     }
 
-    // วิเคราะห์ออเดอร์ด้วย AI
-    const analysis = await analyzeOrderFromChat(userId, messages);
-    
+    const unprocessedMessages = messages.filter(
+      (msg) => !msg.orderExtractionRoundId,
+    );
+    if (!unprocessedMessages.length) {
+      return res.json({
+        success: true,
+        hasOrder: false,
+        reason: "ไม่มีข้อความใหม่สำหรับการสกัด",
+      });
+    }
+
+    const targetMessages = unprocessedMessages.slice(-50);
+    const messageIds = targetMessages
+      .map((msg) => msg.messageId)
+      .filter(Boolean);
+
+    if (!messageIds.length) {
+      return res.json({
+        success: true,
+        hasOrder: false,
+        reason: "ไม่พบข้อความใหม่ที่สามารถสกัดได้",
+      });
+    }
+
+    const existingOrders = await getUserOrders(userId);
+    const latestOrder = existingOrders?.[0];
+
+    const analysis = await analyzeOrderFromChat(userId, targetMessages, {
+      previousAddress: latestOrder?.orderData?.shippingAddress || null,
+      previousCustomerName: latestOrder?.orderData?.customerName || null,
+    });
+
     if (!analysis) {
       return res.json({ success: false, error: "ไม่สามารถวิเคราะห์ออเดอร์ได้" });
     }
 
     if (!analysis.hasOrder) {
-      return res.json({ 
-        success: true, 
-        hasOrder: false, 
+      return res.json({
+        success: true,
+        hasOrder: false,
         reason: analysis.reason,
-        confidence: analysis.confidence
+        confidence: analysis.confidence,
       });
     }
 
-    // ดึงข้อมูล platform และ botId จากข้อความล่าสุด
-    const lastMessage = messages[messages.length - 1];
+    const duplicateOrder = findDuplicateOrder(existingOrders, analysis.orderData);
+    if (duplicateOrder) {
+      const extractionRoundId = new ObjectId().toString();
+      await markMessagesAsOrderExtracted(
+        userId,
+        messageIds,
+        extractionRoundId,
+        duplicateOrder?._id?.toString?.() || null,
+      );
+
+      return res.json({
+        success: true,
+        hasOrder: false,
+        reason: "พบออเดอร์เดิม",
+        confidence: analysis.confidence,
+      });
+    }
+
+    const lastMessage = targetMessages[targetMessages.length - 1] ||
+      messages[messages.length - 1];
     const platform = lastMessage?.platform || "line";
     const botId = lastMessage?.botId || null;
 
-    // บันทึกออเดอร์ลงฐานข้อมูล
     const orderId = await saveOrderToDatabase(
-      userId, 
-      platform, 
-      botId, 
-      analysis.orderData, 
-      "manual_extraction", 
-      true
+      userId,
+      platform,
+      botId,
+      analysis.orderData,
+      "manual_extraction",
+      true,
     );
 
     if (!orderId) {
       return res.json({ success: false, error: "ไม่สามารถบันทึกออเดอร์ได้" });
     }
+
+    const extractionRoundId = new ObjectId().toString();
+    await markMessagesAsOrderExtracted(
+      userId,
+      messageIds,
+      extractionRoundId,
+      orderId?.toString?.() || orderId,
+    );
 
     await maybeAnalyzeFollowUp(userId, platform, botId, {
       reasonOverride: analysis.reason,
@@ -10332,7 +10526,6 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
       forceUpdate: true,
     });
 
-    // Emit socket event
     try {
       if (io) {
         io.emit("orderExtracted", {
@@ -10340,18 +10533,18 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
           orderId,
           orderData: analysis.orderData,
           isManualExtraction: true,
-          extractedAt: new Date()
+          extractedAt: new Date(),
         });
       }
     } catch (_) {}
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       hasOrder: true,
       orderId,
       orderData: analysis.orderData,
       confidence: analysis.confidence,
-      reason: analysis.reason
+      reason: analysis.reason,
     });
 
   } catch (err) {
@@ -10382,6 +10575,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
       updateDoc.orderData = {
         ...orderData,
         shippingCost: normalizeShippingCostValue(orderData.shippingCost),
+        customerName: normalizeCustomerName(orderData.customerName),
       };
     }
     if (status) {
@@ -11002,10 +11196,17 @@ app.get("/admin/orders/data", async (req, res) => {
 
     const formattedOrders = orders.map((order) => {
       const orderData = order.orderData || {};
+      const customerName = normalizeCustomerName(orderData.customerName);
+      const displayName =
+        customerName ||
+        profileMap[order.userId] ||
+        order.userId ||
+        "";
       return {
         id: order._id?.toString?.() || "",
         userId: order.userId || "",
-        displayName: profileMap[order.userId] || "",
+        displayName,
+        customerName: customerName || "",
         platform: order.platform || "line",
         status: order.status || "pending",
         totalAmount: orderData.totalAmount || 0,
@@ -11097,7 +11298,10 @@ app.get("/admin/orders/export", async (req, res) => {
           ? moment(order.extractedAt).tz(timezone).format("YYYY-MM-DD HH:mm:ss")
           : "",
         ผู้ใช้: order.userId || "",
-        ชื่อ: profileMap[order.userId] || "",
+        ชื่อลูกค้า:
+          normalizeCustomerName(orderData.customerName) ||
+          profileMap[order.userId] ||
+          "",
         แพลตฟอร์ม: order.platform || "line",
         สถานะ: order.status || "pending",
         ยอดรวม: orderData.totalAmount || 0,
@@ -11429,6 +11633,13 @@ function normalizeMessageForFrontend(message) {
     let displayContent = "";
     let contentType = "text";
     let richDisplayContent = "";
+    const messageId =
+      message?._id && typeof message._id.toString === "function"
+        ? message._id.toString()
+        : message?._id || null;
+    const orderExtractionRoundId = message?.orderExtractionRoundId
+      ? String(message.orderExtractionRoundId)
+      : null;
 
     // ตรวจสอบประเภทของ content และแปลงให้เหมาะสม
     if (typeof content === "string") {
@@ -11498,6 +11709,8 @@ function normalizeMessageForFrontend(message) {
       platform: message.platform || "line",
       botId: message.botId || null,
       rawContent: originalContent,
+      messageId,
+      orderExtractionRoundId,
     };
   } catch (error) {
     console.error("[Normalize] ข้อผิดพลาดในการแปลงข้อความ:", error);
@@ -11509,6 +11722,8 @@ function normalizeMessageForFrontend(message) {
       displayContent: "เกิดข้อผิดพลาดในการประมวลผลข้อความ",
       contentType: "error",
       richDisplayContent: "เกิดข้อผิดพลาดในการประมวลผลข้อความ",
+      messageId: null,
+      orderExtractionRoundId: null,
     };
   }
 }

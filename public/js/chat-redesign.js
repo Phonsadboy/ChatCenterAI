@@ -1346,9 +1346,19 @@ class ChatManager {
         `).join('');
         
         let metaHtml = '';
-        if (orderData.shippingAddress || orderData.phone || orderData.paymentMethod) {
+        if (orderData.customerName || orderData.shippingAddress || orderData.phone || orderData.paymentMethod) {
             metaHtml = '<div class="order-meta">';
-            
+
+            if (orderData.customerName) {
+                metaHtml += `
+                    <div class="order-meta-item">
+                        <i class="fas fa-user"></i>
+                        <span class="order-meta-label">ชื่อลูกค้า:</span>
+                        <span>${this.escapeHtml(orderData.customerName)}</span>
+                    </div>
+                `;
+            }
+
             if (orderData.shippingAddress) {
                 metaHtml += `
                     <div class="order-meta-item">
@@ -1476,6 +1486,10 @@ class ChatManager {
         document.getElementById('editShippingAddress').value = orderData.shippingAddress || '';
         document.getElementById('editPhone').value = orderData.phone || '';
         document.getElementById('editPaymentMethod').value = orderData.paymentMethod || 'เก็บเงินปลายทาง';
+        const customerNameInput = document.getElementById('editCustomerName');
+        if (customerNameInput) {
+            customerNameInput.value = orderData.customerName || '';
+        }
         const shippingCostInput = document.getElementById('editShippingCost');
         if (shippingCostInput) {
             let shippingCost = 0;
@@ -1618,7 +1632,13 @@ class ChatManager {
             shippingAddress: document.getElementById('editShippingAddress').value.trim() || null,
             phone: document.getElementById('editPhone').value.trim() || null,
             paymentMethod: document.getElementById('editPaymentMethod').value || null,
-            shippingCost
+            shippingCost,
+            customerName: (() => {
+                const input = document.getElementById('editCustomerName');
+                if (!input) return null;
+                const value = input.value.trim();
+                return value || null;
+            })()
         };
         
         const status = document.getElementById('editOrderStatus').value;
