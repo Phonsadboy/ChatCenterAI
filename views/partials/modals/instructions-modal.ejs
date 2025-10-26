@@ -43,45 +43,17 @@
 
                 <hr class="my-4">
 
-                <div class="row g-3">
-                    <div class="col-md-5">
-                        <h6 class="mb-2"><i class="fas fa-image me-2"></i>แนบรูปภาพสำหรับ Instructions</h6>
-                        <div class="border rounded p-3">
-                            <div class="mb-2">
-                                <label class="form-label">ไฟล์รูปภาพ</label>
-                                <input type="file" class="form-control" id="instructionAssetFile" accept="image/*">
-                            </div>
-                            <div class="mb-2">
-                                <label class="form-label">ชื่อรูปภาพ (ใช้อ้างอิงใน AI)</label>
-                                <input type="text" class="form-control" id="instructionAssetLabel" placeholder="เช่น สินค้า A, QR Code ชำระเงิน, เมนูอาหาร">
-                                <div class="form-text">
-                                    <i class="fas fa-info-circle me-1"></i>ใช้ภาษาไทยได้ ระบบจะแปลงเป็น slug อัตโนมัติ
-                                </div>
-                            </div>
-                            <div class="mb-2">
-                                <label class="form-label">คำอธิบายสำหรับ AI</label>
-                                <textarea class="form-control" id="instructionAssetDescription" rows="3" placeholder="คำอธิบายรูป เพื่อให้ AI เข้าใจว่าใช้ในกรณีใด เช่น 'ใช้เมื่อลูกค้าถามเกี่ยวกับสินค้า A' หรือ 'แสดงเมื่อลูกค้าต้องการชำระเงิน'"></textarea>
-                            </div>
-                            <div class="form-check mb-3">
-                                <input class="form-check-input" type="checkbox" id="assetOverwrite">
-                                <label class="form-check-label" for="assetOverwrite">
-                                    แทนที่ไฟล์เดิม หากมี label นี้อยู่แล้ว
-                                </label>
-                            </div>
-                            <div class="d-grid">
-                                <button class="btn btn-primary" id="uploadInstructionAssetBtn">
-                                    <i class="fas fa-upload me-2"></i>อัพโหลดรูปภาพ
-                                </button>
-                            </div>
-                            <div class="small text-muted mt-2">
-                                <i class="fas fa-lightbulb me-1"></i>ใช้ในข้อความ AI ด้วยรูปแบบ: <code>#[IMAGE:ชื่อรูปภาพ]</code><br>
-                                <span class="small">ตัวอย่าง: <code>#[IMAGE:สินค้า A]</code> หรือ <code>#[IMAGE:QR Code ชำระเงิน]</code></span>
-                            </div>
+                <div class="alert alert-info d-flex align-items-start">
+                    <i class="fas fa-images me-2 mt-1"></i>
+                    <div>
+                        <strong>คลังรูปภาพถูกย้ายไปยังศูนย์กลางรูปภาพ</strong>
+                        <div class="small mt-1">
+                            จัดการการอัปโหลด สร้างคอลเลกชัน และเลือกให้แต่ละบอทใช้งานได้ที่ส่วน
+                            <em>“คลังรูปภาพ &amp; การกำหนดให้บอท”</em> บนหน้า Bot &amp; AI Management
                         </div>
-                    </div>
-                    <div class="col-md-7">
-                        <h6 class="mb-2"><i class="fas fa-photo-video me-2"></i>รูปภาพที่ใช้งานได้</h6>
-                        <div id="instructionAssetsList" class="row g-2" style="max-height: 420px; overflow-y: auto;"></div>
+                        <div class="small mt-2 text-muted">
+                            อ้างอิงรูปในข้อความ AI ด้วยโทเคน <code>#[IMAGE:ชื่อรูป]</code> ได้เหมือนเดิม
+                        </div>
                     </div>
                 </div>
 
@@ -92,7 +64,7 @@
                         <li>คลิกเลือก instruction ใหม่ได้ทันที ระบบจะแทนที่อันเก่าอัตโนมัติ</li>
                         <li>การเปลี่ยนแปลงจะมีผลทันทีหลังจากบันทึก</li>
                         <li>หากต้องการยกเลิกการเลือก กดปุ่ม "ยกเลิก" ที่อันที่เลือกอยู่</li>
-                        <li>สำหรับรูปภาพ ให้แนบในส่วนด้านบน และอ้างอิงด้วย <code>#[IMAGE:ชื่อรูปภาพ]</code> ในข้อความ AI (ใช้ภาษาไทยได้)</li>
+                        <li>รูปภาพที่ต้องใช้ให้จัดการจากศูนย์กลางรูปภาพ แล้วนำ token มาใช้ในข้อความ AI</li>
                     </ul>
                 </div>
 

@@ -7,6 +7,7 @@
         facebookBots: [],
         collectionFilter: '',
         assetFilter: '',
+        collectionAssetFilter: '',
         botCollectionFilter: '',
         editingCollectionId: null,
         editingBot: null
@@ -20,6 +21,15 @@
         addCollectionBtn: null,
         refreshCollectionsBtn: null,
         assetsManagerBtn: null,
+        assetsCount: null,
+        assetsSearch: null,
+        assetsList: null,
+        assetUploadForm: null,
+        assetFile: null,
+        assetLabel: null,
+        assetDescription: null,
+        assetOverwrite: null,
+        assetUploadBtn: null,
         lineAssignments: null,
         facebookAssignments: null,
         collectionModal: null,
@@ -58,6 +68,27 @@
         }
     };
 
+    const escapeHtml = (value) => {
+        if (value === null || value === undefined) return '';
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    };
+
+    const formatFileSize = (bytes) => {
+        const size = Number(bytes);
+        if (!Number.isFinite(size) || size <= 0) return '-';
+        const kb = size / 1024;
+        if (kb < 1024) {
+            return `${kb.toFixed(1)} KB`;
+        }
+        const mb = kb / 1024;
+        return `${mb.toFixed(1)} MB`;
+    };
+
     const getCollectionById = (id) => state.collections.find((item) => item._id === id);
 
     const getCollectionName = (id) => {
@@ -86,6 +117,15 @@
         elements.addCollectionBtn = document.getElementById('createImageCollectionBtn');
         elements.refreshCollectionsBtn = document.getElementById('refreshImageCollectionsBtn');
         elements.assetsManagerBtn = document.getElementById('openAssetsManagerBtn');
+        elements.assetsCount = document.getElementById('imageAssetsCount');
+        elements.assetsSearch = document.getElementById('imageAssetsSearch');
+        elements.assetsList = document.getElementById('imageAssetsList');
+        elements.assetUploadForm = document.getElementById('imageAssetUploadForm');
+        elements.assetFile = document.getElementById('imageAssetFile');
+        elements.assetLabel = document.getElementById('imageAssetLabel');
+        elements.assetDescription = document.getElementById('imageAssetDescription');
+        elements.assetOverwrite = document.getElementById('imageAssetOverwrite');
+        elements.assetUploadBtn = document.getElementById('uploadImageAssetBtn');
         elements.lineAssignments = document.getElementById('lineBotCollectionsList');
         elements.facebookAssignments = document.getElementById('facebookBotCollectionsList');
         elements.collectionModal = document.getElementById('imageCollectionModal');
@@ -119,14 +159,30 @@
 
         if (elements.assetsManagerBtn) {
             elements.assetsManagerBtn.addEventListener('click', () => {
-                const modalEl = document.getElementById('instructionsModal');
-                if (modalEl) {
-                    const modalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
-                    modalInstance.show();
-                } else {
-                    showAlert('ไม่พบหน้าจอจัดการรูปภาพหลัก', 'warning');
-                }
+                elements.section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
+        }
+
+        if (elements.assetUploadForm) {
+            elements.assetUploadForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                handleAssetUpload();
+            });
+        }
+
+        if (elements.assetUploadBtn) {
+            elements.assetUploadBtn.addEventListener('click', handleAssetUpload);
+        }
+
+        if (elements.assetsSearch) {
+            elements.assetsSearch.addEventListener('input', (event) => {
+                state.assetFilter = event.target.value.trim().toLowerCase();
+                renderAssetsList();
+            });
+        }
+
+        if (elements.assetsList) {
+            elements.assetsList.addEventListener('click', handleAssetListAction);
         }
 
         if (elements.collectionsSearch) {
@@ -142,7 +198,7 @@
 
         if (elements.collectionAssetSearch) {
             elements.collectionAssetSearch.addEventListener('input', (event) => {
-                state.assetFilter = event.target.value.trim().toLowerCase();
+                state.collectionAssetFilter = event.target.value.trim().toLowerCase();
                 renderCollectionAssetList();
             });
         }
@@ -190,6 +246,196 @@
         }
     };
 
+    const updateAssetsCount = () => {
+        if (!elements.assetsCount) return;
+        const total = Array.isArray(state.assets) ? state.assets.length : 0;
+        elements.assetsCount.textContent = `${total} รูป`;
+    };
+
+    const getLabelsUsedInCollections = () => {
+        const labels = new Set();
+        state.collections.forEach((collection) => {
+            if (Array.isArray(collection.images)) {
+                collection.images.forEach((img) => {
+                    if (img?.label) {
+                        labels.add(img.label);
+                    }
+                });
+            }
+        });
+        return labels;
+    };
+
+    const renderAssetsList = () => {
+        if (!elements.assetsList) return;
+
+        const assets = Array.isArray(state.assets) ? state.assets : [];
+        const filter = state.assetFilter;
+        const usedLabels = getLabelsUsedInCollections();
+
+        if (assets.length === 0) {
+            elements.assetsList.innerHTML = '<div class="empty-state"><i class="fas fa-image mb-2"></i><div>ยังไม่มีรูปภาพ</div><small class="text-muted">อัปโหลดรูปเพื่อใช้ร่วมกับ AI ได้ทันที</small></div>';
+            return;
+        }
+
+        const filtered = filter
+            ? assets.filter((asset) => {
+                  const label = (asset.label || '').toLowerCase();
+                  const description = (asset.description || asset.alt || '').toLowerCase();
+                  return label.includes(filter) || description.includes(filter);
+              })
+            : assets;
+
+        if (filtered.length === 0) {
+            elements.assetsList.innerHTML = '<div class="empty-state"><i class="fas fa-search mb-2"></i><div>ไม่พบรูปภาพที่ตรงกับคำค้น</div></div>';
+            return;
+        }
+
+        const html = filtered
+            .map((asset) => {
+                const label = asset.label || asset.fileName || 'unnamed';
+                const escapedLabel = escapeHtml(label);
+                const description = escapeHtml(asset.description || asset.alt || '');
+                const token = `#[IMAGE:${label}]`;
+                const sizeText = formatFileSize(asset.size);
+                const thumb = asset.thumbUrl || asset.url || '';
+                const usedBadge = usedLabels.has(label)
+                    ? '<span class="badge bg-success-soft text-success ms-2"><i class="fas fa-check me-1"></i>ใช้งานในคอลเลกชัน</span>'
+                    : '';
+                const updated = formatTimestamp(asset.updatedAt || asset.createdAt);
+
+                return `
+                    <div class="image-asset-item" data-label="${escapedLabel}">
+                        <div class="image-asset-thumb">
+                            ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
+                        </div>
+                        <div class="image-asset-info">
+                            <div class="image-asset-title">
+                                <strong>${escapedLabel}</strong>
+                                ${usedBadge}
+                            </div>
+                            <div class="image-asset-description">${description || '<span class="text-muted">ไม่มีคำอธิบาย</span>'}</div>
+                            <div class="image-asset-meta">
+                                <span class="token">token: <code>${escapeHtml(token)}</code></span>
+                                <span class="dot">•</span>
+                                <span>${sizeText}</span>
+                                <span class="dot">•</span>
+                                <span>อัปเดต ${escapeHtml(updated)}</span>
+                            </div>
+                        </div>
+                        <div class="image-asset-actions">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-action="copy" data-label="${escapedLabel}">
+                                <i class="fas fa-copy me-1"></i>โทเคน
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete" data-label="${escapedLabel}">
+                                <i class="fas fa-trash me-1"></i>ลบ
+                            </button>
+                        </div>
+                    </div>
+                `;
+            })
+            .join('');
+
+        elements.assetsList.innerHTML = html;
+    };
+
+    const resetAssetForm = () => {
+        if (elements.assetFile) elements.assetFile.value = '';
+        if (elements.assetLabel) elements.assetLabel.value = '';
+        if (elements.assetDescription) elements.assetDescription.value = '';
+        if (elements.assetOverwrite) elements.assetOverwrite.checked = false;
+    };
+
+    const handleAssetUpload = async () => {
+        const file = elements.assetFile?.files?.[0] || null;
+        const label = elements.assetLabel?.value?.trim();
+        const description = elements.assetDescription?.value?.trim() || '';
+        const overwrite = !!elements.assetOverwrite?.checked;
+
+        if (!file || !label) {
+            showAlert('กรุณาเลือกไฟล์และระบุชื่อรูปภาพ', 'warning');
+            return;
+        }
+
+        const form = new FormData();
+        form.append('image', file);
+        form.append('label', label);
+        form.append('description', description);
+        form.append('overwrite', overwrite ? 'true' : 'false');
+
+        try {
+            if (elements.assetUploadBtn) {
+                elements.assetUploadBtn.disabled = true;
+                elements.assetUploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังอัปโหลด';
+            }
+
+            const response = await fetch('/admin/instructions/assets', {
+                method: 'POST',
+                body: form
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'ไม่สามารถอัปโหลดรูปภาพได้');
+            }
+
+            showAlert('อัปโหลดรูปภาพสำเร็จ', 'success');
+            resetAssetForm();
+            await fetchAssets();
+            await fetchCollections();
+        } catch (err) {
+            console.error('upload asset error:', err);
+            showAlert(err.message || 'เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ', 'danger');
+        } finally {
+            if (elements.assetUploadBtn) {
+                elements.assetUploadBtn.disabled = false;
+                elements.assetUploadBtn.innerHTML = '<i class="fas fa-upload me-1"></i>อัปโหลดรูป';
+            }
+        }
+    };
+
+    const copyAssetToken = async (label) => {
+        const token = `#[IMAGE:${label}]`;
+        try {
+            await navigator.clipboard?.writeText(token);
+            showAlert('คัดลอกโทเคนเรียบร้อยแล้ว', 'success');
+        } catch (err) {
+            console.warn('clipboard copy failed:', err);
+            window.prompt('คัดลอกโทเคนด้วยตนเอง:', token);
+        }
+    };
+
+    const deleteAsset = async (label) => {
+        if (!label) return;
+        if (!confirm(`ยืนยันการลบรูปภาพ: ${label}?`)) return;
+        try {
+            const response = await fetch(`/admin/instructions/assets/${encodeURIComponent(label)}`, {
+                method: 'DELETE'
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'ไม่สามารถลบรูปภาพได้');
+            }
+            showAlert('ลบรูปภาพสำเร็จ', 'success');
+            await fetchAssets();
+            await fetchCollections();
+        } catch (err) {
+            console.error('delete asset error:', err);
+            showAlert(err.message || 'เกิดข้อผิดพลาดในการลบรูปภาพ', 'danger');
+        }
+    };
+
+    const handleAssetListAction = (event) => {
+        const actionBtn = event.target.closest('[data-action]');
+        if (!actionBtn) return;
+        const { action, label } = actionBtn.dataset;
+        if (!label) return;
+        if (action === 'copy') {
+            copyAssetToken(label);
+        } else if (action === 'delete') {
+            deleteAsset(label);
+        }
+    };
+
     const refreshAll = async () => {
         try {
             await Promise.all([
@@ -197,7 +443,6 @@
                 fetchAssets(),
                 fetchBots()
             ]);
-            renderCollectionsList();
             renderAssignments();
         } catch (err) {
             console.error('refreshAll error:', err);
@@ -207,16 +452,23 @@
 
     const fetchCollections = async () => {
         try {
-            if (!elements.collectionsList) return;
-            elements.collectionsList.innerHTML = '<div class="text-muted small">กำลังโหลดรายการคลังรูปภาพ...</div>';
+            if (elements.collectionsList) {
+                elements.collectionsList.innerHTML = '<div class="text-muted small">กำลังโหลดรายการคลังรูปภาพ...</div>';
+            }
             const response = await fetch('/api/image-collections');
             if (!response.ok) throw new Error('ไม่สามารถดึงรายการคลังรูปภาพได้');
             const data = await response.json();
             state.collections = Array.isArray(data.collections) ? data.collections : [];
             updateCollectionsCount();
+            renderCollectionsList();
+            renderAssetsList();
         } catch (err) {
             console.error('fetchCollections error:', err);
             showAlert('โหลดข้อมูลคลังรูปภาพไม่สำเร็จ', 'danger');
+            state.collections = [];
+            updateCollectionsCount();
+            renderCollectionsList();
+            renderAssetsList();
         }
     };
 
@@ -226,9 +478,14 @@
             if (!response.ok) throw new Error('ไม่สามารถดึงรายการรูปภาพได้');
             const data = await response.json();
             state.assets = Array.isArray(data.assets) ? data.assets : [];
+            updateAssetsCount();
+            renderAssetsList();
         } catch (err) {
             console.error('fetchAssets error:', err);
             showAlert('โหลดรายการรูปภาพไม่สำเร็จ', 'danger');
+            state.assets = [];
+            updateAssetsCount();
+            renderAssetsList();
         }
     };
 
@@ -374,7 +631,7 @@
     const openCollectionModal = (collectionId = null, options = {}) => {
         if (!elements.collectionModal || !elements.collectionForm) return;
         state.editingCollectionId = collectionId;
-        state.assetFilter = '';
+        state.collectionAssetFilter = '';
         if (elements.collectionAssetSearch) {
             elements.collectionAssetSearch.value = '';
         }
@@ -425,7 +682,7 @@
             }
         }
 
-        const filter = state.assetFilter;
+        const filter = state.collectionAssetFilter;
         const filteredAssets = filter
             ? state.assets.filter((asset) => {
                 const label = (asset.label || '').toLowerCase();
@@ -517,7 +774,6 @@
             if (modalInstance) modalInstance.hide();
 
             await fetchCollections();
-            renderCollectionsList();
             await fetchBots();
             renderAssignments();
         } catch (err) {
@@ -555,7 +811,6 @@
             const modalInstance = bootstrap.Modal.getInstance(elements.collectionModal);
             if (modalInstance) modalInstance.hide();
             await fetchCollections();
-            renderCollectionsList();
             await fetchBots();
             renderAssignments();
         } catch (err) {

@@ -199,11 +199,121 @@
 }
 
 /* Image Collections Section */
+.image-assets-card,
 .image-collections-card,
 .image-collections-assignment-card {
     border: 1px solid #e4e7eb;
     border-radius: 8px;
     box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+
+.image-assets-card .card-body {
+    padding: 1rem;
+}
+
+.image-asset-upload .form-control,
+.image-asset-upload .form-check-input {
+    font-size: 0.8125rem;
+}
+
+.image-asset-upload .form-check-label {
+    font-size: 0.75rem;
+}
+
+.image-assets-list {
+    border: 1px solid #eef2f6;
+    border-radius: 8px;
+    background: #ffffff;
+    max-height: 360px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
+}
+
+.image-asset-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border: 1px solid #e5e9f2;
+    border-radius: 8px;
+    padding: 0.6rem;
+    background: #fdfdfd;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.image-asset-item:hover {
+    border-color: var(--primary);
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
+}
+
+.image-asset-thumb {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-asset-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.image-asset-thumb-placeholder {
+    color: #94a3b8;
+    font-size: 1.25rem;
+}
+
+.image-asset-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 0;
+}
+
+.image-asset-title {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+}
+
+.image-asset-description {
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+
+.image-asset-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    font-size: 0.7rem;
+    color: #94a3b8;
+}
+
+.image-asset-meta .dot {
+    color: #cbd5f5;
+}
+
+.image-asset-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.image-asset-actions .btn {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.5rem;
 }
 
 .image-collections-list {
