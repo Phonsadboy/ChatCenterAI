@@ -2330,12 +2330,49 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
         return { hasOrder: false, orderData: null, confidence: 0, reason: "ไม่มีรายการสินค้า" };
       }
 
-      // ตรวจสอบข้อมูลในแต่ละ item
+      // ตรวจสอบข้อมูลในแต่ละ item และทำความสะอาดข้อมูล
+      const sanitizedItems = [];
       for (const item of items) {
-        if (!item.product || !item.quantity || !item.price) {
-          console.warn("[Order] ข้อมูลสินค้าไม่ครบถ้วน:", item);
-          return { hasOrder: false, orderData: null, confidence: 0, reason: "ข้อมูลสินค้าไม่ครบถ้วน" };
+        const productName =
+          typeof item.product === "string" ? item.product.trim() : "";
+        const quantityNumber = Number(item.quantity);
+        const priceNumber = Number(item.price);
+
+        if (!productName) {
+          console.warn("[Order] ชื่อสินค้าว่าง:", item);
+          return {
+            hasOrder: false,
+            orderData: null,
+            confidence: 0,
+            reason: "ข้อมูลสินค้าไม่ครบถ้วน",
+          };
         }
+
+        if (!Number.isFinite(quantityNumber) || quantityNumber <= 0) {
+          console.warn("[Order] จำนวนสินค้าไม่ถูกต้อง:", item);
+          return {
+            hasOrder: false,
+            orderData: null,
+            confidence: 0,
+            reason: "ข้อมูลสินค้าไม่ครบถ้วน",
+          };
+        }
+
+        if (!Number.isFinite(priceNumber) || priceNumber < 0) {
+          console.warn("[Order] ราคาสินค้าไม่ถูกต้อง:", item);
+          return {
+            hasOrder: false,
+            orderData: null,
+            confidence: 0,
+            reason: "ข้อมูลสินค้าไม่ครบถ้วน",
+          };
+        }
+
+        sanitizedItems.push({
+          product: productName,
+          quantity: quantityNumber,
+          price: priceNumber,
+        });
       }
 
       // ต้องมีที่อยู่จัดส่ง
@@ -2347,7 +2384,10 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
       // คำนวณยอดรวมถ้าไม่ระบุ
       let calculatedTotal = totalAmount;
       if (!calculatedTotal || calculatedTotal <= 0) {
-        calculatedTotal = items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+        calculatedTotal = sanitizedItems.reduce(
+          (sum, item) => sum + item.quantity * item.price,
+          0,
+        );
       }
 
       const normalizedShippingCost = normalizeShippingCostValue(shippingCost);
@@ -2355,7 +2395,7 @@ async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
       return {
         hasOrder: true,
         orderData: {
-          items: items,
+          items: sanitizedItems,
           totalAmount: calculatedTotal,
           shippingAddress: shippingAddress.trim(),
           phone: phone || null,
