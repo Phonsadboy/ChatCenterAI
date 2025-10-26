@@ -24,6 +24,42 @@
           </p>
         </div>
 
+        <div class="card shadow-sm border-info-subtle mb-4">
+          <div class="card-header bg-info-subtle">
+            <span class="fw-semibold text-info-emphasis">
+              <i class="fas fa-question-circle me-2"></i>วิธีใช้งานระบบตอบคอมเมนต์
+            </span>
+          </div>
+          <div class="card-body small text-body-secondary">
+            <div class="mb-3">
+              <h6 class="fw-semibold text-body">เริ่มต้นใช้งาน</h6>
+              <ol class="mb-0 ps-3">
+                <li>เพิ่ม Facebook Page ในระบบให้เรียบร้อย (เมนู &ldquo;ตั้งค่าช่องทาง&rdquo;).</li>
+                <li>กลับมาที่หน้านี้แล้วกดปุ่ม <strong>เพิ่มโพสต์</strong> เพื่อระบุ Post ID ที่ต้องการให้ระบบตอบคอมเมนต์.</li>
+                <li>เลือกว่าจะให้ตอบด้วย <strong>ข้อความกำหนดเอง</strong> หรือให้ <strong>AI</strong> ตอบแทน พร้อมกำหนดข้อความ/Prompt.</li>
+                <li>เปิดสวิตช์ <strong>ดึงเข้าแชท</strong> หากต้องการให้ระบบส่งแชทหาเจ้าของคอมเมนต์โดยอัตโนมัติ.</li>
+                <li>กด <strong>บันทึกการตั้งค่า</strong> แล้วเปิดใช้งานเมื่อพร้อม.</li>
+              </ol>
+            </div>
+            <div class="mb-3">
+              <h6 class="fw-semibold text-body">การหา Post ID</h6>
+              <ul class="mb-0 ps-3">
+                <li>เปิดโพสต์บนหน้าเพจแล้วคัดลอก URL เต็ม (เช่น <code>https://www.facebook.com/123456789/posts/987654321</code>).</li>
+                <li>ประกอบรหัสเป็นรูปแบบ <code>PAGE_ID_POST_ID</code> เช่น <code>123456789_987654321</code> แล้วนำมากรอก.</li>
+                <li>หากไม่ทราบ Page ID สามารถดูได้จากหน้าตั้งค่าเพจ หรือคัดลอกจากระบบจัดการเพจ.</li>
+              </ul>
+            </div>
+            <div class="mb-0">
+              <h6 class="fw-semibold text-body">ทำงานกับโพสต์ที่ระบบจับอัตโนมัติ</h6>
+              <ul class="mb-0 ps-3">
+                <li>เมื่อมีคอมเมนต์บนโพสต์ที่ยังไม่ได้ตั้งค่า ระบบจะสร้างรายการใหม่ให้พร้อมป้าย <strong>จับโพสต์อัตโนมัติ</strong>.</li>
+                <li>กดปุ่ม <strong>แก้ไข</strong> เพื่อกำหนดข้อความตอบกลับ/AI Prompt และเปิดใช้งาน.</li>
+                <li>หากไม่ต้องการใช้โพสต์นั้น สามารถกด <strong>ลบ</strong> หรือปล่อยไว้โดยปิดสถานะการทำงานได้.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
         <!-- Alerts -->
         <% if (typeof success !== 'undefined' && success) { %>
           <div class="alert alert-success alert-dismissible fade show" role="alert">
