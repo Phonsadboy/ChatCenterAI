@@ -11205,6 +11205,7 @@ function processQueueMessageForDisplay(content) {
         // รวมข้อความและรักษาการเว้นบรรทัด
         const combinedText = textParts.join("\n");
         displayContent += `<div class="message-text">${combinedText.replace(/\n/g, "<br>")}</div>`;
+        plainText = combinedText;
       }
 
       if (imageParts.length > 0) {
