@@ -4126,11 +4126,69 @@ app.get("/admin/facebook-comment", async (req, res) => {
       .find({})
       .sort({ createdAt: -1 })
       .toArray();
-    const commentConfigs = await db
+    let commentConfigs = await db
       .collection("facebook_comment_configs")
       .find({})
       .sort({ createdAt: -1 })
       .toArray();
+
+    const configKeySet = new Set(
+      commentConfigs.map((config) => {
+        const pageKey =
+          config.pageId && typeof config.pageId.toString === "function"
+            ? config.pageId.toString()
+            : String(config.pageId || "");
+        return `${pageKey}::${config.postId}`;
+      }),
+    );
+
+    const logColl = db.collection("facebook_comment_logs");
+    const logPostRefs = await logColl
+      .aggregate([
+        {
+          $group: {
+            _id: {
+              pageId: "$pageId",
+              postId: "$postId",
+            },
+          },
+        },
+      ])
+      .toArray();
+
+    let ensuredFromLogs = false;
+    for (const ref of logPostRefs) {
+      const rawPageId = ref?._id?.pageId;
+      const postId = ref?._id?.postId;
+
+      if (!postId || !rawPageId) {
+        continue;
+      }
+
+      const normalizedPageKey =
+        typeof rawPageId?.toString === "function"
+          ? rawPageId.toString()
+          : String(rawPageId);
+      const configKey = `${normalizedPageKey}::${postId}`;
+
+      if (configKeySet.has(configKey)) {
+        continue;
+      }
+
+      const ensured = await ensureCommentConfigExists(normalizedPageKey, postId);
+      if (ensured) {
+        ensuredFromLogs = true;
+        configKeySet.add(configKey);
+      }
+    }
+
+    if (ensuredFromLogs) {
+      commentConfigs = await db
+        .collection("facebook_comment_configs")
+        .find({})
+        .sort({ createdAt: -1 })
+        .toArray();
+    }
 
     // Add page name to configs
     for (const config of commentConfigs) {
@@ -4140,12 +4198,21 @@ app.get("/admin/facebook-comment", async (req, res) => {
       config.pageName = bot?.name || bot?.pageName || "Unknown Page";
     }
 
-    res.render("admin-facebook-comment", { facebookBots, commentConfigs });
+    const autoCapturedCount = commentConfigs.filter(
+      (config) => config.autoCreated,
+    ).length;
+
+    res.render("admin-facebook-comment", {
+      facebookBots,
+      commentConfigs,
+      autoCapturedCount,
+    });
   } catch (err) {
     console.error("Error loading Facebook comment page:", err);
     res.render("admin-facebook-comment", {
       facebookBots: [],
       commentConfigs: [],
+      autoCapturedCount: 0,
       error: "ไม่สามารถโหลดข้อมูลได้",
     });
   }

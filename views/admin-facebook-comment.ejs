@@ -39,6 +39,15 @@
           </div>
         <% } %>
 
+        <% if (autoCapturedCount && autoCapturedCount > 0) { %>
+          <div class="alert alert-warning alert-dismissible fade show" role="alert">
+            <i class="fas fa-magic me-2"></i>
+            พบโพสต์ที่ระบบจับให้อัตโนมัติจำนวน <strong><%= autoCapturedCount %></strong> โพสต์
+            กรุณากดปุ่ม "แก้ไข" เพื่อกำหนดข้อความตอบกลับก่อนเปิดใช้งานจริง
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          </div>
+        <% } %>
+
         <!-- Page Cards -->
         <% if (facebookBots && facebookBots.length > 0) { %>
           <% facebookBots.forEach(function(bot) { %>
