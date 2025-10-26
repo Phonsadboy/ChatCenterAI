@@ -811,6 +811,13 @@ async function saveChatHistory(
       console.error("[FollowUp] Background analyze error:", error.message);
     });
   }
+
+  // วิเคราะห์ออเดอร์อัตโนมัติหลังจากบันทึกข้อความของผู้ใช้
+  if (shouldAnalyzeFollowUp) {
+    maybeAnalyzeOrder(userId, platform, botId).catch((error) => {
+      console.error("[Order] Background analyze error:", error.message);
+    });
+  }
 }
 
 async function getUserStatus(userId) {
@@ -2274,6 +2281,260 @@ async function maybeAnalyzeFollowUp(userId, platform = "line", botId = null) {
     }
   } catch (error) {
     console.error("[FollowUp] วิเคราะห์ไม่สำเร็จ:", error.message);
+  }
+}
+
+// ============================ Order Analysis Functions ============================
+
+async function analyzeOrderFromChat(userId, messages, modelOverride = null) {
+  if (!OPENAI_API_KEY) {
+    console.warn("[Order] ไม่มี OPENAI_API_KEY ข้ามการวิเคราะห์ออเดอร์");
+    return null;
+  }
+
+  const orderModel = modelOverride || (await getSettingValue("orderModel", "gpt-4o-mini"));
+  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+  // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่
+  const formattedConversation = messages
+    .map((entry, index) => {
+      const speaker = entry.role === "user" ? "ลูกค้า" : "เรา";
+      const seq = index + 1;
+      return `${seq}. ${speaker}: ${entry.content}`;
+    })
+    .join("\n");
+
+  const systemPrompt = `วิเคราะห์บทสนทนาเพื่อสกัดข้อมูลออเดอร์
+
+เกณฑ์การพิจารณา:
+✅ ถือว่ามีออเดอร์ = ลูกค้าสั่งซื้อสินค้าชัดเจน พร้อมระบุรายละเอียด
+❌ ไม่ถือว่ามีออเดอร์ = ถามราคา, ต่อรอง, ลังเล, พิจารณาอยู่
+
+ข้อมูลที่ต้องสกัด:
+- items: รายการสินค้า [{product: "ชื่อสินค้า", quantity: จำนวน, price: ราคาต่อชิ้น}]
+- totalAmount: ยอดรวมทั้งหมด (ถ้าไม่ระบุให้คำนวณจาก items)
+- shippingAddress: ที่อยู่จัดส่ง (ถ้าไม่ระบุให้เป็น null)
+- phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
+- paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
+
+ตอบเป็น JSON เท่านั้น: {
+  "hasOrder": true/false,
+  "orderData": {
+    "items": [...],
+    "totalAmount": จำนวน,
+    "shippingAddress": "ที่อยู่หรือ null",
+    "phone": "เบอร์โทรหรือ null",
+    "paymentMethod": "วิธีชำระหรือ null"
+  },
+  "confidence": 0.0-1.0,
+  "reason": "เหตุผลสั้นๆ"
+}`;
+
+  const userPrompt = `บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์และสกัดข้อมูลออเดอร์:`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: orderModel,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.1, // ลดความสุ่มเพื่อความแม่นยำ
+    });
+
+    const content = response.choices?.[0]?.message?.content || "";
+    const trimmed = content.trim();
+    let parsed = null;
+    
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (_) {
+      // พยายามดึง JSON จากข้อความที่มีคำอื่นปะปน
+      const match = trimmed.match(/\{[\s\S]*\}/);
+      if (match) {
+        parsed = JSON.parse(match[0]);
+      }
+    }
+
+    if (!parsed || typeof parsed.hasOrder === "undefined") {
+      console.warn("[Order] รูปแบบคำตอบไม่ถูกต้อง:", trimmed);
+      return null;
+    }
+
+    // ตรวจสอบความถูกต้องของข้อมูล
+    if (parsed.hasOrder && parsed.orderData) {
+      const { items, totalAmount, shippingAddress, phone, paymentMethod } = parsed.orderData;
+      
+      // ตรวจสอบ items
+      if (!Array.isArray(items) || items.length === 0) {
+        console.warn("[Order] ไม่มีรายการสินค้า");
+        return { hasOrder: false, orderData: null, confidence: 0, reason: "ไม่มีรายการสินค้า" };
+      }
+
+      // ตรวจสอบข้อมูลในแต่ละ item
+      for (const item of items) {
+        if (!item.product || !item.quantity || !item.price) {
+          console.warn("[Order] ข้อมูลสินค้าไม่ครบถ้วน:", item);
+          return { hasOrder: false, orderData: null, confidence: 0, reason: "ข้อมูลสินค้าไม่ครบถ้วน" };
+        }
+      }
+
+      // คำนวณยอดรวมถ้าไม่ระบุ
+      let calculatedTotal = totalAmount;
+      if (!calculatedTotal || calculatedTotal <= 0) {
+        calculatedTotal = items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+      }
+
+      return {
+        hasOrder: true,
+        orderData: {
+          items: items,
+          totalAmount: calculatedTotal,
+          shippingAddress: shippingAddress || null,
+          phone: phone || null,
+          paymentMethod: paymentMethod || "เก็บเงินปลายทาง"
+        },
+        confidence: parsed.confidence || 0.8,
+        reason: parsed.reason || "พบออเดอร์ในบทสนทนา"
+      };
+    }
+
+    return {
+      hasOrder: false,
+      orderData: null,
+      confidence: parsed.confidence || 0.1,
+      reason: parsed.reason || "ไม่พบออเดอร์ในบทสนทนา"
+    };
+
+  } catch (error) {
+    console.error("[Order] เกิดข้อผิดพลาดในการเรียก OpenAI:", error.message);
+    return null;
+  }
+}
+
+async function saveOrderToDatabase(userId, platform, botId, orderData, extractedFrom = null, isManualExtraction = false) {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const orderDoc = {
+      userId,
+      platform: platform || "line",
+      botId: botId || null,
+      orderData,
+      status: "pending",
+      extractedAt: new Date(),
+      extractedFrom,
+      isManualExtraction,
+      updatedAt: new Date(),
+      notes: ""
+    };
+
+    const result = await coll.insertOne(orderDoc);
+    console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
+    
+    return result.insertedId;
+  } catch (error) {
+    console.error("[Order] บันทึกออเดอร์ไม่สำเร็จ:", error.message);
+    return null;
+  }
+}
+
+async function getUserOrders(userId) {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const orders = await coll
+      .find({ userId })
+      .sort({ extractedAt: -1 })
+      .toArray();
+
+    return orders;
+  } catch (error) {
+    console.error("[Order] ดึงออเดอร์ไม่สำเร็จ:", error.message);
+    return [];
+  }
+}
+
+async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
+  try {
+    // ตรวจสอบว่ามีการตั้งค่าให้วิเคราะห์ออเดอร์อัตโนมัติหรือไม่
+    const orderAnalysisEnabled = await getSettingValue("orderAnalysisEnabled", true);
+    if (!orderAnalysisEnabled) {
+      return;
+    }
+
+    // ดึงประวัติการสนทนาล่าสุด (ไม่เกิน 20 ข้อความล่าสุด)
+    const messages = await getNormalizedChatHistory(userId);
+    if (!messages || messages.length === 0) return;
+
+    // ตรวจสอบว่ามีออเดอร์ใหม่หรือไม่ (วิเคราะห์เฉพาะข้อความล่าสุด 5 ข้อความ)
+    const recentMessages = messages.slice(-5);
+    const analysis = await analyzeOrderFromChat(userId, recentMessages);
+    
+    if (!analysis || !analysis.hasOrder) {
+      return;
+    }
+
+    // ตรวจสอบว่ามีออเดอร์คล้ายกันอยู่แล้วหรือไม่ (เพื่อป้องกันการสกัดซ้ำ)
+    const existingOrders = await getUserOrders(userId);
+    const isDuplicate = existingOrders.some(order => {
+      const existingItems = order.orderData?.items || [];
+      const newItems = analysis.orderData?.items || [];
+      
+      // เปรียบเทียบรายการสินค้า
+      if (existingItems.length !== newItems.length) return false;
+      
+      return existingItems.every((existingItem, index) => {
+        const newItem = newItems[index];
+        return existingItem.product === newItem.product && 
+               existingItem.quantity === newItem.quantity &&
+               existingItem.price === newItem.price;
+      });
+    });
+
+    if (isDuplicate) {
+      console.log(`[Order] พบออเดอร์ซ้ำสำหรับผู้ใช้ ${userId}`);
+      return;
+    }
+
+    // บันทึกออเดอร์ใหม่
+    const orderId = await saveOrderToDatabase(
+      userId, 
+      platform, 
+      botId, 
+      analysis.orderData, 
+      "auto_extraction", 
+      false
+    );
+
+    if (!orderId) {
+      console.error(`[Order] ไม่สามารถบันทึกออเดอร์สำหรับผู้ใช้ ${userId}`);
+      return;
+    }
+
+    // Emit socket event
+    try {
+      if (io) {
+        io.emit("orderExtracted", {
+          userId,
+          orderId,
+          orderData: analysis.orderData,
+          isManualExtraction: false,
+          extractedAt: new Date(),
+          confidence: analysis.confidence,
+          reason: analysis.reason
+        });
+      }
+    } catch (_) {}
+
+    console.log(`[Order] สกัดออเดอร์อัตโนมัติสำเร็จสำหรับผู้ใช้ ${userId}: ${orderId}`);
+
+  } catch (error) {
+    console.error("[Order] วิเคราะห์ออเดอร์อัตโนมัติไม่สำเร็จ:", error.message);
   }
 }
 
@@ -9926,6 +10187,249 @@ app.post("/admin/chat/tags/:userId", async (req, res) => {
   }
 });
 
+// ========== Order Management APIs ==========
+
+// Get orders for a specific user
+app.get("/admin/chat/orders/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const orders = await getUserOrders(userId);
+    
+    res.json({ 
+      success: true, 
+      orders: orders 
+    });
+  } catch (err) {
+    console.error("Error getting user orders:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Extract order manually from chat history
+app.post("/admin/chat/orders/extract", async (req, res) => {
+  try {
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.json({ success: false, error: "userId จำเป็น" });
+    }
+
+    // ดึงประวัติการสนทนาทั้งหมด
+    const messages = await getNormalizedChatHistory(userId);
+    if (!messages || messages.length === 0) {
+      return res.json({ success: false, error: "ไม่พบประวัติการสนทนา" });
+    }
+
+    // วิเคราะห์ออเดอร์ด้วย AI
+    const analysis = await analyzeOrderFromChat(userId, messages);
+    
+    if (!analysis) {
+      return res.json({ success: false, error: "ไม่สามารถวิเคราะห์ออเดอร์ได้" });
+    }
+
+    if (!analysis.hasOrder) {
+      return res.json({ 
+        success: true, 
+        hasOrder: false, 
+        reason: analysis.reason,
+        confidence: analysis.confidence
+      });
+    }
+
+    // ดึงข้อมูล platform และ botId จากข้อความล่าสุด
+    const lastMessage = messages[messages.length - 1];
+    const platform = lastMessage?.platform || "line";
+    const botId = lastMessage?.botId || null;
+
+    // บันทึกออเดอร์ลงฐานข้อมูล
+    const orderId = await saveOrderToDatabase(
+      userId, 
+      platform, 
+      botId, 
+      analysis.orderData, 
+      "manual_extraction", 
+      true
+    );
+
+    if (!orderId) {
+      return res.json({ success: false, error: "ไม่สามารถบันทึกออเดอร์ได้" });
+    }
+
+    // Emit socket event
+    try {
+      if (io) {
+        io.emit("orderExtracted", {
+          userId,
+          orderId,
+          orderData: analysis.orderData,
+          isManualExtraction: true,
+          extractedAt: new Date()
+        });
+      }
+    } catch (_) {}
+
+    res.json({ 
+      success: true, 
+      hasOrder: true,
+      orderId,
+      orderData: analysis.orderData,
+      confidence: analysis.confidence,
+      reason: analysis.reason
+    });
+
+  } catch (err) {
+    console.error("Error extracting order:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Update order
+app.put("/admin/chat/orders/:orderId", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { orderData, status, notes } = req.body;
+
+    if (!ObjectId.isValid(orderId)) {
+      return res.json({ success: false, error: "orderId ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const updateDoc = {
+      updatedAt: new Date()
+    };
+
+    if (orderData) {
+      updateDoc.orderData = orderData;
+    }
+    if (status) {
+      updateDoc.status = status;
+    }
+    if (notes !== undefined) {
+      updateDoc.notes = notes;
+    }
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(orderId) },
+      { $set: updateDoc }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    // ดึงข้อมูลออเดอร์ที่อัปเดตแล้ว
+    const updatedOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+
+    // Emit socket event
+    try {
+      if (io) {
+        io.emit("orderUpdated", {
+          orderId,
+          userId: updatedOrder.userId,
+          orderData: updatedOrder.orderData,
+          status: updatedOrder.status,
+          notes: updatedOrder.notes,
+          updatedAt: updatedOrder.updatedAt
+        });
+      }
+    } catch (_) {}
+
+    res.json({ 
+      success: true, 
+      order: updatedOrder 
+    });
+
+  } catch (err) {
+    console.error("Error updating order:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Delete order
+app.delete("/admin/chat/orders/:orderId", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!ObjectId.isValid(orderId)) {
+      return res.json({ success: false, error: "orderId ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    // ดึงข้อมูลออเดอร์ก่อนลบ
+    const order = await coll.findOne({ _id: new ObjectId(orderId) });
+    if (!order) {
+      return res.json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    const result = await coll.deleteOne({ _id: new ObjectId(orderId) });
+
+    if (result.deletedCount === 0) {
+      return res.json({ success: false, error: "ไม่สามารถลบออเดอร์ได้" });
+    }
+
+    // Emit socket event
+    try {
+      if (io) {
+        io.emit("orderDeleted", {
+          orderId,
+          userId: order.userId
+        });
+      }
+    } catch (_) {}
+
+    res.json({ 
+      success: true, 
+      message: "ลบออเดอร์เรียบร้อยแล้ว" 
+    });
+
+  } catch (err) {
+    console.error("Error deleting order:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// Get all orders (for reporting)
+app.get("/admin/chat/orders", async (req, res) => {
+  try {
+    const { status, limit = 50, offset = 0 } = req.query;
+    
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const query = {};
+    if (status) {
+      query.status = status;
+    }
+
+    const orders = await coll
+      .find(query)
+      .sort({ extractedAt: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(offset))
+      .toArray();
+
+    const totalCount = await coll.countDocuments(query);
+
+    res.json({ 
+      success: true, 
+      orders,
+      totalCount,
+      hasMore: (parseInt(offset) + orders.length) < totalCount
+    });
+
+  } catch (err) {
+    console.error("Error getting all orders:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // Get all available tags in the system
 app.get("/admin/chat/available-tags", async (req, res) => {
   try {
@@ -11036,6 +11540,20 @@ async function getNormalizedChatUsers() {
       purchaseMap[status.userId] = status.hasPurchased;
     });
 
+    // ดึงข้อมูลออเดอร์
+    const ordersColl = db.collection("orders");
+    const userOrders =
+      userIds.length > 0
+        ? await ordersColl.find({ userId: { $in: userIds } }).toArray()
+        : [];
+    const ordersMap = {};
+    userOrders.forEach((order) => {
+      if (!ordersMap[order.userId]) {
+        ordersMap[order.userId] = [];
+      }
+      ordersMap[order.userId].push(order);
+    });
+
     const contextCache = new Map();
 
     // แปลงข้อมูลผู้ใช้แต่ละคน
@@ -11100,6 +11618,11 @@ async function getNormalizedChatUsers() {
           hasPurchased = hasFollowUp;
         }
 
+        // ดึงข้อมูลออเดอร์
+        const userOrders = ordersMap[user._id] || [];
+        const hasOrders = userOrders.length > 0;
+        const orderCount = userOrders.length;
+
         return {
           userId: user._id,
           displayName: userProfile
@@ -11120,6 +11643,8 @@ async function getNormalizedChatUsers() {
           followUpUpdatedAt,
           tags,
           hasPurchased,
+          hasOrders,
+          orderCount,
           followUp: {
             analysisEnabled: config.analysisEnabled !== false,
             showInChat: showFollowUp,

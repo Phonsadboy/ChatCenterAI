@@ -9,11 +9,11 @@
                 <p class="text-muted mb-0">จัดการบอททุกช่องทาง กำหนดโมเดล AI และ Instruction ให้เหมาะกับการตอบแชทของทีม</p>
             </div>
             <div class="bot-ai-actions">
-                <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
-                    <i class="fab fa-line me-2"></i>เพิ่ม Line Bot
-                </button>
                 <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
                     <i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot
+                </button>
+                <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
+                    <i class="fab fa-line me-2"></i>เพิ่ม Line Bot
                 </button>
                 <button type="button" class="btn btn-outline-secondary" onclick="refreshLineBotList()">
                     <i class="fas fa-sync-alt me-2"></i>รีเฟรชข้อมูล
@@ -36,6 +36,17 @@
             <div class="bot-ai-section__body bot-overview">
                 <div class="bot-group">
                     <div class="bot-group__header">
+                        <h6 class="mb-0"><i class="fab fa-facebook text-primary me-2"></i>Facebook Bots</h6>
+                        <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
+                            <i class="fas fa-plus-circle me-1"></i>เพิ่มใหม่
+                        </button>
+                    </div>
+                    <div id="facebookBotList" class="bot-overview-table-container">
+                        <!-- Facebook Bot items load here -->
+                    </div>
+                </div>
+                <div class="bot-group">
+                    <div class="bot-group__header">
                         <h6 class="mb-0"><i class="fab fa-line text-success me-2"></i>Line Bots</h6>
                         <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#addLineBotModal">
                             <i class="fas fa-plus-circle me-1"></i>เพิ่มใหม่
@@ -44,17 +55,6 @@
                     <div id="lineBotAiModelInfo" class="bot-group__summary"></div>
                     <div id="lineBotList" class="bot-overview-table-container">
                         <!-- Line Bot items load here -->
-                    </div>
-                </div>
-                <div class="bot-group">
-                    <div class="bot-group__header">
-                        <h6 class="mb-0"><i class="fab fa-facebook text-primary me-2"></i>Facebook Bots</h6>
-                        <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#addFacebookBotModal">
-                            <i class="fas fa-plus-circle me-1"></i>เพิ่มใหม่
-                        </button>
-                    </div>
-                    <div id="facebookBotList" class="bot-overview-table-container">
-                        <!-- Facebook Bot items load here -->
                     </div>
                 </div>
             </div>

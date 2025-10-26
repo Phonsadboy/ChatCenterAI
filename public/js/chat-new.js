@@ -158,6 +158,7 @@ class ChatManager {
         this.setupStatisticsListeners();
         this.setupExportListeners();
         this.setupKeyboardShortcuts();
+        this.setupOrderListeners();
         this.loadQuickReplies();
     }
 
@@ -198,6 +199,22 @@ class ChatManager {
                 user.tags = data.tags || [];
                 this.applyFilters();
             }
+        });
+
+        // Order-related socket events
+        this.socket.on('orderExtracted', (data) => {
+            console.log('ออเดอร์ใหม่:', data);
+            this.handleOrderExtracted(data);
+        });
+
+        this.socket.on('orderUpdated', (data) => {
+            console.log('ออเดอร์อัปเดต:', data);
+            this.handleOrderUpdated(data);
+        });
+
+        this.socket.on('orderDeleted', (data) => {
+            console.log('ออเดอร์ถูกลบ:', data);
+            this.handleOrderDeleted(data);
         });
 
         this.socket.on('userPurchaseStatusUpdated', (data) => {
@@ -514,6 +531,10 @@ class ChatManager {
                 ? `<i class="fas fa-shopping-cart text-success ms-1" title="เคยซื้อแล้ว"></i>` 
                 : '';
             
+            const orderBadge = user.hasOrders 
+                ? `<span class="user-has-order" title="มีออเดอร์ ${user.orderCount || 1} รายการ">🛒</span>` 
+                : '';
+            
             // แสดงแท็ก (สูงสุด 2 tags)
             let tagsHtml = '';
             if (user.tags && user.tags.length > 0) {
@@ -541,6 +562,7 @@ class ChatManager {
                             <div class="user-name">
                                 ${this.escapeHtml(displayName)}
                                 ${purchasedIcon}
+                                ${orderBadge}
                                 ${aiBadge}
                                 ${followUpBadge}
                             </div>
@@ -942,6 +964,9 @@ class ChatManager {
         
         // Load chat history
         await this.loadChatHistory(userId);
+        
+        // Load orders for current user
+        await this.renderOrderSidebar();
     }
 
     updateChatHeader(user) {
@@ -2560,6 +2585,480 @@ class ChatManager {
         // Update UI to reflect exit from selection mode
         const messages = document.querySelectorAll('.message-item.selected');
         messages.forEach(msg => msg.classList.remove('selected'));
+    }
+
+    // ========== 8. Order Management ==========
+    
+    async loadUserOrders(userId) {
+        if (!userId) return [];
+        
+        try {
+            const response = await fetch(`/admin/chat/orders/${userId}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                return data.orders || [];
+            } else {
+                console.error('Error loading orders:', data.error);
+                return [];
+            }
+        } catch (error) {
+            console.error('Error loading orders:', error);
+            return [];
+        }
+    }
+
+    async extractOrderManual() {
+        if (!this.currentUserId) {
+            window.showError('กรุณาเลือกผู้ใช้ก่อน');
+            return;
+        }
+
+        const btn = document.getElementById('btnExtractOrder');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        }
+
+        try {
+            const response = await fetch('/admin/chat/orders/extract', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    userId: this.currentUserId
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                if (data.hasOrder) {
+                    window.showSuccess('สกัดออเดอร์สำเร็จ!');
+                    // Reload orders for current user
+                    await this.renderOrderSidebar();
+                } else {
+                    window.showWarning(`ไม่พบออเดอร์: ${data.reason}`);
+                }
+            } else {
+                window.showError(`ไม่สามารถสกัดออเดอร์ได้: ${data.error}`);
+            }
+        } catch (error) {
+            console.error('Error extracting order:', error);
+            window.showError('เกิดข้อผิดพลาดในการสกัดออเดอร์');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-shopping-cart"></i>';
+            }
+        }
+    }
+
+    async updateOrder(orderId, orderData) {
+        try {
+            const response = await fetch(`/admin/chat/orders/${orderId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(orderData)
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                window.showSuccess('อัปเดตออเดอร์เรียบร้อยแล้ว');
+                // Reload orders for current user
+                await this.renderOrderSidebar();
+                return data.order;
+            } else {
+                window.showError(`ไม่สามารถอัปเดตออเดอร์ได้: ${data.error}`);
+                return null;
+            }
+        } catch (error) {
+            console.error('Error updating order:', error);
+            window.showError('เกิดข้อผิดพลาดในการอัปเดตออเดอร์');
+            return null;
+        }
+    }
+
+    async deleteOrder(orderId) {
+        if (!confirm('คุณแน่ใจหรือไม่ที่จะลบออเดอร์นี้?')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/admin/chat/orders/${orderId}`, {
+                method: 'DELETE'
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                window.showSuccess('ลบออเดอร์เรียบร้อยแล้ว');
+                // Reload orders for current user
+                await this.renderOrderSidebar();
+            } else {
+                window.showError(`ไม่สามารถลบออเดอร์ได้: ${data.error}`);
+            }
+        } catch (error) {
+            console.error('Error deleting order:', error);
+            window.showError('เกิดข้อผิดพลาดในการลบออเดอร์');
+        }
+    }
+
+    async renderOrderSidebar() {
+        const orderContent = document.getElementById('orderContent');
+        const orderCountBadge = document.getElementById('orderCountBadge');
+        const orderEmptyState = document.getElementById('orderEmptyState');
+
+        if (!orderContent || !this.currentUserId) {
+            return;
+        }
+
+        // Show loading state
+        orderContent.innerHTML = `
+            <div class="order-loading">
+                <div class="spinner"></div>
+                กำลังโหลดออเดอร์...
+            </div>
+        `;
+
+        try {
+            const orders = await this.loadUserOrders(this.currentUserId);
+            
+            if (orders.length === 0) {
+                orderContent.innerHTML = '';
+                orderEmptyState.style.display = 'flex';
+                if (orderCountBadge) orderCountBadge.textContent = '0';
+                return;
+            }
+
+            orderEmptyState.style.display = 'none';
+            if (orderCountBadge) orderCountBadge.textContent = orders.length;
+
+            const ordersHTML = orders.map(order => this.renderOrderCard(order)).join('');
+            orderContent.innerHTML = ordersHTML;
+
+            // Add event listeners for order actions
+            this.setupOrderEventListeners();
+
+        } catch (error) {
+            console.error('Error rendering order sidebar:', error);
+            orderContent.innerHTML = `
+                <div class="order-empty-state">
+                    <div class="order-empty-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <h6 class="order-empty-title">เกิดข้อผิดพลาด</h6>
+                    <p class="order-empty-description">ไม่สามารถโหลดออเดอร์ได้</p>
+                </div>
+            `;
+        }
+    }
+
+    renderOrderCard(order) {
+        const items = order.orderData?.items || [];
+        const totalAmount = order.orderData?.totalAmount || 0;
+        const shippingAddress = order.orderData?.shippingAddress || 'ไม่ระบุ';
+        const phone = order.orderData?.phone || 'ไม่ระบุ';
+        const paymentMethod = order.orderData?.paymentMethod || 'ไม่ระบุ';
+        const status = order.status || 'pending';
+        const extractedAt = new Date(order.extractedAt).toLocaleDateString('th-TH');
+        const notes = order.notes || '';
+
+        const statusLabels = {
+            pending: 'รอดำเนินการ',
+            confirmed: 'ยืนยันแล้ว',
+            shipped: 'จัดส่งแล้ว',
+            completed: 'เสร็จสิ้น',
+            cancelled: 'ยกเลิก'
+        };
+
+        const itemsHTML = items.map(item => `
+            <div class="order-item">
+                <div class="order-item-info">
+                    <div class="order-item-name">${this.escapeHtml(item.product)}</div>
+                    <div class="order-item-details">
+                        <span>จำนวน: ${item.quantity}</span>
+                        <span>ราคา: ฿${item.price.toLocaleString()}</span>
+                    </div>
+                </div>
+                <div class="order-item-price">฿${(item.quantity * item.price).toLocaleString()}</div>
+            </div>
+        `).join('');
+
+        return `
+            <div class="order-card" data-order-id="${order._id}">
+                <div class="order-card-header">
+                    <h6 class="order-card-title">
+                        <i class="fas fa-shopping-cart"></i>
+                        ออเดอร์ #${order._id.toString().slice(-6)}
+                    </h6>
+                    <span class="order-status ${status}">${statusLabels[status]}</span>
+                </div>
+
+                <div class="order-items">
+                    ${itemsHTML}
+                </div>
+
+                <div class="order-summary">
+                    <div class="order-summary-row">
+                        <span class="order-summary-label">ยอดรวม</span>
+                        <span class="order-summary-value order-total">฿${totalAmount.toLocaleString()}</span>
+                    </div>
+                </div>
+
+                <div class="order-details">
+                    <div class="order-detail-row">
+                        <span class="order-detail-label">ที่อยู่:</span>
+                        <span class="order-detail-value">${this.escapeHtml(shippingAddress)}</span>
+                    </div>
+                    <div class="order-detail-row">
+                        <span class="order-detail-label">โทร:</span>
+                        <span class="order-detail-value">${this.escapeHtml(phone)}</span>
+                    </div>
+                    <div class="order-detail-row">
+                        <span class="order-detail-label">ชำระ:</span>
+                        <span class="order-detail-value">${this.escapeHtml(paymentMethod)}</span>
+                    </div>
+                    <div class="order-detail-row">
+                        <span class="order-detail-label">วันที่:</span>
+                        <span class="order-detail-value">${extractedAt}</span>
+                    </div>
+                    ${notes ? `
+                    <div class="order-detail-row">
+                        <span class="order-detail-label">หมายเหตุ:</span>
+                        <span class="order-detail-value">${this.escapeHtml(notes)}</span>
+                    </div>
+                    ` : ''}
+                </div>
+
+                <div class="order-actions">
+                    <button class="order-action-btn edit" data-order-id="${order._id}" title="แก้ไข">
+                        <i class="fas fa-edit"></i>
+                        แก้ไข
+                    </button>
+                    <button class="order-action-btn delete" data-order-id="${order._id}" title="ลบ">
+                        <i class="fas fa-trash"></i>
+                        ลบ
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    setupOrderEventListeners() {
+        // Edit order buttons
+        document.querySelectorAll('.order-action-btn.edit').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const orderId = e.currentTarget.dataset.orderId;
+                this.openEditOrderModal(orderId);
+            });
+        });
+
+        // Delete order buttons
+        document.querySelectorAll('.order-action-btn.delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const orderId = e.currentTarget.dataset.orderId;
+                this.deleteOrder(orderId);
+            });
+        });
+    }
+
+    async openEditOrderModal(orderId) {
+        try {
+            const orders = await this.loadUserOrders(this.currentUserId);
+            const order = orders.find(o => o._id === orderId);
+            
+            if (!order) {
+                window.showError('ไม่พบออเดอร์');
+                return;
+            }
+
+            // Populate form
+            document.getElementById('editOrderId').value = orderId;
+            document.getElementById('editOrderStatus').value = order.status || 'pending';
+            document.getElementById('editOrderNotes').value = order.notes || '';
+            document.getElementById('editShippingAddress').value = order.orderData?.shippingAddress || '';
+            document.getElementById('editPhone').value = order.orderData?.phone || '';
+            document.getElementById('editPaymentMethod').value = order.orderData?.paymentMethod || 'เก็บเงินปลายทาง';
+
+            // Populate order items (read-only for now)
+            const itemsContainer = document.getElementById('editOrderItems');
+            const items = order.orderData?.items || [];
+            itemsContainer.innerHTML = items.map(item => `
+                <div class="order-item">
+                    <div class="order-item-info">
+                        <div class="order-item-name">${this.escapeHtml(item.product)}</div>
+                        <div class="order-item-details">
+                            <span>จำนวน: ${item.quantity}</span>
+                            <span>ราคา: ฿${item.price.toLocaleString()}</span>
+                        </div>
+                    </div>
+                    <div class="order-item-price">฿${(item.quantity * item.price).toLocaleString()}</div>
+                </div>
+            `).join('');
+
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('orderEditModal'));
+            modal.show();
+
+        } catch (error) {
+            console.error('Error opening edit order modal:', error);
+            window.showError('เกิดข้อผิดพลาดในการเปิดฟอร์มแก้ไข');
+        }
+    }
+
+    setupOrderModalListeners() {
+        // Save order button
+        const saveOrderBtn = document.getElementById('saveOrderBtn');
+        if (saveOrderBtn) {
+            saveOrderBtn.addEventListener('click', async () => {
+                await this.saveOrderChanges();
+            });
+        }
+    }
+
+    async saveOrderChanges() {
+        const orderId = document.getElementById('editOrderId').value;
+        const status = document.getElementById('editOrderStatus').value;
+        const notes = document.getElementById('editOrderNotes').value;
+        const shippingAddress = document.getElementById('editShippingAddress').value;
+        const phone = document.getElementById('editPhone').value;
+        const paymentMethod = document.getElementById('editPaymentMethod').value;
+
+        if (!orderId) {
+            window.showError('ไม่พบ ID ออเดอร์');
+            return;
+        }
+
+        const saveBtn = document.getElementById('saveOrderBtn');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>กำลังบันทึก...';
+        }
+
+        try {
+            // Get current order data first
+            const orders = await this.loadUserOrders(this.currentUserId);
+            const currentOrder = orders.find(o => o._id === orderId);
+            
+            if (!currentOrder) {
+                window.showError('ไม่พบออเดอร์');
+                return;
+            }
+
+            // Update order data
+            const updatedOrderData = {
+                ...currentOrder.orderData,
+                shippingAddress: shippingAddress || null,
+                phone: phone || null,
+                paymentMethod: paymentMethod || 'เก็บเงินปลายทาง'
+            };
+
+            const result = await this.updateOrder(orderId, {
+                orderData: updatedOrderData,
+                status: status,
+                notes: notes
+            });
+
+            if (result) {
+                // Close modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('orderEditModal'));
+                if (modal) modal.hide();
+            }
+
+        } catch (error) {
+            console.error('Error saving order changes:', error);
+            window.showError('เกิดข้อผิดพลาดในการบันทึก');
+        } finally {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '<i class="fas fa-save me-2"></i>บันทึก';
+            }
+        }
+    }
+
+    setupOrderListeners() {
+        // Extract order button
+        const extractOrderBtn = document.getElementById('btnExtractOrder');
+        if (extractOrderBtn) {
+            extractOrderBtn.addEventListener('click', () => {
+                this.extractOrderManual();
+            });
+        }
+
+        // Setup order modal listeners
+        this.setupOrderModalListeners();
+    }
+
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // ========== 9. Socket Event Handlers ==========
+    
+    handleOrderExtracted(data) {
+        const { userId, orderId, orderData, isManualExtraction, extractedAt } = data;
+        
+        // Update user list to show order badge
+        const user = this.allUsers.find(u => u.userId === userId);
+        if (user) {
+            user.hasOrders = true;
+            user.orderCount = (user.orderCount || 0) + 1;
+            this.applyFilters();
+        }
+
+        // If this is the current user, reload order sidebar
+        if (userId === this.currentUserId) {
+            this.renderOrderSidebar();
+        }
+
+        // Show notification
+        if (isManualExtraction) {
+            window.showSuccess('สกัดออเดอร์สำเร็จ!');
+        } else {
+            window.showInfo(`พบออเดอร์ใหม่จาก ${user?.displayName || 'ลูกค้า'}`);
+        }
+    }
+
+    handleOrderUpdated(data) {
+        const { userId, orderId, orderData, status, notes, updatedAt } = data;
+        
+        // If this is the current user, reload order sidebar
+        if (userId === this.currentUserId) {
+            this.renderOrderSidebar();
+        }
+
+        // Show notification
+        window.showInfo('ออเดอร์ได้รับการอัปเดต');
+    }
+
+    handleOrderDeleted(data) {
+        const { userId, orderId } = data;
+        
+        // Update user list
+        const user = this.allUsers.find(u => u.userId === userId);
+        if (user) {
+            user.orderCount = Math.max(0, (user.orderCount || 1) - 1);
+            if (user.orderCount === 0) {
+                user.hasOrders = false;
+            }
+            this.applyFilters();
+        }
+
+        // If this is the current user, reload order sidebar
+        if (userId === this.currentUserId) {
+            this.renderOrderSidebar();
+        }
+
+        // Show notification
+        window.showInfo('ออเดอร์ถูกลบแล้ว');
     }
 }
 
