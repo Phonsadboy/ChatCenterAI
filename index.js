@@ -118,6 +118,7 @@ app.use(
           "https://cdnjs.cloudflare.com",
           "https://fonts.googleapis.com",
         ],
+        imgSrc: ["'self'", "data:", "blob:"],
         fontSrc: [
           "'self'",
           "https://cdnjs.cloudflare.com",
