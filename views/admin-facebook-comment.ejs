@@ -39,6 +39,15 @@
           </div>
         <% } %>
 
+        <% if (autoCapturedCount && autoCapturedCount > 0) { %>
+          <div class="alert alert-warning alert-dismissible fade show" role="alert">
+            <i class="fas fa-magic me-2"></i>
+            พบโพสต์ที่ระบบจับให้อัตโนมัติจำนวน <strong><%= autoCapturedCount %></strong> โพสต์
+            กรุณากดปุ่ม "แก้ไข" เพื่อกำหนดข้อความตอบกลับก่อนเปิดใช้งานจริง
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          </div>
+        <% } %>
+
         <!-- Page Cards -->
         <% if (facebookBots && facebookBots.length > 0) { %>
           <% facebookBots.forEach(function(bot) { %>
@@ -74,10 +83,25 @@
                         <span class="badge-status <%= config.isActive ? 'badge-active' : 'badge-inactive' %>">
                           <%= config.isActive ? '🟢 เปิดใช้งาน' : '🔴 ปิดใช้งาน' %>
                         </span>
+                        <% if (config.autoCreated) { %>
+                          <span class="badge bg-warning text-dark ms-2">
+                            <i class="fas fa-magic me-1"></i>จับโพสต์อัตโนมัติ
+                          </span>
+                        <% } %>
                       </div>
                     </div>
 
                     <div class="config-info">
+                      <% if (config.autoCreated) { %>
+                        <div class="config-row">
+                          <span class="config-label text-warning">
+                            <i class="fas fa-lightbulb me-1"></i>หมายเหตุ:
+                          </span>
+                          <span class="config-value text-warning">
+                            ระบบจับโพสต์นี้ให้อัตโนมัติจากคอมเมนต์ใหม่ กรุณากด "แก้ไข" เพื่อกำหนดข้อความตอบกลับก่อนเปิดใช้งาน
+                          </span>
+                        </div>
+                      <% } %>
                       <div class="config-row">
                         <span class="config-label">ประเภทการตอบ:</span>
                         <span class="config-value">

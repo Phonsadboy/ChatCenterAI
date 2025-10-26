@@ -3940,6 +3940,56 @@ async function getCommentReplyConfig(pageId, postId) {
   return config;
 }
 
+// Ensure config exists for the post (auto-capture support)
+async function ensureCommentConfigExists(pageId, postId) {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_comment_configs");
+
+    const normalizedPageId = ObjectId.isValid(pageId)
+      ? new ObjectId(pageId)
+      : pageId;
+
+    const existing = await coll.findOne({
+      pageId: normalizedPageId,
+      postId,
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const placeholder = {
+      pageId: normalizedPageId,
+      postId,
+      replyType: "custom",
+      customMessage: null,
+      aiModel: null,
+      systemPrompt: null,
+      pullToChat: false,
+      isActive: false,
+      autoCreated: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await coll.insertOne(placeholder);
+
+    console.log(
+      `[Facebook Comment] Auto-created placeholder config for post ${postId}`,
+    );
+
+    return { ...placeholder, _id: result.insertedId };
+  } catch (err) {
+    console.error(
+      `[Facebook Comment] Failed to ensure config for post ${postId}:`,
+      err.message,
+    );
+    return null;
+  }
+}
+
 // Helper function to send reply to comment
 async function sendCommentReply(commentId, message, accessToken) {
   try {
@@ -4076,11 +4126,69 @@ app.get("/admin/facebook-comment", async (req, res) => {
       .find({})
       .sort({ createdAt: -1 })
       .toArray();
-    const commentConfigs = await db
+    let commentConfigs = await db
       .collection("facebook_comment_configs")
       .find({})
       .sort({ createdAt: -1 })
       .toArray();
+
+    const configKeySet = new Set(
+      commentConfigs.map((config) => {
+        const pageKey =
+          config.pageId && typeof config.pageId.toString === "function"
+            ? config.pageId.toString()
+            : String(config.pageId || "");
+        return `${pageKey}::${config.postId}`;
+      }),
+    );
+
+    const logColl = db.collection("facebook_comment_logs");
+    const logPostRefs = await logColl
+      .aggregate([
+        {
+          $group: {
+            _id: {
+              pageId: "$pageId",
+              postId: "$postId",
+            },
+          },
+        },
+      ])
+      .toArray();
+
+    let ensuredFromLogs = false;
+    for (const ref of logPostRefs) {
+      const rawPageId = ref?._id?.pageId;
+      const postId = ref?._id?.postId;
+
+      if (!postId || !rawPageId) {
+        continue;
+      }
+
+      const normalizedPageKey =
+        typeof rawPageId?.toString === "function"
+          ? rawPageId.toString()
+          : String(rawPageId);
+      const configKey = `${normalizedPageKey}::${postId}`;
+
+      if (configKeySet.has(configKey)) {
+        continue;
+      }
+
+      const ensured = await ensureCommentConfigExists(normalizedPageKey, postId);
+      if (ensured) {
+        ensuredFromLogs = true;
+        configKeySet.add(configKey);
+      }
+    }
+
+    if (ensuredFromLogs) {
+      commentConfigs = await db
+        .collection("facebook_comment_configs")
+        .find({})
+        .sort({ createdAt: -1 })
+        .toArray();
+    }
 
     // Add page name to configs
     for (const config of commentConfigs) {
@@ -4090,12 +4198,21 @@ app.get("/admin/facebook-comment", async (req, res) => {
       config.pageName = bot?.name || bot?.pageName || "Unknown Page";
     }
 
-    res.render("admin-facebook-comment", { facebookBots, commentConfigs });
+    const autoCapturedCount = commentConfigs.filter(
+      (config) => config.autoCreated,
+    ).length;
+
+    res.render("admin-facebook-comment", {
+      facebookBots,
+      commentConfigs,
+      autoCapturedCount,
+    });
   } catch (err) {
     console.error("Error loading Facebook comment page:", err);
     res.render("admin-facebook-comment", {
       facebookBots: [],
       commentConfigs: [],
+      autoCapturedCount: 0,
       error: "ไม่สามารถโหลดข้อมูลได้",
     });
   }
@@ -4156,6 +4273,7 @@ app.post("/admin/facebook-comment/create", async (req, res) => {
       systemPrompt: replyType === "ai" ? systemPrompt : null,
       pullToChat: pullToChat === true || pullToChat === "true",
       isActive: isActive !== false && isActive !== "false",
+      autoCreated: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -4238,6 +4356,7 @@ app.post("/admin/facebook-comment/update", async (req, res) => {
       systemPrompt: replyType === "ai" ? systemPrompt : null,
       pullToChat: pullToChat === true || pullToChat === "true",
       isActive: isActive !== false && isActive !== "false",
+      autoCreated: false,
       updatedAt: new Date(),
     };
 
@@ -4312,7 +4431,20 @@ async function handleFacebookComment(pageId, postId, commentData, accessToken) {
     const config = await getCommentReplyConfig(pageId, postId);
 
     if (!config) {
-      console.log(`[Facebook Comment] No config found for post ${postId}`);
+      const placeholder = await ensureCommentConfigExists(pageId, postId);
+      if (placeholder) {
+        const placeholderId =
+          typeof placeholder._id?.toString === "function"
+            ? placeholder._id.toString()
+            : placeholder._id || "";
+        console.log(
+          `[Facebook Comment] No active config for post ${postId}. Placeholder ${placeholderId} ready for setup.`,
+        );
+      } else {
+        console.log(
+          `[Facebook Comment] Unable to ensure config for post ${postId}, skipping reply.`,
+        );
+      }
       return;
     }
 
