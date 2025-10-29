@@ -777,7 +777,10 @@ async function saveChatHistory(
     botId,
     source: "user",
   };
-  await coll.insertOne(userMessageDoc);
+  const userInsertResult = await coll.insertOne(userMessageDoc);
+  if (userInsertResult?.insertedId) {
+    userMessageDoc._id = userInsertResult.insertedId;
+  }
 
   try {
     if (typeof io !== "undefined" && io) {
@@ -843,7 +846,10 @@ async function saveChatHistory(
     botId,
     source: "ai",
   };
-  await coll.insertOne(assistantMessageDoc);
+  const assistantInsertResult = await coll.insertOne(assistantMessageDoc);
+  if (assistantInsertResult?.insertedId) {
+    assistantMessageDoc._id = assistantInsertResult.insertedId;
+  }
 
   try {
     if (typeof io !== "undefined" && io) {
@@ -919,25 +925,93 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
   }
 
   const trimmedMessage = message.trim();
-  
+
+  const normalizeForComparison = (value) => {
+    if (typeof value !== "string") {
+      return "";
+    }
+    let normalized = value;
+    try {
+      normalized = normalized.normalize("NFC");
+    } catch (_) {
+      // หาก normalize ใช้ไม่ได้ (เช่น environment เก่า) ให้ใช้ค่าดั้งเดิม
+    }
+    return normalized.trim().replace(/\s+/g, " ").toLowerCase();
+  };
+
+  const parseKeywords = (raw) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) {
+      return raw
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0);
+    }
+    if (typeof raw !== "string") {
+      return [];
+    }
+    return raw
+      .split(/[\n,|]/)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+  };
+
+  const matchesKeyword = (input, setting) => {
+    const candidates =
+      Array.isArray(setting.keywords) && setting.keywords.length > 0
+        ? setting.keywords
+        : setting.keyword
+        ? [setting.keyword]
+        : [];
+
+    if (!candidates.length) {
+      return false;
+    }
+
+    const normalizedInput = normalizeForComparison(input);
+    if (!normalizedInput) {
+      return false;
+    }
+
+    return candidates.some(
+      (candidate) => normalizeForComparison(candidate) === normalizedInput,
+    );
+  };
+
   // รองรับทั้งรูปแบบเก่า (string) และรูปแบบใหม่ (object)
   const normalizeKeywordSetting = (setting) => {
-    if (!setting) return { keyword: "", response: "" };
-    if (typeof setting === 'string') {
-      return { keyword: setting, response: "" };
+    if (!setting) {
+      return { keyword: "", keywords: [], response: "" };
+    }
+    if (typeof setting === "string") {
+      const keywords = parseKeywords(setting);
+      return {
+        keyword: keywords[0] || "",
+        keywords,
+        response: "",
+      };
+    }
+    if (Array.isArray(setting)) {
+      const keywords = parseKeywords(setting);
+      return {
+        keyword: keywords[0] || "",
+        keywords,
+        response: "",
+      };
     }
     return {
       keyword: setting.keyword || "",
-      response: setting.response || ""
+      keywords: parseKeywords(setting.keywords || setting.keyword || ""),
+      response:
+        typeof setting.response === "string" ? setting.response : ""
     };
   };
 
   const enableAI = normalizeKeywordSetting(keywordSettings.enableAI);
   const disableAI = normalizeKeywordSetting(keywordSettings.disableAI);
   const disableFollowUp = normalizeKeywordSetting(keywordSettings.disableFollowUp);
-  
+
   // ตรวจสอบ keyword สำหรับเปิด AI
-  if (enableAI.keyword && trimmedMessage === enableAI.keyword.trim()) {
+  if (matchesKeyword(trimmedMessage, enableAI)) {
     await setUserStatus(userId, true);
     console.log(`[Keyword] เปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
     const responseMessage = enableAI.response.trim();
@@ -950,7 +1024,7 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
   }
 
   // ตรวจสอบ keyword สำหรับปิด AI
-  if (disableAI.keyword && trimmedMessage === disableAI.keyword.trim()) {
+  if (matchesKeyword(trimmedMessage, disableAI)) {
     await setUserStatus(userId, false);
     console.log(`[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
     const responseMessage = disableAI.response.trim();
@@ -963,7 +1037,7 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
   }
 
   // ตรวจสอบ keyword สำหรับปิดระบบติดตาม
-  if (disableFollowUp.keyword && trimmedMessage === disableFollowUp.keyword.trim()) {
+  if (matchesKeyword(trimmedMessage, disableFollowUp)) {
     await cancelFollowUpTasksForUser(userId, platform, botId, { reason: "keyword_cancel" });
     console.log(`[Keyword] ปิดระบบติดตามสำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
     const responseMessage = disableFollowUp.response.trim();
@@ -11183,7 +11257,10 @@ app.post("/admin/chat/send", async (req, res) => {
       botId,
     };
 
-    await coll.insertOne(messageDoc);
+    const messageInsertResult = await coll.insertOne(messageDoc);
+    if (messageInsertResult?.insertedId) {
+      messageDoc._id = messageInsertResult.insertedId;
+    }
     await resetUserUnreadCount(userId);
 
     try {
@@ -11290,6 +11367,94 @@ app.post("/admin/chat/tags/:userId", async (req, res) => {
     res.json({ success: true, tags: cleanTags });
   } catch (err) {
     console.error("Error setting user tags:", err);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// ========== Message Feedback APIs ==========
+
+app.post("/admin/chat/feedback", async (req, res) => {
+  try {
+    const { messageId, userId, feedback, notes } = req.body || {};
+    const trimmedUserId = typeof userId === "string" ? userId.trim() : "";
+    const allowedFeedback = ["positive", "negative", "clear"];
+
+    if (!messageId || !trimmedUserId || !feedback) {
+      return res.json({ success: false, error: "ข้อมูลไม่ครบถ้วน" });
+    }
+
+    if (!allowedFeedback.includes(feedback)) {
+      return res.json({ success: false, error: "ประเภทการประเมินไม่ถูกต้อง" });
+    }
+
+    const messageObjectId = toObjectId(messageId);
+    if (!messageObjectId) {
+      return res.json({ success: false, error: "รหัสข้อความไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const historyColl = db.collection("chat_history");
+    const feedbackColl = db.collection("chat_feedback");
+
+    const messageDoc = await historyColl.findOne({ _id: messageObjectId });
+    if (!messageDoc) {
+      return res.json({ success: false, error: "ไม่พบข้อความที่ต้องการประเมิน" });
+    }
+
+    if (messageDoc.senderId !== trimmedUserId) {
+      return res.json({
+        success: false,
+        error: "ข้อความนี้ไม่ตรงกับผู้ใช้ที่กำหนด",
+      });
+    }
+
+    if (messageDoc.role !== "assistant") {
+      return res.json({
+        success: false,
+        error: "สามารถประเมินได้เฉพาะข้อความของ AI เท่านั้น",
+      });
+    }
+
+    if (feedback === "clear") {
+      await feedbackColl.deleteOne({ messageId: messageObjectId });
+      return res.json({ success: true, feedback: null });
+    }
+
+    const sanitizedNotes =
+      typeof notes === "string" ? notes.trim().substring(0, 500) : "";
+    const now = new Date();
+
+    await feedbackColl.updateOne(
+      { messageId: messageObjectId },
+      {
+        $set: {
+          messageId: messageObjectId,
+          messageIdString: messageObjectId.toString(),
+          userId: trimmedUserId,
+          senderId: messageDoc.senderId,
+          senderRole: messageDoc.role || null,
+          platform: messageDoc.platform || null,
+          botId: messageDoc.botId || null,
+          feedback,
+          notes: sanitizedNotes,
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          createdAt: now,
+        },
+      },
+      { upsert: true },
+    );
+
+    res.json({
+      success: true,
+      feedback,
+      notes: sanitizedNotes,
+      updatedAt: now,
+    });
+  } catch (err) {
+    console.error("Error saving chat feedback:", err);
     res.json({ success: false, error: err.message });
   }
 });
@@ -12946,6 +13111,31 @@ async function getNormalizedChatHistory(userId, options = {}) {
       .limit(200)
       .toArray();
 
+    const messageIds = messages
+      .map((message) => (message?._id ? message._id : null))
+      .filter(Boolean);
+
+    let feedbackMap = {};
+    if (messageIds.length > 0) {
+      const feedbackColl = db.collection("chat_feedback");
+      const feedbackDocs = await feedbackColl
+        .find({ messageId: { $in: messageIds } })
+        .toArray();
+
+      feedbackDocs.forEach((doc) => {
+        const key =
+          doc?.messageId && typeof doc.messageId.toString === "function"
+            ? doc.messageId.toString()
+            : doc?.messageIdString || null;
+        if (!key) return;
+        feedbackMap[key] = {
+          feedback: doc.feedback || null,
+          notes: doc.notes || "",
+          updatedAt: doc.updatedAt || doc.createdAt || null,
+        };
+      });
+    }
+
     let filterConfig = null;
     if (applyFilter) {
       filterConfig = await loadMessageFilterConfig();
@@ -12963,6 +13153,21 @@ async function getNormalizedChatHistory(userId, options = {}) {
     const normalizedMessages = await Promise.all(
       messages.map(async (message) => {
         const normalized = normalizeMessageForFrontend(message);
+
+        const messageIdStr =
+          message?._id && typeof message._id.toString === "function"
+            ? message._id.toString()
+            : null;
+        if (messageIdStr && feedbackMap[messageIdStr]) {
+          const feedbackInfo = feedbackMap[messageIdStr];
+          normalized.feedback = feedbackInfo.feedback;
+          if (feedbackInfo.notes) {
+            normalized.feedbackNotes = feedbackInfo.notes;
+          }
+          if (feedbackInfo.updatedAt) {
+            normalized.feedbackUpdatedAt = feedbackInfo.updatedAt;
+          }
+        }
 
         if (
           filterConfig &&

@@ -29,6 +29,9 @@ class ChatManager {
         // Orders
         this.currentOrders = [];
         this.isExtractingOrder = false;
+
+        // Feedback tracking
+        this.feedbackRequests = new Set();
         
         // Initialize
         this.init();
@@ -302,6 +305,29 @@ class ChatManager {
                 }
             });
         }
+
+        // Message feedback (event delegation)
+        const messagesContainer = document.getElementById('messagesContainer');
+        if (messagesContainer) {
+            messagesContainer.addEventListener('click', (event) => {
+                const button = event.target.closest('.feedback-btn');
+                if (!button) return;
+
+                const feedbackWrapper = button.closest('.message-feedback');
+                if (!feedbackWrapper || feedbackWrapper.classList.contains('is-loading')) {
+                    return;
+                }
+
+                const messageId = feedbackWrapper.dataset.messageId || '';
+                const feedbackType = button.dataset.feedbackType || '';
+                if (!messageId || !feedbackType) {
+                    return;
+                }
+
+                event.preventDefault();
+                this.handleFeedbackClick(messageId, feedbackType);
+            });
+        }
     }
     
     // ========================================
@@ -540,6 +566,7 @@ class ChatManager {
                             normalized.displayContent = sanitizedText;
                         }
                     }
+                    this.resolveMessageId(normalized);
                     return normalized;
                 });
                 this.renderMessages();
@@ -584,6 +611,8 @@ class ChatManager {
         const textForRender = displayText || (hasImages ? '[ไฟล์แนบ]' : '');
         const content = this.escapeHtml(textForRender);
         const time = message.timestamp ? this.formatTime(message.timestamp) : '';
+        const messageId = this.resolveMessageId(message);
+        const feedbackState = message.feedback || null;
         
         const roleLabels = {
             user: 'ผู้ใช้',
@@ -605,6 +634,30 @@ class ChatManager {
                 </div>
             `;
         }
+
+        let feedbackHtml = '';
+        if (role === 'assistant' && messageId) {
+            const positiveActive = feedbackState === 'positive' ? 'active' : '';
+            const negativeActive = feedbackState === 'negative' ? 'active' : '';
+            const wrapperClass = feedbackState ? ' has-feedback' : '';
+            const labelClass = feedbackState ? 'active' : '';
+            feedbackHtml = `
+                <div class="message-feedback${wrapperClass}" data-message-id="${messageId}" data-feedback-state="${feedbackState || ''}">
+                    <span class="feedback-label ${labelClass}">
+                        <i class="fas fa-magic"></i>
+                        ประเมินคำตอบ
+                    </span>
+                    <button type="button" class="feedback-btn positive ${positiveActive}" data-feedback-type="positive">
+                        <i class="fas fa-thumbs-up"></i>
+                        ดี
+                    </button>
+                    <button type="button" class="feedback-btn negative ${negativeActive}" data-feedback-type="negative">
+                        <i class="fas fa-thumbs-down"></i>
+                        ควรปรับ
+                    </button>
+                </div>
+            `;
+        }
         
         return `
             <div class="message ${role}">
@@ -616,9 +669,135 @@ class ChatManager {
                     <div class="message-content">${content}</div>
                     ${imagesHtml}
                     <div class="message-time">${time}</div>
+                    ${feedbackHtml}
                 </div>
             </div>
         `;
+    }
+
+    resolveMessageId(message) {
+        if (!message || typeof message !== 'object') {
+            return '';
+        }
+        if (typeof message.messageId === 'string' && message.messageId) {
+            return message.messageId;
+        }
+        const rawId = message._id;
+        let resolved = '';
+        if (typeof rawId === 'string' && rawId) {
+            resolved = rawId;
+        } else if (rawId && typeof rawId.toHexString === 'function') {
+            resolved = rawId.toHexString();
+        } else if (rawId && typeof rawId.toString === 'function') {
+            resolved = rawId.toString();
+        } else if (rawId && rawId.$oid) {
+            resolved = rawId.$oid;
+        }
+        if (resolved) {
+            message.messageId = resolved;
+        }
+        return resolved || '';
+    }
+
+    findMessageById(messageId) {
+        if (!messageId || !this.currentUserId) {
+            return null;
+        }
+        const messages = this.chatHistory[this.currentUserId] || [];
+        return messages.find(msg => this.resolveMessageId(msg) === messageId) || null;
+    }
+
+    handleFeedbackClick(messageId, feedbackType) {
+        if (!this.currentUserId || !messageId || !feedbackType) {
+            return;
+        }
+        if (this.feedbackRequests.has(messageId)) {
+            return;
+        }
+        this.feedbackRequests.add(messageId);
+        this.setFeedbackLoading(messageId, true);
+
+        this.submitFeedback(messageId, feedbackType)
+            .catch(error => {
+                console.error('handleFeedbackClick error', error);
+            })
+            .finally(() => {
+                this.feedbackRequests.delete(messageId);
+                this.setFeedbackLoading(messageId, false);
+            });
+    }
+
+    async submitFeedback(messageId, feedbackType) {
+        const targetMessage = this.findMessageById(messageId);
+        if (!targetMessage) {
+            this.showToast('ไม่พบข้อความที่ต้องการประเมิน', 'error');
+            return;
+        }
+
+        const currentFeedback = targetMessage.feedback || null;
+        const action = currentFeedback === feedbackType ? 'clear' : feedbackType;
+
+        try {
+            const response = await fetch('/admin/chat/feedback', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    messageId,
+                    userId: this.currentUserId,
+                    feedback: action
+                })
+            });
+
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'ไม่สามารถบันทึกการประเมินได้');
+            }
+
+            if (action === 'clear') {
+                delete targetMessage.feedback;
+                delete targetMessage.feedbackUpdatedAt;
+                delete targetMessage.feedbackNotes;
+            } else {
+                targetMessage.feedback = feedbackType;
+                targetMessage.feedbackUpdatedAt = result.updatedAt || null;
+                targetMessage.feedbackNotes = result.notes || '';
+            }
+
+            this.updateFeedbackUI(messageId, targetMessage.feedback || null);
+        } catch (error) {
+            this.showToast(error.message || 'ไม่สามารถบันทึกการประเมินได้', 'error');
+            throw error;
+        }
+    }
+
+    setFeedbackLoading(messageId, isLoading) {
+        const container = document.querySelector(`.message-feedback[data-message-id="${messageId}"]`);
+        if (!container) return;
+        container.classList.toggle('is-loading', isLoading);
+        const buttons = container.querySelectorAll('.feedback-btn');
+        buttons.forEach(btn => {
+            btn.disabled = isLoading;
+        });
+    }
+
+    updateFeedbackUI(messageId, feedback) {
+        const container = document.querySelector(`.message-feedback[data-message-id="${messageId}"]`);
+        if (!container) return;
+        container.dataset.feedbackState = feedback || '';
+        container.classList.toggle('has-feedback', Boolean(feedback));
+
+        const buttons = container.querySelectorAll('.feedback-btn');
+        buttons.forEach(btn => {
+            const btnType = btn.dataset.feedbackType;
+            btn.classList.toggle('active', Boolean(feedback) && btnType === feedback);
+        });
+
+        const label = container.querySelector('.feedback-label');
+        if (label) {
+            label.classList.toggle('active', Boolean(feedback));
+        }
     }
     
     scrollToBottom() {
@@ -1016,6 +1195,10 @@ class ChatManager {
             if (!normalizedMessage.displayContent || typeof normalizedMessage.displayContent !== 'string') {
                 normalizedMessage.displayContent = sanitizedText;
             }
+        }
+        this.resolveMessageId(normalizedMessage);
+        if (!Object.prototype.hasOwnProperty.call(normalizedMessage, 'feedback')) {
+            normalizedMessage.feedback = null;
         }
 
         // Add to chat history

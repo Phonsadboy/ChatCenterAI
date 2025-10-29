@@ -1245,6 +1245,78 @@
     display: block;
 }
 
+.message-feedback {
+    margin-top: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: var(--chat-text-secondary);
+}
+
+.message-feedback .feedback-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 500;
+    color: var(--chat-text-tertiary);
+}
+
+.message-feedback .feedback-label i {
+    font-size: 0.75rem;
+}
+
+.message-feedback.has-feedback .feedback-label,
+.message-feedback .feedback-label.active {
+    color: var(--chat-text-secondary);
+}
+
+.feedback-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid var(--chat-border-color);
+    background: var(--chat-bg-app);
+    color: var(--chat-text-secondary);
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    transition: var(--chat-transition);
+    cursor: pointer;
+}
+
+.feedback-btn i {
+    font-size: 0.75rem;
+}
+
+.feedback-btn:hover {
+    border-color: var(--chat-primary);
+    color: var(--chat-primary);
+}
+
+.feedback-btn.positive.active {
+    background: rgba(104, 185, 132, 0.12);
+    border-color: var(--chat-success);
+    color: var(--chat-success);
+}
+
+.feedback-btn.negative.active {
+    background: rgba(255, 104, 104, 0.12);
+    border-color: var(--chat-danger);
+    color: var(--chat-danger);
+}
+
+.feedback-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.message-feedback.is-loading .feedback-btn {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
 /* ========================================
    Message Input Area (Fixed at bottom)
    ======================================== */
