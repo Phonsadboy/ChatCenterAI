@@ -310,6 +310,49 @@ curl -X POST "http://localhost:3000/admin/chat/mark-read/user123" \
 
 ---
 
+### 5. Refresh Facebook Display Name
+
+กรณีผู้ใช้ Facebook ที่ยังโชว์เป็นรหัส PSID สามารถสั่งให้ระบบดึงชื่อจาก Graph API อีกรอบได้
+
+**Endpoint:** `POST /admin/chat/users/:userId/refresh-profile`
+
+**Request Body (optional):**
+```json
+{
+    "platform": "facebook",
+    "botId": "6535fb9a7b2c1f001234abcd"
+}
+```
+- `platform` และ `botId` ไม่จำเป็นต้องส่ง หากไม่ระบุระบบจะดูค่าล่าสุดจากประวัติสนทนาเอง
+- ต้องเป็นผู้ใช้ของ Facebook Page ที่มี page access token พร้อมสิทธิ์ `pages_messaging`
+
+**Request Example:**
+```bash
+curl -X POST "http://localhost:3000/admin/chat/users/24480861594886811/refresh-profile" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: connect.sid=<session_id>" \
+  -d '{"platform":"facebook"}'
+```
+
+**Response (สำเร็จ):**
+```json
+{
+    "success": true,
+    "displayName": "คุณสมชาย ใจดี",
+    "updatedAt": "2024-11-12T08:45:21.123Z"
+}
+```
+
+**Response (กรณีดึงชื่อไม่ได้):**
+```json
+{
+    "success": false,
+    "error": "ไม่สามารถดึงชื่อจาก Facebook ได้"
+}
+```
+
+---
+
 ## Tag Management APIs
 
 ### 1. Get All Tags
@@ -841,4 +884,3 @@ console.log(data);
 **Email:** support@chatcenterai.com  
 **Documentation:** https://docs.chatcenterai.com  
 **GitHub:** https://github.com/chatcenterai/api
-

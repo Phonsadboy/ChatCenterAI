@@ -119,6 +119,27 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
+// ============================ CSP Helpers ============================
+const cspImgSrc = ["'self'", "data:", "blob:"];
+const registerCspOrigin = (value) => {
+  if (!value || typeof value !== "string") return;
+  const trimmed = value.trim();
+  if (!trimmed) return;
+  try {
+    const url = new URL(trimmed);
+    if (url.origin && !cspImgSrc.includes(url.origin)) {
+      cspImgSrc.push(url.origin);
+    }
+  } catch (_) {
+    // Ignore non-absolute URLs (self already covers relative paths)
+  }
+};
+
+registerCspOrigin(PUBLIC_BASE_URL);
+registerCspOrigin(process.env.FOLLOWUP_PUBLIC_BASE_URL);
+registerCspOrigin(process.env.FOLLOWUP_ASSETS_BASE_URL);
+registerCspOrigin(process.env.ASSETS_BASE_URL);
+
 // ============================ UI Middleware ============================
 // Security headers (relaxed CSP ให้โหลด resource จาก CDN ได้)
 app.use(
@@ -141,7 +162,7 @@ app.use(
           "https://cdnjs.cloudflare.com",
           "https://fonts.googleapis.com",
         ],
-        imgSrc: ["'self'", "data:", "blob:"],
+        imgSrc: cspImgSrc,
         fontSrc: [
           "'self'",
           "https://cdnjs.cloudflare.com",
