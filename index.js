@@ -14770,6 +14770,25 @@ async function getNormalizedChatUsers(options = {}) {
       purchaseMap[status.userId] = status.hasPurchased;
     });
 
+    const profileDocs =
+      userIds.length > 0
+        ? await profileColl
+            .find({ userId: { $in: userIds } })
+            .project({
+              userId: 1,
+              platform: 1,
+              displayName: 1,
+              pictureUrl: 1,
+              statusMessage: 1,
+            })
+            .toArray()
+        : [];
+    const profileMap = new Map();
+    profileDocs.forEach((doc) => {
+      const key = `${doc.userId}:${doc.platform || "line"}`;
+      profileMap.set(key, doc);
+    });
+
     // ดึงข้อมูลออเดอร์
     const ordersColl = db.collection("orders");
     const userOrders =
@@ -14813,11 +14832,17 @@ async function getNormalizedChatUsers(options = {}) {
         }
 
         // ดึงข้อมูลโปรไฟล์
-        let userProfile = null;
-        if (platform === "line") {
-          userProfile = await profileColl.findOne({ userId: user._id });
-          if (!userProfile) {
-            userProfile = await saveOrUpdateUserProfile(user._id);
+        const profileKey = `${user._id}:${platform}`;
+        let userProfile = profileMap.get(profileKey) || null;
+
+        if (platform === "line" && !userProfile) {
+          const freshProfile = await saveOrUpdateUserProfile(user._id);
+          if (freshProfile) {
+            userProfile = {
+              ...freshProfile,
+              platform: "line",
+            };
+            profileMap.set(profileKey, userProfile);
           }
         }
 
@@ -14885,13 +14910,19 @@ async function getNormalizedChatUsers(options = {}) {
         const hasOrders = userOrders.length > 0;
         const orderCount = userOrders.length;
 
+        const profileDisplayName =
+          userProfile && typeof userProfile.displayName === "string"
+            ? userProfile.displayName.trim()
+            : "";
+
         return {
           userId: user._id,
-          displayName: userProfile
-            ? userProfile.displayName
-            : user._id.substring(0, 8) + "...",
-          pictureUrl: userProfile ? userProfile.pictureUrl : null,
-          statusMessage: userProfile ? userProfile.statusMessage : null,
+          displayName: profileDisplayName || user._id.substring(0, 8) + "...",
+          pictureUrl: userProfile ? userProfile.pictureUrl || null : null,
+          statusMessage:
+            platform === "line" && userProfile
+              ? userProfile.statusMessage || null
+              : null,
           lastMessage: normalizedLastMessage.displayContent,
           lastMessageRaw: user.lastMessage,
           lastTimestamp: user.lastTimestamp,
