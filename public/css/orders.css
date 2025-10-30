@@ -33,6 +33,33 @@
   height: 2.5rem;
 }
 
+.order-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.order-settings-table .badge {
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.order-settings-table .cutoff-input {
+  max-width: 130px;
+}
+
+.order-settings-meta {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.order-settings-summary {
+  font-size: 0.8rem;
+  color: #4b5563;
+}
+
 .orders-empty-state i {
   font-size: 2.75rem;
   color: #d1d5db;

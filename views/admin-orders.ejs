@@ -37,7 +37,13 @@
               <label for="filterEndDate" class="form-label">วันที่สิ้นสุด</label>
               <input type="date" class="form-control" id="filterEndDate">
             </div>
-            <div class="col-md-2">
+            <div class="col-md-3">
+              <label for="filterPage" class="form-label">เพจ/บอท</label>
+              <select class="form-select" id="filterPage">
+                <option value="all">ทุกเพจ</option>
+              </select>
+            </div>
+            <div class="col-md-3">
               <label for="filterStatus" class="form-label">สถานะออเดอร์</label>
               <select class="form-select" id="filterStatus">
                 <option value="all">ทั้งหมด</option>
@@ -48,7 +54,7 @@
                 <option value="cancelled">ยกเลิก</option>
               </select>
             </div>
-            <div class="col-md-2">
+            <div class="col-md-3">
               <div class="form-check mt-4">
                 <input class="form-check-input" type="checkbox" id="filterTodayOnly">
                 <label class="form-check-label" for="filterTodayOnly">
@@ -56,7 +62,7 @@
                 </label>
               </div>
             </div>
-            <div class="col-md-2 d-flex gap-2">
+            <div class="col-md-4 col-lg-3 d-flex gap-2">
               <button type="submit" class="btn btn-primary flex-grow-1">
                 <i class="fas fa-search me-2"></i>กรองข้อมูล
               </button>
@@ -65,6 +71,41 @@
               </button>
             </div>
           </form>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-4" id="orderPageSettingsCard">
+        <div class="card-body">
+          <div class="order-settings-header">
+            <div>
+              <h5 class="mb-1">การตั้งเวลาตัดรอบออเดอร์</h5>
+              <p class="text-muted small mb-0">เลือกเวลาตัดรอบสำหรับแต่ละเพจ ระบบจะสแกนเฉพาะลูกค้าที่มีการสนทนาหลังรอบล่าสุด</p>
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="orderCutoffToggle" disabled>
+              <label class="form-check-label" for="orderCutoffToggle">เปิดการสแกนตามรอบ</label>
+            </div>
+          </div>
+          <div id="orderPageSettingsStatus" class="alert alert-info small py-2 px-3 mt-3" style="display: none;"></div>
+          <div class="table-responsive mt-3">
+            <table class="table align-middle order-settings-table">
+              <thead>
+                <tr>
+                  <th scope="col">เพจ/บอท</th>
+                  <th scope="col">แพลตฟอร์ม</th>
+                  <th scope="col" style="width: 160px;">เวลาตัดรอบ</th>
+                  <th scope="col">รอบล่าสุด</th>
+                  <th scope="col">สรุปรอบก่อน</th>
+                  <th scope="col" style="width: 120px;">การจัดการ</th>
+                </tr>
+              </thead>
+              <tbody id="orderPageSettingsBody">
+                <tr id="orderPageSettingsEmpty">
+                  <td colspan="6" class="text-center text-muted py-4">กำลังโหลดข้อมูลเพจ...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -110,6 +151,7 @@
                 <tr>
                   <th scope="col">วันที่</th>
                   <th scope="col">ลูกค้า</th>
+                  <th scope="col">เพจ</th>
                   <th scope="col">แพลตฟอร์ม</th>
                   <th scope="col">รายการสินค้า</th>
                   <th scope="col">ค่าส่ง</th>

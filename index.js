@@ -781,6 +781,7 @@ async function saveChatHistory(
   if (userInsertResult?.insertedId) {
     userMessageDoc._id = userInsertResult.insertedId;
   }
+  await appendOrderExtractionMessage(userMessageDoc);
 
   try {
     if (typeof io !== "undefined" && io) {
@@ -850,6 +851,7 @@ async function saveChatHistory(
   if (assistantInsertResult?.insertedId) {
     assistantMessageDoc._id = assistantInsertResult.insertedId;
   }
+  await appendOrderExtractionMessage(assistantMessageDoc);
 
   try {
     if (typeof io !== "undefined" && io) {
@@ -2020,7 +2022,11 @@ async function sendFollowUpMessage(task, round, db) {
     botId: task.botId || null,
     source: "follow_up",
   };
-  await historyColl.insertOne(messageDoc);
+  const historyInsertResult = await historyColl.insertOne(messageDoc);
+  if (historyInsertResult?.insertedId) {
+    messageDoc._id = historyInsertResult.insertedId;
+  }
+  await appendOrderExtractionMessage(messageDoc);
 
   try {
     if (io) {
@@ -2359,6 +2365,355 @@ function normalizeCustomerName(rawName) {
   return trimmed.length ? trimmed : null;
 }
 
+// ============================ Order Buffer & Cutoff Helpers ============================
+
+const ORDER_BUFFER_COLLECTION = "order_extraction_buffers";
+const ORDER_CUTOFF_SETTINGS_COLLECTION = "order_cutoff_settings";
+const ORDER_DEFAULT_CUTOFF_TIME = "23:59";
+const ORDER_CUTOFF_TIMEZONE = BANGKOK_TZ || "Asia/Bangkok";
+const ORDER_CUTOFF_INTERVAL_MS = 60 * 1000;
+
+let orderCutoffTimer = null;
+let orderCutoffProcessing = false;
+
+function normalizeOrderPlatform(platform) {
+  if (typeof platform !== "string") return "line";
+  const normalized = platform.toLowerCase();
+  if (["facebook", "line"].includes(normalized)) {
+    return normalized;
+  }
+  return "line";
+}
+
+function normalizeOrderBotId(botId) {
+  if (!botId) return null;
+  if (typeof botId === "string") {
+    const trimmed = botId.trim();
+    return trimmed.length ? trimmed : null;
+  }
+  try {
+    const str = botId.toString();
+    return str.length ? str : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildOrderPageKey(platform, botId = null) {
+  const normalizedPlatform = normalizeOrderPlatform(platform);
+  const normalizedBotId = normalizeOrderBotId(botId);
+  return normalizedBotId
+    ? `${normalizedPlatform}:${normalizedBotId}`
+    : `${normalizedPlatform}:default`;
+}
+
+function parseOrderPageKey(pageKey) {
+  if (typeof pageKey !== "string" || !pageKey.includes(":")) {
+    return { platform: null, botId: null };
+  }
+  const [platformPart, ...rest] = pageKey.split(":");
+  const botIdPart = rest.join(":");
+  const platform = normalizeOrderPlatform(platformPart);
+  const botId =
+    botIdPart && botIdPart !== "default" ? normalizeOrderBotId(botIdPart) : null;
+  return { platform, botId };
+}
+
+function parseCutoffTime(cutoffTime) {
+  const fallback = ORDER_DEFAULT_CUTOFF_TIME;
+  if (typeof cutoffTime !== "string") return fallback;
+  const match = cutoffTime.trim().match(/^([0-1]?\d|2[0-3]):([0-5]\d)$/);
+  if (!match) return fallback;
+  const hours = match[1].padStart(2, "0");
+  const minutes = match[2].padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function getCutoffMomentForDay(cutoffTime, baseMoment = null) {
+  const safeCutoff = parseCutoffTime(cutoffTime);
+  const [hoursStr, minutesStr] = safeCutoff.split(":");
+  const hours = parseInt(hoursStr, 10);
+  const minutes = parseInt(minutesStr, 10);
+  const momentBase = baseMoment ? baseMoment.clone() : getBangkokMoment();
+  return momentBase
+    .clone()
+    .hours(hours)
+    .minutes(minutes)
+    .seconds(0)
+    .milliseconds(0);
+}
+
+async function appendOrderExtractionMessage(chatDoc) {
+  try {
+    if (!chatDoc || typeof chatDoc !== "object") return;
+    const senderId = chatDoc.senderId || chatDoc.userId || null;
+    if (!senderId) return;
+    const role = chatDoc.role || "user";
+    if (!["user", "assistant"].includes(role)) {
+      return;
+    }
+
+    const platform = normalizeOrderPlatform(chatDoc.platform);
+    const botId = normalizeOrderBotId(chatDoc.botId);
+    const pageKey = buildOrderPageKey(platform, botId);
+    const timestamp =
+      chatDoc.timestamp instanceof Date
+        ? chatDoc.timestamp
+        : new Date(chatDoc.timestamp || Date.now());
+    const chatMessageId =
+      chatDoc._id && typeof chatDoc._id.toString === "function"
+        ? chatDoc._id.toString()
+        : chatDoc._id || null;
+
+    const bufferDoc = {
+      pageKey,
+      platform,
+      botId,
+      userId: senderId,
+      role,
+      direction: role === "user" ? "inbound" : "outbound",
+      source: chatDoc.source || null,
+      content: chatDoc.content ?? null,
+      timestamp,
+      chatMessageId,
+      lastMessageAt: timestamp,
+      createdAt: new Date(),
+    };
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection(ORDER_BUFFER_COLLECTION);
+    await coll.insertOne(bufferDoc);
+  } catch (error) {
+    console.error("[OrderBuffer] เพิ่มข้อความลงบัฟเฟอร์ไม่สำเร็จ:", error.message);
+  }
+}
+
+async function ensureOrderBufferIndexes() {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const bufferColl = db.collection(ORDER_BUFFER_COLLECTION);
+    const cutoffColl = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
+
+    await bufferColl.createIndex({ pageKey: 1, userId: 1, timestamp: 1 });
+    await bufferColl.createIndex({ pageKey: 1, timestamp: 1 });
+    await bufferColl.createIndex({ chatMessageId: 1 }, { sparse: true });
+
+    await cutoffColl.createIndex({ pageKey: 1 }, { unique: true });
+  } catch (error) {
+    console.error("[OrderCutoff] ไม่สามารถสร้างดัชนีได้:", error.message);
+  }
+}
+
+async function ensureOrderCutoffSetting(platform, botId = null) {
+  const normalizedPlatform = normalizeOrderPlatform(platform);
+  const normalizedBotId = normalizeOrderBotId(botId);
+  const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
+
+  const existing = await coll.findOne({ pageKey });
+  if (existing) {
+    return existing;
+  }
+
+  const now = new Date();
+  const doc = {
+    pageKey,
+    platform: normalizedPlatform,
+    botId: normalizedBotId,
+    cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
+    timezone: ORDER_CUTOFF_TIMEZONE,
+    lastProcessedAt: null,
+    lastCutoffDateKey: null,
+    lastRunSummary: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await coll.insertOne(doc);
+  return doc;
+}
+
+async function getOrderCutoffSetting(platform, botId = null) {
+  const normalizedPlatform = normalizeOrderPlatform(platform);
+  const normalizedBotId = normalizeOrderBotId(botId);
+  const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
+  const existing = await coll.findOne({ pageKey });
+  if (existing) return existing;
+  return ensureOrderCutoffSetting(normalizedPlatform, normalizedBotId);
+}
+
+async function updateOrderCutoffSetting(platform, botId, updates = {}) {
+  const normalizedPlatform = normalizeOrderPlatform(platform);
+  const normalizedBotId = normalizeOrderBotId(botId);
+  const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
+  const safeUpdates = { ...updates, updatedAt: new Date() };
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
+  await coll.updateOne(
+    { pageKey },
+    { $set: safeUpdates },
+    { upsert: true },
+  );
+  return coll.findOne({ pageKey });
+}
+
+async function listOrderCutoffPages() {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+
+  const [lineBots, facebookBots, settingsDocs] = await Promise.all([
+    db
+      .collection("line_bots")
+      .find({})
+      .project({ _id: 1, name: 1, displayName: 1, botName: 1 })
+      .toArray(),
+    db
+      .collection("facebook_bots")
+      .find({})
+      .project({ _id: 1, name: 1, pageName: 1 })
+      .toArray(),
+    db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION).find({}).toArray(),
+  ]);
+
+  const settingsMap = new Map();
+  settingsDocs.forEach((doc) => {
+    if (doc && doc.pageKey) {
+      settingsMap.set(doc.pageKey, doc);
+    }
+  });
+
+  const pages = [];
+
+  lineBots.forEach((bot) => {
+    const botId =
+      bot?._id && typeof bot._id.toString === "function"
+        ? bot._id.toString()
+        : bot._id || null;
+    const pageKey = buildOrderPageKey("line", botId);
+    const settings =
+      settingsMap.get(pageKey) ||
+      {
+        cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
+        lastProcessedAt: null,
+        lastCutoffDateKey: null,
+        lastRunSummary: null,
+      };
+    pages.push({
+      pageKey,
+      platform: "line",
+      botId,
+      name:
+        bot?.name ||
+        bot?.displayName ||
+        bot?.botName ||
+        `LINE Bot (${botId?.slice(-4) || "N/A"})`,
+      cutoffTime: settings.cutoffTime || ORDER_DEFAULT_CUTOFF_TIME,
+      lastProcessedAt: settings.lastProcessedAt || null,
+      lastCutoffDateKey: settings.lastCutoffDateKey || null,
+      lastRunSummary: settings.lastRunSummary || null,
+    });
+  });
+
+  facebookBots.forEach((bot) => {
+    const botId =
+      bot?._id && typeof bot._id.toString === "function"
+        ? bot._id.toString()
+        : bot._id || null;
+    const pageKey = buildOrderPageKey("facebook", botId);
+    const settings =
+      settingsMap.get(pageKey) ||
+      {
+        cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
+        lastProcessedAt: null,
+        lastCutoffDateKey: null,
+        lastRunSummary: null,
+      };
+    pages.push({
+      pageKey,
+      platform: "facebook",
+      botId,
+      name:
+        bot?.pageName ||
+        bot?.name ||
+        `Facebook Page (${botId?.slice(-4) || "N/A"})`,
+      cutoffTime: settings.cutoffTime || ORDER_DEFAULT_CUTOFF_TIME,
+      lastProcessedAt: settings.lastProcessedAt || null,
+      lastCutoffDateKey: settings.lastCutoffDateKey || null,
+      lastRunSummary: settings.lastRunSummary || null,
+    });
+  });
+
+  // Ensure settings existสำหรับเพจใหม่เท่านั้น
+  const missingSettings = pages.filter((page) => !settingsMap.has(page.pageKey));
+  if (missingSettings.length) {
+    await Promise.all(
+      missingSettings.map((page) =>
+        ensureOrderCutoffSetting(page.platform, page.botId),
+      ),
+    );
+  }
+
+  return pages;
+}
+
+async function orderBufferMessagesForUser(pageKey, userId) {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection(ORDER_BUFFER_COLLECTION);
+  return coll
+    .find({ pageKey, userId })
+    .sort({ timestamp: 1 })
+    .toArray();
+}
+
+async function clearOrderBufferForUser(pageKey, userId) {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection(ORDER_BUFFER_COLLECTION);
+  await coll.deleteMany({ pageKey, userId });
+}
+
+async function listOrderBufferUsersWithActivity(pageKey, since) {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection(ORDER_BUFFER_COLLECTION);
+
+  const match = { pageKey };
+  if (since instanceof Date) {
+    match.timestamp = { $gt: since };
+  }
+
+  const results = await coll
+    .aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$userId",
+          lastMessageAt: { $max: "$timestamp" },
+        },
+      },
+      { $sort: { lastMessageAt: 1 } },
+    ])
+    .toArray();
+
+  return results.map((entry) => ({
+    userId: entry._id,
+    lastMessageAt: entry.lastMessageAt,
+  }));
+}
+
+
 function findDuplicateOrder(existingOrders, newOrderData) {
   if (!Array.isArray(existingOrders) || !newOrderData) {
     return null;
@@ -2442,6 +2797,46 @@ async function markMessagesAsOrderExtracted(userId, messageIds, extractionRoundI
 
 function buildOrderQuery(params = {}) {
   const query = {};
+  const pageKeyParam = params.pageKey;
+  let platformFilter = params.platform;
+  let botIdFilter = params.botId;
+
+  if (pageKeyParam && pageKeyParam !== "all") {
+    const parsed = parseOrderPageKey(pageKeyParam);
+    if (parsed.platform) {
+      platformFilter = parsed.platform;
+    }
+    if (parsed.botId || parsed.botId === null) {
+      botIdFilter =
+        parsed.botId === null ? "default" : parsed.botId;
+    }
+  }
+
+  if (platformFilter && platformFilter !== "all") {
+    query.platform = normalizeOrderPlatform(platformFilter);
+  }
+
+  if (
+    typeof botIdFilter === "string" &&
+    botIdFilter.length > 0 &&
+    botIdFilter !== "all"
+  ) {
+    if (botIdFilter === "default") {
+      const defaultConditions = [
+        { botId: null },
+        { botId: { $exists: false } },
+        { botId: "" },
+      ];
+      if (!query.$or) {
+        query.$or = defaultConditions;
+      } else {
+        query.$or.push(...defaultConditions);
+      }
+    } else {
+      query.botId = normalizeOrderBotId(botIdFilter);
+    }
+  }
+
   const status = params.status;
   if (status && status !== "all") {
     query.status = status;
@@ -2738,6 +3133,14 @@ async function getUserOrders(userId) {
 
 async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
   try {
+    const orderCutoffSchedulingEnabled = await getSettingValue(
+      "orderCutoffSchedulingEnabled",
+      true,
+    );
+    if (orderCutoffSchedulingEnabled) {
+      return;
+    }
+
     // ตรวจสอบว่ามีการตั้งค่าให้วิเคราะห์ออเดอร์อัตโนมัติหรือไม่
     const orderAnalysisEnabled = await getSettingValue("orderAnalysisEnabled", true);
     if (!orderAnalysisEnabled) {
@@ -2846,6 +3249,282 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
   } catch (error) {
     console.error("[Order] วิเคราะห์ออเดอร์อัตโนมัติไม่สำเร็จ:", error.message);
   }
+}
+
+async function processOrderCutoffForPage(pageConfig, options = {}) {
+  const nowMoment = options.nowMoment || getBangkokMoment();
+  const pageKey = pageConfig.pageKey;
+  const platform = pageConfig.platform;
+  const botId = pageConfig.botId || null;
+
+  const setting = await getOrderCutoffSetting(platform, botId);
+  const lastProcessedAt =
+    setting.lastProcessedAt instanceof Date
+      ? setting.lastProcessedAt
+      : setting.lastProcessedAt
+      ? new Date(setting.lastProcessedAt)
+      : null;
+
+  const users = await listOrderBufferUsersWithActivity(
+    pageKey,
+    lastProcessedAt || null,
+  );
+
+  if (!users.length) {
+    await updateOrderCutoffSetting(platform, botId, {
+      lastProcessedAt: nowMoment.toDate(),
+      lastCutoffDateKey: nowMoment.format("YYYY-MM-DD"),
+      lastRunSummary: {
+        processedUsers: 0,
+        createdOrders: 0,
+        duplicates: 0,
+        noOrder: 0,
+        timestamp: nowMoment.toDate(),
+      },
+    });
+    return;
+  }
+
+  let createdOrders = 0;
+  let duplicateCount = 0;
+  let noOrderCount = 0;
+
+  for (const entry of users) {
+    const userId = entry.userId;
+    if (!userId) continue;
+
+    try {
+      const messageDocs = await orderBufferMessagesForUser(pageKey, userId);
+      if (!messageDocs.length) {
+        continue;
+      }
+
+      const messageIds = messageDocs
+        .map((doc) => doc.chatMessageId)
+        .filter(Boolean);
+      const normalizedMessages = messageDocs
+        .map((doc) => {
+          return normalizeMessageForFrontend({
+            _id: doc.chatMessageId || null,
+            role: doc.role || "user",
+            content: doc.content ?? "",
+            timestamp: doc.timestamp || new Date(),
+            source: doc.source || "user",
+            platform: doc.platform || platform || "line",
+            botId: doc.botId || botId || null,
+          });
+        })
+        .filter((msg) => !!msg && !!msg.content);
+
+      if (!normalizedMessages.length) {
+        noOrderCount += 1;
+        continue;
+      }
+
+      const targetMessages = normalizedMessages.slice(-50).map((msg) => ({
+        role: msg.role,
+        content: typeof msg.content === "string" ? msg.content : msg.displayContent,
+        messageId: msg.messageId || null,
+      }));
+
+      const existingOrders = await getUserOrders(userId);
+      const latestOrder = existingOrders?.[0];
+
+      const analysis = await analyzeOrderFromChat(userId, targetMessages, {
+        previousAddress: latestOrder?.orderData?.shippingAddress || null,
+        previousCustomerName: latestOrder?.orderData?.customerName || null,
+      });
+
+      if (!analysis || !analysis.hasOrder) {
+        noOrderCount += 1;
+        continue;
+      }
+
+      const duplicateOrder = findDuplicateOrder(
+        existingOrders,
+        analysis.orderData,
+      );
+
+      const extractionRoundId = new ObjectId().toString();
+
+      if (duplicateOrder) {
+        duplicateCount += 1;
+        await markMessagesAsOrderExtracted(
+          userId,
+          messageIds,
+          extractionRoundId,
+          duplicateOrder?._id?.toString?.() || null,
+        );
+        await clearOrderBufferForUser(pageKey, userId);
+        try {
+          if (io) {
+            io.emit("orderExtracted", {
+              userId,
+              orderId: duplicateOrder?._id?.toString?.() || null,
+              orderData: duplicateOrder?.orderData || null,
+              isManualExtraction: false,
+              extractedAt: new Date(),
+              duplicate: true,
+              source: "scheduled_cutoff",
+              reason: analysis.reason,
+            });
+          }
+        } catch (_) {}
+        continue;
+      }
+
+      const orderId = await saveOrderToDatabase(
+        userId,
+        platform,
+        botId,
+        analysis.orderData,
+        "scheduled_cutoff",
+        false,
+      );
+
+      if (!orderId) {
+        console.error(
+          `[OrderCutoff] ไม่สามารถบันทึกออเดอร์ของผู้ใช้ ${userId} ได้`,
+        );
+        continue;
+      }
+
+      createdOrders += 1;
+
+      await markMessagesAsOrderExtracted(
+        userId,
+        messageIds,
+        extractionRoundId,
+        orderId?.toString?.() || orderId,
+      );
+
+      await clearOrderBufferForUser(pageKey, userId);
+
+      await maybeAnalyzeFollowUp(userId, platform, botId, {
+        reasonOverride: analysis.reason,
+        followUpUpdatedAt: new Date(),
+        forceUpdate: true,
+      });
+
+      try {
+        if (io) {
+          io.emit("orderExtracted", {
+            userId,
+            orderId,
+            orderData: analysis.orderData,
+            isManualExtraction: false,
+            extractedAt: new Date(),
+            confidence: analysis.confidence,
+            reason: analysis.reason,
+            source: "scheduled_cutoff",
+          });
+        }
+      } catch (_) {}
+    } catch (error) {
+      console.error(
+        `[OrderCutoff] ประมวลผลผู้ใช้ ${userId} ไม่สำเร็จ:`,
+        error.message,
+      );
+    }
+  }
+
+  await updateOrderCutoffSetting(platform, botId, {
+    lastProcessedAt: nowMoment.toDate(),
+    lastCutoffDateKey: nowMoment.format("YYYY-MM-DD"),
+    lastRunSummary: {
+      processedUsers: users.length,
+      createdOrders,
+      duplicates: duplicateCount,
+      noOrder: noOrderCount,
+      timestamp: nowMoment.toDate(),
+    },
+  });
+}
+
+async function evaluateOrderCutoffSchedules() {
+  if (orderCutoffProcessing) {
+    return;
+  }
+
+  orderCutoffProcessing = true;
+  try {
+    const schedulingEnabled = await getSettingValue(
+      "orderCutoffSchedulingEnabled",
+      true,
+    );
+    if (!schedulingEnabled) {
+      return;
+    }
+
+    const pages = await listOrderCutoffPages();
+    if (!pages.length) return;
+
+    const nowMoment = getBangkokMoment();
+    const dateKey = nowMoment.format("YYYY-MM-DD");
+
+    for (const page of pages) {
+      try {
+        const cutoffMoment = getCutoffMomentForDay(page.cutoffTime, nowMoment);
+        if (!cutoffMoment || nowMoment.isBefore(cutoffMoment)) {
+          continue;
+        }
+
+        const setting = await getOrderCutoffSetting(page.platform, page.botId);
+        if (setting.lastCutoffDateKey === dateKey) {
+          continue;
+        }
+
+        await processOrderCutoffForPage(page, { nowMoment });
+      } catch (pageError) {
+        console.error(
+          `[OrderCutoff] ประมวลผลเพจ ${page.pageKey} ไม่สำเร็จ:`,
+          pageError.message,
+        );
+      }
+    }
+  } catch (error) {
+    console.error("[OrderCutoff] evaluateOrderCutoffSchedules error:", error.message);
+  } finally {
+    orderCutoffProcessing = false;
+  }
+}
+
+async function startOrderCutoffScheduler() {
+  const schedulingEnabled = await getSettingValue(
+    "orderCutoffSchedulingEnabled",
+    true,
+  );
+
+  if (!schedulingEnabled) {
+    if (orderCutoffTimer) {
+      clearInterval(orderCutoffTimer);
+      orderCutoffTimer = null;
+    }
+    console.log("[OrderCutoff] Scheduler ถูกปิดใช้งานตามการตั้งค่า");
+    return;
+  }
+
+  if (orderCutoffTimer) {
+    clearInterval(orderCutoffTimer);
+  }
+
+  orderCutoffTimer = setInterval(() => {
+    evaluateOrderCutoffSchedules().catch((err) => {
+      console.error("[OrderCutoff] Scheduler loop error:", err.message);
+    });
+  }, ORDER_CUTOFF_INTERVAL_MS);
+
+  // Trigger first run shortly after startup
+  setTimeout(() => {
+    evaluateOrderCutoffSchedules().catch((err) => {
+      console.error("[OrderCutoff] Initial scheduler run error:", err.message);
+    });
+  }, 5000);
+
+  console.log(
+    `[OrderCutoff] Scheduler เริ่มทำงาน (interval ${ORDER_CUTOFF_INTERVAL_MS / 1000
+    }s)`,
+  );
 }
 
 async function getFollowUpUsers(filter = {}) {
@@ -4628,7 +5307,7 @@ async function handleFacebookComment(pageId, postId, commentData, accessToken) {
             );
 
             // Save initial chat history
-            await chatColl.insertOne({
+            const welcomeDoc = {
               senderId: commenterId,
               role: "assistant",
               content: welcomeMessage,
@@ -4636,7 +5315,12 @@ async function handleFacebookComment(pageId, postId, commentData, accessToken) {
               source: "comment_pull",
               platform: "facebook",
               botId: pageId,
-            });
+            };
+            const welcomeInsert = await chatColl.insertOne(welcomeDoc);
+            if (welcomeInsert?.insertedId) {
+              welcomeDoc._id = welcomeInsert.insertedId;
+            }
+            await appendOrderExtractionMessage(welcomeDoc);
           } catch (pmError) {
             console.error(
               "[Facebook Comment] Failed to send private message:",
@@ -4870,7 +5554,9 @@ server.listen(PORT, async () => {
     await ensureInstructionIdentifiers();
     await ensureSettings();
     await ensureFollowUpIndexes();
+    await ensureOrderBufferIndexes();
     startFollowUpTaskWorker();
+    await startOrderCutoffScheduler();
 
     console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
   } catch (err) {
@@ -5532,6 +6218,8 @@ async function ensureSettings() {
     { key: "followUpShowInChat", value: true },
     { key: "followUpShowInDashboard", value: true },
     { key: "followUpAutoEnabled", value: false },
+    { key: "orderAnalysisEnabled", value: true },
+    { key: "orderCutoffSchedulingEnabled", value: true },
     {
       key: "audioAttachmentResponse",
       value: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
@@ -5567,6 +6255,23 @@ async function getSettingValue(key, defaultValue) {
   } catch (error) {
     console.error(`Error getting setting ${key}:`, error);
     return defaultValue;
+  }
+}
+
+async function setSettingValue(key, value) {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("settings");
+    await coll.updateOne(
+      { key },
+      { $set: { value } },
+      { upsert: true },
+    );
+    return true;
+  } catch (error) {
+    console.error(`Error setting ${key}:`, error);
+    return false;
   }
 }
 
@@ -6924,7 +7629,11 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     platform: "facebook",
                     botId: facebookBot?._id?.toString?.() || null,
                   };
-                  await coll.insertOne(controlDoc);
+                  const controlInsertResult = await coll.insertOne(controlDoc);
+                  if (controlInsertResult?.insertedId) {
+                    controlDoc._id = controlInsertResult.insertedId;
+                  }
+                  await appendOrderExtractionMessage(controlDoc);
 
                   try {
                     await resetUserUnreadCount(targetUserId);
@@ -6960,7 +7669,11 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                   platform: "facebook",
                   botId: facebookBot?._id?.toString?.() || null,
                 };
-                await coll.insertOne(controlDoc);
+                const controlInsertResult = await coll.insertOne(controlDoc);
+                if (controlInsertResult?.insertedId) {
+                  controlDoc._id = controlInsertResult.insertedId;
+                }
+                await appendOrderExtractionMessage(controlDoc);
 
                 try {
                   await resetUserUnreadCount(targetUserId);
@@ -6986,7 +7699,11 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                   platform: "facebook",
                   botId: facebookBot?._id?.toString?.() || null,
                 };
-                await coll.insertOne(baseDoc);
+                const baseInsertResult = await coll.insertOne(baseDoc);
+                if (baseInsertResult?.insertedId) {
+                  baseDoc._id = baseInsertResult.insertedId;
+                }
+                await appendOrderExtractionMessage(baseDoc);
                 // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
                 try {
                   await resetUserUnreadCount(targetUserId);
@@ -10982,6 +11699,94 @@ app.get("/admin/orders", async (req, res) => {
   }
 });
 
+app.get("/admin/orders/pages", async (req, res) => {
+  try {
+    const [pages, schedulingEnabled] = await Promise.all([
+      listOrderCutoffPages(),
+      getSettingValue("orderCutoffSchedulingEnabled", true),
+    ]);
+
+    res.json({
+      success: true,
+      pages,
+      settings: {
+        schedulingEnabled: !!schedulingEnabled,
+        defaultCutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
+      },
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถโหลดการตั้งค่าเพจ:", error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post("/admin/orders/pages/cutoff", async (req, res) => {
+  try {
+    const { pageKey, platform, botId, cutoffTime } =
+      req.body || {};
+
+    let targetPlatform = platform ? normalizeOrderPlatform(platform) : null;
+    let targetBotId = typeof botId === "string" ? botId : null;
+
+    if (pageKey && pageKey !== "all") {
+      const parsed = parseOrderPageKey(pageKey);
+      targetPlatform = parsed.platform || targetPlatform;
+      targetBotId =
+        parsed.botId === null ? null : parsed.botId || targetBotId;
+    }
+
+    if (!targetPlatform) {
+      return res.json({
+        success: false,
+        error: "ไม่พบเพจที่ต้องการปรับเวลาตัดรอบ",
+      });
+    }
+
+    const normalizedBotId =
+      targetBotId === "default" ? null : normalizeOrderBotId(targetBotId);
+    const safeCutoff = parseCutoffTime(
+      cutoffTime || ORDER_DEFAULT_CUTOFF_TIME,
+    );
+
+    const updated = await updateOrderCutoffSetting(
+      targetPlatform,
+      normalizedBotId,
+      { cutoffTime: safeCutoff },
+    );
+
+    res.json({
+      success: true,
+      setting: {
+        ...(updated || {}),
+        cutoffTime: safeCutoff,
+      },
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถบันทึกเวลาตัดรอบได้:", error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post("/admin/orders/settings/scheduling", async (req, res) => {
+  try {
+    const { enabled } = req.body || {};
+    if (typeof enabled !== "boolean") {
+      return res.json({
+        success: false,
+        error: "กรุณาระบุสถานะเปิด/ปิดที่ถูกต้อง",
+      });
+    }
+
+    await setSettingValue("orderCutoffSchedulingEnabled", enabled);
+    await startOrderCutoffScheduler();
+
+    res.json({ success: true, enabled });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถปรับสถานะ scheduler ได้:", error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
 // Get users who have chatted
 app.get("/admin/chat/users", async (req, res) => {
   try {
@@ -11044,7 +11849,11 @@ app.post("/admin/chat/user-status", async (req, res) => {
       platform,
       botId,
     };
-    await coll.insertOne(controlDoc);
+    const controlInsertResult = await coll.insertOne(controlDoc);
+    if (controlInsertResult?.insertedId) {
+      controlDoc._id = controlInsertResult.insertedId;
+    }
+    await appendOrderExtractionMessage(controlDoc);
 
     try {
       await resetUserUnreadCount(userId);
@@ -11141,9 +11950,13 @@ app.post("/admin/chat/send", async (req, res) => {
           timestamp: new Date(),
           source: "admin_chat",
           platform,
-          botId,
-        };
-        await coll.insertOne(controlDoc);
+      botId,
+    };
+        const controlInsertResult = await coll.insertOne(controlDoc);
+        if (controlInsertResult?.insertedId) {
+          controlDoc._id = controlInsertResult.insertedId;
+        }
+        await appendOrderExtractionMessage(controlDoc);
         await resetUserUnreadCount(userId);
 
         // Emit เพื่ออัปเดต UI ของแอดมิน
@@ -11185,11 +11998,15 @@ app.post("/admin/chat/send", async (req, res) => {
         role: "assistant",
         content: `[ระบบ] ${controlText}`,
         timestamp: new Date(),
-        source: "admin_chat",
-        platform,
-        botId,
-      };
-      await coll.insertOne(controlDoc);
+      source: "admin_chat",
+      platform,
+      botId,
+    };
+      const legacyControlInsert = await coll.insertOne(controlDoc);
+      if (legacyControlInsert?.insertedId) {
+        controlDoc._id = legacyControlInsert.insertedId;
+      }
+      await appendOrderExtractionMessage(controlDoc);
 
       // รีเซ็ต unread count เมื่อแอดมินตอบกลับ
       await resetUserUnreadCount(userId);
@@ -11261,6 +12078,7 @@ app.post("/admin/chat/send", async (req, res) => {
     if (messageInsertResult?.insertedId) {
       messageDoc._id = messageInsertResult.insertedId;
     }
+    await appendOrderExtractionMessage(messageDoc);
     await resetUserUnreadCount(userId);
 
     try {
@@ -12256,6 +13074,65 @@ app.get("/admin/orders/data", async (req, res) => {
       profileMap[profile.userId] = profile.displayName;
     });
 
+    const botIdSets = {
+      line: new Set(),
+      facebook: new Set(),
+    };
+
+    orders.forEach((order) => {
+      const platform = normalizeOrderPlatform(order.platform || "line");
+      const rawBotId = order.botId || null;
+      const botIdStr =
+        rawBotId && typeof rawBotId.toString === "function"
+          ? rawBotId.toString()
+          : rawBotId || null;
+      if (botIdStr) {
+        botIdSets[platform].add(botIdStr);
+      }
+    });
+
+    let lineBotDocs = [];
+    let facebookBotDocs = [];
+
+    const lineBotIds = [...botIdSets.line].filter((id) => ObjectId.isValid(id));
+    if (lineBotIds.length) {
+      lineBotDocs = await db
+        .collection("line_bots")
+        .find({ _id: { $in: lineBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, displayName: 1, botName: 1 })
+        .toArray();
+    }
+
+    const facebookBotIds = [...botIdSets.facebook].filter((id) =>
+      ObjectId.isValid(id),
+    );
+    if (facebookBotIds.length) {
+      facebookBotDocs = await db
+        .collection("facebook_bots")
+        .find({ _id: { $in: facebookBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, pageName: 1 })
+        .toArray();
+    }
+
+    const pageNameMap = new Map();
+    lineBotDocs.forEach((bot) => {
+      const key = buildOrderPageKey("line", bot._id.toString());
+      const label =
+        bot.displayName ||
+        bot.name ||
+        bot.botName ||
+        `LINE Bot (${bot._id.toString().slice(-4)})`;
+      pageNameMap.set(key, label);
+    });
+    facebookBotDocs.forEach((bot) => {
+      const key = buildOrderPageKey("facebook", bot._id.toString());
+      const label =
+        bot.pageName ||
+        bot.name ||
+        `Facebook Page (${bot._id.toString().slice(-4)})`;
+      pageNameMap.set(key, label);
+    });
+
     const formattedOrders = orders.map((order) => {
       const orderData = order.orderData || {};
       const customerName = normalizeCustomerName(orderData.customerName);
@@ -12264,12 +13141,27 @@ app.get("/admin/orders/data", async (req, res) => {
         profileMap[order.userId] ||
         order.userId ||
         "";
+      const platform = normalizeOrderPlatform(order.platform || "line");
+      const rawBotId = order.botId || null;
+      const botId =
+        rawBotId && typeof rawBotId.toString === "function"
+          ? rawBotId.toString()
+          : rawBotId || null;
+      const pageKey = buildOrderPageKey(platform, botId);
+      const pageName =
+        pageNameMap.get(pageKey) ||
+        (botId
+          ? `${platform === "facebook" ? "Facebook" : "LINE"} (${botId})`
+          : null);
       return {
         id: order._id?.toString?.() || "",
         userId: order.userId || "",
         displayName,
         customerName: customerName || "",
-        platform: order.platform || "line",
+        platform,
+        botId,
+        pageKey,
+        pageName,
         status: order.status || "pending",
         totalAmount: orderData.totalAmount || 0,
         shippingCost: orderData.shippingCost || 0,
@@ -12343,6 +13235,65 @@ app.get("/admin/orders/export", async (req, res) => {
       profileMap[profile.userId] = profile.displayName;
     });
 
+    const botIdSets = {
+      line: new Set(),
+      facebook: new Set(),
+    };
+
+    orders.forEach((order) => {
+      const platform = normalizeOrderPlatform(order.platform || "line");
+      const rawBotId = order.botId || null;
+      const botIdStr =
+        rawBotId && typeof rawBotId.toString === "function"
+          ? rawBotId.toString()
+          : rawBotId || null;
+      if (botIdStr) {
+        botIdSets[platform].add(botIdStr);
+      }
+    });
+
+    let lineBotDocs = [];
+    let facebookBotDocs = [];
+
+    const lineBotIds = [...botIdSets.line].filter((id) => ObjectId.isValid(id));
+    if (lineBotIds.length) {
+      lineBotDocs = await db
+        .collection("line_bots")
+        .find({ _id: { $in: lineBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, displayName: 1, botName: 1 })
+        .toArray();
+    }
+
+    const facebookBotIds = [...botIdSets.facebook].filter((id) =>
+      ObjectId.isValid(id),
+    );
+    if (facebookBotIds.length) {
+      facebookBotDocs = await db
+        .collection("facebook_bots")
+        .find({ _id: { $in: facebookBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, pageName: 1 })
+        .toArray();
+    }
+
+    const pageNameMap = new Map();
+    lineBotDocs.forEach((bot) => {
+      const key = buildOrderPageKey("line", bot._id.toString());
+      const label =
+        bot.displayName ||
+        bot.name ||
+        bot.botName ||
+        `LINE Bot (${bot._id.toString().slice(-4)})`;
+      pageNameMap.set(key, label);
+    });
+    facebookBotDocs.forEach((bot) => {
+      const key = buildOrderPageKey("facebook", bot._id.toString());
+      const label =
+        bot.pageName ||
+        bot.name ||
+        `Facebook Page (${bot._id.toString().slice(-4)})`;
+      pageNameMap.set(key, label);
+    });
+
     const timezone = "Asia/Bangkok";
     const exportRows = orders.map((order, index) => {
       const orderData = order.orderData || {};
@@ -12353,6 +13304,20 @@ app.get("/admin/orders/export", async (req, res) => {
             `${idx + 1}. ${item.product} x${item.quantity} @ ${item.price}`,
         )
         .join("\n");
+      const platform = normalizeOrderPlatform(order.platform || "line");
+      const rawBotId = order.botId || null;
+      const botId =
+        rawBotId && typeof rawBotId.toString === "function"
+          ? rawBotId.toString()
+          : rawBotId || null;
+      const pageKey = buildOrderPageKey(platform, botId);
+      const pageName =
+        pageNameMap.get(pageKey) ||
+        (botId
+          ? `${platform === "facebook" ? "Facebook" : "LINE"} (${botId})`
+          : platform === "facebook"
+          ? "Facebook (default)"
+          : "LINE (default)");
 
       return {
         ลำดับ: index + 1,
@@ -12365,6 +13330,7 @@ app.get("/admin/orders/export", async (req, res) => {
           profileMap[order.userId] ||
           "",
         แพลตฟอร์ม: order.platform || "line",
+        เพจ: pageName,
         สถานะ: order.status || "pending",
         ยอดรวม: orderData.totalAmount || 0,
         ค่าส่ง: orderData.shippingCost || 0,
