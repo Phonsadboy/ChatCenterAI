@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastTotalItems = 0;
   let densityMode = 'comfortable';
   let activeOrders = [];
+  let supportsManualScan = false;
 
   let orderPages = [];
   const pageLookup = new Map();
@@ -584,14 +585,18 @@ document.addEventListener('DOMContentLoaded', () => {
             </td>
             <td>
               <div class="d-flex flex-column gap-2">
-                <button
-                  type="button"
-                  class="btn btn-outline-success btn-sm"
-                  data-action="trigger-scan"
-                  data-page-key="${escapeHtml(page.pageKey)}"
-                >
-                  สแกนตอนนี้
-                </button>
+                ${
+                  supportsManualScan
+                    ? `<button
+                        type="button"
+                        class="btn btn-outline-success btn-sm"
+                        data-action="trigger-scan"
+                        data-page-key="${escapeHtml(page.pageKey)}"
+                      >
+                        สแกนตอนนี้
+                      </button>`
+                    : ''
+                }
                 <button
                   type="button"
                   class="btn btn-outline-primary btn-sm"
@@ -707,6 +712,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!data.success) {
         throw new Error(data.error || 'ไม่สามารถโหลดข้อมูลเพจได้');
       }
+
+      supportsManualScan = !!(
+        data.settings?.supportsManualScan ||
+        data.settings?.manualScanEnabled ||
+        data.settings?.manualScanEndpoint
+      );
 
       orderPages = data.pages || [];
       pageLookup.clear();
@@ -1322,6 +1333,10 @@ document.addEventListener('DOMContentLoaded', () => {
           break;
         }
         case 'trigger-scan': {
+          if (!supportsManualScan) {
+            showSettingsStatus('ฟีเจอร์สแกนตอนนี้ยังไม่พร้อมใช้งานในระบบนี้', 'info');
+            return;
+          }
           const originalHtml = button.innerHTML;
           button.disabled = true;
           button.innerHTML =
