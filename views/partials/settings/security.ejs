@@ -12,6 +12,78 @@
                     </p>
                 </div>
                 <div class="settings-body">
+                    <!-- Passcode Management (visible for superadmin only) -->
+                    <div class="setting-item" id="passcodeManagementSection" style="display: none;">
+                        <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-lg-between gap-3">
+                            <div>
+                                <div class="setting-label mb-1">การจัดการรหัสเข้าใช้งานทีม</div>
+                                <div class="setting-description">
+                                    ตั้งค่ารหัสผ่านสำหรับสมาชิกทีม ให้เข้าถึงระบบแอดมินได้อย่างปลอดภัย
+                                </div>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="badge bg-success-subtle text-success-emphasis" id="passcodeStatusBadge">
+                                    <i class="fas fa-lock me-1"></i> ระบบล็อกอินเปิดใช้งาน
+                                </span>
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="togglePasscodeCreateBtn">
+                                    <i class="fas fa-plus-circle me-2"></i>สร้างรหัสใหม่
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info mt-3 d-none" id="passcodeMessageBox" role="alert"></div>
+
+                        <div class="card border-0 shadow-sm mt-3" id="passcodeCreateContainer" style="display: none;">
+                            <div class="card-body">
+                                <form id="createPasscodeForm" class="row g-3 align-items-end">
+                                    <div class="col-md-5">
+                                        <label for="newPasscodeLabel" class="form-label">ชื่อรหัส <span class="text-danger">*</span></label>
+                                        <input type="text" id="newPasscodeLabel" class="form-control" placeholder="เช่น ทีมขาย, ทีมบริการลูกค้า" required>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="newPasscodeValue" class="form-label">รหัสสำหรับเข้าใช้งาน <span class="text-danger">*</span></label>
+                                        <div class="input-group">
+                                            <input type="text" id="newPasscodeValue" class="form-control" placeholder="กำหนดเองหรือกดสุ่ม" minlength="4" required>
+                                            <button class="btn btn-outline-secondary" type="button" id="generatePasscodeBtn">
+                                                <i class="fas fa-random"></i>
+                                            </button>
+                                        </div>
+                                        <div class="form-text">แนะนำใช้ความยาว 6-12 ตัวอักษร มีทั้งตัวเลข/ตัวอักษร</div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <button type="submit" class="btn btn-primary w-100" id="createPasscodeSubmitBtn">
+                                            <span class="default-label"><i class="fas fa-save me-2"></i>บันทึกรหัส</span>
+                                            <span class="loading-label d-none">
+                                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                กำลังบันทึก...
+                                            </span>
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive mt-3" id="passcodeListContainer">
+                            <table class="table table-sm align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="min-width: 160px;">ชื่อรหัส</th>
+                                        <th style="min-width: 120px;">สถานะ</th>
+                                        <th style="min-width: 160px;">ใช้งานล่าสุด</th>
+                                        <th style="min-width: 100px;">จำนวนครั้งที่ใช้</th>
+                                        <th style="min-width: 140px;" class="text-end">การจัดการ</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="passcodeTableBody">
+                                    <tr id="passcodeEmptyState">
+                                        <td colspan="5" class="text-center text-muted py-4">
+                                            <i class="fas fa-key me-2"></i>ยังไม่มีรหัสสำหรับทีมงาน เริ่มสร้างรหัสชุดแรกได้เลย
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                     <!-- Security Overview -->
                     <div class="row mb-4">
                         <div class="col-md-4">

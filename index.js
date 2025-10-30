@@ -1,6 +1,7 @@
 // -----------------------------------
 // Original code with #DELETEMANY logic added
 // -----------------------------------
+require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const util = require("util");
@@ -22,6 +23,9 @@ const fs = require("fs");
 const crypto = require("crypto");
 const XLSX = require("xlsx");
 const multer = require("multer");
+const session = require("express-session");
+const MongoStore = require("connect-mongo");
+const rateLimit = require("express-rate-limit");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
 const ASSETS_DIR =
   process.env.ASSETS_DIR ||
@@ -37,7 +41,16 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const MONGO_URI = process.env.MONGO_URI;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+const ADMIN_MASTER_PASSCODE =
+  (process.env.ADMIN_MASTER_PASSCODE || "").trim();
+const ADMIN_SESSION_SECRET =
+  process.env.ADMIN_SESSION_SECRET ||
+  "change-me-please-admin-session-secret";
+const ADMIN_SESSION_TTL_SECONDS = Number(
+  process.env.ADMIN_SESSION_TTL_SECONDS || 60 * 60 * 12,
+);
+const SESSION_COOKIE_NAME =
+  process.env.ADMIN_SESSION_COOKIE_NAME || "admin_session";
 const GOOGLE_CLIENT_EMAIL =
   "aitar-888@eminent-wares-446512-j8.iam.gserviceaccount.com";
 const GOOGLE_PRIVATE_KEY =
@@ -45,6 +58,18 @@ const GOOGLE_PRIVATE_KEY =
 const GOOGLE_DOC_ID = "1U-2OPVVI_Gz0-uFonrRNrcFopDqmPGUcJ4qJ1RdAqxY";
 const SPREADSHEET_ID = "15nU46XyAh0zLAyD_5DJPfZ2Gog6IOsoedSCCMpnjEJo";
 // FLOW_TEXT และรายละเอียด flow ต่าง ๆ ถูกลบออก เนื่องจากไม่ได้ใช้งานแล้ว
+const {
+  isPasscodeFeatureEnabled,
+  ensurePasscodeIndexes,
+  verifyPasscode,
+  createPasscode,
+  listPasscodes,
+  togglePasscode,
+  deletePasscode,
+  sanitizePasscodeInput,
+  sanitizeLabelInput,
+  mapPasscodeDoc,
+} = require("./utils/auth");
 
 function resolveInstructionAssetUrl(url, fallbackFileName) {
   const base = typeof PUBLIC_BASE_URL === "string"
@@ -93,10 +118,8 @@ function createLineClient(channelAccessToken, channelSecret) {
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
-app.use(bodyParser.json({ limit: "10mb" }));
 
 // ============================ UI Middleware ============================
-app.use(bodyParser.urlencoded({ extended: true, limit: "10mb" }));
 // Security headers (relaxed CSP ให้โหลด resource จาก CDN ได้)
 app.use(
   helmet({
@@ -490,6 +513,15 @@ async function connectDB() {
   if (!mongoClient) {
     mongoClient = new MongoClient(MONGO_URI);
     await mongoClient.connect();
+    try {
+      const db = mongoClient.db("chatbot");
+      await ensurePasscodeIndexes(db);
+    } catch (err) {
+      console.warn(
+        "[DB] ไม่สามารถตั้งค่า index สำหรับ passcode ได้:",
+        err?.message || err,
+      );
+    }
   }
   return mongoClient;
 }
@@ -504,6 +536,134 @@ function normalizeRoleContent(role, content) {
     // ถ้าไม่ใช่ string => stringify
     return { role, content: JSON.stringify(content) };
   }
+}
+
+const sessionStore = MongoStore.create({
+  clientPromise: connectDB(),
+  dbName: "chatbot",
+  collectionName: "admin_sessions",
+  stringify: false,
+  ttl: ADMIN_SESSION_TTL_SECONDS,
+});
+
+const sessionMiddleware = session({
+  name: SESSION_COOKIE_NAME,
+  secret: ADMIN_SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  store: sessionStore,
+  cookie: {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: ADMIN_SESSION_TTL_SECONDS * 1000,
+  },
+});
+
+app.use(sessionMiddleware);
+app.use(bodyParser.json({ limit: "10mb" }));
+app.use(bodyParser.urlencoded({ extended: true, limit: "10mb" }));
+app.use((req, res, next) => {
+  res.locals.adminUser = req.session?.adminUser || null;
+  res.locals.isPasscodeRequired =
+    isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE);
+  next();
+});
+
+function isAdminAuthenticated(req) {
+  return Boolean(req.session && req.session.adminUser);
+}
+
+function registerAdminSession(req, { role, passcodeDoc }) {
+  req.session.adminUser = {
+    role,
+    codeId: passcodeDoc ? String(passcodeDoc._id) : null,
+    label: passcodeDoc?.label || null,
+    loggedInAt: new Date().toISOString(),
+  };
+}
+
+function destroyAdminSession(req) {
+  return new Promise((resolve, reject) => {
+    if (!req.session) return resolve();
+    req.session.destroy((err) => {
+      if (err) {
+        return reject(err);
+      }
+      resolve();
+    });
+  });
+}
+
+function getAdminUserContext(req) {
+  if (!isAdminAuthenticated(req)) return null;
+  const { role, codeId, label, loggedInAt } = req.session.adminUser;
+  return {
+    role,
+    codeId,
+    label,
+    loggedInAt,
+  };
+}
+
+function enforceAdminLogin(req, res, next) {
+  if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) {
+    return next();
+  }
+
+  const relaxedPaths = ["/login", "/logout", "/passcodes/self-check"];
+  if (relaxedPaths.some((prefix) => req.path.startsWith(prefix))) {
+    return next();
+  }
+
+  if (isAdminAuthenticated(req)) {
+    return next();
+  }
+
+  const wantsHTML =
+    req.headers.accept && req.headers.accept.includes("text/html");
+  if (wantsHTML) {
+    return res.redirect("/admin/login");
+  }
+
+  return res.status(401).json({
+    success: false,
+    error: "กรุณาล็อกอินก่อนใช้งาน",
+  });
+}
+
+const loginLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      error: "พยายามเข้าสู่ระบบบ่อยเกินไป กรุณาลองใหม่ในภายหลัง",
+    });
+  },
+});
+
+function requireSuperadmin(req, res, next) {
+  if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) {
+    return res.status(400).json({
+      success: false,
+      error: "ยังไม่ได้เปิดใช้ระบบรหัสผ่าน",
+    });
+  }
+
+  if (
+    !isAdminAuthenticated(req) ||
+    req.session.adminUser.role !== "superadmin"
+  ) {
+    return res.status(403).json({
+      success: false,
+      error: "จำเป็นต้องเป็นแอดมินใหญ่ก่อน",
+    });
+  }
+
+  return next();
 }
 
 async function getChatHistory(userId) {
@@ -7389,9 +7549,175 @@ app.post(
   },
 );
 
+// ============================ Admin Authentication ============================
+
+app.get("/api/auth/session", (req, res) => {
+  res.json({
+    success: true,
+    requirePasscode: isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE),
+    user: getAdminUserContext(req),
+  });
+});
+
+app.get("/admin/login", (req, res) => {
+  if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) {
+    return res.redirect("/admin/dashboard");
+  }
+
+  if (isAdminAuthenticated(req)) {
+    return res.redirect("/admin/dashboard");
+  }
+
+  res.render("admin-login", {
+    requirePasscode: true,
+  });
+});
+
+app.post("/admin/login", loginLimiter, async (req, res) => {
+  try {
+    if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) {
+      return res.status(400).json({
+        success: false,
+        error: "ยังไม่ได้เปิดใช้ระบบรหัสผ่าน",
+      });
+    }
+
+    const { passcode } = req.body;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const verifyResult = await verifyPasscode({
+      db,
+      passcode,
+      masterPasscode: ADMIN_MASTER_PASSCODE,
+      ipAddress: req.ip,
+    });
+
+    if (!verifyResult.valid) {
+      return res.status(401).json({
+        success: false,
+        error: "รหัสผ่านไม่ถูกต้อง",
+      });
+    }
+
+    registerAdminSession(req, verifyResult);
+    res.json({
+      success: true,
+      user: getAdminUserContext(req),
+    });
+  } catch (err) {
+    console.error("[Auth] Login error:", err);
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถเข้าสู่ระบบได้ กรุณาลองใหม่อีกครั้ง",
+    });
+  }
+});
+
+app.post("/admin/logout", async (req, res) => {
+  try {
+    await destroyAdminSession(req);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: "ออกจากระบบไม่สำเร็จ กรุณาลองใหม่",
+    });
+  }
+});
+
+app.use("/admin", enforceAdminLogin);
+
+// ============================ Admin Passcode Management API ============================
+
+app.get("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const passcodes = await listPasscodes(db);
+    res.json({ success: true, passcodes });
+  } catch (err) {
+    console.error("[Auth] List passcodes error:", err);
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถโหลดรายการรหัสผ่านได้",
+    });
+  }
+});
+
+app.post("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
+  try {
+    const { label, passcode } = req.body || {};
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const sanitizedPasscode = sanitizePasscodeInput(passcode);
+    if (
+      isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE) &&
+      sanitizedPasscode &&
+      sanitizedPasscode === ADMIN_MASTER_PASSCODE
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "ไม่สามารถใช้รหัสผ่านเดียวกับรหัสหลักของระบบได้",
+      });
+    }
+
+    const doc = await createPasscode(db, {
+      label: sanitizeLabelInput(label),
+      passcode: sanitizedPasscode,
+      createdBy: getAdminUserContext(req)?.role || "superadmin",
+    });
+    res.status(201).json({ success: true, passcode: doc });
+  } catch (err) {
+    res.status(400).json({
+     success: false,
+      error: err?.message || "ไม่สามารถสร้างรหัสผ่านใหม่ได้",
+    });
+  }
+});
+
+app.patch(
+  "/api/admin-passcodes/:id/toggle",
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body || {};
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const doc = await togglePasscode(db, id, isActive !== false);
+      res.json({ success: true, passcode: doc });
+    } catch (err) {
+      res.status(400).json({
+        success: false,
+        error: err?.message || "ไม่สามารถปรับสถานะรหัสผ่านได้",
+      });
+    }
+  },
+);
+
+app.delete(
+  "/api/admin-passcodes/:id",
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      await deletePasscode(db, id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({
+        success: false,
+        error: err?.message || "ไม่สามารถลบรหัสผ่านได้",
+      });
+    }
+  },
+);
+
 // ============================ Admin UI Routes ============================
 
-// Redirect root admin to dashboard directly (no login required)
+// Redirect root admin to dashboard (ตรวจสอบการล็อกอินผ่าน middleware แล้ว)
 app.get("/admin", (req, res) => {
   res.redirect("/admin/dashboard");
 });

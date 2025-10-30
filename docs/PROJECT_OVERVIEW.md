@@ -1117,7 +1117,9 @@ OPENAI_API_KEY=sk-...
 PUBLIC_BASE_URL=https://...
 
 # Optional
-ADMIN_PASSWORD=...           # Default: admin123
+ADMIN_MASTER_PASSCODE=...    # เปิดใช้งานระบบล็อกอินผู้ดูแล
+ADMIN_SESSION_SECRET=...     # คีย์สุ่มสำหรับเข้ารหัส session
+# ADMIN_SESSION_TTL_SECONDS=43200
 PORT=...                     # Default: 3000
 ```
 

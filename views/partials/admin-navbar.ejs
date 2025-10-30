@@ -1,5 +1,9 @@
 <%
   const current = typeof activePage !== 'undefined' ? activePage : '';
+  const signedInUser = typeof adminUser !== 'undefined' && adminUser ? adminUser : null;
+  const roleBadgeLabel = signedInUser
+    ? (signedInUser.role === 'superadmin' ? 'แอดมินใหญ่' : 'ผู้ดูแลระบบ')
+    : '';
 %>
 <nav class="navbar navbar-expand-lg navbar-light app-navbar">
   <div class="container">
@@ -47,12 +51,49 @@
             <i class="fas fa-cogs"></i> ตั้งค่า
           </a>
         </li>
-        <li class="nav-item">
-          <a class="nav-link" href="/admin">
-            <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
-          </a>
-        </li>
+        <% if (signedInUser) { %>
+          <li class="nav-item d-flex align-items-center nav-user-pill">
+            <span class="badge rounded-pill bg-light text-dark">
+              <i class="fas fa-user-shield me-1 text-primary"></i>
+              <%= roleBadgeLabel %>
+              <% if (signedInUser.label) { %>
+                <span class="text-muted">&middot; <%= signedInUser.label %></span>
+              <% } %>
+            </span>
+          </li>
+          <li class="nav-item">
+            <button type="button" class="nav-link btn btn-link logout-link" id="adminLogoutBtn">
+              <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
+            </button>
+          </li>
+        <% } %>
       </ul>
     </div>
   </div>
 </nav>
+<script>
+  (function() {
+    window.adminAuth = window.adminAuth || {};
+    window.adminAuth.requirePasscode = <%= isPasscodeRequired ? 'true' : 'false' %>;
+    window.adminAuth.user = <%- JSON.stringify(signedInUser || null) %>;
+
+    const logoutBtn = document.getElementById('adminLogoutBtn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', async (event) => {
+        event.preventDefault();
+        logoutBtn.disabled = true;
+        try {
+          const response = await fetch('/admin/logout', { method: 'POST' });
+          if (!response.ok) {
+            throw new Error('logout_failed');
+          }
+          window.location.href = '/admin/login';
+        } catch (error) {
+          console.error('[Auth] logout error:', error);
+          alert('ออกจากระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+          logoutBtn.disabled = false;
+        }
+      });
+    }
+  })();
+</script>

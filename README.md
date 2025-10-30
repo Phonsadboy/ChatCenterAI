@@ -79,8 +79,10 @@ OPENAI_API_KEY=sk-xxxxxxxxxxxxx
 # Public URL (สำหรับ Webhook)
 PUBLIC_BASE_URL=https://your-domain.com
 
-# Admin Password (ไม่บังคับ, default: admin123)
-ADMIN_PASSWORD=your_secure_password
+# Admin Security (ใส่เมื่ออยากให้ระบบบังคับล็อกอิน)
+ADMIN_MASTER_PASSCODE=your_master_passcode
+ADMIN_SESSION_SECRET=replace_with_random_session_secret
+# ADMIN_SESSION_TTL_SECONDS=43200  # (ไม่บังคับ) เวลา session มีผล (วินาที)
 ```
 
 **หมายเหตุ:** LINE และ Facebook Bot สามารถตั้งค่าผ่านหน้า Admin ได้ ไม่จำเป็นต้องใส่ใน `.env`
@@ -102,8 +104,8 @@ npm start
 - **Health Check:** http://localhost:3000/health
 
 **Login:**
-- Username: (ไม่ต้องใส่)
-- Password: ค่าที่ตั้งใน `ADMIN_PASSWORD` (default: admin123)
+- หากไม่ได้ตั้งค่า `ADMIN_MASTER_PASSCODE` สามารถเข้า `/admin` ได้ทันที
+- หากตั้งค่า `ADMIN_MASTER_PASSCODE` ระบบจะพาไปหน้าใส่รหัสผ่าน (ใช้รหัสหลักจาก `.env` หรือรหัสทีมที่สร้างในแท็บ “ความปลอดภัย”)
 
 ---
 
@@ -535,9 +537,9 @@ curl "http://localhost:3000/webhook/facebook/YOUR_BOT_ID?hub.mode=subscribe&hub.
 3. ตรวจสอบ permissions ของโฟลเดอร์ public
 
 #### ไม่สามารถ Login Admin
-1. ตรวจสอบ `ADMIN_PASSWORD` ใน `.env`
-2. รีสตาร์ทแอปพลิเคชัน
-3. ลองใช้ค่า default: `admin123`
+1. ตรวจสอบว่า `ADMIN_MASTER_PASSCODE` ถูกตั้งค่าใน `.env` และเซิร์ฟเวอร์ถูกรีสตาร์ทแล้ว
+2. ลองใช้รหัสหลักจาก `.env` หรือรหัสทีมที่สร้างในหน้า **ตั้งค่า > ความปลอดภัย**
+3. หากยังเข้าไม่ได้ ให้ให้แอดมินใหญ่สร้างรหัสชุดใหม่แล้วแจกให้ทีมงานล่าสุด
 
 #### MongoDB Connection Failed
 1. ตรวจสอบ `MONGO_URI` ใน `.env`
@@ -589,4 +591,3 @@ ChatCenter AI - ระบบจัดการแชทบอท AI อัจฉ
 **เวอร์ชัน:** 1.0.0  
 **อัพเดทล่าสุด:** ตุลาคม 2025  
 **Node.js:** >= 18.0.0
-

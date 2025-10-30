@@ -14,6 +14,8 @@ let currentBotId = null;
 let currentBotType = null; // 'line' or 'facebook'
 let currentBotInstructions = [];
 let availableLibraries = [];
+let passcodeCache = [];
+let passcodeSectionInitialized = false;
 const DEFAULT_AUDIO_ATTACHMENT_RESPONSE = 'ขออภัยค่ะ ขณะนี้ระบบยังไม่รองรับไฟล์เสียง กรุณาพิมพ์ข้อความหรือส่งรูปภาพแทน';
 
 const TAB_RESOURCE_REQUIREMENTS = {
@@ -251,6 +253,9 @@ function setupEventListeners() {
         tab.addEventListener('shown.bs.tab', function(e) {
             const tabId = e.target ? e.target.id : getActiveSettingsTabId();
             loadSettings({ tabId, useCacheFirst: true });
+            if (tabId === 'filter-tab' && isSuperadminUser() && isPasscodeFeatureEnabledClient()) {
+                refreshPasscodeList();
+            }
         });
     });
 
@@ -282,6 +287,8 @@ function setupEventListeners() {
     if (addFacebookBotBtn) {
         addFacebookBotBtn.addEventListener('click', addNewFacebookBot);
     }
+
+    initializePasscodeManagement();
 }
 
 // Load current settings with cache-first strategy
@@ -767,6 +774,400 @@ function createAlertToastElement(type, message) {
     toast.appendChild(content);
 
     return { toast, closeBtn };
+}
+
+// =================== Passcode Management ===================
+
+function isSuperadminUser() {
+    return Boolean(window.adminAuth && window.adminAuth.user && window.adminAuth.user.role === 'superadmin');
+}
+
+function isPasscodeFeatureEnabledClient() {
+    return Boolean(window.adminAuth && window.adminAuth.requirePasscode);
+}
+
+function initializePasscodeManagement() {
+    const section = document.getElementById('passcodeManagementSection');
+    if (!section) {
+        return;
+    }
+
+    if (!isPasscodeFeatureEnabledClient() || !isSuperadminUser()) {
+        section.style.display = 'none';
+        return;
+    }
+
+    section.style.display = '';
+
+    if (!passcodeSectionInitialized) {
+        setupPasscodeEventBindings();
+        passcodeSectionInitialized = true;
+    }
+
+    refreshPasscodeList();
+}
+
+function setupPasscodeEventBindings() {
+    const toggleBtn = document.getElementById('togglePasscodeCreateBtn');
+    const createContainer = document.getElementById('passcodeCreateContainer');
+    const createForm = document.getElementById('createPasscodeForm');
+    const generateBtn = document.getElementById('generatePasscodeBtn');
+    const tableBody = document.getElementById('passcodeTableBody');
+
+    if (toggleBtn && createContainer) {
+        toggleBtn.addEventListener('click', () => {
+            const isVisible = createContainer.style.display !== 'none';
+            createContainer.style.display = isVisible ? 'none' : 'block';
+            toggleBtn.innerHTML = isVisible
+                ? '<i class="fas fa-plus-circle me-2"></i>สร้างรหัสใหม่'
+                : '<i class="fas fa-times-circle me-2"></i>ยกเลิก';
+        });
+    }
+
+    if (generateBtn) {
+        generateBtn.addEventListener('click', () => {
+            const input = document.getElementById('newPasscodeValue');
+            if (input) {
+                input.value = generateRandomPasscode();
+                input.focus();
+                input.select();
+            }
+        });
+    }
+
+    if (createForm) {
+        createForm.addEventListener('submit', handleCreatePasscode);
+    }
+
+    if (tableBody) {
+        tableBody.addEventListener('click', handlePasscodeTableClick);
+    }
+}
+
+function generateRandomPasscode() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const length = 8;
+    let value = '';
+    for (let i = 0; i < length; i++) {
+        const index = Math.floor(Math.random() * alphabet.length);
+        value += alphabet[index];
+    }
+    return value.replace(/(.{4})/g, '$1-').replace(/-$/, '');
+}
+
+async function refreshPasscodeList() {
+    const section = document.getElementById('passcodeManagementSection');
+    if (!section || !isSuperadminUser()) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/admin-passcodes');
+        if (!response.ok) {
+            throw new Error('ไม่สามารถโหลดข้อมูลรหัสผ่านได้');
+        }
+        const payload = await response.json();
+        passcodeCache = Array.isArray(payload.passcodes) ? payload.passcodes : [];
+        renderPasscodeTable();
+        setPasscodeMessage(null, '');
+    } catch (error) {
+        console.error('[Passcode] load error:', error);
+        setPasscodeMessage('error', error.message || 'ไม่สามารถโหลดข้อมูลรหัสผ่านได้');
+    }
+}
+
+function handlePasscodeTableClick(event) {
+    const target = event.target.closest('button[data-action]');
+    if (!target) {
+        return;
+    }
+
+    const action = target.getAttribute('data-action');
+    const id = target.getAttribute('data-id');
+    if (!id) {
+        return;
+    }
+
+    if (action === 'toggle') {
+        togglePasscodeStatus(id, target);
+    } else if (action === 'delete') {
+        deletePasscode(id, target);
+    }
+}
+
+async function togglePasscodeStatus(id, triggerBtn) {
+    const passcode = passcodeCache.find(item => item.id === id);
+    if (!passcode) {
+        return;
+    }
+
+    const willActivate = !passcode.isActive;
+    const confirmationMessage = willActivate
+        ? 'ต้องการเปิดใช้งานรหัสนี้หรือไม่?'
+        : 'การปิดรหัสจะทำให้ทีมงานที่ใช้รหัสนี้ไม่สามารถล็อกอินใหม่ได้ ต้องการดำเนินการต่อหรือไม่?';
+    if (!confirm(confirmationMessage)) {
+        return;
+    }
+
+    setButtonLoading(triggerBtn, true);
+
+    try {
+        const response = await fetch(`/api/admin-passcodes/${id}/toggle`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ isActive: willActivate })
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+            throw new Error(payload.error || 'ปรับสถานะรหัสไม่สำเร็จ');
+        }
+
+        const updated = payload.passcode;
+        passcodeCache = passcodeCache.map(item => item.id === id ? updated : item);
+        renderPasscodeTable();
+        setPasscodeMessage('success', 'อัปเดตรหัสเรียบร้อยแล้ว');
+    } catch (error) {
+        console.error('[Passcode] toggle error:', error);
+        setPasscodeMessage('error', error.message || 'ปรับสถานะรหัสไม่สำเร็จ');
+    } finally {
+        setButtonLoading(triggerBtn, false);
+    }
+}
+
+async function deletePasscode(id, triggerBtn) {
+    if (window.adminAuth && window.adminAuth.user && window.adminAuth.user.codeId === id) {
+        setPasscodeMessage('error', 'ไม่สามารถลบรหัสที่คุณกำลังใช้งานอยู่ได้');
+        return;
+    }
+
+    if (!confirm('ต้องการลบรหัสนี้หรือไม่? เมื่อยืนยันแล้วจะไม่สามารถเรียกคืนได้')) {
+        return;
+    }
+
+    setButtonLoading(triggerBtn, true);
+
+    try {
+        const response = await fetch(`/api/admin-passcodes/${id}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || 'ลบรหัสไม่สำเร็จ');
+        }
+
+        passcodeCache = passcodeCache.filter(item => item.id !== id);
+        renderPasscodeTable();
+        setPasscodeMessage('success', 'ลบรหัสเรียบร้อยแล้ว');
+    } catch (error) {
+        console.error('[Passcode] delete error:', error);
+        setPasscodeMessage('error', error.message || 'ลบรหัสไม่สำเร็จ');
+    } finally {
+        setButtonLoading(triggerBtn, false);
+    }
+}
+
+async function handleCreatePasscode(event) {
+    event.preventDefault();
+
+    const labelInput = document.getElementById('newPasscodeLabel');
+    const passcodeInput = document.getElementById('newPasscodeValue');
+    const submitBtn = document.getElementById('createPasscodeSubmitBtn');
+
+    if (!labelInput || !passcodeInput || !submitBtn) {
+        return;
+    }
+
+    const label = (labelInput.value || '').trim();
+    const passcode = (passcodeInput.value || '').trim();
+
+    if (!label || !passcode) {
+        setPasscodeMessage('error', 'กรุณากรอกชื่อรหัสและรหัสผ่านให้ครบถ้วน');
+        return;
+    }
+
+    setCreatePasscodeLoading(true);
+
+    try {
+        const response = await fetch('/api/admin-passcodes', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ label, passcode })
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+            throw new Error(payload.error || 'ไม่สามารถสร้างรหัสใหม่ได้');
+        }
+
+        passcodeCache.unshift(payload.passcode);
+        renderPasscodeTable();
+        labelInput.value = '';
+        passcodeInput.value = '';
+        setPasscodeMessage('success', 'สร้างรหัสใหม่เรียบร้อยแล้ว');
+
+        const createContainer = document.getElementById('passcodeCreateContainer');
+        const toggleBtn = document.getElementById('togglePasscodeCreateBtn');
+        if (createContainer && toggleBtn) {
+            createContainer.style.display = 'none';
+            toggleBtn.innerHTML = '<i class="fas fa-plus-circle me-2"></i>สร้างรหัสใหม่';
+        }
+    } catch (error) {
+        console.error('[Passcode] create error:', error);
+        setPasscodeMessage('error', error.message || 'ไม่สามารถสร้างรหัสใหม่ได้');
+    } finally {
+        setCreatePasscodeLoading(false);
+    }
+}
+
+function renderPasscodeTable() {
+    const tbody = document.getElementById('passcodeTableBody');
+    const emptyState = document.getElementById('passcodeEmptyState');
+    if (!tbody) {
+        return;
+    }
+
+    Array.from(tbody.querySelectorAll('tr[data-passcode-id]')).forEach(row => row.remove());
+
+    if (!passcodeCache.length) {
+        if (emptyState) {
+            emptyState.style.display = '';
+        }
+        const badge = document.getElementById('passcodeStatusBadge');
+        if (badge) {
+            badge.innerHTML = '<i class="fas fa-lock me-1"></i>ยังไม่มีรหัสทีมงาน';
+        }
+        return;
+    }
+
+    if (emptyState) {
+        emptyState.style.display = 'none';
+    }
+
+    const badge = document.getElementById('passcodeStatusBadge');
+    if (badge) {
+        const activeCount = passcodeCache.filter(item => item.isActive !== false).length;
+        badge.innerHTML = `<i class="fas fa-lock me-1"></i>รหัสใช้งาน ${activeCount}/${passcodeCache.length}`;
+    }
+
+    passcodeCache.forEach(item => {
+        const row = document.createElement('tr');
+        row.setAttribute('data-passcode-id', item.id);
+        if (window.adminAuth && window.adminAuth.user && window.adminAuth.user.codeId === item.id) {
+            row.classList.add('table-active');
+        }
+
+        const statusBadge = item.isActive
+            ? '<span class="badge bg-success-subtle text-success-emphasis"><i class="fas fa-check-circle me-1"></i>เปิดใช้งาน</span>'
+            : '<span class="badge bg-secondary-subtle text-secondary-emphasis"><i class="fas fa-pause-circle me-1"></i>ปิดชั่วคราว</span>';
+
+        row.innerHTML = `
+            <td>
+                <strong>${escapeHtml(item.label || '-')}</strong>
+            </td>
+            <td>${statusBadge}</td>
+            <td>${formatPasscodeTimestamp(item.lastUsedAt)}</td>
+            <td>${typeof item.usageCount === 'number' ? item.usageCount : 0}</td>
+            <td class="text-end">
+                <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn btn-outline-secondary" data-action="toggle" data-id="${item.id}">
+                        <i class="fas ${item.isActive ? 'fa-toggle-off' : 'fa-toggle-on'} me-1"></i>${item.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}
+                    </button>
+                    <button type="button" class="btn btn-outline-danger" data-action="delete" data-id="${item.id}">
+                        <i class="fas fa-trash-alt me-1"></i>ลบ
+                    </button>
+                </div>
+            </td>
+        `;
+
+        tbody.appendChild(row);
+    });
+}
+
+function setCreatePasscodeLoading(isLoading) {
+    const submitBtn = document.getElementById('createPasscodeSubmitBtn');
+    if (!submitBtn) {
+        return;
+    }
+    setButtonLoading(submitBtn, isLoading, '.default-label', '.loading-label');
+    const inputs = document.querySelectorAll('#createPasscodeForm input, #createPasscodeForm button');
+    inputs.forEach(el => {
+        if (el.id !== 'createPasscodeSubmitBtn') {
+            el.disabled = isLoading;
+        }
+    });
+}
+
+function setButtonLoading(button, isLoading, defaultSelector = '.default-label', loadingSelector = '.loading-label') {
+    if (!button) {
+        return;
+    }
+    button.disabled = isLoading;
+    const defaultLabel = button.querySelector(defaultSelector);
+    const loadingLabel = button.querySelector(loadingSelector);
+    if (defaultLabel && loadingLabel) {
+        if (isLoading) {
+            defaultLabel.classList.add('d-none');
+            loadingLabel.classList.remove('d-none');
+        } else {
+            defaultLabel.classList.remove('d-none');
+            loadingLabel.classList.add('d-none');
+        }
+    }
+}
+
+function setPasscodeMessage(type, message) {
+    const box = document.getElementById('passcodeMessageBox');
+    if (!box) {
+        return;
+    }
+    if (!message) {
+        box.className = 'alert alert-info mt-3 d-none';
+        box.textContent = '';
+        return;
+    }
+
+    let alertClass = 'alert-info';
+    if (type === 'success') {
+        alertClass = 'alert-success';
+    } else if (type === 'error') {
+        alertClass = 'alert-danger';
+    }
+
+    box.className = `alert ${alertClass} mt-3`;
+    box.textContent = message;
+    box.classList.remove('d-none');
+}
+
+function formatPasscodeTimestamp(value) {
+    if (!value) {
+        return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return '-';
+    }
+    return date.toLocaleString('th-TH', {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+    });
+}
+
+function escapeHtml(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
 // Show alert message
