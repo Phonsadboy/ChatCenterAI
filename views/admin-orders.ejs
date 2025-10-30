@@ -26,24 +26,48 @@
         </button>
       </div>
 
-      <div class="card shadow-sm mb-4">
+      <div class="card shadow-sm mb-4 orders-filter-card">
         <div class="card-body">
+          <div class="orders-filter-toolbar d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+            <nav class="nav nav-pills orders-status-tabs" id="ordersStatusTabs">
+              <button type="button" class="nav-link active" data-status="all">
+                <span class="badge rounded-pill text-bg-secondary me-1"><i class="fas fa-layer-group"></i></span>ทั้งหมด
+              </button>
+              <button type="button" class="nav-link" data-status="pending">รอดำเนินการ</button>
+              <button type="button" class="nav-link" data-status="confirmed">ยืนยันแล้ว</button>
+              <button type="button" class="nav-link" data-status="shipped">จัดส่งแล้ว</button>
+              <button type="button" class="nav-link" data-status="completed">เสร็จสิ้น</button>
+              <button type="button" class="nav-link" data-status="cancelled">ยกเลิก</button>
+            </nav>
+            <div class="d-flex align-items-center gap-2">
+              <button type="button" class="btn btn-light btn-sm" id="ordersDensityToggle" data-mode="comfortable">
+                <i class="fas fa-arrows-alt-v me-2"></i><span class="orders-density-label">แสดงแบบกะทัดรัด</span>
+              </button>
+            </div>
+          </div>
           <form id="orderFilterForm" class="row gy-3 gx-3 align-items-end">
-            <div class="col-md-3">
+            <div class="col-md-4 col-lg-3">
+              <label for="filterSearch" class="form-label">ค้นหาด้วยชื่อ / หมายเลขออเดอร์ / หมายเหตุ</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="fas fa-search"></i></span>
+                <input type="search" class="form-control" id="filterSearch" placeholder="พิมพ์คำค้นหา...">
+              </div>
+            </div>
+            <div class="col-md-4 col-lg-2">
               <label for="filterStartDate" class="form-label">วันที่เริ่ม</label>
               <input type="date" class="form-control" id="filterStartDate">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4 col-lg-2">
               <label for="filterEndDate" class="form-label">วันที่สิ้นสุด</label>
               <input type="date" class="form-control" id="filterEndDate">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4 col-lg-3">
               <label for="filterPage" class="form-label">เพจ/บอท</label>
               <select class="form-select" id="filterPage">
                 <option value="all">ทุกเพจ</option>
               </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4 col-lg-2">
               <label for="filterStatus" class="form-label">สถานะออเดอร์</label>
               <select class="form-select" id="filterStatus">
                 <option value="all">ทั้งหมด</option>
@@ -54,17 +78,25 @@
                 <option value="cancelled">ยกเลิก</option>
               </select>
             </div>
-            <div class="col-md-3">
-              <div class="form-check mt-4">
+            <div class="col-md-4 col-lg-2">
+              <label for="filterLimit" class="form-label">จำนวนต่อหน้า</label>
+              <select class="form-select" id="filterLimit">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+            <div class="col-md-4 col-lg-2">
+              <div class="form-check mt-md-4 pt-md-1">
                 <input class="form-check-input" type="checkbox" id="filterTodayOnly">
                 <label class="form-check-label" for="filterTodayOnly">
                   แสดงเฉพาะวันนี้
                 </label>
               </div>
             </div>
-            <div class="col-md-4 col-lg-3 d-flex gap-2">
+            <div class="col-md-8 col-lg-4 d-flex gap-2">
               <button type="submit" class="btn btn-primary flex-grow-1">
-                <i class="fas fa-search me-2"></i>กรองข้อมูล
+                <i class="fas fa-filter me-2"></i>กรองข้อมูล
               </button>
               <button type="button" class="btn btn-outline-secondary" id="filterClearBtn">
                 ล้าง
@@ -109,23 +141,37 @@
         </div>
       </div>
 
+      <div id="ordersSummaryContext" class="orders-summary-context mb-3 d-flex flex-wrap align-items-center gap-2"></div>
+
       <div class="row g-3 mb-4" id="ordersSummary">
-        <div class="col-md-4">
+        <div class="col-md-6 col-lg-3">
           <div class="summary-card">
             <div class="summary-label">จำนวนออเดอร์</div>
             <div class="summary-value" id="summaryTotalOrders">0</div>
           </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-6 col-lg-3">
           <div class="summary-card">
             <div class="summary-label">ยอดรวมทั้งหมด</div>
             <div class="summary-value" id="summaryTotalAmount">฿0</div>
           </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-6 col-lg-3">
           <div class="summary-card">
             <div class="summary-label">ค่าส่งรวม</div>
             <div class="summary-value" id="summaryTotalShipping">฿0</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-3">
+          <div class="summary-card">
+            <div class="summary-label">เฉลี่ยต่อออเดอร์</div>
+            <div class="summary-value" id="summaryAveragePerOrder">฿0</div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-3">
+          <div class="summary-card">
+            <div class="summary-label">จำนวนสินค้า</div>
+            <div class="summary-value" id="summaryTotalItems">0</div>
           </div>
         </div>
       </div>
@@ -133,36 +179,78 @@
       <div class="card shadow-sm">
         <div class="card-body">
           <div id="ordersLoading" class="orders-loading text-center py-5" style="display: none;">
-            <div class="spinner-border text-primary mb-2" role="status">
-              <span class="visually-hidden">Loading...</span>
+            <div class="orders-skeleton">
+              <% for (let i = 0; i < 6; i++) { %>
+                <div class="orders-skeleton-row">
+                  <div class="orders-skeleton-cell w-15"></div>
+                  <div class="orders-skeleton-cell w-20"></div>
+                  <div class="orders-skeleton-cell w-15"></div>
+                  <div class="orders-skeleton-cell w-25"></div>
+                  <div class="orders-skeleton-cell w-10"></div>
+                </div>
+              <% } %>
             </div>
-            <div>กำลังโหลดข้อมูลออเดอร์...</div>
           </div>
 
           <div id="ordersEmptyState" class="orders-empty-state text-center py-5" style="display: none;">
             <i class="fas fa-box-open mb-3"></i>
             <h5>ไม่พบออเดอร์</h5>
-            <p class="text-muted mb-0">ลองเปลี่ยนตัวกรองหรือเลือกช่วงวันที่อื่น</p>
+            <p class="text-muted mb-2">ลองเปลี่ยนตัวกรองหรือเลือกช่วงวันที่อื่น</p>
+            <p class="text-muted small mb-3" id="ordersEmptyFilters"></p>
+            <button class="btn btn-outline-primary btn-sm" id="ordersEmptyResetBtn">
+              <i class="fas fa-undo me-2"></i>รีเซ็ตตัวกรอง
+            </button>
           </div>
 
-          <div class="table-responsive">
+          <div class="orders-table-toolbar d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+            <div class="text-muted small" id="ordersResultsInfo"></div>
+            <div class="d-flex align-items-center gap-2">
+              <label class="form-label mb-0 small d-flex align-items-center gap-2">
+                <span>ต่อหน้า:</span>
+                <select id="ordersPageSizeToolbar" class="form-select form-select-sm" aria-label="จำนวนออเดอร์ต่อหน้า">
+                  <option value="25">25</option>
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="table-responsive orders-table-wrapper">
             <table class="table align-middle" id="ordersTable">
               <thead>
                 <tr>
-                  <th scope="col">วันที่</th>
-                  <th scope="col">ลูกค้า</th>
-                  <th scope="col">เพจ</th>
-                  <th scope="col">แพลตฟอร์ม</th>
+                  <th scope="col" class="col-select">
+                    <input class="form-check-input" type="checkbox" id="ordersSelectAll">
+                  </th>
+                  <th scope="col" class="sortable" data-sort-key="extractedAt">วันที่</th>
+                  <th scope="col" class="sortable" data-sort-key="customerName">ลูกค้า</th>
+                  <th scope="col">เพจ / แพลตฟอร์ม</th>
                   <th scope="col">รายการสินค้า</th>
-                  <th scope="col">ค่าส่ง</th>
-                  <th scope="col">ยอดรวม</th>
+                  <th scope="col" class="sortable text-end" data-sort-key="shippingCost">ค่าส่ง</th>
+                  <th scope="col" class="sortable text-end" data-sort-key="totalAmount">ยอดรวม</th>
                   <th scope="col">การชำระเงิน</th>
-                  <th scope="col">สถานะ</th>
+                  <th scope="col" class="sortable" data-sort-key="status">สถานะ</th>
                   <th scope="col">หมายเหตุ</th>
+                  <th scope="col" class="col-actions">การจัดการ</th>
                 </tr>
               </thead>
               <tbody id="ordersTableBody"></tbody>
             </table>
+          </div>
+
+          <div id="ordersBulkActions" class="orders-bulk-actions alert alert-light border d-flex flex-wrap align-items-center gap-3 px-3 py-2 shadow-sm" style="display: none;">
+            <div>
+              เลือกไว้ <span class="fw-semibold" id="ordersSelectedCount">0</span> รายการ
+            </div>
+            <div class="d-flex align-items-center gap-2 ms-auto">
+              <button class="btn btn-outline-primary btn-sm" id="ordersBulkExport">
+                <i class="fas fa-file-export me-2"></i>ส่งออกเฉพาะที่เลือก
+              </button>
+              <button class="btn btn-outline-secondary btn-sm" id="ordersBulkClear">
+                ยกเลิกการเลือก
+              </button>
+            </div>
           </div>
 
           <div id="ordersPagination" class="d-flex justify-content-between align-items-center mt-3" style="display: none;">
