@@ -1,3 +1,5 @@
+/* global bootstrap */
+
 document.addEventListener('DOMContentLoaded', () => {
   const filterForm = document.getElementById('orderFilterForm');
   const statusTabs = document.getElementById('ordersStatusTabs');
@@ -32,6 +34,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const selectedCountLabel = document.getElementById('ordersSelectedCount');
   const tableHead = table ? table.querySelector('thead') : null;
   const tableWrapper = document.querySelector('.orders-table-wrapper');
+  const addressModalEl = document.getElementById('orderAddressModal');
+  const addressModalLabel = document.getElementById('orderAddressModalLabel');
+  const addressContentEl = document.getElementById('orderAddressContent');
+  const addressCopyBtn = document.getElementById('orderAddressCopyBtn');
+  const addressModal = addressModalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal
+    ? new bootstrap.Modal(addressModalEl, { backdrop: true })
+    : null;
 
   const summaryTotalOrders = document.getElementById('summaryTotalOrders');
   const summaryTotalAmount = document.getElementById('summaryTotalAmount');
@@ -258,6 +267,14 @@ document.addEventListener('DOMContentLoaded', () => {
           order.externalUrl ||
           order.conversationUrl ||
           '';
+        const conversationUrl =
+          order.chatUrl ||
+          order.conversationUrl ||
+          order.threadUrl ||
+          order.messageUrl ||
+          '';
+        const addressData = getOrderAddress(order);
+        const hasAddress = !!addressData?.plain;
         const isSelected = selectedOrders.has(orderId);
 
         return `
@@ -325,6 +342,21 @@ document.addEventListener('DOMContentLoaded', () => {
             <td data-label="หมายเหตุ">${notes}</td>
             <td data-label="การจัดการ" class="col-actions">
               <div class="d-flex flex-wrap gap-2">
+                ${
+                  hasAddress
+                    ? `<button
+                        type="button"
+                        class="btn btn-outline-secondary btn-sm orders-action"
+                        data-action="view-address"
+                        data-order-id="${escapeAttribute(orderId)}"
+                        data-address-html="${escapeAttribute(addressData.html)}"
+                        data-address-plain="${escapeAttribute(addressData.plain)}"
+                        data-customer="${escapeAttribute(customerName)}"
+                      >
+                        <i class="fas fa-map-marker-alt"></i>
+                      </button>`
+                    : ''
+                }
                 <button
                   type="button"
                   class="btn btn-outline-secondary btn-sm orders-action"
@@ -357,6 +389,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         title="เปิดรายละเอียดออเดอร์"
                       >
                         <i class="fas fa-external-link-alt me-1"></i>ดู
+                      </a>`
+                    : ''
+                }
+                ${
+                  conversationUrl
+                    ? `<a
+                        class="btn btn-primary btn-sm"
+                        href="${escapeAttribute(conversationUrl)}"
+                        target="_blank"
+                        rel="noopener"
+                        title="เปิดแชตกับลูกค้า"
+                      >
+                        <i class="fas fa-comments me-1"></i>แชต
                       </a>`
                     : ''
                 }
@@ -452,6 +497,67 @@ document.addEventListener('DOMContentLoaded', () => {
       return { label: 'อัปเดตภายใน 24 ชั่วโมง', className: 'status-chip-info' };
     }
     return { label: 'ไม่ได้อัปเดตเกิน 24 ชั่วโมง', className: 'status-chip-warning' };
+  }
+
+  function getOrderAddress(order) {
+    if (!order) return null;
+    const segments = [];
+    const seen = new Set();
+
+    const pushSegment = (value) => {
+      if (!value) return;
+      const trimmed = String(value).trim();
+      if (!trimmed) return;
+      if (seen.has(trimmed)) return;
+      seen.add(trimmed);
+      segments.push(trimmed);
+    };
+
+    const addressObj =
+      order.shippingAddress ||
+      order.deliveryAddress ||
+      order.address ||
+      order.recipientAddress ||
+      null;
+
+    const addressText =
+      order.shippingAddressText ||
+      order.addressText ||
+      order.fullAddress ||
+      (typeof addressObj === 'string' ? addressObj : '');
+
+    pushSegment(order.shippingName || order.recipientName || order.customerName);
+    pushSegment(order.customerPhone || order.shippingPhone || order.recipientPhone);
+
+    if (addressObj && typeof addressObj === 'object') {
+      pushSegment(addressObj.name);
+      pushSegment(addressObj.phone);
+      pushSegment(addressObj.line1 || addressObj.addressLine1);
+      pushSegment(addressObj.line2 || addressObj.addressLine2);
+      pushSegment(addressObj.subDistrict || addressObj.subdistrict);
+      pushSegment(addressObj.district);
+      pushSegment(addressObj.city || addressObj.province || addressObj.state);
+      pushSegment(addressObj.postalCode || addressObj.zip || addressObj.zipCode);
+      pushSegment(addressObj.country);
+    }
+
+    if (addressText) {
+      pushSegment(addressText);
+    }
+
+    if (Array.isArray(order.addressLines)) {
+      order.addressLines.forEach(pushSegment);
+    }
+
+    const parts = segments.filter(Boolean);
+    if (!parts.length) {
+      return null;
+    }
+
+    const plain = parts.join('\n');
+    const html = parts.map((part) => escapeHtml(part)).join('<br>');
+
+    return { plain, html };
   }
 
   function getSortedOrders(orders) {
@@ -559,14 +665,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         return `
           <tr data-page-key="${escapeHtml(page.pageKey)}">
-            <td>
+            <td data-label="เพจ/บอท">
               <div class="fw-semibold">${escapeHtml(page.name || '-')}</div>
               <div class="order-settings-meta">${escapeHtml(page.pageKey)}</div>
             </td>
-            <td>
+            <td data-label="แพลตฟอร์ม">
               <span class="badge bg-light text-dark">${escapeHtml(platformLabel)}</span>
             </td>
-            <td>
+            <td data-label="เวลาตัดรอบ">
               <input
                 type="time"
                 class="form-control form-control-sm cutoff-input"
@@ -574,16 +680,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 data-page-key="${escapeHtml(page.pageKey)}"
               >
             </td>
-            <td>
+            <td data-label="รอบล่าสุด">
               <div>${escapeHtml(lastRunText)}</div>
             </td>
-            <td>
+            <td data-label="สรุปรอบก่อน">
               <div class="order-settings-summary">${escapeHtml(summary)}</div>
               <div class="mt-2">
                 <span class="status-chip ${scanMeta.className}">${escapeHtml(scanMeta.label)}</span>
               </div>
             </td>
-            <td>
+            <td data-label="การจัดการ">
               <div class="d-flex flex-column gap-2">
                 ${
                   supportsManualScan
@@ -1230,6 +1336,36 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
         break;
+      case 'view-address': {
+        if (!addressModal || !addressContentEl) {
+          console.warn('[Orders] address modal not ready');
+          return;
+        }
+        const addressHtml = actionButton.getAttribute('data-address-html') || '';
+        const addressPlain = actionButton.getAttribute('data-address-plain') || '';
+        const customer = actionButton.getAttribute('data-customer') || '';
+        if (addressModalLabel) {
+          addressModalLabel.textContent = customer
+            ? `ที่อยู่ของ ${customer}`
+            : 'ที่อยู่จัดส่ง';
+        }
+        if (!addressHtml && !addressPlain) {
+          addressContentEl.innerHTML = '<span class="text-muted">ไม่พบที่อยู่สำหรับออเดอร์นี้</span>';
+          if (addressCopyBtn) {
+            addressCopyBtn.dataset.address = '';
+            addressCopyBtn.disabled = true;
+          }
+          addressModal.show();
+          return;
+        }
+        addressContentEl.innerHTML = addressHtml || escapeHtml(addressPlain);
+        if (addressCopyBtn) {
+          addressCopyBtn.dataset.address = addressPlain || '';
+          addressCopyBtn.disabled = !addressPlain;
+        }
+        addressModal.show();
+        break;
+      }
       default:
         break;
     }
@@ -1259,6 +1395,19 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       updateSelectAllState();
       updateBulkActions();
+    });
+  }
+
+  if (addressCopyBtn) {
+    addressCopyBtn.addEventListener('click', async () => {
+      const address = addressCopyBtn.dataset.address || '';
+      if (!address) return;
+      try {
+        await copyToClipboard(address);
+        indicateActionSuccess(addressCopyBtn);
+      } catch (error) {
+        console.warn('[Orders] copy address error:', error);
+      }
     });
   }
 

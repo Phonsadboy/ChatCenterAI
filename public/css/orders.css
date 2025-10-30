@@ -123,6 +123,10 @@
   border-radius: 999px;
 }
 
+.order-address-content {
+  line-height: 1.6;
+}
+
 .orders-action-success {
   color: #0ea5e9 !important;
 }
@@ -405,6 +409,57 @@
 @media (max-width: 767.98px) {
   .orders-wrapper {
     padding-bottom: 2rem;
+  }
+
+  .order-settings-table thead {
+    display: none;
+  }
+
+  .order-settings-table tbody tr {
+    display: block;
+    margin-bottom: 1rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 1rem;
+    background-color: #fff;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  }
+
+  .order-settings-table tbody td {
+    display: flex;
+    justify-content: space-between;
+    gap: 1.25rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px dashed #e5e7eb;
+  }
+
+  .order-settings-table tbody td:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .order-settings-table tbody td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: #6b7280;
+    flex: 0 0 40%;
+    max-width: 140px;
+  }
+
+  .order-settings-table tbody td[data-label="การจัดการ"] {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .order-settings-table tbody td[data-label="การจัดการ"] .btn {
+    width: 100%;
+  }
+
+  .order-settings-table tbody td[data-label="เพจ/บอท"] {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
   }
 
   #ordersTable thead {

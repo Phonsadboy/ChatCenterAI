@@ -239,8 +239,9 @@ class ChatManager {
         const btnTogglePurchase = document.getElementById('btnTogglePurchase');
         const btnManageTags = document.getElementById('btnManageTags');
         const btnToggleAI = document.getElementById('btnToggleAI');
+        const btnRefreshProfile = document.getElementById('btnRefreshProfile');
         const btnClearChat = document.getElementById('btnClearChat');
-        
+
         if (btnTogglePurchase) {
             btnTogglePurchase.addEventListener('click', () => {
                 this.togglePurchaseStatus();
@@ -258,7 +259,13 @@ class ChatManager {
                 this.toggleAI();
             });
         }
-        
+
+        if (btnRefreshProfile) {
+            btnRefreshProfile.addEventListener('click', () => {
+                this.refreshCurrentUserProfile();
+            });
+        }
+
         if (btnClearChat) {
             btnClearChat.addEventListener('click', () => {
                 this.clearChat();
@@ -501,8 +508,16 @@ class ChatManager {
     }
     
     updateChatHeader() {
+        const btnRefreshProfile = document.getElementById('btnRefreshProfile');
         const user = this.users.find(u => u.userId === this.currentUserId);
-        if (!user) return;
+        if (!user) {
+            if (btnRefreshProfile) {
+                btnRefreshProfile.disabled = true;
+                btnRefreshProfile.title = 'เลือกผู้ใช้เพื่ออัปเดตข้อมูล';
+                btnRefreshProfile.classList.add('disabled');
+            }
+            return;
+        }
         
         const chatAvatar = document.getElementById('chatAvatar');
         const chatUserName = document.getElementById('chatUserName');
@@ -532,8 +547,17 @@ class ChatManager {
         if (chatHeaderActions) {
             chatHeaderActions.style.display = 'flex';
         }
+
+        if (btnRefreshProfile) {
+            const isFacebook = user.platform === 'facebook';
+            btnRefreshProfile.disabled = !isFacebook;
+            btnRefreshProfile.title = isFacebook
+                ? 'อัปเดตข้อมูลผู้ใช้'
+                : 'ใช้กับผู้ใช้ Facebook เท่านั้น';
+            btnRefreshProfile.classList.toggle('disabled', !isFacebook);
+        }
     }
-    
+
     showMessageInput() {
         const messageInputArea = document.getElementById('messageInputArea');
         const emptyState = document.getElementById('emptyState');
@@ -895,6 +919,101 @@ class ChatManager {
         } catch (error) {
             console.error('Error toggling purchase status:', error);
             this.showToast('เกิดข้อผิดพลาด', 'error');
+        }
+    }
+
+    async refreshCurrentUserProfile() {
+        if (!this.currentUserId) {
+            this.showToast('กรุณาเลือกผู้ใช้ก่อน', 'warning');
+            return;
+        }
+
+        const user =
+            this.users.find(u => u.userId === this.currentUserId) ||
+            this.allUsers.find(u => u.userId === this.currentUserId);
+
+        if (!user) {
+            this.showToast('ไม่พบข้อมูลผู้ใช้ในรายการ', 'error');
+            return;
+        }
+
+        if (user.platform !== 'facebook') {
+            this.showToast('ปุ่มนี้ใช้ได้เฉพาะกับผู้ใช้ Facebook', 'info');
+            return;
+        }
+
+        const btnRefreshProfile = document.getElementById('btnRefreshProfile');
+        let originalHtml = null;
+        if (btnRefreshProfile) {
+            originalHtml = btnRefreshProfile.innerHTML;
+            btnRefreshProfile.disabled = true;
+            btnRefreshProfile.innerHTML =
+                '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+        }
+
+        try {
+            const response = await fetch(
+                `/admin/chat/users/${encodeURIComponent(this.currentUserId)}/refresh-profile`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        platform: user.platform,
+                        botId: user.botId || null,
+                    }),
+                },
+            );
+
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.error || 'ไม่สามารถอัปเดตข้อมูลได้');
+            }
+
+            const newDisplayName = data.displayName || '';
+            if (newDisplayName) {
+                this.updateUserDisplayName(this.currentUserId, newDisplayName);
+                this.showToast('อัปเดตชื่อผู้ใช้เรียบร้อย', 'success');
+            } else {
+                this.showToast('ไม่มีข้อมูลใหม่จาก Facebook', 'info');
+            }
+
+            await this.loadUsers();
+            this.updateChatHeader();
+        } catch (error) {
+            console.error('Error refreshing profile:', error);
+            this.showToast(error.message || 'เกิดข้อผิดพลาดในการอัปเดต', 'error');
+        } finally {
+            if (btnRefreshProfile) {
+                btnRefreshProfile.disabled = false;
+                btnRefreshProfile.innerHTML =
+                    originalHtml || '<i class="fas fa-sync"></i>';
+            }
+        }
+    }
+
+    updateUserDisplayName(userId, displayName) {
+        if (!userId || !displayName) {
+            return;
+        }
+
+        const applyUpdate = (list) => {
+            if (!Array.isArray(list)) return;
+            const target = list.find((u) => u.userId === userId);
+            if (target) {
+                target.displayName = displayName;
+            }
+        };
+
+        applyUpdate(this.allUsers);
+        applyUpdate(this.users);
+
+        if (this.currentUserId === userId) {
+            const chatUserName = document.getElementById('chatUserName');
+            if (chatUserName) {
+                chatUserName.textContent = displayName;
+            }
         }
     }
     

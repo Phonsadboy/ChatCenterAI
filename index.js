@@ -900,6 +900,94 @@ async function saveOrUpdateUserProfile(userId) {
   }
 }
 
+async function fetchFacebookProfile(psid, accessToken) {
+  if (!psid || !accessToken) {
+    return null;
+  }
+
+  const apiVersion = "v18.0";
+  const url = `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(
+    psid,
+  )}`;
+
+  try {
+    const { data } = await axios.get(url, {
+      params: {
+        fields: "name,first_name,last_name,profile_pic",
+        access_token: accessToken,
+      },
+    });
+
+    const fullName =
+      data?.name ||
+      [data?.first_name, data?.last_name].filter(Boolean).join(" ").trim();
+
+    if (!fullName) {
+      return null;
+    }
+
+    return {
+      userId: psid,
+      platform: "facebook",
+      displayName: fullName,
+      pictureUrl: data?.profile_pic || null,
+      updatedAt: new Date(),
+    };
+  } catch (error) {
+    const status = error?.response?.status;
+    const message =
+      error?.response?.data?.error?.message || error?.message || "unknown";
+    console.warn(
+      `[Facebook] ไม่สามารถดึงโปรไฟล์ ${psid} (${status || "n/a"}): ${message}`,
+    );
+    return null;
+  }
+}
+
+async function ensureFacebookProfileDisplayName(psid, accessToken) {
+  if (!psid || !accessToken) {
+    return null;
+  }
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("user_profiles");
+
+  const existing = await coll.findOne(
+    { userId: psid, platform: "facebook" },
+    { projection: { displayName: 1 } },
+  );
+
+  if (existing?.displayName && existing.displayName.trim()) {
+    return existing;
+  }
+
+  const profile = await fetchFacebookProfile(psid, accessToken);
+  if (!profile?.displayName) {
+    return existing;
+  }
+
+  const now = new Date();
+  await coll.updateOne(
+    { userId: psid, platform: "facebook" },
+    {
+      $set: {
+        displayName: profile.displayName,
+        pictureUrl: profile.pictureUrl || null,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        userId: psid,
+        platform: "facebook",
+        createdAt: now,
+      },
+    },
+    { upsert: true },
+  );
+
+  return profile;
+}
+
 async function saveChatHistory(
   userId,
   userMsg,
@@ -5400,6 +5488,17 @@ async function handleFacebookComment(pageId, postId, commentData, accessToken) {
     const commenterId = commentData.from?.id;
     const commenterName = commentData.from?.name;
 
+    if (commenterId) {
+      try {
+        await ensureFacebookProfileDisplayName(commenterId, accessToken);
+      } catch (profileErr) {
+        console.warn(
+          `[Facebook Comment] ไม่สามารถอัปเดตโปรไฟล์ ${commenterId}:`,
+          profileErr?.message || profileErr,
+        );
+      }
+    }
+
     console.log(
       `[Facebook Comment] Processing comment from ${commenterName} (${commenterId}): ${commentText.substring(0, 50)}...`,
     );
@@ -8054,6 +8153,17 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
           if (messagingEvent.message) {
             const senderId = messagingEvent.sender.id;
+            try {
+              await ensureFacebookProfileDisplayName(
+                senderId,
+                facebookBot.accessToken,
+              );
+            } catch (profileErr) {
+              console.warn(
+                `[Facebook Bot: ${facebookBot.name}] อัปเดตโปรไฟล์ ${senderId} ไม่สำเร็จ:`,
+                profileErr?.message || profileErr,
+              );
+            }
             const queueOptions = { ...queueOptionsBase };
             const itemsToQueue = [];
             const audioAttachments = [];
@@ -12199,6 +12309,90 @@ app.post("/admin/chat/user-status", async (req, res) => {
   } catch (err) {
     console.error("Error setting user status:", err);
     res.json({ success: false, error: err.message });
+  }
+});
+
+app.post("/admin/chat/users/:userId/refresh-profile", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.json({ success: false, error: "ไม่พบรหัสผู้ใช้" });
+    }
+
+    const { platform: bodyPlatform, botId: bodyBotId } = req.body || {};
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const chatColl = db.collection("chat_history");
+
+    let platform = bodyPlatform || null;
+    let botId = bodyBotId || null;
+
+    if (!platform || !botId) {
+      const lastChat = await chatColl.findOne(
+        { senderId: userId },
+        { sort: { timestamp: -1 }, projection: { platform: 1, botId: 1 } },
+      );
+      platform = platform || lastChat?.platform || null;
+      botId = botId || lastChat?.botId || null;
+    }
+
+    if (platform !== "facebook") {
+      return res.json({
+        success: false,
+        error: "สามารถอัปเดตได้เฉพาะผู้ใช้ Facebook เท่านั้น",
+      });
+    }
+
+    if (!botId) {
+      return res.json({
+        success: false,
+        error: "ไม่พบข้อมูลเพจสำหรับผู้ใช้นี้",
+      });
+    }
+
+    const fbColl = db.collection("facebook_bots");
+    let facebookBot = null;
+
+    if (ObjectId.isValid(botId)) {
+      facebookBot = await fbColl.findOne({ _id: new ObjectId(botId) });
+    }
+    if (!facebookBot) {
+      facebookBot = await fbColl.findOne({ _id: botId });
+    }
+    if (!facebookBot) {
+      facebookBot = await fbColl.findOne({ pageId: botId });
+    }
+
+    if (!facebookBot || !facebookBot.accessToken) {
+      return res.json({
+        success: false,
+        error: "ไม่พบข้อมูลเพจหรือ Access Token ของ Facebook Bot",
+      });
+    }
+
+    await ensureFacebookProfileDisplayName(userId, facebookBot.accessToken);
+
+    const profile = await db.collection("user_profiles").findOne(
+      { userId, platform: "facebook" },
+      { projection: { displayName: 1, updatedAt: 1 } },
+    );
+
+    if (!profile?.displayName) {
+      return res.json({
+        success: false,
+        error: "ไม่สามารถดึงชื่อจาก Facebook ได้",
+      });
+    }
+
+    res.json({
+      success: true,
+      displayName: profile.displayName,
+      updatedAt: profile.updatedAt || null,
+    });
+  } catch (error) {
+    console.error("[Chat] refresh-profile error:", error);
+    res.json({ success: false, error: error.message || "เกิดข้อผิดพลาด" });
   }
 });
 
