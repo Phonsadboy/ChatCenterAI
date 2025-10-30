@@ -12396,6 +12396,21 @@ app.post("/admin/chat/users/:userId/refresh-profile", async (req, res) => {
   }
 });
 
+app.post("/admin/chat/mark-read/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.json({ success: false, error: "ไม่พบรหัสผู้ใช้" });
+    }
+
+    await resetUserUnreadCount(userId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("[Chat] mark-read error:", error);
+    res.json({ success: false, error: error.message || "เกิดข้อผิดพลาด" });
+  }
+});
+
 // Get chat history for a specific user
 app.get("/admin/chat/history/:userId", async (req, res) => {
   try {
