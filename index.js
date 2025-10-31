@@ -4323,6 +4323,321 @@ function analyzeQueueContent(messages) {
   return analysis;
 }
 
+function sanitizeTextValue(text, options = {}) {
+  if (text === null || text === undefined) {
+    return null;
+  }
+
+  let sanitized = String(text);
+  sanitized = sanitized
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\r\n/g, "\n")
+    .trim();
+
+  if (!sanitized) {
+    return null;
+  }
+
+  const maxLength =
+    typeof options.maxLength === "number" && options.maxLength > 0
+      ? Math.floor(options.maxLength)
+      : 6000;
+
+  if (sanitized.length > maxLength) {
+    if (options.keepTail) {
+      sanitized = sanitized.slice(-maxLength);
+    } else {
+      sanitized = sanitized.slice(0, maxLength);
+    }
+  }
+
+  return sanitized;
+}
+
+function isLikelyValidBase64Image(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length < 16) {
+    return false;
+  }
+
+  if (/[^A-Za-z0-9+/=\r\n]/.test(trimmed)) {
+    return false;
+  }
+
+  return trimmed.length % 4 === 0;
+}
+
+function cloneQueueMessage(message) {
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+
+  const cloned = { ...message };
+  if (message.data && typeof message.data === "object") {
+    cloned.data = { ...message.data };
+  }
+  return cloned;
+}
+
+function filterMessagesForStrategy(messages, strategy = "original") {
+  const meta = {
+    droppedImages: 0,
+    droppedTexts: 0,
+    droppedOthers: 0,
+    suspectImages: 0,
+  };
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { messages: [], meta };
+  }
+
+  if (strategy === "recent_text_only") {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const cloned = cloneQueueMessage(messages[i]);
+      if (!cloned) continue;
+      const data =
+        (cloned.data && typeof cloned.data === "object" && cloned.data) ||
+        (typeof cloned === "object" ? cloned : null);
+      if (!data || data.type !== "text") {
+        meta.droppedOthers++;
+        continue;
+      }
+
+      const sanitizedText = sanitizeTextValue(
+        data.text !== undefined ? data.text : data.content,
+      );
+      if (!sanitizedText) {
+        meta.droppedTexts++;
+        continue;
+      }
+
+      if (data.text !== undefined) {
+        data.text = sanitizedText;
+      } else {
+        data.content = sanitizedText;
+      }
+      return { messages: [cloned], meta };
+    }
+    return { messages: [], meta };
+  }
+
+  const result = [];
+  for (const original of messages) {
+    const cloned = cloneQueueMessage(original);
+    if (!cloned) {
+      meta.droppedOthers++;
+      continue;
+    }
+
+    const data =
+      (cloned.data && typeof cloned.data === "object" && cloned.data) ||
+      (typeof cloned === "object" ? cloned : null);
+    if (!data || typeof data !== "object") {
+      meta.droppedOthers++;
+      continue;
+    }
+
+    const type = data.type;
+
+    if (type === "text") {
+      const sanitizedText = sanitizeTextValue(
+        data.text !== undefined ? data.text : data.content,
+      );
+      if (!sanitizedText) {
+        meta.droppedTexts++;
+        continue;
+      }
+
+      if (data.text !== undefined) {
+        data.text = sanitizedText;
+      } else {
+        data.content = sanitizedText;
+      }
+    } else if (type === "image") {
+      const base64 =
+        typeof data.base64 === "string" ? data.base64 : data.content;
+      const hasContent = typeof base64 === "string" && base64.trim().length > 0;
+      const validBase64 = hasContent && isLikelyValidBase64Image(base64);
+
+      if (!hasContent) {
+        meta.droppedImages++;
+        continue;
+      }
+
+      if (!validBase64) {
+        if (strategy === "drop_invalid_images") {
+          meta.droppedImages++;
+          continue;
+        }
+        meta.suspectImages++;
+      }
+    } else if (typeof type === "string") {
+      // ชนิดอื่น ๆ เช่น audio, file
+      meta.droppedOthers++;
+      continue;
+    } else {
+      meta.droppedOthers++;
+      continue;
+    }
+
+    result.push(cloned);
+  }
+
+  return { messages: result, meta };
+}
+
+function buildContentSequenceFromMessages(messages, enableMessageMerging = true) {
+  const contentSequence = [];
+  const combinedTextParts = [];
+
+  if (!Array.isArray(messages)) {
+    return {
+      contentSequence,
+      combinedTextParts,
+      hasImages: false,
+      textSegmentCount: 0,
+    };
+  }
+
+  for (const message of messages) {
+    const data =
+      (message.data && typeof message.data === "object" && message.data) ||
+      (typeof message === "object" ? message : null);
+    if (!data || typeof data !== "object") {
+      continue;
+    }
+
+    if (data.type === "text") {
+      const rawText =
+        data.text !== undefined ? data.text : data.content !== undefined
+          ? data.content
+          : null;
+      const sanitizedText = sanitizeTextValue(rawText);
+      if (!sanitizedText) {
+        continue;
+      }
+
+      combinedTextParts.push(sanitizedText);
+      contentSequence.push({ type: "text", content: sanitizedText });
+    } else if (data.type === "image") {
+      const base64 =
+        typeof data.base64 === "string" ? data.base64 : data.content;
+      if (!base64 || !base64.trim()) {
+        continue;
+      }
+
+      contentSequence.push({
+        type: "image",
+        content: base64,
+        description:
+          data.description || data.text || "ผู้ใช้ส่งรูปภาพมา",
+      });
+    }
+  }
+
+  return {
+    contentSequence,
+    combinedTextParts,
+    hasImages: contentSequence.some((entry) => entry.type === "image"),
+    textSegmentCount: combinedTextParts.length,
+  };
+}
+
+function cloneContentSequenceEntry(entry) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const cloned = { ...entry };
+  if (entry.payload && typeof entry.payload === "object") {
+    cloned.payload = { ...entry.payload };
+  }
+  return cloned;
+}
+
+function filterContentSequenceForStrategy(sequence, strategy = "original") {
+  const meta = {
+    droppedImages: 0,
+    droppedTexts: 0,
+    droppedOthers: 0,
+    suspectImages: 0,
+  };
+
+  if (!Array.isArray(sequence) || sequence.length === 0) {
+    return { sequence: [], textParts: [], meta };
+  }
+
+  if (strategy === "recent_text_only") {
+    for (let i = sequence.length - 1; i >= 0; i--) {
+      const cloned = cloneContentSequenceEntry(sequence[i]);
+      if (!cloned) {
+        meta.droppedOthers++;
+        continue;
+      }
+      if (cloned.type !== "text") {
+        meta.droppedOthers++;
+        continue;
+      }
+      const sanitized = sanitizeTextValue(cloned.content);
+      if (!sanitized) {
+        meta.droppedTexts++;
+        continue;
+      }
+      cloned.content = sanitized;
+      return { sequence: [cloned], textParts: [sanitized], meta };
+    }
+    return { sequence: [], textParts: [], meta };
+  }
+
+  const result = [];
+  const textParts = [];
+
+  for (const entry of sequence) {
+    const cloned = cloneContentSequenceEntry(entry);
+    if (!cloned) {
+      meta.droppedOthers++;
+      continue;
+    }
+
+    if (cloned.type === "text") {
+      const sanitized = sanitizeTextValue(cloned.content);
+      if (!sanitized) {
+        meta.droppedTexts++;
+        continue;
+      }
+      cloned.content = sanitized;
+      textParts.push(sanitized);
+      result.push(cloned);
+    } else if (cloned.type === "image") {
+      const base64 = typeof cloned.content === "string" ? cloned.content : "";
+      const hasContent = base64.trim().length > 0;
+      const validBase64 = hasContent && isLikelyValidBase64Image(base64);
+
+      if (!hasContent) {
+        meta.droppedImages++;
+        continue;
+      }
+
+      if (!validBase64) {
+        if (strategy === "drop_invalid_images") {
+          meta.droppedImages++;
+          continue;
+        }
+        meta.suspectImages++;
+      }
+
+      result.push(cloned);
+    } else {
+      meta.droppedOthers++;
+    }
+  }
+
+  return { sequence: result, textParts, meta };
+}
+
 async function addToQueue(userId, incomingItem, options = {}) {
   console.log(`[LOG] เพิ่มข้อมูลเข้าคิวสำหรับผู้ใช้: ${userId}`);
   const queueKey = buildQueueKey(userId, options);
@@ -4545,93 +4860,122 @@ async function processFlushedMessages(
     true,
   );
 
-  // วิเคราะห์เนื้อหาในคิวเพื่อกำหนดกลยุทธ์การประมวลผล
-  const contentAnalysis = analyzeQueueContent(mergedContent);
-
-  // แยกเนื้อหาตามประเภทและจัดเรียงตามลำดับที่ได้รับ
-  const contentSequence = [];
-  let combinedTextParts = [];
-  let hasImages = false;
-
-  // ใช้การตั้งค่าการรวมข้อความ
-  if (enableMessageMerging) {
-    for (const item of mergedContent) {
-      if (item.data && item.data.type === "text") {
-        combinedTextParts.push(item.data.text);
-        contentSequence.push({ type: "text", content: item.data.text });
-      } else if (item.data && item.data.type === "image") {
-        hasImages = true;
-        contentSequence.push({
-          type: "image",
-          content: item.data.base64,
-          description: item.data.text || "ผู้ใช้ส่งรูปภาพมา",
-        });
-      }
-    }
-  } else {
-    // ถ้าไม่เปิดการรวมข้อความ ให้ประมวลผลทีละข้อความ
-    for (const item of mergedContent) {
-      if (item.data && item.data.type === "text") {
-        contentSequence.push({ type: "text", content: item.data.text });
-      } else if (item.data && item.data.type === "image") {
-        hasImages = true;
-        contentSequence.push({
-          type: "image",
-          content: item.data.base64,
-          description: item.data.text || "ผู้ใช้ส่งรูปภาพมา",
-        });
-      }
-    }
-  }
-
-  console.log(`[LOG] สร้าง system instructions สำหรับการตอบกลับ...`);
-  const systemInstructions = await buildSystemInstructionsWithContext(
-    history,
-    queueContext,
-  );
+  // บันทึกสถานะเนื้อหาต้นฉบับเพื่อช่วยดีบัก
+  analyzeQueueContent(mergedContent);
 
   let assistantMsg = "";
+  const recoveryStrategies = [
+    { key: "original", label: "ข้อมูลเดิมทั้งหมด" },
+    { key: "drop_invalid_images", label: "ลบรูปภาพที่อาจมีปัญหา" },
+    { key: "recent_text_only", label: "ใช้เฉพาะข้อความล่าสุดที่ใช้ได้" },
+  ];
 
-  // ใช้กลยุทธ์การประมวลผลตามการวิเคราะห์
-  if (contentAnalysis.processingStrategy === "text_only") {
-    // กรณีมีแต่ข้อความ - ใช้โมเดลปกติ
-    const combinedText = combinedTextParts.join("\n\n"); // ใช้ \n\n แทน space เพื่อแยกข้อความ
-    console.log(
-      `[LOG] ประมวลผลข้อความอย่างเดียว: ${combinedText.substring(0, 100)}${combinedText.length > 100 ? "..." : ""}`,
+  for (
+    let attemptIndex = 0;
+    attemptIndex < recoveryStrategies.length && !assistantMsg;
+    attemptIndex++
+  ) {
+    const strategy = recoveryStrategies[attemptIndex];
+    const { messages: sanitizedMessages, meta } = filterMessagesForStrategy(
+      mergedContent,
+      strategy.key,
     );
-    assistantMsg = await getAssistantResponseTextOnly(
-      systemInstructions,
-      history,
-      combinedText,
-      aiModelOverride,
-    );
-  } else if (contentAnalysis.processingStrategy === "image_focused") {
-    // กรณีมีแต่รูปภาพ - ให้ความสำคัญกับรูปภาพ
-    console.log(
-      `[LOG] ประมวลผลโฟกัสที่รูปภาพ: ${contentSequence.filter((c) => c.type === "image").length} รูป`,
-    );
-    assistantMsg = await getAssistantResponseMultimodal(
-      systemInstructions,
-      history,
+
+    if (!sanitizedMessages.length) {
+      console.warn(
+        `[LOG] กลยุทธ์ "${strategy.label}" ไม่พบข้อมูลที่พร้อมใช้งานสำหรับผู้ใช้ ${userId} ข้ามไปยังกลยุทธ์ถัดไป`,
+      );
+      continue;
+    }
+
+    const {
       contentSequence,
-      aiModelOverride,
-    );
-  } else {
-    // กรณีมีทั้งข้อความและรูปภาพ - จัดการแบบผสม
+      combinedTextParts,
+      hasImages,
+      textSegmentCount,
+    } = buildContentSequenceFromMessages(sanitizedMessages, enableMessageMerging);
+
+    const combinedText = combinedTextParts.join("\n\n");
+    const imageCount = contentSequence.filter((c) => c.type === "image").length;
+
+    if (!hasImages && !combinedText) {
+      console.warn(
+        `[LOG] กลยุทธ์ "${strategy.label}" สำหรับผู้ใช้ ${userId} ไม่มีข้อความหรือรูปภาพหลังทำความสะอาด`,
+      );
+      continue;
+    }
+
+    if (
+      meta.droppedImages > 0 ||
+      meta.droppedTexts > 0 ||
+      meta.droppedOthers > 0 ||
+      meta.suspectImages > 0
+    ) {
+      const adjustments = [];
+      if (meta.droppedImages > 0) {
+        adjustments.push(`ลบรูปภาพ ${meta.droppedImages} รายการ`);
+      }
+      if (meta.suspectImages > 0) {
+        adjustments.push(`พบรูปภาพที่ต้องจับตา ${meta.suspectImages} รายการ`);
+      }
+      if (meta.droppedTexts > 0) {
+        adjustments.push(`ลบข้อความ ${meta.droppedTexts} รายการ`);
+      }
+      if (meta.droppedOthers > 0) {
+        adjustments.push(`ละเว้นข้อมูลอื่น ${meta.droppedOthers} รายการ`);
+      }
+      console.log(
+        `[LOG] กลยุทธ์ "${strategy.label}" มีการปรับข้อมูล: ${adjustments.join(", ")}`,
+      );
+    }
+
     console.log(
-      `[LOG] ประมวลผลเนื้อหาแบบ multimodal: ข้อความ ${combinedTextParts.length} ส่วน, รูปภาพ ${contentSequence.filter((c) => c.type === "image").length} รูป`,
+      `[LOG] เริ่มสร้าง system instructions (กลยุทธ์ ${strategy.label}, รอบที่ ${attemptIndex + 1}/${recoveryStrategies.length})`,
     );
-    assistantMsg = await getAssistantResponseMultimodal(
-      systemInstructions,
+    const systemInstructions = await buildSystemInstructionsWithContext(
       history,
-      contentSequence,
-      aiModelOverride,
+      queueContext,
     );
+
+    if (hasImages) {
+      console.log(
+        `[LOG] ประมวลผลแบบ multimodal (กลยุทธ์ ${strategy.label}): ข้อความ ${textSegmentCount} ส่วน, รูปภาพ ${imageCount} รูป`,
+      );
+      assistantMsg = await getAssistantResponseMultimodal(
+        systemInstructions,
+        history,
+        contentSequence,
+        aiModelOverride,
+      );
+    } else {
+      const preview = combinedText.substring(0, 100);
+      console.log(
+        `[LOG] ประมวลผลข้อความอย่างเดียว (กลยุทธ์ ${strategy.label}): ${preview}${combinedText.length > 100 ? "..." : ""}`,
+      );
+      assistantMsg = await getAssistantResponseTextOnly(
+        systemInstructions,
+        history,
+        combinedText,
+        aiModelOverride,
+      );
+    }
+
+    if (!assistantMsg) {
+      console.warn(
+        `[LOG] กลยุทธ์ "${strategy.label}" ไม่สามารถสร้างคำตอบได้สำหรับผู้ใช้ ${userId}`,
+      );
+    }
   }
 
-  console.log(
-    `[LOG] ได้รับคำตอบ: ${assistantMsg.substring(0, 100)}${assistantMsg.length > 100 ? "..." : ""}`,
-  );
+  if (assistantMsg) {
+    console.log(
+      `[LOG] ได้รับคำตอบ: ${assistantMsg.substring(0, 100)}${assistantMsg.length > 100 ? "..." : ""}`,
+    );
+  } else {
+    console.warn(
+      `[LOG] ไม่สามารถสร้างคำตอบสำหรับผู้ใช้ ${userId} หลังใช้ทุกกลยุทธ์`,
+    );
+  }
 
   console.log(`[LOG] บันทึกประวัติการสนทนาสำหรับผู้ใช้: ${userId}`);
   await saveChatHistory(
@@ -8954,23 +9298,97 @@ async function processFacebookMessageWithAI(
 
     const history = await getAIHistory(userId);
 
+    const recoveryStrategies = [
+      { key: "original", label: "ข้อมูลเดิมทั้งหมด" },
+      { key: "drop_invalid_images", label: "ลบรูปภาพที่อาจมีปัญหา" },
+      { key: "recent_text_only", label: "ใช้เฉพาะข้อความล่าสุดที่ใช้ได้" },
+    ];
+
+    const baseSequence = Array.isArray(contentSequence)
+      ? contentSequence
+      : [];
+
     let assistantReply = "";
-    const hasImages = contentSequence.some((item) => item.type === "image");
-    if (hasImages) {
-      assistantReply = await getAssistantResponseMultimodal(
-        systemPrompt,
-        history,
-        contentSequence,
-        aiModel,
-      );
-    } else {
-      const text = contentSequence.map((item) => item.content).join("\n\n");
-      assistantReply = await getAssistantResponseTextOnly(
-        systemPrompt,
-        history,
-        text,
-        aiModel,
-      );
+
+    for (
+      let attemptIndex = 0;
+      attemptIndex < recoveryStrategies.length && !assistantReply;
+      attemptIndex++
+    ) {
+      const strategy = recoveryStrategies[attemptIndex];
+      const { sequence: sanitizedSequence, textParts, meta } =
+        filterContentSequenceForStrategy(baseSequence, strategy.key);
+
+      if (!sanitizedSequence.length) {
+        console.warn(
+          `[Facebook AI] กลยุทธ์ "${strategy.label}" ไม่มีข้อมูลสำหรับผู้ใช้ ${userId} ข้ามไปยังกลยุทธ์ถัดไป`,
+        );
+        continue;
+      }
+
+      const hasImages = sanitizedSequence.some((item) => item.type === "image");
+      const combinedText = textParts.join("\n\n");
+
+      if (!hasImages && !combinedText) {
+        console.warn(
+          `[Facebook AI] กลยุทธ์ "${strategy.label}" ไม่เหลือข้อความหรือรูปภาพหลังจัดการสำหรับผู้ใช้ ${userId}`,
+        );
+        continue;
+      }
+
+      if (
+        meta.droppedImages > 0 ||
+        meta.droppedTexts > 0 ||
+        meta.droppedOthers > 0 ||
+        meta.suspectImages > 0
+      ) {
+        const adjustments = [];
+        if (meta.droppedImages > 0) {
+          adjustments.push(`ลบรูปภาพ ${meta.droppedImages} รายการ`);
+        }
+        if (meta.suspectImages > 0) {
+          adjustments.push(`พบรูปภาพที่ต้องจับตา ${meta.suspectImages} รายการ`);
+        }
+        if (meta.droppedTexts > 0) {
+          adjustments.push(`ลบข้อความ ${meta.droppedTexts} รายการ`);
+        }
+        if (meta.droppedOthers > 0) {
+          adjustments.push(`ละเว้นข้อมูลอื่น ${meta.droppedOthers} รายการ`);
+        }
+        console.log(
+          `[Facebook AI] กลยุทธ์ "${strategy.label}" ปรับข้อมูล: ${adjustments.join(", ")}`,
+        );
+      }
+
+      if (hasImages) {
+        const imageCount = sanitizedSequence.filter((i) => i.type === "image").length;
+        console.log(
+          `[Facebook AI] ประมวลผลแบบ multimodal (กลยุทธ์ ${strategy.label}, รอบที่ ${attemptIndex + 1}/${recoveryStrategies.length}) ภาพ ${imageCount} รูป`,
+        );
+        assistantReply = await getAssistantResponseMultimodal(
+          systemPrompt,
+          history,
+          sanitizedSequence,
+          aiModel,
+        );
+      } else {
+        const preview = combinedText.substring(0, 100);
+        console.log(
+          `[Facebook AI] ประมวลผลข้อความ (กลยุทธ์ ${strategy.label}, รอบที่ ${attemptIndex + 1}/${recoveryStrategies.length}): ${preview}${combinedText.length > 100 ? "..." : ""}`,
+        );
+        assistantReply = await getAssistantResponseTextOnly(
+          systemPrompt,
+          history,
+          combinedText,
+          aiModel,
+        );
+      }
+
+      if (!assistantReply) {
+        console.warn(
+          `[Facebook AI] กลยุทธ์ "${strategy.label}" ไม่สามารถสร้างคำตอบสำหรับผู้ใช้ ${userId}`,
+        );
+      }
     }
 
     assistantReply = await filterMessage(assistantReply);
@@ -8995,19 +9413,17 @@ async function processFacebookMessageWithAI(
 
 // Helper function to process message with AI
 async function processMessageWithAI(message, userId, lineBot) {
+  const aiModel = lineBot.aiModel || "gpt-5";
+  const lineSelections = normalizeInstructionSelections(
+    lineBot.selectedInstructions || [],
+  );
+
+  let systemPrompt = "คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้";
+
   try {
-    // ดึงข้อมูล instructions ที่เลือก
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    // ใช้ AI Model เฉพาะของ Line Bot นี้
-    const aiModel = lineBot.aiModel || "gpt-5";
-
-    // ดึง system prompt จาก instructions ที่เลือก
-    let systemPrompt = "คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้";
-    const lineSelections = normalizeInstructionSelections(
-      lineBot.selectedInstructions || [],
-    );
     if (lineSelections.length > 0) {
       const prompt = await buildSystemPromptFromSelections(lineSelections, db);
       if (prompt.trim()) {
@@ -9015,39 +9431,80 @@ async function processMessageWithAI(message, userId, lineBot) {
       }
     }
 
-    // สร้าง OpenAI client และเรียก API
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    const messages = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: message },
-    ];
-
-    const response = await openai.chat.completions.create({
-      model: aiModel,
-      messages,
+    const messageVariants = [
+      {
+        label: "ต้นฉบับ",
+        content: sanitizeTextValue(message, { maxLength: 8000 }),
+      },
+      {
+        label: "ตัดครึ่งท้าย",
+        content: sanitizeTextValue(message, {
+          maxLength: 4000,
+          keepTail: true,
+        }),
+      },
+    ].filter((variant, index, arr) => {
+      if (!variant.content) {
+        return false;
+      }
+      if (index === 0) {
+        return true;
+      }
+      return variant.content !== arr[index - 1].content;
     });
 
-    let assistantReply = response.choices[0].message.content;
-    if (typeof assistantReply !== "string") {
-      assistantReply = JSON.stringify(assistantReply);
+    if (messageVariants.length === 0) {
+      console.warn(
+        `[Line AI] ข้อความของผู้ใช้ ${userId} ไม่มีเนื้อหาที่สามารถส่งให้ AI ประมวลผลได้`,
+      );
+      return "";
     }
 
-    // เพิ่มข้อมูล token usage
-    if (response.usage) {
-      const usage = response.usage;
-      const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens`;
-      assistantReply += tokenInfo;
+    for (let attemptIndex = 0; attemptIndex < messageVariants.length; attemptIndex++) {
+      const variant = messageVariants[attemptIndex];
+      const payloadMessages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: variant.content },
+      ];
+
+      try {
+        console.log(
+          `[Line AI] ประมวลผลข้อความ (${variant.label}, รอบที่ ${attemptIndex + 1}/${messageVariants.length}) สำหรับผู้ใช้ ${userId}`,
+        );
+        const response = await openai.chat.completions.create({
+          model: aiModel,
+          messages: payloadMessages,
+        });
+
+        let assistantReply = response.choices[0].message.content;
+        if (typeof assistantReply !== "string") {
+          assistantReply = JSON.stringify(assistantReply);
+        }
+
+        if (response.usage) {
+          const usage = response.usage;
+          const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens`;
+          assistantReply += tokenInfo;
+        }
+
+        const finalReply = extractThaiReply(assistantReply);
+        return finalReply.trim();
+      } catch (error) {
+        console.error(
+          `[Line AI] เกิดข้อผิดพลาดระหว่างประมวลผล (${variant.label}, รอบที่ ${attemptIndex + 1}/${messageVariants.length}):`,
+          error,
+        );
+      }
     }
 
-    // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
-    const finalReply = extractThaiReply(assistantReply);
-
-    return finalReply.trim();
+    return "";
   } catch (error) {
-    console.error("Error processing message with AI:", error);
+    console.error("Error preparing AI request:", error);
     return "";
   }
+
 }
 
 // Get all Line Bots
