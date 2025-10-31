@@ -41,11 +41,9 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const MONGO_URI = process.env.MONGO_URI;
-const ADMIN_MASTER_PASSCODE =
-  (process.env.ADMIN_MASTER_PASSCODE || "").trim();
+const ADMIN_MASTER_PASSCODE = (process.env.ADMIN_MASTER_PASSCODE || "").trim();
 const ADMIN_SESSION_SECRET =
-  process.env.ADMIN_SESSION_SECRET ||
-  "change-me-please-admin-session-secret";
+  process.env.ADMIN_SESSION_SECRET || "change-me-please-admin-session-secret";
 const ADMIN_SESSION_TTL_SECONDS = Number(
   process.env.ADMIN_SESSION_TTL_SECONDS || 60 * 60 * 12,
 );
@@ -72,9 +70,10 @@ const {
 } = require("./utils/auth");
 
 function resolveInstructionAssetUrl(url, fallbackFileName) {
-  const base = typeof PUBLIC_BASE_URL === "string"
-    ? PUBLIC_BASE_URL.replace(/\/$/, "")
-    : "";
+  const base =
+    typeof PUBLIC_BASE_URL === "string"
+      ? PUBLIC_BASE_URL.replace(/\/$/, "")
+      : "";
   const candidate = (() => {
     if (typeof url === "string" && url.trim()) {
       return url.trim();
@@ -586,8 +585,9 @@ app.use(bodyParser.json({ limit: "10mb" }));
 app.use(bodyParser.urlencoded({ extended: true, limit: "10mb" }));
 app.use((req, res, next) => {
   res.locals.adminUser = req.session?.adminUser || null;
-  res.locals.isPasscodeRequired =
-    isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE);
+  res.locals.isPasscodeRequired = isPasscodeFeatureEnabled(
+    ADMIN_MASTER_PASSCODE,
+  );
   next();
 });
 
@@ -1185,7 +1185,14 @@ async function setUserStatus(userId, aiEnabled) {
  * @param {boolean} isFromAdmin - เป็นข้อความจากแอดมินหรือไม่
  * @returns {Promise<{action: string|null, message: string, sendResponse: boolean}>} - action ที่ดำเนินการและข้อความตอบกลับ
  */
-async function detectKeywordAction(message, keywordSettings, userId, platform, botId, isFromAdmin = false) {
+async function detectKeywordAction(
+  message,
+  keywordSettings,
+  userId,
+  platform,
+  botId,
+  isFromAdmin = false,
+) {
   // ต้องเป็นข้อความจากแอดมินเท่านั้น
   if (!isFromAdmin) {
     return { action: null, message: "", sendResponse: false };
@@ -1231,8 +1238,8 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
       Array.isArray(setting.keywords) && setting.keywords.length > 0
         ? setting.keywords
         : setting.keyword
-        ? [setting.keyword]
-        : [];
+          ? [setting.keyword]
+          : [];
 
     if (!candidates.length) {
       return false;
@@ -1272,51 +1279,60 @@ async function detectKeywordAction(message, keywordSettings, userId, platform, b
     return {
       keyword: setting.keyword || "",
       keywords: parseKeywords(setting.keywords || setting.keyword || ""),
-      response:
-        typeof setting.response === "string" ? setting.response : ""
+      response: typeof setting.response === "string" ? setting.response : "",
     };
   };
 
   const enableAI = normalizeKeywordSetting(keywordSettings.enableAI);
   const disableAI = normalizeKeywordSetting(keywordSettings.disableAI);
-  const disableFollowUp = normalizeKeywordSetting(keywordSettings.disableFollowUp);
+  const disableFollowUp = normalizeKeywordSetting(
+    keywordSettings.disableFollowUp,
+  );
 
   // ตรวจสอบ keyword สำหรับเปิด AI
   if (matchesKeyword(trimmedMessage, enableAI)) {
     await setUserStatus(userId, true);
-    console.log(`[Keyword] เปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    console.log(
+      `[Keyword] เปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
+    );
     const responseMessage = enableAI.response.trim();
     const sendResponse = responseMessage.length > 0;
-    return { 
-      action: "enableAI", 
+    return {
+      action: "enableAI",
       message: responseMessage || `✅ เปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`,
-      sendResponse: sendResponse
+      sendResponse: sendResponse,
     };
   }
 
   // ตรวจสอบ keyword สำหรับปิด AI
   if (matchesKeyword(trimmedMessage, disableAI)) {
     await setUserStatus(userId, false);
-    console.log(`[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    console.log(
+      `[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
+    );
     const responseMessage = disableAI.response.trim();
     const sendResponse = responseMessage.length > 0;
-    return { 
-      action: "disableAI", 
+    return {
+      action: "disableAI",
       message: responseMessage || `⏸️ ปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`,
-      sendResponse: sendResponse
+      sendResponse: sendResponse,
     };
   }
 
   // ตรวจสอบ keyword สำหรับปิดระบบติดตาม
   if (matchesKeyword(trimmedMessage, disableFollowUp)) {
-    await cancelFollowUpTasksForUser(userId, platform, botId, { reason: "keyword_cancel" });
-    console.log(`[Keyword] ปิดระบบติดตามสำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`);
+    await cancelFollowUpTasksForUser(userId, platform, botId, {
+      reason: "keyword_cancel",
+    });
+    console.log(
+      `[Keyword] ปิดระบบติดตามสำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
+    );
     const responseMessage = disableFollowUp.response.trim();
     const sendResponse = responseMessage.length > 0;
-    return { 
-      action: "disableFollowUp", 
+    return {
+      action: "disableFollowUp",
       message: responseMessage || `🔕 ปิดระบบติดตามสำหรับผู้ใช้นี้แล้ว`,
-      sendResponse: sendResponse
+      sendResponse: sendResponse,
     };
   }
 
@@ -1433,7 +1449,10 @@ function sanitizeFollowUpImage(image) {
 
 function sanitizeFollowUpImages(images) {
   if (!Array.isArray(images)) {
-    console.log("[FollowUp Debug] sanitizeFollowUpImages: not an array", typeof images);
+    console.log(
+      "[FollowUp Debug] sanitizeFollowUpImages: not an array",
+      typeof images,
+    );
     return [];
   }
   const result = images.map(sanitizeFollowUpImage).filter(Boolean);
@@ -1441,12 +1460,12 @@ function sanitizeFollowUpImages(images) {
     inputCount: images.length,
     outputCount: result.length,
     sample: result[0],
-    allUrls: result.map(img => ({
+    allUrls: result.map((img) => ({
       url: img.url,
       isAbsolute: img.url.startsWith("http"),
       previewUrl: img.previewUrl,
       previewIsAbsolute: img.previewUrl?.startsWith("http"),
-    }))
+    })),
   });
   return result;
 }
@@ -1474,16 +1493,16 @@ function normalizeFollowUpRounds(rounds) {
     const delay = Number(item.delayMinutes);
     const message = typeof item.message === "string" ? item.message.trim() : "";
     const images = sanitizeFollowUpImages(item.images || item.media);
-    
+
     // Debug log
     console.log(`[FollowUp Debug] Normalizing round ${idx}:`, {
       hasItem: !!item,
       delay,
       messageLength: message.length,
       rawImages: item.images || item.media,
-      imagesCount: images.length
+      imagesCount: images.length,
     });
-    
+
     if (!Number.isFinite(delay) || delay < 1) return;
     if (!message && images.length === 0) return;
     normalized.push({
@@ -1866,15 +1885,15 @@ async function scheduleFollowUpForUser(userId, options = {}) {
         .clone()
         .add(round.delayMinutes, "minutes");
       const sanitizedImages = sanitizeFollowUpImages(round.images);
-      
+
       // Debug log
       console.log(`[FollowUp Debug] Creating round ${index}:`, {
         hasImages: !!round.images,
         imageCount: Array.isArray(round.images) ? round.images.length : 0,
         sanitizedCount: sanitizedImages.length,
-        sampleImage: sanitizedImages[0]
+        sampleImage: sanitizedImages[0],
       });
-      
+
       return {
         index,
         delayMinutes: round.delayMinutes,
@@ -2055,7 +2074,7 @@ async function handleFollowUpTask(task, db) {
     currentIndex,
     hasRound: !!round,
     roundHasImages: !!round?.images,
-    roundImagesCount: Array.isArray(round?.images) ? round.images.length : 0
+    roundImagesCount: Array.isArray(round?.images) ? round.images.length : 0,
   });
 
   if (!round) {
@@ -2143,15 +2162,17 @@ async function sendFollowUpMessage(task, round, db) {
   const message =
     typeof round?.message === "string" ? round.message.trim() : "";
   let images = sanitizeFollowUpImages(round?.images || []);
-  
+
   // ถ้า PUBLIC_BASE_URL ไม่ได้ตั้งค่า ให้เตือน
   if (!PUBLIC_BASE_URL) {
-    console.warn("[FollowUp Warning] PUBLIC_BASE_URL is not set. Images with relative URLs may fail.");
+    console.warn(
+      "[FollowUp Warning] PUBLIC_BASE_URL is not set. Images with relative URLs may fail.",
+    );
   }
-  
+
   // แปลง relative URLs เป็น absolute URLs ถ้า PUBLIC_BASE_URL มี
   if (PUBLIC_BASE_URL) {
-    images = images.map(img => {
+    images = images.map((img) => {
       const fixed = { ...img };
       if (img.url && img.url.startsWith("/")) {
         fixed.url = PUBLIC_BASE_URL.replace(/\/$/, "") + img.url;
@@ -2165,7 +2186,7 @@ async function sendFollowUpMessage(task, round, db) {
       return fixed;
     });
   }
-  
+
   // Debug log
   console.log("[FollowUp Debug] Round data:", {
     hasRound: !!round,
@@ -2173,9 +2194,9 @@ async function sendFollowUpMessage(task, round, db) {
     sanitizedImages: images,
     imageCount: images.length,
     hasPublicBaseUrl: !!PUBLIC_BASE_URL,
-    sampleUrl: images[0]?.url
+    sampleUrl: images[0]?.url,
   });
-  
+
   if (!message && images.length === 0) {
     throw new Error("ไม่มีเนื้อหาสำหรับการติดตาม");
   }
@@ -2199,15 +2220,15 @@ async function sendFollowUpMessage(task, round, db) {
       throw new Error("ไม่พบข้อมูล Facebook Bot");
     }
     const metadata = "follow_up_auto";
-    
+
     // สร้างข้อความรวม text และรูปภาพ ในรูปแบบที่ sendFacebookMessage รองรับ
     let combinedMessage = message || "";
-    
+
     // เพิ่ม [cut] เพื่อแยกข้อความถ้ามีทั้ง text และรูป
     if (message && images.length > 0) {
       combinedMessage += "[cut]";
     }
-    
+
     const followUpAssets = [];
     const followUpLabels = [];
     // เพิ่ม #[IMAGE:...] token สำหรับแต่ละรูป
@@ -2227,13 +2248,13 @@ async function sendFollowUpMessage(task, round, db) {
         label: labelSource,
       });
     }
-    
+
     console.log("[FollowUp Debug] Combined message:", {
       hasText: !!message,
       imageCount: images.length,
       messageLength: combinedMessage.length,
     });
-    
+
     // สร้าง assetsMap จากรูปภาพที่มี
     const assetsMap = buildAssetsLookup(
       followUpAssets.map((asset) => ({
@@ -2242,18 +2263,24 @@ async function sendFollowUpMessage(task, round, db) {
         fileName: asset.fileName || "",
       })),
     );
-    
+
     console.log("[FollowUp Debug] Assets map:", {
       labels: followUpLabels,
       urls: followUpAssets.map((asset) => asset.url),
     });
-    
+
     // ใช้ sendFacebookMessage ที่มี upload/url mode และ fallback
-    await sendFacebookMessage(task.userId, combinedMessage, fbBot.accessToken, {
-      metadata,
-      selectedImageCollections: null, // ไม่ใช้ collections แต่ใช้ assetsMap ที่สร้างเอง
-    }, assetsMap);
-    
+    await sendFacebookMessage(
+      task.userId,
+      combinedMessage,
+      fbBot.accessToken,
+      {
+        metadata,
+        selectedImageCollections: null, // ไม่ใช้ collections แต่ใช้ assetsMap ที่สร้างเอง
+      },
+      assetsMap,
+    );
+
     console.log("[FollowUp Debug] Facebook follow-up sent successfully");
   } else {
     await sendLineFollowUpMessage(task.userId, message, task.botId, db, images);
@@ -2364,10 +2391,13 @@ async function sendLineFollowUpMessage(
     const sendChunks = async (client) => {
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
-        console.log(`[FollowUp Debug] Sending chunk ${i + 1}/${chunks.length}:`, {
-          itemCount: chunk.length,
-          types: chunk.map((item) => item.type),
-        });
+        console.log(
+          `[FollowUp Debug] Sending chunk ${i + 1}/${chunks.length}:`,
+          {
+            itemCount: chunk.length,
+            types: chunk.map((item) => item.type),
+          },
+        );
         await client.pushMessage(userId, chunk.length === 1 ? chunk[0] : chunk);
         console.log(`[FollowUp Debug] Chunk ${i + 1} sent successfully`);
       }
@@ -2618,7 +2648,9 @@ function normalizeShippingCostValue(rawCost) {
     return rawCost;
   }
   if (typeof rawCost === "string") {
-    const parsed = parseFloat(rawCost.replace(/[^\d.,-]/g, "").replace(/,/g, ""));
+    const parsed = parseFloat(
+      rawCost.replace(/[^\d.,-]/g, "").replace(/,/g, ""),
+    );
     if (!Number.isNaN(parsed) && parsed >= 0) {
       return parsed;
     }
@@ -2684,7 +2716,9 @@ function parseOrderPageKey(pageKey) {
   const botIdPart = rest.join(":");
   const platform = normalizeOrderPlatform(platformPart);
   const botId =
-    botIdPart && botIdPart !== "default" ? normalizeOrderBotId(botIdPart) : null;
+    botIdPart && botIdPart !== "default"
+      ? normalizeOrderBotId(botIdPart)
+      : null;
   return { platform, botId };
 }
 
@@ -2754,7 +2788,10 @@ async function appendOrderExtractionMessage(chatDoc) {
     const coll = db.collection(ORDER_BUFFER_COLLECTION);
     await coll.insertOne(bufferDoc);
   } catch (error) {
-    console.error("[OrderBuffer] เพิ่มข้อความลงบัฟเฟอร์ไม่สำเร็จ:", error.message);
+    console.error(
+      "[OrderBuffer] เพิ่มข้อความลงบัฟเฟอร์ไม่สำเร็จ:",
+      error.message,
+    );
   }
 }
 
@@ -2829,11 +2866,7 @@ async function updateOrderCutoffSetting(platform, botId, updates = {}) {
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
-  await coll.updateOne(
-    { pageKey },
-    { $set: safeUpdates },
-    { upsert: true },
-  );
+  await coll.updateOne({ pageKey }, { $set: safeUpdates }, { upsert: true });
   return coll.findOne({ pageKey });
 }
 
@@ -2870,14 +2903,12 @@ async function listOrderCutoffPages() {
         ? bot._id.toString()
         : bot._id || null;
     const pageKey = buildOrderPageKey("line", botId);
-    const settings =
-      settingsMap.get(pageKey) ||
-      {
-        cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
-        lastProcessedAt: null,
-        lastCutoffDateKey: null,
-        lastRunSummary: null,
-      };
+    const settings = settingsMap.get(pageKey) || {
+      cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
+      lastProcessedAt: null,
+      lastCutoffDateKey: null,
+      lastRunSummary: null,
+    };
     pages.push({
       pageKey,
       platform: "line",
@@ -2900,14 +2931,12 @@ async function listOrderCutoffPages() {
         ? bot._id.toString()
         : bot._id || null;
     const pageKey = buildOrderPageKey("facebook", botId);
-    const settings =
-      settingsMap.get(pageKey) ||
-      {
-        cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
-        lastProcessedAt: null,
-        lastCutoffDateKey: null,
-        lastRunSummary: null,
-      };
+    const settings = settingsMap.get(pageKey) || {
+      cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
+      lastProcessedAt: null,
+      lastCutoffDateKey: null,
+      lastRunSummary: null,
+    };
     pages.push({
       pageKey,
       platform: "facebook",
@@ -2924,7 +2953,9 @@ async function listOrderCutoffPages() {
   });
 
   // Ensure settings existสำหรับเพจใหม่เท่านั้น
-  const missingSettings = pages.filter((page) => !settingsMap.has(page.pageKey));
+  const missingSettings = pages.filter(
+    (page) => !settingsMap.has(page.pageKey),
+  );
   if (missingSettings.length) {
     await Promise.all(
       missingSettings.map((page) =>
@@ -2940,10 +2971,7 @@ async function orderBufferMessagesForUser(pageKey, userId) {
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection(ORDER_BUFFER_COLLECTION);
-  return coll
-    .find({ pageKey, userId })
-    .sort({ timestamp: 1 })
-    .toArray();
+  return coll.find({ pageKey, userId }).sort({ timestamp: 1 }).toArray();
 }
 
 async function clearOrderBufferForUser(pageKey, userId) {
@@ -2982,7 +3010,6 @@ async function listOrderBufferUsersWithActivity(pageKey, since) {
   }));
 }
 
-
 function findDuplicateOrder(existingOrders, newOrderData) {
   if (!Array.isArray(existingOrders) || !newOrderData) {
     return null;
@@ -3013,7 +3040,12 @@ function findDuplicateOrder(existingOrders, newOrderData) {
   );
 }
 
-async function markMessagesAsOrderExtracted(userId, messageIds, extractionRoundId, orderId = null) {
+async function markMessagesAsOrderExtracted(
+  userId,
+  messageIds,
+  extractionRoundId,
+  orderId = null,
+) {
   if (!Array.isArray(messageIds) || messageIds.length === 0) {
     return;
   }
@@ -3060,7 +3092,10 @@ async function markMessagesAsOrderExtracted(userId, messageIds, extractionRoundI
       { $set: updateDoc },
     );
   } catch (error) {
-    console.error("[Order] ไม่สามารถมาร์กข้อความที่สกัดแล้วได้:", error.message);
+    console.error(
+      "[Order] ไม่สามารถมาร์กข้อความที่สกัดแล้วได้:",
+      error.message,
+    );
   }
 }
 
@@ -3076,8 +3111,7 @@ function buildOrderQuery(params = {}) {
       platformFilter = parsed.platform;
     }
     if (parsed.botId || parsed.botId === null) {
-      botIdFilter =
-        parsed.botId === null ? "default" : parsed.botId;
+      botIdFilter = parsed.botId === null ? "default" : parsed.botId;
     }
   }
 
@@ -3154,7 +3188,8 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
     previousCustomerName = null,
   } = options || {};
 
-  const orderModel = modelOverride || (await getSettingValue("orderModel", "gpt-4.1-mini"));
+  const orderModel =
+    modelOverride || (await getSettingValue("orderModel", "gpt-4.1-mini"));
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
   // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่
@@ -3221,7 +3256,7 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
     const content = response.choices?.[0]?.message?.content || "";
     const trimmed = content.trim();
     let parsed = null;
-    
+
     try {
       parsed = JSON.parse(trimmed);
     } catch (_) {
@@ -3248,11 +3283,16 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
         shippingCost,
         customerName,
       } = parsed.orderData;
-      
+
       // ตรวจสอบ items
       if (!Array.isArray(items) || items.length === 0) {
         console.warn("[Order] ไม่มีรายการสินค้า");
-        return { hasOrder: false, orderData: null, confidence: 0, reason: "ไม่มีรายการสินค้า" };
+        return {
+          hasOrder: false,
+          orderData: null,
+          confidence: 0,
+          reason: "ไม่มีรายการสินค้า",
+        };
       }
 
       // ตรวจสอบข้อมูลในแต่ละ item และทำความสะอาดข้อมูล
@@ -3301,9 +3341,18 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
       }
 
       // ต้องมีที่อยู่จัดส่ง
-      if (!shippingAddress || typeof shippingAddress !== "string" || !shippingAddress.trim()) {
+      if (
+        !shippingAddress ||
+        typeof shippingAddress !== "string" ||
+        !shippingAddress.trim()
+      ) {
         console.warn("[Order] ไม่มีที่อยู่จัดส่ง");
-        return { hasOrder: false, orderData: null, confidence: 0, reason: "ไม่มีที่อยู่จัดส่ง" };
+        return {
+          hasOrder: false,
+          orderData: null,
+          confidence: 0,
+          reason: "ไม่มีที่อยู่จัดส่ง",
+        };
       }
 
       // คำนวณยอดรวมถ้าไม่ระบุ
@@ -3330,7 +3379,7 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
           customerName: normalizedCustomerName,
         },
         confidence: parsed.confidence || 0.8,
-        reason: parsed.reason || "พบออเดอร์ในบทสนทนา"
+        reason: parsed.reason || "พบออเดอร์ในบทสนทนา",
       };
     }
 
@@ -3338,16 +3387,22 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
       hasOrder: false,
       orderData: null,
       confidence: parsed.confidence || 0.1,
-      reason: parsed.reason || "ไม่พบออเดอร์ในบทสนทนา"
+      reason: parsed.reason || "ไม่พบออเดอร์ในบทสนทนา",
     };
-
   } catch (error) {
     console.error("[Order] เกิดข้อผิดพลาดในการเรียก OpenAI:", error.message);
     return null;
   }
 }
 
-async function saveOrderToDatabase(userId, platform, botId, orderData, extractedFrom = null, isManualExtraction = false) {
+async function saveOrderToDatabase(
+  userId,
+  platform,
+  botId,
+  orderData,
+  extractedFrom = null,
+  isManualExtraction = false,
+) {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -3369,12 +3424,12 @@ async function saveOrderToDatabase(userId, platform, botId, orderData, extracted
       extractedFrom,
       isManualExtraction,
       updatedAt: new Date(),
-      notes: ""
+      notes: "",
     };
 
     const result = await coll.insertOne(orderDoc);
     console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
-    
+
     return result.insertedId;
   } catch (error) {
     console.error("[Order] บันทึกออเดอร์ไม่สำเร็จ:", error.message);
@@ -3411,7 +3466,10 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
     }
 
     // ตรวจสอบว่ามีการตั้งค่าให้วิเคราะห์ออเดอร์อัตโนมัติหรือไม่
-    const orderAnalysisEnabled = await getSettingValue("orderAnalysisEnabled", true);
+    const orderAnalysisEnabled = await getSettingValue(
+      "orderAnalysisEnabled",
+      true,
+    );
     if (!orderAnalysisEnabled) {
       return;
     }
@@ -3471,12 +3529,12 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
 
     // บันทึกออเดอร์ใหม่
     const orderId = await saveOrderToDatabase(
-      userId, 
-      platform, 
-      botId, 
-      analysis.orderData, 
-      "auto_extraction", 
-      false
+      userId,
+      platform,
+      botId,
+      analysis.orderData,
+      "auto_extraction",
+      false,
     );
 
     if (!orderId) {
@@ -3508,13 +3566,14 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
           isManualExtraction: false,
           extractedAt: new Date(),
           confidence: analysis.confidence,
-          reason: analysis.reason
+          reason: analysis.reason,
         });
       }
     } catch (_) {}
 
-    console.log(`[Order] สกัดออเดอร์อัตโนมัติสำเร็จสำหรับผู้ใช้ ${userId}: ${orderId}`);
-
+    console.log(
+      `[Order] สกัดออเดอร์อัตโนมัติสำเร็จสำหรับผู้ใช้ ${userId}: ${orderId}`,
+    );
   } catch (error) {
     console.error("[Order] วิเคราะห์ออเดอร์อัตโนมัติไม่สำเร็จ:", error.message);
   }
@@ -3531,8 +3590,8 @@ async function processOrderCutoffForPage(pageConfig, options = {}) {
     setting.lastProcessedAt instanceof Date
       ? setting.lastProcessedAt
       : setting.lastProcessedAt
-      ? new Date(setting.lastProcessedAt)
-      : null;
+        ? new Date(setting.lastProcessedAt)
+        : null;
 
   const users = await listOrderBufferUsersWithActivity(
     pageKey,
@@ -3592,7 +3651,8 @@ async function processOrderCutoffForPage(pageConfig, options = {}) {
 
       const targetMessages = normalizedMessages.slice(-50).map((msg) => ({
         role: msg.role,
-        content: typeof msg.content === "string" ? msg.content : msg.displayContent,
+        content:
+          typeof msg.content === "string" ? msg.content : msg.displayContent,
         messageId: msg.messageId || null,
       }));
 
@@ -3752,7 +3812,10 @@ async function evaluateOrderCutoffSchedules() {
       }
     }
   } catch (error) {
-    console.error("[OrderCutoff] evaluateOrderCutoffSchedules error:", error.message);
+    console.error(
+      "[OrderCutoff] evaluateOrderCutoffSchedules error:",
+      error.message,
+    );
   } finally {
     orderCutoffProcessing = false;
   }
@@ -3791,7 +3854,8 @@ async function startOrderCutoffScheduler() {
   }, 5000);
 
   console.log(
-    `[OrderCutoff] Scheduler เริ่มทำงาน (interval ${ORDER_CUTOFF_INTERVAL_MS / 1000
+    `[OrderCutoff] Scheduler เริ่มทำงาน (interval ${
+      ORDER_CUTOFF_INTERVAL_MS / 1000
     }s)`,
   );
 }
@@ -4619,9 +4683,10 @@ async function processFlushedMessages(
           userId,
           filteredMessage,
           facebookAccessToken,
-          { 
+          {
             metadata: "ai_generated",
-            selectedImageCollections: queueContext.selectedImageCollections || null
+            selectedImageCollections:
+              queueContext.selectedImageCollections || null,
           },
         );
         console.log("[Facebook] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
@@ -5095,30 +5160,34 @@ async function sendPrivateMessageFromComment(commentId, message, accessToken) {
 // Helper function to process comment with AI
 async function processCommentWithAI(commentText, systemPrompt, aiModel) {
   const startTime = Date.now();
-  
+
   try {
     // ตรวจสอบ API Key
     if (!OPENAI_API_KEY) {
       console.error("[Facebook Comment AI] OPENAI_API_KEY not configured");
-      return "ขอบคุณสำหรับความสนใจครับ 😊 ทีมงานจะติดต่อกลับในเร็วๆ นี้ครับ";
+      return "";
     }
 
     // ตรวจสอบ input
     if (!commentText || commentText.trim().length === 0) {
       console.warn("[Facebook Comment AI] Empty comment text");
-      return "ขอบคุณที่ติดต่อเรานะครับ 🙏";
+      return "";
     }
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const messages = [
-      { role: "system", content: systemPrompt || "คุณคือผู้ช่วยตอบคอมเมนต์ Facebook อย่างเป็นมิตร" },
+      {
+        role: "system",
+        content:
+          systemPrompt || "คุณคือผู้ช่วยตอบคอมเมนต์ Facebook อย่างเป็นมิตร",
+      },
       { role: "user", content: commentText },
     ];
 
     console.log("[Facebook Comment AI] Calling OpenAI:", {
       model: aiModel || "gpt-4o-mini",
-      commentLength: commentText.length
+      commentLength: commentText.length,
     });
 
     const completion = await openai.chat.completions.create({
@@ -5127,47 +5196,47 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel) {
     });
 
     const reply = completion.choices[0]?.message?.content;
-    
+
     if (!reply || reply.trim().length === 0) {
       console.error("[Facebook Comment AI] Empty response from AI");
-      return "ขอบคุณสำหรับความสนใจครับ 😊 ทีมงานจะติดต่อกลับในเร็วๆ นี้ครับ";
+      return "";
     }
 
     const processingTime = Date.now() - startTime;
     console.log("[Facebook Comment AI] Success:", {
       model: completion.model,
       tokensUsed: completion.usage?.total_tokens,
-      processingTime: `${processingTime}ms`
+      processingTime: `${processingTime}ms`,
     });
 
     return reply.trim();
   } catch (error) {
     const processingTime = Date.now() - startTime;
-    
+
     console.error("[Facebook Comment AI] Error:", {
       message: error.message,
       code: error.code,
-      processingTime: `${processingTime}ms`
+      processingTime: `${processingTime}ms`,
     });
 
     // จัดการ error ตามประเภท
-    if (error.code === 'insufficient_quota') {
+    if (error.code === "insufficient_quota") {
       console.error("[Facebook Comment AI] OpenAI quota exceeded");
-      return "ขอบคุณสำหรับความสนใจครับ 🙏 กรุณาติดต่อทีมงานผ่าน Messenger นะครับ";
-    }
-    
-    if (error.code === 'rate_limit_exceeded') {
-      console.error("[Facebook Comment AI] Rate limit exceeded");
-      return "ได้รับความสนใจจากลูกค้าเป็นอย่างมาก 😊 ทีมงานจะติดต่อกลับเร็วๆ นี้ครับ";
+      return "";
     }
 
-    if (error.code === 'invalid_api_key') {
+    if (error.code === "rate_limit_exceeded") {
+      console.error("[Facebook Comment AI] Rate limit exceeded");
+      return "";
+    }
+
+    if (error.code === "invalid_api_key") {
       console.error("[Facebook Comment AI] Invalid API key");
-      return "ขอบคุณสำหรับความสนใจครับ 😊 ทีมงานจะติดต่อกลับในเร็วๆ นี้ครับ";
+      return "";
     }
 
     // Fallback message ทั่วไป
-    return "ขอบคุณสำหรับความสนใจครับ 😊 ทีมงานจะติดต่อกลับในเร็วๆ นี้ครับ";
+    return "";
   }
 }
 
@@ -5231,7 +5300,10 @@ app.get("/admin/facebook-comment", async (req, res) => {
         continue;
       }
 
-      const ensured = await ensureCommentConfigExists(normalizedPageKey, postId);
+      const ensured = await ensureCommentConfigExists(
+        normalizedPageKey,
+        postId,
+      );
       if (ensured) {
         ensuredFromLogs = true;
         configKeySet.add(configKey);
@@ -5541,7 +5613,7 @@ async function handleFacebookComment(pageId, postId, commentData, accessToken) {
           "[Facebook Comment] AI processing failed:",
           aiError.message,
         );
-        replyMessage = "ขออภัย ไม่สามารถประมวลผลได้ในขณะนี้";
+        replyMessage = "";
       }
     }
 
@@ -6226,12 +6298,13 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
         client = await connectDB();
         db = client.db("chatbot");
       }
-      
-      const botCollection = botKind === "facebook" ? "facebook_bots" : "line_bots";
-      const botDoc = await db.collection(botCollection).findOne({ 
-        _id: queueContext.botId 
+
+      const botCollection =
+        botKind === "facebook" ? "facebook_bots" : "line_bots";
+      const botDoc = await db.collection(botCollection).findOne({
+        _id: queueContext.botId,
       });
-      
+
       if (botDoc && botDoc.selectedImageCollections) {
         selectedImageCollections = botDoc.selectedImageCollections;
       }
@@ -6331,7 +6404,7 @@ async function getAssistantResponseTextOnly(
     return finalReply.trim();
   } catch (err) {
     console.error("OpenAI text error:", err);
-    return "ขออภัยค่ะ ระบบขัดข้องชั่วคราว ไม่สามารถตอบได้ในขณะนี้";
+    return "";
   }
 }
 
@@ -6469,7 +6542,7 @@ async function getAssistantResponseMultimodal(
     return finalReply.trim();
   } catch (err) {
     console.error("OpenAI multimodal error:", err);
-    return "ขออภัยค่ะ ระบบขัดข้องชั่วคราว ไม่สามารถประมวลผลรูปภาพได้ในขณะนี้";
+    return "";
   }
 }
 
@@ -6543,11 +6616,7 @@ async function setSettingValue(key, value) {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("settings");
-    await coll.updateOne(
-      { key },
-      { $set: { value } },
-      { upsert: true },
-    );
+    await coll.updateOne({ key }, { $set: { value } }, { upsert: true });
     return true;
   } catch (error) {
     console.error(`Error setting ${key}:`, error);
@@ -7134,7 +7203,11 @@ async function getAssetsInstructionsText(selectedCollectionIds = null) {
   let assets = [];
 
   // ถ้ามีการเลือก collections ให้ใช้รูปจาก collections
-  if (selectedCollectionIds && Array.isArray(selectedCollectionIds) && selectedCollectionIds.length > 0) {
+  if (
+    selectedCollectionIds &&
+    Array.isArray(selectedCollectionIds) &&
+    selectedCollectionIds.length > 0
+  ) {
     assets = await getImagesFromSelectedCollections(selectedCollectionIds);
   } else {
     // fallback: ใช้รูปทั้งหมด (backward compatible)
@@ -7210,7 +7283,9 @@ async function getAssetsMapForBot(selectedCollectionIds = null) {
       console.warn(
         "[Assets] Some instruction assets are not linked to selected collections:",
         sample.join(", "),
-        missingLabels.size > sample.length ? `(+${missingLabels.size - sample.length})` : "",
+        missingLabels.size > sample.length
+          ? `(+${missingLabels.size - sample.length})`
+          : "",
       );
     }
   }
@@ -7238,7 +7313,9 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
     const prev = message.slice(lastIndex, idx);
     if (prev && prev.trim() !== "") segments.push({ type: "text", text: prev });
     let rawLabel = (match[1] || "").trim();
-    let cleanedLabel = rawLabel.replace(/^[“”"'`]+/, "").replace(/[“”"'`]+$/, "");
+    let cleanedLabel = rawLabel
+      .replace(/^[“”"'`]+/, "")
+      .replace(/[“”"'`]+$/, "");
     const candidates = [];
     uniquePush(candidates, cleanedLabel);
     if (cleanedLabel.endsWith(":")) {
@@ -7790,7 +7867,7 @@ app.post("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
     res.status(201).json({ success: true, passcode: doc });
   } catch (err) {
     res.status(400).json({
-     success: false,
+      success: false,
       error: err?.message || "ไม่สามารถสร้างรหัสผ่านใหม่ได้",
     });
   }
@@ -7816,24 +7893,20 @@ app.patch(
   },
 );
 
-app.delete(
-  "/api/admin-passcodes/:id",
-  requireSuperadmin,
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      await deletePasscode(db, id);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(400).json({
-        success: false,
-        error: err?.message || "ไม่สามารถลบรหัสผ่านได้",
-      });
-    }
-  },
-);
+app.delete("/api/admin-passcodes/:id", requireSuperadmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    await deletePasscode(db, id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || "ไม่สามารถลบรหัสผ่านได้",
+    });
+  }
+});
 
 // ============================ Admin UI Routes ============================
 
@@ -8060,7 +8133,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                 targetUserId,
                 "facebook",
                 facebookBot._id?.toString?.() || null,
-                true // isFromAdmin = true
+                true, // isFromAdmin = true
               );
 
               if (keywordResult.action) {
@@ -8312,7 +8385,12 @@ async function sendFacebookMessage(
   options = {},
   customAssetsMap = null,
 ) {
-  const { metadata = null, messagingType = null, tag = null, selectedImageCollections = null } = options || {};
+  const {
+    metadata = null,
+    messagingType = null,
+    tag = null,
+    selectedImageCollections = null,
+  } = options || {};
   // แยกข้อความตามตัวแบ่ง [cut] → จากนั้น parse #[IMAGE:<label>] เป็น segments
   const parts = String(message)
     .split("[cut]")
@@ -8320,7 +8398,8 @@ async function sendFacebookMessage(
     .filter((p) => p.length > 0);
 
   // ใช้ customAssetsMap ถ้ามี ไม่เช่นนั้นดึงจาก database
-  const assetsMap = customAssetsMap || await getAssetsMapForBot(selectedImageCollections);
+  const assetsMap =
+    customAssetsMap || (await getAssetsMapForBot(selectedImageCollections));
   const maxLength = 2000;
 
   for (const part of parts) {
@@ -8910,7 +8989,7 @@ async function processFacebookMessageWithAI(
     return finalReply.trim();
   } catch (error) {
     console.error("Error processing Facebook message with AI:", error);
-    return "ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ";
+    return "";
   }
 }
 
@@ -8967,7 +9046,7 @@ async function processMessageWithAI(message, userId, lineBot) {
     return finalReply.trim();
   } catch (error) {
     console.error("Error processing message with AI:", error);
-    return "ขออภัย เกิดข้อผิดพลาดในการประมวลผลข้อความ";
+    return "";
   }
 }
 
@@ -9066,7 +9145,7 @@ app.post("/api/line-bots", async (req, res) => {
       keywordSettings: {
         enableAI: { keyword: "", response: "" },
         disableAI: { keyword: "", response: "" },
-        disableFollowUp: { keyword: "", response: "" }
+        disableFollowUp: { keyword: "", response: "" },
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -9191,16 +9270,16 @@ app.patch("/api/line-bots/:id/toggle-status", async (req, res) => {
 
     const result = await coll.updateOne(
       { _id: new ObjectId(id) },
-      { $set: { status: newStatus, updatedAt: new Date() } }
+      { $set: { status: newStatus, updatedAt: new Date() } },
     );
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    res.json({ 
+    res.json({
       message: `เปลี่ยนสถานะ Line Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
-      status: newStatus
+      status: newStatus,
     });
   } catch (err) {
     console.error("Error toggling line bot status:", err);
@@ -9344,10 +9423,8 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
     const { id } = req.params;
     const { keywordSettings } = req.body;
 
-    if (!keywordSettings || typeof keywordSettings !== 'object') {
-      return res
-        .status(400)
-        .json({ error: "keywordSettings ต้องเป็น object" });
+    if (!keywordSettings || typeof keywordSettings !== "object") {
+      return res.status(400).json({ error: "keywordSettings ต้องเป็น object" });
     }
 
     const client = await connectDB();
@@ -9357,19 +9434,19 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
     // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response)
     const normalizeKeywordSetting = (setting) => {
       if (!setting) return { keyword: "", response: "" };
-      if (typeof setting === 'string') {
+      if (typeof setting === "string") {
         return { keyword: setting.trim(), response: "" };
       }
       return {
         keyword: (setting.keyword || "").trim(),
-        response: (setting.response || "").trim()
+        response: (setting.response || "").trim(),
       };
     };
 
     const normalizedSettings = {
       enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
       disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
-      disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp)
+      disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
     const result = await coll.updateOne(
@@ -9386,12 +9463,13 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    res.json({ message: "อัปเดต keyword settings เรียบร้อยแล้ว", keywordSettings: normalizedSettings });
+    res.json({
+      message: "อัปเดต keyword settings เรียบร้อยแล้ว",
+      keywordSettings: normalizedSettings,
+    });
   } catch (err) {
     console.error("Error updating line bot keyword settings:", err);
-    res
-      .status(500)
-      .json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
+    res.status(500).json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
   }
 });
 
@@ -9544,7 +9622,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       keywordSettings: {
         enableAI: { keyword: "", response: "" },
         disableAI: { keyword: "", response: "" },
-        disableFollowUp: { keyword: "", response: "" }
+        disableFollowUp: { keyword: "", response: "" },
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -9669,16 +9747,16 @@ app.patch("/api/facebook-bots/:id/toggle-status", async (req, res) => {
 
     const result = await coll.updateOne(
       { _id: new ObjectId(id) },
-      { $set: { status: newStatus, updatedAt: new Date() } }
+      { $set: { status: newStatus, updatedAt: new Date() } },
     );
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    res.json({ 
+    res.json({
       message: `เปลี่ยนสถานะ Facebook Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
-      status: newStatus
+      status: newStatus,
     });
   } catch (err) {
     console.error("Error toggling facebook bot status:", err);
@@ -9824,10 +9902,8 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
     const { id } = req.params;
     const { keywordSettings } = req.body;
 
-    if (!keywordSettings || typeof keywordSettings !== 'object') {
-      return res
-        .status(400)
-        .json({ error: "keywordSettings ต้องเป็น object" });
+    if (!keywordSettings || typeof keywordSettings !== "object") {
+      return res.status(400).json({ error: "keywordSettings ต้องเป็น object" });
     }
 
     const client = await connectDB();
@@ -9837,19 +9913,19 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
     // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response)
     const normalizeKeywordSetting = (setting) => {
       if (!setting) return { keyword: "", response: "" };
-      if (typeof setting === 'string') {
+      if (typeof setting === "string") {
         return { keyword: setting.trim(), response: "" };
       }
       return {
         keyword: (setting.keyword || "").trim(),
-        response: (setting.response || "").trim()
+        response: (setting.response || "").trim(),
       };
     };
 
     const normalizedSettings = {
       enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
       disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
-      disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp)
+      disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
     const result = await coll.updateOne(
@@ -9866,12 +9942,13 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    res.json({ message: "อัปเดต keyword settings เรียบร้อยแล้ว", keywordSettings: normalizedSettings });
+    res.json({
+      message: "อัปเดต keyword settings เรียบร้อยแล้ว",
+      keywordSettings: normalizedSettings,
+    });
   } catch (err) {
     console.error("Error updating facebook bot keyword settings:", err);
-    res
-      .status(500)
-      .json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
+    res.status(500).json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
   }
 });
 
@@ -10902,9 +10979,7 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
     res.json({ success: true, asset: mapInstructionAssetResponse(updatedDoc) });
   } catch (err) {
     console.error("[Assets] update error:", err);
-    res
-      .status(500)
-      .json({ success: false, error: "ไม่สามารถแก้ไขรูปภาพได้" });
+    res.status(500).json({ success: false, error: "ไม่สามารถแก้ไขรูปภาพได้" });
   }
 });
 
@@ -11005,7 +11080,10 @@ async function getImageCollections() {
 // Helper: ดึงรูปภาพจาก collections ที่เลือก (สำหรับ bot)
 async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
   try {
-    if (!Array.isArray(selectedCollectionIds) || selectedCollectionIds.length === 0) {
+    if (
+      !Array.isArray(selectedCollectionIds) ||
+      selectedCollectionIds.length === 0
+    ) {
       return [];
     }
 
@@ -11196,7 +11274,9 @@ async function syncInstructionAssetToCollections(db, asset) {
   }
 
   if (!defaultUpdated) {
-    const defaultCollection = await collectionsColl.findOne({ isDefault: true });
+    const defaultCollection = await collectionsColl.findOne({
+      isDefault: true,
+    });
     if (defaultCollection) {
       const images = Array.isArray(defaultCollection.images)
         ? [collectionEntry, ...defaultCollection.images.filter(Boolean)]
@@ -11212,7 +11292,10 @@ async function syncInstructionAssetToCollections(db, asset) {
       );
     } else {
       const assetsColl = db.collection("instruction_assets");
-      const allAssets = await assetsColl.find({}).sort({ createdAt: -1 }).toArray();
+      const allAssets = await assetsColl
+        .find({})
+        .sort({ createdAt: -1 })
+        .toArray();
       const imageEntries = [];
       for (const assetDoc of allAssets) {
         const entry = buildCollectionImageEntryFromAsset(assetDoc);
@@ -11334,9 +11417,9 @@ app.get("/admin/image-collections", async (req, res) => {
     res.json({ success: true, collections });
   } catch (err) {
     console.error("[Collections] list error:", err);
-    res.status(500).json({ 
-      success: false, 
-      error: "ไม่สามารถดึงรายการ Image Collections ได้" 
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถดึงรายการ Image Collections ได้",
     });
   }
 });
@@ -11361,22 +11444,22 @@ app.get("/admin/image-collections/:id", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("image_collections");
-    
+
     const collection = await coll.findOne({ _id: id });
-    
+
     if (!collection) {
-      return res.status(404).json({ 
-        success: false, 
-        error: "ไม่พบ Image Collection" 
+      return res.status(404).json({
+        success: false,
+        error: "ไม่พบ Image Collection",
       });
     }
-    
+
     res.json({ success: true, collection });
   } catch (err) {
     console.error("[Collections] get error:", err);
-    res.status(500).json({ 
-      success: false, 
-      error: "ไม่สามารถดึงข้อมูล Image Collection ได้" 
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถดึงข้อมูล Image Collection ได้",
     });
   }
 });
@@ -11387,9 +11470,9 @@ app.post("/admin/image-collections", async (req, res) => {
     const { name, description, imageLabels } = req.body;
 
     if (!name || !name.trim()) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "กรุณาระบุชื่อ Collection" 
+      return res.status(400).json({
+        success: false,
+        error: "กรุณาระบุชื่อ Collection",
       });
     }
 
@@ -11399,42 +11482,48 @@ app.post("/admin/image-collections", async (req, res) => {
     const assetsColl = db.collection("instruction_assets");
 
     // ดึงข้อมูลรูปภาพจาก labels ที่เลือก
-    const selectedAssets = await assetsColl.find({
-      label: { $in: imageLabels || [] }
-    }).toArray();
+    const selectedAssets = await assetsColl
+      .find({
+        label: { $in: imageLabels || [] },
+      })
+      .toArray();
 
-    const images = selectedAssets.map(asset => ({
+    const images = selectedAssets.map((asset) => ({
       label: asset.label,
       slug: asset.slug || asset.label,
       url: asset.url,
       thumbUrl: asset.thumbUrl || asset.url,
       description: asset.description || asset.alt || "",
       fileName: asset.fileName,
-      assetId: asset._id.toString()
+      assetId: asset._id.toString(),
     }));
 
     const newCollection = {
-      _id: "collection-" + Date.now() + "-" + Math.random().toString(36).slice(2, 9),
+      _id:
+        "collection-" +
+        Date.now() +
+        "-" +
+        Math.random().toString(36).slice(2, 9),
       name: name.trim(),
       description: (description || "").trim(),
       images: images,
       isDefault: false,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
 
     await collectionsColl.insertOne(newCollection);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       collection: newCollection,
-      message: `สร้าง Collection "${newCollection.name}" สำเร็จ (${images.length} รูป)` 
+      message: `สร้าง Collection "${newCollection.name}" สำเร็จ (${images.length} รูป)`,
     });
   } catch (err) {
     console.error("[Collections] create error:", err);
-    res.status(500).json({ 
-      success: false, 
-      error: "ไม่สามารถสร้าง Image Collection ได้" 
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถสร้าง Image Collection ได้",
     });
   }
 });
@@ -11446,9 +11535,9 @@ app.put("/admin/image-collections/:id", async (req, res) => {
     const { name, description, imageLabels } = req.body;
 
     if (!name || !name.trim()) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "กรุณาระบุชื่อ Collection" 
+      return res.status(400).json({
+        success: false,
+        error: "กรุณาระบุชื่อ Collection",
       });
     }
 
@@ -11460,51 +11549,53 @@ app.put("/admin/image-collections/:id", async (req, res) => {
     // ตรวจสอบว่า collection มีอยู่หรือไม่
     const existing = await collectionsColl.findOne({ _id: id });
     if (!existing) {
-      return res.status(404).json({ 
-        success: false, 
-        error: "ไม่พบ Image Collection" 
+      return res.status(404).json({
+        success: false,
+        error: "ไม่พบ Image Collection",
       });
     }
 
     // ดึงข้อมูลรูปภาพจาก labels ที่เลือก
-    const selectedAssets = await assetsColl.find({
-      label: { $in: imageLabels || [] }
-    }).toArray();
+    const selectedAssets = await assetsColl
+      .find({
+        label: { $in: imageLabels || [] },
+      })
+      .toArray();
 
-    const images = selectedAssets.map(asset => ({
+    const images = selectedAssets.map((asset) => ({
       label: asset.label,
       slug: asset.slug || asset.label,
       url: asset.url,
       thumbUrl: asset.thumbUrl || asset.url,
       description: asset.description || asset.alt || "",
       fileName: asset.fileName,
-      assetId: asset._id.toString()
+      assetId: asset._id.toString(),
     }));
 
     await collectionsColl.updateOne(
       { _id: id },
-      { 
+      {
         $set: {
           name: name.trim(),
           description: (description || "").trim(),
           images: images,
-          updatedAt: new Date()
-        }
-      }
+          updatedAt: new Date(),
+        },
+      },
     );
 
     const updated = await collectionsColl.findOne({ _id: id });
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       collection: updated,
-      message: `แก้ไข Collection "${updated.name}" สำเร็จ (${images.length} รูป)` 
+      message: `แก้ไข Collection "${updated.name}" สำเร็จ (${images.length} รูป)`,
     });
   } catch (err) {
     console.error("[Collections] update error:", err);
-    res.status(500).json({ 
-      success: false, 
-      error: "ไม่สามารถแก้ไข Image Collection ได้" 
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถแก้ไข Image Collection ได้",
     });
   }
 });
@@ -11520,42 +11611,46 @@ app.delete("/admin/image-collections/:id", async (req, res) => {
     // ตรวจสอบว่าเป็น default collection หรือไม่
     const collection = await coll.findOne({ _id: id });
     if (!collection) {
-      return res.status(404).json({ 
-        success: false, 
-        error: "ไม่พบ Image Collection" 
+      return res.status(404).json({
+        success: false,
+        error: "ไม่พบ Image Collection",
       });
     }
 
     if (collection.isDefault) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "ไม่สามารถลบ Default Collection ได้" 
+      return res.status(400).json({
+        success: false,
+        error: "ไม่สามารถลบ Default Collection ได้",
       });
     }
 
     // ลบ collection reference จาก bots
-    await db.collection("line_bots").updateMany(
-      { selectedImageCollections: id },
-      { $pull: { selectedImageCollections: id } }
-    );
+    await db
+      .collection("line_bots")
+      .updateMany(
+        { selectedImageCollections: id },
+        { $pull: { selectedImageCollections: id } },
+      );
 
-    await db.collection("facebook_bots").updateMany(
-      { selectedImageCollections: id },
-      { $pull: { selectedImageCollections: id } }
-    );
+    await db
+      .collection("facebook_bots")
+      .updateMany(
+        { selectedImageCollections: id },
+        { $pull: { selectedImageCollections: id } },
+      );
 
     // ลบ collection
     await coll.deleteOne({ _id: id });
 
-    res.json({ 
+    res.json({
       success: true,
-      message: `ลบ Collection "${collection.name}" สำเร็จ` 
+      message: `ลบ Collection "${collection.name}" สำเร็จ`,
     });
   } catch (err) {
     console.error("[Collections] delete error:", err);
-    res.status(500).json({ 
-      success: false, 
-      error: "ไม่สามารถลบ Image Collection ได้" 
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถลบ Image Collection ได้",
     });
   }
 });
@@ -12012,9 +12107,11 @@ app.post(
       const db = client.db("chatbot");
       const coll = db.collection("follow_up_assets");
       const bucket = new GridFSBucket(db, { bucketName: "followupAssets" });
-      const urlBase = PUBLIC_BASE_URL 
-        ? PUBLIC_BASE_URL.replace(/\/$/, "") 
-        : (req.get("host") ? `https://${req.get("host")}` : "");
+      const urlBase = PUBLIC_BASE_URL
+        ? PUBLIC_BASE_URL.replace(/\/$/, "")
+        : req.get("host")
+          ? `https://${req.get("host")}`
+          : "";
 
       const assets = [];
       for (const file of files) {
@@ -12179,8 +12276,7 @@ app.get("/admin/orders/pages", async (req, res) => {
 
 app.post("/admin/orders/pages/cutoff", async (req, res) => {
   try {
-    const { pageKey, platform, botId, cutoffTime } =
-      req.body || {};
+    const { pageKey, platform, botId, cutoffTime } = req.body || {};
 
     let targetPlatform = platform ? normalizeOrderPlatform(platform) : null;
     let targetBotId = typeof botId === "string" ? botId : null;
@@ -12188,8 +12284,7 @@ app.post("/admin/orders/pages/cutoff", async (req, res) => {
     if (pageKey && pageKey !== "all") {
       const parsed = parseOrderPageKey(pageKey);
       targetPlatform = parsed.platform || targetPlatform;
-      targetBotId =
-        parsed.botId === null ? null : parsed.botId || targetBotId;
+      targetBotId = parsed.botId === null ? null : parsed.botId || targetBotId;
     }
 
     if (!targetPlatform) {
@@ -12201,9 +12296,7 @@ app.post("/admin/orders/pages/cutoff", async (req, res) => {
 
     const normalizedBotId =
       targetBotId === "default" ? null : normalizeOrderBotId(targetBotId);
-    const safeCutoff = parseCutoffTime(
-      cutoffTime || ORDER_DEFAULT_CUTOFF_TIME,
-    );
+    const safeCutoff = parseCutoffTime(cutoffTime || ORDER_DEFAULT_CUTOFF_TIME);
 
     const updated = await updateOrderCutoffSetting(
       targetPlatform,
@@ -12394,10 +12487,12 @@ app.post("/admin/chat/users/:userId/refresh-profile", async (req, res) => {
 
     await ensureFacebookProfileDisplayName(userId, facebookBot.accessToken);
 
-    const profile = await db.collection("user_profiles").findOne(
-      { userId, platform: "facebook" },
-      { projection: { displayName: 1, updatedAt: 1 } },
-    );
+    const profile = await db
+      .collection("user_profiles")
+      .findOne(
+        { userId, platform: "facebook" },
+        { projection: { displayName: 1, updatedAt: 1 } },
+      );
 
     if (!profile?.displayName) {
       return res.json({
@@ -12477,9 +12572,10 @@ app.post("/admin/chat/send", async (req, res) => {
     // ดึงข้อมูล bot เพื่อตรวจสอบ keyword settings
     let keywordSettings = {};
     if (botId && ObjectId.isValid(botId)) {
-      const botColl = platform === "facebook" 
-        ? db.collection("facebook_bots") 
-        : db.collection("line_bots");
+      const botColl =
+        platform === "facebook"
+          ? db.collection("facebook_bots")
+          : db.collection("line_bots");
       const bot = await botColl.findOne({ _id: new ObjectId(botId) });
       if (bot && bot.keywordSettings) {
         keywordSettings = bot.keywordSettings;
@@ -12493,7 +12589,7 @@ app.post("/admin/chat/send", async (req, res) => {
       userId,
       platform,
       botId,
-      true // isFromAdmin = true
+      true, // isFromAdmin = true
     );
 
     if (keywordResult.action) {
@@ -12506,8 +12602,8 @@ app.post("/admin/chat/send", async (req, res) => {
           timestamp: new Date(),
           source: "admin_chat",
           platform,
-      botId,
-    };
+          botId,
+        };
         const controlInsertResult = await coll.insertOne(controlDoc);
         if (controlInsertResult?.insertedId) {
           controlDoc._id = controlInsertResult.insertedId;
@@ -12536,7 +12632,7 @@ app.post("/admin/chat/send", async (req, res) => {
           control: true,
           displayMessage: "ดำเนินการเรียบร้อยแล้ว (ไม่ส่งข้อความตอบกลับ)",
           skipEcho: true,
-          silent: true
+          silent: true,
         });
       }
     }
@@ -12554,10 +12650,10 @@ app.post("/admin/chat/send", async (req, res) => {
         role: "assistant",
         content: `[ระบบ] ${controlText}`,
         timestamp: new Date(),
-      source: "admin_chat",
-      platform,
-      botId,
-    };
+        source: "admin_chat",
+        platform,
+        botId,
+      };
       const legacyControlInsert = await coll.insertOne(controlDoc);
       if (legacyControlInsert?.insertedId) {
         controlDoc._id = legacyControlInsert.insertedId;
@@ -12693,10 +12789,10 @@ app.get("/admin/chat/tags/:userId", async (req, res) => {
     const tagsColl = db.collection("user_tags");
 
     const userTags = await tagsColl.findOne({ userId });
-    
-    res.json({ 
-      success: true, 
-      tags: userTags ? userTags.tags : [] 
+
+    res.json({
+      success: true,
+      tags: userTags ? userTags.tags : [],
     });
   } catch (err) {
     console.error("Error getting user tags:", err);
@@ -12716,8 +12812,8 @@ app.post("/admin/chat/tags/:userId", async (req, res) => {
 
     // ตรวจสอบและทำความสะอาด tags
     const cleanTags = tags
-      .map(tag => String(tag).trim())
-      .filter(tag => tag.length > 0 && tag.length <= 50)
+      .map((tag) => String(tag).trim())
+      .filter((tag) => tag.length > 0 && tag.length <= 50)
       .slice(0, 20); // จำกัดไม่เกิน 20 tags ต่อคน
 
     const client = await connectDB();
@@ -12726,13 +12822,13 @@ app.post("/admin/chat/tags/:userId", async (req, res) => {
 
     await tagsColl.updateOne(
       { userId },
-      { 
-        $set: { 
-          tags: cleanTags, 
-          updatedAt: new Date() 
-        } 
+      {
+        $set: {
+          tags: cleanTags,
+          updatedAt: new Date(),
+        },
       },
-      { upsert: true }
+      { upsert: true },
     );
 
     // Emit to socket clients
@@ -12773,7 +12869,10 @@ app.post("/admin/chat/feedback", async (req, res) => {
 
     const messageDoc = await historyColl.findOne({ _id: messageObjectId });
     if (!messageDoc) {
-      return res.json({ success: false, error: "ไม่พบข้อความที่ต้องการประเมิน" });
+      return res.json({
+        success: false,
+        error: "ไม่พบข้อความที่ต้องการประเมิน",
+      });
     }
 
     if (messageDoc.senderId !== trimmedUserId) {
@@ -12840,10 +12939,10 @@ app.get("/admin/chat/orders/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     const orders = await getUserOrders(userId);
-    
-    res.json({ 
-      success: true, 
-      orders: orders 
+
+    res.json({
+      success: true,
+      orders: orders,
     });
   } catch (err) {
     console.error("Error getting user orders:", err);
@@ -12855,7 +12954,7 @@ app.get("/admin/chat/orders/:userId", async (req, res) => {
 app.post("/admin/chat/orders/extract", async (req, res) => {
   try {
     const { userId } = req.body;
-    
+
     if (!userId) {
       return res.json({ success: false, error: "userId จำเป็น" });
     }
@@ -12900,7 +12999,10 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
     });
 
     if (!analysis) {
-      return res.json({ success: false, error: "ไม่สามารถวิเคราะห์ออเดอร์ได้" });
+      return res.json({
+        success: false,
+        error: "ไม่สามารถวิเคราะห์ออเดอร์ได้",
+      });
     }
 
     if (!analysis.hasOrder) {
@@ -12912,7 +13014,10 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
       });
     }
 
-    const duplicateOrder = findDuplicateOrder(existingOrders, analysis.orderData);
+    const duplicateOrder = findDuplicateOrder(
+      existingOrders,
+      analysis.orderData,
+    );
     if (duplicateOrder) {
       const extractionRoundId = new ObjectId().toString();
       await markMessagesAsOrderExtracted(
@@ -12930,7 +13035,8 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
       });
     }
 
-    const lastMessage = targetMessages[targetMessages.length - 1] ||
+    const lastMessage =
+      targetMessages[targetMessages.length - 1] ||
       messages[messages.length - 1];
     const platform = lastMessage?.platform || "line";
     const botId = lastMessage?.botId || null;
@@ -12982,7 +13088,6 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
       confidence: analysis.confidence,
       reason: analysis.reason,
     });
-
   } catch (err) {
     console.error("Error extracting order:", err);
     res.json({ success: false, error: err.message });
@@ -13004,7 +13109,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     const coll = db.collection("orders");
 
     const updateDoc = {
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
 
     if (orderData) {
@@ -13023,7 +13128,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
 
     const result = await coll.updateOne(
       { _id: new ObjectId(orderId) },
-      { $set: updateDoc }
+      { $set: updateDoc },
     );
 
     if (result.matchedCount === 0) {
@@ -13042,16 +13147,15 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
           orderData: updatedOrder.orderData,
           status: updatedOrder.status,
           notes: updatedOrder.notes,
-          updatedAt: updatedOrder.updatedAt
+          updatedAt: updatedOrder.updatedAt,
         });
       }
     } catch (_) {}
 
-    res.json({ 
-      success: true, 
-      order: updatedOrder 
+    res.json({
+      success: true,
+      order: updatedOrder,
     });
-
   } catch (err) {
     console.error("Error updating order:", err);
     res.json({ success: false, error: err.message });
@@ -13088,7 +13192,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
       if (io) {
         io.emit("orderDeleted", {
           orderId,
-          userId: order.userId
+          userId: order.userId,
         });
       }
     } catch (_) {}
@@ -13097,11 +13201,10 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
       forceUpdate: true,
     });
 
-    res.json({ 
-      success: true, 
-      message: "ลบออเดอร์เรียบร้อยแล้ว" 
+    res.json({
+      success: true,
+      message: "ลบออเดอร์เรียบร้อยแล้ว",
     });
-
   } catch (err) {
     console.error("Error deleting order:", err);
     res.json({ success: false, error: err.message });
@@ -13112,7 +13215,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
 app.get("/admin/chat/orders", async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
-    
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("orders");
@@ -13131,13 +13234,12 @@ app.get("/admin/chat/orders", async (req, res) => {
 
     const totalCount = await coll.countDocuments(query);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       orders,
       totalCount,
-      hasMore: (parseInt(offset) + orders.length) < totalCount
+      hasMore: parseInt(offset) + orders.length < totalCount,
     });
-
   } catch (err) {
     console.error("Error getting all orders:", err);
     res.json({ success: false, error: err.message });
@@ -13153,12 +13255,12 @@ app.get("/admin/chat/available-tags", async (req, res) => {
 
     // ดึงแท็กทั้งหมดจากผู้ใช้ทั้งหมด
     const allUserTags = await tagsColl.find({}).toArray();
-    
+
     // รวมแท็กทั้งหมดและนับจำนวนการใช้งาน
     const tagCount = {};
-    allUserTags.forEach(userTag => {
+    allUserTags.forEach((userTag) => {
       if (userTag.tags && Array.isArray(userTag.tags)) {
-        userTag.tags.forEach(tag => {
+        userTag.tags.forEach((tag) => {
           tagCount[tag] = (tagCount[tag] || 0) + 1;
         });
       }
@@ -13183,8 +13285,11 @@ app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
     const { userId } = req.params;
     const { hasPurchased } = req.body;
 
-    if (typeof hasPurchased !== 'boolean') {
-      return res.json({ success: false, error: "hasPurchased ต้องเป็น boolean" });
+    if (typeof hasPurchased !== "boolean") {
+      return res.json({
+        success: false,
+        error: "hasPurchased ต้องเป็น boolean",
+      });
     }
 
     const client = await connectDB();
@@ -13193,14 +13298,14 @@ app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
 
     await statusColl.updateOne(
       { userId },
-      { 
-        $set: { 
+      {
+        $set: {
           hasPurchased,
           updatedAt: new Date(),
-          updatedBy: "admin"
-        } 
+          updatedBy: "admin",
+        },
       },
-      { upsert: true }
+      { upsert: true },
     );
 
     // Emit to socket clients
@@ -13693,10 +13798,7 @@ app.get("/admin/orders/data", async (req, res) => {
       const orderData = order.orderData || {};
       const customerName = normalizeCustomerName(orderData.customerName);
       const displayName =
-        customerName ||
-        profileMap[order.userId] ||
-        order.userId ||
-        "";
+        customerName || profileMap[order.userId] || order.userId || "";
       const platform = normalizeOrderPlatform(order.platform || "line");
       const rawBotId = order.botId || null;
       const botId =
@@ -13872,8 +13974,8 @@ app.get("/admin/orders/export", async (req, res) => {
         (botId
           ? `${platform === "facebook" ? "Facebook" : "LINE"} (${botId})`
           : platform === "facebook"
-          ? "Facebook (default)"
-          : "LINE (default)");
+            ? "Facebook (default)"
+            : "LINE (default)");
 
       return {
         ลำดับ: index + 1,
@@ -13906,10 +14008,7 @@ app.get("/admin/orders/export", async (req, res) => {
     const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
     const filename = `orders_${moment().tz("Asia/Bangkok").format("YYYYMMDD_HHmmss")}.xlsx`;
 
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${filename}"`,
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -14184,6 +14283,58 @@ async function testMessageFiltering(message) {
 
 // ============================ Message Content Normalization Functions ============================
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function serializeContentToPlainText(content) {
+  if (content === null) {
+    return "null";
+  }
+
+  if (typeof content === "undefined") {
+    return "undefined";
+  }
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (typeof content === "number" || typeof content === "boolean") {
+    return String(content);
+  }
+
+  if (content instanceof Date) {
+    return content.toISOString();
+  }
+
+  try {
+    return JSON.stringify(content, null, 2);
+  } catch (error) {
+    console.warn("[ContentSerializer] ไม่สามารถแปลงข้อมูลเป็นข้อความได้:", error);
+    return "";
+  }
+}
+
+function buildFallbackDisplayFromContent(content) {
+  const plainText = serializeContentToPlainText(content);
+  if (!plainText) {
+    return null;
+  }
+
+  const html = `<div class="message-text"><pre class="mb-0 text-break" style="white-space: pre-wrap;">${escapeHtml(plainText)}</pre></div>`;
+  return {
+    html,
+    plainText,
+    contentType: "text",
+  };
+}
+
 /**
  * ฟังก์ชันสำหรับแปลงข้อมูลข้อความจากฐานข้อมูลให้อยู่ในรูปแบบที่ frontend สามารถแสดงผลได้
  * @param {Object} message - ข้อความจากฐานข้อมูล
@@ -14274,8 +14425,18 @@ function normalizeMessageForFrontend(message) {
       }
     } else {
       // กรณีอื่น ๆ
-      displayContent = "ข้อความไม่สามารถแสดงผลได้";
-      contentType = "error";
+      const fallbackDisplay = buildFallbackDisplayFromContent(
+        content ?? originalContent,
+      );
+      if (fallbackDisplay) {
+        displayContent = fallbackDisplay.html;
+        richDisplayContent = fallbackDisplay.html;
+        contentType = fallbackDisplay.contentType;
+        content = fallbackDisplay.plainText;
+      } else {
+        displayContent = "ข้อความไม่สามารถแสดงผลได้";
+        contentType = "error";
+      }
     }
 
     if (!richDisplayContent) {
@@ -14327,15 +14488,20 @@ function processQueueMessageForDisplay(content) {
     if (Array.isArray(content)) {
       const textParts = [];
       const imageParts = [];
+      const audioParts = [];
 
       content.forEach((item) => {
-        if (item && item.data) {
-          const data = item.data;
-          if (data.type === "text" && data.text) {
-            textParts.push(data.text);
-          } else if (data.type === "image" && data.base64) {
-            imageParts.push(data);
-          }
+        const data = item?.data || item;
+        if (!data) {
+          return;
+        }
+
+        if (data.type === "text" && data.text) {
+          textParts.push(data.text);
+        } else if (data.type === "image" && data.base64) {
+          imageParts.push(data);
+        } else if (data.type === "audio") {
+          audioParts.push(data);
         }
       });
 
@@ -14360,16 +14526,65 @@ function processQueueMessageForDisplay(content) {
         contentType = "multimodal";
       }
 
-      if (textParts.length === 0 && imageParts.length === 0) {
-        displayContent =
-          '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
-        contentType = "error";
-        plainText = "";
+      if (audioParts.length > 0) {
+        const audioPlainTexts = [];
+        audioParts.forEach((audio, index) => {
+          const audioDisplay = buildAudioAttachmentDisplay(audio, index);
+          displayContent += audioDisplay.html;
+          if (audioDisplay.plainText) {
+            audioPlainTexts.push(audioDisplay.plainText);
+          }
+        });
+        if (audioPlainTexts.length > 0) {
+          plainText = plainText
+            ? `${plainText}\n${audioPlainTexts.join("\n")}`
+            : audioPlainTexts.join("\n");
+        }
+        contentType =
+          textParts.length > 0 || imageParts.length > 0
+            ? "multimodal"
+            : "audio";
+      }
+
+      if (
+        textParts.length === 0 &&
+        imageParts.length === 0 &&
+        audioParts.length === 0
+      ) {
+        const fallbackDisplay = buildFallbackDisplayFromContent(content);
+        if (fallbackDisplay) {
+          displayContent = fallbackDisplay.html;
+          contentType = fallbackDisplay.contentType;
+          plainText = fallbackDisplay.plainText;
+        } else {
+          displayContent =
+            '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+          contentType = "error";
+          plainText = "";
+        }
       }
     }
     // ถ้าเป็น object เดี่ยว
     else if (content && typeof content === "object") {
-      if (content.data) {
+      if (content.type === "text" && content.content) {
+        // รองรับการเว้นบรรทัดในข้อความ
+        const textWithBreaks = content.content.replace(/\n/g, "<br>");
+        displayContent = `<div class="message-text">${textWithBreaks}</div>`;
+        contentType = "text";
+        plainText = content.content;
+      } else if (content.type === "image" && content.content) {
+        displayContent = createImageHTML({
+          base64: content.content,
+          description: content.description || "ผู้ใช้ส่งรูปภาพมา",
+        });
+        contentType = "image";
+        plainText = "";
+      } else if (content.type === "audio") {
+        const audioDisplay = buildAudioAttachmentDisplay(content);
+        displayContent = audioDisplay.html;
+        contentType = "audio";
+        plainText = audioDisplay.plainText || "";
+      } else if (content.data) {
         const data = content.data;
         if (data.type === "text" && data.text) {
           // รองรับการเว้นบรรทัดในข้อความ
@@ -14381,20 +14596,32 @@ function processQueueMessageForDisplay(content) {
           displayContent = createImageHTML(data);
           contentType = "image";
           plainText = "";
+        } else if (data.type === "audio") {
+          const audioDisplay = buildAudioAttachmentDisplay(data);
+          displayContent = audioDisplay.html;
+          contentType = "audio";
+          plainText = audioDisplay.plainText || "";
         } else {
-          displayContent =
-            '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
-          contentType = "error";
-          plainText = "";
+          const fallbackDisplay = buildFallbackDisplayFromContent(data);
+          if (fallbackDisplay) {
+            displayContent = fallbackDisplay.html;
+            contentType = fallbackDisplay.contentType;
+            plainText = fallbackDisplay.plainText;
+          } else {
+            displayContent =
+              '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+            contentType = "error";
+            plainText = "";
+          }
         }
       } else {
         // ถ้าไม่มี data field ให้ลองแปลงเป็น string
-        try {
-          const contentStr = JSON.stringify(content);
-          displayContent = `<div class="message-text">${contentStr}</div>`;
-          contentType = "text";
-          plainText = contentStr;
-        } catch {
+        const fallbackDisplay = buildFallbackDisplayFromContent(content);
+        if (fallbackDisplay) {
+          displayContent = fallbackDisplay.html;
+          contentType = fallbackDisplay.contentType;
+          plainText = fallbackDisplay.plainText;
+        } else {
           displayContent =
             '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
           contentType = "error";
@@ -14404,10 +14631,17 @@ function processQueueMessageForDisplay(content) {
     }
     // กรณีอื่น ๆ
     else {
-      displayContent =
-        '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
-      contentType = "error";
-      plainText = "";
+      const fallbackDisplay = buildFallbackDisplayFromContent(content);
+      if (fallbackDisplay) {
+        displayContent = fallbackDisplay.html;
+        contentType = fallbackDisplay.contentType;
+        plainText = fallbackDisplay.plainText;
+      } else {
+        displayContent =
+          '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+        contentType = "error";
+        plainText = "";
+      }
     }
 
     return {
@@ -14438,11 +14672,13 @@ function processQueueMessageForDisplayV2(content) {
   try {
     let displayContent = "";
     let contentType = "text";
+    let plainText = "";
 
     // ถ้าเป็น array (ข้อความจากคิว)
     if (Array.isArray(content)) {
       const textParts = [];
       const imageParts = [];
+       const audioParts = [];
 
       content.forEach((item) => {
         // รองรับรูปแบบใหม่: item มี type และ content โดยตรง
@@ -14454,6 +14690,8 @@ function processQueueMessageForDisplayV2(content) {
             base64: item.content,
             description: item.description || "ผู้ใช้ส่งรูปภาพมา",
           });
+        } else if (item && item.type === "audio") {
+          audioParts.push(item);
         }
         // รองรับรูปแบบเก่า: item.data
         else if (item && item.data) {
@@ -14462,6 +14700,8 @@ function processQueueMessageForDisplayV2(content) {
             textParts.push(data.text);
           } else if (data.type === "image" && data.base64) {
             imageParts.push(data);
+          } else if (data.type === "audio") {
+            audioParts.push(data);
           }
         }
       });
@@ -14487,11 +14727,42 @@ function processQueueMessageForDisplayV2(content) {
         contentType = "multimodal";
       }
 
-      if (textParts.length === 0 && imageParts.length === 0) {
-        displayContent =
-          '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
-        contentType = "error";
-        plainText = "";
+      if (audioParts.length > 0) {
+        const audioPlainTexts = [];
+        audioParts.forEach((audio, index) => {
+          const audioDisplay = buildAudioAttachmentDisplay(audio, index);
+          displayContent += audioDisplay.html;
+          if (audioDisplay.plainText) {
+            audioPlainTexts.push(audioDisplay.plainText);
+          }
+        });
+        if (audioPlainTexts.length > 0) {
+          plainText = plainText
+            ? `${plainText}\n${audioPlainTexts.join("\n")}`
+            : audioPlainTexts.join("\n");
+        }
+        contentType =
+          textParts.length > 0 || imageParts.length > 0
+            ? "multimodal"
+            : "audio";
+      }
+
+      if (
+        textParts.length === 0 &&
+        imageParts.length === 0 &&
+        audioParts.length === 0
+      ) {
+        const fallbackDisplay = buildFallbackDisplayFromContent(content);
+        if (fallbackDisplay) {
+          displayContent = fallbackDisplay.html;
+          contentType = fallbackDisplay.contentType;
+          plainText = fallbackDisplay.plainText;
+        } else {
+          displayContent =
+            '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+          contentType = "error";
+          plainText = "";
+        }
       }
     }
     // ถ้าเป็น object เดี่ยว
@@ -14510,6 +14781,11 @@ function processQueueMessageForDisplayV2(content) {
         });
         contentType = "image";
         plainText = "";
+      } else if (content.type === "audio") {
+        const audioDisplay = buildAudioAttachmentDisplay(content);
+        displayContent = audioDisplay.html;
+        contentType = "audio";
+        plainText = audioDisplay.plainText || "";
       }
       // รองรับรูปแบบเก่า
       else if (content.data) {
@@ -14524,20 +14800,32 @@ function processQueueMessageForDisplayV2(content) {
           displayContent = createImageHTML(data);
           contentType = "image";
           plainText = "";
+        } else if (data.type === "audio") {
+          const audioDisplay = buildAudioAttachmentDisplay(data);
+          displayContent = audioDisplay.html;
+          contentType = "audio";
+          plainText = audioDisplay.plainText || "";
         } else {
-          displayContent =
-            '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
-          contentType = "error";
-          plainText = "";
+          const fallbackDisplay = buildFallbackDisplayFromContent(data);
+          if (fallbackDisplay) {
+            displayContent = fallbackDisplay.html;
+            contentType = fallbackDisplay.contentType;
+            plainText = fallbackDisplay.plainText;
+          } else {
+            displayContent =
+              '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+            contentType = "error";
+            plainText = "";
+          }
         }
       } else {
         // ถ้าไม่มี data field ให้ลองแปลงเป็น string
-        try {
-          const contentStr = JSON.stringify(content);
-          displayContent = `<div class="message-text">${contentStr}</div>`;
-          contentType = "text";
-          plainText = contentStr;
-        } catch {
+        const fallbackDisplay = buildFallbackDisplayFromContent(content);
+        if (fallbackDisplay) {
+          displayContent = fallbackDisplay.html;
+          contentType = fallbackDisplay.contentType;
+          plainText = fallbackDisplay.plainText;
+        } else {
           displayContent =
             '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
           contentType = "error";
@@ -14547,10 +14835,17 @@ function processQueueMessageForDisplayV2(content) {
     }
     // กรณีอื่น ๆ
     else {
-      displayContent =
-        '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
-      contentType = "error";
-      plainText = "";
+      const fallbackDisplay = buildFallbackDisplayFromContent(content);
+      if (fallbackDisplay) {
+        displayContent = fallbackDisplay.html;
+        contentType = fallbackDisplay.contentType;
+        plainText = fallbackDisplay.plainText;
+      } else {
+        displayContent =
+          '<div class="message-text text-muted">ข้อความไม่สามารถแสดงผลได้</div>';
+        contentType = "error";
+        plainText = "";
+      }
     }
 
     return {
@@ -14578,6 +14873,106 @@ function processQueueMessageForDisplayV2(content) {
  * @param {number} index - ดัชนีของรูปภาพ
  * @returns {string} HTML สำหรับแสดงรูปภาพ
  */
+function buildAudioAttachmentDisplay(audioData = {}, index = 0) {
+  try {
+    const labelCandidates = [
+      audioData.description,
+      audioData.text,
+      audioData.title,
+      audioData.fileName,
+      audioData.filename,
+      audioData.name,
+      audioData?.payload?.label,
+      audioData?.payload?.title,
+      audioData?.payload?.description,
+    ];
+    const label =
+      labelCandidates.find(
+        (value) => typeof value === "string" && value.trim().length > 0,
+      ) || `ไฟล์เสียงที่ ${index + 1}`;
+
+    const rawDuration =
+      typeof audioData.duration === "number"
+        ? audioData.duration
+        : typeof audioData?.payload?.duration === "number"
+          ? audioData.payload.duration
+          : null;
+
+    let durationLabel = "";
+    if (Number.isFinite(rawDuration) && rawDuration > 0) {
+      const durationSeconds =
+        rawDuration > 1000
+          ? Math.round(rawDuration / 1000)
+          : Math.round(rawDuration);
+      const minutes = Math.floor(durationSeconds / 60);
+      const seconds = durationSeconds % 60;
+      durationLabel =
+        minutes > 0
+          ? `${minutes} นาที ${seconds.toString().padStart(2, "0")} วินาที`
+          : `${seconds} วินาที`;
+    }
+
+    const audioUrlCandidate =
+      typeof audioData.url === "string"
+        ? audioData.url
+        : typeof audioData?.payload?.url === "string"
+          ? audioData.payload.url
+          : null;
+    const audioUrl =
+      typeof audioUrlCandidate === "string" && audioUrlCandidate.trim()
+        ? audioUrlCandidate.trim()
+        : null;
+
+    const escapeHtml = (value) =>
+      String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    const escapeAttribute = (value) =>
+      String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    let html =
+      '<div class="message-text text-muted d-inline-flex align-items-center gap-2">';
+    html += '<i class="fas fa-microphone"></i>';
+    html += `<span>${escapeHtml(label)}</span>`;
+    if (durationLabel) {
+      html += `<span class="small">(${escapeHtml(durationLabel)})</span>`;
+    }
+    if (audioUrl) {
+      html += `<a href="${escapeAttribute(audioUrl)}" target="_blank" rel="noopener" class="ms-2">ดาวน์โหลด</a>`;
+    }
+    html += "</div>";
+
+    const plainParts = [
+      `[ไฟล์เสียง ${index + 1}]`,
+      label,
+      durationLabel ? `(${durationLabel})` : "",
+      audioUrl ? `ดาวน์โหลด: ${audioUrl}` : "",
+    ].filter(Boolean);
+    const plainText = plainParts.join(" ").trim();
+
+    return {
+      html,
+      plainText,
+    };
+  } catch (error) {
+    console.error(
+      "[AudioHTML] ข้อผิดพลาดในการสร้าง HTML สำหรับไฟล์เสียง:",
+      error,
+    );
+    return {
+      html: '<div class="message-text text-muted">ไม่สามารถแสดงไฟล์เสียงได้</div>',
+      plainText: `[ไฟล์เสียง ${index + 1}]`,
+    };
+  }
+}
+
 function createImageHTML(imageData, index = 0) {
   try {
     if (!imageData || !imageData.base64) {
@@ -14919,7 +15314,7 @@ async function getNormalizedChatUsers(options = {}) {
 
         // ดึงสถานะการซื้อ (ถ้ามี manual override ให้ใช้ ถ้าไม่ ให้ใช้จาก follow-up)
         let hasPurchased = false;
-        if (typeof purchaseMap[user._id] === 'boolean') {
+        if (typeof purchaseMap[user._id] === "boolean") {
           hasPurchased = purchaseMap[user._id];
         } else {
           // ใช้ข้อมูลจาก follow-up status
