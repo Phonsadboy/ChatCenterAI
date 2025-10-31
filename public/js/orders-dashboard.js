@@ -43,18 +43,6 @@ document.addEventListener("DOMContentLoaded", () => {
       ? new bootstrap.Modal(addressModalEl, { backdrop: true })
       : null;
 
-  const editModalEl = document.getElementById("ordersEditModal");
-  const editForm = document.getElementById("ordersEditForm");
-  const editOrderIdInput = document.getElementById("ordersEditOrderId");
-  const editStatusSelect = document.getElementById("ordersEditStatus");
-  const editNotesInput = document.getElementById("ordersEditNotes");
-  const editFeedbackEl = document.getElementById("ordersEditFeedback");
-  const editSaveButton = document.getElementById("ordersEditSave");
-  const editModal =
-    editModalEl && typeof bootstrap !== "undefined" && bootstrap.Modal
-      ? new bootstrap.Modal(editModalEl, { backdrop: true })
-      : null;
-
   const summaryTotalOrders = document.getElementById("summaryTotalOrders");
   const summaryTotalAmount = document.getElementById("summaryTotalAmount");
   const summaryTotalShipping = document.getElementById("summaryTotalShipping");
@@ -356,7 +344,7 @@ document.addEventListener("DOMContentLoaded", () => {
             </td>
             <td data-label="การชำระเงิน">${escapeHtml(payment)}</td>
             <td data-label="สถานะ">
-              <span class="status-badge ${status}">${statusLabels[status] || status}</span>
+              ${renderStatusDropdown(orderId, status)}
             </td>
             <td data-label="หมายเหตุ">${notes}</td>
             <td data-label="การจัดการ" class="col-actions">
@@ -424,15 +412,6 @@ document.addEventListener("DOMContentLoaded", () => {
                       </a>`
                     : ""
                 }
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary btn-sm orders-action"
-                  data-action="edit-order"
-                  data-order-id="${escapeAttribute(orderId)}"
-                  title="แก้ไขสถานะออเดอร์"
-                >
-                  <i class="fas fa-edit"></i>
-                </button>
               </div>
             </td>
           </tr>
@@ -459,6 +438,56 @@ document.addEventListener("DOMContentLoaded", () => {
       .join("");
 
     return `<div class="order-items-list">${list}</div>`;
+  }
+
+  function renderStatusDropdown(orderId, currentStatus) {
+    const currentLabel = statusLabels[currentStatus] || currentStatus;
+    const availableStatuses = Object.entries(statusLabels);
+    const hasCurrent = Object.prototype.hasOwnProperty.call(
+      statusLabels,
+      currentStatus,
+    );
+    const menuOptions = hasCurrent
+      ? availableStatuses
+      : [...availableStatuses, [currentStatus, currentLabel]];
+
+    const options = menuOptions
+      .map(([value, label]) => {
+        const isActive = value === currentStatus;
+        return `
+          <li>
+            <button
+              type="button"
+              class="dropdown-item orders-action orders-status-option${
+                isActive ? " active" : ""
+              }"
+              data-action="change-status"
+              data-order-id="${escapeAttribute(orderId)}"
+              data-status="${escapeAttribute(value)}"
+            >
+              ${escapeHtml(label)}
+            </button>
+          </li>
+        `;
+      })
+      .join("");
+
+    return `
+      <div class="dropdown">
+        <button
+          class="btn btn-sm status-badge ${currentStatus} dropdown-toggle orders-status-toggle"
+          type="button"
+          data-bs-toggle="dropdown"
+          aria-expanded="false"
+          data-order-id="${escapeAttribute(orderId)}"
+        >
+          ${escapeHtml(currentLabel)}
+        </button>
+        <ul class="dropdown-menu orders-status-menu">
+          ${options}
+        </ul>
+      </div>
+    `;
   }
 
   function getPageLabel(order) {
@@ -1416,13 +1445,11 @@ document.addEventListener("DOMContentLoaded", () => {
         addressModal.show();
         break;
       }
-      case "edit-order": {
+      case "change-status": {
         const orderId = actionButton.getAttribute("data-order-id");
-        if (!orderId) {
-          console.warn("[Orders] missing order id for edit");
-          return;
-        }
-        openOrderEditModal(orderId);
+        const newStatus = actionButton.getAttribute("data-status");
+        if (!orderId || !newStatus) return;
+        await handleOrderStatusChange(actionButton, orderId, newStatus);
         break;
       }
       default:
@@ -1664,133 +1691,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 1200);
   }
 
-  function openOrderEditModal(orderId) {
-    if (!editModal || !editForm || !ordersCache.has(orderId)) {
-      console.warn("[Orders] cannot open edit modal for order:", orderId);
+  async function handleOrderStatusChange(triggerElement, orderId, newStatus) {
+    const dropdown = triggerElement.closest(".dropdown");
+    const toggleButton = dropdown
+      ? dropdown.querySelector(".orders-status-toggle")
+      : null;
+
+    if (!toggleButton) {
+      console.warn("[Orders] missing status toggle for order:", orderId);
       return;
     }
 
-    resetOrderEditModal({ keepFeedback: false });
-
-    const order = ordersCache.get(orderId) || {};
-    const statusValue = order.status || "pending";
-    const notesValue = order.notes || "";
-
-    if (editOrderIdInput) {
-      editOrderIdInput.value = orderId;
-    }
-
-    ensureStatusOption(statusValue);
-    if (editStatusSelect) {
-      editStatusSelect.value = statusValue;
-    }
-
-    if (editNotesInput) {
-      editNotesInput.value = notesValue;
-    }
-
-    editModal.show();
-  }
-
-  function ensureStatusOption(value) {
-    if (!editStatusSelect || !value) return;
-    const hasOption = Array.from(editStatusSelect.options).some(
-      (option) => option.value === value,
-    );
-    if (!hasOption) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = statusLabels[value] || value;
-      editStatusSelect.appendChild(option);
-    }
-  }
-
-  function setEditFeedback(type, message) {
-    if (!editFeedbackEl) return;
-    editFeedbackEl.textContent = message || "";
-    editFeedbackEl.classList.add("d-none");
-    editFeedbackEl.classList.remove(
-      "alert",
-      "alert-success",
-      "alert-danger",
-      "alert-info",
-    );
-    if (!type || !message) {
-      return;
-    }
-    editFeedbackEl.classList.remove("d-none");
-    switch (type) {
-      case "success":
-        editFeedbackEl.classList.add("alert", "alert-success");
-        break;
-      case "danger":
-        editFeedbackEl.classList.add("alert", "alert-danger");
-        break;
-      default:
-        editFeedbackEl.classList.add("alert", "alert-info");
-        break;
-    }
-  }
-
-  function resetOrderEditModal({ keepFeedback } = { keepFeedback: false }) {
-    if (editForm) {
-      editForm.reset();
-    }
-    if (editOrderIdInput) {
-      editOrderIdInput.value = "";
-    }
-    if (!keepFeedback && editFeedbackEl) {
-      editFeedbackEl.classList.add("d-none");
-      editFeedbackEl.textContent = "";
-      editFeedbackEl.classList.remove(
-        "alert",
-        "alert-success",
-        "alert-danger",
-        "alert-info",
-      );
-    }
-  }
-
-  function setEditLoading(isLoading) {
-    if (editSaveButton) {
-      if (!editSaveButton.dataset.originalLabel) {
-        editSaveButton.dataset.originalLabel = editSaveButton.innerHTML;
-      }
-      editSaveButton.disabled = isLoading;
-      editSaveButton.innerHTML = isLoading
-        ? '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
-        : editSaveButton.dataset.originalLabel;
-    }
-    if (editForm) {
-      const inputs = editForm.querySelectorAll("select, textarea, input");
-      inputs.forEach((input) => {
-        if (input === editOrderIdInput) return;
-        input.disabled = isLoading;
-      });
-    }
-  }
-
-  async function submitOrderEdit() {
-    if (!editForm || !editOrderIdInput) {
+    if (toggleButton.dataset.loading === "true") {
       return;
     }
 
-    const orderId = editOrderIdInput.value;
-    if (!orderId) {
-      setEditFeedback("danger", "ไม่พบรหัสออเดอร์");
-      return;
-    }
-
-    const status = editStatusSelect ? editStatusSelect.value : "pending";
-    const notes = editNotesInput ? editNotesInput.value.trim() : "";
-
-    const payload = {
-      status,
-      notes,
-    };
-
-    setEditLoading(true);
-    setEditFeedback("info", "กำลังบันทึก...");
+    const originalHtml = toggleButton.innerHTML;
+    toggleButton.dataset.loading = "true";
+    toggleButton.disabled = true;
+    toggleButton.innerHTML =
+      '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
 
     try {
       const response = await fetch(`/admin/chat/orders/${orderId}`, {
@@ -1798,28 +1718,38 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          status: newStatus,
+        }),
       });
 
       const data = await response.json();
       if (!data.success) {
-        throw new Error(data.error || "ไม่สามารถบันทึกออเดอร์ได้");
+        throw new Error(data.error || "ไม่สามารถอัปเดตสถานะออเดอร์ได้");
       }
 
-      setEditFeedback("success", "บันทึกออเดอร์สำเร็จ");
-
-      setTimeout(() => {
-        if (editModal) {
-          editModal.hide();
-        }
-      }, 400);
+      if (data.order) {
+        ordersCache.set(orderId, data.order);
+      } else if (ordersCache.has(orderId)) {
+        const existing = ordersCache.get(orderId);
+        ordersCache.set(orderId, {
+          ...existing,
+          status: newStatus,
+        });
+      }
 
       await loadOrders(currentPage);
     } catch (error) {
-      console.error("[Orders] submitOrderEdit error:", error);
-      setEditFeedback("danger", error.message || "ไม่สามารถบันทึกออเดอร์ได้");
+      console.error("[Orders] handleOrderStatusChange error:", error);
+      if (toggleButton.isConnected) {
+        toggleButton.innerHTML = originalHtml;
+        toggleButton.disabled = false;
+      }
+      alert(error.message || "ไม่สามารถอัปเดตสถานะออเดอร์ได้");
     } finally {
-      setEditLoading(false);
+      if (toggleButton.isConnected) {
+        toggleButton.dataset.loading = "false";
+      }
     }
   }
 

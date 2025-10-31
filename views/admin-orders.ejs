@@ -289,45 +289,6 @@
   </div>
 </div>
 
-  <div class="modal fade" id="ordersEditModal" tabindex="-1" aria-labelledby="ordersEditModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="ordersEditModalLabel">
-            <i class="fas fa-edit me-2"></i>แก้ไขออเดอร์
-          </h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <div class="modal-body">
-          <div id="ordersEditFeedback" class="alert d-none" role="alert"></div>
-          <form id="ordersEditForm">
-            <input type="hidden" id="ordersEditOrderId">
-            <div class="mb-3">
-              <label for="ordersEditStatus" class="form-label">สถานะออเดอร์</label>
-              <select id="ordersEditStatus" class="form-select" required>
-                <option value="pending">รอดำเนินการ</option>
-                <option value="confirmed">ยืนยันแล้ว</option>
-                <option value="shipped">จัดส่งแล้ว</option>
-                <option value="completed">เสร็จสิ้น</option>
-                <option value="cancelled">ยกเลิก</option>
-              </select>
-            </div>
-            <div class="mb-3">
-              <label for="ordersEditNotes" class="form-label">หมายเหตุ</label>
-              <textarea id="ordersEditNotes" class="form-control" rows="3" placeholder="เพิ่มหมายเหตุ..."></textarea>
-            </div>
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-          <button type="submit" class="btn btn-primary" id="ordersEditSave" form="ordersEditForm">
-            <i class="fas fa-save me-2"></i>บันทึก
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/js/orders-dashboard.js"></script>
 </body>
