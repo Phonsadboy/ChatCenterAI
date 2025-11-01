@@ -1250,9 +1250,11 @@ async function detectKeywordAction(
       return false;
     }
 
-    return candidates.some(
-      (candidate) => normalizeForComparison(candidate) === normalizedInput,
-    );
+    return candidates.some((candidate) => {
+      const normalizedCandidate = normalizeForComparison(candidate);
+      if (!normalizedCandidate) return false;
+      return normalizedInput.includes(normalizedCandidate);
+    });
   };
 
   // รองรับทั้งรูปแบบเก่า (string) และรูปแบบใหม่ (object)
@@ -1307,6 +1309,16 @@ async function detectKeywordAction(
   // ตรวจสอบ keyword สำหรับปิด AI
   if (matchesKeyword(trimmedMessage, disableAI)) {
     await setUserStatus(userId, false);
+    try {
+      await cancelFollowUpTasksForUser(userId, platform, botId, {
+        reason: "disable_ai_keyword",
+      });
+    } catch (followUpError) {
+      console.error(
+        `[Keyword] ไม่สามารถยกเลิกงานติดตามสำหรับผู้ใช้ ${userId} หลังจากปิด AI:`,
+        followUpError?.message || followUpError,
+      );
+    }
     console.log(
       `[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
     );
