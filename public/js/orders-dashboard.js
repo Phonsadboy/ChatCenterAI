@@ -38,6 +38,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const addressModalLabel = document.getElementById("orderAddressModalLabel");
   const addressContentEl = document.getElementById("orderAddressContent");
   const addressCopyBtn = document.getElementById("orderAddressCopyBtn");
+  const editModalEl = document.getElementById("orderEditModal");
+  const editForm = document.getElementById("orderEditForm");
   const addressModal =
     addressModalEl && typeof bootstrap !== "undefined" && bootstrap.Modal
       ? new bootstrap.Modal(addressModalEl, { backdrop: true })
