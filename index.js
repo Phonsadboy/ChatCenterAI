@@ -6532,6 +6532,160 @@ app.get("/api/instructions-v2/:id/preview", async (req, res) => {
 // END NEW INSTRUCTION SYSTEM V2
 // ============================================================================
 
+// ============================================================================
+// AUTO MIGRATION: instructions → instructions_v2
+// ============================================================================
+
+async function migrateToInstructionsV2() {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const migrationLogsColl = db.collection("migration_logs");
+    const oldColl = db.collection("instructions");
+    const newColl = db.collection("instructions_v2");
+
+    // ตรวจสอบว่า migrate แล้วหรือยัง
+    const migrationLog = await migrationLogsColl.findOne({
+      migration: "instructions_to_v2"
+    });
+
+    if (migrationLog && migrationLog.completed) {
+      console.log("[Migration] Instructions V2: Already migrated ✓");
+      return;
+    }
+
+    console.log("\n" + "=".repeat(60));
+    console.log("🔄 Starting Auto-Migration: Instructions → Instructions V2");
+    console.log("=".repeat(60));
+
+    // ตรวจสอบว่ามีข้อมูลใน instructions_v2 อยู่แล้วหรือไม่
+    const v2Count = await newColl.countDocuments();
+    if (v2Count > 0) {
+      console.log(`[Migration] Instructions V2 already has ${v2Count} documents`);
+      console.log("[Migration] Skipping migration to avoid data loss");
+
+      // บันทึกว่า migrate แล้ว
+      await migrationLogsColl.updateOne(
+        { migration: "instructions_to_v2" },
+        {
+          $set: {
+            migration: "instructions_to_v2",
+            completed: true,
+            skipped: true,
+            reason: "instructions_v2 already has data",
+            completedAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+
+      console.log("=".repeat(60) + "\n");
+      return;
+    }
+
+    // ดึงข้อมูลเก่า
+    const oldInstructions = await oldColl.find({}).toArray();
+
+    if (oldInstructions.length === 0) {
+      console.log("[Migration] No old instructions found. Nothing to migrate.");
+
+      // บันทึกว่า migrate แล้ว (แต่ไม่มีข้อมูล)
+      await migrationLogsColl.updateOne(
+        { migration: "instructions_to_v2" },
+        {
+          $set: {
+            migration: "instructions_to_v2",
+            completed: true,
+            skipped: true,
+            reason: "no data to migrate",
+            completedAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+
+      console.log("=".repeat(60) + "\n");
+      return;
+    }
+
+    console.log(`[Migration] Found ${oldInstructions.length} old instructions`);
+
+    // สร้าง Instruction ใหม่
+    const now = new Date();
+    const newInstruction = {
+      instructionId: generateInstructionId(),
+      name: "Default Instruction (จากระบบเดิม)",
+      description: "รวมชุดข้อมูลทั้งหมดจากระบบเดิม - คุณสามารถแยกออกเป็นหลาย Instruction ได้",
+      dataItems: oldInstructions.map((old, index) => {
+        // จัดการข้อมูลแต่ละประเภท
+        const item = {
+          itemId: generateDataItemId(),
+          title: old.title || `ชุดข้อมูลที่ ${index + 1}`,
+          type: old.type || "text",
+          content: "",
+          data: null,
+          order: index + 1,
+          createdAt: old.createdAt || now,
+          updatedAt: old.updatedAt || now
+        };
+
+        if (old.type === "text") {
+          item.content = old.content || "";
+        } else if (old.type === "table") {
+          item.data = old.data || { columns: [], rows: [] };
+        }
+
+        return item;
+      }),
+      usageCount: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    // Insert ลง instructions_v2
+    const result = await newColl.insertOne(newInstruction);
+    console.log(`[Migration] ✓ Created instruction: "${newInstruction.name}"`);
+    console.log(`[Migration]   ID: ${result.insertedId}`);
+    console.log(`[Migration]   Data Items: ${newInstruction.dataItems.length}`);
+
+    // Backup collection เดิม
+    try {
+      const backupName = `instructions_backup_${Date.now()}`;
+      await db.collection("instructions").rename(backupName);
+      console.log(`[Migration] ✓ Backed up old collection as: ${backupName}`);
+    } catch (err) {
+      console.warn(`[Migration] Could not backup old collection:`, err.message);
+    }
+
+    // บันทึก migration log
+    await migrationLogsColl.insertOne({
+      migration: "instructions_to_v2",
+      completed: true,
+      instructionCreated: result.insertedId.toString(),
+      dataItemsMigrated: newInstruction.dataItems.length,
+      startedAt: now,
+      completedAt: new Date()
+    });
+
+    console.log("[Migration] ✓ Migration completed successfully!");
+    console.log("\n📝 Next Steps:");
+    console.log("   1. Visit /admin/dashboard to see the new interface");
+    console.log("   2. Split the default instruction into multiple ones if needed");
+    console.log("   3. Configure bots to use the new instruction");
+    console.log("=".repeat(60) + "\n");
+
+  } catch (err) {
+    console.error("\n❌ [Migration] Failed to migrate instructions:", err);
+    console.error("   The old data is still safe in 'instructions' collection");
+    console.error("=".repeat(60) + "\n");
+  }
+}
+
+// ============================================================================
+// END AUTO MIGRATION
+// ============================================================================
+
 // ------------------------
 // Start server
 // ------------------------
@@ -6697,6 +6851,7 @@ server.listen(PORT, async () => {
     console.log(`[LOG] กำลังตรวจสอบและ migrate ข้อมูล...`);
     await migrateInstructionAssetsAddSlug();
     await migrateAssetsToCollections();
+    await migrateToInstructionsV2(); // Auto-migrate to new instruction system
     console.log(`[LOG] Migration เสร็จสิ้น`);
 
     console.log(`[LOG] กำลังดึงข้อมูล instructions จาก Google Doc...`);
