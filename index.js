@@ -6542,7 +6542,7 @@ async function migrateToInstructionsV2() {
     const db = client.db("chatbot");
 
     const migrationLogsColl = db.collection("migration_logs");
-    const oldColl = db.collection("instructions");
+    const libraryColl = db.collection("instruction_library");
     const newColl = db.collection("instructions_v2");
 
     // ตรวจสอบว่า migrate แล้วหรือยัง
@@ -6556,7 +6556,7 @@ async function migrateToInstructionsV2() {
     }
 
     console.log("\n" + "=".repeat(60));
-    console.log("🔄 Starting Auto-Migration: Instructions → Instructions V2");
+    console.log("🔄 Starting Auto-Migration: Instruction Library → Instructions V2");
     console.log("=".repeat(60));
 
     // ตรวจสอบว่ามีข้อมูลใน instructions_v2 อยู่แล้วหรือไม่
@@ -6584,11 +6584,11 @@ async function migrateToInstructionsV2() {
       return;
     }
 
-    // ดึงข้อมูลเก่า
-    const oldInstructions = await oldColl.find({}).toArray();
+    // ดึงข้อมูลจาก instruction_library
+    const libraries = await libraryColl.find({}).toArray();
 
-    if (oldInstructions.length === 0) {
-      console.log("[Migration] No old instructions found. Nothing to migrate.");
+    if (libraries.length === 0) {
+      console.log("[Migration] No instruction libraries found. Nothing to migrate.");
 
       // บันทึกว่า migrate แล้ว (แต่ไม่มีข้อมูล)
       await migrationLogsColl.updateOne(
@@ -6609,16 +6609,36 @@ async function migrateToInstructionsV2() {
       return;
     }
 
-    console.log(`[Migration] Found ${oldInstructions.length} old instructions`);
+    console.log(`[Migration] Found ${libraries.length} instruction libraries to migrate`);
 
-    // สร้าง Instruction ใหม่
+    // สร้าง Instruction ใหม่สำหรับแต่ละ library
     const now = new Date();
-    const newInstruction = {
-      instructionId: generateInstructionId(),
-      name: "Default Instruction (จากระบบเดิม)",
-      description: "รวมชุดข้อมูลทั้งหมดจากระบบเดิม - คุณสามารถแยกออกเป็นหลาย Instruction ได้",
-      dataItems: oldInstructions.map((old, index) => {
-        // จัดการข้อมูลแต่ละประเภท
+    const createdInstructions = [];
+    let totalDataItems = 0;
+
+    for (const library of libraries) {
+      // สร้างชื่อจาก library.name หรือ library.date
+      let instructionName = library.name || library.displayDate || library.date;
+
+      // ถ้าไม่มี name ให้สร้างชื่อจาก date
+      if (!library.name && library.date) {
+        // แปลง date จาก "2024-01-15_manual_14-30-00" เป็นรูปแบบที่อ่านง่าย
+        const dateMatch = library.date.match(/^(\d{4})-(\d{2})-(\d{2})_(.+?)_(\d{2})-(\d{2})-(\d{2})$/);
+        if (dateMatch) {
+          const [, year, month, day, type, hour, min, sec] = dateMatch;
+          const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+                             'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+          const monthName = thaiMonths[parseInt(month) - 1] || month;
+          const typeLabel = type === 'manual' ? 'บันทึกเอง' : type === 'auto' ? 'อัตโนมัติ' : type;
+          instructionName = `Library: ${day} ${monthName} ${year} - ${hour}:${min} (${typeLabel})`;
+        } else {
+          instructionName = `Library: ${library.date}`;
+        }
+      }
+
+      // แปลง library.instructions เป็น dataItems
+      const instructions = library.instructions || [];
+      const dataItems = instructions.map((old, index) => {
         const item = {
           itemId: generateDataItemId(),
           title: old.title || `ชุดข้อมูลที่ ${index + 1}`,
@@ -6637,47 +6657,65 @@ async function migrateToInstructionsV2() {
         }
 
         return item;
-      }),
-      usageCount: 0,
-      createdAt: now,
-      updatedAt: now
-    };
+      });
 
-    // Insert ลง instructions_v2
-    const result = await newColl.insertOne(newInstruction);
-    console.log(`[Migration] ✓ Created instruction: "${newInstruction.name}"`);
-    console.log(`[Migration]   ID: ${result.insertedId}`);
-    console.log(`[Migration]   Data Items: ${newInstruction.dataItems.length}`);
+      // สร้าง Instruction ใหม่
+      const newInstruction = {
+        instructionId: generateInstructionId(),
+        name: instructionName,
+        description: library.description || `Instruction จาก Library: ${library.date}`,
+        dataItems: dataItems,
+        usageCount: 0,
+        libraryDate: library.date, // เก็บ reference ไว้
+        createdAt: now,
+        updatedAt: now
+      };
+
+      // Insert ลง instructions_v2
+      const result = await newColl.insertOne(newInstruction);
+      createdInstructions.push({
+        id: result.insertedId.toString(),
+        name: newInstruction.name,
+        dataItemCount: dataItems.length
+      });
+      totalDataItems += dataItems.length;
+
+      console.log(`[Migration] ✓ Created: "${newInstruction.name}"`);
+      console.log(`[Migration]   ID: ${result.insertedId}`);
+      console.log(`[Migration]   Data Items: ${dataItems.length}`);
+    }
 
     // Backup collection เดิม
     try {
-      const backupName = `instructions_backup_${Date.now()}`;
-      await db.collection("instructions").rename(backupName);
-      console.log(`[Migration] ✓ Backed up old collection as: ${backupName}`);
+      const backupName = `instruction_library_backup_${Date.now()}`;
+      await db.collection("instruction_library").rename(backupName);
+      console.log(`[Migration] ✓ Backed up old library as: ${backupName}`);
     } catch (err) {
-      console.warn(`[Migration] Could not backup old collection:`, err.message);
+      console.warn(`[Migration] Could not backup old library:`, err.message);
     }
 
     // บันทึก migration log
     await migrationLogsColl.insertOne({
       migration: "instructions_to_v2",
       completed: true,
-      instructionCreated: result.insertedId.toString(),
-      dataItemsMigrated: newInstruction.dataItems.length,
+      instructionsCreated: createdInstructions,
+      totalInstructions: createdInstructions.length,
+      totalDataItems: totalDataItems,
       startedAt: now,
       completedAt: new Date()
     });
 
-    console.log("[Migration] ✓ Migration completed successfully!");
+    console.log(`\n[Migration] ✓ Migration completed successfully!`);
+    console.log(`[Migration] Created ${createdInstructions.length} Instructions with ${totalDataItems} total data items`);
     console.log("\n📝 Next Steps:");
     console.log("   1. Visit /admin/dashboard to see the new interface");
-    console.log("   2. Split the default instruction into multiple ones if needed");
-    console.log("   3. Configure bots to use the new instruction");
+    console.log("   2. Edit or organize instructions as needed");
+    console.log("   3. Configure bots to use the new instruction system");
     console.log("=".repeat(60) + "\n");
 
   } catch (err) {
     console.error("\n❌ [Migration] Failed to migrate instructions:", err);
-    console.error("   The old data is still safe in 'instructions' collection");
+    console.error("   The old data is still safe in 'instruction_library' collection");
     console.error("=".repeat(60) + "\n");
   }
 }
