@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>แดชบอร์ด | จัดการ AI Instructions</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/css/style.css" rel="stylesheet">
+    <style>
+        :root {
+            --border-radius: 8px;
+            --spacing: 12px;
+        }
+
+        .instruction-card {
+            border: 1px solid #dee2e6;
+            border-radius: var(--border-radius);
+            margin-bottom: 16px;
+            background: #fff;
+            transition: box-shadow 0.2s;
+        }
+
+        .instruction-card:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .instruction-header {
+            padding: 16px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .instruction-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0;
+            color: #212529;
+        }
+
+        .instruction-desc {
+            font-size: 13px;
+            color: #6c757d;
+            margin: 4px 0 0 0;
+        }
+
+        .instruction-actions {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .instruction-actions .btn {
+            padding: 4px 8px;
+            font-size: 13px;
+        }
+
+        .data-items-container {
+            padding: 12px 16px;
+        }
+
+        .data-item {
+            padding: 10px 12px;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .data-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .data-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .data-item-title {
+            font-size: 14px;
+            font-weight: 500;
+            margin: 0;
+            color: #495057;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .data-item-meta {
+            font-size: 12px;
+            color: #6c757d;
+            margin: 2px 0 0 0;
+        }
+
+        .data-item-actions {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .data-item-actions .btn {
+            padding: 2px 6px;
+            font-size: 12px;
+        }
+
+        .instruction-footer {
+            padding: 12px 16px;
+            border-top: 1px solid #e9ecef;
+            background: #fafbfc;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            font-size: 12px;
+            color: #6c757d;
+        }
+
+        .btn-add-item {
+            width: 100%;
+            padding: 8px;
+            font-size: 13px;
+            border: 1px dashed #dee2e6;
+            background: #fff;
+        }
+
+        .btn-add-item:hover {
+            background: #f8f9fa;
+            border-color: #0d6efd;
+            color: #0d6efd;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: #6c757d;
+        }
+
+        .empty-state i {
+            font-size: 48px;
+            margin-bottom: 16px;
+            color: #dee2e6;
+        }
+
+        .type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .type-badge.type-text {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .type-badge.type-table {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .dashboard-header {
+            background: #fff;
+            border-bottom: 1px solid #dee2e6;
+            padding: 20px 0;
+            margin-bottom: 24px;
+        }
+
+        .search-bar {
+            max-width: 400px;
+        }
+    </style>
+</head>
+<body>
+    <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
+
+    <div class="dashboard-header">
+        <div class="container-fluid">
+            <div class="row align-items-center g-3">
+                <div class="col-md-6">
+                    <h4 class="mb-1">จัดการ AI Instructions</h4>
+                    <p class="text-muted small mb-0">สร้างและจัดการชุดข้อมูลที่ AI ใช้ตอบลูกค้า</p>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <button class="btn btn-primary" id="createInstructionBtn">
+                        <i class="fas fa-plus me-1"></i> สร้าง Instruction
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container-fluid">
+        <% if (typeof error !== 'undefined' && error) { %>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="fas fa-exclamation-circle me-2"></i> <%= error %>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <% } %>
+
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <div class="search-bar">
+                    <input type="search" class="form-control" id="searchInstructions" placeholder="🔍 ค้นหา Instruction...">
+                </div>
+            </div>
+        </div>
+
+        <div id="instructionsContainer">
+            <% if (instructions.length === 0) { %>
+                <div class="empty-state">
+                    <i class="fas fa-book-open"></i>
+                    <h5>ยังไม่มี Instruction</h5>
+                    <p>เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI ใช้ตอบลูกค้า</p>
+                    <button class="btn btn-primary mt-2" onclick="document.getElementById('createInstructionBtn').click()">
+                        <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
+                    </button>
+                </div>
+            <% } else { %>
+                <% instructions.forEach(instruction => { %>
+                    <div class="instruction-card" data-id="<%= instruction._id %>">
+                        <div class="instruction-header">
+                            <div class="flex-grow-1">
+                                <h5 class="instruction-title"><%= instruction.name || 'ไม่มีชื่อ' %></h5>
+                                <% if (instruction.description) { %>
+                                    <p class="instruction-desc"><%= instruction.description %></p>
+                                <% } %>
+                            </div>
+                            <div class="instruction-actions">
+                                <button class="btn btn-sm btn-outline-primary edit-instruction" data-id="<%= instruction._id %>">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary preview-instruction" data-id="<%= instruction._id %>">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-info duplicate-instruction" data-id="<%= instruction._id %>">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger delete-instruction" data-id="<%= instruction._id %>">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="data-items-container">
+                            <% if (instruction.dataItems && instruction.dataItems.length > 0) { %>
+                                <% instruction.dataItems.forEach((item, index) => { %>
+                                    <div class="data-item" data-item-id="<%= item.itemId %>">
+                                        <div class="data-item-info">
+                                            <div class="data-item-title">
+                                                <span class="type-badge type-<%= item.type %>"><%= item.type === 'text' ? 'Text' : 'Table' %></span>
+                                                <span><%= index + 1 %>. <%= item.title || 'ไม่มีชื่อ' %></span>
+                                            </div>
+                                            <div class="data-item-meta">
+                                                <% if (item.type === 'text') { %>
+                                                    <%= (item.content || '').length %> อักขระ
+                                                <% } else if (item.type === 'table' && item.data) { %>
+                                                    <%= (item.data.columns || []).length %> คอลัมน์ × <%= (item.data.rows || []).length %> แถว
+                                                <% } %>
+                                                • แก้ไข: <%= item.updatedAt ? new Date(item.updatedAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-' %>
+                                            </div>
+                                        </div>
+                                        <div class="data-item-actions">
+                                            <button class="btn btn-sm btn-outline-primary edit-data-item"
+                                                    data-instruction-id="<%= instruction._id %>"
+                                                    data-item-id="<%= item.itemId %>">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-secondary duplicate-data-item"
+                                                    data-instruction-id="<%= instruction._id %>"
+                                                    data-item-id="<%= item.itemId %>">
+                                                <i class="fas fa-copy"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-danger delete-data-item"
+                                                    data-instruction-id="<%= instruction._id %>"
+                                                    data-item-id="<%= item.itemId %>">
+                                                <i class="fas fa-times"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                <% }) %>
+                            <% } else { %>
+                                <div class="text-center text-muted py-3 small">
+                                    ยังไม่มีชุดข้อมูล
+                                </div>
+                            <% } %>
+
+                            <button class="btn btn-add-item add-data-item" data-instruction-id="<%= instruction._id %>">
+                                <i class="fas fa-plus me-1"></i> เพิ่มชุดข้อมูล
+                            </button>
+                        </div>
+
+                        <div class="instruction-footer">
+                            <span>
+                                <i class="fas fa-database me-1"></i>
+                                <%= (instruction.dataItems || []).length %> ชุดข้อมูล
+                            </span>
+                            <span>
+                                <i class="fas fa-clock me-1"></i>
+                                แก้ไข: <%= instruction.updatedAt ? new Date(instruction.updatedAt).toLocaleString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-' %>
+                            </span>
+                        </div>
+                    </div>
+                <% }) %>
+            <% } %>
+        </div>
+    </div>
+
+    <!-- Modal: Create/Edit Instruction -->
+    <div class="modal fade" id="instructionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="instructionModalTitle">สร้าง Instruction</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="instructionForm">
+                        <input type="hidden" id="instructionId">
+                        <div class="mb-3">
+                            <label class="form-label">ชื่อ Instruction <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="instructionName" required placeholder="เช่น LINE Official - ทั่วไป">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">คำอธิบาย</label>
+                            <textarea class="form-control" id="instructionDescription" rows="3" placeholder="อธิบายสั้นๆ ว่า Instruction นี้ใช้สำหรับอะไร"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                    <button type="button" class="btn btn-primary" id="saveInstructionBtn">บันทึก</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Add/Edit Data Item -->
+    <div class="modal fade" id="dataItemModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="dataItemModalTitle">เพิ่มชุดข้อมูล</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="dataItemForm">
+                        <input type="hidden" id="dataItemInstructionId">
+                        <input type="hidden" id="dataItemId">
+
+                        <div class="mb-3">
+                            <label class="form-label">ประเภท <span class="text-danger">*</span></label>
+                            <select class="form-select" id="dataItemType" required>
+                                <option value="">-- เลือกประเภท --</option>
+                                <option value="text">📝 ข้อความ (Text)</option>
+                                <option value="table">📊 ตาราง (Table)</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">ชื่อชุดข้อมูล <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="dataItemTitle" required placeholder="เช่น ข้อมูลสินค้า iPhone">
+                        </div>
+
+                        <div id="textEditorSection" style="display:none;">
+                            <div class="mb-3">
+                                <label class="form-label">เนื้อหา</label>
+                                <textarea class="form-control" id="dataItemContent" rows="10" placeholder="กรอกเนื้อหาที่ต้องการให้ AI ใช้ตอบ"></textarea>
+                                <div class="form-text">
+                                    <span id="contentCharCount">0</span> อักขระ
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="tableEditorSection" style="display:none;">
+                            <p class="text-muted small">กรุณาเปิดหน้าแก้ไขแบบเต็มรูปแบบสำหรับตาราง</p>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                    <button type="button" class="btn btn-primary" id="saveDataItemBtn">บันทึก</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Preview -->
+    <div class="modal fade" id="previewModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Preview: System Prompt</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info small">
+                        <i class="fas fa-info-circle me-2"></i>
+                        นี่คือข้อมูลที่ AI จะได้รับเมื่อตอบลูกค้า
+                    </div>
+                    <pre id="previewContent" style="background: #f8f9fa; padding: 16px; border-radius: 6px; max-height: 400px; overflow: auto;"></pre>
+                    <div class="mt-3 text-muted small">
+                        <div><i class="fas fa-database me-2"></i>ชุดข้อมูล: <span id="previewDataItemCount">0</span></div>
+                        <div><i class="fas fa-font me-2"></i>จำนวนอักขระ: <span id="previewCharCount">0</span></div>
+                        <div><i class="fas fa-coins me-2"></i>โทเค็นโดยประมาณ: <span id="previewTokenCount">0</span></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/admin-dashboard-v2.js"></script>
+</body>
+</html>

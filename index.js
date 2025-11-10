@@ -6074,6 +6074,464 @@ async function handleFacebookComment(pageId, postId, commentData, accessToken) {
   }
 }
 
+// ============================================================================
+// NEW INSTRUCTION SYSTEM V2 - Instructions with embedded Data Items
+// ============================================================================
+
+// Helper: Generate unique item ID
+function generateDataItemId() {
+  return `item_${crypto.randomBytes(8).toString("hex")}`;
+}
+
+// Helper: Get all instructions v2
+async function getInstructionsV2() {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("instructions_v2");
+  const cursor = coll.find({}).sort({ createdAt: -1 });
+  const instructions = await cursor.toArray();
+  return instructions.map((instruction) => ({
+    ...instruction,
+    _id: instruction._id.toString(),
+  }));
+}
+
+// API: List all instructions
+app.get("/api/instructions-v2", async (req, res) => {
+  try {
+    const instructions = await getInstructionsV2();
+    res.json({ success: true, instructions });
+  } catch (err) {
+    console.error("Error fetching instructions v2:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Get one instruction
+app.get("/api/instructions-v2/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    res.json({ success: true, instruction: { ...instruction, _id: instruction._id.toString() } });
+  } catch (err) {
+    console.error("Error fetching instruction v2:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Create new instruction
+app.post("/api/instructions-v2", async (req, res) => {
+  try {
+    const { name, description } = req.body;
+
+    if (!name || name.trim() === "") {
+      return res.status(400).json({ success: false, error: "กรุณาระบุชื่อ Instruction" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const now = new Date();
+    const instruction = {
+      instructionId: generateInstructionId(),
+      name: name.trim(),
+      description: (description || "").trim(),
+      dataItems: [],
+      usageCount: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const result = await coll.insertOne(instruction);
+    instruction._id = result.insertedId.toString();
+
+    res.json({ success: true, instruction });
+  } catch (err) {
+    console.error("Error creating instruction v2:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Update instruction (name, description only)
+app.put("/api/instructions-v2/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description } = req.body;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const updateData = { updatedAt: new Date() };
+    if (name !== undefined) updateData.name = name.trim();
+    if (description !== undefined) updateData.description = description.trim();
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    res.json({ success: true, instruction: { ...instruction, _id: instruction._id.toString() } });
+  } catch (err) {
+    console.error("Error updating instruction v2:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Delete instruction
+app.delete("/api/instructions-v2/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error deleting instruction v2:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Duplicate instruction
+app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const original = await coll.findOne({ _id: new ObjectId(id) });
+    if (!original) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction ต้นฉบับ" });
+    }
+
+    const now = new Date();
+    const duplicate = {
+      instructionId: generateInstructionId(),
+      name: name || `${original.name} (สำเนา)`,
+      description: original.description || "",
+      dataItems: (original.dataItems || []).map(item => ({
+        ...item,
+        itemId: generateDataItemId(),
+        createdAt: now,
+        updatedAt: now
+      })),
+      usageCount: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const result = await coll.insertOne(duplicate);
+    duplicate._id = result.insertedId.toString();
+
+    res.json({ success: true, instruction: duplicate });
+  } catch (err) {
+    console.error("Error duplicating instruction v2:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Add data item to instruction
+app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, type, content, data } = req.body;
+
+    if (!title || title.trim() === "") {
+      return res.status(400).json({ success: false, error: "กรุณาระบุชื่อชุดข้อมูล" });
+    }
+
+    if (!type || !["text", "table"].includes(type)) {
+      return res.status(400).json({ success: false, error: "ประเภทไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    const now = new Date();
+    const newItem = {
+      itemId: generateDataItemId(),
+      title: title.trim(),
+      type,
+      content: type === "text" ? (content || "") : "",
+      data: type === "table" ? (data || { columns: [], rows: [] }) : null,
+      order: (instruction.dataItems || []).length + 1,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $push: { dataItems: newItem },
+        $set: { updatedAt: now }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    res.json({ success: true, dataItem: newItem });
+  } catch (err) {
+    console.error("Error adding data item:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Update data item
+app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+    const { title, content, data } = req.body;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    const itemIndex = (instruction.dataItems || []).findIndex(item => item.itemId === itemId);
+    if (itemIndex === -1) {
+      return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
+    }
+
+    const now = new Date();
+    const updateFields = {};
+    if (title !== undefined) updateFields[`dataItems.${itemIndex}.title`] = title.trim();
+    if (content !== undefined) updateFields[`dataItems.${itemIndex}.content`] = content;
+    if (data !== undefined) updateFields[`dataItems.${itemIndex}.data`] = data;
+    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
+    updateFields.updatedAt = now;
+
+    await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateFields }
+    );
+
+    const updatedInstruction = await coll.findOne({ _id: new ObjectId(id) });
+    const updatedItem = updatedInstruction.dataItems[itemIndex];
+
+    res.json({ success: true, dataItem: updatedItem });
+  } catch (err) {
+    console.error("Error updating data item:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Delete data item
+app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $pull: { dataItems: { itemId } },
+        $set: { updatedAt: new Date() }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error deleting data item:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Duplicate data item
+app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    const originalItem = (instruction.dataItems || []).find(item => item.itemId === itemId);
+    if (!originalItem) {
+      return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
+    }
+
+    const now = new Date();
+    const duplicateItem = {
+      ...originalItem,
+      itemId: generateDataItemId(),
+      title: `${originalItem.title} (สำเนา)`,
+      order: (instruction.dataItems || []).length + 1,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $push: { dataItems: duplicateItem },
+        $set: { updatedAt: now }
+      }
+    );
+
+    res.json({ success: true, dataItem: duplicateItem });
+  } catch (err) {
+    console.error("Error duplicating data item:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Reorder data items
+app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { itemIds } = req.body; // Array of itemIds in new order
+
+    if (!Array.isArray(itemIds)) {
+      return res.status(400).json({ success: false, error: "itemIds ต้องเป็น array" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    // Reorder dataItems based on itemIds array
+    const reorderedItems = itemIds.map((itemId, index) => {
+      const item = (instruction.dataItems || []).find(i => i.itemId === itemId);
+      if (item) {
+        return { ...item, order: index + 1 };
+      }
+      return null;
+    }).filter(Boolean);
+
+    await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          dataItems: reorderedItems,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error reordering data items:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Preview instruction (build system prompt)
+app.get("/api/instructions-v2/:id/preview", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    // Build system prompt from data items
+    let systemPrompt = "";
+    const dataItems = instruction.dataItems || [];
+
+    for (const item of dataItems) {
+      systemPrompt += `\n\n${"=".repeat(60)}\n\n`;
+      systemPrompt += `## ${item.title}\n\n`;
+
+      if (item.type === "text") {
+        systemPrompt += item.content || "";
+      } else if (item.type === "table" && item.data) {
+        const { columns, rows } = item.data;
+        if (Array.isArray(columns) && Array.isArray(rows)) {
+          // Build markdown table
+          systemPrompt += `| ${columns.join(" | ")} |\n`;
+          systemPrompt += `| ${columns.map(() => "---").join(" | ")} |\n`;
+          rows.forEach(row => {
+            if (Array.isArray(row)) {
+              systemPrompt += `| ${row.join(" | ")} |\n`;
+            }
+          });
+        }
+      }
+    }
+
+    systemPrompt = systemPrompt.trim();
+
+    // Calculate approximate token count (rough estimate: 1 token ≈ 4 characters)
+    const charCount = systemPrompt.length;
+    const tokenCount = Math.ceil(charCount / 4);
+
+    res.json({
+      success: true,
+      preview: systemPrompt,
+      stats: {
+        dataItemCount: dataItems.length,
+        charCount,
+        tokenCount
+      }
+    });
+  } catch (err) {
+    console.error("Error previewing instruction:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================================
+// END NEW INSTRUCTION SYSTEM V2
+// ============================================================================
+
 // ------------------------
 // Start server
 // ------------------------
@@ -10645,14 +11103,14 @@ app.get(
   },
 );
 
-// Dashboard
+// Dashboard (V2 - New Instruction System)
 app.get("/admin/dashboard", async (req, res) => {
   try {
-    const instructions = await getInstructions();
+    const instructions = await getInstructionsV2();
     const aiEnabled = await getAiEnabled();
-    res.render("admin-dashboard", { instructions, aiEnabled });
+    res.render("admin-dashboard-v2", { instructions, aiEnabled });
   } catch (err) {
-    res.render("admin-dashboard", {
+    res.render("admin-dashboard-v2", {
       instructions: [],
       aiEnabled: false,
       error: err.message,
