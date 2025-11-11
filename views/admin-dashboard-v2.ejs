@@ -382,7 +382,31 @@
                         </div>
 
                         <div id="tableEditorSection" style="display:none;">
-                            <p class="text-muted small">กรุณาเปิดหน้าแก้ไขแบบเต็มรูปแบบสำหรับตาราง</p>
+                            <div class="mb-3">
+                                <label class="form-label">คอลัมน์ตาราง</label>
+                                <div id="tableColumns" class="mb-2"></div>
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="addColumnBtn">
+                                    <i class="fas fa-plus me-1"></i> เพิ่มคอลัมน์
+                                </button>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">ข้อมูลในตาราง</label>
+                                <div class="table-responsive" style="max-height: 300px; overflow: auto;">
+                                    <table class="table table-bordered table-sm" id="tableDataPreview">
+                                        <thead id="tableHead"></thead>
+                                        <tbody id="tableBody"></tbody>
+                                    </table>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="addRowBtn">
+                                    <i class="fas fa-plus me-1"></i> เพิ่มแถว
+                                </button>
+                            </div>
+
+                            <div class="alert alert-info small">
+                                <i class="fas fa-info-circle me-2"></i>
+                                คลิกที่เซลล์เพื่อแก้ไขข้อมูล
+                            </div>
                         </div>
                     </form>
                 </div>
