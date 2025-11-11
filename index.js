@@ -11311,6 +11311,118 @@ app.get("/admin/dashboard", async (req, res) => {
   }
 });
 
+// Edit Data Item (V2) - Full Page Editor
+app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (req, res) => {
+  try {
+    const { instructionId, itemId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    // ดึง instruction
+    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    if (!instruction) {
+      return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+
+    // หา data item
+    const dataItem = (instruction.dataItems || []).find(item => item.itemId === itemId);
+    if (!dataItem) {
+      return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
+    }
+
+    // สร้าง instruction object สำหรับ EJS (ใช้ structure แบบเดิม)
+    const instructionForEdit = {
+      _id: instructionId,
+      instructionId: dataItem.itemId,
+      type: dataItem.type || 'text',
+      title: dataItem.title || '',
+      content: dataItem.content || '',
+      data: dataItem.data || null,
+      createdAt: dataItem.createdAt,
+      updatedAt: dataItem.updatedAt,
+      parentInstructionName: instruction.name // เพิ่มชื่อ instruction หลักสำหรับแสดง
+    };
+
+    res.render("edit-data-item-v2", {
+      instruction: instructionForEdit,
+      instructionId: instructionId,
+      itemId: itemId
+    });
+  } catch (err) {
+    console.error("Error rendering edit data item page:", err);
+    res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
+  }
+});
+
+// Save Data Item (V2) - Full Page Editor
+app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (req, res) => {
+  try {
+    const { instructionId, itemId } = req.params;
+    const { type, title, content, tableData } = req.body;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    // ดึง instruction
+    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    if (!instruction) {
+      return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+
+    // หา index ของ data item
+    const itemIndex = (instruction.dataItems || []).findIndex(item => item.itemId === itemId);
+    if (itemIndex === -1) {
+      return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
+    }
+
+    const now = new Date();
+    const updateFields = {};
+
+    // อัปเดต title
+    if (title !== undefined) {
+      updateFields[`dataItems.${itemIndex}.title`] = title.trim();
+    }
+
+    // อัปเดตตาม type
+    if (type === 'table') {
+      // ตาราง: อัปเดต data field
+      if (tableData && tableData.trim() !== "") {
+        try {
+          const parsedData = JSON.parse(tableData);
+          if (parsedData && typeof parsedData === "object") {
+            updateFields[`dataItems.${itemIndex}.data`] = parsedData;
+            updateFields[`dataItems.${itemIndex}.content`] = ""; // ล้าง content สำหรับตาราง
+          }
+        } catch (parseErr) {
+          console.error("Error parsing table data:", parseErr);
+          return res.redirect(`/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit?error=ข้อมูลตารางไม่ถูกต้อง`);
+        }
+      }
+    } else {
+      // ข้อความ: อัปเดต content field
+      updateFields[`dataItems.${itemIndex}.content`] = content || "";
+      updateFields[`dataItems.${itemIndex}.data`] = null; // ล้าง data สำหรับข้อความ
+    }
+
+    updateFields[`dataItems.${itemIndex}.type`] = type;
+    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
+    updateFields.updatedAt = now;
+
+    // บันทึกลง database
+    await coll.updateOne(
+      { _id: new ObjectId(instructionId) },
+      { $set: updateFields }
+    );
+
+    res.redirect("/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว");
+  } catch (err) {
+    console.error("Error saving data item:", err);
+    res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
+  }
+});
+
 // Admin settings page
 app.get("/admin/settings", async (req, res) => {
   try {
