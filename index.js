@@ -8101,9 +8101,22 @@ async function deleteGridFsEntries(bucket, entries = []) {
       const objectId = toObjectId(entry.id);
       if (!objectId) continue;
       try {
+        // Check if file exists before attempting delete
+        const files = await bucket.find({ _id: objectId }).toArray();
+        if (files.length === 0) {
+          // File doesn't exist, skip silently
+          continue;
+        }
         await bucket.delete(objectId);
       } catch (err) {
-        if (err.code !== "FileNotFound" && err.code !== 26) {
+        // Only log unexpected errors (not FileNotFound)
+        const isFileNotFound =
+          err.code === "FileNotFound" ||
+          err.code === 26 ||
+          err.message?.includes("File not found") ||
+          err.message?.includes("FileNotFound");
+
+        if (!isFileNotFound) {
           console.warn("[GridFS] delete by id failed:", err?.message || err);
         }
       }
@@ -8116,7 +8129,13 @@ async function deleteGridFsEntries(bucket, entries = []) {
           try {
             await bucket.delete(file._id);
           } catch (err) {
-            if (err.code !== "FileNotFound" && err.code !== 26) {
+            const isFileNotFound =
+              err.code === "FileNotFound" ||
+              err.code === 26 ||
+              err.message?.includes("File not found") ||
+              err.message?.includes("FileNotFound");
+
+            if (!isFileNotFound) {
               console.warn(
                 "[GridFS] delete by filename failed:",
                 err?.message || err,
@@ -12342,6 +12361,117 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
       .json({ success: false, error: "ไม่สามารถลบรูปภาพที่เลือกได้" });
   }
 });
+
+// Check and fix asset data consistency
+app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const results = {
+      instruction_assets: await checkAndFixAssetConsistency(
+        db,
+        "instruction_assets",
+        "instructionAssets"
+      ),
+      follow_up_assets: await checkAndFixAssetConsistency(
+        db,
+        "follow_up_assets",
+        "followupAssets"
+      ),
+    };
+
+    const totalFixed =
+      results.instruction_assets.fixed + results.follow_up_assets.fixed;
+    const totalOk = results.instruction_assets.ok + results.follow_up_assets.ok;
+
+    res.json({
+      success: true,
+      message:
+        totalFixed > 0
+          ? `ซ่อมแซมข้อมูลสำเร็จ ${totalFixed} รายการ`
+          : "ข้อมูลถูกต้องครบถ้วน",
+      results,
+      summary: {
+        ok: totalOk,
+        fixed: totalFixed,
+      },
+    });
+  } catch (err) {
+    console.error("[Assets] consistency check error:", err);
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถตรวจสอบความสมบูรณ์ของข้อมูลได้",
+    });
+  }
+});
+
+async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
+  const coll = db.collection(collectionName);
+  const bucket = new GridFSBucket(db, { bucketName });
+
+  const assets = await coll.find({}).toArray();
+  let fixedCount = 0;
+  let okCount = 0;
+  const fixedItems = [];
+
+  for (const asset of assets) {
+    const label = asset.label || asset.fileName || asset._id.toString();
+    let needsUpdate = false;
+    const updates = {};
+
+    // Check main file
+    if (asset.fileId) {
+      const exists = await checkGridFsFileExists(bucket, asset.fileId);
+      if (!exists) {
+        console.log(
+          `[Consistency] Missing fileId ${asset.fileId} for ${label}`
+        );
+        updates.fileId = null;
+        needsUpdate = true;
+      }
+    }
+
+    // Check thumbnail file
+    const thumbId = asset.thumbFileId || asset.thumbId;
+    if (thumbId) {
+      const exists = await checkGridFsFileExists(bucket, thumbId);
+      if (!exists) {
+        console.log(`[Consistency] Missing thumbFileId ${thumbId} for ${label}`);
+        updates.thumbFileId = null;
+        if (asset.thumbId) updates.thumbId = null;
+        needsUpdate = true;
+      }
+    }
+
+    if (needsUpdate) {
+      await coll.updateOne({ _id: asset._id }, { $set: updates });
+      fixedItems.push({ label, fixes: updates });
+      fixedCount++;
+    } else {
+      okCount++;
+    }
+  }
+
+  return {
+    total: assets.length,
+    ok: okCount,
+    fixed: fixedCount,
+    items: fixedItems,
+  };
+}
+
+async function checkGridFsFileExists(bucket, fileId) {
+  try {
+    const objectId = toObjectId(fileId);
+    if (!objectId) return false;
+
+    const files = await bucket.find({ _id: objectId }).toArray();
+    return files.length > 0;
+  } catch (err) {
+    return false;
+  }
+}
 
 // ==================== IMAGE COLLECTIONS API ====================
 
