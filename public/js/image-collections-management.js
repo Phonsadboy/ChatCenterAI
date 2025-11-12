@@ -364,11 +364,23 @@
 
             const { summary, results } = data;
 
-            if (summary.fixed > 0) {
+            if (summary.fixed > 0 || summary.deleted > 0) {
+                const instructionMsg = [
+                    `${results.instruction_assets.ok} OK`,
+                    results.instruction_assets.fixed > 0 ? `${results.instruction_assets.fixed} แก้ไข` : null,
+                    results.instruction_assets.deleted > 0 ? `${results.instruction_assets.deleted} ลบ` : null
+                ].filter(Boolean).join(', ');
+
+                const followupMsg = [
+                    `${results.follow_up_assets.ok} OK`,
+                    results.follow_up_assets.fixed > 0 ? `${results.follow_up_assets.fixed} แก้ไข` : null,
+                    results.follow_up_assets.deleted > 0 ? `${results.follow_up_assets.deleted} ลบ` : null
+                ].filter(Boolean).join(', ');
+
                 showAlert(
                     `✅ ${data.message}\n\n` +
-                    `📊 Instruction Assets: ${results.instruction_assets.ok} OK, ${results.instruction_assets.fixed} แก้ไข\n` +
-                    `📊 Follow-up Assets: ${results.follow_up_assets.ok} OK, ${results.follow_up_assets.fixed} แก้ไข`,
+                    `📊 Instruction Assets: ${instructionMsg}\n` +
+                    `📊 Follow-up Assets: ${followupMsg}`,
                     'success'
                 );
 
