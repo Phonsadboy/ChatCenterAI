@@ -246,11 +246,30 @@ app.get("/assets/instructions/:fileName", async (req, res, next) => {
     res.set("Content-Type", doc.mime || "image/jpeg");
     res.set("Cache-Control", "public, max-age=604800, immutable");
     stream.on("error", (err) => {
+      console.error(
+        `[Asset Error] Failed to stream instruction asset: ${fileName}`,
+        {
+          error: err.message,
+          code: err.code,
+          fileName,
+          targetName,
+          targetId,
+          fileObjectId,
+        },
+      );
       if (err.code === "FileNotFound") return next();
       next(err);
     });
     stream.pipe(res);
   } catch (err) {
+    console.error(
+      `[Asset Error] Error in instruction asset route: ${fileName}`,
+      {
+        error: err.message,
+        stack: err.stack,
+        fileName,
+      },
+    );
     next(err);
   }
 });
@@ -297,11 +316,24 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
     res.set("Content-Type", doc.mime || "image/jpeg");
     res.set("Cache-Control", "public, max-age=604800, immutable");
     stream.on("error", (err) => {
+      console.error(`[Asset Error] Failed to stream followup asset: ${fileName}`, {
+        error: err.message,
+        code: err.code,
+        fileName,
+        targetName,
+        targetId,
+        fileObjectId,
+      });
       if (err.code === "FileNotFound") return next();
       next(err);
     });
     stream.pipe(res);
   } catch (err) {
+    console.error(`[Asset Error] Error in followup asset route: ${fileName}`, {
+      error: err.message,
+      stack: err.stack,
+      fileName,
+    });
     next(err);
   }
 });
@@ -6877,6 +6909,24 @@ async function migrateAssetsToCollections() {
     );
   }
 }
+
+// Error handling middleware - must be defined after all routes
+app.use((err, req, res, next) => {
+  console.error("[Express Error]", {
+    message: err.message,
+    stack: err.stack,
+    url: req.url,
+    method: req.method,
+    headers: req.headers,
+  });
+
+  // Don't expose internal error details in production
+  const isDev = process.env.NODE_ENV === "development";
+  res.status(err.status || 500).json({
+    error: isDev ? err.message : "Internal Server Error",
+    ...(isDev && { stack: err.stack }),
+  });
+});
 
 server.listen(PORT, async () => {
   console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
