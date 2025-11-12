@@ -312,6 +312,82 @@
         if (elements.saveBotCollectionsBtn) {
             elements.saveBotCollectionsBtn.addEventListener('click', saveBotImageCollections);
         }
+
+        // Secret data consistency fix button (triple click on "ขั้นตอนที่ 1")
+        const secretFixBtn = document.getElementById('secretFixBtn');
+        if (secretFixBtn) {
+            let clickCount = 0;
+            let clickTimer = null;
+
+            secretFixBtn.addEventListener('click', () => {
+                clickCount++;
+
+                // Add visual feedback
+                secretFixBtn.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    secretFixBtn.style.transform = '';
+                }, 100);
+
+                if (clickCount === 3) {
+                    runDataConsistencyCheck();
+                    clickCount = 0;
+                    if (clickTimer) clearTimeout(clickTimer);
+                } else {
+                    if (clickTimer) clearTimeout(clickTimer);
+                    clickTimer = setTimeout(() => {
+                        clickCount = 0;
+                    }, 1000);
+                }
+            });
+        }
+    };
+
+    const runDataConsistencyCheck = async () => {
+        const secretFixBtn = document.getElementById('secretFixBtn');
+        if (secretFixBtn) {
+            secretFixBtn.style.opacity = '0.5';
+        }
+
+        try {
+            showAlert('กำลังตรวจสอบและซ่อมแซมข้อมูล...', 'info');
+
+            const response = await fetch('/admin/instructions/assets/check-consistency', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'ไม่สามารถตรวจสอบข้อมูลได้');
+            }
+
+            const { summary, results } = data;
+
+            if (summary.fixed > 0) {
+                showAlert(
+                    `✅ ${data.message}\n\n` +
+                    `📊 Instruction Assets: ${results.instruction_assets.ok} OK, ${results.instruction_assets.fixed} แก้ไข\n` +
+                    `📊 Follow-up Assets: ${results.follow_up_assets.ok} OK, ${results.follow_up_assets.fixed} แก้ไข`,
+                    'success'
+                );
+
+                // Refresh assets list
+                await fetchImageAssets();
+                renderAssetsList();
+            } else {
+                showAlert('✅ ' + data.message + ' ไม่พบปัญหาใด ๆ', 'success');
+            }
+
+            console.log('[Consistency Check]', data);
+        } catch (err) {
+            console.error('Data consistency check error:', err);
+            showAlert('❌ ' + (err.message || 'เกิดข้อผิดพลาดในการตรวจสอบข้อมูล'), 'danger');
+        } finally {
+            if (secretFixBtn) {
+                secretFixBtn.style.opacity = '';
+            }
+        }
     };
 
     const init = () => {
