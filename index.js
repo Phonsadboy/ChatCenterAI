@@ -12383,18 +12383,26 @@ app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
 
     const totalFixed =
       results.instruction_assets.fixed + results.follow_up_assets.fixed;
+    const totalDeleted =
+      results.instruction_assets.deleted + results.follow_up_assets.deleted;
     const totalOk = results.instruction_assets.ok + results.follow_up_assets.ok;
+
+    let message = "ข้อมูลถูกต้องครบถ้วน";
+    if (totalFixed > 0 || totalDeleted > 0) {
+      const parts = [];
+      if (totalFixed > 0) parts.push(`ซ่อมแซม ${totalFixed} รายการ`);
+      if (totalDeleted > 0) parts.push(`ลบ ${totalDeleted} รายการ`);
+      message = parts.join(" และ ");
+    }
 
     res.json({
       success: true,
-      message:
-        totalFixed > 0
-          ? `ซ่อมแซมข้อมูลสำเร็จ ${totalFixed} รายการ`
-          : "ข้อมูลถูกต้องครบถ้วน",
+      message,
       results,
       summary: {
         ok: totalOk,
         fixed: totalFixed,
+        deleted: totalDeleted,
       },
     });
   } catch (err) {
@@ -12413,14 +12421,18 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
   const assets = await coll.find({}).toArray();
   let fixedCount = 0;
   let okCount = 0;
+  let deletedCount = 0;
   const fixedItems = [];
+  const deletedItems = [];
 
   for (const asset of assets) {
     const label = asset.label || asset.fileName || asset._id.toString();
     let needsUpdate = false;
+    let needsDelete = false;
     const updates = {};
 
     // Check main file
+    let mainFileExists = true;
     if (asset.fileId) {
       const exists = await checkGridFsFileExists(bucket, asset.fileId);
       if (!exists) {
@@ -12429,10 +12441,14 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
         );
         updates.fileId = null;
         needsUpdate = true;
+        mainFileExists = false;
       }
+    } else {
+      mainFileExists = false;
     }
 
     // Check thumbnail file
+    let thumbFileExists = true;
     const thumbId = asset.thumbFileId || asset.thumbId;
     if (thumbId) {
       const exists = await checkGridFsFileExists(bucket, thumbId);
@@ -12441,7 +12457,23 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
         updates.thumbFileId = null;
         if (asset.thumbId) updates.thumbId = null;
         needsUpdate = true;
+        thumbFileExists = false;
       }
+    } else {
+      thumbFileExists = false;
+    }
+
+    // Delete orphaned records (no files at all)
+    if (!mainFileExists && !thumbFileExists) {
+      console.log(`[Consistency] Deleting orphaned record: ${label}`);
+      await coll.deleteOne({ _id: asset._id });
+      deletedItems.push({ label, reason: 'No files in GridFS' });
+      deletedCount++;
+      needsDelete = true;
+    }
+
+    if (needsDelete) {
+      continue;
     }
 
     if (needsUpdate) {
@@ -12457,7 +12489,9 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
     total: assets.length,
     ok: okCount,
     fixed: fixedCount,
+    deleted: deletedCount,
     items: fixedItems,
+    deletedItems,
   };
 }
 
