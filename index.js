@@ -11920,6 +11920,50 @@ app.get("/admin/dashboard", async (req, res) => {
   }
 });
 
+// Create Data Item (V2) - Full Page Editor
+app.get(
+  "/admin/instructions-v2/:instructionId/data-items/new",
+  async (req, res) => {
+    try {
+      const { instructionId } = req.params;
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("instructions_v2");
+
+      const instruction = await coll.findOne({
+        _id: new ObjectId(instructionId),
+      });
+      if (!instruction) {
+        return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+      }
+
+      const templateDataItem = {
+        _id: instructionId,
+        instructionId: "",
+        type: "text",
+        title: "",
+        content: "",
+        data: null,
+        createdAt: null,
+        updatedAt: null,
+        parentInstructionName: instruction.name,
+      };
+
+      res.render("edit-data-item-v2", {
+        instruction: templateDataItem,
+        instructionId,
+        itemId: "",
+        isNew: true,
+      });
+    } catch (err) {
+      console.error("Error rendering create data item page:", err);
+      res.redirect(
+        "/admin/dashboard?error=" + encodeURIComponent(err.message || "Error"),
+      );
+    }
+  },
+);
+
 // Edit Data Item (V2) - Full Page Editor
 app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (req, res) => {
   try {
@@ -11956,13 +12000,108 @@ app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (
     res.render("edit-data-item-v2", {
       instruction: instructionForEdit,
       instructionId: instructionId,
-      itemId: itemId
+      itemId: itemId,
+      isNew: false,
     });
   } catch (err) {
     console.error("Error rendering edit data item page:", err);
     res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
   }
 });
+
+// Create Data Item (V2) - Save
+app.post(
+  "/admin/instructions-v2/:instructionId/data-items/new",
+  async (req, res) => {
+    try {
+      const { instructionId } = req.params;
+      let { type = "text", title = "", content = "", tableData } = req.body;
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("instructions_v2");
+
+      const instruction = await coll.findOne({
+        _id: new ObjectId(instructionId),
+      });
+      if (!instruction) {
+        return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+      }
+
+      title = (title || "").trim();
+      if (!title) {
+        return res.redirect(
+          `/admin/instructions-v2/${instructionId}/data-items/new?error=` +
+            encodeURIComponent("กรุณาระบุชื่อชุดข้อมูล"),
+        );
+      }
+
+      const allowedTypes = ["text", "table"];
+      if (!allowedTypes.includes(type)) {
+        type = "text";
+      }
+
+      const items = Array.isArray(instruction.dataItems)
+        ? instruction.dataItems
+        : [];
+      const now = new Date();
+      const newItem = {
+        itemId: generateDataItemId(),
+        title,
+        type,
+        content: "",
+        data: null,
+        order: items.length + 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (type === "table") {
+        if (!tableData || tableData.trim() === "") {
+          return res.redirect(
+            `/admin/instructions-v2/${instructionId}/data-items/new?error=` +
+              encodeURIComponent("กรุณากรอกข้อมูลตารางหรือเลือกประเภทข้อความ"),
+          );
+        }
+        try {
+          const parsedData = JSON.parse(tableData);
+          if (!parsedData || typeof parsedData !== "object") {
+            throw new Error("invalid");
+          }
+          newItem.data = parsedData;
+          newItem.content = "";
+        } catch (parseErr) {
+          console.error("Invalid table data payload:", parseErr);
+          return res.redirect(
+            `/admin/instructions-v2/${instructionId}/data-items/new?error=` +
+              encodeURIComponent("ข้อมูลตารางไม่ถูกต้อง"),
+          );
+        }
+      } else {
+        newItem.content = content || "";
+        newItem.data = null;
+      }
+
+      await coll.updateOne(
+        { _id: new ObjectId(instructionId) },
+        {
+          $push: { dataItems: newItem },
+          $set: { updatedAt: now },
+        },
+      );
+
+      res.redirect(
+        "/admin/dashboard?success=" +
+          encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว"),
+      );
+    } catch (err) {
+      console.error("Error creating data item:", err);
+      res.redirect(
+        "/admin/dashboard?error=" + encodeURIComponent(err.message || "Error"),
+      );
+    }
+  },
+);
 
 // Save Data Item (V2) - Full Page Editor
 app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (req, res) => {

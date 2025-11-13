@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
+    <% const isNewItem = typeof isNew !== 'undefined' ? isNew : false; %>
+    <% const pageTitle = isNewItem ? 'สร้างชุดข้อมูล' : 'แก้ไขชุดข้อมูล'; %>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>แก้ไขชุดข้อมูล - <%= instruction.title || 'ไม่มีชื่อ' %></title>
+    <title><%= pageTitle %> - <%= instruction.parentInstructionName || instruction.title || 'ไม่มีชื่อ' %></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="/css/style.css" rel="stylesheet">
@@ -70,7 +72,7 @@
                 <div class="parent-instruction-badge">
                     <i class="fas fa-folder me-1"></i> <%= instruction.parentInstructionName %>
                 </div>
-                <h4 class="mb-0">แก้ไขชุดข้อมูล</h4>
+                <h4 class="mb-0"><%= pageTitle %></h4>
             </div>
             <a href="/admin/dashboard" class="btn btn-outline-secondary">
                 <i class="fas fa-arrow-left me-1"></i> กลับแดชบอร์ด
@@ -79,13 +81,31 @@
 
         <div class="row g-4">
             <div class="col-12">
-                <form id="editDataItemForm" method="POST" action="/admin/instructions-v2/<%= instructionId %>/data-items/<%= itemId %>/edit" class="needs-validation" novalidate>
+                <% const formAction = isNewItem
+                    ? '/admin/instructions-v2/' + instructionId + '/data-items/new'
+                    : '/admin/instructions-v2/' + instructionId + '/data-items/' + itemId + '/edit'; %>
+                <form id="editDataItemForm" method="POST" action="<%= formAction %>" class="needs-validation" novalidate>
                     <div class="card shadow-sm mb-4">
                         <div class="card-body">
-                            <input type="hidden" id="instructionType" name="type" value="<%= instruction.type %>">
-
                             <div class="mb-3 text-muted small">
-                                รหัสชุดข้อมูล: <span class="text-break"><%= itemId %></span>
+                                <% if (isNewItem) { %>
+                                    รหัสชุดข้อมูลจะถูกสร้างอัตโนมัติเมื่อบันทึก
+                                <% } else { %>
+                                    รหัสชุดข้อมูล: <span class="text-break"><%= itemId %></span>
+                                <% } %>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label" for="instructionType">
+                                    ประเภทข้อมูล
+                                </label>
+                                <select class="form-select" id="instructionType" name="type">
+                                    <option value="text" <%= instruction.type === 'text' ? 'selected' : '' %>>ข้อความ (Text)</option>
+                                    <option value="table" <%= instruction.type === 'table' ? 'selected' : '' %>>ตาราง (Table)</option>
+                                </select>
+                                <div class="form-text">
+                                    เลือกรูปแบบข้อมูลที่เหมาะกับชุดข้อมูลนี้
+                                </div>
                             </div>
 
                             <div class="mb-3">
@@ -167,7 +187,7 @@
                             <i class="fas fa-times me-1"></i> ยกเลิก
                         </a>
                         <button type="submit" class="btn btn-primary" id="saveInstructionBtn">
-                            <i class="fas fa-save me-1"></i> บันทึกการแก้ไข
+                            <i class="fas fa-save me-1"></i> <%= isNewItem ? 'สร้างชุดข้อมูล' : 'บันทึกการแก้ไข' %>
                         </button>
                     </div>
                 </form>
@@ -617,6 +637,16 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const errorMessage = params.get('error');
+            if (errorMessage) {
+                showAlert(errorMessage, 'error');
+            }
+            const successMessage = params.get('success');
+            if (successMessage) {
+                showAlert(successMessage, 'success');
+            }
+
             const typeSelect = document.getElementById('instructionType');
             const textSection = document.getElementById('textEditorSection');
             const tableSection = document.getElementById('tableEditorSection');

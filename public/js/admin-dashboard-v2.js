@@ -501,6 +501,17 @@
         });
     });
 
+    // Add Data Item
+    document.querySelectorAll('.add-data-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const instructionId = btn.dataset.instructionId;
+            if (!instructionId) {
+                return;
+            }
+            window.location.href = `/admin/instructions-v2/${instructionId}/data-items/new`;
+        });
+    });
+
     // Search Instructions
     const searchInput = document.getElementById('searchInstructions');
     if (searchInput) {
