@@ -99,6 +99,199 @@ function setupModalEventListeners() {
   }
 }
 
+async function loadInstructionLibraries(options = {}) {
+  const { showError = false } = options;
+  try {
+    const response = await fetch("/api/instructions/library");
+    if (!response.ok) {
+      throw new Error("ไม่สามารถดึงรายการ instruction library ได้");
+    }
+    const result = await response.json();
+    availableLibraries = Array.isArray(result.libraries) ? result.libraries : [];
+    if (
+      window.adminSettings &&
+      typeof window.adminSettings.setInstructionLibraryCache === "function"
+    ) {
+      window.adminSettings.setInstructionLibraryCache(availableLibraries);
+    }
+    // Update overview badge immediately ifมี
+    if (typeof displayInstructionsOverview === "function") {
+      displayInstructionsOverview(availableLibraries);
+    }
+    return availableLibraries;
+  } catch (error) {
+    console.error("Error loading instruction libraries:", error);
+    if (showError) {
+      showAlert("ไม่สามารถโหลดคลัง Instructions ได้", "danger");
+    }
+    return [];
+  }
+}
+
+function setInstructionCreationLoading(isLoading) {
+  const createBtn = document.getElementById("createInstructionV2Btn");
+  if (!createBtn) return;
+  createBtn.disabled = isLoading;
+  const defaultLabel = createBtn.querySelector(".default-label");
+  const loadingLabel = createBtn.querySelector(".loading-label");
+  if (defaultLabel) {
+    defaultLabel.classList.toggle("d-none", isLoading);
+  }
+  if (loadingLabel) {
+    loadingLabel.classList.toggle("d-none", !isLoading);
+  }
+}
+
+async function handleInstructionV2Creation(event) {
+  event?.preventDefault?.();
+  const nameInput = document.getElementById("instructionV2Name");
+  const descriptionInput = document.getElementById("instructionV2Description");
+  const name = nameInput?.value?.trim();
+  const description = descriptionInput?.value?.trim() || "";
+
+  if (!name) {
+    showAlert("กรุณาระบุชื่อ Instruction ก่อนสร้าง", "warning");
+    nameInput?.focus();
+    return;
+  }
+
+  setInstructionCreationLoading(true);
+
+  try {
+    const response = await fetch("/api/instructions-v2", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const message =
+        errorData?.error || "ไม่สามารถสร้าง Instruction V2 ใหม่ได้";
+      showAlert(message, "danger");
+      return;
+    }
+
+    const data = await response.json();
+    const createdInstruction = data?.instruction;
+    showAlert("สร้าง Instruction V2 ใหม่เรียบร้อยแล้ว", "success");
+
+    if (nameInput) nameInput.value = "";
+    if (descriptionInput) descriptionInput.value = "";
+
+    const collapseElement = document.getElementById("createInstructionV2Form");
+    if (collapseElement && typeof bootstrap !== "undefined") {
+      const collapseInstance =
+        bootstrap.Collapse.getOrCreateInstance(collapseElement);
+      collapseInstance.hide();
+    }
+
+    await loadInstructionLibraries({ showError: true });
+
+    if (createdInstruction?.instructionId) {
+      const newLibrary = availableLibraries.find(
+        (lib) =>
+          lib &&
+          lib.source === INSTRUCTION_SOURCE.V2 &&
+          lib.instructionId === createdInstruction.instructionId,
+      );
+      if (newLibrary) {
+        setCurrentSelectionFromLibrary(newLibrary);
+      }
+    }
+
+    displayInstructionLibraries();
+    displaySelectedInstructions();
+    updateInstructionCounts();
+    refreshInstructionAssetUsage()
+      .catch((err) =>
+        console.error("refreshInstructionAssetUsage error:", err),
+      );
+  } catch (error) {
+    console.error("Error creating Instruction V2:", error);
+    showAlert("เกิดข้อผิดพลาดระหว่างสร้าง Instruction V2", "danger");
+  } finally {
+    setInstructionCreationLoading(false);
+  }
+}
+
+function initInstructionCreationForm() {
+  const createBtn = document.getElementById("createInstructionV2Btn");
+  if (createBtn && !createBtn.hasAttribute("data-listeners-attached")) {
+    createBtn.addEventListener("click", handleInstructionV2Creation);
+    createBtn.setAttribute("data-listeners-attached", "true");
+  }
+}
+
+document.addEventListener("DOMContentLoaded", initInstructionCreationForm);
+
+function setConvertButtonLoading(button, isLoading) {
+  if (!button) return;
+  button.disabled = isLoading;
+  const defaultLabel = button.querySelector(".default-label");
+  const loadingLabel = button.querySelector(".loading-label");
+  if (defaultLabel) defaultLabel.classList.toggle("d-none", isLoading);
+  if (loadingLabel) loadingLabel.classList.toggle("d-none", !isLoading);
+}
+
+async function convertLegacyLibraryToV2(libraryDate, triggerButton) {
+  if (!libraryDate) {
+    showAlert("ไม่พบข้อมูลคลัง instruction ที่ต้องการแปลง", "warning");
+    return;
+  }
+
+  setConvertButtonLoading(triggerButton, true);
+
+  try {
+    const response = await fetch(
+      `/api/instructions/library/${encodeURIComponent(
+        libraryDate,
+      )}/convert-to-v2`,
+      { method: "POST" },
+    );
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || !data.success) {
+      const message =
+        data?.error || "ไม่สามารถแปลง instruction library เป็น V2 ได้";
+      showAlert(message, "danger");
+      return;
+    }
+
+    if (data.alreadyConverted) {
+      showAlert("คลังนี้ถูกแปลงเป็น Instruction Set แล้ว", "info");
+    } else {
+      showAlert("แปลง Instruction Library เป็น V2 เรียบร้อยแล้ว", "success");
+    }
+
+    await loadInstructionLibraries({ showError: true });
+
+    if (data.instruction?.instructionId) {
+      const newLibrary = availableLibraries.find(
+        (lib) =>
+          lib &&
+          lib.source === INSTRUCTION_SOURCE.V2 &&
+          lib.instructionId === data.instruction.instructionId,
+      );
+      if (newLibrary) {
+        setCurrentSelectionFromLibrary(newLibrary);
+      }
+    }
+
+    displayInstructionLibraries();
+    displaySelectedInstructions();
+    updateInstructionCounts();
+    refreshInstructionAssetUsage().catch((err) =>
+      console.error("refreshInstructionAssetUsage error:", err),
+    );
+  } catch (error) {
+    console.error("Error converting instruction library:", error);
+    showAlert("เกิดข้อผิดพลาดระหว่างแปลง instruction library", "danger");
+  } finally {
+    setConvertButtonLoading(triggerButton, false);
+  }
+}
+
 // Manage Instructions for Line Bot
 async function manageInstructions(botId) {
   currentBotType = "line";
@@ -120,19 +313,12 @@ async function manageInstructions(botId) {
     }
 
     // Load available instruction libraries
-    const libraryResponse = await fetch("/api/instructions/library");
-    if (libraryResponse.ok) {
-      const result = await libraryResponse.json();
-      availableLibraries = Array.isArray(result.libraries) ? result.libraries : [];
-      if (window.adminSettings && typeof window.adminSettings.setInstructionLibraryCache === "function") {
-        window.adminSettings.setInstructionLibraryCache(availableLibraries);
-      }
-    }
+    await loadInstructionLibraries({ showError: true });
 
-  // Display data
-  displayInstructionLibraries();
-  displaySelectedInstructions();
-  updateInstructionCounts();
+    // Display data
+    displayInstructionLibraries();
+    displaySelectedInstructions();
+    updateInstructionCounts();
 
     // Show modal
     const manageInstructionsModalLabel = document.getElementById(
@@ -176,19 +362,12 @@ async function manageFacebookInstructions(botId) {
     }
 
     // Load available instruction libraries
-    const libraryResponse = await fetch("/api/instructions/library");
-    if (libraryResponse.ok) {
-      const result = await libraryResponse.json();
-      availableLibraries = Array.isArray(result.libraries) ? result.libraries : [];
-      if (window.adminSettings && typeof window.adminSettings.setInstructionLibraryCache === "function") {
-        window.adminSettings.setInstructionLibraryCache(availableLibraries);
-      }
-    }
+    await loadInstructionLibraries({ showError: true });
 
-  // Display data
-  displayInstructionLibraries();
-  displaySelectedInstructions();
-  updateInstructionCounts();
+    // Display data
+    displayInstructionLibraries();
+    displaySelectedInstructions();
+    updateInstructionCounts();
 
     // Show modal
     const manageInstructionsModalLabel = document.getElementById(
@@ -251,6 +430,34 @@ function displayInstructionLibraries() {
       library.source === INSTRUCTION_SOURCE.V2
         ? `<div class="small text-muted"><i class="fas fa-layer-group me-1"></i>${library.dataItemCount || 0} data items</div>`
         : "";
+    let actionArea = "";
+    if (library.source !== INSTRUCTION_SOURCE.V2) {
+      if (library.convertedInstructionId) {
+        const convertedAtText = library.convertedAt
+          ? new Date(library.convertedAt).toLocaleString("th-TH", {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "";
+        actionArea = `
+                <div class="text-muted small mt-2">
+                    <i class="fas fa-check text-success me-1"></i>
+                    แปลงเป็น Instruction Set แล้ว
+                    ${convertedAtText ? `(${convertedAtText})` : ""}
+                </div>
+            `;
+      } else if (library.date) {
+        actionArea = `
+                <button type="button" class="btn btn-sm btn-outline-primary convert-library-btn mt-2" data-library-date="${library.date}">
+                    <span class="default-label"><i class="fas fa-magic me-1"></i>แปลงเป็น Instruction V2</span>
+                    <span class="loading-label d-none"><i class="fas fa-circle-notch fa-spin me-1"></i>กำลังแปลง...</span>
+                </button>
+            `;
+      }
+    }
 
     html += `
             <div class="card mb-2 ${selectedClass} library-item" data-selection-key="${selectionKey}" style="cursor: pointer; transition: all 0.2s;">
@@ -268,6 +475,7 @@ function displayInstructionLibraries() {
                                 <i class="fas fa-clock me-1 ms-2"></i>${library.displayTime}
                             </small>
                             ${extraMeta}
+                            ${actionArea}
                         </div>
                         <div class="text-end">
                             <small class="badge ${typeBadgeClass}">${typeBadgeLabel}</small>
@@ -300,6 +508,14 @@ function displayInstructionLibraries() {
       }
     });
   });
+
+  container.querySelectorAll(".convert-library-btn").forEach((btn) => {
+    btn.addEventListener("click", function (event) {
+      event.stopPropagation();
+      const libraryDate = this.dataset.libraryDate;
+      convertLegacyLibraryToV2(libraryDate, this);
+    });
+  });
 }
 
 // Display selected instructions (Single-Select UI)
@@ -329,6 +545,23 @@ function displaySelectedInstructions() {
       library.source === INSTRUCTION_SOURCE.V2
         ? `<div class="text-muted small"><i class="fas fa-layer-group me-1"></i>${library.dataItemCount || 0} data items</div>`
         : `<div class="text-muted small"><i class="fas fa-archive me-1"></i>Instruction Library (Legacy)</div>`;
+    const convertAction =
+      library.source === INSTRUCTION_SOURCE.V2 || !library.date
+        ? ""
+        : `
+                <div class="alert alert-warning mt-3 mb-0 small">
+                    <div class="d-flex flex-wrap align-items-center gap-2">
+                        <div>
+                            <i class="fas fa-info-circle me-1"></i>
+                            แปลงคลังนี้เป็น Instruction Set เพื่อแก้ไขบนแดชบอร์ดใหม่
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-primary convert-selected-legacy" data-library-date="${library.date}">
+                            <span class="default-label"><i class="fas fa-magic me-1"></i>แปลงเป็น Instruction V2</span>
+                            <span class="loading-label d-none"><i class="fas fa-circle-notch fa-spin me-1"></i>กำลังแปลง...</span>
+                        </button>
+                    </div>
+                </div>
+            `;
 
     html += `
             <div class="card border-primary shadow-sm">
@@ -348,6 +581,7 @@ function displaySelectedInstructions() {
                                 <i class="fas fa-clock me-1 ms-2"></i>${library.displayTime}
                             </div>
                             ${metaText}
+                            ${convertAction}
                         </div>
                         <button class="btn btn-sm btn-outline-danger" onclick="removeLibrarySelection('${selectionKey}')" title="ยกเลิกการเลือก">
                             <i class="fas fa-times me-1"></i>ยกเลิก
@@ -371,6 +605,14 @@ function displaySelectedInstructions() {
   }
 
   container.innerHTML = html;
+
+  container.querySelectorAll(".convert-selected-legacy").forEach((btn) => {
+    btn.addEventListener("click", function (event) {
+      event.preventDefault();
+      const libraryDate = this.dataset.libraryDate;
+      convertLegacyLibraryToV2(libraryDate, this);
+    });
+  });
 }
 
 // Toggle library selection (Single-Select Mode)
@@ -747,4 +989,5 @@ window.instructionsManagement = {
   displayAiModelOverview,
   displayInstructionsOverview,
   displaySecurityOverview,
+  convertLegacyLibraryToV2,
 };

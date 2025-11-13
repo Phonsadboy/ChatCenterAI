@@ -11316,6 +11316,8 @@ app.get("/api/instructions/library", async (req, res) => {
               displayTime: 1,
               type: 1,
               savedAt: 1,
+              convertedInstructionId: 1,
+              convertedAt: 1,
             },
           },
         )
@@ -11387,6 +11389,8 @@ app.get("/api/instructions/library", async (req, res) => {
       ...lib,
       source: lib.source || "legacy",
       dataItemCount: lib.dataItemCount || 0,
+      convertedInstructionId: lib.convertedInstructionId || null,
+      convertedAt: lib.convertedAt || null,
     }));
 
     const getSortTimestamp = (entry) => {
@@ -11410,6 +11414,140 @@ app.get("/api/instructions/library", async (req, res) => {
     res
       .status(500)
       .json({ error: "ไม่สามารถดึงรายการ instruction library ได้" });
+  }
+});
+
+// Route: แปลง instruction library (legacy) เป็น Instruction V2
+app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
+  try {
+    const { date } = req.params;
+    if (!date) {
+      return res
+        .status(400)
+        .json({ success: false, error: "กรุณาระบุวันที่ของคลัง instruction" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const libraryColl = db.collection("instruction_library");
+    const v2Coll = db.collection("instructions_v2");
+
+    const library = await libraryColl.findOne({ date });
+    if (!library) {
+      return res
+        .status(404)
+        .json({ success: false, error: "ไม่พบคลัง instruction ของวันที่ระบุ" });
+    }
+
+    const existingInstruction = await v2Coll.findOne({ libraryDate: date });
+    if (existingInstruction) {
+      return res.json({
+        success: true,
+        alreadyConverted: true,
+        instruction: {
+          ...existingInstruction,
+          _id: existingInstruction._id.toString(),
+        },
+      });
+    }
+
+    const now = new Date();
+    const instructions = Array.isArray(library.instructions)
+      ? library.instructions
+      : [];
+
+    const buildInstructionName = () => {
+      if (library.name) return library.name;
+      if (library.displayDate) return `Library: ${library.displayDate}`;
+      if (library.date) {
+        const match =
+          library.date &&
+          library.date.match(
+            /^(\d{4})-(\d{2})-(\d{2})_(.+?)_(\d{2})-(\d{2})-(\d{2})$/,
+          );
+        if (match) {
+          const [, year, month, day, type, hour, minute] = match;
+          const thaiMonths = [
+            "ม.ค.",
+            "ก.พ.",
+            "มี.ค.",
+            "เม.ย.",
+            "พ.ค.",
+            "มิ.ย.",
+            "ก.ค.",
+            "ส.ค.",
+            "ก.ย.",
+            "ต.ค.",
+            "พ.ย.",
+            "ธ.ค.",
+          ];
+          const monthName = thaiMonths[parseInt(month, 10) - 1] || month;
+          const typeLabel =
+            type === "manual"
+              ? "บันทึกเอง"
+              : type === "auto"
+                ? "อัตโนมัติ"
+                : type;
+          return `Library: ${day} ${monthName} ${year} - ${hour}:${minute} (${typeLabel})`;
+        }
+        return `Library: ${library.date}`;
+      }
+      return "Instruction จาก Library เดิม";
+    };
+
+    const dataItems = instructions.map((oldInstr, index) => {
+      const item = {
+        itemId: generateDataItemId(),
+        title: oldInstr.title || `ชุดข้อมูลที่ ${index + 1}`,
+        type: oldInstr.type || "text",
+        content: "",
+        data: null,
+        order: index + 1,
+        createdAt: oldInstr.createdAt || now,
+        updatedAt: oldInstr.updatedAt || now,
+      };
+
+      if (oldInstr.type === "text") {
+        item.content = oldInstr.content || "";
+      } else if (oldInstr.type === "table") {
+        item.data = oldInstr.data || { columns: [], rows: [] };
+      }
+      return item;
+    });
+
+    const instructionDoc = {
+      instructionId: generateInstructionId(),
+      name: buildInstructionName(),
+      description:
+        library.description ||
+        `Instruction จาก Library: ${library.displayDate || date}`,
+      dataItems,
+      usageCount: 0,
+      libraryDate: date,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const insertResult = await v2Coll.insertOne(instructionDoc);
+    instructionDoc._id = insertResult.insertedId.toString();
+
+    await libraryColl.updateOne(
+      { date },
+      {
+        $set: {
+          convertedInstructionId: instructionDoc.instructionId,
+          convertedAt: now,
+        },
+      },
+    );
+
+    res.json({ success: true, instruction: instructionDoc });
+  } catch (err) {
+    console.error("Error converting instruction library:", err);
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถแปลง instruction library เป็น V2 ได้",
+    });
   }
 });
 
