@@ -7795,18 +7795,27 @@ function normalizeInstructionSelections(selections = []) {
   const seenObjectKeys = new Set();
   const seenStringKeys = new Set();
 
+  const pushInstructionObject = (instructionId, version = null) => {
+    if (!instructionId) return;
+    const key = `${instructionId}::${version === null ? "latest" : version}`;
+    if (seenObjectKeys.has(key)) return;
+    seenObjectKeys.add(key);
+    normalized.push({ instructionId, version });
+  };
+
   for (const entry of selections) {
     if (isInstructionSelectionObject(entry)) {
       const instructionId = entry.instructionId.trim();
       if (!instructionId) continue;
       const version = Number.isInteger(entry.version) ? entry.version : null;
-      const key = `${instructionId}::${version === null ? "latest" : version}`;
-      if (seenObjectKeys.has(key)) continue;
-      seenObjectKeys.add(key);
-      normalized.push({ instructionId, version });
+      pushInstructionObject(instructionId, version);
     } else if (typeof entry === "string") {
       const value = entry.trim();
       if (!value) continue;
+      if (/^inst_/i.test(value)) {
+        pushInstructionObject(value);
+        continue;
+      }
       if (seenStringKeys.has(value)) continue;
       seenStringKeys.add(value);
       normalized.push(value);
@@ -11293,25 +11302,109 @@ app.get("/api/instructions/library", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const libraryColl = db.collection("instruction_library");
-    const libraries = await libraryColl
-      .find(
-        {},
-        {
-          projection: {
-            date: 1,
-            name: 1,
-            description: 1,
-            displayDate: 1,
-            displayTime: 1,
-            type: 1,
-            savedAt: 1,
-          },
-        },
-      )
-      .sort({ date: -1 })
-      .toArray();
 
-    res.json({ success: true, libraries });
+    const [legacyLibraries, instructionV2Docs] = await Promise.all([
+      libraryColl
+        .find(
+          {},
+          {
+            projection: {
+              date: 1,
+              name: 1,
+              description: 1,
+              displayDate: 1,
+              displayTime: 1,
+              type: 1,
+              savedAt: 1,
+            },
+          },
+        )
+        .sort({ date: -1 })
+        .toArray(),
+      db
+        .collection("instructions_v2")
+        .aggregate([
+          {
+            $project: {
+              instructionId: 1,
+              name: 1,
+              description: 1,
+              createdAt: 1,
+              updatedAt: 1,
+              dataItemCount: {
+                $size: { $ifNull: ["$dataItems", []] },
+              },
+            },
+          },
+          { $sort: { updatedAt: -1, createdAt: -1 } },
+        ])
+        .toArray(),
+    ]);
+
+    const toDateSafe = (value) => {
+      if (value instanceof Date) return value;
+      if (!value) return new Date();
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return new Date();
+      return parsed;
+    };
+
+    const formatThaiDate = (value) =>
+      toDateSafe(value).toLocaleDateString("th-TH", {
+        timeZone: "Asia/Bangkok",
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+      });
+
+    const formatThaiTime = (value) =>
+      toDateSafe(value).toLocaleTimeString("th-TH", {
+        timeZone: "Asia/Bangkok",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+
+    const v2Libraries = instructionV2Docs.map((doc) => {
+      const createdAt = doc.createdAt || doc.updatedAt || new Date();
+      const updatedAt = doc.updatedAt || createdAt;
+      return {
+        date: doc.instructionId,
+        name: doc.name,
+        description: doc.description,
+        displayDate: formatThaiDate(createdAt),
+        displayTime: formatThaiTime(createdAt),
+        type: "v2",
+        source: "v2",
+        instructionId: doc.instructionId,
+        dataItemCount: doc.dataItemCount || 0,
+        createdAt,
+        updatedAt,
+      };
+    });
+
+    const legacyWithSource = legacyLibraries.map((lib) => ({
+      ...lib,
+      source: lib.source || "legacy",
+      dataItemCount: lib.dataItemCount || 0,
+    }));
+
+    const getSortTimestamp = (entry) => {
+      if (!entry) return 0;
+      if (entry.updatedAt) return toDateSafe(entry.updatedAt).getTime();
+      if (entry.savedAt) return toDateSafe(entry.savedAt).getTime();
+      if (entry.createdAt) return toDateSafe(entry.createdAt).getTime();
+      if (entry.date && /^\d{4}-\d{2}-\d{2}/.test(entry.date)) {
+        return toDateSafe(entry.date.slice(0, 10)).getTime();
+      }
+      return 0;
+    };
+
+    const combined = [...v2Libraries, ...legacyWithSource].sort(
+      (a, b) => getSortTimestamp(b) - getSortTimestamp(a),
+    );
+
+    res.json({ success: true, libraries: combined });
   } catch (err) {
     console.error("Error fetching instruction libraries:", err);
     res

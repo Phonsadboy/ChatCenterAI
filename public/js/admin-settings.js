@@ -48,10 +48,25 @@ function populateInstructionOptionsFromCache() {
     const currentValue = select.value;
 
     select.innerHTML = '<option value="">ไม่เลือก</option>';
+    const seenValues = new Set();
     libraries.forEach(lib => {
+        const isV2Source = lib && lib.source === 'v2';
+        const value =
+            isV2Source && lib && lib.instructionId
+                ? lib.instructionId
+                : lib && lib.date;
+        if (!value || seenValues.has(value)) {
+            return;
+        }
+        seenValues.add(value);
+
         const option = document.createElement('option');
-        option.value = lib.date;
-        option.textContent = lib.name || lib.displayDate;
+        option.value = value;
+        const prefix =
+            isV2Source ? '[Instruction Set]' : '[Legacy Library]';
+        const optionLabel =
+            (lib && lib.name) || (lib && lib.displayDate) || value;
+        option.textContent = `${prefix} ${optionLabel}`;
         select.appendChild(option);
     });
 

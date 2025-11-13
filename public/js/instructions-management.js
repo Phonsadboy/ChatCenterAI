@@ -1,5 +1,10 @@
 // Instructions Management JavaScript
 
+const INSTRUCTION_SOURCE = {
+  V2: "v2",
+  LEGACY: "legacy"
+};
+
 // Clean up modal backdrops
 function cleanupModalBackdrop() {
   setTimeout(() => {
@@ -9,6 +14,80 @@ function cleanupModalBackdrop() {
     document.body.style.overflow = '';
     document.body.style.paddingRight = '';
   }, 300);
+}
+
+function cloneBotInstructionSelections(selections) {
+  if (!Array.isArray(selections)) return [];
+  return selections.map((entry) => {
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      return { ...entry };
+    }
+    return entry;
+  });
+}
+
+function isSelectionObject(entry) {
+  return !!entry && typeof entry === "object" && !Array.isArray(entry) && entry.instructionId;
+}
+
+function getLibrarySelectionKey(library) {
+  if (!library) return "";
+  if (library.source === INSTRUCTION_SOURCE.V2 && library.instructionId) {
+    return `${INSTRUCTION_SOURCE.V2}:${library.instructionId}`;
+  }
+  if (library.date) {
+    return `${INSTRUCTION_SOURCE.LEGACY}:${library.date}`;
+  }
+  return `${library.source || "library"}:${library.name || ""}`;
+}
+
+function findLibraryByKey(key) {
+  if (!key || !Array.isArray(availableLibraries)) return null;
+  return availableLibraries.find((lib) => getLibrarySelectionKey(lib) === key) || null;
+}
+
+function selectionMatchesLibrary(selection, library) {
+  if (!library) return false;
+  if (library.source === INSTRUCTION_SOURCE.V2 && library.instructionId) {
+    if (isSelectionObject(selection)) {
+      return selection.instructionId === library.instructionId;
+    }
+    return typeof selection === "string" && selection === library.instructionId;
+  }
+  return typeof selection === "string" && selection === library.date;
+}
+
+function isLibrarySelected(library) {
+  if (!library || !Array.isArray(currentBotInstructions)) return false;
+  return currentBotInstructions.some((selection) =>
+    selectionMatchesLibrary(selection, library),
+  );
+}
+
+function getCurrentSelectedLibrary() {
+  if (!Array.isArray(availableLibraries)) return null;
+  return availableLibraries.find((lib) => isLibrarySelected(lib)) || null;
+}
+
+function buildSelectionPayload(library) {
+  if (!library) return null;
+  if (library.source === INSTRUCTION_SOURCE.V2 && library.instructionId) {
+    return { instructionId: library.instructionId };
+  }
+  return library.date || null;
+}
+
+function setCurrentSelectionFromLibrary(library) {
+  if (!library) {
+    currentBotInstructions = [];
+    return;
+  }
+  const payload = buildSelectionPayload(library);
+  if (!payload) {
+    currentBotInstructions = [];
+    return;
+  }
+  currentBotInstructions = [payload];
 }
 
 // Setup modal event listeners
@@ -34,7 +113,7 @@ async function manageInstructions(botId) {
     const botResponse = await fetch(`/api/line-bots/${botId}`);
     if (botResponse.ok) {
       const bot = await botResponse.json();
-      currentBotInstructions = bot.selectedInstructions || [];
+      currentBotInstructions = cloneBotInstructionSelections(bot.selectedInstructions);
       
       // Load keyword settings
       loadKeywordSettingsToForm(bot.keywordSettings);
@@ -44,7 +123,7 @@ async function manageInstructions(botId) {
     const libraryResponse = await fetch("/api/instructions/library");
     if (libraryResponse.ok) {
       const result = await libraryResponse.json();
-      availableLibraries = result.libraries || [];
+      availableLibraries = Array.isArray(result.libraries) ? result.libraries : [];
       if (window.adminSettings && typeof window.adminSettings.setInstructionLibraryCache === "function") {
         window.adminSettings.setInstructionLibraryCache(availableLibraries);
       }
@@ -90,7 +169,7 @@ async function manageFacebookInstructions(botId) {
     const botResponse = await fetch(`/api/facebook-bots/${botId}`);
     if (botResponse.ok) {
       const bot = await botResponse.json();
-      currentBotInstructions = bot.selectedInstructions || [];
+      currentBotInstructions = cloneBotInstructionSelections(bot.selectedInstructions);
       
       // Load keyword settings
       loadKeywordSettingsToForm(bot.keywordSettings);
@@ -100,7 +179,7 @@ async function manageFacebookInstructions(botId) {
     const libraryResponse = await fetch("/api/instructions/library");
     if (libraryResponse.ok) {
       const result = await libraryResponse.json();
-      availableLibraries = result.libraries || [];
+      availableLibraries = Array.isArray(result.libraries) ? result.libraries : [];
       if (window.adminSettings && typeof window.adminSettings.setInstructionLibraryCache === "function") {
         window.adminSettings.setInstructionLibraryCache(availableLibraries);
       }
@@ -149,7 +228,8 @@ function displayInstructionLibraries() {
 
   let html = '<div class="mb-2 text-muted small"><i class="fas fa-info-circle me-1"></i>คลิกเพื่อเลือก instruction (เลือกได้เพียง 1 อัน)</div>';
   availableLibraries.forEach((library) => {
-    const isSelected = currentBotInstructions.includes(library.date);
+    const isSelected = isLibrarySelected(library);
+    const selectionKey = getLibrarySelectionKey(library);
     const selectedClass = isSelected
       ? "border-primary bg-light shadow-sm"
       : "border-secondary";
@@ -159,9 +239,21 @@ function displayInstructionLibraries() {
     const selectedBadge = isSelected 
       ? '<span class="badge bg-primary ms-2"><i class="fas fa-check me-1"></i>ใช้งานอยู่</span>' 
       : '';
+    const typeBadgeLabel =
+      library.source === INSTRUCTION_SOURCE.V2
+        ? "Instruction Set"
+        : library.type === "auto"
+          ? "อัตโนมัติ"
+          : "ด้วยตนเอง";
+    const typeBadgeClass =
+      library.source === INSTRUCTION_SOURCE.V2 ? "bg-info text-dark" : library.type === "auto" ? "bg-primary" : "bg-success";
+    const extraMeta =
+      library.source === INSTRUCTION_SOURCE.V2
+        ? `<div class="small text-muted"><i class="fas fa-layer-group me-1"></i>${library.dataItemCount || 0} data items</div>`
+        : "";
 
     html += `
-            <div class="card mb-2 ${selectedClass} library-item" data-date="${library.date}" style="cursor: pointer; transition: all 0.2s;">
+            <div class="card mb-2 ${selectedClass} library-item" data-selection-key="${selectionKey}" style="cursor: pointer; transition: all 0.2s;">
                 <div class="card-body p-2">
                     <div class="d-flex justify-content-between align-items-start">
                         <div class="flex-grow-1">
@@ -175,9 +267,10 @@ function displayInstructionLibraries() {
                                 <i class="fas fa-calendar me-1"></i>${library.displayDate}
                                 <i class="fas fa-clock me-1 ms-2"></i>${library.displayTime}
                             </small>
+                            ${extraMeta}
                         </div>
                         <div class="text-end">
-                            <small class="badge bg-${library.type === "auto" ? "primary" : "success"}">${library.type === "auto" ? "อัตโนมัติ" : "ด้วยตนเอง"}</small>
+                            <small class="badge ${typeBadgeClass}">${typeBadgeLabel}</small>
                         </div>
                     </div>
                 </div>
@@ -190,8 +283,8 @@ function displayInstructionLibraries() {
   // Add click events with hover effect
   document.querySelectorAll(".library-item").forEach((item) => {
     item.addEventListener("click", function () {
-      const date = this.dataset.date;
-      toggleLibrarySelection(date);
+      const selectionKey = this.dataset.selectionKey;
+      toggleLibrarySelection(selectionKey);
     });
     
     // Add hover effect
@@ -229,11 +322,14 @@ function displaySelectedInstructions() {
 
   let html = '<div class="mb-2"><strong>Instruction ที่เลือกใช้:</strong></div>';
   
-  // Since single-select, only show the first (and only) item
-  const date = currentBotInstructions[0];
-  const library = availableLibraries.find((lib) => lib.date === date);
-  
+  const library = getCurrentSelectedLibrary();
   if (library) {
+    const selectionKey = getLibrarySelectionKey(library);
+    const metaText =
+      library.source === INSTRUCTION_SOURCE.V2
+        ? `<div class="text-muted small"><i class="fas fa-layer-group me-1"></i>${library.dataItemCount || 0} data items</div>`
+        : `<div class="text-muted small"><i class="fas fa-archive me-1"></i>Instruction Library (Legacy)</div>`;
+
     html += `
             <div class="card border-primary shadow-sm">
                 <div class="card-body p-3">
@@ -251,8 +347,9 @@ function displaySelectedInstructions() {
                                 <i class="fas fa-calendar me-1"></i>${library.displayDate}
                                 <i class="fas fa-clock me-1 ms-2"></i>${library.displayTime}
                             </div>
+                            ${metaText}
                         </div>
-                        <button class="btn btn-sm btn-outline-danger" onclick="removeLibrarySelection('${date}')" title="ยกเลิกการเลือก">
+                        <button class="btn btn-sm btn-outline-danger" onclick="removeLibrarySelection('${selectionKey}')" title="ยกเลิกการเลือก">
                             <i class="fas fa-times me-1"></i>ยกเลิก
                         </button>
                     </div>
@@ -277,14 +374,14 @@ function displaySelectedInstructions() {
 }
 
 // Toggle library selection (Single-Select Mode)
-function toggleLibrarySelection(date) {
-  // Single-select mode: Replace the current selection with new one
-  if (currentBotInstructions.length === 1 && currentBotInstructions[0] === date) {
-    // If clicking the already selected item, deselect it
+function toggleLibrarySelection(selectionKey) {
+  const library = findLibraryByKey(selectionKey);
+  if (!library) return;
+
+  if (isLibrarySelected(library)) {
     currentBotInstructions = [];
   } else {
-    // Replace with new selection (only one item)
-    currentBotInstructions = [date];
+    setCurrentSelectionFromLibrary(library);
   }
 
   // Refresh display
@@ -297,17 +394,21 @@ function toggleLibrarySelection(date) {
 }
 
 // Remove library selection
-function removeLibrarySelection(date) {
-  const index = currentBotInstructions.indexOf(date);
-  if (index > -1) {
-    currentBotInstructions.splice(index, 1);
-    displayInstructionLibraries();
-    displaySelectedInstructions();
-    updateInstructionCounts();
-    refreshInstructionAssetUsage().catch((err) =>
-      console.error("refreshInstructionAssetUsage error:", err),
+function removeLibrarySelection(selectionKey) {
+  const library = findLibraryByKey(selectionKey);
+  if (!library) {
+    currentBotInstructions = [];
+  } else {
+    currentBotInstructions = currentBotInstructions.filter(
+      (selection) => !selectionMatchesLibrary(selection, library),
     );
   }
+  displayInstructionLibraries();
+  displaySelectedInstructions();
+  updateInstructionCounts();
+  refreshInstructionAssetUsage().catch((err) =>
+    console.error("refreshInstructionAssetUsage error:", err),
+  );
 }
 
 // Update instruction counts in badges
@@ -315,7 +416,8 @@ function updateInstructionCounts() {
   // Update libraries count
   const librariesCountEl = document.getElementById('librariesCount');
   if (librariesCountEl) {
-    librariesCountEl.textContent = availableLibraries.length;
+    const totalLibraries = Array.isArray(availableLibraries) ? availableLibraries.length : 0;
+    librariesCountEl.textContent = totalLibraries;
   }
   
   // Update selected count
