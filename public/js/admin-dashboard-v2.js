@@ -17,6 +17,9 @@
     const instructionEditorUpdatedAt = document.getElementById('instructionEditorUpdatedAt');
     const instructionDirtyAlert = document.getElementById('instructionDirtyAlert');
     const saveInstructionChangesBtn = document.getElementById('saveInstructionChangesBtn');
+    const instructionCardsWrapper = document.getElementById('instructionCardsWrapper');
+    const instructionCardsEmptyState = document.getElementById('instructionCardsEmptyState');
+    const instructionCards = Array.from(document.querySelectorAll('.instruction-card'));
 
     const editorState = {
         currentInstructionId: '',
@@ -44,6 +47,22 @@
         }
     };
 
+    const applyInstructionCardFilter = (instructionId) => {
+        if (!instructionCardsWrapper || !instructionCardsEmptyState || instructionCards.length === 0) return;
+        if (!instructionId) {
+            instructionCardsWrapper.classList.add('d-none');
+            instructionCardsEmptyState.classList.remove('d-none');
+            instructionCards.forEach(card => card.classList.add('d-none'));
+            return;
+        }
+        instructionCardsWrapper.classList.remove('d-none');
+        instructionCardsEmptyState.classList.add('d-none');
+        instructionCards.forEach(card => {
+            const matches = card.dataset.id === instructionId;
+            card.classList.toggle('d-none', !matches);
+        });
+    };
+
     const clearEditor = () => {
         editorState.currentInstructionId = '';
         editorState.initialData = null;
@@ -58,6 +77,7 @@
         if (saveInstructionChangesBtn) saveInstructionChangesBtn.disabled = true;
         toggleEditorFields(false);
         setEditorStatus('ยังไม่ได้เลือก Instruction', false);
+        applyInstructionCardFilter('');
     };
 
     const hasEditorChanges = () => {
@@ -111,6 +131,8 @@
 
     let editorRequestToken = 0;
 
+    clearEditor();
+
     const loadInstructionIntoEditor = async (instructionId) => {
         if (!instructionId) {
             clearEditor();
@@ -149,6 +171,7 @@
                 }
                 formatUpdatedAtText(instruction.updatedAt || instruction.createdAt);
                 toggleEditorFields(true);
+                applyInstructionCardFilter(instructionId);
                 setEditorStatus('ข้อมูลล่าสุดบันทึกแล้ว', false);
                 editorState.isDirty = false;
                 if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');

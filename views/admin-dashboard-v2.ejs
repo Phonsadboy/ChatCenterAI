@@ -243,7 +243,13 @@
                         <select id="instructionSelect" class="form-select">
                             <option value="">— เลือก Instruction —</option>
                             <% instructions.forEach(instruction => { %>
-                                <option value="<%= instruction._id %>"><%= instruction.name || 'ไม่มีชื่อ' %></option>
+                                <% const updatedAt = instruction.updatedAt || instruction.createdAt; %>
+                                <option value="<%= instruction._id %>" data-updated="<%= updatedAt ? new Date(updatedAt).toISOString() : '' %>">
+                                    <%= instruction.instructionId ? '[' + instruction.instructionId + '] ' : '' %><%= instruction.name || 'ไม่มีชื่อ' %>
+                                    <% if (updatedAt) { %>
+                                        — <%= new Date(updatedAt).toLocaleString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) %>
+                                    <% } %>
+                                </option>
                             <% }) %>
                         </select>
                     </div>
@@ -285,17 +291,24 @@
             </div>
         </div>
 
-        <div id="instructionsContainer">
-            <% if (instructions.length === 0) { %>
+        <% if (instructions.length === 0) { %>
+            <div class="empty-state">
+                <i class="fas fa-book-open"></i>
+                <h5>ยังไม่มี Instruction</h5>
+                <p>เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI ใช้ตอบลูกค้า</p>
+                <button class="btn btn-primary mt-2" onclick="document.getElementById('createInstructionBtn').click()">
+                    <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
+                </button>
+            </div>
+        <% } else { %>
+            <div id="instructionCardsEmptyState">
                 <div class="empty-state">
                     <i class="fas fa-book-open"></i>
-                    <h5>ยังไม่มี Instruction</h5>
-                    <p>เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI ใช้ตอบลูกค้า</p>
-                    <button class="btn btn-primary mt-2" onclick="document.getElementById('createInstructionBtn').click()">
-                        <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
-                    </button>
+                    <h5>เลือก Instruction เพื่อดูและแก้ไขรายละเอียด</h5>
+                    <p>ใช้ตัวเลือกด้านบนเพื่อโหลดข้อมูลที่ต้องการแก้ไข</p>
                 </div>
-            <% } else { %>
+            </div>
+            <div id="instructionCardsWrapper" class="d-none">
                 <% instructions.forEach(instruction => { %>
                     <div class="instruction-card" data-id="<%= instruction._id %>">
                         <div class="instruction-header">
