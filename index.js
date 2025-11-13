@@ -6436,6 +6436,52 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
   }
 });
 
+// API: Reorder data items
+// NOTE: Declare before the :itemId route below so Express does not treat "reorder" as an itemId.
+app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { itemIds } = req.body; // Array of itemIds in new order
+
+    if (!Array.isArray(itemIds)) {
+      return res.status(400).json({ success: false, error: "itemIds ต้องเป็น array" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    // Reorder dataItems based on itemIds array
+    const reorderedItems = itemIds.map((itemId, index) => {
+      const item = (instruction.dataItems || []).find(i => i.itemId === itemId);
+      if (item) {
+        return { ...item, order: index + 1 };
+      }
+      return null;
+    }).filter(Boolean);
+
+    await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          dataItems: reorderedItems,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error reordering data items:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // API: Update data item
 app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
   try {
@@ -6547,51 +6593,6 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
     res.json({ success: true, dataItem: duplicateItem });
   } catch (err) {
     console.error("Error duplicating data item:", err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// API: Reorder data items
-app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { itemIds } = req.body; // Array of itemIds in new order
-
-    if (!Array.isArray(itemIds)) {
-      return res.status(400).json({ success: false, error: "itemIds ต้องเป็น array" });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
-    if (!instruction) {
-      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-    }
-
-    // Reorder dataItems based on itemIds array
-    const reorderedItems = itemIds.map((itemId, index) => {
-      const item = (instruction.dataItems || []).find(i => i.itemId === itemId);
-      if (item) {
-        return { ...item, order: index + 1 };
-      }
-      return null;
-    }).filter(Boolean);
-
-    await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          dataItems: reorderedItems,
-          updatedAt: new Date()
-        }
-      }
-    );
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Error reordering data items:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
