@@ -514,4 +514,109 @@
         });
     }
 
+    // ===== Data Item Reordering =====
+    const getSiblingDataItem = (itemElement, direction) => {
+        let sibling = direction === 'up'
+            ? itemElement.previousElementSibling
+            : itemElement.nextElementSibling;
+        while (sibling && !sibling.classList.contains('data-item')) {
+            sibling = direction === 'up'
+                ? sibling.previousElementSibling
+                : sibling.nextElementSibling;
+        }
+        return sibling;
+    };
+
+    const updateDataItemOrderUI = (container) => {
+        const orderSpans = container.querySelectorAll('.data-item-order');
+        orderSpans.forEach((span, idx) => {
+            span.textContent = `${idx + 1}.`;
+        });
+    };
+
+    const applyDataItemOrder = (container, itemIds) => {
+        const addButton = container.querySelector('.add-data-item');
+        const map = {};
+        container.querySelectorAll('.data-item').forEach(item => {
+            map[item.dataset.itemId] = item;
+        });
+        itemIds.forEach(id => {
+            const element = map[id];
+            if (!element) return;
+            if (addButton) {
+                container.insertBefore(element, addButton);
+            } else {
+                container.appendChild(element);
+            }
+        });
+    };
+
+    const setInstructionReorderLoading = (instructionId, isLoading) => {
+        document.querySelectorAll(`.move-data-item[data-instruction-id="${instructionId}"]`)
+            .forEach(btn => {
+                btn.disabled = isLoading;
+            });
+    };
+
+    const persistDataItemOrder = async (instructionId, itemIds, container, fallbackOrder) => {
+        setInstructionReorderLoading(instructionId, true);
+        try {
+            const res = await fetch(`/api/instructions-v2/${instructionId}/data-items/reorder`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ itemIds })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'ไม่สามารถสลับลำดับได้');
+            }
+            return true;
+        } catch (err) {
+            console.error('Error reordering data items:', err);
+            alert(err.message || 'ไม่สามารถสลับลำดับได้');
+            if (Array.isArray(fallbackOrder) && fallbackOrder.length > 0) {
+                applyDataItemOrder(container, fallbackOrder);
+                updateDataItemOrderUI(container);
+            }
+            return false;
+        } finally {
+            setInstructionReorderLoading(instructionId, false);
+        }
+    };
+
+    const initDataItemReorderControls = () => {
+        document.querySelectorAll('.move-data-item').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const direction = btn.dataset.direction;
+                const instructionId = btn.dataset.instructionId;
+                const itemElement = btn.closest('.data-item');
+                const container = btn.closest('.data-items-container');
+
+                if (!direction || !instructionId || !itemElement || !container) return;
+
+                const target = getSiblingDataItem(itemElement, direction);
+                if (!target) return;
+
+                const previousOrder = Array.from(container.querySelectorAll('.data-item'))
+                    .map(item => item.dataset.itemId);
+
+                if (direction === 'up') {
+                    container.insertBefore(itemElement, target);
+                } else {
+                    container.insertBefore(itemElement, target.nextElementSibling);
+                }
+
+                updateDataItemOrderUI(container);
+
+                const newOrder = Array.from(container.querySelectorAll('.data-item'))
+                    .map(item => item.dataset.itemId);
+
+                await persistDataItemOrder(instructionId, newOrder, container, previousOrder);
+                updateDataItemOrderUI(container);
+            });
+        });
+    };
+
+    initDataItemReorderControls();
+
 })();

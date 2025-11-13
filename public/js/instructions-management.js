@@ -69,6 +69,21 @@ function getCurrentSelectedLibrary() {
   return availableLibraries.find((lib) => isLibrarySelected(lib)) || null;
 }
 
+function safeRefreshInstructionAssetUsage() {
+  if (typeof refreshInstructionAssetUsage === "function") {
+    try {
+      const result = refreshInstructionAssetUsage();
+      if (result && typeof result.then === "function") {
+        return result;
+      }
+      return Promise.resolve(result);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+  return Promise.resolve();
+}
+
 function buildSelectionPayload(library) {
   if (!library) return null;
   if (library.source === INSTRUCTION_SOURCE.V2 && library.instructionId) {
@@ -184,7 +199,7 @@ async function convertLegacyLibraryToV2(libraryDate, triggerButton) {
     displayInstructionLibraries();
     displaySelectedInstructions();
     updateInstructionCounts();
-    refreshInstructionAssetUsage().catch((err) =>
+    safeRefreshInstructionAssetUsage().catch((err) =>
       console.error("refreshInstructionAssetUsage error:", err),
     );
   } catch (error) {
@@ -533,7 +548,7 @@ function toggleLibrarySelection(selectionKey) {
   displayInstructionLibraries();
   displaySelectedInstructions();
   updateInstructionCounts();
-  refreshInstructionAssetUsage().catch((err) =>
+  safeRefreshInstructionAssetUsage().catch((err) =>
     console.error("refreshInstructionAssetUsage error:", err),
   );
 }
@@ -551,7 +566,7 @@ function removeLibrarySelection(selectionKey) {
   displayInstructionLibraries();
   displaySelectedInstructions();
   updateInstructionCounts();
-  refreshInstructionAssetUsage().catch((err) =>
+  safeRefreshInstructionAssetUsage().catch((err) =>
     console.error("refreshInstructionAssetUsage error:", err),
   );
 }

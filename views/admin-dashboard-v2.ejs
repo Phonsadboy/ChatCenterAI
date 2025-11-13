@@ -93,6 +93,15 @@
             gap: 6px;
         }
 
+        .data-item-order {
+            font-weight: 600;
+            color: #0d6efd;
+        }
+
+        .data-item-title-text {
+            flex: 1;
+        }
+
         .data-item-meta {
             font-size: 12px;
             color: #6c757d;
@@ -108,6 +117,14 @@
         .data-item-actions .btn {
             padding: 2px 6px;
             font-size: 12px;
+        }
+
+        .data-item-actions .btn-move {
+            color: #6c757d;
+        }
+
+        .data-item-actions .btn-move:disabled {
+            opacity: 0.4;
         }
 
         .instruction-footer {
@@ -334,14 +351,15 @@
                             </div>
                         </div>
 
-                        <div class="data-items-container">
+                        <div class="data-items-container" data-instruction-id="<%= instruction._id %>">
                             <% if (instruction.dataItems && instruction.dataItems.length > 0) { %>
                                 <% instruction.dataItems.forEach((item, index) => { %>
-                                    <div class="data-item" data-item-id="<%= item.itemId %>">
+                                    <div class="data-item" data-item-id="<%= item.itemId %>" data-instruction-id="<%= instruction._id %>">
                                         <div class="data-item-info">
                                             <div class="data-item-title">
                                                 <span class="type-badge type-<%= item.type %>"><%= item.type === 'text' ? 'Text' : 'Table' %></span>
-                                                <span><%= index + 1 %>. <%= item.title || 'ไม่มีชื่อ' %></span>
+                                                <span class="data-item-order"><%= index + 1 %>.</span>
+                                                <span class="data-item-title-text"><%= item.title || 'ไม่มีชื่อ' %></span>
                                             </div>
                                             <div class="data-item-meta">
                                                 <% if (item.type === 'text') { %>
@@ -353,6 +371,18 @@
                                             </div>
                                         </div>
                                         <div class="data-item-actions">
+                                            <button class="btn btn-sm btn-outline-secondary btn-move move-data-item"
+                                                    data-direction="up"
+                                                    data-instruction-id="<%= instruction._id %>"
+                                                    data-item-id="<%= item.itemId %>">
+                                                <i class="fas fa-arrow-up"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-secondary btn-move move-data-item"
+                                                    data-direction="down"
+                                                    data-instruction-id="<%= instruction._id %>"
+                                                    data-item-id="<%= item.itemId %>">
+                                                <i class="fas fa-arrow-down"></i>
+                                            </button>
                                             <button class="btn btn-sm btn-outline-primary edit-data-item"
                                                     data-instruction-id="<%= instruction._id %>"
                                                     data-item-id="<%= item.itemId %>">
