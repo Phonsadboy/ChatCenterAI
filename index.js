@@ -200,6 +200,32 @@ try {
   console.warn("[Static] Could not ensure asset directories:", e?.message || e);
 }
 
+const buildInstructionLookupNames = (fileName) => {
+  if (!fileName) return [];
+  const safeDecode = (() => {
+    try {
+      return decodeURIComponent(fileName);
+    } catch (_) {
+      return fileName;
+    }
+  })();
+  const baseName = fileName
+    .replace(/(_thumb)?\.(jpe?g|png|webp)$/i, "")
+    .trim();
+  const variants = [
+    fileName,
+    fileName.toLowerCase(),
+    safeDecode,
+    safeDecode.toLowerCase(),
+    baseName,
+    baseName.toLowerCase(),
+    baseName.replace(/[_\s]+/g, "-"),
+  ];
+  return Array.from(
+    new Set(variants.filter((value) => typeof value === "string" && value)),
+  );
+};
+
 app.get("/assets/instructions/:fileName", async (req, res, next) => {
   const { fileName } = req.params;
   if (!fileName) return next();
@@ -209,6 +235,7 @@ app.get("/assets/instructions/:fileName", async (req, res, next) => {
     const db = client.db("chatbot");
     const coll = db.collection("instruction_assets");
     const queryOr = [{ fileName }, { thumbFileName: fileName }];
+    const lookupNames = buildInstructionLookupNames(fileName);
     for (const name of lookupNames) {
       queryOr.push({ label: name });
       queryOr.push({ slug: name });
@@ -12212,6 +12239,32 @@ function generateSlugFromLabel(label) {
   return slug;
 }
 
+async function ensureUniqueInstructionSlug(
+  coll,
+  baseSlug,
+  { excludeLabel } = {},
+) {
+  if (!coll) return baseSlug;
+  const sanitizedBase = baseSlug || `asset-${Date.now()}`;
+  let candidate = sanitizedBase;
+  let counter = 1;
+  const maxAttempts = 50;
+
+  while (counter <= maxAttempts) {
+    const query = { slug: candidate };
+    if (excludeLabel) {
+      query.label = { $ne: excludeLabel };
+    }
+    const conflict = await coll.findOne(query);
+    if (!conflict) {
+      return candidate;
+    }
+    candidate = `${sanitizedBase}-${counter++}`;
+  }
+
+  return `${sanitizedBase}-${Date.now().toString(36)}`;
+}
+
 // Upload a new instruction asset
 app.post(
   "/admin/instructions/assets",
@@ -12230,9 +12283,6 @@ app.post(
           .status(400)
           .json({ success: false, error: "กรุณาระบุชื่อ Label" });
       }
-
-      // สร้าง slug จาก label (รองรับภาษาไทย)
-      const slug = generateSlugFromLabel(label);
 
       if (!req.file) {
         return res
@@ -12257,17 +12307,8 @@ app.post(
         .jpeg({ quality: 80 })
         .toBuffer();
 
-      const sha256 = crypto
-        .createHash("sha256")
-        .update(optimized)
-        .digest("hex")
-        .slice(0, 16);
-      const fileName = `${slug}.jpg`;
-      const thumbName = `${slug}_thumb.jpg`;
-
       const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
-      const url = `${urlBase}/assets/instructions/${fileName}`;
-      const thumbUrl = `${urlBase}/assets/instructions/${thumbName}`;
+      let slug = generateSlugFromLabel(label);
 
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -12281,6 +12322,19 @@ app.post(
           error: "label นี้มีอยู่แล้ว หากต้องการแทนที่ให้ส่ง overwrite=true",
         });
       }
+
+      if (existing?.slug) {
+        slug = existing.slug;
+      } else {
+        slug = await ensureUniqueInstructionSlug(coll, slug, {
+          excludeLabel: existing ? label : undefined,
+        });
+      }
+
+      const fileName = `${slug}.jpg`;
+      const thumbName = `${slug}_thumb.jpg`;
+      const url = `${urlBase}/assets/instructions/${fileName}`;
+      const thumbUrl = `${urlBase}/assets/instructions/${thumbName}`;
 
       if (existing) {
         await deleteGridFsEntries(bucket, [
@@ -12308,6 +12362,11 @@ app.post(
         }),
       ]);
 
+      const sha256 = crypto
+        .createHash("sha256")
+        .update(optimized)
+        .digest("hex")
+        .slice(0, 16);
       const doc = {
         label,
         slug,
