@@ -54,7 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const summaryTotalItems = document.getElementById("summaryTotalItems");
   const pageSettingsBody = document.getElementById("orderPageSettingsBody");
   const pageSettingsStatus = document.getElementById("orderPageSettingsStatus");
-  const cutoffToggle = document.getElementById("orderCutoffToggle");
+  const extractionModeSelect = document.getElementById("orderExtractionMode");
 
   let currentPage = 1;
   let totalPages = 1;
@@ -856,26 +856,26 @@ document.addEventListener("DOMContentLoaded", () => {
     return data;
   }
 
-  async function updateScheduling(enabled) {
+  async function updateExtractionMode(mode) {
     const response = await fetch("/admin/orders/settings/scheduling", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify({ mode }),
     });
     if (!response.ok) {
-      throw new Error("ไม่สามารถอัปเดตสถานะการสแกนได้");
+      throw new Error("ไม่สามารถอัปเดตโหมดการสกัดได้");
     }
     const data = await response.json();
     if (!data.success) {
-      throw new Error(data.error || "ไม่สามารถอัปเดตสถานะการสแกนได้");
+      throw new Error(data.error || "ไม่สามารถอัปเดตโหมดการสกัดได้");
     }
-    return data.enabled;
+    return typeof data.mode === "string" ? data.mode : mode;
   }
 
   async function loadPageSettings() {
-    if (!pageSelect && !pageSettingsBody && !cutoffToggle) {
+    if (!pageSelect && !pageSettingsBody && !extractionModeSelect) {
       return;
     }
 
@@ -909,13 +909,22 @@ document.addEventListener("DOMContentLoaded", () => {
       populatePageFilter(orderPages);
       renderPageSettings(orderPages);
 
-      if (cutoffToggle) {
-        const enabled =
-          typeof data.settings?.schedulingEnabled !== "undefined"
-            ? !!data.settings.schedulingEnabled
-            : true;
-        cutoffToggle.checked = enabled;
-        cutoffToggle.disabled = false;
+      const enabled =
+        typeof data.settings?.schedulingEnabled !== "undefined"
+          ? !!data.settings.schedulingEnabled
+          : true;
+      const extractionMode =
+        typeof data.settings?.extractionMode === "string"
+          ? data.settings.extractionMode
+          : enabled
+            ? "scheduled"
+            : "realtime";
+      if (extractionModeSelect) {
+        extractionModeSelect.value =
+          extractionMode === "realtime" ? "realtime" : "scheduled";
+        extractionModeSelect.dataset.currentMode =
+          extractionModeSelect.value;
+        extractionModeSelect.disabled = false;
       }
     } catch (error) {
       console.error("[Orders] loadPageSettings error:", error);
@@ -1622,27 +1631,33 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  if (cutoffToggle) {
-    cutoffToggle.addEventListener("change", async () => {
-      const enabled = cutoffToggle.checked;
-      cutoffToggle.disabled = true;
+  if (extractionModeSelect) {
+    extractionModeSelect.addEventListener("change", async () => {
+      const previousValue =
+        extractionModeSelect.dataset.currentMode || extractionModeSelect.value;
+      const selectedMode = extractionModeSelect.value || "scheduled";
+      extractionModeSelect.disabled = true;
       try {
-        await updateScheduling(enabled);
-        showSettingsStatus(
-          enabled
-            ? "เปิดการสแกนอัตโนมัติสำหรับการสกัดออเดอร์แล้ว"
-            : "ปิดการสแกนอัตโนมัติสำหรับการสกัดออเดอร์แล้ว",
-          "success",
-        );
+        const appliedMode = await updateExtractionMode(selectedMode);
+        const finalValue =
+          appliedMode === "realtime" ? "realtime" : "scheduled";
+        extractionModeSelect.value = finalValue;
+        extractionModeSelect.dataset.currentMode = finalValue;
+        const successMessage =
+          finalValue === "scheduled"
+            ? "สลับเป็นโหมดสกัดวันละครั้งตามเวลาที่กำหนดแล้ว"
+            : "สลับเป็นโหมดสกัดทุกครั้งหลัง AI ตอบกลับแล้ว";
+        showSettingsStatus(successMessage, "success");
       } catch (error) {
-        console.error("[Orders] updateScheduling error:", error);
+        console.error("[Orders] updateExtractionMode error:", error);
         showSettingsStatus(
-          error.message || "ไม่สามารถอัปเดตสถานะการสแกนได้",
+          error.message || "ไม่สามารถอัปเดตโหมดการสกัดได้",
           "danger",
         );
-        cutoffToggle.checked = !enabled;
+        extractionModeSelect.value = previousValue;
+        extractionModeSelect.dataset.currentMode = previousValue;
       } finally {
-        cutoffToggle.disabled = false;
+        extractionModeSelect.disabled = false;
       }
     });
   }

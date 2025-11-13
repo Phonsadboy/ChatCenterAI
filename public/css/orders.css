@@ -248,6 +248,10 @@
   flex-wrap: wrap;
 }
 
+.order-extraction-mode {
+  min-width: 260px;
+}
+
 .order-settings-table .badge {
   font-weight: 600;
   font-size: 0.75rem;

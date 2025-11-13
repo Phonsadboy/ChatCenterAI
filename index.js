@@ -1456,6 +1456,35 @@ let followUpTaskTimer = null;
 let followUpProcessing = false;
 const FOLLOW_UP_TASK_INTERVAL_MS = 30 * 1000;
 
+const DEFAULT_ORDER_PROMPT_BODY = `วิเคราะห์บทสนทนาเพื่อสกัดข้อมูลออเดอร์ โดยให้ความสำคัญกับการสรุปยอดล่าสุดที่สุดในบทสนทนา (ถ้ามีหลายรอบให้ใช้ข้อมูลจากรอบล่าสุดเท่านั้น)
+
+เกณฑ์การพิจารณา:
+✅ ถือว่ามีออเดอร์ = ลูกค้าสั่งซื้อสินค้าชัดเจน พร้อมระบุรายละเอียด
+❌ ไม่ถือว่ามีออเดอร์ = ถามราคา, ต่อรอง, ลังเล, พิจารณาอยู่
+
+ข้อมูลที่ต้องสกัด:
+- items: รายการสินค้า [{product: "ชื่อสินค้า", quantity: จำนวน, price: ราคาต่อชิ้น}]
+- totalAmount: ยอดรวมทั้งหมด (ถ้าไม่ระบุให้คำนวณจาก items)
+- shippingAddress: ที่อยู่จัดส่ง (จำเป็นต้องมี ถ้าไม่มีให้สรุปว่าไม่มีออเดอร์)
+- phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
+- paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
+- shippingCost: ค่าส่ง (ตัวเลข; หากไม่ระบุให้ใช้ 0 และถือว่าส่งฟรี)
+- หากได้รับข้อมูลที่อยู่หรือชื่อลูกค้าจากออเดอร์ก่อนหน้า ให้ใช้เป็นค่าเริ่มต้นเมื่อไม่มีข้อมูลใหม่`;
+
+const ORDER_PROMPT_JSON_SUFFIX = `ตอบเป็น JSON เท่านั้น: {
+  "hasOrder": true/false,
+  "orderData": {
+    "items": [...],
+    "totalAmount": จำนวน,
+    "shippingAddress": "ที่อยู่หรือ null",
+    "phone": "เบอร์โทรหรือ null",
+    "paymentMethod": "วิธีชำระหรือ null",
+    "shippingCost": จำนวน
+  },
+  "confidence": 0.0-1.0,
+  "reason": "เหตุผลสั้นๆ (หากไม่มีที่อยู่ให้สรุปว่าไม่มีออเดอร์)"
+}`;
+
 function normalizeFollowUpBotId(botId) {
   if (!botId) return null;
   if (typeof botId === "string") return botId;
@@ -1646,6 +1675,7 @@ async function getFollowUpBaseConfig() {
     "followUpShowInDashboard",
     "followUpAutoEnabled",
     "followUpRounds",
+    "followUpOrderPromptInstructions",
   ];
   const docs = await coll.find({ key: { $in: keys } }).toArray();
   const map = {};
@@ -1671,6 +1701,11 @@ async function getFollowUpBaseConfig() {
         ? map.followUpAutoEnabled
         : false,
     rounds: normalizeFollowUpRounds(map.followUpRounds || []),
+    orderPromptInstructions:
+      typeof map.followUpOrderPromptInstructions === "string" &&
+      map.followUpOrderPromptInstructions.trim().length
+        ? map.followUpOrderPromptInstructions.trim()
+        : DEFAULT_ORDER_PROMPT_BODY,
   };
 
   followUpBaseConfigCache = config;
@@ -1728,8 +1763,34 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
     merged.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
   }
 
+  const promptText =
+    typeof merged.orderPromptInstructions === "string"
+      ? merged.orderPromptInstructions.trim()
+      : "";
+  merged.orderPromptInstructions = promptText || DEFAULT_ORDER_PROMPT_BODY;
+
   followUpContextCache.set(cacheKey, merged);
   return merged;
+}
+
+async function getOrderPromptBody(platform = "line", botId = null) {
+  try {
+    const config = await getFollowUpConfigForContext(platform, botId);
+    if (
+      config &&
+      typeof config.orderPromptInstructions === "string" &&
+      config.orderPromptInstructions.trim()
+    ) {
+      return config.orderPromptInstructions.trim();
+    }
+  } catch (error) {
+    console.warn(
+      `[Order] ไม่สามารถโหลดคำสั่งวิเคราะห์สำหรับ ${platform}:${
+        botId || "default"
+      }: ${error.message}`,
+    );
+  }
+  return DEFAULT_ORDER_PROMPT_BODY;
 }
 
 async function listFollowUpPageSettings() {
@@ -1779,6 +1840,11 @@ async function listFollowUpPageSettings() {
     if (typeof config.autoFollowUpEnabled !== "boolean") {
       config.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
     }
+    const promptText =
+      typeof config.orderPromptInstructions === "string"
+        ? config.orderPromptInstructions.trim()
+        : "";
+    config.orderPromptInstructions = promptText || DEFAULT_ORDER_PROMPT_BODY;
     return config;
   };
 
@@ -2775,6 +2841,11 @@ const ORDER_CUTOFF_INTERVAL_MS = 60 * 1000;
 let orderCutoffTimer = null;
 let orderCutoffProcessing = false;
 
+const ORDER_EXTRACTION_MODES = Object.freeze({
+  SCHEDULED: "scheduled",
+  REALTIME: "realtime",
+});
+
 function normalizeOrderPlatform(platform) {
   if (typeof platform !== "string") return "line";
   const normalized = platform.toLowerCase();
@@ -3284,11 +3355,15 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
     modelOverride = null,
     previousAddress = null,
     previousCustomerName = null,
+    platform = "line",
+    botId = null,
   } = options || {};
 
   const orderModel =
     modelOverride || (await getSettingValue("orderModel", "gpt-4.1-mini"));
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  const promptBody = (await getOrderPromptBody(platform, botId)).trim();
+  const systemPrompt = `${promptBody}\n\n${ORDER_PROMPT_JSON_SUFFIX}`;
 
   // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่
   const formattedConversation = messages
@@ -3298,35 +3373,6 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
       return `${seq}. ${speaker}: ${entry.content}`;
     })
     .join("\n");
-
-  const systemPrompt = `วิเคราะห์บทสนทนาเพื่อสกัดข้อมูลออเดอร์ โดยให้ความสำคัญกับการสรุปยอดล่าสุดที่สุดในบทสนทนา (ถ้ามีหลายรอบให้ใช้ข้อมูลจากรอบล่าสุดเท่านั้น)
-
-เกณฑ์การพิจารณา:
-✅ ถือว่ามีออเดอร์ = ลูกค้าสั่งซื้อสินค้าชัดเจน พร้อมระบุรายละเอียด
-❌ ไม่ถือว่ามีออเดอร์ = ถามราคา, ต่อรอง, ลังเล, พิจารณาอยู่
-
-ข้อมูลที่ต้องสกัด:
-- items: รายการสินค้า [{product: "ชื่อสินค้า", quantity: จำนวน, price: ราคาต่อชิ้น}]
-- totalAmount: ยอดรวมทั้งหมด (ถ้าไม่ระบุให้คำนวณจาก items)
-- shippingAddress: ที่อยู่จัดส่ง (จำเป็นต้องมี ถ้าไม่มีให้สรุปว่าไม่มีออเดอร์)
-- phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
-- paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
-- shippingCost: ค่าส่ง (ตัวเลข; หากไม่ระบุให้ใช้ 0 และถือว่าส่งฟรี)
-- หากได้รับข้อมูลที่อยู่หรือชื่อลูกค้าจากออเดอร์ก่อนหน้า ให้ใช้เป็นค่าเริ่มต้นเมื่อไม่มีข้อมูลใหม่
-
-ตอบเป็น JSON เท่านั้น: {
-  "hasOrder": true/false,
-  "orderData": {
-    "items": [...],
-    "totalAmount": จำนวน,
-    "shippingAddress": "ที่อยู่หรือ null",
-    "phone": "เบอร์โทรหรือ null",
-    "paymentMethod": "วิธีชำระหรือ null",
-    "shippingCost": จำนวน
-  },
-  "confidence": 0.0-1.0,
-  "reason": "เหตุผลสั้นๆ (หากไม่มีที่อยู่ให้สรุปว่าไม่มีออเดอร์)"
-}`;
 
   const previousContextLines = [];
   if (previousCustomerName) {
@@ -3555,11 +3601,8 @@ async function getUserOrders(userId) {
 
 async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
   try {
-    const orderCutoffSchedulingEnabled = await getSettingValue(
-      "orderCutoffSchedulingEnabled",
-      true,
-    );
-    if (orderCutoffSchedulingEnabled) {
+    const extractionMode = await getOrderExtractionModeSetting();
+    if (extractionMode === ORDER_EXTRACTION_MODES.SCHEDULED) {
       return;
     }
 
@@ -3598,6 +3641,8 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
     const analysis = await analyzeOrderFromChat(userId, targetMessages, {
       previousAddress: latestOrder?.orderData?.shippingAddress || null,
       previousCustomerName: latestOrder?.orderData?.customerName || null,
+      platform,
+      botId,
     });
 
     if (!analysis || !analysis.hasOrder) {
@@ -3760,6 +3805,8 @@ async function processOrderCutoffForPage(pageConfig, options = {}) {
       const analysis = await analyzeOrderFromChat(userId, targetMessages, {
         previousAddress: latestOrder?.orderData?.shippingAddress || null,
         previousCustomerName: latestOrder?.orderData?.customerName || null,
+        platform,
+        botId,
       });
 
       if (!analysis || !analysis.hasOrder) {
@@ -3875,11 +3922,8 @@ async function evaluateOrderCutoffSchedules() {
 
   orderCutoffProcessing = true;
   try {
-    const schedulingEnabled = await getSettingValue(
-      "orderCutoffSchedulingEnabled",
-      true,
-    );
-    if (!schedulingEnabled) {
+    const extractionMode = await getOrderExtractionModeSetting();
+    if (extractionMode !== ORDER_EXTRACTION_MODES.SCHEDULED) {
       return;
     }
 
@@ -3920,17 +3964,15 @@ async function evaluateOrderCutoffSchedules() {
 }
 
 async function startOrderCutoffScheduler() {
-  const schedulingEnabled = await getSettingValue(
-    "orderCutoffSchedulingEnabled",
-    true,
-  );
+  const extractionMode = await getOrderExtractionModeSetting();
+  const schedulingEnabled = extractionMode === ORDER_EXTRACTION_MODES.SCHEDULED;
 
   if (!schedulingEnabled) {
     if (orderCutoffTimer) {
       clearInterval(orderCutoffTimer);
       orderCutoffTimer = null;
     }
-    console.log("[OrderCutoff] Scheduler ถูกปิดใช้งานตามการตั้งค่า");
+    console.log("[OrderCutoff] Scheduler ถูกปิดใช้งาน (โหมดเรียลไทม์)");
     return;
   }
 
@@ -7684,6 +7726,7 @@ async function ensureSettings() {
     { key: "followUpAutoEnabled", value: false },
     { key: "orderAnalysisEnabled", value: true },
     { key: "orderCutoffSchedulingEnabled", value: true },
+    { key: "orderExtractionMode", value: ORDER_EXTRACTION_MODES.SCHEDULED },
     {
       key: "audioAttachmentResponse",
       value: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
@@ -7733,6 +7776,30 @@ async function setSettingValue(key, value) {
     console.error(`Error setting ${key}:`, error);
     return false;
   }
+}
+
+function normalizeOrderExtractionMode(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (Object.values(ORDER_EXTRACTION_MODES).includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+async function getOrderExtractionModeSetting() {
+  const rawMode = await getSettingValue("orderExtractionMode", null);
+  const normalized = normalizeOrderExtractionMode(rawMode);
+  if (normalized) {
+    return normalized;
+  }
+  const legacyEnabled = await getSettingValue(
+    "orderCutoffSchedulingEnabled",
+    true,
+  );
+  return legacyEnabled
+    ? ORDER_EXTRACTION_MODES.SCHEDULED
+    : ORDER_EXTRACTION_MODES.REALTIME;
 }
 
 async function getAiEnabled() {
@@ -13944,18 +14011,16 @@ app.post("/admin/broadcast", async (req, res) => {
 // Follow-up page (stub)
 app.get("/admin/followup", async (req, res) => {
   try {
-    const analysisEnabled = await getSettingValue(
-      "enableFollowUpAnalysis",
-      true,
-    );
-    const showDashboard = await getSettingValue(
-      "followUpShowInDashboard",
-      true,
-    );
+    const baseConfig = await getFollowUpBaseConfig();
     res.render("admin-followup", {
       followUpConfig: {
-        analysisEnabled,
-        showDashboard,
+        analysisEnabled: baseConfig.analysisEnabled !== false,
+        showDashboard: baseConfig.showInDashboard !== false,
+      },
+      orderPromptDefaults: {
+        instructions:
+          baseConfig.orderPromptInstructions || DEFAULT_ORDER_PROMPT_BODY,
+        jsonSuffix: ORDER_PROMPT_JSON_SUFFIX,
       },
     });
   } catch (error) {
@@ -13964,6 +14029,10 @@ app.get("/admin/followup", async (req, res) => {
       followUpConfig: {
         analysisEnabled: false,
         showDashboard: false,
+      },
+      orderPromptDefaults: {
+        instructions: DEFAULT_ORDER_PROMPT_BODY,
+        jsonSuffix: ORDER_PROMPT_JSON_SUFFIX,
       },
     });
   }
@@ -14136,6 +14205,14 @@ app.post("/admin/followup/page-settings", async (req, res) => {
         sanitized[key] = clamped;
       }
     });
+
+    if (
+      typeof settings?.orderPromptInstructions === "string" &&
+      settings.orderPromptInstructions.trim().length
+    ) {
+      const trimmedPrompt = settings.orderPromptInstructions.trim();
+      sanitized.orderPromptInstructions = trimmedPrompt.slice(0, 4000);
+    }
 
     if (
       typeof settings?.model === "string" &&
@@ -14366,10 +14443,12 @@ app.get("/admin/orders", async (req, res) => {
 
 app.get("/admin/orders/pages", async (req, res) => {
   try {
-    const [pages, schedulingEnabled] = await Promise.all([
+    const [pages, extractionMode] = await Promise.all([
       listOrderCutoffPages(),
-      getSettingValue("orderCutoffSchedulingEnabled", true),
+      getOrderExtractionModeSetting(),
     ]);
+    const schedulingEnabled =
+      extractionMode === ORDER_EXTRACTION_MODES.SCHEDULED;
 
     res.json({
       success: true,
@@ -14377,6 +14456,7 @@ app.get("/admin/orders/pages", async (req, res) => {
       settings: {
         schedulingEnabled: !!schedulingEnabled,
         defaultCutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
+        extractionMode,
       },
     });
   } catch (error) {
@@ -14430,18 +14510,34 @@ app.post("/admin/orders/pages/cutoff", async (req, res) => {
 
 app.post("/admin/orders/settings/scheduling", async (req, res) => {
   try {
-    const { enabled } = req.body || {};
-    if (typeof enabled !== "boolean") {
+    const { enabled, mode } = req.body || {};
+    let targetMode = normalizeOrderExtractionMode(mode);
+
+    if (!targetMode && typeof enabled === "boolean") {
+      targetMode = enabled
+        ? ORDER_EXTRACTION_MODES.SCHEDULED
+        : ORDER_EXTRACTION_MODES.REALTIME;
+    }
+
+    if (!targetMode) {
       return res.json({
         success: false,
-        error: "กรุณาระบุสถานะเปิด/ปิดที่ถูกต้อง",
+        error: "กรุณาเลือกโหมดการสกัดออเดอร์ที่ถูกต้อง",
       });
     }
 
-    await setSettingValue("orderCutoffSchedulingEnabled", enabled);
+    await setSettingValue("orderExtractionMode", targetMode);
+    await setSettingValue(
+      "orderCutoffSchedulingEnabled",
+      targetMode === ORDER_EXTRACTION_MODES.SCHEDULED,
+    );
     await startOrderCutoffScheduler();
 
-    res.json({ success: true, enabled });
+    res.json({
+      success: true,
+      mode: targetMode,
+      enabled: targetMode === ORDER_EXTRACTION_MODES.SCHEDULED,
+    });
   } catch (error) {
     console.error("[Orders] ไม่สามารถปรับสถานะ scheduler ได้:", error);
     res.json({ success: false, error: error.message });
@@ -15104,9 +15200,17 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
     const existingOrders = await getUserOrders(userId);
     const latestOrder = existingOrders?.[0];
 
+    const lastMessage =
+      targetMessages[targetMessages.length - 1] ||
+      messages[messages.length - 1];
+    const platform = lastMessage?.platform || "line";
+    const botId = lastMessage?.botId || null;
+
     const analysis = await analyzeOrderFromChat(userId, targetMessages, {
       previousAddress: latestOrder?.orderData?.shippingAddress || null,
       previousCustomerName: latestOrder?.orderData?.customerName || null,
+      platform,
+      botId,
     });
 
     if (!analysis) {
@@ -15145,12 +15249,6 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
         confidence: analysis.confidence,
       });
     }
-
-    const lastMessage =
-      targetMessages[targetMessages.length - 1] ||
-      messages[messages.length - 1];
-    const platform = lastMessage?.platform || "line";
-    const botId = lastMessage?.botId || null;
 
     const orderId = await saveOrderToDatabase(
       userId,

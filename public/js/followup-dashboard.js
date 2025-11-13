@@ -39,6 +39,8 @@
         modalResetBtn: document.getElementById('followupModalResetBtn'),
         modalSaveBtn: document.getElementById('followupModalSaveBtn'),
         modalTitle: document.getElementById('followupModalTitle'),
+        modalPrompt: document.getElementById('followupModalPrompt'),
+        modalPromptJson: document.getElementById('followupModalPromptJson'),
         pageGrid: document.getElementById('followupPageGrid'),
         summaryActive: document.getElementById('followupMetricActive'),
         summaryActiveMeta: document.getElementById('followupMetricActiveMeta'),
@@ -64,6 +66,20 @@
         { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
         { value: 'o3', label: 'O3 (ทรงพลังสุด)' }
     ];
+
+    const getDefaultPromptInstructions = () => {
+        const cfg = state.config || {};
+        return typeof cfg.defaultOrderPromptInstructions === 'string'
+            ? cfg.defaultOrderPromptInstructions
+            : '';
+    };
+
+    const getPromptJsonSuffix = () => {
+        const cfg = state.config || {};
+        return typeof cfg.orderPromptJsonSuffix === 'string'
+            ? cfg.orderPromptJsonSuffix
+            : '';
+    };
 
     const normalizeId = (value) => {
         if (value === undefined || value === null) return null;
@@ -1414,6 +1430,15 @@
         if (el.modalShowChat) el.modalShowChat.checked = cfg.showInChat !== false;
         if (el.modalShowDashboard) el.modalShowDashboard.checked = cfg.showInDashboard !== false;
         if (el.modalModel) el.modalModel.value = cfg.model || MODEL_OPTIONS[0].value;
+        if (el.modalPromptJson) {
+            el.modalPromptJson.textContent = getPromptJsonSuffix();
+        }
+        if (el.modalPrompt) {
+            const promptValue = typeof cfg.orderPromptInstructions === 'string'
+                ? cfg.orderPromptInstructions
+                : '';
+            el.modalPrompt.value = promptValue || getDefaultPromptInstructions();
+        }
         state.modalRounds = Array.isArray(cfg.rounds)
             ? cfg.rounds.map(round => ({
                 delayMinutes: Number(round.delayMinutes) || '',
@@ -1448,7 +1473,10 @@
                 autoFollowUpEnabled: !!(el.modalAutoSend && el.modalAutoSend.checked),
                 showInChat: !!(el.modalShowChat && el.modalShowChat.checked),
                 showInDashboard: !!(el.modalShowDashboard && el.modalShowDashboard.checked),
-                model: el.modalModel ? el.modalModel.value : undefined
+                model: el.modalModel ? el.modalModel.value : undefined,
+                orderPromptInstructions: el.modalPrompt
+                    ? (el.modalPrompt.value || '').trim()
+                    : ''
             }
         };
         payload.settings.rounds = collectRoundsPayload();

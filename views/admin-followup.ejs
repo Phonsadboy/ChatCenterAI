@@ -196,6 +196,15 @@
               </div>
               <div class="text-muted small" id="followupModalUpdatedAt"></div>
             </div>
+            <div class="col-12">
+              <label class="form-label" for="followupModalPrompt">คำสั่งให้ AI วิเคราะห์ออเดอร์</label>
+              <textarea class="form-control" id="followupModalPrompt" rows="6" placeholder="อธิบายแนวทางให้ AI วิเคราะห์บทสนทนาเพื่อสกัดออเดอร์"></textarea>
+              <small class="text-muted">ระบบจะแนบรูปแบบ JSON ด้านล่างให้อัตโนมัติ หากปล่อยว่างจะใช้ค่าเริ่มต้น</small>
+            </div>
+            <div class="col-12">
+              <label class="form-label form-label-sm text-muted mb-1">รูปแบบ JSON (แก้ไขไม่ได้)</label>
+              <pre class="form-control bg-light small" id="followupModalPromptJson" style="height: 180px; white-space: pre-wrap;"></pre>
+            </div>
             <div class="col-12 mt-2">
               <div class="card border-0 bg-light" id="followupModalRoundsContainer">
                 <div class="card-body">
@@ -236,7 +245,9 @@
   <script>
     window.followUpDashboardConfig = {
       analysisEnabled: <%= (followUpConfig && followUpConfig.analysisEnabled) ? 'true' : 'false' %>,
-      showDashboard: <%= (followUpConfig && followUpConfig.showDashboard) ? 'true' : 'false' %>
+      showDashboard: <%= (followUpConfig && followUpConfig.showDashboard) ? 'true' : 'false' %>,
+      defaultOrderPromptInstructions: <%- JSON.stringify((orderPromptDefaults && orderPromptDefaults.instructions) || "") %>,
+      orderPromptJsonSuffix: <%- JSON.stringify((orderPromptDefaults && orderPromptDefaults.jsonSuffix) || "") %>
     };
   </script>
   <script src="/socket.io/socket.io.js"></script>
