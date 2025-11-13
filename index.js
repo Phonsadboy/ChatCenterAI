@@ -204,18 +204,6 @@ app.get("/assets/instructions/:fileName", async (req, res, next) => {
   const { fileName } = req.params;
   if (!fileName) return next();
 
-  const withoutExtension = fileName.replace(/\.[^/.]+$/, "");
-  const baseName = withoutExtension.replace(/_thumb$/i, "");
-  const lookupNameSet = new Set();
-  [withoutExtension, baseName].forEach((value) => {
-    if (!value || typeof value !== "string") return;
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    lookupNameSet.add(trimmed);
-    lookupNameSet.add(trimmed.toLowerCase());
-  });
-  const lookupNames = Array.from(lookupNameSet);
-
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -12597,7 +12585,7 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
         updates.mime = null;
         needsUpdate = true;
         mainFileExists = false;
-        mainFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
+        deleteLocalInstructionAssetFile(asset.fileName);
       }
     } else {
       mainFileExists = false;
@@ -12617,7 +12605,8 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
         updates.thumbMime = null;
         needsUpdate = true;
         thumbFileExists = false;
-        thumbFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
+        const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
+        deleteLocalInstructionAssetFile(thumbName);
       }
     } else {
       thumbFileExists = false;
@@ -12630,13 +12619,14 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
       await deleteGridFsEntries(bucket, [
         { id: asset.fileId },
         { id: asset.thumbFileId },
-        ...mainFileNames.map((name) => ({ filename: name })),
-        ...thumbFileNames.map((name) => ({ filename: name })),
+        { filename: asset.fileName },
+        { filename: asset.thumbFileName },
       ]);
       await coll.deleteOne({ _id: asset._id });
-      mainFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
-      thumbFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
-      deletedItems.push({ label, reason: "No files in GridFS" });
+      deleteLocalInstructionAssetFile(asset.fileName);
+      const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
+      deleteLocalInstructionAssetFile(thumbName);
+      deletedItems.push({ label, reason: 'No files in GridFS' });
       deletedCount++;
       needsDelete = true;
     }
@@ -12674,15 +12664,6 @@ async function resolveInstructionAssetStream(db, asset, { isThumbRequest }) {
     asset.thumbFileId || asset.thumbFileName || asset.thumbUrl,
   );
   const docHasMain = Boolean(asset.fileId || asset.fileName || asset.url);
-  const baseName = getInstructionAssetBaseName(asset);
-  const mainFallbackNames = buildInstructionAssetVariantFilenames(
-    baseName,
-    "main",
-  );
-  const thumbFallbackNames = buildInstructionAssetVariantFilenames(
-    baseName,
-    "thumb",
-  );
 
   const seen = new Set();
   const candidates = [];
@@ -12698,31 +12679,31 @@ async function resolveInstructionAssetStream(db, asset, { isThumbRequest }) {
     if (docHasThumb) {
       addCandidate("thumb", "id", asset.thumbFileId);
       addCandidate("thumb", "filename", asset.thumbFileName);
-      thumbFallbackNames.forEach((name) =>
-        addCandidate("thumb", "filename", name),
-      );
+      if (asset.label) {
+        addCandidate("thumb", "filename", `${asset.label}_thumb.jpg`);
+      }
     }
     if (docHasMain) {
       addCandidate("main", "id", asset.fileId);
       addCandidate("main", "filename", asset.fileName);
-      mainFallbackNames.forEach((name) =>
-        addCandidate("main", "filename", name),
-      );
+      if (asset.label) {
+        addCandidate("main", "filename", `${asset.label}.jpg`);
+      }
     }
   } else {
     if (docHasMain) {
       addCandidate("main", "id", asset.fileId);
       addCandidate("main", "filename", asset.fileName);
-      mainFallbackNames.forEach((name) =>
-        addCandidate("main", "filename", name),
-      );
+      if (asset.label) {
+        addCandidate("main", "filename", `${asset.label}.jpg`);
+      }
     }
     if (docHasThumb) {
       addCandidate("thumb", "id", asset.thumbFileId);
       addCandidate("thumb", "filename", asset.thumbFileName);
-      thumbFallbackNames.forEach((name) =>
-        addCandidate("thumb", "filename", name),
-      );
+      if (asset.label) {
+        addCandidate("thumb", "filename", `${asset.label}_thumb.jpg`);
+      }
     }
   }
 
@@ -12814,41 +12795,18 @@ async function markInstructionAssetMissingVariants(
   const coll = db.collection("instruction_assets");
   const updates = {};
   let shouldUpdate = false;
-  const baseName = getInstructionAssetBaseName(asset);
-  const mainFileNames = Array.from(
-    new Set(
-      [
-        asset.fileName,
-        ...buildInstructionAssetVariantFilenames(baseName, "main"),
-      ]
-        .filter((name) => typeof name === "string" && name.trim())
-        .map((name) => name.trim()),
-    ),
-  );
-  const thumbFileNames = Array.from(
-    new Set(
-      [
-        asset.thumbFileName,
-        ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
-      ]
-        .filter((name) => typeof name === "string" && name.trim())
-        .map((name) => name.trim()),
-    ),
-  );
 
   if (missingReferences.main?.id && asset.fileId) {
     updates.fileId = null;
     shouldUpdate = true;
   }
 
-  if (missingReferences.main?.filename) {
-    if (asset.fileName) {
-      updates.fileName = null;
-      updates.url = null;
-      updates.mime = null;
-      shouldUpdate = true;
-    }
-    mainFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
+  if (missingReferences.main?.filename && asset.fileName) {
+    updates.fileName = null;
+    updates.url = null;
+    updates.mime = null;
+    shouldUpdate = true;
+    deleteLocalInstructionAssetFile(asset.fileName);
   }
 
   if (missingReferences.thumb?.id && asset.thumbFileId) {
@@ -12856,14 +12814,13 @@ async function markInstructionAssetMissingVariants(
     shouldUpdate = true;
   }
 
-  if (missingReferences.thumb?.filename) {
-    if (asset.thumbFileName) {
-      updates.thumbFileName = null;
-      updates.thumbUrl = null;
-      updates.thumbMime = null;
-      shouldUpdate = true;
-    }
-    thumbFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
+  if (missingReferences.thumb?.filename && asset.thumbFileName) {
+    updates.thumbFileName = null;
+    updates.thumbUrl = null;
+    updates.thumbMime = null;
+    shouldUpdate = true;
+    const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
+    deleteLocalInstructionAssetFile(thumbName);
   }
 
   if (!shouldUpdate) return;
