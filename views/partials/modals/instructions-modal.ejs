@@ -27,36 +27,6 @@
                                 <h6 class="mb-0"><i class="fas fa-list me-2"></i>คลัง Instructions ที่มีอยู่</h6>
                                 <span class="badge bg-secondary" id="librariesCount">0</span>
                             </div>
-                            <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#createInstructionV2Form" aria-expanded="false" aria-controls="createInstructionV2Form">
-                                <i class="fas fa-plus me-1"></i>สร้าง Instruction V2
-                            </button>
-                        </div>
-                        <div class="collapse mb-3" id="createInstructionV2Form">
-                            <div class="card border-primary shadow-sm">
-                                <div class="card-body">
-                                    <h6 class="text-primary d-flex align-items-center gap-2 mb-3">
-                                        <i class="fas fa-layer-group"></i>
-                                        เพิ่ม Instruction ระบบใหม่ (V2)
-                                    </h6>
-                                    <div class="mb-2">
-                                        <label for="instructionV2Name" class="form-label small mb-1">ชื่อ Instruction <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control form-control-sm" id="instructionV2Name" placeholder="เช่น: FAQ สินค้าใหม่">
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="instructionV2Description" class="form-label small mb-1">คำอธิบาย (ไม่บังคับ)</label>
-                                        <textarea class="form-control form-control-sm" id="instructionV2Description" rows="2" placeholder="ช่วยให้ทีมรู้ว่าชุดนี้ใช้ตอบอะไร"></textarea>
-                                    </div>
-                                    <div class="d-flex justify-content-end gap-2">
-                                        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#createInstructionV2Form">
-                                            ยกเลิก
-                                        </button>
-                                        <button type="button" class="btn btn-sm btn-primary" id="createInstructionV2Btn">
-                                            <span class="default-label"><i class="fas fa-save me-1"></i>สร้าง Instruction</span>
-                                            <span class="loading-label d-none"><i class="fas fa-circle-notch fa-spin me-1"></i>กำลังสร้าง...</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                         <div id="instructionLibraries" class="border rounded p-3" style="max-height: 400px; overflow-y: auto;">
                             <!-- รายการคลัง instructions จะถูกโหลดที่นี่ -->
