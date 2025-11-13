@@ -8133,6 +8133,43 @@ async function resolveInstructionSelections(
   return results;
 }
 
+async function resolveInstructionSelectionsV2(
+  selections = [],
+  dbInstance = null,
+) {
+  if (!Array.isArray(selections) || selections.length === 0) return [];
+
+  const instructionIds = [
+    ...new Set(
+      selections
+        .filter(isInstructionSelectionObject)
+        .map((entry) => entry.instructionId?.trim())
+        .filter(Boolean),
+    ),
+  ];
+
+  if (instructionIds.length === 0) return [];
+
+  let db = dbInstance;
+  let client = null;
+  if (!db) {
+    client = await connectDB();
+    db = client.db("chatbot");
+  }
+
+  const docs = await db
+    .collection("instructions_v2")
+    .find({ instructionId: { $in: instructionIds } })
+    .toArray();
+
+  return docs.map((doc) => {
+    if (doc && doc._id && typeof doc._id.toString === "function") {
+      return { ...doc, _id: doc._id.toString() };
+    }
+    return doc;
+  });
+}
+
 function buildSystemPromptFromInstructionDocs(instructions = []) {
   if (!Array.isArray(instructions) || instructions.length === 0) return "";
   const normalize = (text) => {
@@ -8159,6 +8196,54 @@ function buildSystemPromptFromInstructionDocs(instructions = []) {
   return parts.filter(Boolean).join("\n\n");
 }
 
+function buildSystemPromptFromInstructionV2Docs(instructions = []) {
+  if (!Array.isArray(instructions) || instructions.length === 0) return "";
+
+  const parts = [];
+  for (const instruction of instructions) {
+    if (!instruction || !Array.isArray(instruction.dataItems)) continue;
+    const sortedItems = [...instruction.dataItems].sort(
+      (a, b) => (a?.order || 0) - (b?.order || 0),
+    );
+
+    if (sortedItems.length === 0) continue;
+
+    if (instruction.name) {
+      parts.push(`### ${instruction.name}`.trim());
+    }
+
+    for (const item of sortedItems) {
+      if (!item) continue;
+      const header = item.title ? `=== ${item.title} ===\n` : "";
+
+      if (item.type === "table") {
+        const tableJson = tableInstructionToJSON({
+          instructionId: instruction.instructionId || item.itemId,
+          type: "table",
+          title: item.title,
+          data: item.data,
+          content: item.content || "",
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        });
+        if (tableJson) {
+          parts.push(
+            `${header}ข้อมูลตารางในรูปแบบ JSON:\n\`\`\`json\n${tableJson}\n\`\`\``.trim(),
+          );
+        }
+        continue;
+      }
+
+      const body = String(item.content || "").trim();
+      if (body) {
+        parts.push(`${header}${body}`.trim());
+      }
+    }
+  }
+
+  return parts.filter(Boolean).join("\n\n");
+}
+
 async function buildSystemPromptFromSelections(
   selectedInstructions = [],
   dbInstance = null,
@@ -8177,8 +8262,18 @@ async function buildSystemPromptFromSelections(
   }
 
   if (hasObjectSelections) {
-    const docs = await resolveInstructionSelections(selectedInstructions, db);
-    return buildSystemPromptFromInstructionDocs(docs);
+    const [legacyDocs, v2Docs] = await Promise.all([
+      resolveInstructionSelections(selectedInstructions, db),
+      resolveInstructionSelectionsV2(selectedInstructions, db),
+    ]);
+    const promptSegments = [
+      buildSystemPromptFromInstructionDocs(legacyDocs),
+      buildSystemPromptFromInstructionV2Docs(v2Docs),
+    ].filter((segment) => segment && segment.trim());
+
+    if (promptSegments.length > 0) {
+      return promptSegments.join("\n\n");
+    }
   }
 
   let localDb = db;
