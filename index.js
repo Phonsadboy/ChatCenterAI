@@ -201,49 +201,84 @@ try {
 }
 
 app.get("/assets/instructions/:fileName", async (req, res, next) => {
-  try {
-    const { fileName } = req.params;
-    if (!fileName) return next();
+  const { fileName } = req.params;
+  if (!fileName) return next();
 
+  const withoutExtension = fileName.replace(/\.[^/.]+$/, "");
+  const baseName = withoutExtension.replace(/_thumb$/i, "");
+  const lookupNameSet = new Set();
+  [withoutExtension, baseName].forEach((value) => {
+    if (!value || typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    lookupNameSet.add(trimmed);
+    lookupNameSet.add(trimmed.toLowerCase());
+  });
+  const lookupNames = Array.from(lookupNameSet);
+
+  try {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instruction_assets");
-    const doc = await coll.findOne({
-      $or: [
-        { fileName },
-        { thumbFileName: fileName },
-        { label: fileName.replace(/\.[^/.]+$/, "") },
-        { label: fileName.replace(/_thumb\.[^/.]+$/, "") },
-      ],
-    });
+    const queryOr = [{ fileName }, { thumbFileName: fileName }];
+    for (const name of lookupNames) {
+      queryOr.push({ label: name });
+      queryOr.push({ slug: name });
+    }
+    const doc = await coll.findOne({ $or: queryOr });
 
     if (!doc) return next();
 
-    const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
-    const isThumb =
+    const isThumbRequest =
       fileName === doc.thumbFileName ||
       fileName.endsWith("_thumb.jpg") ||
       fileName.endsWith("_thumb.jpeg");
-    const targetName = isThumb
-      ? doc.thumbFileName || `${doc.label}_thumb.jpg`
-      : doc.fileName || `${doc.label}.jpg`;
-    const targetId = isThumb ? doc.thumbFileId : doc.fileId;
-    if (!targetName) return next();
-    let fileObjectId = toObjectId(targetId);
 
-    if (!fileObjectId) {
-      const files = await bucket
-        .find({ filename: targetName })
-        .sort({ uploadDate: -1 })
-        .limit(1)
-        .toArray();
-      if (!files.length) return next();
-      fileObjectId = files[0]._id;
+    const { stream, mime, missingReferences } = await resolveInstructionAssetStream(
+      db,
+      doc,
+      { isThumbRequest },
+    );
+
+    const variantMissingCompletely = (variant) => {
+      const refs = missingReferences?.[variant] || {};
+      const hasId = variant === "main" ? Boolean(doc.fileId) : Boolean(doc.thumbFileId);
+      const hasFileName =
+        variant === "main" ? Boolean(doc.fileName) : Boolean(doc.thumbFileName);
+      const hasUrl = variant === "main" ? Boolean(doc.url) : Boolean(doc.thumbUrl);
+      const idGone = !hasId || refs.id === true;
+      const fileGone = !hasFileName || refs.filename === true;
+      const urlGone = !hasUrl;
+      return idGone && fileGone && urlGone;
+    };
+
+    if (!stream) {
+      const mainMissing = variantMissingCompletely("main");
+      const thumbMissing = variantMissingCompletely("thumb");
+
+      if (mainMissing && thumbMissing) {
+        await performInstructionAssetDeletion(db, doc);
+      } else if (
+        missingReferences?.main?.id ||
+        missingReferences?.main?.filename ||
+        missingReferences?.thumb?.id ||
+        missingReferences?.thumb?.filename
+      ) {
+        await markInstructionAssetMissingVariants(db, doc, missingReferences);
+      }
+      return res.sendStatus(404);
     }
 
-    const stream = bucket.openDownloadStream(fileObjectId);
+    if (
+      missingReferences?.main?.id ||
+      missingReferences?.main?.filename ||
+      missingReferences?.thumb?.id ||
+      missingReferences?.thumb?.filename
+    ) {
+      await markInstructionAssetMissingVariants(db, doc, missingReferences);
+    }
 
-    res.set("Content-Type", doc.mime || "image/jpeg");
+    res.set("Content-Type", mime || doc.mime || "image/jpeg");
     res.set("Cache-Control", "public, max-age=604800, immutable");
     stream.on("error", (err) => {
       console.error(
@@ -252,12 +287,16 @@ app.get("/assets/instructions/:fileName", async (req, res, next) => {
           error: err.message,
           code: err.code,
           fileName,
-          targetName,
-          targetId,
-          fileObjectId,
         },
       );
-      if (err.code === "FileNotFound") return next();
+      if (err.code === "FileNotFound") {
+        markInstructionAssetMissingVariants(db, doc, {
+          main: { id: !isThumbRequest, filename: !isThumbRequest },
+          thumb: { id: isThumbRequest, filename: isThumbRequest },
+        }).catch(() => {});
+        res.status(404).end();
+        return;
+      }
       next(err);
     });
     stream.pipe(res);
@@ -8186,6 +8225,39 @@ function stripAssetExtension(name) {
   return trimmed;
 }
 
+function getInstructionAssetBaseName(asset) {
+  if (!asset || typeof asset !== "object") return null;
+  const normalize = (value) =>
+    typeof value === "string" && value.trim() ? value.trim() : null;
+
+  const slug = normalize(asset.slug);
+  if (slug) return slug;
+
+  const fileName = normalize(asset.fileName);
+  if (fileName) {
+    const withoutExt = stripAssetExtension(fileName);
+    if (withoutExt) return withoutExt;
+  }
+
+  const label = normalize(asset.label);
+  if (label) {
+    const generated = generateSlugFromLabel(label);
+    return normalize(generated);
+  }
+
+  return null;
+}
+
+function buildInstructionAssetVariantFilenames(baseName, variant = "main") {
+  if (!baseName || typeof baseName !== "string") return [];
+  const trimmed = baseName.trim();
+  if (!trimmed) return [];
+  if (variant === "thumb") {
+    return [`${trimmed}_thumb.jpg`, `${trimmed}_thumb.jpeg`];
+  }
+  return [`${trimmed}.jpg`, `${trimmed}.jpeg`];
+}
+
 function normalizeAssetKey(value) {
   if (!value || typeof value !== "string") return null;
   const normalized = value
@@ -9786,14 +9858,37 @@ async function readInstructionAssetBuffer(seg) {
 
     if (assetDoc) {
       const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
+      const baseName = getInstructionAssetBaseName(assetDoc);
+      const mainFileNames = Array.from(
+        new Set(
+          [
+            assetDoc.fileName,
+            ...buildInstructionAssetVariantFilenames(baseName, "main"),
+          ]
+            .filter((name) => typeof name === "string" && name.trim())
+            .map((name) => name.trim()),
+        ),
+      );
+      const thumbFileNames = Array.from(
+        new Set(
+          [
+            assetDoc.thumbFileName,
+            ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
+          ]
+            .filter((name) => typeof name === "string" && name.trim())
+            .map((name) => name.trim()),
+        ),
+      );
       const useThumb =
         requestedFileName &&
         (requestedFileName === assetDoc.thumbFileName ||
-          requestedFileName.endsWith("_thumb.jpg"));
-      const targetFileName = useThumb
-        ? assetDoc.thumbFileName || `${assetDoc.label}_thumb.jpg`
-        : assetDoc.fileName || `${assetDoc.label}.jpg`;
+          /_thumb\.(jpe?g)$/i.test(requestedFileName));
+      const candidateFileNames = useThumb ? thumbFileNames : mainFileNames;
       const targetId = useThumb ? assetDoc.thumbFileId : assetDoc.fileId;
+      if (!candidateFileNames.length) {
+        throw new Error("ไม่พบชื่อไฟล์ของรูปภาพที่ต้องการใช้งาน");
+      }
+      let resolvedFileName = candidateFileNames[0];
       let downloadStream = null;
 
       if (targetId) {
@@ -9804,20 +9899,38 @@ async function readInstructionAssetBuffer(seg) {
       }
 
       if (!downloadStream) {
-        downloadStream = bucket.openDownloadStreamByName(targetFileName);
+        for (const name of candidateFileNames) {
+          try {
+            downloadStream = bucket.openDownloadStreamByName(name);
+            resolvedFileName = name;
+            break;
+          } catch (err) {
+            const isFileNotFound =
+              err?.code === "FileNotFound" ||
+              err?.code === 26 ||
+              err?.message?.includes("File not found") ||
+              err?.message?.includes("FileNotFound");
+            if (!isFileNotFound) {
+              throw err;
+            }
+          }
+        }
+        if (!downloadStream) {
+          throw new Error("ไม่พบไฟล์รูปภาพในระบบจัดเก็บ");
+        }
       }
 
       const buffer = await streamToBuffer(downloadStream);
       let contentType = assetDoc.mime || "image/jpeg";
       if (!assetDoc.mime) {
-        const ext = path.extname(targetFileName).toLowerCase();
+        const ext = path.extname(resolvedFileName).toLowerCase();
         if (ext === ".png") contentType = "image/png";
         else if (ext === ".webp") contentType = "image/webp";
       }
 
       return {
         buffer,
-        filename: targetFileName,
+        filename: resolvedFileName,
         contentType,
       };
     }
@@ -9829,17 +9942,35 @@ async function readInstructionAssetBuffer(seg) {
   }
 
   const baseDir = ASSETS_DIR;
-  const tryFiles = [];
-  if (requestedFileName) tryFiles.push(requestedFileName);
+  const tryFilesSet = new Set();
+  const addFileName = (name) => {
+    if (!name || typeof name !== "string") return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    tryFilesSet.add(trimmed);
+  };
+  const addBaseVariants = (base) => {
+    if (!base || typeof base !== "string") return;
+    const trimmed = base.trim();
+    if (!trimmed) return;
+    addFileName(`${trimmed}.jpg`);
+    addFileName(`${trimmed}.jpeg`);
+    addFileName(`${trimmed}.png`);
+    addFileName(`${trimmed}.webp`);
+    addFileName(`${trimmed}_thumb.jpg`);
+    addFileName(`${trimmed}_thumb.jpeg`);
+  };
+
+  addFileName(requestedFileName);
+  addBaseVariants(label);
+  const segSlug =
+    typeof seg.slug === "string" && seg.slug.trim() ? seg.slug.trim() : null;
+  addBaseVariants(segSlug);
   if (label) {
-    tryFiles.push(
-      `${label}.jpg`,
-      `${label}.jpeg`,
-      `${label}.png`,
-      `${label}.webp`,
-      `${label}_thumb.jpg`,
-    );
+    addBaseVariants(generateSlugFromLabel(label));
   }
+
+  const tryFiles = Array.from(tryFilesSet);
 
   for (const name of tryFiles) {
     const p = path.join(baseDir, name);
@@ -12427,6 +12558,27 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
 
   for (const asset of assets) {
     const label = asset.label || asset.fileName || asset._id.toString();
+    const baseName = getInstructionAssetBaseName(asset);
+    const mainFileNames = Array.from(
+      new Set(
+        [
+          asset.fileName,
+          ...buildInstructionAssetVariantFilenames(baseName, "main"),
+        ]
+          .filter((name) => typeof name === "string" && name.trim())
+          .map((name) => name.trim()),
+      ),
+    );
+    const thumbFileNames = Array.from(
+      new Set(
+        [
+          asset.thumbFileName,
+          ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
+        ]
+          .filter((name) => typeof name === "string" && name.trim())
+          .map((name) => name.trim()),
+      ),
+    );
     let needsUpdate = false;
     let needsDelete = false;
     const updates = {};
@@ -12440,8 +12592,12 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
           `[Consistency] Missing fileId ${asset.fileId} for ${label}`
         );
         updates.fileId = null;
+        updates.fileName = null;
+        updates.url = null;
+        updates.mime = null;
         needsUpdate = true;
         mainFileExists = false;
+        mainFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
       }
     } else {
       mainFileExists = false;
@@ -12456,8 +12612,12 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
         console.log(`[Consistency] Missing thumbFileId ${thumbId} for ${label}`);
         updates.thumbFileId = null;
         if (asset.thumbId) updates.thumbId = null;
+        updates.thumbFileName = null;
+        updates.thumbUrl = null;
+        updates.thumbMime = null;
         needsUpdate = true;
         thumbFileExists = false;
+        thumbFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
       }
     } else {
       thumbFileExists = false;
@@ -12466,8 +12626,17 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
     // Delete orphaned records (no files at all)
     if (!mainFileExists && !thumbFileExists) {
       console.log(`[Consistency] Deleting orphaned record: ${label}`);
+      await removeInstructionAssetFromCollections(db, asset);
+      await deleteGridFsEntries(bucket, [
+        { id: asset.fileId },
+        { id: asset.thumbFileId },
+        ...mainFileNames.map((name) => ({ filename: name })),
+        ...thumbFileNames.map((name) => ({ filename: name })),
+      ]);
       await coll.deleteOne({ _id: asset._id });
-      deletedItems.push({ label, reason: 'No files in GridFS' });
+      mainFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
+      thumbFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
+      deletedItems.push({ label, reason: "No files in GridFS" });
       deletedCount++;
       needsDelete = true;
     }
@@ -12493,6 +12662,236 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
     items: fixedItems,
     deletedItems,
   };
+}
+
+async function resolveInstructionAssetStream(db, asset, { isThumbRequest }) {
+  if (!db || !asset) {
+    return { stream: null, mime: null, missingReferences: {} };
+  }
+
+  const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
+  const docHasThumb = Boolean(
+    asset.thumbFileId || asset.thumbFileName || asset.thumbUrl,
+  );
+  const docHasMain = Boolean(asset.fileId || asset.fileName || asset.url);
+  const baseName = getInstructionAssetBaseName(asset);
+  const mainFallbackNames = buildInstructionAssetVariantFilenames(
+    baseName,
+    "main",
+  );
+  const thumbFallbackNames = buildInstructionAssetVariantFilenames(
+    baseName,
+    "thumb",
+  );
+
+  const seen = new Set();
+  const candidates = [];
+  const addCandidate = (variant, type, value) => {
+    if (!value) return;
+    const key = `${variant}:${type}:${value}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push({ variant, type, value });
+  };
+
+  if (isThumbRequest) {
+    if (docHasThumb) {
+      addCandidate("thumb", "id", asset.thumbFileId);
+      addCandidate("thumb", "filename", asset.thumbFileName);
+      thumbFallbackNames.forEach((name) =>
+        addCandidate("thumb", "filename", name),
+      );
+    }
+    if (docHasMain) {
+      addCandidate("main", "id", asset.fileId);
+      addCandidate("main", "filename", asset.fileName);
+      mainFallbackNames.forEach((name) =>
+        addCandidate("main", "filename", name),
+      );
+    }
+  } else {
+    if (docHasMain) {
+      addCandidate("main", "id", asset.fileId);
+      addCandidate("main", "filename", asset.fileName);
+      mainFallbackNames.forEach((name) =>
+        addCandidate("main", "filename", name),
+      );
+    }
+    if (docHasThumb) {
+      addCandidate("thumb", "id", asset.thumbFileId);
+      addCandidate("thumb", "filename", asset.thumbFileName);
+      thumbFallbackNames.forEach((name) =>
+        addCandidate("thumb", "filename", name),
+      );
+    }
+  }
+
+  const missingReferences = {
+    main: { id: false, filename: false },
+    thumb: { id: false, filename: false },
+  };
+
+  for (const candidate of candidates) {
+    const isThumbVariant = candidate.variant === "thumb";
+    const shouldTrackMissing = isThumbVariant ? docHasThumb : docHasMain;
+    const refKey = isThumbVariant ? "thumb" : "main";
+
+    try {
+      if (candidate.type === "id") {
+        const objectId = toObjectId(candidate.value);
+        if (!objectId) {
+          if (shouldTrackMissing) {
+            missingReferences[refKey].id = true;
+          }
+          continue;
+        }
+        const exists = await checkGridFsFileExists(bucket, objectId);
+        if (!exists) {
+          if (shouldTrackMissing) {
+            missingReferences[refKey].id = true;
+          }
+          continue;
+        }
+        const stream = bucket.openDownloadStream(objectId);
+        const mime = isThumbVariant
+          ? asset.thumbMime || asset.mime || "image/jpeg"
+          : asset.mime || asset.thumbMime || "image/jpeg";
+        return {
+          stream,
+          mime,
+          missingReferences,
+          servedVariant: refKey,
+        };
+      }
+
+      if (candidate.type === "filename") {
+        const files = await bucket
+          .find({ filename: candidate.value })
+          .sort({ uploadDate: -1 })
+          .limit(1)
+          .toArray();
+        if (!files.length) {
+          if (shouldTrackMissing) {
+            missingReferences[refKey].filename = true;
+          }
+          continue;
+        }
+        const stream = bucket.openDownloadStream(files[0]._id);
+        const mime = isThumbVariant
+          ? asset.thumbMime || asset.mime || "image/jpeg"
+          : asset.mime || asset.thumbMime || "image/jpeg";
+        return {
+          stream,
+          mime,
+          missingReferences,
+          servedVariant: refKey,
+        };
+      }
+    } catch (err) {
+      console.warn(
+        "[Assets] Failed to resolve instruction asset stream:",
+        err?.message || err,
+      );
+      if (shouldTrackMissing) {
+        if (candidate.type === "id") {
+          missingReferences[refKey].id = true;
+        } else if (candidate.type === "filename") {
+          missingReferences[refKey].filename = true;
+        }
+      }
+    }
+  }
+
+  return { stream: null, mime: null, missingReferences, servedVariant: null };
+}
+
+async function markInstructionAssetMissingVariants(
+  db,
+  asset,
+  missingReferences = {},
+) {
+  if (!db || !asset) return;
+  const coll = db.collection("instruction_assets");
+  const updates = {};
+  let shouldUpdate = false;
+  const baseName = getInstructionAssetBaseName(asset);
+  const mainFileNames = Array.from(
+    new Set(
+      [
+        asset.fileName,
+        ...buildInstructionAssetVariantFilenames(baseName, "main"),
+      ]
+        .filter((name) => typeof name === "string" && name.trim())
+        .map((name) => name.trim()),
+    ),
+  );
+  const thumbFileNames = Array.from(
+    new Set(
+      [
+        asset.thumbFileName,
+        ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
+      ]
+        .filter((name) => typeof name === "string" && name.trim())
+        .map((name) => name.trim()),
+    ),
+  );
+
+  if (missingReferences.main?.id && asset.fileId) {
+    updates.fileId = null;
+    shouldUpdate = true;
+  }
+
+  if (missingReferences.main?.filename) {
+    if (asset.fileName) {
+      updates.fileName = null;
+      updates.url = null;
+      updates.mime = null;
+      shouldUpdate = true;
+    }
+    mainFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
+  }
+
+  if (missingReferences.thumb?.id && asset.thumbFileId) {
+    updates.thumbFileId = null;
+    shouldUpdate = true;
+  }
+
+  if (missingReferences.thumb?.filename) {
+    if (asset.thumbFileName) {
+      updates.thumbFileName = null;
+      updates.thumbUrl = null;
+      updates.thumbMime = null;
+      shouldUpdate = true;
+    }
+    thumbFileNames.forEach((name) => deleteLocalInstructionAssetFile(name));
+  }
+
+  if (!shouldUpdate) return;
+
+  updates.updatedAt = new Date();
+  try {
+    await coll.updateOne({ _id: asset._id }, { $set: updates });
+  } catch (err) {
+    console.warn(
+      "[Assets] Failed to mark missing instruction asset variants:",
+      err?.message || err,
+    );
+  }
+}
+
+function deleteLocalInstructionAssetFile(fileName) {
+  if (!fileName) return;
+  try {
+    const filePath = path.join(ASSETS_DIR, fileName);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (err) {
+    console.warn(
+      "[Assets] Failed to remove local instruction asset file:",
+      err?.message || err,
+    );
+  }
 }
 
 async function checkGridFsFileExists(bucket, fileId) {
@@ -12820,20 +13219,39 @@ async function performInstructionAssetDeletion(db, asset) {
   await removeInstructionAssetFromCollections(db, asset);
 
   const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
+  const baseName = getInstructionAssetBaseName(asset);
+  const mainFileNames = Array.from(
+    new Set(
+      [
+        asset.fileName,
+        ...buildInstructionAssetVariantFilenames(baseName, "main"),
+      ]
+        .filter((name) => typeof name === "string" && name.trim())
+        .map((name) => name.trim()),
+    ),
+  );
+  const thumbFileNames = Array.from(
+    new Set(
+      [
+        asset.thumbFileName,
+        ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
+      ]
+        .filter((name) => typeof name === "string" && name.trim())
+        .map((name) => name.trim()),
+    ),
+  );
   await deleteGridFsEntries(bucket, [
     { id: asset.fileId },
     { id: asset.thumbFileId },
-    { filename: asset.fileName },
-    { filename: asset.thumbFileName || `${asset.label}_thumb.jpg` },
+    ...mainFileNames.map((name) => ({ filename: name })),
+    ...thumbFileNames.map((name) => ({ filename: name })),
   ]);
 
   const baseDir = ASSETS_DIR;
-  const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
-  const files = [
-    path.join(baseDir, asset.fileName || ""),
-    path.join(baseDir, thumbName),
-  ];
-  files.forEach((p) => {
+  const filePaths = [...mainFileNames, ...thumbFileNames]
+    .filter((name) => typeof name === "string" && name)
+    .map((name) => path.join(baseDir, name));
+  filePaths.forEach((p) => {
     try {
       if (fs.existsSync(p)) fs.unlinkSync(p);
     } catch (_) {}
