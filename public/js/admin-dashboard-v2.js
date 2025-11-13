@@ -6,6 +6,266 @@
     const instructionModal = new bootstrap.Modal(document.getElementById('instructionModal'));
     const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
 
+    // ===== Inline Instruction Editor =====
+    const instructionSelect = document.getElementById('instructionSelect');
+    const instructionEditorName = document.getElementById('instructionEditorName');
+    const instructionEditorDescription = document.getElementById('instructionEditorDescription');
+    const instructionEditorStatus = document.getElementById('instructionEditorStatus');
+    const instructionEditorFields = document.getElementById('instructionEditorFields');
+    const instructionEditorEmptyState = document.getElementById('instructionEditorEmptyState');
+    const instructionEditorLoading = document.getElementById('instructionEditorLoading');
+    const instructionEditorUpdatedAt = document.getElementById('instructionEditorUpdatedAt');
+    const instructionDirtyAlert = document.getElementById('instructionDirtyAlert');
+    const saveInstructionChangesBtn = document.getElementById('saveInstructionChangesBtn');
+
+    const editorState = {
+        currentInstructionId: '',
+        initialData: null,
+        isDirty: false,
+    };
+
+    const setEditorStatus = (message, isActive = false) => {
+        if (!instructionEditorStatus) return;
+        instructionEditorStatus.textContent = message;
+        instructionEditorStatus.classList.toggle('active', !!isActive);
+    };
+
+    const setEditorLoading = (isLoading) => {
+        if (!instructionEditorLoading) return;
+        instructionEditorLoading.classList.toggle('d-none', !isLoading);
+    };
+
+    const toggleEditorFields = (visible) => {
+        if (instructionEditorFields) {
+            instructionEditorFields.classList.toggle('d-none', !visible);
+        }
+        if (instructionEditorEmptyState) {
+            instructionEditorEmptyState.classList.toggle('d-none', visible);
+        }
+    };
+
+    const clearEditor = () => {
+        editorState.currentInstructionId = '';
+        editorState.initialData = null;
+        editorState.isDirty = false;
+        if (instructionSelect) {
+            instructionSelect.value = '';
+        }
+        if (instructionEditorName) instructionEditorName.value = '';
+        if (instructionEditorDescription) instructionEditorDescription.value = '';
+        if (instructionEditorUpdatedAt) instructionEditorUpdatedAt.textContent = '';
+        if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
+        if (saveInstructionChangesBtn) saveInstructionChangesBtn.disabled = true;
+        toggleEditorFields(false);
+        setEditorStatus('ยังไม่ได้เลือก Instruction', false);
+    };
+
+    const hasEditorChanges = () => {
+        if (!editorState.initialData) return false;
+        const currentName = (instructionEditorName?.value || '').trim();
+        const currentDescription = (instructionEditorDescription?.value || '').trim();
+        return (
+            currentName !== (editorState.initialData.name || '') ||
+            currentDescription !== (editorState.initialData.description || '')
+        );
+    };
+
+    const refreshDirtyState = () => {
+        const dirty = hasEditorChanges();
+        editorState.isDirty = dirty;
+        if (instructionDirtyAlert) {
+            instructionDirtyAlert.classList.toggle('d-none', !dirty);
+        }
+        if (saveInstructionChangesBtn) {
+            saveInstructionChangesBtn.disabled = !dirty;
+        }
+        if (editorState.currentInstructionId) {
+            setEditorStatus(
+                dirty ? 'มีการแก้ไขที่ยังไม่บันทึก' : 'ข้อมูลล่าสุดบันทึกแล้ว',
+                dirty
+            );
+        } else {
+            setEditorStatus('ยังไม่ได้เลือก Instruction', false);
+        }
+    };
+
+    const formatUpdatedAtText = (value) => {
+        if (!instructionEditorUpdatedAt) return;
+        if (!value) {
+            instructionEditorUpdatedAt.textContent = '';
+            return;
+        }
+        const updatedAt = new Date(value);
+        if (Number.isNaN(updatedAt.getTime())) {
+            instructionEditorUpdatedAt.textContent = '';
+            return;
+        }
+        instructionEditorUpdatedAt.textContent = `อัปเดตล่าสุด: ${updatedAt.toLocaleString('th-TH', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        })}`;
+    };
+
+    let editorRequestToken = 0;
+
+    const loadInstructionIntoEditor = async (instructionId) => {
+        if (!instructionId) {
+            clearEditor();
+            return;
+        }
+        editorState.currentInstructionId = instructionId;
+        editorState.initialData = null;
+        editorState.isDirty = false;
+        if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
+        if (saveInstructionChangesBtn) saveInstructionChangesBtn.disabled = true;
+        toggleEditorFields(false);
+        setEditorStatus('กำลังโหลดข้อมูล...', true);
+        setEditorLoading(true);
+
+        const requestId = ++editorRequestToken;
+
+        try {
+            const res = await fetch(`/api/instructions-v2/${instructionId}`);
+            const data = await res.json();
+
+            if (requestId !== editorRequestToken) {
+                return;
+            }
+
+            if (data.success) {
+                const { instruction } = data;
+                editorState.initialData = {
+                    name: instruction.name || '',
+                    description: instruction.description || ''
+                };
+                if (instructionEditorName) {
+                    instructionEditorName.value = editorState.initialData.name;
+                }
+                if (instructionEditorDescription) {
+                    instructionEditorDescription.value = editorState.initialData.description;
+                }
+                formatUpdatedAtText(instruction.updatedAt || instruction.createdAt);
+                toggleEditorFields(true);
+                setEditorStatus('ข้อมูลล่าสุดบันทึกแล้ว', false);
+                editorState.isDirty = false;
+                if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
+                if (saveInstructionChangesBtn) saveInstructionChangesBtn.disabled = true;
+            } else {
+                alert(data.error || 'ไม่สามารถโหลดข้อมูล Instruction ได้');
+                clearEditor();
+            }
+        } catch (error) {
+            console.error('Error loading instruction:', error);
+            alert('เกิดข้อผิดพลาดในการโหลด Instruction');
+            clearEditor();
+        } finally {
+            setEditorLoading(false);
+        }
+    };
+
+    if (instructionSelect && instructionEditorName && instructionEditorDescription) {
+        instructionSelect.addEventListener('change', () => {
+            const selectedId = instructionSelect.value;
+            if (
+                editorState.isDirty &&
+                selectedId !== editorState.currentInstructionId &&
+                !confirm('มีการแก้ไขที่ยังไม่บันทึก ต้องการละทิ้งการเปลี่ยนแปลงหรือไม่?')
+            ) {
+                instructionSelect.value = editorState.currentInstructionId || '';
+                return;
+            }
+            loadInstructionIntoEditor(selectedId);
+        });
+
+        [instructionEditorName, instructionEditorDescription].forEach((input) => {
+            input.addEventListener('input', () => refreshDirtyState());
+        });
+
+        if (saveInstructionChangesBtn) {
+            saveInstructionChangesBtn.addEventListener('click', async () => {
+                if (!editorState.currentInstructionId) {
+                    alert('กรุณาเลือก Instruction ที่ต้องการบันทึก');
+                    return;
+                }
+                const name = instructionEditorName.value.trim();
+                const description = instructionEditorDescription.value.trim();
+                if (!name) {
+                    alert('กรุณาระบุชื่อ Instruction');
+                    return;
+                }
+                saveInstructionChangesBtn.disabled = true;
+                saveInstructionChangesBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> กำลังบันทึก...';
+                try {
+                    const res = await fetch(`/api/instructions-v2/${editorState.currentInstructionId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, description })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        editorState.initialData = { name, description };
+                        editorState.isDirty = false;
+                        if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
+                        setEditorStatus('บันทึกเรียบร้อยแล้ว', false);
+                        setTimeout(() => {
+                            if (!editorState.isDirty) {
+                                setEditorStatus('ข้อมูลล่าสุดบันทึกแล้ว', false);
+                            }
+                        }, 3000);
+                        formatUpdatedAtText(new Date());
+                        // Update card title/description
+                        const card = document.querySelector(`.instruction-card[data-id="${editorState.currentInstructionId}"]`);
+                        if (card) {
+                            const titleEl = card.querySelector('.instruction-title');
+                            if (titleEl) {
+                                titleEl.textContent = name || 'ไม่มีชื่อ';
+                            }
+                            let descEl = card.querySelector('.instruction-desc');
+                            if (description) {
+                                if (!descEl) {
+                                    const header = card.querySelector('.instruction-header .flex-grow-1');
+                                    if (header) {
+                                        descEl = document.createElement('p');
+                                        descEl.className = 'instruction-desc';
+                                        header.appendChild(descEl);
+                                    }
+                                }
+                                if (descEl) descEl.textContent = description;
+                            } else if (descEl) {
+                                descEl.remove();
+                            }
+                        }
+                        // Update select option text
+                        const option = instructionSelect.querySelector(`option[value="${editorState.currentInstructionId}"]`);
+                        if (option) {
+                            option.textContent = name || 'ไม่มีชื่อ';
+                        }
+                    } else {
+                        alert(data.error || 'ไม่สามารถบันทึก Instruction ได้');
+                    }
+                } catch (error) {
+                    console.error('Error saving instruction:', error);
+                    alert('เกิดข้อผิดพลาดในการบันทึก Instruction');
+                } finally {
+                    refreshDirtyState();
+                    saveInstructionChangesBtn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการแก้ไข';
+                }
+            });
+        }
+
+        window.addEventListener('beforeunload', (event) => {
+            if (editorState.isDirty) {
+                event.preventDefault();
+                event.returnValue = '';
+            }
+        });
+    }
+
+    // ===== Existing Modals / Actions =====
+
     // Create Instruction
     document.getElementById('createInstructionBtn').addEventListener('click', () => {
         document.getElementById('instructionModalTitle').textContent = 'สร้าง Instruction';
