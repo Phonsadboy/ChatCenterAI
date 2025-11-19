@@ -6242,7 +6242,7 @@ app.get("/api/instructions-v2/:id", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    const instruction = await coll.findOne({ _id: toObjectId(id) });
 
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
@@ -6304,7 +6304,7 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
     if (description !== undefined) updateData.description = description.trim();
 
     const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: toObjectId(id) },
       { $set: updateData }
     );
 
@@ -6312,7 +6312,7 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
 
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    const instruction = await coll.findOne({ _id: toObjectId(id) });
     res.json({ success: true, instruction: { ...instruction, _id: instruction._id.toString() } });
   } catch (err) {
     console.error("Error updating instruction v2:", err);
@@ -6328,7 +6328,7 @@ app.delete("/api/instructions-v2/:id", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
-    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    const result = await coll.deleteOne({ _id: toObjectId(id) });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
@@ -6351,7 +6351,7 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
-    const original = await coll.findOne({ _id: new ObjectId(id) });
+    const original = await coll.findOne({ _id: toObjectId(id) });
     if (!original) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction ต้นฉบับ" });
     }
@@ -6400,7 +6400,7 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    const instruction = await coll.findOne({ _id: toObjectId(id) });
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
@@ -6418,7 +6418,7 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
     };
 
     const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: toObjectId(id) },
       {
         $push: { dataItems: newItem },
         $set: { updatedAt: now }
@@ -6451,7 +6451,7 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    const instruction = await coll.findOne({ _id: toObjectId(id) });
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
@@ -6466,7 +6466,7 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
     }).filter(Boolean);
 
     await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: toObjectId(id) },
       {
         $set: {
           dataItems: reorderedItems,
@@ -6492,7 +6492,7 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    const instruction = await coll.findOne({ _id: toObjectId(id) });
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
@@ -6511,11 +6511,11 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
     updateFields.updatedAt = now;
 
     await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: toObjectId(id) },
       { $set: updateFields }
     );
 
-    const updatedInstruction = await coll.findOne({ _id: new ObjectId(id) });
+    const updatedInstruction = await coll.findOne({ _id: toObjectId(id) });
     const updatedItem = updatedInstruction.dataItems[itemIndex];
 
     res.json({ success: true, dataItem: updatedItem });
@@ -6535,7 +6535,7 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
     const coll = db.collection("instructions_v2");
 
     const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: toObjectId(id) },
       {
         $pull: { dataItems: { itemId } },
         $set: { updatedAt: new Date() }
@@ -6562,7 +6562,7 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    const instruction = await coll.findOne({ _id: toObjectId(id) });
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
@@ -6583,7 +6583,7 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
     };
 
     await coll.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: toObjectId(id) },
       {
         $push: { dataItems: duplicateItem },
         $set: { updatedAt: now }
@@ -6606,7 +6606,7 @@ app.get("/api/instructions-v2/:id/preview", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
+    const instruction = await coll.findOne({ _id: toObjectId(id) });
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
@@ -6793,8 +6793,9 @@ app.post("/api/instructions-v2/import", upload.single("file"), async (req, res) 
       let instructionId = null;
       let isUpdate = false;
 
-      if (idStr && ObjectId.isValid(idStr)) {
-        const existing = await coll.findOne({ _id: new ObjectId(idStr) });
+      const objId = toObjectId(idStr);
+      if (objId) {
+        const existing = await coll.findOne({ _id: objId });
         if (existing) {
           instructionId = existing._id;
           isUpdate = true;
