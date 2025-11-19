@@ -228,6 +228,13 @@
                     <p class="text-muted small mb-0">สร้างและจัดการชุดข้อมูลที่ AI ใช้ตอบลูกค้า</p>
                 </div>
                 <div class="col-md-6 text-md-end">
+                    <button class="btn btn-outline-success me-2" id="exportBtn">
+                        <i class="fas fa-file-excel me-1"></i> Export
+                    </button>
+                    <button class="btn btn-outline-primary me-2" id="importBtn">
+                        <i class="fas fa-file-import me-1"></i> Import
+                    </button>
+                    <input type="file" id="importFile" accept=".xlsx" style="display: none;">
                     <button class="btn btn-primary" id="createInstructionBtn">
                         <i class="fas fa-plus me-1"></i> สร้าง Instruction
                     </button>

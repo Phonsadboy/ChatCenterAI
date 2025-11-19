@@ -6657,6 +6657,191 @@ app.get("/api/instructions-v2/:id/preview", async (req, res) => {
   }
 });
 
+// API: Export Instructions V2 to Excel
+app.get("/api/instructions-v2/export", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instructions = await coll.find({}).sort({ createdAt: -1 }).toArray();
+
+    // 1. Instructions Sheet
+    const instructionRows = instructions.map(inst => ({
+      "Instruction ID": inst._id.toString(),
+      "Name": inst.name,
+      "Description": inst.description || "",
+      "Created At": inst.createdAt ? new Date(inst.createdAt).toISOString() : "",
+      "Updated At": inst.updatedAt ? new Date(inst.updatedAt).toISOString() : ""
+    }));
+
+    // 2. Data Items Sheet
+    const dataItemRows = [];
+    instructions.forEach(inst => {
+      if (inst.dataItems && Array.isArray(inst.dataItems)) {
+        inst.dataItems.forEach(item => {
+          let contentData = "";
+          if (item.type === "text") {
+            contentData = item.content || "";
+          } else if (item.type === "table") {
+            contentData = JSON.stringify(item.data || {});
+          }
+
+          dataItemRows.push({
+            "Instruction ID": inst._id.toString(),
+            "Instruction Name": inst.name,
+            "Item ID": item.itemId,
+            "Item Title": item.title,
+            "Item Type": item.type,
+            "Content/Data": contentData,
+            "Order": item.order || 0
+          });
+        });
+      }
+    });
+
+    const wb = XLSX.utils.book_new();
+    
+    // Add Instructions Sheet
+    const wsInstructions = XLSX.utils.json_to_sheet(instructionRows);
+    XLSX.utils.book_append_sheet(wb, wsInstructions, "Instructions");
+
+    // Add DataItems Sheet
+    const wsDataItems = XLSX.utils.json_to_sheet(dataItemRows);
+    XLSX.utils.book_append_sheet(wb, wsDataItems, "DataItems");
+
+    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+    res.setHeader("Content-Disposition", `attachment; filename="instructions_export_${moment().format('YYYYMMDD_HHmm')}.xlsx"`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.send(buffer);
+
+  } catch (err) {
+    console.error("Error exporting instructions:", err);
+    res.status(500).send("Error exporting instructions: " + err.message);
+  }
+});
+
+// API: Import Instructions V2 from Excel
+app.post("/api/instructions-v2/import", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: "กรุณาอัพโหลดไฟล์ Excel" });
+    }
+
+    const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+    
+    // Check sheets
+    if (!wb.SheetNames.includes("Instructions") || !wb.SheetNames.includes("DataItems")) {
+      return res.status(400).json({ success: false, error: "รูปแบบไฟล์ไม่ถูกต้อง (ต้องมี sheet 'Instructions' และ 'DataItems')" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instructionsRaw = XLSX.utils.sheet_to_json(wb.Sheets["Instructions"]);
+    const dataItemsRaw = XLSX.utils.sheet_to_json(wb.Sheets["DataItems"]);
+
+    let importedCount = 0;
+    let updatedCount = 0;
+
+    for (const row of instructionsRaw) {
+      const idStr = row["Instruction ID"];
+      const name = row["Name"];
+      const desc = row["Description"];
+      
+      if (!name) continue;
+
+      let instructionId = null;
+      let isUpdate = false;
+
+      if (idStr && ObjectId.isValid(idStr)) {
+        const existing = await coll.findOne({ _id: new ObjectId(idStr) });
+        if (existing) {
+          instructionId = existing._id;
+          isUpdate = true;
+        }
+      }
+
+      const now = new Date();
+      const docData = {
+        name: name,
+        description: desc || "",
+        updatedAt: now
+      };
+
+      if (isUpdate) {
+        await coll.updateOne({ _id: instructionId }, { $set: docData });
+        // Reset data items to prevent duplication on repeated imports
+        await coll.updateOne({ _id: instructionId }, { $set: { dataItems: [] } });
+        updatedCount++;
+      } else {
+        // Create New
+        const newDoc = {
+          ...docData,
+          instructionId: generateInstructionId(),
+          dataItems: [],
+          usageCount: 0,
+          createdAt: now
+        };
+        const result = await coll.insertOne(newDoc);
+        instructionId = result.insertedId;
+        importedCount++;
+      }
+
+      // Find items for this instruction (using the ID from Excel)
+      const items = dataItemsRaw.filter(r => r["Instruction ID"] === idStr);
+      
+      const cleanDataItems = [];
+      for (const itemRow of items) {
+        const type = itemRow["Item Type"] || "text";
+        const title = itemRow["Item Title"] || "ไม่มีชื่อ";
+        const contentData = itemRow["Content/Data"];
+        const order = itemRow["Order"] || 0;
+        
+        const newItem = {
+          itemId: generateDataItemId(),
+          title: title,
+          type: type,
+          order: order,
+          createdAt: now,
+          updatedAt: now
+        };
+
+        if (type === "text") {
+          newItem.content = contentData ? String(contentData) : "";
+          newItem.data = null;
+        } else if (type === "table") {
+          newItem.content = "";
+          try {
+            newItem.data = contentData ? JSON.parse(contentData) : null;
+          } catch (e) {
+            newItem.data = null; 
+          }
+        }
+
+        cleanDataItems.push(newItem);
+      }
+
+      cleanDataItems.sort((a, b) => a.order - b.order);
+
+      if (cleanDataItems.length > 0) {
+        await coll.updateOne(
+          { _id: instructionId },
+          { $set: { dataItems: cleanDataItems } }
+        );
+      }
+    }
+
+    res.json({ success: true, message: `นำเข้าสำเร็จ: สร้างใหม่ ${importedCount}, อัปเดต ${updatedCount}` });
+
+  } catch (err) {
+    console.error("Error importing instructions:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ============================================================================
 // END NEW INSTRUCTION SYSTEM V2
 // ============================================================================

@@ -630,4 +630,56 @@
 
     initDataItemReorderControls();
 
+    // Export Button
+    const exportBtn = document.getElementById('exportBtn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', () => {
+            window.location.href = '/api/instructions-v2/export';
+        });
+    }
+
+    // Import Button
+    const importBtn = document.getElementById('importBtn');
+    const importFile = document.getElementById('importFile');
+    if (importBtn && importFile) {
+        importBtn.addEventListener('click', () => {
+            importFile.click();
+        });
+
+        importFile.addEventListener('change', async (e) => {
+            if (e.target.files.length === 0) return;
+            
+            const file = e.target.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            // Disable buttons
+            importBtn.disabled = true;
+            importBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Importing...';
+            
+            try {
+                const res = await fetch('/api/instructions-v2/import', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await res.json();
+                
+                if (data.success) {
+                    alert(data.message || 'นำเข้าข้อมูลเรียบร้อยแล้ว');
+                    location.reload();
+                } else {
+                    alert(data.error || 'เกิดข้อผิดพลาดในการนำเข้า');
+                }
+            } catch (err) {
+                console.error('Error importing file:', err);
+                alert('เกิดข้อผิดพลาดในการนำเข้าไฟล์');
+            } finally {
+                importBtn.disabled = false;
+                importBtn.innerHTML = '<i class="fas fa-file-import me-1"></i> Import';
+                importFile.value = ''; // Reset file input
+            }
+        });
+    }
+
 })();
