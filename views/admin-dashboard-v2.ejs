@@ -231,10 +231,9 @@
                     <button class="btn btn-outline-success me-2" id="exportBtn">
                         <i class="fas fa-file-excel me-1"></i> Export
                     </button>
-                    <button class="btn btn-outline-primary me-2" id="importBtn">
+                    <button class="btn btn-outline-primary me-2" id="importBtn" data-bs-toggle="modal" data-bs-target="#uploadExcelModal">
                         <i class="fas fa-file-import me-1"></i> Import
                     </button>
-                    <input type="file" id="importFile" accept=".xlsx" style="display: none;">
                     <button class="btn btn-primary" id="createInstructionBtn">
                         <i class="fas fa-plus me-1"></i> สร้าง Instruction
                     </button>
@@ -486,6 +485,49 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Upload Excel -->
+    <div class="modal fade" id="uploadExcelModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-file-excel me-2"></i> นำเข้า Instruction จาก Excel
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>คำแนะนำ:</strong> ระบบรองรับไฟล์ที่ได้จากการ Export เท่านั้น (ต้องมี Sheet "Instructions" และ "DataItems")
+                    </div>
+
+                    <form id="excelUploadForm" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label class="form-label">เลือกไฟล์ Excel (.xlsx)</label>
+                            <input type="file" id="excelFileInput" name="file" class="form-control" accept=".xlsx" required>
+                        </div>
+
+                        <div id="excelPreviewSection" class="mb-3 d-none">
+                            <h6>ตัวอย่างข้อมูลที่จะนำเข้า:</h6>
+                            <div id="excelPreviewContent" class="bg-light p-3 rounded" style="max-height: 200px; overflow: auto;">
+                                <!-- Preview content inserted via JS -->
+                            </div>
+                        </div>
+
+                        <div class="text-end">
+                            <button type="button" class="btn btn-outline-secondary" id="previewExcelBtn">
+                                <i class="fas fa-eye me-1"></i> ดูตัวอย่าง
+                            </button>
+                            <button type="submit" class="btn btn-primary ms-2" id="uploadExcelBtn" disabled>
+                                <i class="fas fa-upload me-1"></i> นำเข้าข้อมูล
+                            </button>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>

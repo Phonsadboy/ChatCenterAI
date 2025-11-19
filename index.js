@@ -6722,6 +6722,43 @@ app.get("/api/instructions-v2/export", async (req, res) => {
   }
 });
 
+// API: Preview Import Instructions V2
+app.post("/api/instructions-v2/preview-import", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: "กรุณาอัพโหลดไฟล์ Excel" });
+    }
+
+    const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+    
+    // Check sheets
+    if (!wb.SheetNames.includes("Instructions") || !wb.SheetNames.includes("DataItems")) {
+      return res.status(400).json({ success: false, error: "รูปแบบไฟล์ไม่ถูกต้อง (ต้องมี sheet 'Instructions' และ 'DataItems')" });
+    }
+
+    const instructionsRaw = XLSX.utils.sheet_to_json(wb.Sheets["Instructions"]);
+    const dataItemsRaw = XLSX.utils.sheet_to_json(wb.Sheets["DataItems"]);
+
+    const previews = instructionsRaw.map(row => {
+      const name = row["Name"] || "(ไม่มีชื่อ)";
+      const idStr = row["Instruction ID"];
+      const items = dataItemsRaw.filter(r => r["Instruction ID"] === idStr);
+      
+      return {
+        name,
+        itemsCount: items.length,
+        description: row["Description"] || ""
+      };
+    });
+
+    res.json({ success: true, previews });
+
+  } catch (err) {
+    console.error("Error previewing import:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // API: Import Instructions V2 from Excel
 app.post("/api/instructions-v2/import", upload.single("file"), async (req, res) => {
   try {

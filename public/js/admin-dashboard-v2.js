@@ -638,31 +638,97 @@
         });
     }
 
-    // Import Button
-    const importBtn = document.getElementById('importBtn');
-    const importFile = document.getElementById('importFile');
-    if (importBtn && importFile) {
-        importBtn.addEventListener('click', () => {
-            importFile.click();
-        });
+    // Import Button (Modal Trigger)
+    // Note: The button #importBtn now triggers the modal via data-bs-toggle attribute.
 
-        importFile.addEventListener('change', async (e) => {
-            if (e.target.files.length === 0) return;
+    // Excel Upload Modal Logic
+    const excelUploadForm = document.getElementById('excelUploadForm');
+    const previewExcelBtn = document.getElementById('previewExcelBtn');
+    const uploadExcelBtn = document.getElementById('uploadExcelBtn');
+    const excelPreviewSection = document.getElementById('excelPreviewSection');
+    const excelPreviewContent = document.getElementById('excelPreviewContent');
+
+    if (excelUploadForm) {
+        // Preview
+        if (previewExcelBtn) {
+            previewExcelBtn.addEventListener('click', async () => {
+                const formData = new FormData(excelUploadForm);
+                const fileInput = document.getElementById('excelFileInput');
+                if (!fileInput.files.length) {
+                    alert('กรุณาเลือกไฟล์ Excel');
+                    return;
+                }
+                
+                previewExcelBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> กำลังโหลด...';
+                previewExcelBtn.disabled = true;
+                
+                try {
+                    const res = await fetch('/api/instructions-v2/preview-import', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    
+                    if (data.success) {
+                        if (excelPreviewSection) excelPreviewSection.classList.remove('d-none');
+                        if (uploadExcelBtn) uploadExcelBtn.disabled = false;
+                        
+                        if (excelPreviewContent) {
+                            excelPreviewContent.innerHTML = `
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-bordered mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Instruction Name</th>
+                                                <th>Items</th>
+                                                <th>Description</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${data.previews.map(p => `
+                                                <tr>
+                                                    <td>${p.name}</td>
+                                                    <td class="text-center">${p.itemsCount}</td>
+                                                    <td class="small text-muted">${p.description || '-'}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="mt-2 text-success small">
+                                    <i class="fas fa-check-circle me-1"></i> พร้อมนำเข้า ${data.previews.length} Instructions
+                                </div>
+                            `;
+                        }
+                    } else {
+                        alert(data.error || 'ไม่สามารถดูตัวอย่างไฟล์ได้');
+                        if (uploadExcelBtn) uploadExcelBtn.disabled = true;
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                } finally {
+                    previewExcelBtn.innerHTML = '<i class="fas fa-eye me-1"></i> ดูตัวอย่าง';
+                    previewExcelBtn.disabled = false;
+                }
+            });
+        }
+
+        // Upload
+        excelUploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(excelUploadForm);
             
-            const file = e.target.files[0];
-            const formData = new FormData();
-            formData.append('file', file);
-            
-            // Disable buttons
-            importBtn.disabled = true;
-            importBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Importing...';
+            if (uploadExcelBtn) {
+                uploadExcelBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> กำลังนำเข้า...';
+                uploadExcelBtn.disabled = true;
+            }
             
             try {
                 const res = await fetch('/api/instructions-v2/import', {
                     method: 'POST',
                     body: formData
                 });
-                
                 const data = await res.json();
                 
                 if (data.success) {
@@ -670,14 +736,18 @@
                     location.reload();
                 } else {
                     alert(data.error || 'เกิดข้อผิดพลาดในการนำเข้า');
+                    if (uploadExcelBtn) {
+                        uploadExcelBtn.disabled = false;
+                        uploadExcelBtn.innerHTML = '<i class="fas fa-upload me-1"></i> นำเข้าข้อมูล';
+                    }
                 }
             } catch (err) {
-                console.error('Error importing file:', err);
-                alert('เกิดข้อผิดพลาดในการนำเข้าไฟล์');
-            } finally {
-                importBtn.disabled = false;
-                importBtn.innerHTML = '<i class="fas fa-file-import me-1"></i> Import';
-                importFile.value = ''; // Reset file input
+                console.error(err);
+                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                if (uploadExcelBtn) {
+                    uploadExcelBtn.disabled = false;
+                    uploadExcelBtn.innerHTML = '<i class="fas fa-upload me-1"></i> นำเข้าข้อมูล';
+                }
             }
         });
     }
