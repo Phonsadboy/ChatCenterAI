@@ -117,6 +117,31 @@ function createLineClient(channelAccessToken, channelSecret) {
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
+let commentIndexesEnsured = false;
+
+async function ensureFacebookCommentIndexes(db) {
+  if (commentIndexesEnsured) return;
+  try {
+    await db.collection("facebook_page_posts").createIndexes([
+      { key: { botId: 1, postId: 1 }, unique: true },
+      { key: { pageId: 1 } },
+      { key: { lastCommentAt: -1 } },
+    ]);
+    await db.collection("facebook_comment_policies").createIndexes([
+      { key: { botId: 1, scope: 1 }, unique: true },
+    ]);
+    await db.collection("facebook_comment_events").createIndexes([
+      { key: { commentId: 1 }, unique: true },
+      { key: { postId: 1, createdAt: -1 } },
+    ]);
+    commentIndexesEnsured = true;
+  } catch (err) {
+    console.warn(
+      "[DB] ไม่สามารถตั้งค่า index สำหรับ Facebook comment ได้:",
+      err?.message || err,
+    );
+  }
+}
 
 // ============================ CSP Helpers ============================
 const cspImgSrc = ["'self'", "data:", "blob:"];
@@ -622,6 +647,7 @@ async function connectDB() {
     try {
       const db = mongoClient.db("chatbot");
       await ensurePasscodeIndexes(db);
+      await ensureFacebookCommentIndexes(db);
     } catch (err) {
       console.warn(
         "[DB] ไม่สามารถตั้งค่า index สำหรับ passcode ได้:",
@@ -5528,85 +5554,120 @@ function schedule15MinRefresh() {
   }, 60 * 1000);
 }
 
-// ============================ Facebook Comment Reply System ============================
+// ============================ Facebook Comment Reply System (v2) ============================
 
-// Helper function to get comment reply config for a specific post
-async function getCommentReplyConfig(pageId, postId) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("facebook_comment_configs");
+const FACEBOOK_POST_FIELDS =
+  "id,from,message,permalink_url,created_time,full_picture,status_type,attachments{media_type,type,url,media}";
 
-  const config = await coll.findOne({
-    pageId: ObjectId.isValid(pageId) ? new ObjectId(pageId) : pageId,
-    postId: postId,
-    isActive: true,
+function buildDefaultReplyProfile() {
+  return {
+    mode: "off", // off | template | ai
+    templateMessage: "",
+    aiModel: "",
+    systemPrompt: "",
+    pullToChat: false,
+    sendPrivateReply: false,
+    isActive: false,
+    status: "off",
+  };
+}
+
+function normalizeBotIdValue(bot) {
+  const candidate = bot?._id || bot?.botId || bot;
+  return ObjectId.isValid(candidate) ? new ObjectId(candidate) : candidate;
+}
+
+function mapFacebookAttachments(attachments) {
+  if (!attachments || !Array.isArray(attachments.data)) return [];
+  return attachments.data
+    .map((att) => {
+      const url =
+        att?.url ||
+        att?.media?.image?.src ||
+        att?.media?.source ||
+        att?.permalink_url ||
+        att?.target?.url ||
+        "";
+      return {
+        type: att?.type || att?.media_type || "",
+        url,
+      };
+    })
+    .filter((att) => att.url);
+}
+
+async function fetchFacebookPostDetails(postId, accessToken) {
+  const url = `https://graph.facebook.com/v18.0/${postId}`;
+  const response = await axios.get(url, {
+    params: {
+      fields: FACEBOOK_POST_FIELDS,
+      access_token: accessToken,
+    },
   });
-
-  return config;
+  return response.data;
 }
 
-// Ensure config exists for the post (auto-capture support)
-async function ensureCommentConfigExists(pageId, postId) {
+async function upsertFacebookPost(db, bot, postId, source = "webhook") {
+  const botId = normalizeBotIdValue(bot);
+  const pageId = bot?.pageId || botId?.toString?.() || "";
+  const coll = db.collection("facebook_page_posts");
+  const now = new Date();
+
+  let fbPost = null;
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_comment_configs");
-
-    const normalizedPageId = ObjectId.isValid(pageId)
-      ? new ObjectId(pageId)
-      : pageId;
-
-    const existing = await coll.findOne({
-      pageId: normalizedPageId,
-      postId,
-    });
-
-    if (existing) {
-      return existing;
-    }
-
-    const placeholder = {
-      pageId: normalizedPageId,
-      postId,
-      replyType: "custom",
-      customMessage: null,
-      aiModel: null,
-      systemPrompt: null,
-      pullToChat: false,
-      isActive: false,
-      autoCreated: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const result = await coll.insertOne(placeholder);
-
-    console.log(
-      `[Facebook Comment] Auto-created placeholder config for post ${postId}`,
-    );
-
-    return { ...placeholder, _id: result.insertedId };
+    fbPost = await fetchFacebookPostDetails(postId, bot?.accessToken);
   } catch (err) {
-    console.error(
-      `[Facebook Comment] Failed to ensure config for post ${postId}:`,
-      err.message,
+    console.warn(
+      `[Facebook Post] ไม่สามารถดึงโพสต์ ${postId}:`,
+      err?.response?.data || err?.message || err,
     );
-    return null;
   }
+
+  const existing = await coll.findOne({ botId, postId });
+  const replyProfile = existing?.replyProfile || buildDefaultReplyProfile();
+
+  const updateDoc = {
+    botId,
+    pageId,
+    postId,
+    message: fbPost?.message || existing?.message || "",
+    permalink: fbPost?.permalink_url || existing?.permalink || "",
+    createdTime: fbPost?.created_time
+      ? new Date(fbPost.created_time)
+      : existing?.createdTime || null,
+    attachments: mapFacebookAttachments(
+      fbPost?.attachments || existing?.attachments,
+    ),
+    statusType: fbPost?.status_type || existing?.statusType || null,
+    fullPicture: fbPost?.full_picture || existing?.fullPicture || null,
+    capturedFrom: source,
+    syncedAt: now,
+    updatedAt: now,
+  };
+
+  await coll.updateOne(
+    { botId, postId },
+    {
+      $set: updateDoc,
+      $setOnInsert: {
+        replyProfile,
+        createdAt: now,
+        commentCount: 0,
+      },
+    },
+    { upsert: true },
+  );
+
+  return coll.findOne({ botId, postId });
 }
 
-// Helper function to send reply to comment
 async function sendCommentReply(commentId, message, accessToken) {
   try {
     const url = `https://graph.facebook.com/v22.0/${commentId}/comments`;
     const response = await axios.post(
       url,
-      {
-        message: message,
-      },
-      {
-        params: { access_token: accessToken },
-      },
+      { message },
+      { params: { access_token: accessToken } },
     );
     return response.data;
   } catch (error) {
@@ -5618,18 +5679,13 @@ async function sendCommentReply(commentId, message, accessToken) {
   }
 }
 
-// Helper function to send private message from comment
 async function sendPrivateMessageFromComment(commentId, message, accessToken) {
   try {
     const url = `https://graph.facebook.com/v22.0/${commentId}/private_replies`;
     const response = await axios.post(
       url,
-      {
-        message: message,
-      },
-      {
-        params: { access_token: accessToken },
-      },
+      { message },
+      { params: { access_token: accessToken } },
     );
     return response.data;
   } catch (error) {
@@ -5641,25 +5697,21 @@ async function sendPrivateMessageFromComment(commentId, message, accessToken) {
   }
 }
 
-// Helper function to process comment with AI
 async function processCommentWithAI(commentText, systemPrompt, aiModel) {
   const startTime = Date.now();
 
   try {
-    // ตรวจสอบ API Key
     if (!OPENAI_API_KEY) {
       console.error("[Facebook Comment AI] OPENAI_API_KEY not configured");
       return "";
     }
 
-    // ตรวจสอบ input
     if (!commentText || commentText.trim().length === 0) {
       console.warn("[Facebook Comment AI] Empty comment text");
       return "";
     }
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
     const messages = [
       {
         role: "system",
@@ -5703,502 +5755,241 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel) {
       processingTime: `${processingTime}ms`,
     });
 
-    // จัดการ error ตามประเภท
-    if (error.code === "insufficient_quota") {
-      console.error("[Facebook Comment AI] OpenAI quota exceeded");
-      return "";
-    }
+    if (error.code === "insufficient_quota") return "";
+    if (error.code === "rate_limit_exceeded") return "";
+    if (error.code === "invalid_api_key") return "";
 
-    if (error.code === "rate_limit_exceeded") {
-      console.error("[Facebook Comment AI] Rate limit exceeded");
-      return "";
-    }
-
-    if (error.code === "invalid_api_key") {
-      console.error("[Facebook Comment AI] Invalid API key");
-      return "";
-    }
-
-    // Fallback message ทั่วไป
     return "";
   }
 }
 
-// Admin page for managing comment replies
-app.get("/admin/facebook-comment", async (req, res) => {
-  try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
+async function getPageDefaultPolicy(db, bot) {
+  const botId = normalizeBotIdValue(bot);
+  const policy = await db.collection("facebook_comment_policies").findOne({
+    botId,
+    scope: "page_default",
+  });
+  if (!policy) return null;
+  return {
+    ...buildDefaultReplyProfile(),
+    ...policy,
+    isActive: policy.isActive === true || policy.status === "active",
+  };
+}
 
-    const facebookBots = await db
-      .collection("facebook_bots")
-      .find({})
-      .sort({ createdAt: -1 })
-      .toArray();
-    let commentConfigs = await db
-      .collection("facebook_comment_configs")
-      .find({})
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    const configKeySet = new Set(
-      commentConfigs.map((config) => {
-        const pageKey =
-          config.pageId && typeof config.pageId.toString === "function"
-            ? config.pageId.toString()
-            : String(config.pageId || "");
-        return `${pageKey}::${config.postId}`;
-      }),
-    );
-
-    const logColl = db.collection("facebook_comment_logs");
-    const logPostRefs = await logColl
-      .aggregate([
-        {
-          $group: {
-            _id: {
-              pageId: "$pageId",
-              postId: "$postId",
-            },
-          },
-        },
-      ])
-      .toArray();
-
-    let ensuredFromLogs = false;
-    for (const ref of logPostRefs) {
-      const rawPageId = ref?._id?.pageId;
-      const postId = ref?._id?.postId;
-
-      if (!postId || !rawPageId) {
-        continue;
-      }
-
-      const normalizedPageKey =
-        typeof rawPageId?.toString === "function"
-          ? rawPageId.toString()
-          : String(rawPageId);
-      const configKey = `${normalizedPageKey}::${postId}`;
-
-      if (configKeySet.has(configKey)) {
-        continue;
-      }
-
-      const ensured = await ensureCommentConfigExists(
-        normalizedPageKey,
-        postId,
-      );
-      if (ensured) {
-        ensuredFromLogs = true;
-        configKeySet.add(configKey);
-      }
-    }
-
-    if (ensuredFromLogs) {
-      commentConfigs = await db
-        .collection("facebook_comment_configs")
-        .find({})
-        .sort({ createdAt: -1 })
-        .toArray();
-    }
-
-    // Add page name to configs
-    for (const config of commentConfigs) {
-      const bot = facebookBots.find(
-        (b) => b._id.toString() === config.pageId.toString(),
-      );
-      config.pageName = bot?.name || bot?.pageName || "Unknown Page";
-    }
-
-    const autoCapturedCount = commentConfigs.filter(
-      (config) => config.autoCreated,
-    ).length;
-
-    res.render("admin-facebook-comment", {
-      facebookBots,
-      commentConfigs,
-      autoCapturedCount,
-    });
-  } catch (err) {
-    console.error("Error loading Facebook comment page:", err);
-    res.render("admin-facebook-comment", {
-      facebookBots: [],
-      commentConfigs: [],
-      autoCapturedCount: 0,
-      error: "ไม่สามารถโหลดข้อมูลได้",
-    });
-  }
-});
-
-// API: Create comment reply config
-app.post("/admin/facebook-comment/create", async (req, res) => {
-  try {
-    const {
-      pageId,
-      postId,
-      replyType,
-      customMessage,
-      aiModel,
-      systemPrompt,
-      pullToChat,
-      isActive,
-    } = req.body;
-
-    if (!pageId || !postId || !replyType) {
-      return res
-        .status(400)
-        .json({ error: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน" });
-    }
-
-    if (replyType === "custom" && !customMessage) {
-      return res.status(400).json({ error: "กรุณาระบุข้อความตอบกลับ" });
-    }
-
-    if (replyType === "ai" && (!aiModel || !systemPrompt)) {
-      return res
-        .status(400)
-        .json({ error: "กรุณาเลือกโมเดลและระบุ System Prompt" });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_comment_configs");
-
-    // Check if config already exists for this post
-    const existing = await coll.findOne({
-      pageId: ObjectId.isValid(pageId) ? new ObjectId(pageId) : pageId,
-      postId: postId,
-    });
-
-    if (existing) {
-      return res
-        .status(400)
-        .json({ error: "มีการตั้งค่าสำหรับโพสต์นี้อยู่แล้ว" });
-    }
-
-    const config = {
-      pageId: ObjectId.isValid(pageId) ? new ObjectId(pageId) : pageId,
-      postId: postId,
-      replyType: replyType,
-      customMessage: replyType === "custom" ? customMessage : null,
-      aiModel: replyType === "ai" ? aiModel : null,
-      systemPrompt: replyType === "ai" ? systemPrompt : null,
-      pullToChat: pullToChat === true || pullToChat === "true",
-      isActive: isActive !== false && isActive !== "false",
-      autoCreated: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+async function resolveCommentPolicyForPost(db, bot, postDoc) {
+  if (postDoc?.replyProfile) {
+    return {
+      ...buildDefaultReplyProfile(),
+      ...postDoc.replyProfile,
     };
-
-    await coll.insertOne(config);
-
-    res.json({ success: true, config });
-  } catch (err) {
-    console.error("Error creating comment config:", err);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการบันทึก" });
   }
-});
+  const pagePolicy = await getPageDefaultPolicy(db, bot);
+  if (pagePolicy) return pagePolicy;
+  return buildDefaultReplyProfile();
+}
 
-// API: Get comment reply config
-app.get("/admin/facebook-comment/get/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_comment_configs");
+async function recordCommentEvent(db, eventDoc) {
+  const coll = db.collection("facebook_comment_events");
+  await coll.updateOne(
+    { commentId: eventDoc.commentId },
+    { $setOnInsert: eventDoc },
+    { upsert: true },
+  );
+}
 
-    const config = await coll.findOne({ _id: new ObjectId(id) });
+// Webhook handler for Facebook comments (new pipeline)
+async function handleFacebookComment(
+  pageId,
+  postId,
+  commentData,
+  accessToken,
+  bot,
+) {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const eventsColl = db.collection("facebook_comment_events");
+  const postsColl = db.collection("facebook_page_posts");
 
-    if (!config) {
-      return res.status(404).json({ error: "ไม่พบการตั้งค่า" });
-    }
+  const commentId = commentData.id;
+  const commentText = commentData.message || "";
+  const commenterId = commentData.from?.id;
+  const commenterName = commentData.from?.name || "ผู้ใช้ Facebook";
 
-    // Get page name
-    const bot = await db
-      .collection("facebook_bots")
-      .findOne({ _id: config.pageId });
-    config.pageName = bot?.name || bot?.pageName || "Unknown Page";
-
-    res.json(config);
-  } catch (err) {
-    console.error("Error getting comment config:", err);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการโหลดข้อมูล" });
+  // dedupe
+  const existingEvent = await eventsColl.findOne({ commentId });
+  if (existingEvent) {
+    console.log(`[Facebook Comment] Skip duplicate comment ${commentId}`);
+    return;
   }
-});
 
-// API: Update comment reply config
-app.post("/admin/facebook-comment/update", async (req, res) => {
+  const botId = normalizeBotIdValue(bot);
+  const baseEvent = {
+    commentId,
+    postId,
+    botId,
+    pageId,
+    commentText,
+    commenterId,
+    commenterName,
+    createdAt: new Date(),
+  };
+
+  let postDoc = null;
   try {
-    const {
-      configId,
-      postId,
-      replyType,
-      customMessage,
-      aiModel,
-      systemPrompt,
-      pullToChat,
-      isActive,
-    } = req.body;
-
-    if (!configId || !postId || !replyType) {
-      return res
-        .status(400)
-        .json({ error: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน" });
+    postDoc = await upsertFacebookPost(db, bot, postId, "webhook");
+    if (postDoc?._id) {
+      await postsColl.updateOne(
+        { _id: postDoc._id },
+        { $set: { lastCommentAt: new Date(), updatedAt: new Date() } },
+      );
     }
-
-    if (replyType === "custom" && !customMessage) {
-      return res.status(400).json({ error: "กรุณาระบุข้อความตอบกลับ" });
-    }
-
-    if (replyType === "ai" && (!aiModel || !systemPrompt)) {
-      return res
-        .status(400)
-        .json({ error: "กรุณาเลือกโมเดลและระบุ System Prompt" });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_comment_configs");
-
-    const updateData = {
-      postId: postId,
-      replyType: replyType,
-      customMessage: replyType === "custom" ? customMessage : null,
-      aiModel: replyType === "ai" ? aiModel : null,
-      systemPrompt: replyType === "ai" ? systemPrompt : null,
-      pullToChat: pullToChat === true || pullToChat === "true",
-      isActive: isActive !== false && isActive !== "false",
-      autoCreated: false,
-      updatedAt: new Date(),
-    };
-
-    const result = await coll.updateOne(
-      { _id: new ObjectId(configId) },
-      { $set: updateData },
+  } catch (err) {
+    console.error(
+      "[Facebook Comment] ไม่สามารถ upsert โพสต์:",
+      err?.message || err,
     );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "ไม่พบการตั้งค่า" });
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Error updating comment config:", err);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการอัปเดต" });
   }
-});
 
-// API: Toggle comment reply config
-app.post("/admin/facebook-comment/toggle/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { isActive } = req.body;
+  if (commenterId) {
+    try {
+      await ensureFacebookProfileDisplayName(commenterId, accessToken);
+    } catch (profileErr) {
+      console.warn(
+        `[Facebook Comment] ไม่สามารถอัปเดตโปรไฟล์ ${commenterId}:`,
+        profileErr?.message || profileErr,
+      );
+    }
+  }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_comment_configs");
+  const policy = await resolveCommentPolicyForPost(db, bot, postDoc);
+  const shouldReply =
+    policy?.isActive === true && policy.mode && policy.mode !== "off";
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { isActive: isActive === true, updatedAt: new Date() } },
+  if (!shouldReply) {
+    await recordCommentEvent(db, {
+      ...baseEvent,
+      replyMode: policy?.mode || "off",
+      action: "skipped",
+      reason: "policy_off",
+    });
+    return;
+  }
+
+  let replyMessage = "";
+  if (policy.mode === "template") {
+    replyMessage = policy.templateMessage || "";
+  } else if (policy.mode === "ai") {
+    replyMessage = await processCommentWithAI(
+      commentText,
+      policy.systemPrompt,
+      policy.aiModel,
     );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "ไม่พบการตั้งค่า" });
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Error toggling comment config:", err);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการเปลี่ยนสถานะ" });
   }
-});
+  replyMessage = (replyMessage || "").trim();
 
-// API: Delete comment reply config
-app.post("/admin/facebook-comment/delete/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_comment_configs");
-
-    const result = await coll.deleteOne({ _id: new ObjectId(id) });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ error: "ไม่พบการตั้งค่า" });
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Error deleting comment config:", err);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการลบ" });
+  if (!replyMessage) {
+    await recordCommentEvent(db, {
+      ...baseEvent,
+      replyMode: policy.mode,
+      action: "skipped",
+      reason: "empty_reply",
+    });
+    return;
   }
-});
 
-// Webhook handler for Facebook comments (needs to be added to webhook subscription)
-// This will be called when someone comments on a post
-async function handleFacebookComment(pageId, postId, commentData, accessToken) {
+  let action = "replied";
+  let reason = "";
+  let privateSent = false;
+
   try {
-    const config = await getCommentReplyConfig(pageId, postId);
+    await sendCommentReply(commentId, replyMessage, accessToken);
+    console.log(`[Facebook Comment] Replied to comment ${commentId}`);
+  } catch (err) {
+    action = "failed";
+    reason = err?.response?.data?.error?.message || err?.message || "reply_failed";
+  }
 
-    if (!config) {
-      const placeholder = await ensureCommentConfigExists(pageId, postId);
-      if (placeholder) {
-        const placeholderId =
-          typeof placeholder._id?.toString === "function"
-            ? placeholder._id.toString()
-            : placeholder._id || "";
-        console.log(
-          `[Facebook Comment] No active config for post ${postId}. Placeholder ${placeholderId} ready for setup.`,
-        );
-      } else {
-        console.log(
-          `[Facebook Comment] Unable to ensure config for post ${postId}, skipping reply.`,
-        );
-      }
-      return;
-    }
-
-    const commentId = commentData.id;
-    const commentText = commentData.message || "";
-    const commenterId = commentData.from?.id;
-    const commenterName = commentData.from?.name;
-
-    if (commenterId) {
-      try {
-        await ensureFacebookProfileDisplayName(commenterId, accessToken);
-      } catch (profileErr) {
-        console.warn(
-          `[Facebook Comment] ไม่สามารถอัปเดตโปรไฟล์ ${commenterId}:`,
-          profileErr?.message || profileErr,
-        );
+  if ((policy.pullToChat || policy.sendPrivateReply) && commenterId) {
+    const privateMessage =
+      policy.sendPrivateReply && replyMessage
+        ? replyMessage
+        : `สวัสดีคุณ ${commenterName} ขอบคุณที่สนใจ สามารถทักแชทต่อได้เลยนะครับ`;
+    try {
+      await sendPrivateMessageFromComment(commentId, privateMessage, accessToken);
+      privateSent = true;
+    } catch (err) {
+      if (action !== "failed") {
+        action = "failed";
+        reason =
+          err?.response?.data?.error?.message || err?.message || "private_failed";
       }
     }
 
-    console.log(
-      `[Facebook Comment] Processing comment from ${commenterName} (${commenterId}): ${commentText.substring(0, 50)}...`,
-    );
-
-    let replyMessage = "";
-
-    // Determine reply message
-    if (config.replyType === "custom") {
-      replyMessage = config.customMessage;
-    } else if (config.replyType === "ai") {
+    if (policy.pullToChat && commenterId) {
       try {
-        replyMessage = await processCommentWithAI(
-          commentText,
-          config.systemPrompt,
-          config.aiModel,
-        );
-      } catch (aiError) {
-        console.error(
-          "[Facebook Comment] AI processing failed:",
-          aiError.message,
-        );
-        replyMessage = "";
-      }
-    }
-
-    // Send reply to comment
-    if (replyMessage) {
-      try {
-        await sendCommentReply(commentId, replyMessage, accessToken);
-        console.log(`[Facebook Comment] Replied to comment ${commentId}`);
-      } catch (replyError) {
-        console.error(
-          "[Facebook Comment] Failed to reply:",
-          replyError.message,
-        );
-      }
-    }
-
-    // Pull to chat if configured and user hasn't been pulled before
-    if (config.pullToChat && commenterId) {
-      try {
-        const client = await connectDB();
-        const db = client.db("chatbot");
         const chatColl = db.collection("chat_history");
-
-        // Check if user already has chat history
         const existingChat = await chatColl.findOne({
           senderId: commenterId,
           platform: "facebook",
-          botId: pageId,
+          botId: botId,
         });
 
         if (!existingChat) {
-          // Send private message to pull user into chat
-          const welcomeMessage = `สวัสดีครับคุณ ${commenterName} 👋\n\nขอบคุณที่แสดงความสนใจ! หากมีคำถามเพิ่มเติม สามารถสอบถามได้เลยครับ`;
-
-          try {
-            await sendPrivateMessageFromComment(
-              commentId,
-              welcomeMessage,
-              accessToken,
-            );
-            console.log(
-              `[Facebook Comment] Sent private message to pull ${commenterId} into chat`,
-            );
-
-            // Save initial chat history
-            const welcomeDoc = {
-              senderId: commenterId,
-              role: "assistant",
-              content: welcomeMessage,
-              timestamp: new Date(),
-              source: "comment_pull",
-              platform: "facebook",
-              botId: pageId,
-            };
-            const welcomeInsert = await chatColl.insertOne(welcomeDoc);
-            if (welcomeInsert?.insertedId) {
-              welcomeDoc._id = welcomeInsert.insertedId;
-            }
-            await appendOrderExtractionMessage(welcomeDoc);
-          } catch (pmError) {
-            console.error(
-              "[Facebook Comment] Failed to send private message:",
-              pmError.message,
-            );
+          const welcomeDoc = {
+            senderId: commenterId,
+            role: "assistant",
+            content: privateMessage,
+            timestamp: new Date(),
+            source: "comment_pull",
+            platform: "facebook",
+            botId: botId,
+          };
+          const welcomeInsert = await chatColl.insertOne(welcomeDoc);
+          if (welcomeInsert?.insertedId) {
+            welcomeDoc._id = welcomeInsert.insertedId;
           }
-        } else {
-          console.log(
-            `[Facebook Comment] User ${commenterId} already has chat history, skipping pull`,
-          );
+          await appendOrderExtractionMessage(welcomeDoc);
         }
-      } catch (pullError) {
+      } catch (pullErr) {
         console.error(
-          "[Facebook Comment] Error in pull to chat:",
-          pullError.message,
+          "[Facebook Comment] Error in pull-to-chat:",
+          pullErr?.message || pullErr,
         );
       }
     }
+  }
 
-    // Save comment interaction log
-    try {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const logColl = db.collection("facebook_comment_logs");
+  await recordCommentEvent(db, {
+    ...baseEvent,
+    replyMode: policy.mode,
+    replyText: replyMessage,
+    action,
+    reason,
+  });
 
-      await logColl.insertOne({
-        pageId: ObjectId.isValid(pageId) ? new ObjectId(pageId) : pageId,
-        postId: postId,
-        commentId: commentId,
-        commentText: commentText,
-        commenterId: commenterId,
-        commenterName: commenterName,
-        replyType: config.replyType,
-        replyMessage: replyMessage,
-        pulledToChat: config.pullToChat,
-        timestamp: new Date(),
-      });
-    } catch (logError) {
-      console.error("[Facebook Comment] Failed to save log:", logError.message);
+  if (postDoc?._id) {
+    const updatePayload = {
+      $set: { updatedAt: new Date() },
+      $inc: { commentCount: 1 },
+    };
+
+    if (action === "replied") {
+      updatePayload.$set.lastReplyAt = new Date();
+      updatePayload.$set.lastCommentAt = new Date();
+      if (privateSent) {
+        updatePayload.$set.pulledToChat = true;
+      }
     }
-  } catch (error) {
-    console.error("[Facebook Comment] Error handling comment:", error);
+
+    try {
+      await postsColl.updateOne({ _id: postDoc._id }, updatePayload);
+    } catch (err) {
+      console.error(
+        "[Facebook Comment] ไม่สามารถอัปเดตสถิติโพสต์:",
+        err?.message || err,
+      );
+    }
   }
 }
 
@@ -9607,7 +9398,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
         .json({ error: "Facebook Bot ไม่พบหรือไม่เปิดใช้งาน" });
     }
 
-    const pageId = facebookBot._id.toString();
+    const pageId = facebookBot.pageId || facebookBot._id.toString();
     const accessToken = facebookBot.accessToken;
 
     const queueOptionsBase = {
@@ -9626,34 +9417,43 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
     // Process webhook events asynchronously
     if (req.body.object === "page") {
       for (let entry of req.body.entry) {
-        // Handle comment events
+        // Handle feed/comment events
         if (entry.changes) {
           for (let change of entry.changes) {
-            if (change.field === "feed" && change.value) {
-              const value = change.value;
+            if (change.field !== "feed" || !change.value) continue;
+            const value = change.value;
+            const postId =
+              value.post_id || value.post?.id || value.parent_id || null;
 
-              // Handle new comments
-              if (value.item === "comment" && value.verb === "add") {
-                const postId = value.post_id;
-                const commentData = {
-                  id: value.comment_id,
-                  message: value.message,
-                  from: value.from,
-                };
-
-                // Process comment asynchronously
-                handleFacebookComment(
-                  pageId,
-                  postId,
-                  commentData,
-                  accessToken,
-                ).catch((err) => {
+            // Upsert post whenever we see feed change (post/comment/share)
+            if (postId) {
+              upsertFacebookPost(db, facebookBot, postId, "webhook").catch(
+                (err) => {
                   console.error(
-                    "[Facebook Webhook] Error processing comment:",
-                    err,
+                    "[Facebook Webhook] Error upserting post:",
+                    err?.message || err,
                   );
-                });
-              }
+                },
+              );
+            }
+
+            // Handle new comments
+            if (value.item === "comment" && value.verb === "add") {
+              const commentData = {
+                id: value.comment_id,
+                message: value.message,
+                from: value.from,
+              };
+
+              handleFacebookComment(
+                pageId,
+                postId,
+                commentData,
+                accessToken,
+                facebookBot,
+              ).catch((err) => {
+                console.error("[Facebook Webhook] Error processing comment:", err);
+              });
             }
           }
         }
@@ -11625,6 +11425,204 @@ app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
       .json({ error: "ไม่สามารถอัปเดตคลังรูปภาพของ Facebook Bot ได้" });
   }
 });
+
+// ============================ Facebook Comment v2 Admin API ============================
+
+// List captured posts (per page/bot)
+app.get("/api/facebook-posts", requireSuperadmin, async (req, res) => {
+  try {
+    const { botId, limit = 50 } = req.query;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_page_posts");
+
+    const query = {};
+    if (botId) {
+      const botRef = toObjectId(botId) || botId;
+      query.botId = botRef;
+    }
+
+    const posts = await coll
+      .find(query)
+      .sort({ createdTime: -1, syncedAt: -1 })
+      .limit(Math.min(Number(limit) || 50, 200))
+      .toArray();
+
+    res.json({ posts });
+  } catch (err) {
+    console.error("Error listing facebook posts:", err);
+    res.status(500).json({ error: "ไม่สามารถดึงรายการโพสต์ได้" });
+  }
+});
+
+// Update reply profile per post (default OFF, activate per post)
+app.patch(
+  "/api/facebook-posts/:postId/reply-profile",
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { postId } = req.params;
+      const {
+        botId,
+        mode,
+        templateMessage,
+        aiModel,
+        systemPrompt,
+        pullToChat,
+        sendPrivateReply,
+        isActive,
+      } = req.body || {};
+
+      if (!postId) {
+        return res.status(400).json({ error: "ต้องระบุ postId" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("facebook_page_posts");
+
+      const query = { postId };
+      if (botId) {
+        query.botId = toObjectId(botId) || botId;
+      }
+
+      const existing = await coll.findOne(query);
+      if (!existing) {
+        return res.status(404).json({ error: "ไม่พบโพสต์" });
+      }
+
+      const mergedProfile = {
+        ...buildDefaultReplyProfile(),
+        ...existing.replyProfile,
+        mode: mode || existing.replyProfile?.mode || "off",
+        templateMessage: templateMessage ?? existing.replyProfile?.templateMessage,
+        aiModel: aiModel ?? existing.replyProfile?.aiModel,
+        systemPrompt: systemPrompt ?? existing.replyProfile?.systemPrompt,
+        pullToChat:
+          pullToChat === undefined
+            ? existing.replyProfile?.pullToChat || false
+            : Boolean(pullToChat),
+        sendPrivateReply:
+          sendPrivateReply === undefined
+            ? existing.replyProfile?.sendPrivateReply || false
+            : Boolean(sendPrivateReply),
+        isActive:
+          isActive === undefined
+            ? existing.replyProfile?.isActive || false
+            : Boolean(isActive),
+        status:
+          isActive === true
+            ? "active"
+            : existing.replyProfile?.status || "off",
+      };
+
+      await coll.updateOne(
+        query,
+        {
+          $set: {
+            replyProfile: mergedProfile,
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      const updated = await coll.findOne(query);
+      res.json({ success: true, post: updated });
+    } catch (err) {
+      console.error("Error updating reply profile:", err);
+      res.status(500).json({ error: "ไม่สามารถอัปเดตการตั้งค่าโพสต์ได้" });
+    }
+  },
+);
+
+// Get page default comment policy
+app.get(
+  "/api/facebook-bots/:id/comment-policy",
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("facebook_comment_policies");
+
+      const policy = await coll.findOne({
+        botId: toObjectId(id) || id,
+        scope: "page_default",
+      });
+
+      res.json({ policy: policy || buildDefaultReplyProfile() });
+    } catch (err) {
+      console.error("Error fetching comment policy:", err);
+      res.status(500).json({ error: "ไม่สามารถดึงนโยบายคอมเมนต์ได้" });
+    }
+  },
+);
+
+// Set page default comment policy
+app.put(
+  "/api/facebook-bots/:id/comment-policy",
+  requireSuperadmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const {
+        mode,
+        templateMessage,
+        aiModel,
+        systemPrompt,
+        pullToChat,
+        sendPrivateReply,
+        isActive,
+      } = req.body || {};
+
+      if (!mode || !["off", "template", "ai"].includes(mode)) {
+        return res.status(400).json({ error: "mode ต้องเป็น off | template | ai" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const botsColl = db.collection("facebook_bots");
+      const policiesColl = db.collection("facebook_comment_policies");
+
+      const botId = toObjectId(id) || id;
+      const bot = await botsColl.findOne({ _id: botId });
+      if (!bot) {
+        return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+      }
+
+      const policy = {
+        ...buildDefaultReplyProfile(),
+        botId,
+        pageId: bot.pageId || "",
+        scope: "page_default",
+        mode,
+        templateMessage: templateMessage || "",
+        aiModel: aiModel || "",
+        systemPrompt: systemPrompt || "",
+        pullToChat: Boolean(pullToChat),
+        sendPrivateReply: Boolean(sendPrivateReply),
+        isActive: Boolean(isActive),
+        status: isActive ? "active" : "off",
+        updatedAt: new Date(),
+      };
+
+      await policiesColl.updateOne(
+        { botId, scope: "page_default" },
+        {
+          $set: policy,
+          $setOnInsert: { createdAt: new Date() },
+        },
+        { upsert: true },
+      );
+
+      res.json({ success: true, policy });
+    } catch (err) {
+      console.error("Error updating comment policy:", err);
+      res.status(500).json({ error: "ไม่สามารถตั้งค่านโยบายคอมเมนต์ได้" });
+    }
+  },
+);
 
 // Route: อัปเดต keyword settings สำหรับ Facebook Bot
 app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
