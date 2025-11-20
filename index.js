@@ -5798,6 +5798,38 @@ async function recordCommentEvent(db, eventDoc) {
   );
 }
 
+// Admin page to manage Facebook posts/comment policies
+app.get("/admin/facebook-posts", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const facebookBots = await db
+      .collection("facebook_bots")
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    const selectedBotId =
+      facebookBots && facebookBots.length > 0
+        ? facebookBots[0]._id.toString()
+        : null;
+
+    res.render("admin-facebook-posts", {
+      facebookBots,
+      selectedBotId,
+      current: "facebook-posts",
+    });
+  } catch (err) {
+    console.error("Error loading Facebook posts page:", err);
+    res.render("admin-facebook-posts", {
+      facebookBots: [],
+      selectedBotId: null,
+      error: "ไม่สามารถโหลดข้อมูลได้",
+      current: "facebook-posts",
+    });
+  }
+});
+
 // Webhook handler for Facebook comments (new pipeline)
 async function handleFacebookComment(
   pageId,
