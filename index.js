@@ -799,6 +799,20 @@ function requireSuperadmin(req, res, next) {
   return next();
 }
 
+// อนุญาตทุกคนเมื่อไม่เปิดระบบรหัสผ่าน; ถ้าเปิดต้องล็อกอินอย่างน้อยเป็นแอดมิน
+function requireAdmin(req, res, next) {
+  if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) {
+    return next();
+  }
+  if (!isAdminAuthenticated(req)) {
+    return res.status(401).json({
+      success: false,
+      error: "กรุณาล็อกอินก่อนใช้งาน",
+    });
+  }
+  return next();
+}
+
 async function getChatHistory(userId) {
   // ตรวจสอบการตั้งค่าการบันทึกประวัติ
   const enableChatHistory = await getSettingValue("enableChatHistory", true);
@@ -11461,7 +11475,7 @@ app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
 // ============================ Facebook Comment v2 Admin API ============================
 
 // List captured posts (per page/bot)
-app.get("/api/facebook-posts", requireSuperadmin, async (req, res) => {
+app.get("/api/facebook-posts", requireAdmin, async (req, res) => {
   try {
     const { botId, limit = 50 } = req.query;
     const client = await connectDB();
@@ -11490,7 +11504,7 @@ app.get("/api/facebook-posts", requireSuperadmin, async (req, res) => {
 // Update reply profile per post (default OFF, activate per post)
 app.patch(
   "/api/facebook-posts/:postId/reply-profile",
-  requireSuperadmin,
+  requireAdmin,
   async (req, res) => {
     try {
       const { postId } = req.params;
@@ -11570,7 +11584,7 @@ app.patch(
 // Get page default comment policy
 app.get(
   "/api/facebook-bots/:id/comment-policy",
-  requireSuperadmin,
+  requireAdmin,
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -11594,7 +11608,7 @@ app.get(
 // Set page default comment policy
 app.put(
   "/api/facebook-bots/:id/comment-policy",
-  requireSuperadmin,
+  requireAdmin,
   async (req, res) => {
     try {
       const { id } = req.params;
