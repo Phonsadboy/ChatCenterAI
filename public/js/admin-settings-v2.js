@@ -295,14 +295,46 @@ async function saveLineBot() {
 window.openAddFacebookBotModal = function () {
     const form = document.getElementById('facebookBotForm');
     if (form) form.reset();
+
     const idInput = document.getElementById('facebookBotId');
     if (idInput) idInput.value = '';
 
+    const deleteBtn = document.getElementById('deleteFacebookBotBtn');
+    if (deleteBtn) deleteBtn.style.display = 'none';
+
+    const verifiedToggle = document.getElementById('fbVerifiedToggle');
+    if (verifiedToggle) verifiedToggle.checked = false;
+
+    const title = document.getElementById('addFacebookBotModalLabel');
+    if (title) title.innerHTML = '<i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่';
+
     const modalEl = document.getElementById('addFacebookBotModal');
-    if (modalEl) {
-        const modal = new bootstrap.Modal(modalEl);
-        modal.show();
-    }
+    if (!modalEl) return;
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+
+    // ขอ webhook/verify token ล่วงหน้าเหมือนหน้าเก่า
+    (async () => {
+        try {
+            const res = await fetch('/api/facebook-bots/init', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data?.error || 'ไม่สามารถเตรียมข้อมูล Webhook ได้');
+
+            if (idInput) idInput.value = data.id;
+            const webhookInput = document.getElementById('facebookWebhookUrl');
+            const verifyInput = document.getElementById('facebookVerifyToken');
+            if (webhookInput) webhookInput.value = data.webhookUrl || '';
+            if (verifyInput) verifyInput.value = data.verifyToken || '';
+            showToast('สร้าง Webhook URL และ Verify Token สำเร็จ', 'success');
+        } catch (err) {
+            console.error('init facebook bot error', err);
+            showToast('ไม่สามารถสร้าง Webhook URL / Verify Token ได้', 'danger');
+        }
+    })();
 };
 
 window.openEditFacebookBotModal = async function (id) {
@@ -324,11 +356,16 @@ window.openEditFacebookBotModal = async function (id) {
         const defaultCheck = document.getElementById('facebookBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
 
+        const title = document.getElementById('addFacebookBotModalLabel');
+        if (title) title.innerHTML = '<i class="fab fa-facebook me-2"></i>แก้ไข Facebook Bot';
+
+        const deleteBtn = document.getElementById('deleteFacebookBotBtn');
+        if (deleteBtn) deleteBtn.style.display = 'inline-block';
+
         const modalEl = document.getElementById('addFacebookBotModal');
-        if (modalEl) {
-            const modal = new bootstrap.Modal(modalEl);
-            modal.show();
-        }
+        if (!modalEl) return;
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
     } catch (error) {
         console.error('Error fetching bot details:', error);
         showToast('ไม่สามารถโหลดข้อมูลบอทได้', 'danger');
