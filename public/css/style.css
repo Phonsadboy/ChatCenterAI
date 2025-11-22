@@ -1,5 +1,5 @@
-/* Add Google Font */
-@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap');
+/* Global Fonts: Thai-first (Mali) with English fallback (Inter) */
+@import url('https://fonts.googleapis.com/css2?family=Mali:wght@200;300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 /* CSS Variables */
 :root {
@@ -34,8 +34,8 @@
   --transition: all 0.2s ease;
   
   /* Typography */
-  --font-family-base: 'Prompt', 'Kanit', sans-serif;
-  --font-family-heading: 'Prompt', 'Kanit', sans-serif;
+  --font-family-base: 'Mali', 'Inter', sans-serif;
+  --font-family-heading: 'Mali', 'Inter', sans-serif;
   --font-family-mono: 'Courier New', Monaco, monospace;
   
   /* Font Sizes - Compact */
