@@ -20,7 +20,7 @@
 </head>
 
 <body>
-    <%- include('partials/admin-navbar', { activePage: 'settings' }) %>
+    <%- include('partials/admin-navbar', { activePage: 'settings2' }) %>
 
         <div class="settings-layout">
             <!-- Sidebar -->
@@ -489,6 +489,23 @@
                 </section>
 
             </main>
+        </div>
+
+        <div class="legacy-settings-toast" id="legacySettingsToast" aria-live="polite">
+            <div class="legacy-toast-header">
+                <div class="legacy-toast-title">
+                    <i class="fas fa-wand-magic-sparkles me-2"></i>หน้าตั้งค่าใหม่
+                </div>
+                <button type="button" class="btn-close btn-close-white" id="dismissLegacyToast"
+                    aria-label="ปิดการแจ้งเตือน"></button>
+            </div>
+            <p class="legacy-toast-text mb-2">หน้านี้เป็นเวอร์ชันใหม่ หากต้องการใช้การตั้งค่าแบบเดิมสามารถกดไปที่หน้าเก่าได้</p>
+            <div class="legacy-toast-actions">
+                <a class="btn btn-sm btn-light" href="/admin/settings">
+                    <i class="fas fa-undo-alt me-1"></i> ไปหน้าเก่า
+                </a>
+                <button type="button" class="btn btn-sm btn-outline-light" id="legacyToastCloseBtn">ปิด</button>
+            </div>
         </div>
 
         <!-- Modals -->

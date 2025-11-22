@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initNavigation();
     loadAllSettings();
     setupEventListeners();
+    showLegacySettingsNotice();
 });
 
 // Provide a global alert helper for modules that expect showAlert
@@ -629,4 +630,26 @@ function showToast(message, type = 'info') {
     toast.innerHTML = message;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
+}
+
+function showLegacySettingsNotice() {
+    const toast = document.getElementById('legacySettingsToast');
+    if (!toast) return;
+
+    ['legacyToastCloseBtn', 'dismissLegacyToast'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            btn.addEventListener('click', () => hideLegacySettingsNotice());
+        }
+    });
+
+    setTimeout(() => {
+        toast.classList.add('show');
+    }, 300);
+}
+
+function hideLegacySettingsNotice() {
+    const toast = document.getElementById('legacySettingsToast');
+    if (!toast) return;
+    toast.classList.remove('show');
 }

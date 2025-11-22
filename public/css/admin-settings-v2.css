@@ -1097,6 +1097,76 @@ input:checked+.toggle-slider:before {
     overflow-y: auto;
 }
 
+/* Legacy settings toast */
+.legacy-settings-toast {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 320px;
+    max-width: calc(100% - 24px);
+    background: linear-gradient(140deg, #0f172a, #111827);
+    color: #f8fafc;
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 10px 35px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    transform: translateY(12px);
+    pointer-events: none;
+    transition: all 0.25s ease;
+    z-index: 1100;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.legacy-settings-toast.show {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.legacy-toast-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.legacy-toast-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.legacy-toast-text {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    margin-bottom: 0.5rem;
+}
+
+.legacy-toast-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.legacy-toast-actions .btn {
+    font-weight: 600;
+    border-radius: 10px;
+    padding: 6px 10px;
+}
+
+.legacy-toast-actions .btn-outline-light {
+    color: #e2e8f0;
+    border-color: rgba(226, 232, 240, 0.4);
+}
+
+.legacy-toast-actions .btn-outline-light:hover {
+    background: rgba(226, 232, 240, 0.1);
+    color: #fff;
+}
+
 /* Utilities */
 .text-muted-v2 {
     color: var(--text-secondary);
@@ -1146,5 +1216,11 @@ input:checked+.toggle-slider:before {
 
     .settings-content {
         padding: 1rem;
+    }
+
+    .legacy-settings-toast {
+        left: 12px;
+        right: 12px;
+        width: auto;
     }
 }
