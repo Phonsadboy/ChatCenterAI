@@ -12535,7 +12535,7 @@ app.get("/admin/settings", async (req, res) => {
 // Admin settings2 page (new modern design)
 app.get("/admin/settings2", async (req, res) => {
   try {
-    res.render("admin-settings2");
+    res.render("admin-settings-v2");
   } catch (err) {
     console.error("Error rendering admin settings2:", err);
     res.status(500).send("Internal Server Error");
