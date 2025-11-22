@@ -102,7 +102,11 @@
   function renderPosts(posts = []) {
     if (!posts.length) {
       postList.innerHTML =
-        '<div class="text-center text-muted">ยังไม่มีโพสต์ที่ระบบจับได้</div>';
+        `<div class="text-center py-5 text-muted">
+           <i class="fas fa-inbox fa-3x mb-3 text-secondary opacity-50"></i>
+           <p class="mb-2">ยังไม่มีโพสต์ที่ระบบจับได้</p>
+           <small>ลองกดปุ่ม <strong>"ดึงโพสต์ล่าสุด"</strong> เพื่อซิงค์ข้อมูลจาก Facebook</small>
+         </div>`;
       return;
     }
 
@@ -130,8 +134,10 @@
                 <div class="text-muted small">สร้าง: ${escapeHtml(created)}</div>
               </div>
               <div class="text-end small">
-                <div class="${isActive ? "text-success" : "text-muted"}">
-                  ${isActive ? "🟢 เปิด" : "🔴 ปิด"}
+                <div>
+                  <span class="badge ${isActive ? "bg-success" : "bg-secondary"}">
+                    ${isActive ? "เปิดใช้งาน" : "ปิด"}
+                  </span>
                 </div>
                 ${permalink
             ? `<a class="small" href="${permalink}" target="_blank">เปิดโพสต์</a>`

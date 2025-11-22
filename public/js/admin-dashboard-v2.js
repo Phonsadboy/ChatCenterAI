@@ -1,5 +1,5 @@
 // Admin Dashboard V2 - Instruction Management
-(function() {
+(function () {
     'use strict';
 
     // Modals
@@ -658,21 +658,21 @@
                     alert('กรุณาเลือกไฟล์ Excel');
                     return;
                 }
-                
+
                 previewExcelBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> กำลังโหลด...';
                 previewExcelBtn.disabled = true;
-                
+
                 try {
                     const res = await fetch('/api/instructions-v2/preview-import', {
                         method: 'POST',
                         body: formData
                     });
                     const data = await res.json();
-                    
+
                     if (data.success) {
                         if (excelPreviewSection) excelPreviewSection.classList.remove('d-none');
                         if (uploadExcelBtn) uploadExcelBtn.disabled = false;
-                        
+
                         if (excelPreviewContent) {
                             excelPreviewContent.innerHTML = `
                                 <div class="table-responsive">
@@ -718,19 +718,19 @@
         excelUploadForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const formData = new FormData(excelUploadForm);
-            
+
             if (uploadExcelBtn) {
                 uploadExcelBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> กำลังนำเข้า...';
                 uploadExcelBtn.disabled = true;
             }
-            
+
             try {
                 const res = await fetch('/api/instructions-v2/import', {
                     method: 'POST',
                     body: formData
                 });
                 const data = await res.json();
-                
+
                 if (data.success) {
                     alert(data.message || 'นำเข้าข้อมูลเรียบร้อยแล้ว');
                     location.reload();
@@ -750,6 +750,19 @@
                 }
             }
         });
+    }
+
+    // Auto-select instruction from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const instructionIdParam = urlParams.get('instructionId');
+    if (instructionIdParam && instructionSelect) {
+        // Wait for options to be populated if needed, but usually they are server-rendered.
+        // Check if option exists
+        const option = instructionSelect.querySelector(`option[value="${instructionIdParam}"]`);
+        if (option) {
+            instructionSelect.value = instructionIdParam;
+            instructionSelect.dispatchEvent(new Event('change'));
+        }
     }
 
 })();

@@ -333,7 +333,7 @@ app.get("/assets/instructions/:fileName", async (req, res, next) => {
         markInstructionAssetMissingVariants(db, doc, {
           main: { id: !isThumbRequest, filename: !isThumbRequest },
           thumb: { id: isThumbRequest, filename: isThumbRequest },
-        }).catch(() => {});
+        }).catch(() => { });
         res.status(404).end();
         return;
       }
@@ -431,7 +431,7 @@ const upload = multer({
     // ตรวจสอบว่าเป็นไฟล์ Excel หรือไม่
     if (
       file.mimetype ===
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
       file.mimetype === "application/vnd.ms-excel" ||
       file.originalname.match(/\.(xlsx|xls)$/)
     ) {
@@ -1743,7 +1743,7 @@ async function getFollowUpBaseConfig() {
     rounds: normalizeFollowUpRounds(map.followUpRounds || []),
     orderPromptInstructions:
       typeof map.followUpOrderPromptInstructions === "string" &&
-      map.followUpOrderPromptInstructions.trim().length
+        map.followUpOrderPromptInstructions.trim().length
         ? map.followUpOrderPromptInstructions.trim()
         : DEFAULT_ORDER_PROMPT_BODY,
   };
@@ -1794,9 +1794,9 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
 
   merged.rounds = normalizeFollowUpRounds(
     (specificOverrides && specificOverrides.rounds) ||
-      (platformDefaults && platformDefaults.rounds) ||
-      (baseConfig && baseConfig.rounds) ||
-      [],
+    (platformDefaults && platformDefaults.rounds) ||
+    (baseConfig && baseConfig.rounds) ||
+    [],
   );
 
   if (typeof merged.autoFollowUpEnabled !== "boolean") {
@@ -1825,8 +1825,7 @@ async function getOrderPromptBody(platform = "line", botId = null) {
     }
   } catch (error) {
     console.warn(
-      `[Order] ไม่สามารถโหลดคำสั่งวิเคราะห์สำหรับ ${platform}:${
-        botId || "default"
+      `[Order] ไม่สามารถโหลดคำสั่งวิเคราะห์สำหรับ ${platform}:${botId || "default"
       }: ${error.message}`,
     );
   }
@@ -1873,9 +1872,9 @@ async function listFollowUpPageSettings() {
     };
     config.rounds = normalizeFollowUpRounds(
       specific?.settings?.rounds ||
-        platformDefault?.settings?.rounds ||
-        baseConfig?.rounds ||
-        [],
+      platformDefault?.settings?.rounds ||
+      baseConfig?.rounds ||
+      [],
     );
     if (typeof config.autoFollowUpEnabled !== "boolean") {
       config.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
@@ -1976,7 +1975,7 @@ function emitFollowUpScheduleUpdate(payload) {
       });
       io.emit("followUpScheduleUpdated", sanitized);
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 async function scheduleFollowUpForUser(userId, options = {}) {
@@ -2028,9 +2027,9 @@ async function scheduleFollowUpForUser(userId, options = {}) {
           : null;
         const sentRoundsCount = Array.isArray(existingTask.rounds)
           ? existingTask.rounds.reduce(
-              (count, round) => (round?.status === "sent" ? count + 1 : count),
-              0,
-            )
+            (count, round) => (round?.status === "sent" ? count + 1 : count),
+            0,
+          )
           : Array.isArray(existingTask.sentRounds)
             ? existingTask.sentRounds.length
             : typeof existingTask.nextRoundIndex === "number"
@@ -2537,7 +2536,7 @@ async function sendFollowUpMessage(task, round, db) {
         timestamp,
       });
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 async function sendLineFollowUpMessage(
@@ -2839,7 +2838,7 @@ async function maybeAnalyzeFollowUp(
           botId: normalizedBotId,
         });
       }
-    } catch (_) {}
+    } catch (_) { }
   } catch (error) {
     console.error("[FollowUp] วิเคราะห์ไม่สำเร็จ:", error.message);
   }
@@ -3752,7 +3751,7 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
           reason: analysis.reason,
         });
       }
-    } catch (_) {}
+    } catch (_) { }
 
     console.log(
       `[Order] สกัดออเดอร์อัตโนมัติสำเร็จสำหรับผู้ใช้ ${userId}: ${orderId}`,
@@ -3883,7 +3882,7 @@ async function processOrderCutoffForPage(pageConfig, options = {}) {
               reason: analysis.reason,
             });
           }
-        } catch (_) {}
+        } catch (_) { }
         continue;
       }
 
@@ -3933,7 +3932,7 @@ async function processOrderCutoffForPage(pageConfig, options = {}) {
             source: "scheduled_cutoff",
           });
         }
-      } catch (_) {}
+      } catch (_) { }
     } catch (error) {
       console.error(
         `[OrderCutoff] ประมวลผลผู้ใช้ ${userId} ไม่สำเร็จ:`,
@@ -4034,8 +4033,7 @@ async function startOrderCutoffScheduler() {
   }, 5000);
 
   console.log(
-    `[OrderCutoff] Scheduler เริ่มทำงาน (interval ${
-      ORDER_CUTOFF_INTERVAL_MS / 1000
+    `[OrderCutoff] Scheduler เริ่มทำงาน (interval ${ORDER_CUTOFF_INTERVAL_MS / 1000
     }s)`,
   );
 }
@@ -5813,7 +5811,7 @@ async function recordCommentEvent(db, eventDoc) {
 }
 
 // Admin page to manage Facebook posts/comment policies
-app.get("/admin/facebook-posts", async (req, res) => {
+app.get("/admin/facebook-posts", requireAdmin, async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -6538,7 +6536,7 @@ app.get("/api/instructions-v2/export", async (req, res) => {
     });
 
     const wb = XLSX.utils.book_new();
-    
+
     // Add Instructions Sheet
     const wsInstructions = XLSX.utils.json_to_sheet(instructionRows);
     XLSX.utils.book_append_sheet(wb, wsInstructions, "Instructions");
@@ -6567,7 +6565,7 @@ app.post("/api/instructions-v2/preview-import", upload.single("file"), async (re
     }
 
     const wb = XLSX.read(req.file.buffer, { type: "buffer" });
-    
+
     // Check sheets
     if (!wb.SheetNames.includes("Instructions") || !wb.SheetNames.includes("DataItems")) {
       return res.status(400).json({ success: false, error: "รูปแบบไฟล์ไม่ถูกต้อง (ต้องมี sheet 'Instructions' และ 'DataItems')" });
@@ -6580,7 +6578,7 @@ app.post("/api/instructions-v2/preview-import", upload.single("file"), async (re
       const name = row["Name"] || "(ไม่มีชื่อ)";
       const idStr = row["Instruction ID"];
       const items = dataItemsRaw.filter(r => r["Instruction ID"] === idStr);
-      
+
       return {
         name,
         itemsCount: items.length,
@@ -6604,7 +6602,7 @@ app.post("/api/instructions-v2/import", upload.single("file"), async (req, res) 
     }
 
     const wb = XLSX.read(req.file.buffer, { type: "buffer" });
-    
+
     // Check sheets
     if (!wb.SheetNames.includes("Instructions") || !wb.SheetNames.includes("DataItems")) {
       return res.status(400).json({ success: false, error: "รูปแบบไฟล์ไม่ถูกต้อง (ต้องมี sheet 'Instructions' และ 'DataItems')" });
@@ -6624,7 +6622,7 @@ app.post("/api/instructions-v2/import", upload.single("file"), async (req, res) 
       const idStr = row["Instruction ID"];
       const name = row["Name"];
       const desc = row["Description"];
-      
+
       if (!name) continue;
 
       let instructionId = null;
@@ -6667,14 +6665,14 @@ app.post("/api/instructions-v2/import", upload.single("file"), async (req, res) 
 
       // Find items for this instruction (using the ID from Excel)
       const items = dataItemsRaw.filter(r => r["Instruction ID"] === idStr);
-      
+
       const cleanDataItems = [];
       for (const itemRow of items) {
         const type = itemRow["Item Type"] || "text";
         const title = itemRow["Item Title"] || "ไม่มีชื่อ";
         const contentData = itemRow["Content/Data"];
         const order = itemRow["Order"] || 0;
-        
+
         const newItem = {
           itemId: generateDataItemId(),
           title: title,
@@ -6692,7 +6690,7 @@ app.post("/api/instructions-v2/import", upload.single("file"), async (req, res) 
           try {
             newItem.data = contentData ? JSON.parse(contentData) : null;
           } catch (e) {
-            newItem.data = null; 
+            newItem.data = null;
           }
         }
 
@@ -6816,7 +6814,7 @@ async function migrateToInstructionsV2() {
         if (dateMatch) {
           const [, year, month, day, type, hour, min, sec] = dateMatch;
           const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-                             'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+            'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
           const monthName = thaiMonths[parseInt(month) - 1] || month;
           const typeLabel = type === 'manual' ? 'บันทึกเอง' : type === 'auto' ? 'อัตโนมัติ' : type;
           instructionName = `Library: ${day} ${monthName} ${year} - ${hour}:${min} (${typeLabel})`;
@@ -9119,7 +9117,7 @@ app.post(
           contentPreview:
             instruction.type === "text"
               ? instruction.content.substring(0, 200) +
-                (instruction.content.length > 200 ? "..." : "")
+              (instruction.content.length > 200 ? "..." : "")
               : `ตาราง ${instruction.data.rows ? instruction.data.rows.length : 0} แถว, ${instruction.data.columns ? instruction.data.columns.length : 0} คอลัมน์`,
           rowCount:
             instruction.data && instruction.data.rows
@@ -9560,7 +9558,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
                   try {
                     await resetUserUnreadCount(targetUserId);
-                  } catch (_) {}
+                  } catch (_) { }
 
                   // แจ้ง UI แอดมินแบบเรียลไทม์
                   try {
@@ -9570,7 +9568,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                       sender: "assistant",
                       timestamp: controlDoc.timestamp,
                     });
-                  } catch (_) {}
+                  } catch (_) { }
                 }
                 continue;
               }
@@ -9600,7 +9598,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
                 try {
                   await resetUserUnreadCount(targetUserId);
-                } catch (_) {}
+                } catch (_) { }
 
                 // แจ้ง UI แอดมินแบบเรียลไทม์
                 try {
@@ -9610,7 +9608,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     sender: "assistant",
                     timestamp: controlDoc.timestamp,
                   });
-                } catch (_) {}
+                } catch (_) { }
               } else {
                 // บันทึกข้อความจากแอดมินเพจเป็น assistant (เฉพาะกรณีไม่ใช่คำสั่ง)
                 const baseDoc = {
@@ -9630,7 +9628,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                 // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
                 try {
                   await resetUserUnreadCount(targetUserId);
-                } catch (_) {}
+                } catch (_) { }
                 try {
                   io.emit("newMessage", {
                     userId: targetUserId,
@@ -9638,7 +9636,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     sender: "assistant",
                     timestamp: baseDoc.timestamp,
                   });
-                } catch (_) {}
+                } catch (_) { }
               }
             } catch (echoErr) {
               console.error(
@@ -9949,7 +9947,7 @@ async function sendFacebookMessage(
                   headers: { "Content-Type": "application/json" },
                 },
               );
-            } catch (_) {}
+            } catch (_) { }
           }
         }
       }
@@ -11062,8 +11060,8 @@ app.post("/api/facebook-bots/init", async (req, res) => {
     const verifyToken =
       providedVerifyToken ||
       "vt_" +
-        Math.random().toString(36).slice(2, 10) +
-        Math.random().toString(36).slice(2, 10);
+      Math.random().toString(36).slice(2, 10) +
+      Math.random().toString(36).slice(2, 10);
 
     // Create minimal bot stub
     const stub = {
@@ -11583,7 +11581,7 @@ app.post("/api/facebook-posts/fetch", requireAdmin, async (req, res) => {
       error: "เกิดข้อผิดพลาดในการดึงข้อมูลจาก Facebook: " + err.message,
     });
   }
-});  }
+
 });
 
 // Update reply profile per post (default OFF, activate per post)
@@ -12384,7 +12382,7 @@ app.post(
       if (!title) {
         return res.redirect(
           `/admin/instructions-v2/${instructionId}/data-items/new?error=` +
-            encodeURIComponent("กรุณาระบุชื่อชุดข้อมูล"),
+          encodeURIComponent("กรุณาระบุชื่อชุดข้อมูล"),
         );
       }
 
@@ -12412,7 +12410,7 @@ app.post(
         if (!tableData || tableData.trim() === "") {
           return res.redirect(
             `/admin/instructions-v2/${instructionId}/data-items/new?error=` +
-              encodeURIComponent("กรุณากรอกข้อมูลตารางหรือเลือกประเภทข้อความ"),
+            encodeURIComponent("กรุณากรอกข้อมูลตารางหรือเลือกประเภทข้อความ"),
           );
         }
         try {
@@ -12426,7 +12424,7 @@ app.post(
           console.error("Invalid table data payload:", parseErr);
           return res.redirect(
             `/admin/instructions-v2/${instructionId}/data-items/new?error=` +
-              encodeURIComponent("ข้อมูลตารางไม่ถูกต้อง"),
+            encodeURIComponent("ข้อมูลตารางไม่ถูกต้อง"),
           );
         }
       } else {
@@ -12443,8 +12441,9 @@ app.post(
       );
 
       res.redirect(
-        "/admin/dashboard?success=" +
-          encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว"),
+        `/admin/dashboard?success=${encodeURIComponent(
+          "สร้างชุดข้อมูลเรียบร้อยแล้ว",
+        )}&instructionId=${instructionId}`,
       );
     } catch (err) {
       console.error("Error creating data item:", err);
@@ -12516,7 +12515,7 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
       { $set: updateFields }
     );
 
-    res.redirect("/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว");
+    res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
   } catch (err) {
     console.error("Error saving data item:", err);
     res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
@@ -12532,6 +12531,18 @@ app.get("/admin/settings", async (req, res) => {
     res.status(500).send("Internal Server Error");
   }
 });
+
+// Admin settings2 page (new modern design)
+app.get("/admin/settings2", async (req, res) => {
+  try {
+    res.render("admin-settings2");
+  } catch (err) {
+    console.error("Error rendering admin settings2:", err);
+    res.status(500).send("Internal Server Error");
+  }
+});
+
+
 
 // Toggle global AI enabled
 app.post("/admin/ai-toggle", async (req, res) => {
@@ -12794,9 +12805,9 @@ app.get("/admin/instructions/export/markdown", async (req, res) => {
       instructions.length === 0
         ? "ไม่มีข้อมูล instructions"
         : buildInstructionText(instructions, {
-            tableMode: "json",
-            emptyText: "_ไม่มีเนื้อหา_",
-          });
+          tableMode: "json",
+          emptyText: "_ไม่มีเนื้อหา_",
+        });
     const timestamp = new Date()
       .toISOString()
       .replace(/[:.]/g, "-")
@@ -12849,15 +12860,15 @@ app.get("/admin/instructions/export/excel", async (req, res) => {
         if (instruction.type === "table" && instruction.data) {
           const columns =
             Array.isArray(instruction.data.columns) &&
-            instruction.data.columns.length > 0
+              instruction.data.columns.length > 0
               ? instruction.data.columns
               : Array.from(
-                  new Set(
-                    (instruction.data.rows || []).flatMap((row) =>
-                      Object.keys(row),
-                    ),
+                new Set(
+                  (instruction.data.rows || []).flatMap((row) =>
+                    Object.keys(row),
                   ),
-                );
+                ),
+              );
           const rows = Array.isArray(instruction.data.rows)
             ? instruction.data.rows
             : [];
@@ -12927,9 +12938,9 @@ app.get("/admin/instructions/preview", async (req, res) => {
       instructions.length === 0
         ? ""
         : buildInstructionText(instructions, {
-            tableMode: "placeholder",
-            emptyText: "",
-          });
+          tableMode: "placeholder",
+          emptyText: "",
+        });
     res.json({ success: true, instructions: preview });
   } catch (err) {
     res.json({ success: false, error: err.message });
@@ -13371,12 +13382,12 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
   try {
     const labels = Array.isArray(req.body?.labels)
       ? Array.from(
-          new Set(
-            req.body.labels
-              .map((label) => (typeof label === "string" ? label.trim() : ""))
-              .filter((label) => !!label),
-          ),
-        )
+        new Set(
+          req.body.labels
+            .map((label) => (typeof label === "string" ? label.trim() : ""))
+            .filter((label) => !!label),
+        ),
+      )
       : [];
 
     if (labels.length === 0) {
@@ -14155,7 +14166,7 @@ async function performInstructionAssetDeletion(db, asset) {
   filePaths.forEach((p) => {
     try {
       if (fs.existsSync(p)) fs.unlinkSync(p);
-    } catch (_) {}
+    } catch (_) { }
   });
 
   return true;
@@ -14586,7 +14597,7 @@ app.post("/admin/broadcast", async (req, res) => {
       const db = client.db("chatbot");
       lineBots = await db.collection("line_bots").find({}).toArray();
       facebookBots = await db.collection("facebook_bots").find({}).toArray();
-    } catch (e) {}
+    } catch (e) { }
     res.render("admin-broadcast", {
       lineBots,
       facebookBots,
@@ -14737,7 +14748,7 @@ app.post("/admin/followup/clear", async (req, res) => {
           botId,
         });
       }
-    } catch (_) {}
+    } catch (_) { }
     res.json({ success: true });
   } catch (error) {
     console.error("[FollowUp] ไม่สามารถล้างสถานะได้:", error);
@@ -15201,7 +15212,7 @@ app.post("/admin/chat/user-status", async (req, res) => {
 
     try {
       await resetUserUnreadCount(userId);
-    } catch (_) {}
+    } catch (_) { }
 
     // Notify admin UIs
     try {
@@ -15211,7 +15222,7 @@ app.post("/admin/chat/user-status", async (req, res) => {
         sender: "assistant",
         timestamp: controlDoc.timestamp,
       });
-    } catch (_) {}
+    } catch (_) { }
 
     res.json({ success: true, aiEnabled: !!aiEnabled });
   } catch (err) {
@@ -15874,7 +15885,7 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
           extractedAt: new Date(),
         });
       }
-    } catch (_) {}
+    } catch (_) { }
 
     res.json({
       success: true,
@@ -15946,7 +15957,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
           updatedAt: updatedOrder.updatedAt,
         });
       }
-    } catch (_) {}
+    } catch (_) { }
 
     res.json({
       success: true,
@@ -15991,7 +16002,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
           userId: order.userId,
         });
       }
-    } catch (_) {}
+    } catch (_) { }
 
     await maybeAnalyzeFollowUp(order.userId, order.platform, order.botId, {
       forceUpdate: true,
@@ -16972,7 +16983,7 @@ async function filterMessage(message, options = {}) {
       config.hiddenWords !== undefined ? config.hiddenWords : "";
     const replacementText =
       typeof config.replacementText === "string" &&
-      config.replacementText.trim().length > 0
+        config.replacementText.trim().length > 0
         ? config.replacementText
         : "[ข้อความถูกซ่อน]";
     const enableStrictFiltering =
@@ -16987,12 +16998,12 @@ async function filterMessage(message, options = {}) {
     // ตรวจสอบว่าการกรองเปิดใช้งานหรือไม่
     const wordsToHide = Array.isArray(hiddenWordsSource)
       ? hiddenWordsSource
-          .map((word) => (typeof word === "string" ? word.trim() : ""))
-          .filter((word) => word.length > 0)
+        .map((word) => (typeof word === "string" ? word.trim() : ""))
+        .filter((word) => word.length > 0)
       : String(hiddenWordsSource)
-          .split("\n")
-          .map((word) => word.trim())
-          .filter((word) => word.length > 0);
+        .split("\n")
+        .map((word) => word.trim())
+        .filter((word) => word.length > 0);
 
     if (wordsToHide.length === 0) {
       return message; // ไม่กรอง ถ้าไม่มีคำที่ซ่อน
@@ -17474,7 +17485,7 @@ function processQueueMessageForDisplayV2(content) {
     if (Array.isArray(content)) {
       const textParts = [];
       const imageParts = [];
-       const audioParts = [];
+      const audioParts = [];
 
       content.forEach((item) => {
         // รองรับรูปแบบใหม่: item มี type และ content โดยตรง
@@ -17985,15 +17996,15 @@ async function getNormalizedChatUsers(options = {}) {
     const profileDocs =
       userIds.length > 0
         ? await profileColl
-            .find({ userId: { $in: userIds } })
-            .project({
-              userId: 1,
-              platform: 1,
-              displayName: 1,
-              pictureUrl: 1,
-              statusMessage: 1,
-            })
-            .toArray()
+          .find({ userId: { $in: userIds } })
+          .project({
+            userId: 1,
+            platform: 1,
+            displayName: 1,
+            pictureUrl: 1,
+            statusMessage: 1,
+          })
+          .toArray()
         : [];
     const profileMap = new Map();
     profileDocs.forEach((doc) => {
@@ -18090,7 +18101,7 @@ async function getNormalizedChatUsers(options = {}) {
         try {
           const status = await getUserStatus(user._id);
           aiEnabled = !!status.aiEnabled;
-        } catch (_) {}
+        } catch (_) { }
 
         const followStatus = followMap[user._id];
         const showFollowUp = config.showInChat !== false;
@@ -18101,8 +18112,8 @@ async function getNormalizedChatUsers(options = {}) {
           : "";
         const followUpUpdatedAt = hasFollowUp
           ? followStatus.followUpUpdatedAt ||
-            followStatus.lastAnalyzedAt ||
-            null
+          followStatus.lastAnalyzedAt ||
+          null
           : null;
 
         // ดึงแท็กของผู้ใช้
