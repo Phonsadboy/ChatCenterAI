@@ -196,9 +196,16 @@ async function toggleBotStatus(type, id, isActive) {
 window.openAddLineBotModal = function () {
     const form = document.getElementById('lineBotForm');
     if (form) form.reset();
-    document.getElementById('lineBotId').value = '';
-    const modal = new bootstrap.Modal(document.getElementById('lineBotModal'));
-    modal.show();
+    const idInput = document.getElementById('lineBotId');
+    if (idInput) idInput.value = '';
+
+    const modalEl = document.getElementById('addLineBotModal');
+    if (modalEl) {
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+    } else {
+        console.error('Modal element #addLineBotModal not found');
+    }
 };
 
 window.openEditLineBotModal = async function (id) {
@@ -209,22 +216,25 @@ window.openEditLineBotModal = async function (id) {
         document.getElementById('lineBotId').value = bot._id;
         document.getElementById('lineBotName').value = bot.name;
         document.getElementById('lineBotDescription').value = bot.description || '';
-        document.getElementById('channelAccessToken').value = bot.channelAccessToken;
-        document.getElementById('channelSecret').value = bot.channelSecret;
-        document.getElementById('lineWebhookUrl').value = bot.webhookUrl || ''; // Assuming ID matches existing modal
+        document.getElementById('lineChannelAccessToken').value = bot.channelAccessToken; // Corrected ID
+        document.getElementById('lineChannelSecret').value = bot.channelSecret; // Corrected ID
+        document.getElementById('lineWebhookUrl').value = bot.webhookUrl || '';
 
         // Handle checkboxes/selects if they exist in the partial
         const statusSelect = document.getElementById('lineBotStatus');
         if (statusSelect) statusSelect.value = bot.status;
 
-        const aiModelSelect = document.getElementById('lineBotAIModel');
+        const aiModelSelect = document.getElementById('lineBotAiModel'); // Corrected ID (case sensitive check)
         if (aiModelSelect) aiModelSelect.value = bot.aiModel;
 
-        const defaultCheck = document.getElementById('lineBotIsDefault');
+        const defaultCheck = document.getElementById('lineBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
 
-        const modal = new bootstrap.Modal(document.getElementById('lineBotModal'));
-        modal.show();
+        const modalEl = document.getElementById('addLineBotModal');
+        if (modalEl) {
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
     } catch (error) {
         console.error('Error fetching bot details:', error);
         showToast('ไม่สามารถโหลดข้อมูลบอทได้', 'danger');
@@ -233,18 +243,19 @@ window.openEditLineBotModal = async function (id) {
 
 async function saveLineBot() {
     const form = document.getElementById('lineBotForm');
-    const formData = new FormData(form);
+    const formData = new FormData(form); // Use FormData to get values if preferred, or manual getElementById
     const botId = document.getElementById('lineBotId').value;
 
+    // Manual collection to match IDs in partial
     const botData = {
         name: document.getElementById('lineBotName').value,
         description: document.getElementById('lineBotDescription').value,
-        channelAccessToken: document.getElementById('channelAccessToken').value,
-        channelSecret: document.getElementById('channelSecret').value,
+        channelAccessToken: document.getElementById('lineChannelAccessToken').value,
+        channelSecret: document.getElementById('lineChannelSecret').value,
         webhookUrl: document.getElementById('lineWebhookUrl').value,
         status: document.getElementById('lineBotStatus').value,
-        aiModel: document.getElementById('lineBotAIModel').value,
-        isDefault: document.getElementById('lineBotIsDefault').checked
+        aiModel: document.getElementById('lineBotAiModel').value,
+        isDefault: document.getElementById('lineBotDefault').checked
     };
 
     const url = botId ? `/api/line-bots/${botId}` : '/api/line-bots';
@@ -259,7 +270,7 @@ async function saveLineBot() {
 
         if (res.ok) {
             showToast('บันทึกข้อมูล Line Bot เรียบร้อยแล้ว', 'success');
-            const modalEl = document.getElementById('lineBotModal');
+            const modalEl = document.getElementById('addLineBotModal');
             const modal = bootstrap.Modal.getInstance(modalEl);
             modal.hide();
             loadBotSettings();
@@ -276,9 +287,14 @@ async function saveLineBot() {
 window.openAddFacebookBotModal = function () {
     const form = document.getElementById('facebookBotForm');
     if (form) form.reset();
-    document.getElementById('facebookBotId').value = '';
-    const modal = new bootstrap.Modal(document.getElementById('facebookBotModal'));
-    modal.show();
+    const idInput = document.getElementById('facebookBotId');
+    if (idInput) idInput.value = '';
+
+    const modalEl = document.getElementById('addFacebookBotModal');
+    if (modalEl) {
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+    }
 };
 
 window.openEditFacebookBotModal = async function (id) {
@@ -294,14 +310,17 @@ window.openEditFacebookBotModal = async function (id) {
         document.getElementById('facebookVerifyToken').value = bot.verifyToken;
         document.getElementById('facebookWebhookUrl').value = bot.webhookUrl || '';
 
-        const aiModelSelect = document.getElementById('facebookBotAIModel');
+        const aiModelSelect = document.getElementById('facebookBotAiModel'); // Corrected ID
         if (aiModelSelect) aiModelSelect.value = bot.aiModel;
 
-        const defaultCheck = document.getElementById('facebookBotIsDefault');
+        const defaultCheck = document.getElementById('facebookBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
 
-        const modal = new bootstrap.Modal(document.getElementById('facebookBotModal'));
-        modal.show();
+        const modalEl = document.getElementById('addFacebookBotModal');
+        if (modalEl) {
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
     } catch (error) {
         console.error('Error fetching bot details:', error);
         showToast('ไม่สามารถโหลดข้อมูลบอทได้', 'danger');
@@ -318,8 +337,8 @@ async function saveFacebookBot() {
         accessToken: document.getElementById('facebookAccessToken').value,
         verifyToken: document.getElementById('facebookVerifyToken').value,
         webhookUrl: document.getElementById('facebookWebhookUrl').value,
-        aiModel: document.getElementById('facebookBotAIModel').value,
-        isDefault: document.getElementById('facebookBotIsDefault').checked
+        aiModel: document.getElementById('facebookBotAiModel').value,
+        isDefault: document.getElementById('facebookBotDefault').checked
     };
 
     const url = botId ? `/api/facebook-bots/${botId}` : '/api/facebook-bots';
@@ -338,7 +357,7 @@ async function saveFacebookBot() {
 
         if (res.ok) {
             showToast('บันทึกข้อมูล Facebook Bot เรียบร้อยแล้ว', 'success');
-            const modalEl = document.getElementById('facebookBotModal');
+            const modalEl = document.getElementById('addFacebookBotModal');
             const modal = bootstrap.Modal.getInstance(modalEl);
             modal.hide();
             loadBotSettings();
@@ -501,7 +520,16 @@ async function loadImageCollections() {
 
     try {
         const res = await fetch('/api/image-collections');
-        const collections = await res.json();
+        const data = await res.json();
+
+        // Ensure collections is an array
+        const collections = Array.isArray(data) ? data : (data.collections || []);
+
+        if (!Array.isArray(collections)) {
+            console.error('Invalid collections format:', data);
+            list.innerHTML = '<div class="col-12 text-center text-danger">รูปแบบข้อมูลไม่ถูกต้อง</div>';
+            return;
+        }
 
         if (collections.length === 0) {
             list.innerHTML = '<div class="col-12 text-center py-5 text-muted-v2">ยังไม่มีคลังรูปภาพ</div>';
