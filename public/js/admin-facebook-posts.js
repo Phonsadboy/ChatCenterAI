@@ -125,89 +125,76 @@
               <div>
                 <div class="fw-semibold">${title}</div>
                 <div class="text-muted small">Post ID: ${escapeHtml(
-                  post.postId || "",
-                )}</div>
+          post.postId || "",
+        )}</div>
                 <div class="text-muted small">สร้าง: ${escapeHtml(created)}</div>
               </div>
               <div class="text-end small">
                 <div class="${isActive ? "text-success" : "text-muted"}">
                   ${isActive ? "🟢 เปิด" : "🔴 ปิด"}
                 </div>
-                ${
-                  permalink
-                    ? `<a class="small" href="${permalink}" target="_blank">เปิดโพสต์</a>`
-                    : ""
-                }
+                ${permalink
+            ? `<a class="small" href="${permalink}" target="_blank">เปิดโพสต์</a>`
+            : ""
+          }
               </div>
             </div>
             <div class="row g-2">
               <div class="col-md-4">
                 <label class="form-label form-label-sm">โหมดตอบ</label>
-                <select class="form-select form-select-sm post-mode" data-post-id="${
-                  post.postId
-                }">
-                  <option value="off" ${
-                    mode === "off" ? "selected" : ""
-                  }>ปิด</option>
-                  <option value="template" ${
-                    mode === "template" ? "selected" : ""
-                  }>Template</option>
-                  <option value="ai" ${
-                    mode === "ai" ? "selected" : ""
-                  }>AI</option>
+                <select class="form-select form-select-sm post-mode" data-post-id="${post.postId
+          }">
+                  <option value="off" ${mode === "off" ? "selected" : ""
+          }>ปิด</option>
+                  <option value="template" ${mode === "template" ? "selected" : ""
+          }>Template</option>
+                  <option value="ai" ${mode === "ai" ? "selected" : ""
+          }>AI</option>
                 </select>
               </div>
               <div class="col-md-4">
                 <label class="form-label form-label-sm">AI Model</label>
-                <input class="form-control form-control-sm post-ai-model" data-post-id="${
-                  post.postId
-                }" value="${escapeHtml(rp.aiModel || "")}" placeholder="เช่น gpt-4o-mini">
+                <input class="form-control form-control-sm post-ai-model" data-post-id="${post.postId
+          }" value="${escapeHtml(rp.aiModel || "")}" placeholder="เช่น gpt-4o-mini">
               </div>
               <div class="col-md-4">
                 <label class="form-label form-label-sm">สถานะ</label>
                 <div class="form-check">
-                  <input class="form-check-input post-active" type="checkbox" data-post-id="${
-                    post.postId
-                  }" ${isActive ? "checked" : ""}>
+                  <input class="form-check-input post-active" type="checkbox" data-post-id="${post.postId
+          }" ${isActive ? "checked" : ""}>
                   <label class="form-check-label small">เปิดใช้งานโพสต์นี้</label>
                 </div>
                 <div class="form-check">
-                  <input class="form-check-input post-pull" type="checkbox" data-post-id="${
-                    post.postId
-                  }" ${rp.pullToChat ? "checked" : ""}>
+                  <input class="form-check-input post-pull" type="checkbox" data-post-id="${post.postId
+          }" ${rp.pullToChat ? "checked" : ""}>
                   <label class="form-check-label small">ดึงเข้าแชท/ส่งข้อความส่วนตัว</label>
                 </div>
               </div>
             </div>
             <div class="mt-2">
               <label class="form-label form-label-sm">Template Message</label>
-              <textarea class="form-control form-control-sm post-template" rows="2" data-post-id="${
-                post.postId
-              }" placeholder="ใช้เมื่อโหมดเป็น Template">${escapeHtml(
-                rp.templateMessage || "",
-              )}</textarea>
+              <textarea class="form-control form-control-sm post-template" rows="2" data-post-id="${post.postId
+          }" placeholder="ใช้เมื่อโหมดเป็น Template">${escapeHtml(
+            rp.templateMessage || "",
+          )}</textarea>
             </div>
             <div class="mt-2">
               <label class="form-label form-label-sm">System Prompt (AI)</label>
-              <textarea class="form-control form-control-sm post-system" rows="2" data-post-id="${
-                post.postId
-              }" placeholder="ใช้เมื่อโหมดเป็น AI">${escapeHtml(
-                rp.systemPrompt || "",
-              )}</textarea>
+              <textarea class="form-control form-control-sm post-system" rows="2" data-post-id="${post.postId
+          }" placeholder="ใช้เมื่อโหมดเป็น AI">${escapeHtml(
+            rp.systemPrompt || "",
+          )}</textarea>
             </div>
             <div class="d-flex justify-content-between align-items-center mt-2">
-              <div class="small text-muted">คอมเมนต์ล่าสุด: ${
-                post.lastCommentAt
-                  ? new Date(post.lastCommentAt).toLocaleString()
-                  : "-"
-              } | ตอบล่าสุด: ${
-          post.lastReplyAt
+              <div class="small text-muted">คอมเมนต์ล่าสุด: ${post.lastCommentAt
+            ? new Date(post.lastCommentAt).toLocaleString()
+            : "-"
+          } | ตอบล่าสุด: ${post.lastReplyAt
             ? new Date(post.lastReplyAt).toLocaleString()
             : "-"
-        }</div>
-              <button class="btn btn-primary btn-sm save-post" data-post-id="${
-                post.postId
-              }">
+          }</div>
+              <button class="btn btn-primary btn-sm save-post" data-post-id="${post.postId
+          }">
                 <i class="fas fa-save me-1"></i>บันทึกโพสต์นี้
               </button>
             </div>
@@ -317,6 +304,43 @@
     loadPosts(currentBotId);
   }
 
+  const syncBtn = document.getElementById("syncPostsBtn");
+
+  async function syncPosts() {
+    if (!currentBotId) return;
+    if (!confirm("ต้องการดึงโพสต์ล่าสุดจาก Facebook หรือไม่? (อาจใช้เวลาสักครู่)")) {
+      return;
+    }
+
+    const originalText = syncBtn.innerHTML;
+    syncBtn.disabled = true;
+    syncBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>กำลังดึง...';
+    postListStatus.textContent = "กำลังติดต่อ Facebook...";
+
+    try {
+      const res = await fetch("/api/facebook-posts/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ botId: currentBotId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "ดึงข้อมูลไม่สำเร็จ");
+      }
+
+      alert(data.message || "ดึงข้อมูลสำเร็จ");
+      loadPosts(currentBotId);
+    } catch (err) {
+      alert(err.message || "เกิดข้อผิดพลาด");
+      console.error(err);
+      postListStatus.textContent = "เกิดข้อผิดพลาดในการดึงข้อมูล";
+    } finally {
+      syncBtn.disabled = false;
+      syncBtn.innerHTML = originalText;
+    }
+  }
+
   if (botSelect) {
     botSelect.addEventListener("change", handleBotChange);
   }
@@ -324,6 +348,9 @@
     refreshBtn.addEventListener("click", () => {
       loadPosts(currentBotId);
     });
+  }
+  if (syncBtn) {
+    syncBtn.addEventListener("click", syncPosts);
   }
   if (saveDefaultPolicyBtn) {
     saveDefaultPolicyBtn.addEventListener("click", saveDefaultPolicy);

@@ -11501,6 +11501,91 @@ app.get("/api/facebook-posts", requireAdmin, async (req, res) => {
   }
 });
 
+async function fetchPagePostsFromFB(pageId, accessToken, limit = 20) {
+  try {
+    const url = `https://graph.facebook.com/v18.0/${pageId}/feed`;
+    const response = await axios.get(url, {
+      params: {
+        access_token: accessToken,
+        fields: FACEBOOK_POST_FIELDS,
+        limit: limit,
+      },
+    });
+    return response.data?.data || [];
+  } catch (error) {
+    console.error(
+      `[Facebook API] Error fetching posts for page ${pageId}:`,
+      error?.response?.data || error.message,
+    );
+    throw error;
+  }
+}
+
+app.post("/api/facebook-posts/fetch", requireAdmin, async (req, res) => {
+  try {
+    const { botId } = req.body;
+    if (!botId) {
+      return res.status(400).json({ error: "Bot ID is required" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const bot = await db
+      .collection("facebook_bots")
+      .findOne({ _id: new ObjectId(botId) });
+
+    if (!bot) {
+      return res.status(404).json({ error: "Facebook Bot not found" });
+    }
+
+    const pageId = bot.pageId || bot._id.toString();
+    const accessToken = bot.accessToken;
+
+    if (!accessToken) {
+      return res
+        .status(400)
+        .json({ error: "Page Access Token not found for this bot" });
+    }
+
+    console.log(`[Facebook Fetch] Fetching posts for bot ${bot.name} (${pageId})`);
+    const posts = await fetchPagePostsFromFB(pageId, accessToken, 50);
+    console.log(`[Facebook Fetch] Found ${posts.length} posts`);
+
+    let upsertCount = 0;
+    for (const post of posts) {
+      try {
+        // Reuse existing upsert logic, but mark source as 'manual_fetch'
+        // We need to adapt the post object structure if necessary,
+        // but fetchPagePostsFromFB uses the same fields as fetchFacebookPostDetails
+        // so we can pass the post ID to upsertFacebookPost which fetches details again
+        // OR we can optimize upsertFacebookPost to accept post data directly.
+        // For safety and consistency, let's just use the ID to upsert,
+        // although it's N+1 calls, it ensures we get the full details consistently.
+        // Optimization: upsertFacebookPost already fetches details.
+        await upsertFacebookPost(db, bot, post.id, "manual_fetch");
+        upsertCount++;
+      } catch (err) {
+        console.error(
+          `[Facebook Fetch] Error upserting post ${post.id}:`,
+          err.message,
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `ดึงข้อมูลสำเร็จ ${upsertCount} โพสต์`,
+      count: upsertCount,
+    });
+  } catch (err) {
+    console.error("Error fetching facebook posts from API:", err);
+    res.status(500).json({
+      error: "เกิดข้อผิดพลาดในการดึงข้อมูลจาก Facebook: " + err.message,
+    });
+  }
+});  }
+});
+
 // Update reply profile per post (default OFF, activate per post)
 app.patch(
   "/api/facebook-posts/:postId/reply-profile",
