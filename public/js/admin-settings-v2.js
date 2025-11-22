@@ -9,6 +9,12 @@ document.addEventListener('DOMContentLoaded', function () {
     setupEventListeners();
 });
 
+// Provide a global alert helper for modules that expect showAlert
+function showAlert(message, type = 'info') {
+    showToast(message, type);
+}
+window.showAlert = showAlert;
+
 // --- Navigation ---
 function initNavigation() {
     const navItems = document.querySelectorAll('.nav-item-v2');
@@ -36,7 +42,9 @@ function initNavigation() {
             if (targetId === 'bot-settings') {
                 loadBotSettings();
             } else if (targetId === 'image-collections') {
-                loadImageCollections();
+                if (window.imageCollectionsManager?.refreshAll) {
+                    window.imageCollectionsManager.refreshAll();
+                }
             }
         });
     });
@@ -50,7 +58,7 @@ async function loadAllSettings() {
             loadChatSettings(),
             loadSystemSettings(),
             loadSecuritySettings(),
-            loadImageCollections()
+            window.imageCollectionsManager?.refreshAll?.()
         ]);
         console.log('All settings loaded');
     } catch (error) {
@@ -513,83 +521,21 @@ async function saveSecuritySettings(e) {
     }
 }
 
-// --- Image Collections ---
-async function loadImageCollections() {
-    const list = document.getElementById('image-collections-list');
-    if (!list) return;
-
-    try {
-        const res = await fetch('/api/image-collections');
-        const data = await res.json();
-
-        // Ensure collections is an array
-        const collections = Array.isArray(data) ? data : (data.collections || []);
-
-        if (!Array.isArray(collections)) {
-            console.error('Invalid collections format:', data);
-            list.innerHTML = '<div class="col-12 text-center text-danger">รูปแบบข้อมูลไม่ถูกต้อง</div>';
-            return;
-        }
-
-        if (collections.length === 0) {
-            list.innerHTML = '<div class="col-12 text-center py-5 text-muted-v2">ยังไม่มีคลังรูปภาพ</div>';
-            return;
-        }
-
-        list.innerHTML = collections.map(col => `
-            <div class="image-item" onclick="alert('ฟีเจอร์จัดการรูปภาพในคลังจะเปิดให้ใช้งานเร็วๆ นี้')">
-                <div class="ratio ratio-1x1 bg-light d-flex align-items-center justify-content-center border rounded">
-                     <i class="fas fa-folder fa-3x text-secondary"></i>
-                </div>
-                <div class="mt-2 text-center small fw-bold text-truncate">${col.name}</div>
-            </div>
-        `).join('');
-
-    } catch (error) {
-        console.error('Error loading collections:', error);
-        list.innerHTML = '<div class="col-12 text-center text-danger">โหลดข้อมูลไม่สำเร็จ</div>';
-    }
-}
-
-window.openCreateCollectionModal = function () {
-    const form = document.getElementById('imageCollectionForm');
-    if (form) form.reset();
-    document.getElementById('imageCollectionId').value = '';
-    const modal = new bootstrap.Modal(document.getElementById('imageCollectionModal'));
-    modal.show();
-};
-
-async function saveImageCollection() {
-    const name = document.getElementById('imageCollectionName').value;
-    const description = document.getElementById('imageCollectionDescription').value;
-
-    if (!name) {
-        showToast('กรุณาระบุชื่อคลังรูปภาพ', 'warning');
-        return;
-    }
-
-    try {
-        const res = await fetch('/api/image-collections', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, description, images: [] })
-        });
-
-        if (res.ok) {
-            showToast('สร้างคลังรูปภาพเรียบร้อยแล้ว', 'success');
-            const modal = bootstrap.Modal.getInstance(document.getElementById('imageCollectionModal'));
-            modal.hide();
-            loadImageCollections();
-        } else {
-            throw new Error('Save failed');
-        }
-    } catch (error) {
-        showToast('สร้างคลังรูปภาพไม่สำเร็จ', 'danger');
-    }
-}
-
 // --- Utilities ---
 function setupEventListeners() {
+    const refreshBtn = document.getElementById('refreshSettingsBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            loadBotSettings();
+            loadChatSettings();
+            loadSystemSettings();
+            loadSecuritySettings();
+            if (window.imageCollectionsManager?.refreshAll) {
+                window.imageCollectionsManager.refreshAll();
+            }
+        });
+    }
+
     const chatForm = document.getElementById('chatSettingsForm');
     if (chatForm) chatForm.addEventListener('submit', saveChatSettings);
 
@@ -605,9 +551,6 @@ function setupEventListeners() {
 
     const saveFbBtn = document.getElementById('saveFacebookBotBtn');
     if (saveFbBtn) saveFbBtn.addEventListener('click', saveFacebookBot);
-
-    const saveColBtn = document.getElementById('saveImageCollectionBtn');
-    if (saveColBtn) saveColBtn.addEventListener('click', saveImageCollection);
 }
 
 function getInputValue(id) {
