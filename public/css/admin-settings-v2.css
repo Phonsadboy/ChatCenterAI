@@ -1104,23 +1104,26 @@ input:checked+.toggle-slider:before {
     bottom: 20px;
     width: 320px;
     max-width: calc(100% - 24px);
-    background: linear-gradient(140deg, #0f172a, #111827);
+    background: linear-gradient(160deg, #0f172a, #0b1a2f 65%, #0f172a);
     color: #f8fafc;
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 14px 16px;
-    box-shadow: 0 10px 35px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.04);
     opacity: 0;
     transform: translateY(12px);
     pointer-events: none;
     transition: all 0.25s ease;
     z-index: 1100;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 4px solid #fbbf24;
+    position: fixed;
 }
 
 .legacy-settings-toast.show {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1.01);
     pointer-events: auto;
+    animation: legacy-pop 0.35s ease;
 }
 
 .legacy-toast-header {
@@ -1137,6 +1140,28 @@ input:checked+.toggle-slider:before {
     display: flex;
     align-items: center;
     gap: 0.25rem;
+}
+
+.legacy-toast-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: rgba(251, 191, 36, 0.16);
+    color: #fbbf24;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1px;
+}
+
+.legacy-toast-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #fbbf24;
+    box-shadow: 0 0 0 6px rgba(251, 191, 36, 0.1);
+    animation: pulse-legacy 1.8s ease-in-out infinite;
 }
 
 .legacy-toast-text {
@@ -1165,6 +1190,17 @@ input:checked+.toggle-slider:before {
 .legacy-toast-actions .btn-outline-light:hover {
     background: rgba(226, 232, 240, 0.1);
     color: #fff;
+}
+
+@keyframes pulse-legacy {
+    0% { box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.12); }
+    50% { box-shadow: 0 0 0 10px rgba(251, 191, 36, 0.06); }
+    100% { box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.12); }
+}
+
+@keyframes legacy-pop {
+    0% { transform: translateY(12px) scale(0.97); opacity: 0; }
+    100% { transform: translateY(0) scale(1.01); opacity: 1; }
 }
 
 /* Utilities */

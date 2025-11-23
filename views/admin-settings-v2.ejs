@@ -37,11 +37,11 @@
                     <a href="#bot-settings" class="nav-item-v2 active">
                         <i class="fas fa-robot"></i> จัดการบอท (Bot)
                     </a>
-                    <a href="#chat-settings" class="nav-item-v2">
-                        <i class="fas fa-comments"></i> แชทและคิว
-                    </a>
                     <a href="#image-collections" class="nav-item-v2">
                         <i class="fas fa-images"></i> คลังรูปภาพ
+                    </a>
+                    <a href="#chat-settings" class="nav-item-v2">
+                        <i class="fas fa-comments"></i> แชทและคิว
                     </a>
                 </nav>
 
@@ -111,94 +111,6 @@
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Chat Settings Section -->
-                <section id="chat-settings" class="settings-section d-none">
-                    <div class="section-header">
-                        <div>
-                            <h2 class="section-title">ตั้งค่าแชทและคิว (Chat & Queue)</h2>
-                            <p class="section-desc">กำหนดเวลาหน่วงการตอบกลับ (Delay), จำกัดคิวข้อความ
-                                และการตอบกลับอัตโนมัติ</p>
-                        </div>
-                    </div>
-
-                    <div class="settings-card">
-                        <div class="card-header-v2">
-                            <h3 class="card-title-v2">การตั้งค่าคิวข้อความ</h3>
-                        </div>
-                        <div class="card-body-v2">
-                            <form id="chatSettingsForm">
-                                <div class="row g-4">
-                                    <div class="col-md-6">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2" for="chatDelaySeconds">เวลาหน่วงก่อนตอบ
-                                                (วินาที)</label>
-                                            <input type="number" class="form-control-v2" id="chatDelaySeconds" min="0"
-                                                max="60">
-                                            <div class="form-text-v2">
-                                                เวลารอเพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนส่งให้ AI</div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2"
-                                                for="maxQueueMessages">จำนวนข้อความสูงสุดในคิว</label>
-                                            <input type="number" class="form-control-v2" id="maxQueueMessages" min="1"
-                                                max="50">
-                                            <div class="form-text-v2">หากข้อความในคิวถึงจำนวนนี้ ระบบจะประมวลผลทันที
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
-                                            <div>
-                                                <label class="form-label-v2 mb-0" for="enableMessageMerging">รวมข้อความ
-                                                    (Merge Messages)</label>
-                                                <div class="form-text-v2 mt-0">รวมข้อความที่ส่งติดกันเป็นข้อความเดียว
-                                                </div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="enableMessageMerging">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
-                                            <div>
-                                                <label class="form-label-v2 mb-0" for="showTokenUsage">แสดง Token
-                                                    Usage</label>
-                                                <div class="form-text-v2 mt-0">แสดงข้อมูลการใช้ Token ต่อท้ายคำตอบ AI
-                                                </div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="showTokenUsage">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-12">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2"
-                                                for="audioAttachmentResponse">ข้อความตอบกลับไฟล์เสียงอัตโนมัติ</label>
-                                            <textarea class="form-control-v2" id="audioAttachmentResponse"
-                                                rows="2"></textarea>
-                                            <div class="form-text-v2">ข้อความที่จะส่งเมื่อผู้ใช้ส่งไฟล์เสียง
-                                                (กรณีระบบยังไม่รองรับการถอดเสียง)</div>
-                                        </div>
-                                    </div>
-                                    <div class="col-12 text-end">
-                                        <button type="submit" class="btn-v2 btn-v2-primary">
-                                            <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
-                                        </button>
-                                    </div>
-                                </div>
-                            </form>
                         </div>
                     </div>
                 </section>
@@ -334,6 +246,94 @@
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Chat Settings Section -->
+                <section id="chat-settings" class="settings-section d-none">
+                    <div class="section-header">
+                        <div>
+                            <h2 class="section-title">ตั้งค่าแชทและคิว (Chat & Queue)</h2>
+                            <p class="section-desc">กำหนดเวลาหน่วงการตอบกลับ (Delay), จำกัดคิวข้อความ
+                                และการตอบกลับอัตโนมัติ</p>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <div class="card-header-v2">
+                            <h3 class="card-title-v2">การตั้งค่าคิวข้อความ</h3>
+                        </div>
+                        <div class="card-body-v2">
+                            <form id="chatSettingsForm">
+                                <div class="row g-4">
+                                    <div class="col-md-6">
+                                        <div class="form-group-v2">
+                                            <label class="form-label-v2" for="chatDelaySeconds">เวลาหน่วงก่อนตอบ
+                                                (วินาที)</label>
+                                            <input type="number" class="form-control-v2" id="chatDelaySeconds" min="0"
+                                                max="60">
+                                            <div class="form-text-v2">
+                                                เวลารอเพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนส่งให้ AI</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group-v2">
+                                            <label class="form-label-v2"
+                                                for="maxQueueMessages">จำนวนข้อความสูงสุดในคิว</label>
+                                            <input type="number" class="form-control-v2" id="maxQueueMessages" min="1"
+                                                max="50">
+                                            <div class="form-text-v2">หากข้อความในคิวถึงจำนวนนี้ ระบบจะประมวลผลทันที
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div
+                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                            <div>
+                                                <label class="form-label-v2 mb-0" for="enableMessageMerging">รวมข้อความ
+                                                    (Merge Messages)</label>
+                                                <div class="form-text-v2 mt-0">รวมข้อความที่ส่งติดกันเป็นข้อความเดียว
+                                                </div>
+                                            </div>
+                                            <div class="toggle-switch">
+                                                <input type="checkbox" id="enableMessageMerging">
+                                                <span class="toggle-slider"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div
+                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                            <div>
+                                                <label class="form-label-v2 mb-0" for="showTokenUsage">แสดง Token
+                                                    Usage</label>
+                                                <div class="form-text-v2 mt-0">แสดงข้อมูลการใช้ Token ต่อท้ายคำตอบ AI
+                                                </div>
+                                            </div>
+                                            <div class="toggle-switch">
+                                                <input type="checkbox" id="showTokenUsage">
+                                                <span class="toggle-slider"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="form-group-v2">
+                                            <label class="form-label-v2"
+                                                for="audioAttachmentResponse">ข้อความตอบกลับไฟล์เสียงอัตโนมัติ</label>
+                                            <textarea class="form-control-v2" id="audioAttachmentResponse"
+                                                rows="2"></textarea>
+                                            <div class="form-text-v2">ข้อความที่จะส่งเมื่อผู้ใช้ส่งไฟล์เสียง
+                                                (กรณีระบบยังไม่รองรับการถอดเสียง)</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-12 text-end">
+                                        <button type="submit" class="btn-v2 btn-v2-primary">
+                                            <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
                         </div>
                     </div>
                 </section>
@@ -496,7 +496,7 @@
         <div class="legacy-settings-toast" id="legacySettingsToast" aria-live="polite">
             <div class="legacy-toast-header">
                 <div class="legacy-toast-title">
-                    <i class="fas fa-wand-magic-sparkles me-2"></i>หน้าตั้งค่าใหม่
+                    <span class="legacy-toast-badge"><span class="legacy-toast-dot"></span>หน้าตั้งค่าใหม่</span>
                 </div>
                 <button type="button" class="btn-close btn-close-white" id="dismissLegacyToast"
                     aria-label="ปิดการแจ้งเตือน"></button>
