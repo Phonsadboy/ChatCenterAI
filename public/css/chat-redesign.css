@@ -131,9 +131,11 @@
     font-size: 1.25rem;
     color: var(--chat-text-secondary);
     cursor: pointer;
-    padding: 0.5rem;
+    padding: 0.65rem;
     border-radius: var(--chat-border-radius);
     transition: var(--chat-transition);
+    min-width: 44px;
+    min-height: 44px;
 }
 
 .btn-close-sidebar:hover {
@@ -956,9 +958,11 @@
     font-size: 1.25rem;
     color: var(--chat-text-secondary);
     cursor: pointer;
-    padding: 0.5rem;
+    padding: 0.65rem;
     border-radius: var(--chat-border-radius);
     transition: var(--chat-transition);
+    min-width: 44px;
+    min-height: 44px;
 }
 
 .btn-toggle-sidebar:hover {
@@ -1326,6 +1330,7 @@
     border-top: 1px solid var(--chat-border-color);
     padding: 0.75rem 1rem;
     flex-shrink: 0;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
 }
 
 .message-input-container {
@@ -1342,12 +1347,12 @@
     border: none;
     color: var(--chat-text-secondary);
     cursor: pointer;
-    padding: 0.5rem;
+    padding: 0.65rem;
     border-radius: 50%;
     transition: var(--chat-transition);
     font-size: 1.125rem;
-    width: 36px;
-    height: 36px;
+    width: 42px;
+    height: 42px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1628,6 +1633,15 @@
         width: 36px;
         height: 36px;
         font-size: 0.875rem;
+    }
+
+    .filter-panel {
+        max-height: 45vh;
+        overflow-y: auto;
+    }
+
+    .user-list {
+        max-height: calc(100vh - 240px);
     }
 }
 
