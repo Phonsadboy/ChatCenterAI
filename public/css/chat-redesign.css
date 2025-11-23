@@ -145,7 +145,7 @@
 
 /* Search Container */
 .search-container {
-    padding: 0.75rem 1rem;
+    padding: 0.65rem 0.85rem;
     border-bottom: 1px solid var(--chat-border-color);
     background: var(--chat-bg-sidebar);
 }
@@ -940,7 +940,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 1rem;
+    padding: 0 0.75rem;
     flex-shrink: 0;
 }
 
@@ -1328,7 +1328,7 @@
 .message-input-area {
     background: var(--chat-bg-sidebar);
     border-top: 1px solid var(--chat-border-color);
-    padding: 0.75rem 1rem;
+    padding: 0.7rem 0.9rem;
     flex-shrink: 0;
     padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
 }

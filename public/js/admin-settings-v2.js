@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', function () {
     loadAllSettings();
     setupEventListeners();
     showLegacySettingsNotice();
+    initSidebarScrollHint();
 });
 
 // Provide a global alert helper for modules that expect showAlert
@@ -652,4 +653,27 @@ function hideLegacySettingsNotice() {
     const toast = document.getElementById('legacySettingsToast');
     if (!toast) return;
     toast.classList.remove('show');
+}
+
+function initSidebarScrollHint() {
+    const sidebar = document.querySelector('.settings-sidebar');
+    if (!sidebar) return;
+    const navItems = sidebar.querySelectorAll('.nav-item-v2');
+    const indicator = document.createElement('div');
+    indicator.className = 'sidebar-scroll-hint';
+    indicator.innerHTML = '<i class="fas fa-arrows-alt-h me-1"></i>ปัดเพื่อดูเมนู';
+
+    const showHint = () => {
+        if (sidebar.scrollWidth > sidebar.clientWidth) {
+            sidebar.appendChild(indicator);
+            requestAnimationFrame(() => indicator.classList.add('show'));
+        }
+    };
+
+    const hideHint = () => indicator.classList.remove('show');
+
+    sidebar.addEventListener('scroll', hideHint, { passive: true });
+    navItems.forEach(item => item.addEventListener('click', hideHint));
+
+    setTimeout(showHint, 500);
 }
