@@ -6,6 +6,7 @@
   let currentBotId =
     parsed.selectedBotId ||
     (bots[0] && (bots[0]._id || bots[0].id || bots[0].botId));
+  let toastContainer = document.getElementById("facebookToastContainer");
 
   const botSelect = document.getElementById("facebookBotSelect");
   const refreshBtn = document.getElementById("refreshPostsBtn");
@@ -25,6 +26,43 @@
   const defaultAiGroup = document.getElementById("defaultAiGroup");
 
   const LIMIT = 100;
+
+  function ensureToastContainer() {
+    if (toastContainer) return toastContainer;
+    toastContainer = document.createElement("div");
+    toastContainer.className = "app-toast-container";
+    document.body.appendChild(toastContainer);
+    return toastContainer;
+  }
+
+  function showToast(message, type = "info") {
+    const container = ensureToastContainer();
+    const typeMap = {
+      success: { icon: "fa-check-circle", className: "app-toast--success" },
+      error: { icon: "fa-times-circle", className: "app-toast--danger" },
+      warning: { icon: "fa-exclamation-triangle", className: "app-toast--warning" },
+      info: { icon: "fa-info-circle", className: "app-toast--info" },
+    };
+    const toastType = typeMap[type] ? type : "info";
+    const { icon, className } = typeMap[toastType];
+
+    const toast = document.createElement("div");
+    toast.className = `app-toast ${className}`;
+    toast.innerHTML = `
+      <div class="app-toast__icon"><i class="fas ${icon}"></i></div>
+      <div class="app-toast__body">
+        <div class="app-toast__title">${message || ""}</div>
+      </div>
+      <button class="app-toast__close" aria-label="ปิดการแจ้งเตือน">&times;</button>
+    `;
+    const removeToast = () => {
+      toast.classList.add("hide");
+      setTimeout(() => toast.remove(), 200);
+    };
+    toast.querySelector(".app-toast__close")?.addEventListener("click", removeToast);
+    container.appendChild(toast);
+    setTimeout(removeToast, 3200);
+  }
 
   function escapeHtml(str = "") {
     return String(str)
@@ -63,6 +101,7 @@
     } catch (err) {
       defaultPolicyStatus.textContent = "โหลดนโยบายไม่สำเร็จ";
       console.error(err);
+      showToast(err.message || "โหลดนโยบายไม่สำเร็จ", "error");
     }
   }
 
@@ -96,6 +135,7 @@
     } catch (err) {
       defaultPolicyStatus.textContent = err.message || "บันทึกไม่สำเร็จ";
       console.error(err);
+      showToast(err.message || "บันทึกไม่สำเร็จ", "error");
     }
   }
 
@@ -238,6 +278,7 @@
     } catch (err) {
       postListStatus.textContent = err.message || "โหลดโพสต์ไม่สำเร็จ";
       console.error(err);
+      showToast(err.message || "โหลดโพสต์ไม่สำเร็จ", "error");
     }
   }
 
@@ -290,6 +331,7 @@
         throw new Error(err.error || "บันทึกไม่สำเร็จ");
       }
       buttonEl.innerHTML = '<i class="fas fa-check me-1"></i>บันทึกแล้ว';
+      showToast("บันทึกโพสต์สำเร็จ", "success");
       setTimeout(() => {
         buttonEl.innerHTML = original;
         buttonEl.disabled = false;
@@ -301,6 +343,7 @@
         buttonEl.disabled = false;
       }, 1500);
       console.error(err);
+      showToast(err.message || "บันทึกไม่สำเร็จ", "error");
     }
   }
 
@@ -335,10 +378,10 @@
         throw new Error(data.error || "ดึงข้อมูลไม่สำเร็จ");
       }
 
-      alert(data.message || "ดึงข้อมูลสำเร็จ");
+      showToast(data.message || "ดึงข้อมูลสำเร็จ", "success");
       loadPosts(currentBotId);
     } catch (err) {
-      alert(err.message || "เกิดข้อผิดพลาด");
+      showToast(err.message || "เกิดข้อผิดพลาด", "error");
       console.error(err);
       postListStatus.textContent = "เกิดข้อผิดพลาดในการดึงข้อมูล";
     } finally {

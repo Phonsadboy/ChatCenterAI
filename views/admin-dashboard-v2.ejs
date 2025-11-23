@@ -7,242 +7,62 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="/css/style.css" rel="stylesheet">
-    <style>
-        :root {
-            --border-radius: 8px;
-            --spacing: 12px;
-        }
-
-        .instruction-card {
-            border: 1px solid #dee2e6;
-            border-radius: var(--border-radius);
-            margin-bottom: 8px;
-            background: #fff;
-            transition: box-shadow 0.2s;
-        }
-
-        .instruction-card:hover {
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }
-
-        .instruction-header {
-            padding: 10px 12px;
-            border-bottom: 1px solid #e9ecef;
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 6px;
-        }
-
-        .instruction-title {
-            font-size: 16px;
-            font-weight: 600;
-            margin: 0;
-            color: #212529;
-        }
-
-        .instruction-desc {
-            font-size: 12px;
-            color: #6c757d;
-            margin: 2px 0 0 0;
-        }
-
-        .instruction-actions {
-            display: flex;
-            gap: 4px;
-            flex-shrink: 0;
-        }
-
-        .instruction-actions .btn {
-            padding: 4px 6px;
-            font-size: 12px;
-        }
-
-        .data-items-container {
-            padding: 8px 12px;
-        }
-
-        .data-item {
-            padding: 8px 10px;
-            border: 1px solid #e9ecef;
-            border-radius: 6px;
-            margin-bottom: 6px;
-            background: #f8f9fa;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .data-item:last-child {
-            margin-bottom: 0;
-        }
-
-        .data-item-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .data-item-title {
-            font-size: 14px;
-            font-weight: 500;
-            margin: 0;
-            color: #495057;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        .data-item-order {
-            font-weight: 600;
-            color: #0d6efd;
-        }
-
-        .data-item-title-text {
-            flex: 1;
-        }
-
-        .data-item-meta {
-            font-size: 12px;
-            color: #6c757d;
-            margin: 2px 0 0 0;
-        }
-
-        .data-item-actions {
-            display: flex;
-            gap: 4px;
-            flex-shrink: 0;
-        }
-
-        .data-item-actions .btn {
-            padding: 2px 6px;
-            font-size: 12px;
-        }
-
-        .data-item-actions .btn-move {
-            color: #6c757d;
-        }
-
-        .data-item-actions .btn-move:disabled {
-            opacity: 0.4;
-        }
-
-        .instruction-footer {
-            padding: 10px 12px;
-            border-top: 1px solid #e9ecef;
-            background: #fafbfc;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 6px;
-            font-size: 12px;
-            color: #6c757d;
-        }
-
-        .btn-add-item {
-            width: 100%;
-            padding: 7px;
-            font-size: 13px;
-            border: 1px dashed #dee2e6;
-            background: #fff;
-        }
-
-        .btn-add-item:hover {
-            background: #f8f9fa;
-            border-color: #0d6efd;
-            color: #0d6efd;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 28px 18px;
-            color: #6c757d;
-        }
-
-        .empty-state i {
-            font-size: 48px;
-            margin-bottom: 8px;
-            color: #dee2e6;
-        }
-
-        .type-badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .type-badge.type-text {
-            background: #d1ecf1;
-            color: #0c5460;
-        }
-
-        .type-badge.type-table {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .dashboard-header {
-            background: #fff;
-            border-bottom: 1px solid #dee2e6;
-            padding: 10px 0;
-            margin-bottom: 10px;
-        }
-
-        .search-bar {
-            max-width: 400px;
-        }
-
-        .instruction-editor-card {
-            border: 1px solid #dee2e6;
-            border-radius: var(--border-radius);
-            background: #fff;
-        }
-
-        .instruction-editor-card .card-body {
-            padding: 11px 12px;
-        }
-
-        .instruction-editor-status {
-            font-size: 13px;
-            color: #6c757d;
-        }
-
-        .instruction-editor-status.active {
-            color: #0d6efd;
-            font-weight: 600;
-        }
-
-        .instruction-editor-alert {
-            font-size: 13px;
-        }
-    </style>
+    <link href="/css/admin-dashboard-v2.css" rel="stylesheet">
 </head>
-<body>
+<body class="app-shell">
     <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
 
-    <div class="dashboard-header">
-        <div class="container-fluid">
-            <div class="row align-items-center g-2">
-                <div class="col-md-6">
-                    <h4 class="mb-1">จัดการ AI Instructions</h4>
-                    <p class="text-muted small mb-0">สร้างและจัดการชุดข้อมูลที่ AI ใช้ตอบลูกค้า</p>
+    <div class="app-content">
+    <% 
+        const instructionCount = instructions.length;
+        const dataItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).length), 0);
+        const textItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).filter(it => it.type === 'text').length), 0);
+        const tableItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).filter(it => it.type === 'table').length), 0);
+        const lastUpdated = instructions.reduce((latest, ins) => {
+            const val = ins.updatedAt || ins.createdAt;
+            if (!val) return latest;
+            return !latest || new Date(val) > new Date(latest) ? val : latest;
+        }, null);
+    %>
+
+    <div class="dashboard-topbar">
+        <div class="row g-3 align-items-center">
+            <div class="col-lg-8">
+                <div class="dashboard-topbar__title">
+                    <i class="fas fa-microchip text-primary"></i>
+                    จัดการ AI Instructions
                 </div>
-                <div class="col-md-6 text-md-end">
-                    <div class="d-flex flex-wrap justify-content-md-end gap-2">
-                        <button class="btn btn-outline-success" id="btnOpenExport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="export">
-                            <i class="fas fa-file-excel me-1"></i> Export
-                        </button>
-                        <button class="btn btn-outline-primary" id="btnOpenImport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="import">
-                            <i class="fas fa-file-import me-1"></i> Import
-                        </button>
-                        <button class="btn btn-primary" id="createInstructionBtn">
-                            <i class="fas fa-plus me-1"></i> สร้าง Instruction
-                        </button>
+                <p class="dashboard-topbar__desc">สร้างและจัดการชุดข้อมูลที่ AI ใช้ตอบลูกค้า พร้อมสรุปสถานะล่าสุด</p>
+                <div class="dashboard-metrics">
+                    <div class="metric-pill">
+                        <i class="fas fa-layer-group text-primary"></i>
+                        ทั้งหมด <strong><%= instructionCount %></strong> ชุด
                     </div>
+                    <div class="metric-pill">
+                        <i class="fas fa-database text-success"></i>
+                        ข้อมูล <strong><%= dataItemCount %></strong> รายการ
+                    </div>
+                    <div class="metric-pill">
+                        <i class="fas fa-font text-info"></i>
+                        Text <strong><%= textItemCount %></strong> / Table <strong><%= tableItemCount %></strong>
+                    </div>
+                    <div class="metric-pill">
+                        <i class="fas fa-clock text-warning"></i>
+                        อัปเดตล่าสุด <strong><%= lastUpdated ? new Date(lastUpdated).toLocaleString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-' %></strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <div class="topbar-actions">
+                    <button class="btn btn-outline-success" id="btnOpenExport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="export">
+                        <i class="fas fa-file-export me-1"></i> Export
+                    </button>
+                    <button class="btn btn-outline-primary" id="btnOpenImport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="import">
+                        <i class="fas fa-file-import me-1"></i> Import
+                    </button>
+                    <button class="btn btn-primary" id="createInstructionBtn">
+                        <i class="fas fa-plus me-1"></i> สร้าง Instruction
+                    </button>
                 </div>
             </div>
         </div>
@@ -256,15 +76,21 @@
             </div>
         <% } %>
 
-        <div class="row g-2 mb-2">
-            <div class="col-md-6">
+        <div class="row g-2 mb-3">
+            <div class="col-md-8">
                 <div class="search-bar">
                     <input type="search" class="form-control" id="searchInstructions" placeholder="🔍 ค้นหา Instruction...">
                 </div>
             </div>
+            <div class="col-md-4 d-flex justify-content-md-end align-items-center">
+                <span class="instruction-editor-chip">
+                    <i class="fas fa-hashtag"></i>
+                    ทั้งหมด <strong><%= instructions.length %></strong> ชุด
+                </span>
+            </div>
         </div>
 
-        <div class="card instruction-editor-card mb-3">
+        <div class="card instruction-editor-card mb-3 shadow-sm">
             <div class="card-body">
                 <div class="row g-2 align-items-end">
                     <div class="col-md-5 col-lg-4">
@@ -321,23 +147,29 @@
         </div>
 
         <% if (instructions.length === 0) { %>
-            <div class="empty-state">
-                <i class="fas fa-book-open"></i>
-                <h5>ยังไม่มี Instruction</h5>
-                <p>เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI ใช้ตอบลูกค้า</p>
-                <button class="btn btn-primary mt-2" onclick="document.getElementById('createInstructionBtn').click()">
-                    <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
-                </button>
+            <div class="empty-state-card">
+                <div class="app-empty">
+                    <div class="app-empty__icon">
+                        <i class="fas fa-book-open"></i>
+                    </div>
+                    <div class="app-empty__title">ยังไม่มี Instruction</div>
+                    <div class="app-empty__desc">เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI ใช้ตอบลูกค้า</div>
+                    <button class="btn btn-primary mt-2" onclick="document.getElementById('createInstructionBtn').click()">
+                        <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
+                    </button>
+                </div>
             </div>
         <% } else { %>
             <div id="instructionCardsEmptyState">
-                <div class="empty-state">
-                    <i class="fas fa-book-open"></i>
-                    <h5>เลือก Instruction เพื่อดูและแก้ไขรายละเอียด</h5>
-                    <p>ใช้ตัวเลือกด้านบนเพื่อโหลดข้อมูลที่ต้องการแก้ไข</p>
+                <div class="app-empty">
+                    <div class="app-empty__icon">
+                        <i class="fas fa-book-open"></i>
+                    </div>
+                    <div class="app-empty__title">เลือก Instruction เพื่อดูและแก้ไขรายละเอียด</div>
+                    <div class="app-empty__desc">ใช้ตัวเลือกด้านบนเพื่อโหลดข้อมูลที่ต้องการแก้ไข</div>
                 </div>
             </div>
-            <div id="instructionCardsWrapper" class="d-none">
+            <div id="instructionCardsWrapper" class="instruction-grid d-none">
                 <% instructions.forEach(instruction => { %>
                     <div class="instruction-card" data-id="<%= instruction._id %>">
                         <div class="instruction-header">
@@ -482,7 +314,7 @@
                         <i class="fas fa-info-circle me-2"></i>
                         นี่คือข้อมูลที่ AI จะได้รับเมื่อตอบลูกค้า
                     </div>
-                    <pre id="previewContent" style="background: #f8f9fa; padding: 12px; border-radius: 6px; max-height: 400px; overflow: auto;"></pre>
+                    <pre id="previewContent" class="preview-box"></pre>
                     <div class="mt-3 text-muted small">
                         <div><i class="fas fa-database me-2"></i>ชุดข้อมูล: <span id="previewDataItemCount">0</span></div>
                         <div><i class="fas fa-font me-2"></i>จำนวนอักขระ: <span id="previewCharCount">0</span></div>
@@ -497,6 +329,10 @@
     </div>
 
     <%- include('partials/modals/import-export-sheets-modal') %>
+
+    <div id="dashboardToastContainer" class="app-toast-container"></div>
+
+    </div><!-- /app-content -->
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/js/admin-dashboard-v2.js"></script>

@@ -1,16 +1,17 @@
 /* Admin Settings Styles - Compact */
 .settings-card {
-    border: 1px solid #e0e0e0;
-    border-radius: 6px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: 10px;
+    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06));
     margin-bottom: 0.75rem;
+    background: var(--card-bg, #fff);
 }
 
 .settings-header {
-    background-color: var(--primary);
+    background-color: var(--primary, #4A6FA5);
     color: #ffffff;
     padding: 0.65rem 0.75rem;
-    border-radius: 6px 6px 0 0;
+    border-radius: 10px 10px 0 0;
 }
 
 .settings-body {
@@ -18,31 +19,34 @@
 }
 
 .form-control, .form-select {
-    border-radius: 6px;
-    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    border: 1px solid var(--border, #E1E5EF);
     transition: all 0.2s ease;
     padding: 0.5rem 0.65rem;
     font-size: 0.875rem;
+    box-shadow: none;
 }
 
 .form-control:focus, .form-select:focus {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 0.15rem rgba(104, 185, 132, 0.2);
+    border-color: var(--primary, #4A6FA5);
+    box-shadow: 0 0 0 3px rgba(165, 184, 217, 0.35);
+    outline: none;
 }
 
 .btn-save {
-    background-color: var(--primary);
-    border: none;
-    border-radius: 6px;
+    background-color: var(--primary, #4A6FA5);
+    border: 1px solid var(--primary, #4A6FA5);
+    border-radius: 8px;
     padding: 0.5rem 1rem;
     font-weight: 600;
     font-size: 0.875rem;
     transition: all 0.2s ease;
+    box-shadow: none;
 }
 
 .btn-save:hover {
     transform: translateY(-1px);
-    box-shadow: 0 3px 8px rgba(104, 185, 132, 0.3);
+    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06));
 }
 
 .setting-item {
@@ -84,15 +88,15 @@
 }
 
 .nav-tabs .nav-link.active {
-    background-color: var(--primary);
+    background-color: var(--primary, #4A6FA5);
     color: #ffffff;
     border: none;
 }
 
 .back-button {
-    background: var(--text-light);
+    background: var(--primary, #4A6FA5);
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 0.5rem 0.75rem;
     color: #ffffff;
     text-decoration: none;
@@ -104,7 +108,7 @@
 }
 
 .back-button:hover {
-    background: var(--text-dark);
+    background: var(--primary-dark, #365983);
     color: #ffffff;
     text-decoration: none;
     transform: translateX(-1px);

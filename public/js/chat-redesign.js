@@ -44,6 +44,7 @@ class ChatManager {
         this.loadUsers();
         this.loadAvailableTags();
         this.setupAutoRefresh();
+        this.hideTypingIndicator();
     }
     
     // ========================================
@@ -123,6 +124,19 @@ class ChatManager {
             }
             // Update user list
             this.loadUsers();
+        });
+
+        // Typing indicator
+        this.socket.on('userTyping', (data) => {
+            if (data && data.userId === this.currentUserId) {
+                this.showTypingIndicator(data.platform || '');
+            }
+        });
+
+        this.socket.on('messageStatusUpdated', (data) => {
+            if (!data || data.userId !== this.currentUserId) return;
+            // Update latest message state (e.g., delivered/read)
+            this.updateMessageStatus(data.messageId, data.status);
         });
     }
     
@@ -241,6 +255,8 @@ class ChatManager {
         const btnToggleAI = document.getElementById('btnToggleAI');
         const btnRefreshProfile = document.getElementById('btnRefreshProfile');
         const btnClearChat = document.getElementById('btnClearChat');
+        const btnToggleOrders = document.getElementById('btnToggleOrders');
+        const orderSidebarOverlay = document.getElementById('orderSidebarOverlay');
 
         if (btnTogglePurchase) {
             btnTogglePurchase.addEventListener('click', () => {
@@ -271,12 +287,49 @@ class ChatManager {
                 this.clearChat();
             });
         }
+
+        if (btnToggleOrders) {
+            btnToggleOrders.addEventListener('click', () => {
+                this.toggleOrderSidebarMobile(true);
+            });
+        }
+
+        if (orderSidebarOverlay) {
+            orderSidebarOverlay.addEventListener('click', () => {
+                this.toggleOrderSidebarMobile(false);
+            });
+        }
         
         // Template button
         const btnTemplate = document.getElementById('btnTemplate');
         if (btnTemplate) {
             btnTemplate.addEventListener('click', () => {
                 this.openTemplateModal();
+            });
+        }
+
+        // Toggle filter panel accessibility
+        const filterToggleBtn = document.getElementById('filterToggle');
+        const filterPanel = document.getElementById('filterPanel');
+        if (filterToggleBtn && filterPanel) {
+            filterToggleBtn.setAttribute('aria-expanded', 'false');
+            filterPanel.setAttribute('tabindex', '-1');
+            filterToggleBtn.addEventListener('click', () => {
+                const isShown = filterPanel.classList.toggle('show');
+                filterPanel.style.display = isShown ? 'block' : 'none';
+                filterToggleBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
+                if (isShown) {
+                    filterPanel.focus({ preventScroll: true });
+                }
+            });
+            // Close filter panel when pressing Esc
+            filterPanel.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    filterPanel.classList.remove('show');
+                    filterPanel.style.display = 'none';
+                    filterToggleBtn.setAttribute('aria-expanded', 'false');
+                    filterToggleBtn.focus();
+                }
             });
         }
         
@@ -491,12 +544,14 @@ class ChatManager {
         const sidebarOverlay = document.getElementById('sidebarOverlay');
         if (chatSidebar) chatSidebar.classList.remove('show');
         if (sidebarOverlay) sidebarOverlay.classList.remove('show');
+        this.toggleOrderSidebarMobile(false);
         
         // Update UI
         this.renderUserList();
         this.updateChatHeader();
         this.showMessageInput();
-        
+        this.hideTypingIndicator();
+
         // Load chat history
         await this.loadChatHistory(userId);
         
@@ -608,21 +663,35 @@ class ChatManager {
         if (!messagesContainer) return;
         
         const messages = this.chatHistory[this.currentUserId] || [];
+
+        // Clear typing indicator when rerendering actual messages
+        this.hideTypingIndicator();
         
         if (messages.length === 0) {
             messagesContainer.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-icon">
+                <div class="app-empty">
+                    <div class="app-empty__icon">
                         <i class="fas fa-comments"></i>
                     </div>
-                    <h5>ยังไม่มีข้อความ</h5>
-                    <p>เริ่มต้นการสนทนาด้วยการส่งข้อความแรก</p>
+                    <div class="app-empty__title">ยังไม่มีข้อความ</div>
+                    <div class="app-empty__desc">เริ่มต้นการสนทนาด้วยการส่งข้อความแรก</div>
                 </div>
             `;
             return;
         }
         
-        messagesContainer.innerHTML = messages.map(msg => this.renderMessage(msg)).join('');
+        let lastDateLabel = '';
+        const blocks = [];
+        messages.forEach(msg => {
+            const dateLabel = msg.timestamp ? this.formatDateLabel(msg.timestamp) : '';
+            if (dateLabel && dateLabel !== lastDateLabel) {
+                blocks.push(`<div class="message-separator">${dateLabel}</div>`);
+                lastDateLabel = dateLabel;
+            }
+            blocks.push(this.renderMessage(msg));
+        });
+
+        messagesContainer.innerHTML = blocks.join('');
         
         // Scroll to bottom
         this.scrollToBottom();
@@ -637,6 +706,8 @@ class ChatManager {
         const time = message.timestamp ? this.formatTime(message.timestamp) : '';
         const messageId = this.resolveMessageId(message);
         const feedbackState = message.feedback || null;
+        const isSending = message.sending;
+        const deliveryStatus = message.deliveryStatus || '';
         
         const roleLabels = {
             user: 'ผู้ใช้',
@@ -692,11 +763,75 @@ class ChatManager {
                     </div>
                     <div class="message-content">${content}</div>
                     ${imagesHtml}
-                    <div class="message-time">${time}</div>
+                    <div class="message-time">
+                        ${isSending ? '<i class="fas fa-spinner fa-spin me-1"></i>' : ''}
+                        ${time}
+                    </div>
                     ${feedbackHtml}
+                    ${deliveryStatus ? `<div class="message-meta text-muted">${this.renderDeliveryStatus(deliveryStatus)}</div>` : ''}
                 </div>
             </div>
         `;
+    }
+
+    renderDeliveryStatus(status) {
+        const map = {
+            sent: 'ส่งแล้ว',
+            delivered: 'ส่งถึงผู้ใช้',
+            read: 'ผู้ใช้เห็นข้อความแล้ว',
+        };
+        return map[status] || status;
+    }
+
+    showTypingIndicator(platformLabel = '') {
+        const container = document.getElementById('messagesContainer');
+        if (!container) return;
+
+        let indicator = document.getElementById('typingIndicator');
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.id = 'typingIndicator';
+            indicator.className = 'message assistant';
+            indicator.innerHTML = `
+                <div class="message-bubble">
+                    <div class="message-header">
+                        <i class="fas fa-robot"></i> AI ${platformLabel ? `· ${this.escapeHtml(platformLabel)}` : ''}
+                    </div>
+                    <div class="message-content">
+                        <span class="typing-dot"></span>
+                        <span class="typing-dot"></span>
+                        <span class="typing-dot"></span>
+                    </div>
+                </div>
+            `;
+            container.appendChild(indicator);
+        }
+
+        indicator.style.display = 'block';
+
+        clearTimeout(this.typingTimeout);
+        this.typingTimeout = setTimeout(() => {
+            this.hideTypingIndicator();
+        }, 3000);
+
+        this.scrollToBottom();
+    }
+
+    hideTypingIndicator() {
+        const indicator = document.getElementById('typingIndicator');
+        if (indicator) {
+            indicator.style.display = 'none';
+        }
+    }
+
+    updateMessageStatus(messageId, status) {
+        if (!messageId || !status) return;
+        const messages = this.chatHistory[this.currentUserId] || [];
+        const target = messages.find(m => this.resolveMessageId(m) === messageId);
+        if (target) {
+            target.deliveryStatus = status;
+            this.renderMessages();
+        }
     }
 
     resolveMessageId(message) {
@@ -832,6 +967,24 @@ class ChatManager {
             }, 100);
         }
     }
+
+    toggleOrderSidebarMobile(show = true) {
+        const orderSidebar = document.getElementById('orderSidebar');
+        const orderSidebarOverlay = document.getElementById('orderSidebarOverlay');
+        if (!orderSidebar) return;
+
+        if (show) {
+            orderSidebar.classList.add('show');
+            if (orderSidebarOverlay) {
+                orderSidebarOverlay.classList.add('show');
+            }
+        } else {
+            orderSidebar.classList.remove('show');
+            if (orderSidebarOverlay) {
+                orderSidebarOverlay.classList.remove('show');
+            }
+        }
+    }
     
     // ========================================
     // Send Message
@@ -845,6 +998,25 @@ class ChatManager {
         if (!rawMessage.trim()) return;
         const message = rawMessage.replace(/\r\n/g, '\n');
         
+        // Optimistic UI: append temp message
+        const tempMessage = {
+            role: 'admin',
+            content: message,
+            timestamp: new Date().toISOString(),
+            sending: true
+        };
+        if (!this.chatHistory[this.currentUserId]) {
+            this.chatHistory[this.currentUserId] = [];
+        }
+        this.chatHistory[this.currentUserId].push(tempMessage);
+        this.renderMessages();
+        this.scrollToBottom();
+
+        // Clear input immediately
+        messageInput.value = '';
+        messageInput.style.height = 'auto';
+        document.getElementById('charCount').textContent = '0';
+
         try {
             const response = await fetch('/admin/chat/send', {
                 method: 'POST',
@@ -859,27 +1031,30 @@ class ChatManager {
             
             const data = await response.json();
             
-            if (data.success) {
-                // Clear input
-                messageInput.value = '';
-                messageInput.style.height = 'auto';
-                document.getElementById('charCount').textContent = '0';
-                
-                // Add message to chat
-                if (!this.chatHistory[this.currentUserId]) {
-                    this.chatHistory[this.currentUserId] = [];
+            if (data.success && data.message) {
+                // Replace last temp message
+                const history = this.chatHistory[this.currentUserId] || [];
+                const idx = history.lastIndexOf(tempMessage);
+                if (idx >= 0) {
+                    history[idx] = data.message;
+                } else {
+                    history.push(data.message);
                 }
-                this.chatHistory[this.currentUserId].push(data.message);
                 this.renderMessages();
-                
-                // Update user list
                 this.loadUsers();
             } else {
-                this.showToast('ไม่สามารถส่งข้อความได้', 'error');
+                throw new Error(data.error || 'ไม่สามารถส่งข้อความได้');
             }
         } catch (error) {
             console.error('Error sending message:', error);
             this.showToast('เกิดข้อผิดพลาดในการส่งข้อความ', 'error');
+            // rollback temp message
+            const history = this.chatHistory[this.currentUserId] || [];
+            const idx = history.indexOf(tempMessage);
+            if (idx >= 0) {
+                history.splice(idx, 1);
+                this.renderMessages();
+            }
         }
     }
     
@@ -1525,30 +1700,55 @@ class ChatManager {
             minute: '2-digit'
         });
     }
+
+    formatDateLabel(timestamp) {
+        const time = new Date(timestamp);
+        const now = new Date();
+        const sameYear = time.getFullYear() === now.getFullYear();
+        return time.toLocaleDateString('th-TH', {
+            day: 'numeric',
+            month: 'short',
+            year: sameYear ? undefined : 'numeric'
+        });
+    }
     
     showToast(message, type = 'info') {
-        // Simple toast notification
+        const typeMap = {
+            success: { icon: 'fa-check-circle', className: 'app-toast--success' },
+            error: { icon: 'fa-times-circle', className: 'app-toast--danger' },
+            warning: { icon: 'fa-exclamation-triangle', className: 'app-toast--warning' },
+            info: { icon: 'fa-info-circle', className: 'app-toast--info' }
+        };
+        const toastType = typeMap[type] ? type : 'info';
+        const { icon, className } = typeMap[toastType];
+
+        let container = document.querySelector('.app-toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'app-toast-container';
+            document.body.appendChild(container);
+        }
+
         const toast = document.createElement('div');
-        toast.style.cssText = `
-            position: fixed;
-            top: 80px;
-            right: 20px;
-            padding: 12px 20px;
-            background: ${type === 'success' ? '#00c851' : type === 'error' ? '#ff4444' : type === 'warning' ? '#ffbb33' : '#33b5e5'};
-            color: white;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            z-index: 9999;
-            animation: slideIn 0.3s ease;
+        toast.className = `app-toast ${className}`;
+        toast.innerHTML = `
+            <div class="app-toast__icon"><i class="fas ${icon}"></i></div>
+            <div class="app-toast__body">
+                <div class="app-toast__title">${this.escapeHtml(message || '')}</div>
+            </div>
+            <button class="app-toast__close" aria-label="ปิดการแจ้งเตือน">&times;</button>
         `;
-        toast.textContent = message;
-        
-        document.body.appendChild(toast);
-        
-        setTimeout(() => {
-            toast.style.animation = 'slideOut 0.3s ease';
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
+
+        const removeToast = () => {
+            toast.classList.add('hide');
+            setTimeout(() => toast.remove(), 200);
+        };
+
+        toast.querySelector('.app-toast__close').addEventListener('click', removeToast);
+
+        container.appendChild(toast);
+
+        setTimeout(removeToast, 3200);
     }
     
     // ========================================
@@ -1968,6 +2168,7 @@ class ChatManager {
                 // Close modal
                 const modal = bootstrap.Modal.getInstance(document.getElementById('orderEditModal'));
                 if (modal) modal.hide();
+                this.toggleOrderSidebarMobile(false);
             } else {
                 this.showToast('ไม่สามารถบันทึกออเดอร์ได้: ' + (data.error || 'เกิดข้อผิดพลาด'), 'error');
             }
@@ -1984,30 +2185,3 @@ class ChatManager {
         }).format(num);
     }
 }
-
-// Add CSS for toast animations
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-        to {
-            transform: translateX(0);
-            opacity: 1;
-        }
-    }
-    
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-    }
-`;
-document.head.appendChild(style);

@@ -2,6 +2,64 @@
 (function () {
     'use strict';
 
+    let toastContainer = document.getElementById('dashboardToastContainer');
+
+    const ensureToastContainer = () => {
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.className = 'app-toast-container';
+            document.body.appendChild(toastContainer);
+        }
+        return toastContainer;
+    };
+
+    const showToast = (message, type = 'info') => {
+        const container = ensureToastContainer();
+        const typeMap = {
+            success: { icon: 'fa-check-circle', className: 'app-toast--success' },
+            error: { icon: 'fa-times-circle', className: 'app-toast--danger' },
+            warning: { icon: 'fa-exclamation-triangle', className: 'app-toast--warning' },
+            info: { icon: 'fa-info-circle', className: 'app-toast--info' },
+        };
+        const toastType = typeMap[type] ? type : 'info';
+        const { icon, className } = typeMap[toastType];
+
+        const toast = document.createElement('div');
+        toast.className = `app-toast ${className}`;
+
+        const iconEl = document.createElement('div');
+        iconEl.className = 'app-toast__icon';
+        iconEl.innerHTML = `<i class="fas ${icon}"></i>`;
+
+        const body = document.createElement('div');
+        body.className = 'app-toast__body';
+
+        const title = document.createElement('div');
+        title.className = 'app-toast__title';
+        title.textContent = message || '';
+
+        body.appendChild(title);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'app-toast__close';
+        closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
+        closeBtn.innerHTML = '&times;';
+
+        const removeToast = () => {
+            toast.classList.add('hide');
+            setTimeout(() => toast.remove(), 200);
+        };
+
+        closeBtn.addEventListener('click', removeToast);
+
+        toast.appendChild(iconEl);
+        toast.appendChild(body);
+        toast.appendChild(closeBtn);
+
+        container.appendChild(toast);
+        setTimeout(removeToast, 3200);
+    };
+
     // Modals
     const instructionModal = new bootstrap.Modal(document.getElementById('instructionModal'));
     const previewModal = new bootstrap.Modal(document.getElementById('previewModal'));
@@ -177,12 +235,12 @@
                 if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
                 if (saveInstructionChangesBtn) saveInstructionChangesBtn.disabled = true;
             } else {
-                alert(data.error || 'ไม่สามารถโหลดข้อมูล Instruction ได้');
+                showToast(data.error || 'ไม่สามารถโหลดข้อมูล Instruction ได้', 'error');
                 clearEditor();
             }
         } catch (error) {
             console.error('Error loading instruction:', error);
-            alert('เกิดข้อผิดพลาดในการโหลด Instruction');
+            showToast('เกิดข้อผิดพลาดในการโหลด Instruction', 'error');
             clearEditor();
         } finally {
             setEditorLoading(false);
@@ -210,13 +268,13 @@
         if (saveInstructionChangesBtn) {
             saveInstructionChangesBtn.addEventListener('click', async () => {
                 if (!editorState.currentInstructionId) {
-                    alert('กรุณาเลือก Instruction ที่ต้องการบันทึก');
+                    showToast('กรุณาเลือก Instruction ที่ต้องการบันทึก', 'warning');
                     return;
                 }
                 const name = instructionEditorName.value.trim();
                 const description = instructionEditorDescription.value.trim();
                 if (!name) {
-                    alert('กรุณาระบุชื่อ Instruction');
+                    showToast('กรุณาระบุชื่อ Instruction', 'warning');
                     return;
                 }
                 saveInstructionChangesBtn.disabled = true;
@@ -233,6 +291,7 @@
                         editorState.isDirty = false;
                         if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
                         setEditorStatus('บันทึกเรียบร้อยแล้ว', false);
+                        showToast('บันทึกการแก้ไขแล้ว', 'success');
                         setTimeout(() => {
                             if (!editorState.isDirty) {
                                 setEditorStatus('ข้อมูลล่าสุดบันทึกแล้ว', false);
@@ -267,11 +326,11 @@
                             option.textContent = name || 'ไม่มีชื่อ';
                         }
                     } else {
-                        alert(data.error || 'ไม่สามารถบันทึก Instruction ได้');
+                        showToast(data.error || 'ไม่สามารถบันทึก Instruction ได้', 'error');
                     }
                 } catch (error) {
                     console.error('Error saving instruction:', error);
-                    alert('เกิดข้อผิดพลาดในการบันทึก Instruction');
+                    showToast('เกิดข้อผิดพลาดในการบันทึก Instruction', 'error');
                 } finally {
                     refreshDirtyState();
                     saveInstructionChangesBtn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการแก้ไข';
@@ -305,7 +364,7 @@
         const description = document.getElementById('instructionDescription').value.trim();
 
         if (!name) {
-            alert('กรุณาระบุชื่อ Instruction');
+            showToast('กรุณาระบุชื่อ Instruction', 'warning');
             return;
         }
 
@@ -323,13 +382,14 @@
 
             if (data.success) {
                 instructionModal.hide();
-                location.reload();
+                showToast('บันทึก Instruction แล้ว', 'success');
+                setTimeout(() => location.reload(), 350);
             } else {
-                alert(data.error || 'เกิดข้อผิดพลาด');
+                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
             }
         } catch (err) {
             console.error('Error saving instruction:', err);
-            alert('เกิดข้อผิดพลาด');
+            showToast('เกิดข้อผิดพลาด', 'error');
         }
     });
 
@@ -349,11 +409,11 @@
                     document.getElementById('instructionDescription').value = data.instruction.description || '';
                     instructionModal.show();
                 } else {
-                    alert(data.error || 'ไม่พบ Instruction');
+                    showToast(data.error || 'ไม่พบ Instruction', 'error');
                 }
             } catch (err) {
                 console.error('Error fetching instruction:', err);
-                alert('เกิดข้อผิดพลาด');
+                showToast('เกิดข้อผิดพลาด', 'error');
             }
         });
     });
@@ -373,13 +433,14 @@
                 const data = await res.json();
 
                 if (data.success) {
-                    location.reload();
+                    showToast('ลบ Instruction แล้ว', 'success');
+                    setTimeout(() => location.reload(), 280);
                 } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
+                    showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
                 }
             } catch (err) {
                 console.error('Error deleting instruction:', err);
-                alert('เกิดข้อผิดพลาด');
+                showToast('เกิดข้อผิดพลาด', 'error');
             }
         });
     });
@@ -399,19 +460,20 @@
                     body: JSON.stringify({ name })
                 });
 
-                const data = await res.json();
+            const data = await res.json();
 
-                if (data.success) {
-                    location.reload();
-                } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
-                }
-            } catch (err) {
-                console.error('Error duplicating instruction:', err);
-                alert('เกิดข้อผิดพลาด');
+            if (data.success) {
+                showToast('คัดลอก Instruction แล้ว', 'success');
+                setTimeout(() => location.reload(), 280);
+            } else {
+                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
             }
-        });
+        } catch (err) {
+            console.error('Error duplicating instruction:', err);
+            showToast('เกิดข้อผิดพลาด', 'error');
+        }
     });
+});
 
     // Preview Instruction
     document.querySelectorAll('.preview-instruction').forEach(btn => {
@@ -429,11 +491,11 @@
                     document.getElementById('previewTokenCount').textContent = data.stats.tokenCount;
                     previewModal.show();
                 } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
+                    showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
                 }
             } catch (err) {
                 console.error('Error previewing instruction:', err);
-                alert('เกิดข้อผิดพลาด');
+                showToast('เกิดข้อผิดพลาด', 'error');
             }
         });
     });
@@ -462,19 +524,20 @@
                     method: 'DELETE'
                 });
 
-                const data = await res.json();
+            const data = await res.json();
 
-                if (data.success) {
-                    location.reload();
-                } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
-                }
-            } catch (err) {
-                console.error('Error deleting data item:', err);
-                alert('เกิดข้อผิดพลาด');
+            if (data.success) {
+                showToast('ลบข้อมูลแล้ว', 'success');
+                setTimeout(() => location.reload(), 280);
+            } else {
+                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
             }
-        });
+        } catch (err) {
+            console.error('Error deleting data item:', err);
+            showToast('เกิดข้อผิดพลาด', 'error');
+        }
     });
+});
 
     // Duplicate Data Item
     document.querySelectorAll('.duplicate-data-item').forEach(btn => {
@@ -487,19 +550,20 @@
                     method: 'POST'
                 });
 
-                const data = await res.json();
+            const data = await res.json();
 
-                if (data.success) {
-                    location.reload();
-                } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
-                }
-            } catch (err) {
-                console.error('Error duplicating data item:', err);
-                alert('เกิดข้อผิดพลาด');
+            if (data.success) {
+                showToast('คัดลอกข้อมูลแล้ว', 'success');
+                setTimeout(() => location.reload(), 280);
+            } else {
+                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
             }
-        });
+        } catch (err) {
+            console.error('Error duplicating data item:', err);
+            showToast('เกิดข้อผิดพลาด', 'error');
+        }
     });
+});
 
     // Add Data Item
     document.querySelectorAll('.add-data-item').forEach(btn => {
@@ -584,7 +648,7 @@
             return true;
         } catch (err) {
             console.error('Error reordering data items:', err);
-            alert(err.message || 'ไม่สามารถสลับลำดับได้');
+            showToast(err.message || 'ไม่สามารถสลับลำดับได้', 'error');
             if (Array.isArray(fallbackOrder) && fallbackOrder.length > 0) {
                 applyDataItemOrder(container, fallbackOrder);
                 updateDataItemOrderUI(container);
@@ -655,7 +719,7 @@
                 const formData = new FormData(excelUploadForm);
                 const fileInput = document.getElementById('excelFileInput');
                 if (!fileInput.files.length) {
-                    alert('กรุณาเลือกไฟล์ Excel');
+                    showToast('กรุณาเลือกไฟล์ Excel', 'warning');
                     return;
                 }
 
@@ -701,12 +765,12 @@
                             `;
                         }
                     } else {
-                        alert(data.error || 'ไม่สามารถดูตัวอย่างไฟล์ได้');
+                        showToast(data.error || 'ไม่สามารถดูตัวอย่างไฟล์ได้', 'error');
                         if (uploadExcelBtn) uploadExcelBtn.disabled = true;
                     }
                 } catch (err) {
                     console.error(err);
-                    alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                    showToast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
                 } finally {
                     previewExcelBtn.innerHTML = '<i class="fas fa-eye me-1"></i> ดูตัวอย่าง';
                     previewExcelBtn.disabled = false;
@@ -732,10 +796,10 @@
                 const data = await res.json();
 
                 if (data.success) {
-                    alert(data.message || 'นำเข้าข้อมูลเรียบร้อยแล้ว');
-                    location.reload();
+                    showToast(data.message || 'นำเข้าข้อมูลเรียบร้อยแล้ว', 'success');
+                    setTimeout(() => location.reload(), 320);
                 } else {
-                    alert(data.error || 'เกิดข้อผิดพลาดในการนำเข้า');
+                    showToast(data.error || 'เกิดข้อผิดพลาดในการนำเข้า', 'error');
                     if (uploadExcelBtn) {
                         uploadExcelBtn.disabled = false;
                         uploadExcelBtn.innerHTML = '<i class="fas fa-upload me-1"></i> นำเข้าข้อมูล';
@@ -743,7 +807,7 @@
                 }
             } catch (err) {
                 console.error(err);
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                showToast('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
                 if (uploadExcelBtn) {
                     uploadExcelBtn.disabled = false;
                     uploadExcelBtn.innerHTML = '<i class="fas fa-upload me-1"></i> นำเข้าข้อมูล';

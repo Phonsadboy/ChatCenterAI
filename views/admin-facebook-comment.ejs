@@ -8,9 +8,10 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <link href="/css/style.css" rel="stylesheet">
 </head>
-<body>
+<body class="app-shell">
   <%- include('partials/admin-navbar', { activePage: 'facebook-comment' }) %>
 
+  <div class="app-content">
   <div class="container mt-4 mb-5">
     <div class="row justify-content-center">
       <div class="col-lg-10">
@@ -220,6 +221,7 @@
       </div>
     </div>
   </div>
+  </div>
 
   <!-- Modal: Add/Edit Post Config -->
   <div class="modal fade" id="postConfigModal" tabindex="-1">
@@ -257,33 +259,29 @@
                 ประเภทการตอบ <span class="text-danger">*</span>
               </label>
 
-              <div class="selection-card" onclick="selectReplyType('custom', event)">
-                <input type="radio" name="replyType" value="custom" id="replyTypeCustom" required>
-                <label for="replyTypeCustom">
-                  <div class="d-flex align-items-start">
-                    <div>
-                      <strong><i class="fas fa-edit me-1"></i>ข้อความกำหนดเอง</strong>
-                      <p class="mb-0 mt-1 text-muted small">
-                        ระบบจะตอบคอมเมนต์ด้วยข้อความที่คุณกำหนดไว้
-                      </p>
-                    </div>
+              <button type="button" class="selection-card" onclick="selectReplyType('custom', event)" aria-pressed="false" aria-controls="customMessageSection">
+                <input type="radio" name="replyType" value="custom" id="replyTypeCustom" required aria-label="เลือกข้อความกำหนดเอง">
+                <div class="d-flex align-items-start">
+                  <div>
+                    <strong><i class="fas fa-edit me-1"></i>ข้อความกำหนดเอง</strong>
+                    <p class="mb-0 mt-1 text-muted small">
+                      ระบบจะตอบคอมเมนต์ด้วยข้อความที่คุณกำหนดไว้
+                    </p>
                   </div>
-                </label>
-              </div>
+                </div>
+              </button>
 
-              <div class="selection-card" onclick="selectReplyType('ai', event)">
-                <input type="radio" name="replyType" value="ai" id="replyTypeAI" required>
-                <label for="replyTypeAI">
-                  <div class="d-flex align-items-start">
-                    <div>
-                      <strong><i class="fas fa-robot me-1"></i>AI ตอบอัตโนมัติ</strong>
-                      <p class="mb-0 mt-1 text-muted small">
-                        ให้ AI วิเคราะห์และตอบคอมเมนต์ตาม System Prompt ที่กำหนด
-                      </p>
-                    </div>
+              <button type="button" class="selection-card" onclick="selectReplyType('ai', event)" aria-pressed="false" aria-controls="aiConfigSection">
+                <input type="radio" name="replyType" value="ai" id="replyTypeAI" required aria-label="เลือกตอบด้วย AI">
+                <div class="d-flex align-items-start">
+                  <div>
+                    <strong><i class="fas fa-robot me-1"></i>AI ตอบอัตโนมัติ</strong>
+                    <p class="mb-0 mt-1 text-muted small">
+                      ให้ AI วิเคราะห์และตอบคอมเมนต์ตาม System Prompt ที่กำหนด
+                    </p>
                   </div>
-                </label>
-              </div>
+                </div>
+              </button>
             </div>
 
             <!-- Custom Message Section -->
@@ -377,9 +375,52 @@
     </div>
   </div>
 
+  </div> <!-- /container -->
+  </div> <!-- /app-content -->
+
+  <div id="facebookToastContainer" class="app-toast-container"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     const modal = new bootstrap.Modal(document.getElementById('postConfigModal'));
+    let toastContainer = document.getElementById('facebookToastContainer');
+
+    function ensureToastContainer() {
+      if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.className = 'app-toast-container';
+        document.body.appendChild(toastContainer);
+      }
+      return toastContainer;
+    }
+
+    function showToast(message, type = 'info') {
+      const container = ensureToastContainer();
+      const typeMap = {
+        success: { icon: 'fa-check-circle', className: 'app-toast--success' },
+        error: { icon: 'fa-times-circle', className: 'app-toast--danger' },
+        warning: { icon: 'fa-exclamation-triangle', className: 'app-toast--warning' },
+        info: { icon: 'fa-info-circle', className: 'app-toast--info' },
+      };
+      const toastType = typeMap[type] ? type : 'info';
+      const { icon, className } = typeMap[toastType];
+      const toast = document.createElement('div');
+      toast.className = `app-toast ${className}`;
+      toast.innerHTML = `
+        <div class="app-toast__icon"><i class="fas ${icon}"></i></div>
+        <div class="app-toast__body">
+          <div class="app-toast__title">${message || ''}</div>
+        </div>
+        <button class="app-toast__close" aria-label="ปิดการแจ้งเตือน">&times;</button>
+      `;
+      const removeToast = () => {
+        toast.classList.add('hide');
+        setTimeout(() => toast.remove(), 200);
+      };
+      toast.querySelector('.app-toast__close')?.addEventListener('click', removeToast);
+      container.appendChild(toast);
+      setTimeout(removeToast, 3200);
+    }
 
     function selectReplyType(type, event) {
       const customRadio = document.getElementById('replyTypeCustom');
@@ -408,11 +449,13 @@
       // Update card active state
       document.querySelectorAll('.selection-card').forEach(card => {
         card.classList.remove('active');
+        card.setAttribute('aria-pressed', 'false');
       });
       
       // Add active class to clicked card (if event is provided)
       if (event && event.currentTarget) {
         event.currentTarget.classList.add('active');
+        event.currentTarget.setAttribute('aria-pressed', 'true');
       } else {
         // If no event, find and activate the correct card based on type
         const cards = document.querySelectorAll('.selection-card');
@@ -420,6 +463,7 @@
           const radio = card.querySelector('input[type="radio"]');
           if (radio && radio.value === type) {
             card.classList.add('active');
+            card.setAttribute('aria-pressed', 'true');
           }
         });
       }
@@ -472,7 +516,7 @@
 
         modal.show();
       } catch (error) {
-        alert('เกิดข้อผิดพลาดในการโหลดข้อมูล');
+        showToast('เกิดข้อผิดพลาดในการโหลดข้อมูล', 'error');
         console.error(error);
       }
     }
@@ -489,10 +533,10 @@
           if (response.ok) {
             location.reload();
           } else {
-            alert('เกิดข้อผิดพลาด');
+            showToast('เกิดข้อผิดพลาด', 'error');
           }
         } catch (error) {
-          alert('เกิดข้อผิดพลาด');
+          showToast('เกิดข้อผิดพลาด', 'error');
           console.error(error);
         }
       }
@@ -508,10 +552,10 @@
           if (response.ok) {
             location.reload();
           } else {
-            alert('เกิดข้อผิดพลาด');
+            showToast('เกิดข้อผิดพลาด', 'error');
           }
         } catch (error) {
-          alert('เกิดข้อผิดพลาด');
+          showToast('เกิดข้อผิดพลาด', 'error');
           console.error(error);
         }
       }
@@ -534,17 +578,17 @@
 
       // Validate based on reply type
       if (data.replyType === 'custom' && !data.customMessage) {
-        alert('กรุณาระบุข้อความตอบกลับ');
+        showToast('กรุณาระบุข้อความตอบกลับ', 'warning');
         return;
       }
 
       if (data.replyType === 'ai') {
         if (!data.aiModel) {
-          alert('กรุณาเลือกโมเดล AI');
+          showToast('กรุณาเลือกโมเดล AI', 'warning');
           return;
         }
         if (!data.systemPrompt) {
-          alert('กรุณาระบุ System Prompt');
+          showToast('กรุณาระบุ System Prompt', 'warning');
           return;
         }
       }
@@ -557,13 +601,14 @@
         });
 
         if (response.ok) {
-          location.reload();
+          showToast('บันทึกการตั้งค่าแล้ว', 'success');
+          setTimeout(() => location.reload(), 300);
         } else {
           const result = await response.json();
-          alert(result.error || 'เกิดข้อผิดพลาด');
+          showToast(result.error || 'เกิดข้อผิดพลาด', 'error');
         }
       } catch (error) {
-        alert('เกิดข้อผิดพลาดในการบันทึก');
+        showToast('เกิดข้อผิดพลาดในการบันทึก', 'error');
         console.error(error);
       }
     });
@@ -575,5 +620,6 @@
       });
     });
   </script>
+  </div> <!-- /app-content -->
 </body>
 </html>

@@ -1,12 +1,17 @@
 # เอกสารตรวจ Frontend ChatCenter AI
 
 ## ส่วนที่ 1: จุดร่วม/ภาพรวมระบบ
-- โทนสี/แบรนด์ไม่สอดคล้องกัน (style.css ใช้เขียว, orders ใช้น้ำเงิน, settings v2 ใช้ม่วง indigo) ทำให้ประสบการณ์ข้ามหน้าไม่ต่อเนื่อง ควรล็อกชุดสี/ตัวอักษรหลักเดียวกันแล้วผูกด้วย CSS variables
-- ปุ่มและการ์ดถูกกำหนดซ้ำหลายชุด (.btn ใน style.css มีหลายเวอร์ชัน, gradients คละ) รวมถึง inline style ในหลายหน้า ส่งผลให้ความหนา-เงา-รัศมีไม่คงที่ ควรยกเลิก inline/ซ้ำซ้อนแล้วใช้ design tokens เดียว
-- ฟอนต์/ขนาดตัวอักษรไม่สม่ำเสมอ (บางหน้าบังคับ Inter, บางหน้าติด Mali + base 14px ที่เล็ก) และ contrast สีเทาบางจุดต่ำ ควรปรับสเกลตัวอักษร/น้ำหนัก/contrast ให้ผ่านเกณฑ์ AA
-- โครงสร้างหน้าไม่มี layout กลาง ทุกหน้าดึง Bootstrap/FA จาก CDN เอง ไม่มี SRI/เวอร์ชันล็อก และขาดองค์ประกอบคงที่ เช่น toast/loading/empty state มาตรฐาน ควรทำ layout partial + component library รวม
-- การเข้าถึง (a11y): หลายจุดใช้ div/selection-card เป็นปุ่ม, badge ที่อ่านไม่ได้ด้วย screen reader, focus state ไม่ชัด ควรใช้ element เชิง semantics + focus ring สม่ำเสมอ
-- การตอบสนองมือถือยังไม่เสมอ (ตารางใหญ่, แถบด้านข้าง, sidebar sticky สูงเต็มจอ) และไม่มี safe-area/keyboard awareness บางส่วน ควรวาง responsive spec (breakpoint, stack order, collapse pattern) กลาง
+- โทนสี/แบรนด์: ล็อกพาเลตเทา-น้ำเงินหม่น (เช่น `--color-primary-500: #4A6FA5`) + Inter/Mali เป็นฐาน ล้างสีเขียว/ม่วงเดิม และใช้ตัวแปรใน `theme.css` ทุกหน้า
+- ปุ่ม/การ์ด: ตัด gradient/เงาหนัก ใช้ design token เดียว (radius 10-12px, border `--color-border-muted`, เงาเบา) ย้าย inline style ออกไป `components.css` และรีไฟน์ `.btn-primary/.btn-ghost/.card`
+- ตัวอักษร/contrast: ตั้ง base 15-16px, heading scale ชัด, น้ำหนัก 500/600 สำหรับหัวข้อ ตรวจ contrast ด้วยสีจาก `theme.css` ให้ผ่าน AA
+- Layout กลาง: ใช้ layout partial (header/sidebar/app-shell) + component library รวมสำหรับ toast/loading/empty/skeleton; ล็อก CDN + SRI หรือ self-host Bootstrap/FA
+- A11y: ใช้ element semantic (button/a/label), focus ring จาก token เดียว, aria-live สำหรับ toast/error, badge/unread อ่านได้ด้วย screen reader, selection-card ต้องเป็นปุ่มจริง
+- Responsive: กำหนด breakpoint sm/md/lg พร้อม pattern collapse (sidebar → drawer, filter → accordion, table → card พร้อม data-label), sticky action bar บน mobile
+- สถานะโหลด/ซิงก์: ทุก action มี skeleton หรือ overlay + toast queue กลาง, ปุ่มมี state loading/disabled, แสดง last-synced/dirty state ในตำแหน่งเดียวกันทุกหน้า
+- ไอคอน/ภาพ: เลือกชุดเดียว (เช่น FontAwesome 6 พร้อม SRI), empty state ใช้ชุดภาพ/ข้อความเดียวกัน ลดปะปน feather/emoji
+- ตาราง/รายการ: ใช้ pattern กลางสำหรับ responsive table, sticky header, bulk action bar, summary bar/quick stats; รายการบนมือถือเป็นการ์ดพร้อม quick action
+- ฟอร์ม/error: ใช้ pattern label > input > help/error สีเดียว, inline validation + aria-describedby, หลีกเลี่ยง alert block ที่ไม่ผูก field
+- สินทรัพย์/ฟอนต์: preload Inter/Mali, กำหนด SRI/เวอร์ชันคงที่หรือ self-host ลด layout shift และปัญหา offline
 
 ## ส่วนที่ 2: รายละเอียดรายหน้า
 

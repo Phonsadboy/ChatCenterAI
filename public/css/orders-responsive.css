@@ -1,0 +1,35 @@
+.orders-table-wrapper table {
+  width: 100%;
+}
+
+@media (max-width: 767.98px) {
+  .orders-table-wrapper table thead {
+    display: none;
+  }
+  .orders-table-wrapper table tbody tr {
+    display: block;
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: 10px;
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+    background: var(--bg-card, #fff);
+  }
+  .orders-table-wrapper table tbody td {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border: none;
+  }
+  .orders-table-wrapper table tbody td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--text-sub, #5C6372);
+  }
+  .orders-table-wrapper .col-select {
+    align-items: center;
+  }
+  .orders-table-wrapper .col-actions {
+    justify-content: flex-end;
+  }
+}

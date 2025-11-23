@@ -14,606 +14,642 @@
         rel="stylesheet">
     <link href="/css/style.css" rel="stylesheet">
     <link href="/css/admin-settings-v2.css" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Mali', 'Inter', sans-serif;
-        }
-    </style>
 </head>
 
-<body>
+<body class="app-shell">
     <%- include('partials/admin-navbar', { activePage: 'settings2' }) %>
 
-        <div class="settings-layout">
-            <!-- Sidebar -->
-            <aside class="settings-sidebar">
-                <div class="mb-4 px-2">
-                    <h5 class="mb-1 fw-bold">การตั้งค่า</h5>
-                    <p class="text-muted-v2 small mb-0">จัดการ AI และระบบของคุณ</p>
-                </div>
-
-                <div class="nav-section-title">AI & ระบบอัตโนมัติ</div>
-                <nav class="nav flex-column mb-4">
-                    <a href="#bot-settings" class="nav-item-v2 active">
-                        <i class="fas fa-robot"></i> จัดการบอท (Bot)
-                    </a>
-                    <a href="#image-collections" class="nav-item-v2">
-                        <i class="fas fa-images"></i> คลังรูปภาพ
-                    </a>
-                    <a href="#chat-settings" class="nav-item-v2">
-                        <i class="fas fa-comments"></i> แชทและคิว
-                    </a>
-                </nav>
-
-                <div class="nav-section-title">ระบบ</div>
-                <nav class="nav flex-column">
-                    <a href="#system-settings" class="nav-item-v2">
-                        <i class="fas fa-server"></i> ตั้งค่าทั่วไป
-                    </a>
-                    <a href="#security-settings" class="nav-item-v2">
-                        <i class="fas fa-shield-alt"></i> ความปลอดภัย & ตัวกรอง
-                    </a>
-                </nav>
-
-                <div class="mt-auto px-2 pt-4 border-top">
-                    <a href="/admin/dashboard" class="btn-v2 btn-v2-secondary w-100 justify-content-center">
-                        <i class="fas fa-arrow-left"></i> กลับหน้าแดชบอร์ด
-                    </a>
-                </div>
-            </aside>
-
-            <!-- Content -->
-            <main class="settings-content">
-
-                <!-- Bot Management Section -->
-                <section id="bot-settings" class="settings-section">
-                    <div class="section-header">
-                        <div>
-                            <h2 class="section-title">จัดการบอท (Bot Management)</h2>
-                            <p class="section-desc">จัดการ Line และ Facebook Bot ของคุณ สถานะการทำงาน และโมเดล AI</p>
-                        </div>
-                        <div class="d-flex gap-2">
-                            <button class="btn-v2 btn-v2-secondary btn-v2-sm" onclick="loadBotSettings()">
-                                <i class="fas fa-sync-alt"></i> รีเฟรช
-                            </button>
-                        </div>
+        <div class="app-content">
+            <div class="settings-layout">
+                <!-- Sidebar -->
+                <aside class="settings-sidebar">
+                    <div class="mb-4 px-2">
+                        <h5 class="mb-1 fw-bold">การตั้งค่า</h5>
+                        <p class="text-muted-v2 small mb-0">จัดการ AI และระบบของคุณ</p>
                     </div>
 
-                    <div class="row">
-                        <div class="col-lg-6">
-                            <div class="settings-card">
-                                <div class="card-header-v2">
-                                    <h3 class="card-title-v2"><i class="fab fa-line text-success me-2"></i>Line Bots
-                                    </h3>
-                                    <button class="btn-v2 btn-v2-primary btn-v2-sm" onclick="openAddLineBotModal()">
-                                        <i class="fas fa-plus"></i> เพิ่มใหม่
-                                    </button>
-                                </div>
-                                <div class="card-body-v2 p-0">
-                                    <div id="line-bots-list" class="p-3">
-                                        <!-- Line Bots Rendered Here -->
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-lg-6">
-                            <div class="settings-card">
-                                <div class="card-header-v2">
-                                    <h3 class="card-title-v2"><i class="fab fa-facebook text-primary me-2"></i>Facebook
-                                        Bots</h3>
-                                    <button class="btn-v2 btn-v2-primary btn-v2-sm" onclick="openAddFacebookBotModal()">
-                                        <i class="fas fa-plus"></i> เพิ่มใหม่
-                                    </button>
-                                </div>
-                                <div class="card-body-v2 p-0">
-                                    <div id="facebook-bots-list" class="p-3">
-                                        <!-- Facebook Bots Rendered Here -->
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
+                    <div class="nav-section-title">AI & ระบบอัตโนมัติ</div>
+                    <nav class="nav flex-column mb-4">
+                        <a href="#bot-settings" class="nav-item-v2 active">
+                            <i class="fas fa-robot"></i> จัดการบอท (Bot)
+                        </a>
+                        <a href="#image-collections" class="nav-item-v2">
+                            <i class="fas fa-images"></i> คลังรูปภาพ
+                        </a>
+                        <a href="#chat-settings" class="nav-item-v2">
+                            <i class="fas fa-comments"></i> แชทและคิว
+                        </a>
+                    </nav>
 
-                <!-- Image Collections Section -->
-                <section id="image-collections" class="settings-section d-none">
-                    <div class="content-section" id="imageCollectionsSection">
+                    <div class="nav-section-title">ระบบ</div>
+                    <nav class="nav flex-column">
+                        <a href="#system-settings" class="nav-item-v2">
+                            <i class="fas fa-server"></i> ตั้งค่าทั่วไป
+                        </a>
+                        <a href="#security-settings" class="nav-item-v2">
+                            <i class="fas fa-shield-alt"></i> ความปลอดภัย & ตัวกรอง
+                        </a>
+                    </nav>
+
+                    <div class="mt-auto px-2 pt-4 border-top">
+                        <a href="/admin/dashboard" class="btn-v2 btn-v2-secondary w-100 justify-content-center">
+                            <i class="fas fa-arrow-left"></i> กลับหน้าแดชบอร์ด
+                        </a>
+                    </div>
+                </aside>
+
+                <!-- Content -->
+                <main class="settings-content">
+
+                    <!-- Bot Management Section -->
+                    <section id="bot-settings" class="settings-section">
                         <div class="section-header">
                             <div>
-                                <h2 class="section-title">คลังรูปภาพ (Image Collections)</h2>
-                                <p class="section-desc">อัปโหลดรูป แยกเป็นชุด และเลือกให้บอทใช้งาน</p>
+                                <h2 class="section-title">จัดการบอท (Bot Management)</h2>
+                                <p class="section-desc">จัดการ Line และ Facebook Bot ของคุณ สถานะการทำงาน และโมเดล AI
+                                </p>
                             </div>
                             <div class="d-flex gap-2">
-                                <button class="btn-action btn-secondary" id="createImageCollectionBtn">
-                                    <i class="fas fa-plus"></i>
-                                    <span>เพิ่มคลัง</span>
-                                </button>
-                                <button class="btn-action btn-tertiary" id="refreshImageCollectionsBtn">
-                                    <i class="fas fa-sync-alt"></i>
-                                    <span>รีเฟรช</span>
+                                <button class="btn-v2 btn-v2-secondary btn-v2-sm" onclick="loadBotSettings()">
+                                    <i class="fas fa-sync-alt"></i> รีเฟรช
                                 </button>
                             </div>
                         </div>
 
-                        <div class="row g-3">
-                            <div class="col-lg-5">
-                                <div class="gallery-step-label">
-                                    <span class="step-number" id="secretFixBtn" title="คลิก 3 ครั้งเพื่อซ่อมแซมข้อมูล">ขั้นตอนที่ 1</span>
-                                    <span class="step-text">อัปโหลดรูปเข้าสู่ระบบ</span>
-                                </div>
-                                <div class="card image-assets-card mb-4">
-                                    <div class="card-body">
-                                        <div class="d-flex justify-content-between align-items-center mb-3">
-                                            <div>
-                                                <h6 class="mb-1">คลังรูปภาพทั้งหมด</h6>
-                                                <small class="text-muted">ใช้โทเคน <code>#[IMAGE:ชื่อรูป]</code> ในข้อความ AI</small>
-                                            </div>
-                                            <span class="badge bg-secondary-soft text-secondary" id="imageAssetsCount">0 รูป</span>
-                                        </div>
-                                        <div class="image-upload-dropzone" id="imageAssetDropzone">
-                                            <div class="dropzone-icon"><i class="fas fa-cloud-upload-alt"></i></div>
-                                            <div class="dropzone-text">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก</div>
-                                            <div class="dropzone-subtext text-muted">รองรับการเลือกหลายไฟล์พร้อมกัน (JPEG/PNG/WebP)</div>
-                                            <input type="file" id="imageAssetFile" accept="image/*" multiple hidden>
-                                            <button type="button" class="btn btn-sm btn-outline-primary mt-3" id="triggerImageAssetSelect">
-                                                <i class="fas fa-folder-open me-1"></i>เลือกไฟล์จากเครื่อง
-                                            </button>
-                                        </div>
-                                        <div class="upload-queue-toolbar d-flex justify-content-between align-items-center mt-3">
-                                            <div class="small text-muted" id="uploadQueueSummary">ยังไม่มีไฟล์ในคิว</div>
-                                            <div class="d-flex gap-2">
-                                                <button type="button" class="btn btn-sm btn-outline-secondary" id="clearUploadQueueBtn" disabled>
-                                                    <i class="fas fa-times me-1"></i>ล้างคิว
-                                                </button>
-                                                <button type="button" class="btn btn-sm btn-primary" id="startUploadQueueBtn" disabled>
-                                                    <i class="fas fa-upload me-1"></i>อัปโหลดทั้งหมด
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div class="upload-queue-list mt-3" id="imageAssetQueue">
-                                            <div class="empty-state small text-muted text-center py-3">
-                                                <i class="fas fa-images me-1"></i>เพิ่มรูปภาพเพื่อเตรียมตั้งชื่อและคำอธิบายได้ที่นี่
-                                            </div>
-                                        </div>
-                                        <hr class="my-4">
-                                        <div class="input-group input-group-sm mb-3">
-                                            <span class="input-group-text bg-light"><i class="fas fa-search"></i></span>
-                                            <input type="text" class="form-control" id="imageAssetsSearch" placeholder="ค้นหาชื่อหรือคำอธิบายรูป">
-                                        </div>
-                                        <div class="asset-selection-toolbar d-flex justify-content-between align-items-center mb-2" id="assetSelectionToolbar" style="display: none;">
-                                            <div class="asset-selection-count text-muted small"></div>
-                                            <div class="asset-selection-actions d-flex gap-2">
-                                                <button type="button" class="btn btn-sm btn-outline-danger" id="bulkDeleteAssetsBtn">
-                                                    <i class="fas fa-trash me-1"></i>ลบรูปที่เลือก
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div class="image-assets-list" id="imageAssetsList">
-                                            <div class="text-muted small py-3 text-center">กำลังโหลดรายการรูปภาพ...</div>
+                        <div class="row">
+                            <div class="col-lg-6">
+                                <div class="settings-card">
+                                    <div class="card-header-v2">
+                                        <h3 class="card-title-v2"><i class="fab fa-line text-success me-2"></i>Line Bots
+                                        </h3>
+                                        <button class="btn-v2 btn-v2-primary btn-v2-sm" onclick="openAddLineBotModal()">
+                                            <i class="fas fa-plus"></i> เพิ่มใหม่
+                                        </button>
+                                    </div>
+                                    <div class="card-body-v2 p-0">
+                                        <div id="line-bots-list" class="p-3">
+                                            <!-- Line Bots Rendered Here -->
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-lg-7">
-                                <div class="gallery-step-label mb-3">
-                                    <span class="step-number">ขั้นตอนที่ 2</span>
-                                    <span class="step-text">จัดรูปเป็นชุด (Collections)</span>
-                                </div>
-                                <div class="card image-collections-card mb-3">
-                                    <div class="card-body d-flex flex-column">
-                                        <div class="d-flex justify-content-between align-items-center mb-3">
-                                            <div>
-                                                <h6 class="mb-1">ชุดรูปภาพ (Collections)</h6>
-                                                <small class="text-muted">รวมรูปเป็นหมวดหมู่เพื่อเลือกให้แต่ละบอท</small>
-                                            </div>
-                                            <span class="badge bg-primary-soft text-primary" id="imageCollectionsCount">0 ชุด</span>
-                                        </div>
-                                        <div class="d-flex gap-2 mb-3 collection-filter-group">
-                                            <button type="button" class="btn btn-sm btn-outline-secondary active" data-usage-filter="all">
-                                                ทั้งหมด
-                                            </button>
-                                            <button type="button" class="btn btn-sm btn-outline-secondary" data-usage-filter="assigned">
-                                                ใช้งานอยู่
-                                            </button>
-                                            <button type="button" class="btn btn-sm btn-outline-secondary" data-usage-filter="unassigned">
-                                                ยังไม่ถูกเลือก
-                                            </button>
-                                        </div>
-                                        <div class="input-group input-group-sm mb-3">
-                                            <span class="input-group-text bg-light"><i class="fas fa-search"></i></span>
-                                            <input type="text" class="form-control" id="imageCollectionsSearch" placeholder="ค้นหาชื่อหรือคำอธิบาย">
-                                        </div>
-                                        <div class="image-collections-list" id="imageCollectionsList">
-                                            <div class="text-muted small py-3 text-center">กำลังโหลดรายการคลังรูปภาพ...</div>
-                                        </div>
+                            <div class="col-lg-6">
+                                <div class="settings-card">
+                                    <div class="card-header-v2">
+                                        <h3 class="card-title-v2"><i
+                                                class="fab fa-facebook text-primary me-2"></i>Facebook
+                                            Bots</h3>
+                                        <button class="btn-v2 btn-v2-primary btn-v2-sm"
+                                            onclick="openAddFacebookBotModal()">
+                                            <i class="fas fa-plus"></i> เพิ่มใหม่
+                                        </button>
                                     </div>
-                                </div>
-                                <div class="card mb-3">
-                                    <div class="card-body">
-                                        <h6 class="mb-3">การกำหนดคลังรูปภาพให้บอท</h6>
-                                        <div class="row g-3">
-                                            <div class="col-md-6">
-                                                <div class="assignment-list" id="lineBotCollectionsList">
-                                                    <div class="text-muted small py-2 text-center">กำลังโหลด Line Bots...</div>
-                                                </div>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <div class="assignment-list" id="facebookBotCollectionsList">
-                                                    <div class="text-muted small py-2 text-center">กำลังโหลด Facebook Bots...</div>
-                                                </div>
-                                            </div>
+                                    <div class="card-body-v2 p-0">
+                                        <div id="facebook-bots-list" class="p-3">
+                                            <!-- Facebook Bots Rendered Here -->
                                         </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </section>
+                    </section>
 
-                <!-- Chat Settings Section -->
-                <section id="chat-settings" class="settings-section d-none">
-                    <div class="section-header">
-                        <div>
-                            <h2 class="section-title">ตั้งค่าแชทและคิว (Chat & Queue)</h2>
-                            <p class="section-desc">กำหนดเวลาหน่วงการตอบกลับ (Delay), จำกัดคิวข้อความ
-                                และการตอบกลับอัตโนมัติ</p>
-                        </div>
-                    </div>
-
-                    <div class="settings-card">
-                        <div class="card-header-v2">
-                            <h3 class="card-title-v2">การตั้งค่าคิวข้อความ</h3>
-                        </div>
-                        <div class="card-body-v2">
-                            <form id="chatSettingsForm">
-                                <div class="row g-4">
-                                    <div class="col-md-6">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2" for="chatDelaySeconds">เวลาหน่วงก่อนตอบ
-                                                (วินาที)</label>
-                                            <input type="number" class="form-control-v2" id="chatDelaySeconds" min="0"
-                                                max="60">
-                                            <div class="form-text-v2">
-                                                เวลารอเพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนส่งให้ AI</div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2"
-                                                for="maxQueueMessages">จำนวนข้อความสูงสุดในคิว</label>
-                                            <input type="number" class="form-control-v2" id="maxQueueMessages" min="1"
-                                                max="50">
-                                            <div class="form-text-v2">หากข้อความในคิวถึงจำนวนนี้ ระบบจะประมวลผลทันที
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
-                                            <div>
-                                                <label class="form-label-v2 mb-0" for="enableMessageMerging">รวมข้อความ
-                                                    (Merge Messages)</label>
-                                                <div class="form-text-v2 mt-0">รวมข้อความที่ส่งติดกันเป็นข้อความเดียว
-                                                </div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="enableMessageMerging">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
-                                            <div>
-                                                <label class="form-label-v2 mb-0" for="showTokenUsage">แสดง Token
-                                                    Usage</label>
-                                                <div class="form-text-v2 mt-0">แสดงข้อมูลการใช้ Token ต่อท้ายคำตอบ AI
-                                                </div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="showTokenUsage">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-12">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2"
-                                                for="audioAttachmentResponse">ข้อความตอบกลับไฟล์เสียงอัตโนมัติ</label>
-                                            <textarea class="form-control-v2" id="audioAttachmentResponse"
-                                                rows="2"></textarea>
-                                            <div class="form-text-v2">ข้อความที่จะส่งเมื่อผู้ใช้ส่งไฟล์เสียง
-                                                (กรณีระบบยังไม่รองรับการถอดเสียง)</div>
-                                        </div>
-                                    </div>
-                                    <div class="col-12 text-end">
-                                        <button type="submit" class="btn-v2 btn-v2-primary">
-                                            <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
-                                        </button>
-                                    </div>
+                    <!-- Image Collections Section -->
+                    <section id="image-collections" class="settings-section d-none">
+                        <div class="content-section" id="imageCollectionsSection">
+                            <div class="section-header">
+                                <div>
+                                    <h2 class="section-title">คลังรูปภาพ (Image Collections)</h2>
+                                    <p class="section-desc">อัปโหลดรูป แยกเป็นชุด และเลือกให้บอทใช้งาน</p>
                                 </div>
-                            </form>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- System Settings Section -->
-                <section id="system-settings" class="settings-section d-none">
-                    <div class="section-header">
-                        <div>
-                            <h2 class="section-title">ตั้งค่าระบบ (System Settings)</h2>
-                            <p class="section-desc">การตั้งค่าทั่วไปและโหมดการทำงานของระบบ</p>
-                        </div>
-                    </div>
-
-                    <div class="settings-card">
-                        <div class="card-header-v2">
-                            <h3 class="card-title-v2">การตั้งค่าทั่วไป</h3>
-                        </div>
-                        <div class="card-body-v2">
-                            <form id="systemSettingsForm">
-                                <div class="row g-4">
-                                    <div class="col-md-12">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded mb-3">
-                                            <div>
-                                                <label class="form-label-v2 mb-0" for="aiEnabled">เปิดใช้งาน AI ทั้งระบบ
-                                                    (Global AI)</label>
-                                                <div class="form-text-v2 mt-0">สวิตช์หลักสำหรับเปิด/ปิดการทำงานของ AI
-                                                    ทั้งหมด</div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="aiEnabled">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
-                                            <div>
-                                                <label class="form-label-v2 mb-0"
-                                                    for="enableChatHistory">บันทึกประวัติแชท</label>
-                                                <div class="form-text-v2 mt-0">บันทึกการสนทนาลงฐานข้อมูลเพื่อดูย้อนหลัง
-                                                </div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="enableChatHistory">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
-                                            <div>
-                                                <label class="form-label-v2 mb-0"
-                                                    for="enableAdminNotifications">แจ้งเตือนแอดมิน</label>
-                                                <div class="form-text-v2 mt-0">แจ้งเตือนเมื่อมีข้อความใหม่เข้ามา</div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="enableAdminNotifications">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2" for="systemMode">โหมดระบบ</label>
-                                            <select class="form-control-v2" id="systemMode">
-                                                <option value="production">Production (ใช้งานจริง)</option>
-                                                <option value="development">Development (พัฒนา)</option>
-                                                <option value="maintenance">Maintenance (ปิดปรับปรุง)</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div class="col-12 text-end">
-                                        <button type="submit" class="btn-v2 btn-v2-primary">
-                                            <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
-                                        </button>
-                                    </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn-action btn-secondary" id="createImageCollectionBtn">
+                                        <i class="fas fa-plus"></i>
+                                        <span>เพิ่มคลัง</span>
+                                    </button>
+                                    <button class="btn-action btn-tertiary" id="refreshImageCollectionsBtn">
+                                        <i class="fas fa-sync-alt"></i>
+                                        <span>รีเฟรช</span>
+                                    </button>
                                 </div>
-                            </form>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Security Settings Section -->
-                <section id="security-settings" class="settings-section d-none">
-                    <div class="section-header">
-                        <div>
-                            <h2 class="section-title">ความปลอดภัย & ตัวกรอง (Security & Filter)</h2>
-                            <p class="section-desc">จัดการการกรองคำหยาบและการเข้าถึง</p>
-                        </div>
-                    </div>
-
-                    <div class="settings-card">
-                        <div class="card-header-v2">
-                            <h3 class="card-title-v2">การกรองเนื้อหา (Content Filtering)</h3>
-                        </div>
-                        <div class="card-body-v2">
-                            <form id="securitySettingsForm">
-                                <div class="row g-4">
-                                    <div class="col-md-6">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
-                                            <div>
-                                                <label class="form-label-v2 mb-0"
-                                                    for="enableMessageFiltering">เปิดใช้งานตัวกรอง</label>
-                                                <div class="form-text-v2 mt-0">กรองคำหยาบหรือคำที่ไม่เหมาะสม</div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="enableMessageFiltering">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div
-                                            class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
-                                            <div>
-                                                <label class="form-label-v2 mb-0"
-                                                    for="enableStrictFiltering">โหมดเข้มงวด (Strict Mode)</label>
-                                                <div class="form-text-v2 mt-0">กรองละเอียดขึ้นและครอบคลุมมากขึ้น</div>
-                                            </div>
-                                            <div class="toggle-switch">
-                                                <input type="checkbox" id="enableStrictFiltering">
-                                                <span class="toggle-slider"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-12">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2" for="hiddenWords">คำที่ต้องการซ่อน (บรรทัดละ 1
-                                                คำ)</label>
-                                            <textarea class="form-control-v2" id="hiddenWords" rows="5"
-                                                placeholder="พิมพ์คำที่ต้องการซ่อนที่นี่..."></textarea>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group-v2">
-                                            <label class="form-label-v2"
-                                                for="replacementText">ข้อความที่ใช้แทนที่</label>
-                                            <input type="text" class="form-control-v2" id="replacementText"
-                                                placeholder="[ข้อความถูกซ่อน]">
-                                        </div>
-                                    </div>
-                                    <div class="col-12 text-end">
-                                        <button type="submit" class="btn-v2 btn-v2-primary">
-                                            <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
-                                        </button>
-                                    </div>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </section>
-
-            </main>
-        </div>
-
-        <div class="legacy-settings-toast" id="legacySettingsToast" aria-live="polite">
-            <div class="legacy-toast-header">
-                <div class="legacy-toast-title">
-                    <span class="legacy-toast-badge"><span class="legacy-toast-dot"></span>หน้าตั้งค่าใหม่</span>
-                </div>
-                <button type="button" class="btn-close btn-close-white" id="dismissLegacyToast"
-                    aria-label="ปิดการแจ้งเตือน"></button>
-            </div>
-            <p class="legacy-toast-text mb-2">หน้านี้เป็นเวอร์ชันใหม่ หากต้องการใช้การตั้งค่าแบบเดิมสามารถกดไปที่หน้าเก่าได้</p>
-            <div class="legacy-toast-actions">
-                <a class="btn btn-sm btn-light" href="/admin/settings">
-                    <i class="fas fa-undo-alt me-1"></i> ไปหน้าเก่า
-                </a>
-                <button type="button" class="btn btn-sm btn-outline-light" id="legacyToastCloseBtn">ปิด</button>
-            </div>
-        </div>
-
-        <!-- Modals -->
-        <%- include('partials/modals/line-bot-modal') %>
-            <%- include('partials/modals/facebook-bot-modal') %>
-
-                <!-- Image Collection Modal -->
-                <div class="modal fade" id="imageCollectionModal" tabindex="-1" aria-labelledby="imageCollectionModalLabel"
-                    aria-hidden="true">
-                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title" id="imageCollectionModalLabel">
-                                    <i class="fas fa-images me-2"></i>จัดการคลังรูปภาพ
-                                </h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"
-                                    aria-label="Close"></button>
                             </div>
-                            <div class="modal-body">
-                                <form id="imageCollectionForm">
-                                    <input type="hidden" id="imageCollectionId">
-                                    <div class="mb-3">
-                                        <label for="imageCollectionName" class="form-label">ชื่อคลังรูปภาพ <span
-                                                class="text-danger">*</span></label>
-                                        <input type="text" id="imageCollectionName" class="form-control"
-                                            placeholder="เช่น: แคมเปญเปิดตัวสินค้า" required>
+
+                            <div class="row g-3">
+                                <div class="col-lg-5">
+                                    <div class="gallery-step-label">
+                                        <span class="step-number" id="secretFixBtn"
+                                            title="คลิก 3 ครั้งเพื่อซ่อมแซมข้อมูล">ขั้นตอนที่ 1</span>
+                                        <span class="step-text">อัปโหลดรูปเข้าสู่ระบบ</span>
                                     </div>
-                                    <div class="mb-3">
-                                        <label for="imageCollectionDescription"
-                                            class="form-label">คำอธิบายเพิ่มเติม</label>
-                                        <textarea id="imageCollectionDescription" class="form-control" rows="2"
-                                            placeholder="ระบุรายละเอียดสั้น ๆ"></textarea>
+                                    <div class="card image-assets-card mb-4">
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                                <div>
+                                                    <h6 class="mb-1">คลังรูปภาพทั้งหมด</h6>
+                                                    <small class="text-muted">ใช้โทเคน <code>#[IMAGE:ชื่อรูป]</code>
+                                                        ในข้อความ AI</small>
+                                                </div>
+                                                <span class="badge bg-secondary-soft text-secondary"
+                                                    id="imageAssetsCount">0 รูป</span>
+                                            </div>
+                                            <div class="image-upload-dropzone" id="imageAssetDropzone">
+                                                <div class="dropzone-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                                                <div class="dropzone-text">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก</div>
+                                                <div class="dropzone-subtext text-muted">รองรับการเลือกหลายไฟล์พร้อมกัน
+                                                    (JPEG/PNG/WebP)</div>
+                                                <input type="file" id="imageAssetFile" accept="image/*" multiple hidden>
+                                                <button type="button" class="btn btn-sm btn-outline-primary mt-3"
+                                                    id="triggerImageAssetSelect">
+                                                    <i class="fas fa-folder-open me-1"></i>เลือกไฟล์จากเครื่อง
+                                                </button>
+                                            </div>
+                                            <div
+                                                class="upload-queue-toolbar d-flex justify-content-between align-items-center mt-3">
+                                                <div class="small text-muted" id="uploadQueueSummary">ยังไม่มีไฟล์ในคิว
+                                                </div>
+                                                <div class="d-flex gap-2">
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                        id="clearUploadQueueBtn" disabled>
+                                                        <i class="fas fa-times me-1"></i>ล้างคิว
+                                                    </button>
+                                                    <button type="button" class="btn btn-sm btn-primary"
+                                                        id="startUploadQueueBtn" disabled>
+                                                        <i class="fas fa-upload me-1"></i>อัปโหลดทั้งหมด
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div class="upload-queue-list mt-3" id="imageAssetQueue">
+                                                <div class="empty-state small text-muted text-center py-3">
+                                                    <i
+                                                        class="fas fa-images me-1"></i>เพิ่มรูปภาพเพื่อเตรียมตั้งชื่อและคำอธิบายได้ที่นี่
+                                                </div>
+                                            </div>
+                                            <hr class="my-4">
+                                            <div class="input-group input-group-sm mb-3">
+                                                <span class="input-group-text bg-light"><i
+                                                        class="fas fa-search"></i></span>
+                                                <input type="text" class="form-control" id="imageAssetsSearch"
+                                                    placeholder="ค้นหาชื่อหรือคำอธิบายรูป">
+                                            </div>
+                                            <div class="asset-selection-toolbar d-flex justify-content-between align-items-center mb-2"
+                                                id="assetSelectionToolbar" style="display: none;">
+                                                <div class="asset-selection-count text-muted small"></div>
+                                                <div class="asset-selection-actions d-flex gap-2">
+                                                    <button type="button" class="btn btn-sm btn-outline-danger"
+                                                        id="bulkDeleteAssetsBtn">
+                                                        <i class="fas fa-trash me-1"></i>ลบรูปที่เลือก
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div class="image-assets-list" id="imageAssetsList">
+                                                <div class="text-muted small py-3 text-center">กำลังโหลดรายการรูปภาพ...
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="mb-3">
-                                        <div class="d-flex justify-content-between align-items-center mb-2">
-                                            <label class="form-label mb-0">เลือกรูปภาพในคลัง</label>
-                                            <div class="text-muted small" id="collectionAssetCount">0 รูป</div>
+                                </div>
+                                <div class="col-lg-7">
+                                    <div class="gallery-step-label mb-3">
+                                        <span class="step-number">ขั้นตอนที่ 2</span>
+                                        <span class="step-text">จัดรูปเป็นชุด (Collections)</span>
+                                    </div>
+                                    <div class="card image-collections-card mb-3">
+                                        <div class="card-body d-flex flex-column">
+                                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                                <div>
+                                                    <h6 class="mb-1">ชุดรูปภาพ (Collections)</h6>
+                                                    <small
+                                                        class="text-muted">รวมรูปเป็นหมวดหมู่เพื่อเลือกให้แต่ละบอท</small>
+                                                </div>
+                                                <span class="badge bg-primary-soft text-primary"
+                                                    id="imageCollectionsCount">0 ชุด</span>
+                                            </div>
+                                            <div class="d-flex gap-2 mb-3 collection-filter-group">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary active"
+                                                    data-usage-filter="all">
+                                                    ทั้งหมด
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                    data-usage-filter="assigned">
+                                                    ใช้งานอยู่
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                    data-usage-filter="unassigned">
+                                                    ยังไม่ถูกเลือก
+                                                </button>
+                                            </div>
+                                            <div class="input-group input-group-sm mb-3">
+                                                <span class="input-group-text bg-light"><i
+                                                        class="fas fa-search"></i></span>
+                                                <input type="text" class="form-control" id="imageCollectionsSearch"
+                                                    placeholder="ค้นหาชื่อหรือคำอธิบาย">
+                                            </div>
+                                            <div class="image-collections-list" id="imageCollectionsList">
+                                                <div class="text-muted small py-3 text-center">
+                                                    กำลังโหลดรายการคลังรูปภาพ...</div>
+                                            </div>
                                         </div>
-                                        <div class="input-group input-group-sm mb-3">
-                                            <span class="input-group-text bg-light"><i
-                                                    class="fas fa-search"></i></span>
-                                            <input type="text" id="imageCollectionAssetSearch" class="form-control"
-                                                placeholder="ค้นหาตามชื่อหรือคำอธิบาย">
+                                    </div>
+                                    <div class="card mb-3">
+                                        <div class="card-body">
+                                            <h6 class="mb-3">การกำหนดคลังรูปภาพให้บอท</h6>
+                                            <div class="row g-3">
+                                                <div class="col-md-6">
+                                                    <div class="assignment-list" id="lineBotCollectionsList">
+                                                        <div class="text-muted small py-2 text-center">กำลังโหลด Line
+                                                            Bots...</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="assignment-list" id="facebookBotCollectionsList">
+                                                        <div class="text-muted small py-2 text-center">กำลังโหลด
+                                                            Facebook Bots...</div>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div class="collection-asset-grid" id="imageCollectionAssetList">
-                                            <div class="text-muted small">กำลังโหลดรายการรูปภาพ...</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Chat Settings Section -->
+                    <section id="chat-settings" class="settings-section d-none">
+                        <div class="section-header">
+                            <div>
+                                <h2 class="section-title">ตั้งค่าแชทและคิว (Chat & Queue)</h2>
+                                <p class="section-desc">กำหนดเวลาหน่วงการตอบกลับ (Delay), จำกัดคิวข้อความ
+                                    และการตอบกลับอัตโนมัติ</p>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2">การตั้งค่าคิวข้อความ</h3>
+                            </div>
+                            <div class="card-body-v2">
+                                <form id="chatSettingsForm">
+                                    <div class="row g-4">
+                                        <div class="col-md-6">
+                                            <div class="form-group-v2">
+                                                <label class="form-label-v2" for="chatDelaySeconds">เวลาหน่วงก่อนตอบ
+                                                    (วินาที)</label>
+                                                <input type="number" class="form-control-v2" id="chatDelaySeconds"
+                                                    min="0" max="60">
+                                                <div class="form-text-v2">
+                                                    เวลารอเพื่อรวมข้อความหลายข้อความเข้าด้วยกันก่อนส่งให้ AI</div>
+                                            </div>
                                         </div>
-                                        <div class="form-text mt-2">รูปภาพดึงจาก Instruction Assets</div>
+                                        <div class="col-md-6">
+                                            <div class="form-group-v2">
+                                                <label class="form-label-v2"
+                                                    for="maxQueueMessages">จำนวนข้อความสูงสุดในคิว</label>
+                                                <input type="number" class="form-control-v2" id="maxQueueMessages"
+                                                    min="1" max="50">
+                                                <div class="form-text-v2">หากข้อความในคิวถึงจำนวนนี้ ระบบจะประมวลผลทันที
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0"
+                                                        for="enableMessageMerging">รวมข้อความ
+                                                        (Merge Messages)</label>
+                                                    <div class="form-text-v2 mt-0">
+                                                        รวมข้อความที่ส่งติดกันเป็นข้อความเดียว
+                                                    </div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="enableMessageMerging">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0" for="showTokenUsage">แสดง Token
+                                                        Usage</label>
+                                                    <div class="form-text-v2 mt-0">แสดงข้อมูลการใช้ Token ต่อท้ายคำตอบ
+                                                        AI
+                                                    </div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="showTokenUsage">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <div class="form-group-v2">
+                                                <label class="form-label-v2"
+                                                    for="audioAttachmentResponse">ข้อความตอบกลับไฟล์เสียงอัตโนมัติ</label>
+                                                <textarea class="form-control-v2" id="audioAttachmentResponse"
+                                                    rows="2"></textarea>
+                                                <div class="form-text-v2">ข้อความที่จะส่งเมื่อผู้ใช้ส่งไฟล์เสียง
+                                                    (กรณีระบบยังไม่รองรับการถอดเสียง)</div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12 text-end">
+                                            <button type="submit" class="btn-v2 btn-v2-primary">
+                                                <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
+                                            </button>
+                                        </div>
                                     </div>
                                 </form>
                             </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-outline-danger me-auto"
-                                    id="deleteImageCollectionBtn" style="display: none;">
-                                    <i class="fas fa-trash me-1"></i>ลบคลังนี้
-                                </button>
-                                <button type="button" class="btn btn-secondary"
-                                    data-bs-dismiss="modal">ยกเลิก</button>
-                                <button type="button" class="btn btn-primary" id="saveImageCollectionBtn">
-                                    <i class="fas fa-save me-1"></i>บันทึก
-                                </button>
+                        </div>
+                    </section>
+
+                    <!-- System Settings Section -->
+                    <section id="system-settings" class="settings-section d-none">
+                        <div class="section-header">
+                            <div>
+                                <h2 class="section-title">ตั้งค่าระบบ (System Settings)</h2>
+                                <p class="section-desc">การตั้งค่าทั่วไปและโหมดการทำงานของระบบ</p>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2">การตั้งค่าทั่วไป</h3>
+                            </div>
+                            <div class="card-body-v2">
+                                <form id="systemSettingsForm">
+                                    <div class="row g-4">
+                                        <div class="col-md-12">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded mb-3">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0" for="aiEnabled">เปิดใช้งาน AI
+                                                        ทั้งระบบ
+                                                        (Global AI)</label>
+                                                    <div class="form-text-v2 mt-0">สวิตช์หลักสำหรับเปิด/ปิดการทำงานของ
+                                                        AI
+                                                        ทั้งหมด</div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="aiEnabled">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0"
+                                                        for="enableChatHistory">บันทึกประวัติแชท</label>
+                                                    <div class="form-text-v2 mt-0">
+                                                        บันทึกการสนทนาลงฐานข้อมูลเพื่อดูย้อนหลัง
+                                                    </div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="enableChatHistory">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0"
+                                                        for="enableAdminNotifications">แจ้งเตือนแอดมิน</label>
+                                                    <div class="form-text-v2 mt-0">แจ้งเตือนเมื่อมีข้อความใหม่เข้ามา
+                                                    </div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="enableAdminNotifications">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-group-v2">
+                                                <label class="form-label-v2" for="systemMode">โหมดระบบ</label>
+                                                <select class="form-control-v2" id="systemMode">
+                                                    <option value="production">Production (ใช้งานจริง)</option>
+                                                    <option value="development">Development (พัฒนา)</option>
+                                                    <option value="maintenance">Maintenance (ปิดปรับปรุง)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="col-12 text-end">
+                                            <button type="submit" class="btn-v2 btn-v2-primary">
+                                                <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Security Settings Section -->
+                    <section id="security-settings" class="settings-section d-none">
+                        <div class="section-header">
+                            <div>
+                                <h2 class="section-title">ความปลอดภัย & ตัวกรอง (Security & Filter)</h2>
+                                <p class="section-desc">จัดการการกรองคำหยาบและการเข้าถึง</p>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2">การกรองเนื้อหา (Content Filtering)</h3>
+                            </div>
+                            <div class="card-body-v2">
+                                <form id="securitySettingsForm">
+                                    <div class="row g-4">
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0"
+                                                        for="enableMessageFiltering">เปิดใช้งานตัวกรอง</label>
+                                                    <div class="form-text-v2 mt-0">กรองคำหยาบหรือคำที่ไม่เหมาะสม</div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="enableMessageFiltering">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0"
+                                                        for="enableStrictFiltering">โหมดเข้มงวด (Strict Mode)</label>
+                                                    <div class="form-text-v2 mt-0">กรองละเอียดขึ้นและครอบคลุมมากขึ้น
+                                                    </div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="enableStrictFiltering">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <div class="form-group-v2">
+                                                <label class="form-label-v2" for="hiddenWords">คำที่ต้องการซ่อน
+                                                    (บรรทัดละ 1
+                                                    คำ)</label>
+                                                <textarea class="form-control-v2" id="hiddenWords" rows="5"
+                                                    placeholder="พิมพ์คำที่ต้องการซ่อนที่นี่..."></textarea>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-group-v2">
+                                                <label class="form-label-v2"
+                                                    for="replacementText">ข้อความที่ใช้แทนที่</label>
+                                                <input type="text" class="form-control-v2" id="replacementText"
+                                                    placeholder="[ข้อความถูกซ่อน]">
+                                            </div>
+                                        </div>
+                                        <div class="col-12 text-end">
+                                            <button type="submit" class="btn-v2 btn-v2-primary">
+                                                <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </section>
+
+                </main>
+            </div>
+
+            <div class="legacy-settings-toast" id="legacySettingsToast" aria-live="polite">
+                <div class="legacy-toast-header">
+                    <div class="legacy-toast-title">
+                        <span class="legacy-toast-badge"><span class="legacy-toast-dot"></span>หน้าตั้งค่าใหม่</span>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" id="dismissLegacyToast"
+                        aria-label="ปิดการแจ้งเตือน"></button>
+                </div>
+                <p class="legacy-toast-text mb-2">หน้านี้เป็นเวอร์ชันใหม่
+                    หากต้องการใช้การตั้งค่าแบบเดิมสามารถกดไปที่หน้าเก่าได้</p>
+                <div class="legacy-toast-actions">
+                    <a class="btn btn-sm btn-light" href="/admin/settings">
+                        <i class="fas fa-undo-alt me-1"></i> ไปหน้าเก่า
+                    </a>
+                    <button type="button" class="btn btn-sm btn-outline-light" id="legacyToastCloseBtn">ปิด</button>
+                </div>
+            </div>
+
+            <!-- Modals -->
+            <%- include('partials/modals/line-bot-modal') %>
+                <%- include('partials/modals/facebook-bot-modal') %>
+
+                    <!-- Image Collection Modal -->
+                    <div class="modal fade" id="imageCollectionModal" tabindex="-1"
+                        aria-labelledby="imageCollectionModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="imageCollectionModalLabel">
+                                        <i class="fas fa-images me-2"></i>จัดการคลังรูปภาพ
+                                    </h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"
+                                        aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <form id="imageCollectionForm">
+                                        <input type="hidden" id="imageCollectionId">
+                                        <div class="mb-3">
+                                            <label for="imageCollectionName" class="form-label">ชื่อคลังรูปภาพ <span
+                                                    class="text-danger">*</span></label>
+                                            <input type="text" id="imageCollectionName" class="form-control"
+                                                placeholder="เช่น: แคมเปญเปิดตัวสินค้า" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="imageCollectionDescription"
+                                                class="form-label">คำอธิบายเพิ่มเติม</label>
+                                            <textarea id="imageCollectionDescription" class="form-control" rows="2"
+                                                placeholder="ระบุรายละเอียดสั้น ๆ"></textarea>
+                                        </div>
+                                        <div class="mb-3">
+                                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                                <label class="form-label mb-0">เลือกรูปภาพในคลัง</label>
+                                                <div class="text-muted small" id="collectionAssetCount">0 รูป</div>
+                                            </div>
+                                            <div class="input-group input-group-sm mb-3">
+                                                <span class="input-group-text bg-light"><i
+                                                        class="fas fa-search"></i></span>
+                                                <input type="text" id="imageCollectionAssetSearch" class="form-control"
+                                                    placeholder="ค้นหาตามชื่อหรือคำอธิบาย">
+                                            </div>
+                                            <div class="collection-asset-grid" id="imageCollectionAssetList">
+                                                <div class="text-muted small">กำลังโหลดรายการรูปภาพ...</div>
+                                            </div>
+                                            <div class="form-text mt-2">รูปภาพดึงจาก Instruction Assets</div>
+                                        </div>
+                                    </form>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-outline-danger me-auto"
+                                        id="deleteImageCollectionBtn" style="display: none;">
+                                        <i class="fas fa-trash me-1"></i>ลบคลังนี้
+                                    </button>
+                                    <button type="button" class="btn btn-secondary"
+                                        data-bs-dismiss="modal">ยกเลิก</button>
+                                    <button type="button" class="btn btn-primary" id="saveImageCollectionBtn">
+                                        <i class="fas fa-save me-1"></i>บันทึก
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- Assign Collections to Bot Modal -->
-                <div class="modal fade" id="botImageCollectionsModal" tabindex="-1"
-                    aria-labelledby="botImageCollectionsModalLabel" aria-hidden="true">
-                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title" id="botImageCollectionsModalLabel">
-                                    <i class="fas fa-layer-group me-2"></i>เลือกคลังรูปภาพ
-                                </h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"
-                                    aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="bot-collection-summary mb-3" id="botImageCollectionsSummary"></div>
-                                <div class="input-group input-group-sm mb-3">
-                                    <span class="input-group-text bg-light"><i class="fas fa-search"></i></span>
-                                    <input type="text" id="botCollectionsSearch" class="form-control"
-                                        placeholder="ค้นหาชื่อคลัง">
+                    <!-- Assign Collections to Bot Modal -->
+                    <div class="modal fade" id="botImageCollectionsModal" tabindex="-1"
+                        aria-labelledby="botImageCollectionsModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="botImageCollectionsModalLabel">
+                                        <i class="fas fa-layer-group me-2"></i>เลือกคลังรูปภาพ
+                                    </h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"
+                                        aria-label="Close"></button>
                                 </div>
-                                <div class="bot-collections-list" id="botImageCollectionsList">
-                                    <div class="text-muted small">กำลังโหลดรายการคลังรูปภาพ...</div>
+                                <div class="modal-body">
+                                    <div class="bot-collection-summary mb-3" id="botImageCollectionsSummary"></div>
+                                    <div class="input-group input-group-sm mb-3">
+                                        <span class="input-group-text bg-light"><i class="fas fa-search"></i></span>
+                                        <input type="text" id="botCollectionsSearch" class="form-control"
+                                            placeholder="ค้นหาชื่อคลัง">
+                                    </div>
+                                    <div class="bot-collections-list" id="botImageCollectionsList">
+                                        <div class="text-muted small">กำลังโหลดรายการคลังรูปภาพ...</div>
+                                    </div>
+                                    <div class="alert alert-info mt-3 mb-0">
+                                        <i class="fas fa-info-circle me-2"></i>หากไม่เลือกคลังรูปภาพ
+                                        ระบบจะใช้รูปทั้งหมดเป็นค่าเริ่มต้น
+                                    </div>
                                 </div>
-                                <div class="alert alert-info mt-3 mb-0">
-                                    <i class="fas fa-info-circle me-2"></i>หากไม่เลือกคลังรูปภาพ
-                                    ระบบจะใช้รูปทั้งหมดเป็นค่าเริ่มต้น
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
+                                    <button type="button" class="btn btn-primary" id="saveBotImageCollectionsBtn">
+                                        <i class="fas fa-save me-1"></i>บันทึกการเลือก
+                                    </button>
                                 </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
-                                <button type="button" class="btn btn-primary" id="saveBotImageCollectionsBtn">
-                                    <i class="fas fa-save me-1"></i>บันทึกการเลือก
-                                </button>
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-                <script src="/js/admin-settings-v2.js"></script>
-                <script src="/js/image-collections-management.js"></script>
+        </div> <!-- /app-content -->
+
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="/js/admin-settings-v2.js"></script>
+        <script src="/js/image-collections-management.js"></script>
 </body>
 
 </html>

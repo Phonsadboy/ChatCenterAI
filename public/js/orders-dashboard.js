@@ -63,6 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let densityMode = "comfortable";
   let activeOrders = [];
   let supportsManualScan = false;
+  let toastContainer = document.getElementById("ordersToastContainer");
 
   let orderPages = [];
   const pageLookup = new Map();
@@ -77,6 +78,42 @@ document.addEventListener("DOMContentLoaded", () => {
     key: "extractedAt",
     direction: "desc",
   };
+
+  function showToast(message, type = "info") {
+    if (!toastContainer) {
+      toastContainer = document.createElement("div");
+      toastContainer.className = "app-toast-container";
+      document.body.appendChild(toastContainer);
+    }
+
+    const typeMap = {
+      success: { icon: "fa-check-circle", className: "app-toast--success" },
+      error: { icon: "fa-times-circle", className: "app-toast--danger" },
+      warning: { icon: "fa-exclamation-triangle", className: "app-toast--warning" },
+      info: { icon: "fa-info-circle", className: "app-toast--info" },
+    };
+    const toastType = typeMap[type] ? type : "info";
+    const { icon, className } = typeMap[toastType];
+
+    const toast = document.createElement("div");
+    toast.className = `app-toast ${className}`;
+    toast.innerHTML = `
+      <div class="app-toast__icon"><i class="fas ${icon}"></i></div>
+      <div class="app-toast__body">
+        <div class="app-toast__title">${escapeHtml(message || "")}</div>
+      </div>
+      <button class="app-toast__close" aria-label="ปิดการแจ้งเตือน">&times;</button>
+    `;
+
+    const removeToast = () => {
+      toast.classList.add("hide");
+      setTimeout(() => toast.remove(), 200);
+    };
+
+    toast.querySelector(".app-toast__close").addEventListener("click", removeToast);
+    toastContainer.appendChild(toast);
+    setTimeout(removeToast, 3200);
+  }
 
   const debouncedReload = debounce(() => {
     loadOrders(1);
@@ -184,6 +221,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (resultsInfo) {
         resultsInfo.textContent = "เกิดข้อผิดพลาดในการโหลดข้อมูล";
       }
+      showToast(error.message || "ไม่สามารถโหลดข้อมูลออเดอร์ได้", "error");
     } finally {
       setLoading(false);
     }
@@ -203,6 +241,13 @@ document.addEventListener("DOMContentLoaded", () => {
       tableBody.innerHTML = "";
       updateSelectAllState();
       updateBulkActions();
+      if (tableWrapper) {
+        tableWrapper.classList.add("loading");
+      }
+    } else {
+      if (tableWrapper) {
+        tableWrapper.classList.remove("loading");
+      }
     }
   }
 
@@ -288,7 +333,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         return `
           <tr data-order-id="${escapeAttribute(orderId)}">
-            <td class="col-select" data-label="เลือก">
+            <td class="col-select d-flex align-items-center gap-2" data-label="เลือก">
               <input
                 class="form-check-input order-select"
                 type="checkbox"
@@ -350,7 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
             </td>
             <td data-label="หมายเหตุ">${notes}</td>
             <td data-label="การจัดการ" class="col-actions">
-              <div class="d-flex flex-wrap gap-2">
+              <div class="d-flex flex-wrap gap-2 justify-content-end">
                 ${
                   hasAddress
                     ? `<button
@@ -1684,8 +1729,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const text = value === undefined || value === null ? "" : String(value);
     if (!text) return;
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast("คัดลอกแล้ว", "success");
+        return;
+      } catch (error) {
+        console.warn("Clipboard write failed", error);
+      }
     }
     const textarea = document.createElement("textarea");
     textarea.value = text;
@@ -1696,6 +1746,7 @@ document.addEventListener("DOMContentLoaded", () => {
     textarea.select();
     document.execCommand("copy");
     document.body.removeChild(textarea);
+    showToast("คัดลอกแล้ว", "success");
   }
 
   function indicateActionSuccess(button) {
@@ -1762,7 +1813,7 @@ document.addEventListener("DOMContentLoaded", () => {
         toggleButton.innerHTML = originalHtml;
         toggleButton.disabled = false;
       }
-      alert(error.message || "ไม่สามารถอัปเดตสถานะออเดอร์ได้");
+      showToast(error.message || "ไม่สามารถอัปเดตสถานะออเดอร์ได้", "error");
     } finally {
       if (toggleButton.isConnected) {
         toggleButton.dataset.loading = "false";

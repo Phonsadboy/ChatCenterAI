@@ -8,17 +8,21 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="/css/style.css" rel="stylesheet">
     <link href="/css/chat-redesign.css" rel="stylesheet">
+    <link href="/css/chat-a11y.css" rel="stylesheet">
+    <link href="/css/chat-meta.css" rel="stylesheet">
 </head>
-<body>
+<body class="app-shell">
     <!-- Navigation -->
     <%- include('partials/admin-navbar', { activePage: 'chat' }) %>
 
     <!-- Main Chat Container -->
+    <div class="app-content">
     <div class="chat-app-wrapper">
-        <div class="container-fluid">
+        <div class="container-fluid px-0">
             <div class="chat-app">
                 <!-- Sidebar Overlay (Mobile) -->
                 <div class="sidebar-overlay" id="sidebarOverlay"></div>
+                <div class="sidebar-overlay" id="orderSidebarOverlay"></div>
                 
                 <!-- Left Sidebar - User List -->
                 <aside class="chat-sidebar" id="chatSidebar">
@@ -49,7 +53,7 @@
                     </div>
 
                     <!-- Filter Panel (Collapsible) -->
-                    <div class="filter-panel" id="filterPanel" style="display: none;">
+                    <div class="filter-panel" id="filterPanel" style="display: none;" role="region" aria-label="ตัวกรองรายชื่อผู้ใช้">
                         <div class="filter-header">
                             <span class="filter-title">ตัวกรอง</span>
                             <button class="btn-clear-filter" id="clearFilters">ล้างทั้งหมด</button>
@@ -137,6 +141,9 @@
                             <button class="btn-header-action" id="btnRefreshProfile" title="อัปเดตข้อมูลผู้ใช้">
                                 <i class="fas fa-sync"></i>
                             </button>
+                            <button class="btn-header-action d-lg-none" id="btnToggleOrders" title="ดูออเดอร์">
+                                <i class="fas fa-clipboard-list"></i>
+                            </button>
                             <div class="header-divider"></div>
                             <button class="btn-header-action btn-danger" id="btnClearChat" title="ล้างแชท">
                                 <i class="fas fa-trash"></i>
@@ -148,12 +155,12 @@
                     <div class="messages-wrapper" id="messagesWrapper">
                         <div class="messages-container" id="messagesContainer">
                             <!-- Empty State -->
-                            <div class="empty-state" id="emptyState">
-                                <div class="empty-icon">
+                            <div class="empty-state app-empty" id="emptyState">
+                                <div class="app-empty__icon">
                                     <i class="fab fa-facebook-messenger"></i>
                                 </div>
-                                <h5>เลือกแชทเพื่อเริ่มการสนทนา</h5>
-                                <p>เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที</p>
+                                <div class="app-empty__title">เลือกแชทเพื่อเริ่มการสนทนา</div>
+                                <div class="app-empty__desc">เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที</div>
                             </div>
                         </div>
                     </div>
@@ -217,6 +224,7 @@
                 </aside>
             </div>
         </div>
+    </div>
     </div>
 
     <!-- Image Modal -->
@@ -390,6 +398,8 @@
     <script src="/socket.io/socket.io.js"></script>
     <script src="/js/chat-redesign.js"></script>
     
+    </div> <!-- /app-content -->
+
     <script>
         // Initialize chat manager
         const chatManager = new ChatManager();

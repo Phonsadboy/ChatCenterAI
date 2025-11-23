@@ -1,0 +1,176 @@
+:root {
+  --followup-radius: 12px;
+}
+
+.followup-summary-card {
+  border: 1px solid var(--border, #E1E5EF);
+  background: var(--bg-card, #fff);
+  border-radius: var(--followup-radius);
+  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+}
+
+.followup-summary-card .summary-value {
+  color: var(--color-primary, #4A6FA5);
+}
+
+.followup-summary-card .summary-label {
+  color: var(--text-sub, #5C6372);
+  letter-spacing: 0.04em;
+}
+
+.followup-summary-card .summary-icon {
+  color: var(--color-primary, #4A6FA5);
+}
+
+.followup-page-pill {
+  border: 1px solid var(--border, #E1E5EF);
+  background: var(--bg-card, #fff);
+  color: var(--text-main, #1E2430);
+  border-radius: 999px;
+  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+}
+
+.followup-page-pill .pill-badge {
+  background: rgba(74, 111, 165, 0.12);
+  color: var(--color-primary, #4A6FA5);
+}
+
+.followup-page-pill:hover,
+.followup-page-pill.active {
+  background: rgba(74, 111, 165, 0.08);
+  color: var(--text-main, #1E2430);
+  box-shadow: 0 8px 20px rgba(22, 34, 56, 0.08);
+  border-color: rgba(74, 111, 165, 0.35);
+}
+
+.followup-page-pill.active .pill-badge,
+.followup-page-pill.active .pill-status,
+.followup-page-pill.active .pill-dot {
+  background: rgba(74, 111, 165, 0.12);
+  color: var(--color-primary, #4A6FA5);
+}
+
+.followup-page-pill.disabled {
+  opacity: 0.6;
+}
+
+.followup-card {
+  border: 1px solid var(--border, #E1E5EF);
+  background: var(--bg-card, #fff);
+  border-radius: 12px;
+  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+}
+
+.followup-avatar {
+  background: linear-gradient(135deg, rgba(74, 111, 165, 0.9), rgba(74, 111, 165, 0.7));
+}
+
+.followup-section .label {
+  color: var(--text-sub, #5C6372);
+}
+
+.followup-section .value {
+  color: var(--text-main, #1E2430);
+}
+
+.followup-list {
+  gap: 0.9rem;
+}
+
+.followup-page-table-wrapper {
+  border: 1px solid var(--border, #E1E5EF);
+  border-radius: 12px;
+  background: var(--bg-card, #fff);
+  padding: 0.35rem;
+  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+}
+
+.followup-page-table thead th {
+  background: #f9fafc;
+  color: var(--text-sub, #5C6372);
+  border-color: var(--border, #E1E5EF);
+}
+
+.followup-page-table tbody td {
+  border-color: var(--border, #E1E5EF);
+  color: var(--text-main, #1E2430);
+}
+
+.followup-page-row.is-muted td {
+  color: var(--text-muted, #8B92A3);
+}
+
+.followup-page-stat .label {
+  color: var(--text-sub, #5C6372);
+}
+
+.followup-page-stat .value {
+  color: var(--text-main, #1E2430);
+}
+
+.followup-page-actions .btn-group .btn {
+  border-radius: 8px !important;
+}
+
+.followup-round-image-card {
+  border: 1px solid var(--border, #E1E5EF);
+  border-radius: 10px;
+  background: #f9fafc;
+}
+
+.filter-pills .filter-pill {
+  border: 1px solid var(--border, #E1E5EF);
+  background: var(--bg-card, #fff);
+  color: var(--text-main, #1E2430);
+  border-radius: 999px;
+  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+}
+
+.filter-pills .filter-pill.active {
+  background: rgba(74, 111, 165, 0.1);
+  border-color: rgba(74, 111, 165, 0.4);
+  color: var(--color-primary, #4A6FA5);
+}
+
+.followup-search .form-control:focus {
+  box-shadow: 0 0 0 3px rgba(165, 184, 217, 0.35);
+  border-color: var(--color-primary, #4A6FA5);
+}
+
+.followup-config-preview {
+  border: 1px solid var(--border, #E1E5EF);
+  border-radius: 12px;
+  background: #f9fafc;
+  padding: 0.9rem 1rem;
+}
+
+@media (max-width: 767.98px) {
+  .followup-page-table thead {
+    display: none;
+  }
+  .followup-page-table tbody tr {
+    display: block;
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: 10px;
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+    background: var(--bg-card, #fff);
+  }
+  .followup-page-table tbody td {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    border: none;
+  }
+  .followup-page-table tbody td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--text-sub, #5C6372);
+  }
+  .followup-page-table tbody td.followup-page-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+}

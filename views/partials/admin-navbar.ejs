@@ -1,99 +1,130 @@
-<%
-  const current = typeof activePage !== 'undefined' ? activePage : '';
-  const signedInUser = typeof adminUser !== 'undefined' && adminUser ? adminUser : null;
-  const roleBadgeLabel = signedInUser
-    ? (signedInUser.role === 'superadmin' ? 'แอดมินใหญ่' : 'ผู้ดูแลระบบ')
-    : '';
-%>
-<nav class="navbar navbar-expand-lg navbar-light app-navbar">
-  <div class="container">
-    <a class="navbar-brand" href="/admin/dashboard">
-      <i class="fas fa-robot"></i> จัดการ AI
-    </a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navbarNav">
-      <ul class="navbar-nav ms-auto align-items-lg-center">
-        <li class="nav-item">
-          <a class="nav-link<%= current === 'dashboard' ? ' active' : '' %>" href="/admin/dashboard">
-            <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link<%= current === 'broadcast' ? ' active' : '' %>" href="/admin/broadcast">
-            <i class="fas fa-bullhorn"></i> บรอดแคสต์
-          </a>
-        </li>
-        <li class="nav-item position-relative">
-          <a class="nav-link<%= current === 'chat' ? ' active' : '' %>" href="/admin/chat">
-            <i class="fas fa-comments"></i> แชท
-            <span class="badge bg-danger notification-badge" id="chatNotificationBadge" style="display: none;">0</span>
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link<%= current === 'orders' ? ' active' : '' %>" href="/admin/orders">
-            <i class="fas fa-shopping-basket"></i> ออเดอร์
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link<%= current === 'followup' ? ' active' : '' %>" href="/admin/followup">
-            <i class="fas fa-user-clock"></i> ติดตามลูกค้า
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link<%= current === 'facebook-posts' ? ' active' : '' %>" href="/admin/facebook-posts">
-            <i class="fas fa-comment-dots"></i> โพสต์ FB/คอมเมนต์
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link<%= (current === 'settings' || current === 'settings2') ? ' active' : '' %>" href="/admin/settings2">
-            <i class="fas fa-cogs"></i> ตั้งค่า
-          </a>
-        </li>
-        <% if (signedInUser) { %>
-          <li class="nav-item d-flex align-items-center nav-user-pill">
-            <span class="badge rounded-pill bg-light text-dark">
-              <i class="fas fa-user-shield me-1 text-primary"></i>
-              <%= roleBadgeLabel %>
-              <% if (signedInUser.label) { %>
-                <span class="text-muted">&middot; <%= signedInUser.label %></span>
-              <% } %>
-            </span>
+<% const current=typeof activePage !=='undefined' ? activePage : '' ; const signedInUser=typeof adminUser !=='undefined'
+  && adminUser ? adminUser : null; const roleBadgeLabel=signedInUser ? (signedInUser.role==='superadmin' ? 'แอดมินใหญ่'
+  : 'ผู้ดูแลระบบ' ) : '' ; %>
+  <nav class="navbar navbar-expand-lg navbar-light app-navbar">
+    <div class="container">
+      <div class="d-flex align-items-center">
+        <a class="navbar-brand me-2" href="/admin/dashboard">
+          <i class="fas fa-robot"></i> จัดการ AI
+        </a>
+        <select id="globalFontSelector"
+          class="form-select form-select-sm border-0 bg-transparent text-muted shadow-none py-0 ps-0 pe-4"
+          style="width: auto; font-size: 0.8rem; cursor: pointer; height: auto;">
+          <option value="'Mali', 'Inter', sans-serif">Mali (Default)</option>
+          <option value="'Sarabun', sans-serif">Sarabun</option>
+          <option value="'Krub', sans-serif">Krub</option>
+          <option value="'Mitr', sans-serif">Mitr</option>
+          <option value="'Pridi', serif">Pridi</option>
+          <option value="'Niramit', sans-serif">Niramit</option>
+        </select>
+      </div>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav ms-auto align-items-lg-center">
+          <li class="nav-item">
+            <a class="nav-link<%= current === 'dashboard' ? ' active' : '' %>" href="/admin/dashboard">
+              <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
+            </a>
           </li>
           <li class="nav-item">
-            <button type="button" class="nav-link btn btn-link logout-link" id="adminLogoutBtn">
-              <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
-            </button>
+            <a class="nav-link<%= current === 'broadcast' ? ' active' : '' %>" href="/admin/broadcast">
+              <i class="fas fa-bullhorn"></i> บรอดแคสต์
+            </a>
           </li>
-        <% } %>
-      </ul>
+          <li class="nav-item position-relative">
+            <a class="nav-link<%= current === 'chat' ? ' active' : '' %>" href="/admin/chat">
+              <i class="fas fa-comments"></i> แชท
+              <span class="badge bg-danger notification-badge" id="chatNotificationBadge"
+                style="display: none;">0</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link<%= current === 'orders' ? ' active' : '' %>" href="/admin/orders">
+              <i class="fas fa-shopping-basket"></i> ออเดอร์
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link<%= current === 'followup' ? ' active' : '' %>" href="/admin/followup">
+              <i class="fas fa-user-clock"></i> ติดตามลูกค้า
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link<%= current === 'facebook-posts' ? ' active' : '' %>" href="/admin/facebook-posts">
+              <i class="fas fa-comment-dots"></i> โพสต์ FB/คอมเมนต์
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link<%= (current === 'settings' || current === 'settings2') ? ' active' : '' %>"
+              href="/admin/settings2">
+              <i class="fas fa-cogs"></i> ตั้งค่า
+            </a>
+          </li>
+          <% if (signedInUser) { %>
+            <li class="nav-item d-flex align-items-center nav-user-pill">
+              <span class="badge rounded-pill bg-light text-dark">
+                <i class="fas fa-user-shield me-1 text-primary"></i>
+                <%= roleBadgeLabel %>
+                  <% if (signedInUser.label) { %>
+                    <span class="text-muted">&middot; <%= signedInUser.label %></span>
+                    <% } %>
+              </span>
+            </li>
+            <li class="nav-item">
+              <button type="button" class="nav-link btn btn-link logout-link" id="adminLogoutBtn">
+                <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
+              </button>
+            </li>
+            <% } %>
+        </ul>
+      </div>
     </div>
-  </div>
-</nav>
-<script>
-  (function() {
-    window.adminAuth = window.adminAuth || {};
-    window.adminAuth.requirePasscode = <%= isPasscodeRequired ? 'true' : 'false' %>;
-    window.adminAuth.user = <%- JSON.stringify(signedInUser || null) %>;
+  </nav>
+  <script>
+    (function () {
+      // Auth Logic
+      window.adminAuth = window.adminAuth || {};
+      window.adminAuth.requirePasscode = <%= isPasscodeRequired ? 'true' : 'false' %>;
+      window.adminAuth.user = <% - JSON.stringify(signedInUser || null) %>;
 
-    const logoutBtn = document.getElementById('adminLogoutBtn');
-    if (logoutBtn) {
-      logoutBtn.addEventListener('click', async (event) => {
-        event.preventDefault();
-        logoutBtn.disabled = true;
-        try {
-          const response = await fetch('/admin/logout', { method: 'POST' });
-          if (!response.ok) {
-            throw new Error('logout_failed');
+      const logoutBtn = document.getElementById('adminLogoutBtn');
+      if (logoutBtn) {
+        logoutBtn.addEventListener('click', async (event) => {
+          event.preventDefault();
+          logoutBtn.disabled = true;
+          try {
+            const response = await fetch('/admin/logout', { method: 'POST' });
+            if (!response.ok) {
+              throw new Error('logout_failed');
+            }
+            window.location.href = '/admin/login';
+          } catch (error) {
+            console.error('[Auth] logout error:', error);
+            alert('ออกจากระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+            logoutBtn.disabled = false;
           }
-          window.location.href = '/admin/login';
-        } catch (error) {
-          console.error('[Auth] logout error:', error);
-          alert('ออกจากระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
-          logoutBtn.disabled = false;
+        });
+      }
+
+      // Global Font Selector Logic
+      document.addEventListener('DOMContentLoaded', function () {
+        const fontSelector = document.getElementById('globalFontSelector');
+        if (fontSelector) {
+          const savedFont = localStorage.getItem('adminFont');
+          if (savedFont) {
+            document.documentElement.style.setProperty('--font-family-base', savedFont);
+            document.documentElement.style.setProperty('--font-family-heading', savedFont);
+            fontSelector.value = savedFont;
+          }
+
+          fontSelector.addEventListener('change', (e) => {
+            const font = e.target.value;
+            document.documentElement.style.setProperty('--font-family-base', font);
+            document.documentElement.style.setProperty('--font-family-heading', font);
+            localStorage.setItem('adminFont', font);
+          });
         }
       });
-    }
-  })();
-</script>
+    })();
+  </script>

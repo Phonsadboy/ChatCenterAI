@@ -8,12 +8,14 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <link href="/css/style.css" rel="stylesheet">
+  <link href="/css/admin-facebook.css" rel="stylesheet">
 </head>
 
-<body>
+<body class="app-shell">
   <%- include('partials/admin-navbar', { activePage: 'facebook-posts' }) %>
 
-    <div class="container mt-4 mb-5">
+    <div class="app-content">
+      <div class="container mt-4 mb-5">
       <div class="row justify-content-center">
         <div class="col-lg-11">
           <div class="mb-4">
@@ -50,14 +52,14 @@
                 </div>
               </div>
 
-              <div class="card shadow-sm mb-4">
-                <div class="card-header bg-light">
+              <div class="card shadow-sm mb-4 fb-page-card">
+                <div class="fb-card-header">
                   <div class="d-flex justify-content-between align-items-center">
                     <div class="fw-semibold text-body">
                       <i class="fas fa-layer-group me-2 text-primary"></i>เลือกเพจ
                     </div>
-                    <div>
-                      <button id="syncPostsBtn" class="btn btn-outline-success btn-sm me-2"
+                    <div class="d-flex gap-2">
+                      <button id="syncPostsBtn" class="btn btn-outline-success btn-sm"
                         title="ดึงข้อมูลโพสต์ล่าสุดจาก Facebook API">
                         <i class="fas fa-cloud-download-alt me-1"></i>ดึงโพสต์ล่าสุด
                       </button>
@@ -67,7 +69,7 @@
                     </div>
                   </div>
                 </div>
-                <div class="card-body">
+                <div class="fb-card-body">
                   <div class="mb-3">
                     <label class="form-label">Facebook Page</label>
                     <select id="facebookBotSelect" class="form-select">
@@ -87,15 +89,15 @@
 
               <div class="row g-3">
                 <div class="col-lg-5">
-                  <div class="card shadow-sm h-100">
-                    <div class="card-header bg-light">
+                  <div class="card shadow-sm h-100 fb-info-card">
+                    <div class="fb-card-header">
                       <div class="fw-semibold text-body">
                         <i class="fas fa-sliders-h me-2 text-primary"></i>นโยบายค่าเริ่มต้นระดับเพจ
                         <i class="fas fa-question-circle text-muted ms-1" data-bs-toggle="tooltip"
                           title="การตั้งค่านี้จะใช้กับทุกโพสต์ในเพจ เว้นแต่คุณจะไปตั้งค่าแยกในแต่ละโพสต์"></i>
                       </div>
                     </div>
-                    <div class="card-body">
+                    <div class="fb-card-body">
                       <div class="mb-3">
                         <label class="form-label">
                           โหมดตอบ
@@ -147,14 +149,14 @@
                 </div>
 
                 <div class="col-lg-7">
-                  <div class="card shadow-sm h-100">
-                    <div class="card-header bg-light">
+                  <div class="card shadow-sm h-100 fb-info-card">
+                    <div class="fb-card-header">
                       <div class="fw-semibold text-body">
                         <i class="fas fa-list me-2 text-primary"></i>โพสต์ที่ระบบจับอัตโนมัติ
                         <span class="badge bg-secondary ms-2">ค่าเริ่มต้น: ปิด</span>
                       </div>
                     </div>
-                    <div class="card-body">
+                    <div class="fb-card-body">
                       <div id="postListStatus" class="text-muted small mb-2"></div>
                       <div id="postList" class="vstack gap-3"></div>
                     </div>
@@ -165,18 +167,22 @@
         </div>
       </div>
     </div>
+  </div>
+
+    </div> <!-- /app-content -->
+
+    <div id="facebookToastContainer" class="app-toast-container"></div>
 
     <script id="facebookBotData" type="application/json">
-    <%- JSON.stringify({ facebookBots, selectedBotId }) %>
-  </script>
+      <%- JSON.stringify({ facebookBots, selectedBotId }) %>
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-      // Initialize Tooltips
       document.addEventListener('DOMContentLoaded', function () {
-        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
-        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-          return new bootstrap.Tooltip(tooltipTriggerEl)
-        })
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+          return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
       });
     </script>
     <script src="/js/admin-facebook-posts.js"></script>
