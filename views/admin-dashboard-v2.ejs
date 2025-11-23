@@ -16,7 +16,7 @@
         .instruction-card {
             border: 1px solid #dee2e6;
             border-radius: var(--border-radius);
-            margin-bottom: 16px;
+            margin-bottom: 8px;
             background: #fff;
             transition: box-shadow 0.2s;
         }
@@ -26,12 +26,12 @@
         }
 
         .instruction-header {
-            padding: 16px;
+            padding: 10px 12px;
             border-bottom: 1px solid #e9ecef;
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            gap: 12px;
+            gap: 6px;
         }
 
         .instruction-title {
@@ -42,9 +42,9 @@
         }
 
         .instruction-desc {
-            font-size: 13px;
+            font-size: 12px;
             color: #6c757d;
-            margin: 4px 0 0 0;
+            margin: 2px 0 0 0;
         }
 
         .instruction-actions {
@@ -54,24 +54,24 @@
         }
 
         .instruction-actions .btn {
-            padding: 4px 8px;
-            font-size: 13px;
+            padding: 4px 6px;
+            font-size: 12px;
         }
 
         .data-items-container {
-            padding: 12px 16px;
+            padding: 8px 12px;
         }
 
         .data-item {
-            padding: 10px 12px;
+            padding: 8px 10px;
             border: 1px solid #e9ecef;
             border-radius: 6px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             background: #f8f9fa;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 12px;
+            gap: 6px;
         }
 
         .data-item:last-child {
@@ -90,7 +90,7 @@
             color: #495057;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 4px;
         }
 
         .data-item-order {
@@ -128,21 +128,21 @@
         }
 
         .instruction-footer {
-            padding: 12px 16px;
+            padding: 10px 12px;
             border-top: 1px solid #e9ecef;
             background: #fafbfc;
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 6px;
             font-size: 12px;
             color: #6c757d;
         }
 
         .btn-add-item {
             width: 100%;
-            padding: 8px;
+            padding: 7px;
             font-size: 13px;
             border: 1px dashed #dee2e6;
             background: #fff;
@@ -156,13 +156,13 @@
 
         .empty-state {
             text-align: center;
-            padding: 48px 24px;
+            padding: 28px 18px;
             color: #6c757d;
         }
 
         .empty-state i {
             font-size: 48px;
-            margin-bottom: 16px;
+            margin-bottom: 8px;
             color: #dee2e6;
         }
 
@@ -188,8 +188,8 @@
         .dashboard-header {
             background: #fff;
             border-bottom: 1px solid #dee2e6;
-            padding: 20px 0;
-            margin-bottom: 24px;
+            padding: 10px 0;
+            margin-bottom: 10px;
         }
 
         .search-bar {
@@ -200,6 +200,10 @@
             border: 1px solid #dee2e6;
             border-radius: var(--border-radius);
             background: #fff;
+        }
+
+        .instruction-editor-card .card-body {
+            padding: 11px 12px;
         }
 
         .instruction-editor-status {
@@ -222,21 +226,23 @@
 
     <div class="dashboard-header">
         <div class="container-fluid">
-            <div class="row align-items-center g-3">
+            <div class="row align-items-center g-2">
                 <div class="col-md-6">
                     <h4 class="mb-1">จัดการ AI Instructions</h4>
                     <p class="text-muted small mb-0">สร้างและจัดการชุดข้อมูลที่ AI ใช้ตอบลูกค้า</p>
                 </div>
                 <div class="col-md-6 text-md-end">
-                    <button class="btn btn-outline-success me-2" id="exportBtn">
-                        <i class="fas fa-file-excel me-1"></i> Export
-                    </button>
-                    <button class="btn btn-outline-primary me-2" id="importBtn" data-bs-toggle="modal" data-bs-target="#uploadExcelModal">
-                        <i class="fas fa-file-import me-1"></i> Import
-                    </button>
-                    <button class="btn btn-primary" id="createInstructionBtn">
-                        <i class="fas fa-plus me-1"></i> สร้าง Instruction
-                    </button>
+                    <div class="d-flex flex-wrap justify-content-md-end gap-2">
+                        <button class="btn btn-outline-success" id="btnOpenExport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="export">
+                            <i class="fas fa-file-excel me-1"></i> Export
+                        </button>
+                        <button class="btn btn-outline-primary" id="btnOpenImport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="import">
+                            <i class="fas fa-file-import me-1"></i> Import
+                        </button>
+                        <button class="btn btn-primary" id="createInstructionBtn">
+                            <i class="fas fa-plus me-1"></i> สร้าง Instruction
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -250,7 +256,7 @@
             </div>
         <% } %>
 
-        <div class="row mb-3">
+        <div class="row g-2 mb-2">
             <div class="col-md-6">
                 <div class="search-bar">
                     <input type="search" class="form-control" id="searchInstructions" placeholder="🔍 ค้นหา Instruction...">
@@ -258,9 +264,9 @@
             </div>
         </div>
 
-        <div class="card instruction-editor-card mb-4">
+        <div class="card instruction-editor-card mb-3">
             <div class="card-body">
-                <div class="row g-3 align-items-end">
+                <div class="row g-2 align-items-end">
                     <div class="col-md-5 col-lg-4">
                         <label for="instructionSelect" class="form-label">เลือก Instruction ที่ต้องการแก้ไข</label>
                         <select id="instructionSelect" class="form-select">
@@ -286,21 +292,21 @@
                         </button>
                     </div>
                 </div>
-                <div id="instructionEditorEmptyState" class="alert alert-info mt-3 mb-0">
+                <div id="instructionEditorEmptyState" class="alert alert-info mt-2 mb-0">
                     <i class="fas fa-info-circle me-2"></i> เลือก Instruction เพื่อโหลดข้อมูลและแก้ไขรายละเอียด
                 </div>
-                <div id="instructionEditorLoading" class="mt-3 d-none">
+                <div id="instructionEditorLoading" class="mt-2 d-none">
                     <div class="d-flex align-items-center gap-2 text-muted">
                         <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
                         <span>กำลังโหลดข้อมูล...</span>
                     </div>
                 </div>
-                <div id="instructionEditorFields" class="mt-3 d-none">
-                    <div class="mb-3">
+                <div id="instructionEditorFields" class="mt-2 d-none">
+                    <div class="mb-2">
                         <label class="form-label">ชื่อ Instruction <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="instructionEditorName" placeholder="ใส่ชื่อ Instruction">
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-2">
                         <label class="form-label">คำอธิบาย</label>
                         <textarea class="form-control" id="instructionEditorDescription" rows="3" placeholder="อธิบายสั้น ๆ ว่า Instruction นี้ใช้สำหรับอะไร"></textarea>
                     </div>
@@ -408,7 +414,7 @@
                                     </div>
                                 <% }) %>
                             <% } else { %>
-                                <div class="text-center text-muted py-3 small">
+                                <div class="text-center text-muted py-2 small">
                                     ยังไม่มีชุดข้อมูล
                                 </div>
                             <% } %>
@@ -476,7 +482,7 @@
                         <i class="fas fa-info-circle me-2"></i>
                         นี่คือข้อมูลที่ AI จะได้รับเมื่อตอบลูกค้า
                     </div>
-                    <pre id="previewContent" style="background: #f8f9fa; padding: 16px; border-radius: 6px; max-height: 400px; overflow: auto;"></pre>
+                    <pre id="previewContent" style="background: #f8f9fa; padding: 12px; border-radius: 6px; max-height: 400px; overflow: auto;"></pre>
                     <div class="mt-3 text-muted small">
                         <div><i class="fas fa-database me-2"></i>ชุดข้อมูล: <span id="previewDataItemCount">0</span></div>
                         <div><i class="fas fa-font me-2"></i>จำนวนอักขระ: <span id="previewCharCount">0</span></div>
@@ -490,50 +496,10 @@
         </div>
     </div>
 
-    <!-- Modal: Upload Excel -->
-    <div class="modal fade" id="uploadExcelModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="fas fa-file-excel me-2"></i> นำเข้า Instruction จาก Excel
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="alert alert-info">
-                        <i class="fas fa-info-circle me-2"></i>
-                        <strong>คำแนะนำ:</strong> ระบบรองรับไฟล์ที่ได้จากการ Export เท่านั้น (ต้องมี Sheet "Instructions" และ "DataItems")
-                    </div>
-
-                    <form id="excelUploadForm" enctype="multipart/form-data">
-                        <div class="mb-3">
-                            <label class="form-label">เลือกไฟล์ Excel (.xlsx)</label>
-                            <input type="file" id="excelFileInput" name="file" class="form-control" accept=".xlsx" required>
-                        </div>
-
-                        <div id="excelPreviewSection" class="mb-3 d-none">
-                            <h6>ตัวอย่างข้อมูลที่จะนำเข้า:</h6>
-                            <div id="excelPreviewContent" class="bg-light p-3 rounded" style="max-height: 200px; overflow: auto;">
-                                <!-- Preview content inserted via JS -->
-                            </div>
-                        </div>
-
-                        <div class="text-end">
-                            <button type="button" class="btn btn-outline-secondary" id="previewExcelBtn">
-                                <i class="fas fa-eye me-1"></i> ดูตัวอย่าง
-                            </button>
-                            <button type="submit" class="btn btn-primary ms-2" id="uploadExcelBtn" disabled>
-                                <i class="fas fa-upload me-1"></i> นำเข้าข้อมูล
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
+    <%- include('partials/modals/import-export-sheets-modal') %>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/js/admin-dashboard-v2.js"></script>
+    <script src="/js/import-export-manager.js"></script>
 </body>
 </html>

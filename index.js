@@ -12,8 +12,10 @@ const line = require("@line/bot-sdk");
 const sharp = require("sharp"); // <--- เพิ่มตรงนี้ ตามต้นฉบับ
 const axios = require("axios");
 const path = require("path");
+const os = require("os");
 const http = require("http");
 const socketIo = require("socket.io");
+const InstructionDataService = require("./services/instructionDataService");
 // Middleware & misc packages for UI
 const helmet = require("helmet");
 const cors = require("cors");
@@ -6557,36 +6559,35 @@ app.get("/api/instructions-v2/export", async (req, res) => {
   }
 });
 
-// API: Preview Import Instructions V2
-app.post("/api/instructions-v2/preview-import", upload.single("file"), async (req, res) => {
+// API: Preview Import Sheets (New Design)
+app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: "กรุณาอัพโหลดไฟล์ Excel" });
     }
 
-    const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const service = new InstructionDataService(db);
+    
+    // Save buffer to temp file
+    const tempDir = os.tmpdir();
+    const token = `import_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.xlsx`;
+    const filePath = path.join(tempDir, token);
+    
+    fs.writeFileSync(filePath, req.file.buffer);
+    
+    const previews = service.previewImportSheets(filePath);
+    
+    // Get list of existing instructions for mapping
+    const instructions = await db.collection("instructions_v2").find({}, { projection: { _id: 1, name: 1 } }).toArray();
 
-    // Check sheets
-    if (!wb.SheetNames.includes("Instructions") || !wb.SheetNames.includes("DataItems")) {
-      return res.status(400).json({ success: false, error: "รูปแบบไฟล์ไม่ถูกต้อง (ต้องมี sheet 'Instructions' และ 'DataItems')" });
-    }
-
-    const instructionsRaw = XLSX.utils.sheet_to_json(wb.Sheets["Instructions"]);
-    const dataItemsRaw = XLSX.utils.sheet_to_json(wb.Sheets["DataItems"]);
-
-    const previews = instructionsRaw.map(row => {
-      const name = row["Name"] || "(ไม่มีชื่อ)";
-      const idStr = row["Instruction ID"];
-      const items = dataItemsRaw.filter(r => r["Instruction ID"] === idStr);
-
-      return {
-        name,
-        itemsCount: items.length,
-        description: row["Description"] || ""
-      };
+    res.json({ 
+      success: true, 
+      previews, 
+      fileToken: token,
+      existingInstructions: instructions 
     });
-
-    res.json({ success: true, previews });
 
   } catch (err) {
     console.error("Error previewing import:", err);
@@ -6594,123 +6595,62 @@ app.post("/api/instructions-v2/preview-import", upload.single("file"), async (re
   }
 });
 
-// API: Import Instructions V2 from Excel
-app.post("/api/instructions-v2/import", upload.single("file"), async (req, res) => {
+// API: Execute Import Sheets (New Design)
+app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, error: "กรุณาอัพโหลดไฟล์ Excel" });
+    const { mappings, fileToken } = req.body;
+    
+    if (!fileToken || !mappings) {
+       return res.status(400).json({ success: false, error: "ข้อมูลไม่ครบถ้วน" });
     }
-
-    const wb = XLSX.read(req.file.buffer, { type: "buffer" });
-
-    // Check sheets
-    if (!wb.SheetNames.includes("Instructions") || !wb.SheetNames.includes("DataItems")) {
-      return res.status(400).json({ success: false, error: "รูปแบบไฟล์ไม่ถูกต้อง (ต้องมี sheet 'Instructions' และ 'DataItems')" });
+    
+    const tempDir = os.tmpdir();
+    const filePath = path.join(tempDir, fileToken);
+    
+    if (!fs.existsSync(filePath)) {
+       return res.status(400).json({ success: false, error: "ไฟล์หมดอายุหรือถูกลบไปแล้ว กรุณาอัพโหลดใหม่" });
     }
 
     const client = await connectDB();
     const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
+    const service = new InstructionDataService(db);
+    
+    const results = await service.executeImport(mappings, filePath);
+    
+    // Clean up
+    try { fs.unlinkSync(filePath); } catch(e) {}
 
-    const instructionsRaw = XLSX.utils.sheet_to_json(wb.Sheets["Instructions"]);
-    const dataItemsRaw = XLSX.utils.sheet_to_json(wb.Sheets["DataItems"]);
-
-    let importedCount = 0;
-    let updatedCount = 0;
-
-    for (const row of instructionsRaw) {
-      const idStr = row["Instruction ID"];
-      const name = row["Name"];
-      const desc = row["Description"];
-
-      if (!name) continue;
-
-      let instructionId = null;
-      let isUpdate = false;
-
-      const objId = toObjectId(idStr);
-      if (objId) {
-        const existing = await coll.findOne({ _id: objId });
-        if (existing) {
-          instructionId = existing._id;
-          isUpdate = true;
-        }
-      }
-
-      const now = new Date();
-      const docData = {
-        name: name,
-        description: desc || "",
-        updatedAt: now
-      };
-
-      if (isUpdate) {
-        await coll.updateOne({ _id: instructionId }, { $set: docData });
-        // Reset data items to prevent duplication on repeated imports
-        await coll.updateOne({ _id: instructionId }, { $set: { dataItems: [] } });
-        updatedCount++;
-      } else {
-        // Create New
-        const newDoc = {
-          ...docData,
-          instructionId: generateInstructionId(),
-          dataItems: [],
-          usageCount: 0,
-          createdAt: now
-        };
-        const result = await coll.insertOne(newDoc);
-        instructionId = result.insertedId;
-        importedCount++;
-      }
-
-      // Find items for this instruction (using the ID from Excel)
-      const items = dataItemsRaw.filter(r => r["Instruction ID"] === idStr);
-
-      const cleanDataItems = [];
-      for (const itemRow of items) {
-        const type = itemRow["Item Type"] || "text";
-        const title = itemRow["Item Title"] || "ไม่มีชื่อ";
-        const contentData = itemRow["Content/Data"];
-        const order = itemRow["Order"] || 0;
-
-        const newItem = {
-          itemId: generateDataItemId(),
-          title: title,
-          type: type,
-          order: order,
-          createdAt: now,
-          updatedAt: now
-        };
-
-        if (type === "text") {
-          newItem.content = contentData ? String(contentData) : "";
-          newItem.data = null;
-        } else if (type === "table") {
-          newItem.content = "";
-          try {
-            newItem.data = contentData ? JSON.parse(contentData) : null;
-          } catch (e) {
-            newItem.data = null;
-          }
-        }
-
-        cleanDataItems.push(newItem);
-      }
-
-      cleanDataItems.sort((a, b) => a.order - b.order);
-
-      if (cleanDataItems.length > 0) {
-        await coll.updateOne(
-          { _id: instructionId },
-          { $set: { dataItems: cleanDataItems } }
-        );
-      }
-    }
-
-    res.json({ success: true, message: `นำเข้าสำเร็จ: สร้างใหม่ ${importedCount}, อัปเดต ${updatedCount}` });
+    res.json({ success: true, results });
 
   } catch (err) {
-    console.error("Error importing instructions:", err);
+    console.error("Error executing import:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Export Sheets (New Design)
+app.post("/api/instructions-v2/export-sheets", async (req, res) => {
+  try {
+    const { instructionIds } = req.body;
+    
+    if (!instructionIds || !Array.isArray(instructionIds) || instructionIds.length === 0) {
+       return res.status(400).json({ success: false, error: "กรุณาเลือก Instruction ที่ต้องการส่งออก" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const service = new InstructionDataService(db);
+    
+    const buffer = await service.exportInstructions(instructionIds);
+    
+    const filename = `instructions_export_${moment().format('YYYYMMDD_HHmm')}.xlsx`;
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+
+  } catch (err) {
+    console.error("Error exporting sheets:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
