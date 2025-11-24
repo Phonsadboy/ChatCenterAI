@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="th">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,333 +10,404 @@
     <link href="/css/style.css" rel="stylesheet">
     <link href="/css/admin-dashboard-v2.css" rel="stylesheet">
 </head>
+
 <body class="app-shell">
     <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
 
-    <div class="app-content">
-    <% 
-        const instructionCount = instructions.length;
-        const dataItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).length), 0);
-        const textItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).filter(it => it.type === 'text').length), 0);
-        const tableItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).filter(it => it.type === 'table').length), 0);
-        const lastUpdated = instructions.reduce((latest, ins) => {
-            const val = ins.updatedAt || ins.createdAt;
-            if (!val) return latest;
-            return !latest || new Date(val) > new Date(latest) ? val : latest;
-        }, null);
-    %>
+        <div class="app-content">
+            <% const instructionCount=instructions.length; const dataItemCount=instructions.reduce((sum, ins)=> sum +
+                ((ins.dataItems || []).length), 0);
+                const textItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).filter(it =>
+                it.type === 'text').length), 0);
+                const tableItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).filter(it =>
+                it.type === 'table').length), 0);
+                const lastUpdated = instructions.reduce((latest, ins) => {
+                const val = ins.updatedAt || ins.createdAt;
+                if (!val) return latest;
+                return !latest || new Date(val) > new Date(latest) ? val : latest;
+                }, null);
+                %>
 
-    <div class="dashboard-topbar">
-        <div class="row g-3 align-items-center">
-            <div class="col-lg-8">
-                <div class="dashboard-topbar__title">
-                    <i class="fas fa-microchip text-primary"></i>
-                    จัดการ AI Instructions
-                </div>
-                <p class="dashboard-topbar__desc">สร้างและจัดการชุดข้อมูลที่ AI ใช้ตอบลูกค้า พร้อมสรุปสถานะล่าสุด</p>
-                <div class="dashboard-metrics">
-                    <div class="metric-pill">
-                        <i class="fas fa-layer-group text-primary"></i>
-                        ทั้งหมด <strong><%= instructionCount %></strong> ชุด
-                    </div>
-                    <div class="metric-pill">
-                        <i class="fas fa-database text-success"></i>
-                        ข้อมูล <strong><%= dataItemCount %></strong> รายการ
-                    </div>
-                    <div class="metric-pill">
-                        <i class="fas fa-font text-info"></i>
-                        Text <strong><%= textItemCount %></strong> / Table <strong><%= tableItemCount %></strong>
-                    </div>
-                    <div class="metric-pill">
-                        <i class="fas fa-clock text-warning"></i>
-                        อัปเดตล่าสุด <strong><%= lastUpdated ? new Date(lastUpdated).toLocaleString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-' %></strong>
-                    </div>
-                </div>
-            </div>
-            <div class="col-lg-4 text-lg-end">
-                <div class="topbar-actions">
-                    <button class="btn btn-outline-success" id="btnOpenExport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="export">
-                        <i class="fas fa-file-export me-1"></i> Export
-                    </button>
-                    <button class="btn btn-outline-primary" id="btnOpenImport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="import">
-                        <i class="fas fa-file-import me-1"></i> Import
-                    </button>
-                    <button class="btn btn-primary" id="createInstructionBtn">
-                        <i class="fas fa-plus me-1"></i> สร้าง Instruction
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="container-fluid">
-        <% if (typeof error !== 'undefined' && error) { %>
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <i class="fas fa-exclamation-circle me-2"></i> <%= error %>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <% } %>
-
-        <div class="row g-2 mb-3">
-            <div class="col-md-8">
-                <div class="search-bar">
-                    <input type="search" class="form-control" id="searchInstructions" placeholder="🔍 ค้นหา Instruction...">
-                </div>
-            </div>
-            <div class="col-md-4 d-flex justify-content-md-end align-items-center">
-                <span class="instruction-editor-chip">
-                    <i class="fas fa-hashtag"></i>
-                    ทั้งหมด <strong><%= instructions.length %></strong> ชุด
-                </span>
-            </div>
-        </div>
-
-        <div class="card instruction-editor-card mb-3 shadow-sm">
-            <div class="card-body">
-                <div class="row g-2 align-items-end">
-                    <div class="col-md-5 col-lg-4">
-                        <label for="instructionSelect" class="form-label">เลือก Instruction ที่ต้องการแก้ไข</label>
-                        <select id="instructionSelect" class="form-select">
-                            <option value="">— เลือก Instruction —</option>
-                            <% instructions.forEach(instruction => { %>
-                                <% const updatedAt = instruction.updatedAt || instruction.createdAt; %>
-                                <option value="<%= instruction._id %>" data-updated="<%= updatedAt ? new Date(updatedAt).toISOString() : '' %>">
-                                    <%= instruction.instructionId ? '[' + instruction.instructionId + '] ' : '' %><%= instruction.name || 'ไม่มีชื่อ' %>
-                                    <% if (updatedAt) { %>
-                                        — <%= new Date(updatedAt).toLocaleString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) %>
-                                    <% } %>
-                                </option>
-                            <% }) %>
-                        </select>
-                    </div>
-                    <div class="col-md-4 col-lg-4">
-                        <label class="form-label">สถานะ</label>
-                        <div id="instructionEditorStatus" class="instruction-editor-status">ยังไม่ได้เลือก Instruction</div>
-                    </div>
-                    <div class="col-md-3 col-lg-4 col-xl-3 d-flex align-items-end justify-content-md-end">
-                        <button class="btn btn-success w-100 w-md-auto" id="saveInstructionChangesBtn" disabled>
-                            <i class="fas fa-save me-1"></i> บันทึกการแก้ไข
-                        </button>
-                    </div>
-                </div>
-                <div id="instructionEditorEmptyState" class="alert alert-info mt-2 mb-0">
-                    <i class="fas fa-info-circle me-2"></i> เลือก Instruction เพื่อโหลดข้อมูลและแก้ไขรายละเอียด
-                </div>
-                <div id="instructionEditorLoading" class="mt-2 d-none">
-                    <div class="d-flex align-items-center gap-2 text-muted">
-                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                        <span>กำลังโหลดข้อมูล...</span>
-                    </div>
-                </div>
-                <div id="instructionEditorFields" class="mt-2 d-none">
-                    <div class="mb-2">
-                        <label class="form-label">ชื่อ Instruction <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="instructionEditorName" placeholder="ใส่ชื่อ Instruction">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label">คำอธิบาย</label>
-                        <textarea class="form-control" id="instructionEditorDescription" rows="3" placeholder="อธิบายสั้น ๆ ว่า Instruction นี้ใช้สำหรับอะไร"></textarea>
-                    </div>
-                    <div class="d-flex justify-content-between flex-wrap gap-2">
-                        <div class="small text-muted" id="instructionEditorUpdatedAt"></div>
-                        <div id="instructionDirtyAlert" class="instruction-editor-alert alert alert-warning py-2 px-3 mb-0 d-none">
-                            <i class="fas fa-exclamation-triangle me-1"></i> มีการแก้ไขที่ยังไม่บันทึก
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <% if (instructions.length === 0) { %>
-            <div class="empty-state-card">
-                <div class="app-empty">
-                    <div class="app-empty__icon">
-                        <i class="fas fa-book-open"></i>
-                    </div>
-                    <div class="app-empty__title">ยังไม่มี Instruction</div>
-                    <div class="app-empty__desc">เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI ใช้ตอบลูกค้า</div>
-                    <button class="btn btn-primary mt-2" onclick="document.getElementById('createInstructionBtn').click()">
-                        <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
-                    </button>
-                </div>
-            </div>
-        <% } else { %>
-            <div id="instructionCardsEmptyState">
-                <div class="app-empty">
-                    <div class="app-empty__icon">
-                        <i class="fas fa-book-open"></i>
-                    </div>
-                    <div class="app-empty__title">เลือก Instruction เพื่อดูและแก้ไขรายละเอียด</div>
-                    <div class="app-empty__desc">ใช้ตัวเลือกด้านบนเพื่อโหลดข้อมูลที่ต้องการแก้ไข</div>
-                </div>
-            </div>
-            <div id="instructionCardsWrapper" class="instruction-grid d-none">
-                <% instructions.forEach(instruction => { %>
-                    <div class="instruction-card" data-id="<%= instruction._id %>">
-                        <div class="instruction-header">
-                            <div class="flex-grow-1">
-                                <h5 class="instruction-title"><%= instruction.name || 'ไม่มีชื่อ' %></h5>
-                                <% if (instruction.description) { %>
-                                    <p class="instruction-desc"><%= instruction.description %></p>
-                                <% } %>
+                <div class="dashboard-topbar">
+                    <div class="row g-3 align-items-center">
+                        <div class="col-lg-8">
+                            <div class="dashboard-topbar__title">
+                                <i class="fas fa-microchip text-primary"></i>
+                                จัดการ AI Instructions
                             </div>
-                            <div class="instruction-actions">
-                                <button class="btn btn-sm btn-outline-primary edit-instruction" data-id="<%= instruction._id %>">
-                                    <i class="fas fa-edit"></i>
+                            <p class="dashboard-topbar__desc">สร้างและจัดการชุดข้อมูลที่ AI ใช้ตอบลูกค้า
+                                พร้อมสรุปสถานะล่าสุด</p>
+                            <div class="dashboard-metrics">
+                                <div class="metric-pill">
+                                    <i class="fas fa-layer-group text-primary"></i>
+                                    ทั้งหมด <strong>
+                                        <%= instructionCount %>
+                                    </strong> ชุด
+                                </div>
+                                <div class="metric-pill">
+                                    <i class="fas fa-database text-success"></i>
+                                    ข้อมูล <strong>
+                                        <%= dataItemCount %>
+                                    </strong> รายการ
+                                </div>
+                                <div class="metric-pill">
+                                    <i class="fas fa-font text-info"></i>
+                                    Text <strong>
+                                        <%= textItemCount %>
+                                    </strong> / Table <strong>
+                                        <%= tableItemCount %>
+                                    </strong>
+                                </div>
+                                <div class="metric-pill">
+                                    <i class="fas fa-clock text-warning"></i>
+                                    อัปเดตล่าสุด <strong>
+                                        <%= lastUpdated ? new Date(lastUpdated).toLocaleString('th-TH', {
+                                            year: 'numeric' , month: 'short' , day: 'numeric' , hour: '2-digit' ,
+                                            minute: '2-digit' }) : '-' %>
+                                    </strong>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-4 text-lg-end">
+                            <div class="topbar-actions">
+                                <button class="btn btn-outline-success" id="btnOpenExport" data-bs-toggle="modal"
+                                    data-bs-target="#importExportModal" data-tab="export">
+                                    <i class="fas fa-file-export me-1"></i> Export
                                 </button>
-                                <button class="btn btn-sm btn-outline-secondary preview-instruction" data-id="<%= instruction._id %>">
-                                    <i class="fas fa-eye"></i>
+                                <button class="btn btn-outline-primary" id="btnOpenImport" data-bs-toggle="modal"
+                                    data-bs-target="#importExportModal" data-tab="import">
+                                    <i class="fas fa-file-import me-1"></i> Import
                                 </button>
-                                <button class="btn btn-sm btn-outline-info duplicate-instruction" data-id="<%= instruction._id %>">
-                                    <i class="fas fa-copy"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-danger delete-instruction" data-id="<%= instruction._id %>">
-                                    <i class="fas fa-trash"></i>
+                                <button class="btn btn-primary" id="createInstructionBtn">
+                                    <i class="fas fa-plus me-1"></i> สร้าง Instruction
                                 </button>
                             </div>
                         </div>
+                    </div>
+                </div>
 
-                        <div class="data-items-container" data-instruction-id="<%= instruction._id %>">
-                            <% if (instruction.dataItems && instruction.dataItems.length > 0) { %>
-                                <% instruction.dataItems.forEach((item, index) => { %>
-                                    <div class="data-item" data-item-id="<%= item.itemId %>" data-instruction-id="<%= instruction._id %>">
-                                        <div class="data-item-info">
-                                            <div class="data-item-title">
-                                                <span class="type-badge type-<%= item.type %>"><%= item.type === 'text' ? 'Text' : 'Table' %></span>
-                                                <span class="data-item-order"><%= index + 1 %>.</span>
-                                                <span class="data-item-title-text"><%= item.title || 'ไม่มีชื่อ' %></span>
-                                            </div>
-                                            <div class="data-item-meta">
-                                                <% if (item.type === 'text') { %>
-                                                    <%= (item.content || '').length %> อักขระ
-                                                <% } else if (item.type === 'table' && item.data) { %>
-                                                    <%= (item.data.columns || []).length %> คอลัมน์ × <%= (item.data.rows || []).length %> แถว
-                                                <% } %>
-                                                • แก้ไข: <%= item.updatedAt ? new Date(item.updatedAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-' %>
-                                            </div>
+                <div class="container-fluid">
+                    <% if (typeof error !=='undefined' && error) { %>
+                        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                            <i class="fas fa-exclamation-circle me-2"></i>
+                            <%= error %>
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                        <% } %>
+                            <div class="card instruction-editor-card mb-3 shadow-sm">
+                                <div class="card-body">
+                                    <div class="row g-2 align-items-end">
+                                        <div class="col-md-5 col-lg-4">
+                                            <label for="instructionSelect" class="form-label">เลือก Instruction
+                                                ที่ต้องการแก้ไข</label>
+                                            <select id="instructionSelect" class="form-select">
+                                                <option value="">— เลือก Instruction —</option>
+                                                <% instructions.forEach(instruction=> { %>
+                                                    <% const updatedAt=instruction.updatedAt || instruction.createdAt;
+                                                        %>
+                                                        <option value="<%= instruction._id %>"
+                                                            data-updated="<%= updatedAt ? new Date(updatedAt).toISOString() : '' %>">
+                                                            <%= instruction.instructionId ? '[' +
+                                                                instruction.instructionId + '] ' : '' %>
+                                                                <%= instruction.name || 'ไม่มีชื่อ' %>
+                                                                    <% if (updatedAt) { %>
+                                                                        — <%= new
+                                                                            Date(updatedAt).toLocaleString('th-TH', {
+                                                                            year: 'numeric' , month: 'short' ,
+                                                                            day: 'numeric' , hour: '2-digit' ,
+                                                                            minute: '2-digit' }) %>
+                                                                            <% } %>
+                                                        </option>
+                                                        <% }) %>
+                                            </select>
                                         </div>
-                                        <div class="data-item-actions">
-                                            <button class="btn btn-sm btn-outline-secondary btn-move move-data-item"
-                                                    data-direction="up"
-                                                    data-instruction-id="<%= instruction._id %>"
-                                                    data-item-id="<%= item.itemId %>">
-                                                <i class="fas fa-arrow-up"></i>
-                                            </button>
-                                            <button class="btn btn-sm btn-outline-secondary btn-move move-data-item"
-                                                    data-direction="down"
-                                                    data-instruction-id="<%= instruction._id %>"
-                                                    data-item-id="<%= item.itemId %>">
-                                                <i class="fas fa-arrow-down"></i>
-                                            </button>
-                                            <button class="btn btn-sm btn-outline-primary edit-data-item"
-                                                    data-instruction-id="<%= instruction._id %>"
-                                                    data-item-id="<%= item.itemId %>">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                            <button class="btn btn-sm btn-outline-secondary duplicate-data-item"
-                                                    data-instruction-id="<%= instruction._id %>"
-                                                    data-item-id="<%= item.itemId %>">
-                                                <i class="fas fa-copy"></i>
-                                            </button>
-                                            <button class="btn btn-sm btn-outline-danger delete-data-item"
-                                                    data-instruction-id="<%= instruction._id %>"
-                                                    data-item-id="<%= item.itemId %>">
-                                                <i class="fas fa-times"></i>
+                                        <div class="col-md-4 col-lg-4">
+                                            <label class="form-label">สถานะ</label>
+                                            <div id="instructionEditorStatus" class="instruction-editor-status">
+                                                ยังไม่ได้เลือก Instruction</div>
+                                        </div>
+                                        <div
+                                            class="col-md-3 col-lg-4 col-xl-3 d-flex align-items-end justify-content-md-end">
+                                            <button class="btn btn-success w-100 w-md-auto"
+                                                id="saveInstructionChangesBtn" disabled>
+                                                <i class="fas fa-save me-1"></i> บันทึกการแก้ไข
                                             </button>
                                         </div>
                                     </div>
-                                <% }) %>
-                            <% } else { %>
-                                <div class="text-center text-muted py-2 small">
-                                    ยังไม่มีชุดข้อมูล
+                                    <div id="instructionEditorEmptyState" class="alert alert-info mt-2 mb-0">
+                                        <i class="fas fa-info-circle me-2"></i> เลือก Instruction
+                                        เพื่อโหลดข้อมูลและแก้ไขรายละเอียด
+                                    </div>
+                                    <div id="instructionEditorLoading" class="mt-2 d-none">
+                                        <div class="d-flex align-items-center gap-2 text-muted">
+                                            <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                            </div>
+                                            <span>กำลังโหลดข้อมูล...</span>
+                                        </div>
+                                    </div>
+                                    <div id="instructionEditorFields" class="mt-2 d-none">
+                                        <div class="mb-2">
+                                            <label class="form-label">ชื่อ Instruction <span
+                                                    class="text-danger">*</span></label>
+                                            <input type="text" class="form-control" id="instructionEditorName"
+                                                placeholder="ใส่ชื่อ Instruction">
+                                        </div>
+                                        <div class="mb-2">
+                                            <label class="form-label">คำอธิบาย</label>
+                                            <textarea class="form-control" id="instructionEditorDescription" rows="3"
+                                                placeholder="อธิบายสั้น ๆ ว่า Instruction นี้ใช้สำหรับอะไร"></textarea>
+                                        </div>
+                                        <div class="d-flex justify-content-between flex-wrap gap-2">
+                                            <div class="small text-muted" id="instructionEditorUpdatedAt"></div>
+                                            <div id="instructionDirtyAlert"
+                                                class="instruction-editor-alert alert alert-warning py-2 px-3 mb-0 d-none">
+                                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                                มีการแก้ไขที่ยังไม่บันทึก
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            <% } %>
+                            </div>
 
-                            <button class="btn btn-add-item add-data-item" data-instruction-id="<%= instruction._id %>">
-                                <i class="fas fa-plus me-1"></i> เพิ่มชุดข้อมูล
-                            </button>
-                        </div>
+                            <% if (instructions.length===0) { %>
+                                <div class="empty-state-card">
+                                    <div class="app-empty">
+                                        <div class="app-empty__icon">
+                                            <i class="fas fa-book-open"></i>
+                                        </div>
+                                        <div class="app-empty__title">ยังไม่มี Instruction</div>
+                                        <div class="app-empty__desc">เริ่มต้นสร้าง Instruction แรกเพื่อให้ AI
+                                            ใช้ตอบลูกค้า</div>
+                                        <button class="btn btn-primary mt-2"
+                                            onclick="document.getElementById('createInstructionBtn').click()">
+                                            <i class="fas fa-plus me-1"></i> สร้าง Instruction แรก
+                                        </button>
+                                    </div>
+                                </div>
+                                <% } else { %>
+                                    <div id="instructionCardsEmptyState">
+                                        <div class="app-empty">
+                                            <div class="app-empty__icon">
+                                                <i class="fas fa-book-open"></i>
+                                            </div>
+                                            <div class="app-empty__title">เลือก Instruction เพื่อดูและแก้ไขรายละเอียด
+                                            </div>
+                                            <div class="app-empty__desc">ใช้ตัวเลือกด้านบนเพื่อโหลดข้อมูลที่ต้องการแก้ไข
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div id="instructionCardsWrapper" class="instruction-grid d-none">
+                                        <% instructions.forEach(instruction=> { %>
+                                            <div class="instruction-card" data-id="<%= instruction._id %>">
+                                                <div class="instruction-header">
+                                                    <div class="flex-grow-1">
+                                                        <h5 class="instruction-title">
+                                                            <%= instruction.name || 'ไม่มีชื่อ' %>
+                                                        </h5>
+                                                        <% if (instruction.description) { %>
+                                                            <p class="instruction-desc">
+                                                                <%= instruction.description %>
+                                                            </p>
+                                                            <% } %>
+                                                    </div>
+                                                    <div class="instruction-actions">
+                                                        <button class="btn btn-sm btn-outline-primary edit-instruction"
+                                                            data-id="<%= instruction._id %>">
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                        <button
+                                                            class="btn btn-sm btn-outline-secondary preview-instruction"
+                                                            data-id="<%= instruction._id %>">
+                                                            <i class="fas fa-eye"></i>
+                                                        </button>
+                                                        <button
+                                                            class="btn btn-sm btn-outline-info duplicate-instruction"
+                                                            data-id="<%= instruction._id %>">
+                                                            <i class="fas fa-copy"></i>
+                                                        </button>
+                                                        <button class="btn btn-sm btn-outline-danger delete-instruction"
+                                                            data-id="<%= instruction._id %>">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </div>
 
-                        <div class="instruction-footer">
-                            <span>
-                                <i class="fas fa-database me-1"></i>
-                                <%= (instruction.dataItems || []).length %> ชุดข้อมูล
-                            </span>
-                            <span>
-                                <i class="fas fa-clock me-1"></i>
-                                แก้ไข: <%= instruction.updatedAt ? new Date(instruction.updatedAt).toLocaleString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-' %>
-                            </span>
+                                                <div class="data-items-container"
+                                                    data-instruction-id="<%= instruction._id %>">
+                                                    <% if (instruction.dataItems && instruction.dataItems.length> 0) {
+                                                        %>
+                                                        <% instruction.dataItems.forEach((item, index)=> { %>
+                                                            <div class="data-item" data-item-id="<%= item.itemId %>"
+                                                                data-instruction-id="<%= instruction._id %>">
+                                                                <div class="data-item-info">
+                                                                    <div class="data-item-title">
+                                                                        <span class="type-badge type-<%= item.type %>">
+                                                                            <%= item.type==='text' ? 'Text' : 'Table' %>
+                                                                        </span>
+                                                                        <span class="data-item-order">
+                                                                            <%= index + 1 %>.
+                                                                        </span>
+                                                                        <span class="data-item-title-text">
+                                                                            <%= item.title || 'ไม่มีชื่อ' %>
+                                                                        </span>
+                                                                    </div>
+                                                                    <div class="data-item-meta">
+                                                                        <% if (item.type==='text' ) { %>
+                                                                            <%= (item.content || '' ).length %> อักขระ
+                                                                                <% } else if (item.type==='table' &&
+                                                                                    item.data) { %>
+                                                                                    <%= (item.data.columns || []).length
+                                                                                        %> คอลัมน์ × <%= (item.data.rows
+                                                                                            || []).length %> แถว
+                                                                                            <% } %>
+                                                                                                • แก้ไข: <%=
+                                                                                                    item.updatedAt ? new
+                                                                                                    Date(item.updatedAt).toLocaleDateString('th-TH',
+                                                                                                    { year: 'numeric' ,
+                                                                                                    month: 'short' ,
+                                                                                                    day: 'numeric' })
+                                                                                                    : '-' %>
+                                                                    </div>
+                                                                </div>
+                                                                <div class="data-item-actions">
+                                                                    <button
+                                                                        class="btn btn-sm btn-outline-secondary btn-move move-data-item"
+                                                                        data-direction="up"
+                                                                        data-instruction-id="<%= instruction._id %>"
+                                                                        data-item-id="<%= item.itemId %>">
+                                                                        <i class="fas fa-arrow-up"></i>
+                                                                    </button>
+                                                                    <button
+                                                                        class="btn btn-sm btn-outline-secondary btn-move move-data-item"
+                                                                        data-direction="down"
+                                                                        data-instruction-id="<%= instruction._id %>"
+                                                                        data-item-id="<%= item.itemId %>">
+                                                                        <i class="fas fa-arrow-down"></i>
+                                                                    </button>
+                                                                    <button
+                                                                        class="btn btn-sm btn-outline-primary edit-data-item"
+                                                                        data-instruction-id="<%= instruction._id %>"
+                                                                        data-item-id="<%= item.itemId %>">
+                                                                        <i class="fas fa-edit"></i>
+                                                                    </button>
+                                                                    <button
+                                                                        class="btn btn-sm btn-outline-secondary duplicate-data-item"
+                                                                        data-instruction-id="<%= instruction._id %>"
+                                                                        data-item-id="<%= item.itemId %>">
+                                                                        <i class="fas fa-copy"></i>
+                                                                    </button>
+                                                                    <button
+                                                                        class="btn btn-sm btn-outline-danger delete-data-item"
+                                                                        data-instruction-id="<%= instruction._id %>"
+                                                                        data-item-id="<%= item.itemId %>">
+                                                                        <i class="fas fa-times"></i>
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            <% }) %>
+                                                                <% } else { %>
+                                                                    <div class="text-center text-muted py-2 small">
+                                                                        ยังไม่มีชุดข้อมูล
+                                                                    </div>
+                                                                    <% } %>
+
+                                                                        <button class="btn btn-add-item add-data-item"
+                                                                            data-instruction-id="<%= instruction._id %>">
+                                                                            <i class="fas fa-plus me-1"></i>
+                                                                            เพิ่มชุดข้อมูล
+                                                                        </button>
+                                                </div>
+
+                                                <div class="instruction-footer">
+                                                    <span>
+                                                        <i class="fas fa-database me-1"></i>
+                                                        <%= (instruction.dataItems || []).length %> ชุดข้อมูล
+                                                    </span>
+                                                    <span>
+                                                        <i class="fas fa-clock me-1"></i>
+                                                        แก้ไข: <%= instruction.updatedAt ? new
+                                                            Date(instruction.updatedAt).toLocaleString('th-TH', {
+                                                            year: 'numeric' , month: 'short' , day: 'numeric' ,
+                                                            hour: '2-digit' , minute: '2-digit' }) : '-' %>
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <% }) %>
+                                                <% } %>
+                                    </div>
+                </div>
+
+                <!-- Modal: Create/Edit Instruction -->
+                <div class="modal fade" id="instructionModal" tabindex="-1">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="instructionModalTitle">สร้าง Instruction</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <form id="instructionForm">
+                                    <input type="hidden" id="instructionId">
+                                    <div class="mb-3">
+                                        <label class="form-label">ชื่อ Instruction <span
+                                                class="text-danger">*</span></label>
+                                        <input type="text" class="form-control" id="instructionName" required
+                                            placeholder="เช่น LINE Official - ทั่วไป">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">คำอธิบาย</label>
+                                        <textarea class="form-control" id="instructionDescription" rows="3"
+                                            placeholder="อธิบายสั้นๆ ว่า Instruction นี้ใช้สำหรับอะไร"></textarea>
+                                    </div>
+                                </form>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                                <button type="button" class="btn btn-primary" id="saveInstructionBtn">บันทึก</button>
+                            </div>
                         </div>
                     </div>
-                <% }) %>
-            <% } %>
-        </div>
-    </div>
+                </div>
 
-    <!-- Modal: Create/Edit Instruction -->
-    <div class="modal fade" id="instructionModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="instructionModalTitle">สร้าง Instruction</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="instructionForm">
-                        <input type="hidden" id="instructionId">
-                        <div class="mb-3">
-                            <label class="form-label">ชื่อ Instruction <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="instructionName" required placeholder="เช่น LINE Official - ทั่วไป">
+                <!-- Modal: Preview -->
+                <div class="modal fade" id="previewModal" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Preview: System Prompt</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info small">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    นี่คือข้อมูลที่ AI จะได้รับเมื่อตอบลูกค้า
+                                </div>
+                                <pre id="previewContent" class="preview-box"></pre>
+                                <div class="mt-3 text-muted small">
+                                    <div><i class="fas fa-database me-2"></i>ชุดข้อมูล: <span
+                                            id="previewDataItemCount">0</span></div>
+                                    <div><i class="fas fa-font me-2"></i>จำนวนอักขระ: <span
+                                            id="previewCharCount">0</span></div>
+                                    <div><i class="fas fa-coins me-2"></i>โทเค็นโดยประมาณ: <span
+                                            id="previewTokenCount">0</span></div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
+                            </div>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label">คำอธิบาย</label>
-                            <textarea class="form-control" id="instructionDescription" rows="3" placeholder="อธิบายสั้นๆ ว่า Instruction นี้ใช้สำหรับอะไร"></textarea>
-                        </div>
-                    </form>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-                    <button type="button" class="btn btn-primary" id="saveInstructionBtn">บันทึก</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal: Preview -->
-    <div class="modal fade" id="previewModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Preview: System Prompt</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="alert alert-info small">
-                        <i class="fas fa-info-circle me-2"></i>
-                        นี่คือข้อมูลที่ AI จะได้รับเมื่อตอบลูกค้า
-                    </div>
-                    <pre id="previewContent" class="preview-box"></pre>
-                    <div class="mt-3 text-muted small">
-                        <div><i class="fas fa-database me-2"></i>ชุดข้อมูล: <span id="previewDataItemCount">0</span></div>
-                        <div><i class="fas fa-font me-2"></i>จำนวนอักขระ: <span id="previewCharCount">0</span></div>
-                        <div><i class="fas fa-coins me-2"></i>โทเค็นโดยประมาณ: <span id="previewTokenCount">0</span></div>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
-                </div>
-            </div>
-        </div>
-    </div>
 
-    <%- include('partials/modals/import-export-sheets-modal') %>
+                <%- include('partials/modals/import-export-sheets-modal') %>
 
-    <div id="dashboardToastContainer" class="app-toast-container"></div>
+                    <div id="dashboardToastContainer" class="app-toast-container"></div>
 
-    </div><!-- /app-content -->
+        </div><!-- /app-content -->
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/js/admin-dashboard-v2.js"></script>
-    <script src="/js/import-export-manager.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="/js/admin-dashboard-v2.js"></script>
+        <script src="/js/import-export-manager.js"></script>
 </body>
+
 </html>
