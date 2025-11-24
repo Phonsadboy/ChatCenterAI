@@ -694,6 +694,20 @@ function initSidebarScrollHint() {
     setTimeout(showHint, 500);
 }
 
+// --- Shared helpers ---
+function formatBotUpdatedAt(value) {
+    if (!value) return 'ไม่ระบุ';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'ไม่ระบุ';
+    return date.toLocaleString('th-TH', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
 // --- Instruction selection helpers ---
 async function loadInstructionLibraries() {
     try {
