@@ -3,6 +3,9 @@
  * Handles all logic for the redesigned settings page.
  */
 
+const INSTRUCTION_SOURCE = { V2: 'v2', LEGACY: 'legacy' };
+let instructionLibraries = [];
+
 document.addEventListener('DOMContentLoaded', function () {
     initNavigation();
     loadAllSettings();
@@ -55,6 +58,7 @@ function initNavigation() {
 // --- Data Loading ---
 async function loadAllSettings() {
     try {
+        await loadInstructionLibraries();
         await Promise.all([
             loadBotSettings(),
             loadChatSettings(),
@@ -78,6 +82,10 @@ async function loadBotSettings() {
     if (fbContainer) fbContainer.innerHTML = '<div class="text-center p-3 text-muted-v2">กำลังโหลด Facebook Bots...</div>';
 
     try {
+        if (instructionLibraries.length === 0) {
+            await loadInstructionLibraries();
+        }
+
         const [lineRes, fbRes] = await Promise.all([
             fetch('/api/line-bots'),
             fetch('/api/facebook-bots')
@@ -105,28 +113,30 @@ function renderLineBots(bots) {
     }
 
     container.innerHTML = bots.map(bot => `
-        <div class="bot-item">
-            <div class="bot-icon line"><i class="fab fa-line"></i></div>
-            <div class="bot-info">
-                <div class="bot-name">
-                    ${bot.name}
-                    ${bot.isDefault ? '<span class="badge bg-primary-soft text-primary ms-2" style="font-size:0.7rem">ค่าเริ่มต้น</span>' : ''}
+        <div class="bot-item-compact">
+            <div class="bot-channel line"><i class="fab fa-line"></i></div>
+            <div class="bot-main">
+                <div class="bot-header">
+                    <div class="bot-title">
+                        <span class="bot-name">${escapeHtml(bot.name)}</span>
+                        ${bot.isDefault ? '<span class="badge badge-default">ค่าเริ่มต้น</span>' : ''}
+                    </div>
+                    <span class="status-pill ${bot.status === 'active' ? 'active' : 'inactive'}"><span class="dot"></span>${bot.status === 'active' ? 'ใช้งาน' : 'ปิดใช้งาน'}</span>
                 </div>
-                <div class="bot-meta">
-                    <span class="status-badge ${bot.status === 'active' ? 'active' : 'inactive'}">
-                        <span class="status-dot"></span>${bot.status === 'active' ? 'ใช้งาน' : 'ปิดใช้งาน'}
-                    </span>
-                    <span class="ms-2 text-muted-v2">Model: ${bot.aiModel || 'gpt-5'}</span>
+                <div class="bot-meta-row">
+                    <span class="meta-chip"><i class="fas fa-microchip"></i>${escapeHtml(bot.aiModel || 'gpt-5')}</span>
+                    <span class="meta-chip"><i class="far fa-clock"></i>${formatBotUpdatedAt(bot.updatedAt)}</span>
                 </div>
+                ${buildInstructionInlineRow(bot, 'line')}
+                ${buildCollectionInlineRow(bot, 'line')}
             </div>
-            <div class="bot-actions">
-                <button class="btn-v2 btn-v2-secondary btn-v2-sm" onclick="openEditLineBotModal('${bot._id}')">
-                    <i class="fas fa-edit"></i> แก้ไข
-                </button>
-                <div class="form-check form-switch ms-2">
-                    <input class="form-check-input" type="checkbox" role="switch" 
-                        ${bot.status === 'active' ? 'checked' : ''} 
-                        onchange="toggleBotStatus('line', '${bot._id}', this.checked)">
+            <div class="bot-actions-compact">
+                <label class="toggle-switch mb-0">
+                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('line', '${bot._id}', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+                <div class="actions-stack">
+                    <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditLineBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
                 </div>
             </div>
         </div>
@@ -143,28 +153,31 @@ function renderFacebookBots(bots) {
     }
 
     container.innerHTML = bots.map(bot => `
-        <div class="bot-item">
-            <div class="bot-icon facebook"><i class="fab fa-facebook-f"></i></div>
-            <div class="bot-info">
-                <div class="bot-name">
-                    ${bot.name}
-                    ${bot.isDefault ? '<span class="badge bg-primary-soft text-primary ms-2" style="font-size:0.7rem">ค่าเริ่มต้น</span>' : ''}
+        <div class="bot-item-compact">
+            <div class="bot-channel facebook"><i class="fab fa-facebook-f"></i></div>
+            <div class="bot-main">
+                <div class="bot-header">
+                    <div class="bot-title">
+                        <span class="bot-name">${escapeHtml(bot.name)}</span>
+                        ${bot.isDefault ? '<span class="badge badge-default">ค่าเริ่มต้น</span>' : ''}
+                    </div>
+                    <span class="status-pill ${bot.status === 'active' ? 'active' : 'inactive'}"><span class="dot"></span>${bot.status === 'active' ? 'ใช้งาน' : 'ปิดใช้งาน'}</span>
                 </div>
-                <div class="bot-meta">
-                    <span class="status-badge ${bot.status === 'active' ? 'active' : 'inactive'}">
-                        <span class="status-dot"></span>${bot.status === 'active' ? 'ใช้งาน' : 'ปิดใช้งาน'}
-                    </span>
-                    <span class="ms-2 text-muted-v2">Page ID: ${bot.pageId || 'N/A'}</span>
+                <div class="bot-meta-row">
+                    <span class="meta-chip"><i class="fas fa-microchip"></i>${escapeHtml(bot.aiModel || 'gpt-5')}</span>
+                    <span class="meta-chip"><i class="far fa-id-card"></i>${escapeHtml(bot.pageId || 'N/A')}</span>
+                    <span class="meta-chip"><i class="far fa-clock"></i>${formatBotUpdatedAt(bot.updatedAt)}</span>
                 </div>
+                ${buildInstructionInlineRow(bot, 'facebook')}
+                ${buildCollectionInlineRow(bot, 'facebook')}
             </div>
-            <div class="bot-actions">
-                <button class="btn-v2 btn-v2-secondary btn-v2-sm" onclick="openEditFacebookBotModal('${bot._id}')">
-                    <i class="fas fa-edit"></i> แก้ไข
-                </button>
-                <div class="form-check form-switch ms-2">
-                    <input class="form-check-input" type="checkbox" role="switch" 
-                        ${bot.status === 'active' ? 'checked' : ''} 
-                        onchange="toggleBotStatus('facebook', '${bot._id}', this.checked)">
+            <div class="bot-actions-compact">
+                <label class="toggle-switch mb-0">
+                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('facebook', '${bot._id}', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+                <div class="actions-stack">
+                    <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditFacebookBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
                 </div>
             </div>
         </div>
@@ -565,7 +578,8 @@ function setupEventListeners() {
     const refreshBtn = document.getElementById('refreshSettingsBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
-            loadBotSettings();
+            loadInstructionLibraries()
+                .then(() => loadBotSettings());
             loadChatSettings();
             loadSystemSettings();
             loadSecuritySettings();
@@ -590,6 +604,8 @@ function setupEventListeners() {
 
     const saveFbBtn = document.getElementById('saveFacebookBotBtn');
     if (saveFbBtn) saveFbBtn.addEventListener('click', saveFacebookBot);
+
+    document.addEventListener('change', handleInstructionSelectChange, true);
 }
 
 function getInputValue(id) {
@@ -676,4 +692,183 @@ function initSidebarScrollHint() {
     navItems.forEach(item => item.addEventListener('click', hideHint));
 
     setTimeout(showHint, 500);
+}
+
+// --- Instruction selection helpers ---
+async function loadInstructionLibraries() {
+    try {
+        const response = await fetch('/api/instructions/library');
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result?.error || 'ไม่สามารถโหลดคลัง Instructions ได้');
+        }
+        instructionLibraries = Array.isArray(result.libraries) ? result.libraries : [];
+    } catch (error) {
+        console.error('Error loading instruction libraries:', error);
+        showToast('โหลดรายชื่อ Instruction ไม่สำเร็จ', 'danger');
+        instructionLibraries = [];
+    }
+}
+
+function getInstructionLibraryKey(lib) {
+    if (!lib) return '';
+    if (lib.source === INSTRUCTION_SOURCE.V2 && lib.instructionId) {
+        return `${INSTRUCTION_SOURCE.V2}:${lib.instructionId}`;
+    }
+    if (lib.date) {
+        return `${INSTRUCTION_SOURCE.LEGACY}:${lib.date}`;
+    }
+    return `${lib.source || 'library'}:${lib.name || ''}`;
+}
+
+function getInstructionLibraryLabel(lib) {
+    if (!lib) return '';
+    const prefix = lib.source === INSTRUCTION_SOURCE.V2 ? '[Instruction Set]' : '[Legacy]';
+    const label = lib.name || lib.displayDate || lib.date || lib.instructionId || 'ไม่ระบุ';
+    return `${prefix} ${label}`;
+}
+
+function buildInstructionInlineRow(bot, botType) {
+    const selectedKey = getSelectedInstructionKey(bot);
+    const instructionLabel = getInstructionLabelByKey(selectedKey) || 'ไม่เลือก';
+    const options = buildInstructionOptions(selectedKey);
+
+    return `
+        <div class="bot-inline-row">
+            <span class="inline-label"><i class="fas fa-book"></i> Instruction</span>
+            <div class="inline-control">
+                <select class="form-select form-select-sm instruction-select"
+                    data-bot-type="${botType}"
+                    data-bot-id="${bot._id}"
+                    data-previous-value="${selectedKey}"
+                    aria-label="เลือก Instruction สำหรับบอท">
+                    ${options}
+                </select>
+                <span class="instruction-chip ${selectedKey ? '' : 'chip-muted'}">ใช้: ${escapeHtml(instructionLabel)}</span>
+            </div>
+        </div>
+    `;
+}
+
+function buildCollectionInlineRow(bot, botType) {
+    const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
+    const summary = collectionCount > 0 ? `${collectionCount} ชุด` : 'ทุกภาพ';
+
+    return `
+        <div class="bot-inline-row">
+            <span class="inline-label"><i class="fas fa-images"></i> แกลเลอรี</span>
+            <div class="inline-control">
+                <span class="instruction-chip chip-muted">ใช้: ${escapeHtml(summary)}</span>
+                <button class="btn-ghost-sm" type="button" onclick="window.imageCollectionsManager && window.imageCollectionsManager.openBotImageCollectionsModal && window.imageCollectionsManager.openBotImageCollectionsModal('${botType}', '${bot._id}')">เปลี่ยน</button>
+            </div>
+        </div>
+    `;
+}
+
+function buildInstructionOptions(selectedKey) {
+    const options = ['<option value="">— ไม่เลือก —</option>'];
+    instructionLibraries.forEach((lib) => {
+        const key = getInstructionLibraryKey(lib);
+        if (!key) return;
+        const label = getInstructionLibraryLabel(lib);
+        const isSelected = selectedKey === key ? 'selected' : '';
+        options.push(`<option value="${key}" ${isSelected}>${escapeHtml(label)}</option>`);
+    });
+    return options.join('');
+}
+
+function getSelectedInstructionKey(bot) {
+    const selections = Array.isArray(bot?.selectedInstructions) ? bot.selectedInstructions : [];
+    if (selections.length === 0) return '';
+    const first = selections[0];
+    if (first && typeof first === 'object' && !Array.isArray(first) && first.instructionId) {
+        return `${INSTRUCTION_SOURCE.V2}:${first.instructionId}`;
+    }
+    if (typeof first === 'string') {
+        return `${INSTRUCTION_SOURCE.LEGACY}:${first}`;
+    }
+    return '';
+}
+
+function getInstructionLabelByKey(key) {
+    if (!key) return '';
+    const lib = instructionLibraries.find((item) => getInstructionLibraryKey(item) === key);
+    if (lib) {
+        return lib.name || lib.displayDate || lib.instructionId || lib.date || '';
+    }
+    const value = key.split(':').slice(1).join(':');
+    return value || '';
+}
+
+function handleInstructionSelectChange(event) {
+    const select = event.target;
+    if (!select.classList.contains('instruction-select')) return;
+    const botType = select.dataset.botType;
+    const botId = select.dataset.botId;
+    const previousValue = select.dataset.previousValue || '';
+    const key = select.value;
+    saveInstructionSelection(botType, botId, key, select, previousValue);
+}
+
+function buildInstructionPayloadFromKey(key) {
+    if (!key) return [];
+    const [source, ...rest] = key.split(':');
+    const value = rest.join(':');
+    if (!value) return [];
+    if (source === INSTRUCTION_SOURCE.V2) {
+        return [{ instructionId: value }];
+    }
+    if (source === INSTRUCTION_SOURCE.LEGACY) {
+        return [value];
+    }
+    return [];
+}
+
+async function saveInstructionSelection(botType, botId, key, select, previousValue) {
+    const payload = buildInstructionPayloadFromKey(key);
+    const url =
+        botType === 'facebook'
+            ? `/api/facebook-bots/${botId}/instructions`
+            : `/api/line-bots/${botId}/instructions`;
+
+    select.disabled = true;
+    try {
+        const response = await fetch(url, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ selectedInstructions: payload })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error || 'บันทึกไม่สำเร็จ');
+        }
+        select.dataset.previousValue = key;
+        updateInstructionChip(select, key);
+        showToast('อัปเดต Instruction ของบอทแล้ว', 'success');
+    } catch (error) {
+        console.error('Error saving instruction selection:', error);
+        select.value = previousValue;
+        updateInstructionChip(select, previousValue);
+        showToast('ไม่สามารถบันทึก Instruction ได้', 'danger');
+    } finally {
+        select.disabled = false;
+    }
+}
+
+function updateInstructionChip(select, key) {
+    const chip = select.closest('.inline-control')?.querySelector('.instruction-chip');
+    if (!chip) return;
+    const label = getInstructionLabelByKey(key) || 'ไม่เลือก';
+    chip.textContent = key ? `ใช้: ${label}` : 'ไม่เลือก';
+    chip.classList.toggle('chip-muted', !key);
+}
+
+function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
