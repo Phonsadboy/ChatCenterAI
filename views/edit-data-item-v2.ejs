@@ -1729,12 +1729,8 @@
                 input.addEventListener('input', () => {
                     if (!flyoutTarget) return;
                     flyoutTarget.value = input.value;
-                    const rowIndex = Number(flyoutTarget.getAttribute('data-row-index'));
-                    const colIndex = Number(flyoutTarget.getAttribute('data-col-index'));
-                    if (Number.isInteger(rowIndex) && Number.isInteger(colIndex) && rows[rowIndex]) {
-                        rows[rowIndex][colIndex] = input.value;
-                        updatePreview();
-                    }
+                    // ส่ง event ต่อให้ input หลักจัดการอัปเดต state/preview
+                    flyoutTarget.dispatchEvent(new Event('input', { bubbles: true }));
                 });
 
                 input.addEventListener('keydown', (e) => {
