@@ -121,7 +121,6 @@ function renderLineBots(bots) {
                         <span class="bot-name">${escapeHtml(bot.name)}</span>
                         ${bot.isDefault ? '<span class="badge badge-default">ค่าเริ่มต้น</span>' : ''}
                     </div>
-                    <span class="status-pill ${bot.status === 'active' ? 'active' : 'inactive'}"><span class="dot"></span>${bot.status === 'active' ? 'ใช้งาน' : 'ปิดใช้งาน'}</span>
                 </div>
                 <div class="bot-subtext">Model: ${escapeHtml(bot.aiModel || 'gpt-5')} • อัปเดต: ${formatBotUpdatedAt(bot.updatedAt)}</div>
                 ${buildBotInlineControls(bot, 'line')}
@@ -157,7 +156,6 @@ function renderFacebookBots(bots) {
                         <span class="bot-name">${escapeHtml(bot.name)}</span>
                         ${bot.isDefault ? '<span class="badge badge-default">ค่าเริ่มต้น</span>' : ''}
                     </div>
-                    <span class="status-pill ${bot.status === 'active' ? 'active' : 'inactive'}"><span class="dot"></span>${bot.status === 'active' ? 'ใช้งาน' : 'ปิดใช้งาน'}</span>
                 </div>
                 <div class="bot-subtext">Model: ${escapeHtml(bot.aiModel || 'gpt-5')} • Page: ${escapeHtml(bot.pageId || 'N/A')}</div>
                 ${buildBotInlineControls(bot, 'facebook')}
