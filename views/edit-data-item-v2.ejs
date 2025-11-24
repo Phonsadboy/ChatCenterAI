@@ -1862,6 +1862,7 @@
                         textSection.style.display = 'none';
                         tableSection.style.display = '';
                         instructionTableBuilder.init();
+                        seedInitialTableData();
                         updatePreview();
                     } else {
                         textSection.style.display = '';
@@ -1870,10 +1871,23 @@
                     }
                 };
 
+                const tableDataInput = document.getElementById('tableDataInput');
+                const seedInitialTableData = () => {
+                    if (
+                        tableDataInput &&
+                        initialInstruction.type === 'table' &&
+                        initialInstruction.data &&
+                        !tableDataInput.value
+                    ) {
+                        tableDataInput.value = JSON.stringify(initialInstruction.data);
+                    }
+                };
+
                 instructionTableBuilder.init();
 
                 if (initialInstruction.type === 'table' && initialInstruction.data) {
                     instructionTableBuilder.populateFromExisting(initialInstruction.data);
+                    seedInitialTableData();
                 }
 
                 toggleEditorSection();

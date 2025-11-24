@@ -12418,6 +12418,8 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
 
     const now = new Date();
     const updateFields = {};
+    const isTable = type === 'table';
+    let parsedTableData = null;
 
     // อัปเดต title
     if (title !== undefined) {
@@ -12425,27 +12427,33 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
     }
 
     // อัปเดตตาม type
-    if (type === 'table') {
+    if (isTable) {
       // ตาราง: อัปเดต data field
-      if (tableData && tableData.trim() !== "") {
-        try {
-          const parsedData = JSON.parse(tableData);
-          if (parsedData && typeof parsedData === "object") {
-            updateFields[`dataItems.${itemIndex}.data`] = parsedData;
-            updateFields[`dataItems.${itemIndex}.content`] = ""; // ล้าง content สำหรับตาราง
-          }
-        } catch (parseErr) {
-          console.error("Error parsing table data:", parseErr);
-          return res.redirect(`/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit?error=ข้อมูลตารางไม่ถูกต้อง`);
-        }
+      if (!tableData || tableData.trim() === "") {
+        return res.redirect(
+          `/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit?error=${encodeURIComponent("กรุณากรอกข้อมูลตาราง")}`,
+        );
       }
+      try {
+        parsedTableData = JSON.parse(tableData);
+        if (!parsedTableData || typeof parsedTableData !== "object") {
+          throw new Error("Invalid table payload");
+        }
+      } catch (parseErr) {
+        console.error("Error parsing table data:", parseErr);
+        return res.redirect(
+          `/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit?error=${encodeURIComponent("ข้อมูลตารางไม่ถูกต้อง")}`,
+        );
+      }
+      updateFields[`dataItems.${itemIndex}.data`] = parsedTableData;
+      updateFields[`dataItems.${itemIndex}.content`] = ""; // ล้าง content สำหรับตาราง
     } else {
       // ข้อความ: อัปเดต content field
       updateFields[`dataItems.${itemIndex}.content`] = content || "";
       updateFields[`dataItems.${itemIndex}.data`] = null; // ล้าง data สำหรับข้อความ
     }
 
-    updateFields[`dataItems.${itemIndex}.type`] = type;
+    updateFields[`dataItems.${itemIndex}.type`] = isTable ? "table" : "text";
     updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
     updateFields.updatedAt = now;
 
