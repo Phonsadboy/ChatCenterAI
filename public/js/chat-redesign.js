@@ -154,16 +154,6 @@ class ChatManager {
             });
         }
         
-        // Filter toggle
-        const filterToggle = document.getElementById('filterToggle');
-        const filterPanel = document.getElementById('filterPanel');
-        if (filterToggle && filterPanel) {
-            filterToggle.addEventListener('click', () => {
-                const isVisible = filterPanel.style.display !== 'none';
-                filterPanel.style.display = isVisible ? 'none' : 'block';
-            });
-        }
-        
         // Clear filters
         const clearFilters = document.getElementById('clearFilters');
         if (clearFilters) {
