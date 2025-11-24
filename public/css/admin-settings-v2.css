@@ -240,11 +240,11 @@ input:checked+.toggle-slider:before {
 .bot-item-compact {
     display: flex;
     align-items: flex-start;
-    gap: 0.55rem;
-    padding: 0.65rem 0.85rem;
+    gap: 0.4rem;
+    padding: 0.5rem 0.65rem;
     border: 1px solid var(--border-color);
-    border-radius: 0.75rem;
-    margin-bottom: 0.75rem;
+    border-radius: 0.6rem;
+    margin-bottom: 0.5rem;
     background-color: #fff;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -255,16 +255,16 @@ input:checked+.toggle-slider:before {
 }
 
 .bot-channel {
-    width: 36px;
-    height: 36px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #fff;
     flex-shrink: 0;
-    font-size: 0.9rem;
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+    font-size: 0.75rem;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .bot-channel.line {
@@ -297,7 +297,7 @@ input:checked+.toggle-slider:before {
 
 .bot-name {
     font-weight: 700;
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     color: var(--text-main);
     line-height: 1.2;
 }
@@ -314,10 +314,10 @@ input:checked+.toggle-slider:before {
 .status-pill {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.25rem 0.6rem;
+    gap: 0.25rem;
+    padding: 0.15rem 0.45rem;
     border-radius: 999px;
-    font-size: 0.75rem;
+    font-size: 0.68rem;
     font-weight: 600;
     color: #fff;
 }
@@ -367,9 +367,9 @@ input:checked+.toggle-slider:before {
 }
 
 .bot-subtext {
-    font-size: 0.78rem;
+    font-size: 0.72rem;
     color: var(--text-secondary);
-    margin-bottom: 0.15rem;
+    margin-bottom: 0.1rem;
 }
 
 .bot-inline-row {
@@ -383,8 +383,8 @@ input:checked+.toggle-slider:before {
 .inline-label {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    font-size: 0.8rem;
+    gap: 0.3rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
     white-space: nowrap;
 }
@@ -399,12 +399,12 @@ input:checked+.toggle-slider:before {
 .instruction-chip {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.45rem;
+    gap: 0.25rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.35rem;
     background: #eef2ff;
     color: #3f51b5;
-    font-size: 0.78rem;
+    font-size: 0.72rem;
 }
 
 .instruction-chip.slim {
@@ -431,9 +431,9 @@ input:checked+.toggle-slider:before {
 .btn-ghost-sm {
     border: 1px solid var(--border-color);
     background: #fff;
-    padding: 0.25rem 0.4rem;
-    border-radius: 0.45rem;
-    font-size: 0.78rem;
+    padding: 0.15rem 0.35rem;
+    border-radius: 0.35rem;
+    font-size: 0.72rem;
     color: var(--text-main);
     transition: all 0.2s ease;
 }
