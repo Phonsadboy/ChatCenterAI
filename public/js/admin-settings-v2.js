@@ -123,12 +123,8 @@ function renderLineBots(bots) {
                     </div>
                     <span class="status-pill ${bot.status === 'active' ? 'active' : 'inactive'}"><span class="dot"></span>${bot.status === 'active' ? 'ใช้งาน' : 'ปิดใช้งาน'}</span>
                 </div>
-                <div class="bot-meta-row">
-                    <span class="meta-chip"><i class="fas fa-microchip"></i>${escapeHtml(bot.aiModel || 'gpt-5')}</span>
-                    <span class="meta-chip"><i class="far fa-clock"></i>${formatBotUpdatedAt(bot.updatedAt)}</span>
-                </div>
-                ${buildInstructionInlineRow(bot, 'line')}
-                ${buildCollectionInlineRow(bot, 'line')}
+                <div class="bot-subtext">Model: ${escapeHtml(bot.aiModel || 'gpt-5')} • อัปเดต: ${formatBotUpdatedAt(bot.updatedAt)}</div>
+                ${buildBotInlineControls(bot, 'line')}
             </div>
             <div class="bot-actions-compact">
                 <label class="toggle-switch mb-0">
@@ -163,13 +159,8 @@ function renderFacebookBots(bots) {
                     </div>
                     <span class="status-pill ${bot.status === 'active' ? 'active' : 'inactive'}"><span class="dot"></span>${bot.status === 'active' ? 'ใช้งาน' : 'ปิดใช้งาน'}</span>
                 </div>
-                <div class="bot-meta-row">
-                    <span class="meta-chip"><i class="fas fa-microchip"></i>${escapeHtml(bot.aiModel || 'gpt-5')}</span>
-                    <span class="meta-chip"><i class="far fa-id-card"></i>${escapeHtml(bot.pageId || 'N/A')}</span>
-                    <span class="meta-chip"><i class="far fa-clock"></i>${formatBotUpdatedAt(bot.updatedAt)}</span>
-                </div>
-                ${buildInstructionInlineRow(bot, 'facebook')}
-                ${buildCollectionInlineRow(bot, 'facebook')}
+                <div class="bot-subtext">Model: ${escapeHtml(bot.aiModel || 'gpt-5')} • Page: ${escapeHtml(bot.pageId || 'N/A')}</div>
+                ${buildBotInlineControls(bot, 'facebook')}
             </div>
             <div class="bot-actions-compact">
                 <label class="toggle-switch mb-0">
@@ -746,11 +737,13 @@ function buildInstructionInlineRow(bot, botType) {
     const selectedKey = getSelectedInstructionKey(bot);
     const instructionLabel = getInstructionLabelByKey(selectedKey) || 'ไม่เลือก';
     const options = buildInstructionOptions(selectedKey);
+    const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
+    const summary = collectionCount > 0 ? `${collectionCount} ชุด` : 'ทุกภาพ';
 
     return `
-        <div class="bot-inline-row">
-            <span class="inline-label"><i class="fas fa-book"></i> Instruction</span>
+        <div class="bot-inline-row compact">
             <div class="inline-control">
+                <span class="inline-label"><i class="fas fa-book"></i> Inst.</span>
                 <select class="form-select form-select-sm instruction-select"
                     data-bot-type="${botType}"
                     data-bot-id="${bot._id}"
@@ -758,26 +751,19 @@ function buildInstructionInlineRow(bot, botType) {
                     aria-label="เลือก Instruction สำหรับบอท">
                     ${options}
                 </select>
-                <span class="instruction-chip ${selectedKey ? '' : 'chip-muted'}">ใช้: ${escapeHtml(instructionLabel)}</span>
             </div>
-        </div>
-    `;
-}
-
-function buildCollectionInlineRow(bot, botType) {
-    const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
-    const summary = collectionCount > 0 ? `${collectionCount} ชุด` : 'ทุกภาพ';
-
-    return `
-        <div class="bot-inline-row">
-            <span class="inline-label"><i class="fas fa-images"></i> แกลเลอรี</span>
             <div class="inline-control">
-                <span class="instruction-chip chip-muted">ใช้: ${escapeHtml(summary)}</span>
-                <button class="btn-ghost-sm" type="button" onclick="window.imageCollectionsManager && window.imageCollectionsManager.openBotImageCollectionsModal && window.imageCollectionsManager.openBotImageCollectionsModal('${botType}', '${bot._id}')">เปลี่ยน</button>
+                <span class="inline-label"><i class="fas fa-images"></i> ภาพ</span>
+                <span class="instruction-chip chip-muted slim">ใช้: ${escapeHtml(summary)}</span>
+                <button class="btn-ghost-sm btn-ghost-xs" type="button" onclick="window.imageCollectionsManager && window.imageCollectionsManager.openBotImageCollectionsModal && window.imageCollectionsManager.openBotImageCollectionsModal('${botType}', '${bot._id}')">เปลี่ยน</button>
             </div>
+            <span class="instruction-chip ${selectedKey ? '' : 'chip-muted'} slim">ใช้: ${escapeHtml(instructionLabel)}</span>
         </div>
     `;
 }
+
+// Alias for backwards compatibility usage in markup
+const buildBotInlineControls = buildInstructionInlineRow;
 
 function buildInstructionOptions(selectedKey) {
     const options = ['<option value="">— ไม่เลือก —</option>'];
