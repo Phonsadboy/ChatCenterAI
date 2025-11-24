@@ -8,8 +8,8 @@
   border: 1px solid var(--border, #E1E5EF);
   border-radius: 12px;
   box-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
-  padding: 0.85rem 1rem;
-  margin-bottom: 0.75rem;
+  padding: 0.35rem 0.6rem;
+  margin-bottom: 0.25rem;
 }
 
 .dashboard-topbar__title {
@@ -41,8 +41,8 @@
 .dashboard-metrics {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.6rem;
-  margin-top: 0.35rem;
+  gap: 0.2rem;
+  margin-top: 0.15rem;
 }
 
 .metric-pill {
@@ -64,7 +64,7 @@
 .instruction-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 0.75rem;
+  gap: 0.25rem;
 }
 
 .instruction-card {
@@ -84,7 +84,7 @@
 }
 
 .instruction-header {
-  padding: 0.75rem 0.85rem;
+  padding: 0.35rem 0.5rem;
   border-bottom: 1px solid var(--border, #E1E5EF);
   display: flex;
   justify-content: space-between;
@@ -119,14 +119,14 @@
 }
 
 .data-items-container {
-  padding: 0.75rem 0.9rem 0.85rem;
+  padding: 0.35rem 0.5rem 0.4rem;
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.15rem;
 }
 
 .data-item {
-  padding: 0.65rem 0.7rem;
+  padding: 0.4rem 0.5rem;
   border: 1px solid var(--border, #E1E5EF);
   border-radius: 10px;
   background: #f9fafc;
@@ -202,7 +202,7 @@
 }
 
 .instruction-footer {
-  padding: 0.65rem 0.85rem;
+  padding: 0.35rem 0.5rem;
   border-top: 1px solid var(--border, #E1E5EF);
   background: #f8f9fc;
   display: flex;
@@ -275,6 +275,7 @@
 .search-bar input {
   border-radius: 10px;
 }
+
 .search-bar {
   max-width: 420px;
 }
@@ -299,17 +300,21 @@
   .instruction-grid {
     grid-template-columns: 1fr;
   }
+
   .instruction-header {
     flex-direction: column;
     align-items: flex-start;
   }
+
   .instruction-actions {
     width: 100%;
     justify-content: flex-start;
   }
+
   .data-item {
     align-items: flex-start;
   }
+
   .data-item-actions {
     width: 100%;
     justify-content: flex-start;
