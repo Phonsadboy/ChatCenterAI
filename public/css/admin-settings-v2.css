@@ -370,6 +370,12 @@ input:checked+.toggle-slider:before {
     flex-wrap: wrap;
 }
 
+.instruction-control {
+    flex: 1;
+    min-width: 200px;
+    flex-wrap: nowrap;
+}
+
 .instruction-select {
     padding: 0.1rem 1.4rem 0.1rem 0.4rem;
     font-size: 0.72rem;
@@ -380,7 +386,8 @@ input:checked+.toggle-slider:before {
     border-radius: 0.3rem;
     border-color: var(--border-color);
     width: auto;
-    max-width: 130px;
+    flex: 1;
+    max-width: none;
 }
 
 .instruction-chip {

@@ -740,7 +740,7 @@ function buildInstructionInlineRow(bot, botType) {
 
     return `
         <div class="bot-inline-row compact">
-            <div class="inline-control">
+            <div class="inline-control instruction-control">
                 <span class="inline-label"><i class="fas fa-book"></i> Inst.</span>
                 <select class="form-select form-select-sm instruction-select"
                     data-bot-type="${botType}"
