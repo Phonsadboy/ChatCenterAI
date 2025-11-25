@@ -2024,62 +2024,87 @@ async function scheduleFollowUpForUser(userId, options = {}) {
 
     if (existingTask) {
       if (!existingTask.completed && !existingTask.canceled) {
-        const nextScheduledAt = existingTask.nextScheduledAt
-          ? new Date(existingTask.nextScheduledAt)
-          : null;
-        const sentRoundsCount = Array.isArray(existingTask.rounds)
-          ? existingTask.rounds.reduce(
-            (count, round) => (round?.status === "sent" ? count + 1 : count),
-            0,
-          )
-          : Array.isArray(existingTask.sentRounds)
-            ? existingTask.sentRounds.length
-            : typeof existingTask.nextRoundIndex === "number"
+        const roundsFromDb = Array.isArray(existingTask.rounds)
+          ? existingTask.rounds
+          : [];
+        const sentRoundsCount = roundsFromDb.reduce(
+          (count, round) => (round?.status === "sent" ? count + 1 : count),
+          0,
+        );
+        const completedRounds = Math.min(
+          roundsConfig.length,
+          Math.max(
+            typeof existingTask.nextRoundIndex === "number"
               ? existingTask.nextRoundIndex
-              : 0;
-        const shouldCancel =
-          nextScheduledAt &&
-          messageTimestamp < nextScheduledAt &&
-          sentRoundsCount > 1;
+              : 0,
+            sentRoundsCount,
+            Array.isArray(existingTask.sentRounds)
+              ? existingTask.sentRounds.length
+              : 0,
+          ),
+        );
 
-        if (shouldCancel) {
-          await coll.updateOne(
-            { _id: existingTask._id },
-            {
-              $set: {
-                canceled: true,
-                cancelReason: "user_replied",
-                canceledAt: now,
-                updatedAt: now,
-                lastUserMessageAt: messageTimestamp,
-                lastUserMessagePreview:
-                  previewText || existingTask.lastUserMessagePreview || "",
-                contextKey,
+        const baseMoment = getBangkokMoment(messageTimestamp);
+        const rebuiltRounds = roundsConfig.map((round, index) => {
+          const scheduledMoment = baseMoment
+            .clone()
+            .add(round.delayMinutes, "minutes");
+          const sanitizedImages = sanitizeFollowUpImages(round.images);
+          const wasSent = index < completedRounds;
+          const existing = roundsFromDb[index] || {};
+
+          return {
+            index,
+            delayMinutes: round.delayMinutes,
+            message: typeof round.message === "string" ? round.message : "",
+            images: sanitizedImages,
+            scheduledAt: scheduledMoment.toDate(),
+            sentAt: wasSent
+              ? existing.sentAt || existing.sent_at || null
+              : null,
+            status: wasSent ? "sent" : "pending",
+          };
+        });
+
+        const nextRoundIndex = Math.min(completedRounds, rebuiltRounds.length);
+        const nextScheduledAt =
+          rebuiltRounds[nextRoundIndex]?.scheduledAt || null;
+
+        await coll.updateOne(
+          { _id: existingTask._id },
+          {
+            $set: {
+              rounds: rebuiltRounds,
+              nextRoundIndex,
+              nextScheduledAt,
+              lastUserMessageAt: messageTimestamp,
+              lastUserMessagePreview:
+                previewText || existingTask.lastUserMessagePreview || "",
+              updatedAt: now,
+              contextKey,
+              canceled: false,
+              completed: false,
+              configSnapshot: {
+                rounds: roundsConfig.map((item) => ({
+                  delayMinutes: item.delayMinutes,
+                  message:
+                    typeof item.message === "string" ? item.message : "",
+                  images: sanitizeFollowUpImages(item.images),
+                })),
+                autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
               },
             },
-          );
-          emitFollowUpScheduleUpdate({
-            userId,
-            platform: normalizedPlatform,
-            botId: normalizedBotId,
-            contextKey,
-            status: "canceled",
-            reason: "user_replied",
-          });
-        } else {
-          await coll.updateOne(
-            { _id: existingTask._id },
-            {
-              $set: {
-                lastUserMessageAt: messageTimestamp,
-                updatedAt: now,
-                lastUserMessagePreview:
-                  previewText || existingTask.lastUserMessagePreview || "",
-                contextKey,
-              },
-            },
-          );
-        }
+          },
+        );
+
+        emitFollowUpScheduleUpdate({
+          userId,
+          platform: normalizedPlatform,
+          botId: normalizedBotId,
+          contextKey,
+          status: "scheduled",
+          nextScheduledAt,
+        });
       }
       return null;
     }
