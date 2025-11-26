@@ -641,6 +641,24 @@ function buildInstructionText(instructions, options = {}) {
     .join("\n\n");
 }
 
+async function ensureCategoryIndexes(db) {
+  try {
+    const categories = db.collection("categories");
+    await categories.createIndex({ categoryId: 1 }, { unique: true });
+    await categories.createIndex({ name: 1 });
+    await categories.createIndex({ isActive: 1, createdAt: -1 });
+
+    const categoryTables = db.collection("category_tables");
+    await categoryTables.createIndex({ categoryId: 1 }, { unique: true });
+    // Wildcard text index for broad search across all columns
+    await categoryTables.createIndex({ "data.values.$**": "text" });
+
+    console.log("[DB] Category indexes ensured");
+  } catch (err) {
+    console.error("[DB] Error ensuring category indexes:", err);
+  }
+}
+
 let mongoClient = null;
 async function connectDB() {
   if (!mongoClient) {
@@ -650,9 +668,10 @@ async function connectDB() {
       const db = mongoClient.db("chatbot");
       await ensurePasscodeIndexes(db);
       await ensureFacebookCommentIndexes(db);
+      await ensureCategoryIndexes(db);
     } catch (err) {
       console.warn(
-        "[DB] ไม่สามารถตั้งค่า index สำหรับ passcode ได้:",
+        "[DB] ไม่สามารถตั้งค่า index ได้:",
         err?.message || err,
       );
     }
@@ -6594,24 +6613,24 @@ app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), as
     const client = await connectDB();
     const db = client.db("chatbot");
     const service = new InstructionDataService(db);
-    
+
     // Save buffer to temp file
     const tempDir = os.tmpdir();
     const token = `import_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.xlsx`;
     const filePath = path.join(tempDir, token);
-    
+
     fs.writeFileSync(filePath, req.file.buffer);
-    
+
     const previews = service.previewImportSheets(filePath);
-    
+
     // Get list of existing instructions for mapping
     const instructions = await db.collection("instructions_v2").find({}, { projection: { _id: 1, name: 1 } }).toArray();
 
-    res.json({ 
-      success: true, 
-      previews, 
+    res.json({
+      success: true,
+      previews,
       fileToken: token,
-      existingInstructions: instructions 
+      existingInstructions: instructions
     });
 
   } catch (err) {
@@ -6624,26 +6643,26 @@ app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), as
 app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
   try {
     const { mappings, fileToken } = req.body;
-    
+
     if (!fileToken || !mappings) {
-       return res.status(400).json({ success: false, error: "ข้อมูลไม่ครบถ้วน" });
+      return res.status(400).json({ success: false, error: "ข้อมูลไม่ครบถ้วน" });
     }
-    
+
     const tempDir = os.tmpdir();
     const filePath = path.join(tempDir, fileToken);
-    
+
     if (!fs.existsSync(filePath)) {
-       return res.status(400).json({ success: false, error: "ไฟล์หมดอายุหรือถูกลบไปแล้ว กรุณาอัพโหลดใหม่" });
+      return res.status(400).json({ success: false, error: "ไฟล์หมดอายุหรือถูกลบไปแล้ว กรุณาอัพโหลดใหม่" });
     }
 
     const client = await connectDB();
     const db = client.db("chatbot");
     const service = new InstructionDataService(db);
-    
+
     const results = await service.executeImport(mappings, filePath);
-    
+
     // Clean up
-    try { fs.unlinkSync(filePath); } catch(e) {}
+    try { fs.unlinkSync(filePath); } catch (e) { }
 
     res.json({ success: true, results });
 
@@ -6657,19 +6676,19 @@ app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
 app.post("/api/instructions-v2/export-sheets", async (req, res) => {
   try {
     const { instructionIds } = req.body;
-    
+
     if (!instructionIds || !Array.isArray(instructionIds) || instructionIds.length === 0) {
-       return res.status(400).json({ success: false, error: "กรุณาเลือก Instruction ที่ต้องการส่งออก" });
+      return res.status(400).json({ success: false, error: "กรุณาเลือก Instruction ที่ต้องการส่งออก" });
     }
 
     const client = await connectDB();
     const db = client.db("chatbot");
     const service = new InstructionDataService(db);
-    
+
     const buffer = await service.exportInstructions(instructionIds);
-    
+
     const filename = `instructions_export_${moment().format('YYYYMMDD_HHmm')}.xlsx`;
-    
+
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -7531,7 +7550,7 @@ async function getAssistantResponseTextOnly(
       `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (ข้อความอย่างเดียว)...`,
     );
 
-    const messages = [
+    let messages = [
       { role: "system", content: systemInstructions },
       ...history,
       { role: "user", content: userText },
@@ -7542,14 +7561,111 @@ async function getAssistantResponseTextOnly(
     // ใช้โมเดลที่ส่งมา หรือ fallback ไปใช้ global setting
     const textModel = aiModel || (await getSettingValue("textModel", "gpt-5"));
 
-    const response = await openai.chat.completions.create({
-      model: textModel,
-      messages,
-    });
+    // Define Tools
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "get_categories",
+          description: "Get list of all available product categories. Use this first to know which category to search in.",
+          parameters: { type: "object", properties: {} }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "search_item_by_category",
+          description: "Search for items in a specific category using the first column (Main Key). Use this for specific searches like Model Name or ID.",
+          parameters: {
+            type: "object",
+            properties: {
+              category: { type: "string", description: "Category name (must be exact match from get_categories)" },
+              keyword: { type: "string", description: "Search keyword" }
+            },
+            required: ["category", "keyword"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "search_item_broad",
+          description: "Search for items in a specific category across ALL columns. Use this if specific search fails.",
+          parameters: {
+            type: "object",
+            properties: {
+              category: { type: "string", description: "Category name" },
+              keyword: { type: "string", description: "Search keyword" }
+            },
+            required: ["category", "keyword"]
+          }
+        }
+      }
+    ];
+
+    // Tool Loop
+    let finalResponse = null;
+    let toolLoopCount = 0;
+    const MAX_TOOL_LOOPS = 5;
+
+    while (toolLoopCount < MAX_TOOL_LOOPS) {
+      const response = await openai.chat.completions.create({
+        model: textModel,
+        messages,
+        tools: tools,
+        tool_choice: "auto",
+      });
+
+      const responseMessage = response.choices[0].message;
+
+      // Check if tool calls
+      if (responseMessage.tool_calls) {
+        messages.push(responseMessage); // Add assistant's tool call message
+
+        console.log(`[LOG] AI ต้องการใช้ Tool: ${responseMessage.tool_calls.length} calls`);
+
+        const client = await connectDB();
+        const db = client.db("chatbot");
+
+        for (const toolCall of responseMessage.tool_calls) {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`[LOG] Executing Tool: ${functionName}`, functionArgs);
+
+          let toolResult = { error: "Unknown tool" };
+
+          if (functionName === "get_categories") {
+            toolResult = await getCategories(db);
+          } else if (functionName === "search_item_by_category") {
+            toolResult = await searchItemByCategory(db, functionArgs.category, functionArgs.keyword);
+          } else if (functionName === "search_item_broad") {
+            toolResult = await searchItemBroad(db, functionArgs.category, functionArgs.keyword);
+          }
+
+          messages.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            name: functionName,
+            content: JSON.stringify(toolResult),
+          });
+        }
+        toolLoopCount++;
+      } else {
+        // No tool calls, this is the final response
+        finalResponse = response;
+        break;
+      }
+    }
+
+    if (!finalResponse) {
+      console.warn("[LOG] Tool loop limit reached or no response");
+      return "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
+    }
 
     console.log(`[LOG] ได้รับคำตอบจาก OpenAI API เรียบร้อยแล้ว`);
 
-    let assistantReply = response.choices[0].message.content;
+    let assistantReply = finalResponse.choices[0].message.content;
     if (typeof assistantReply !== "string") {
       assistantReply = JSON.stringify(assistantReply);
     }
@@ -7561,8 +7677,8 @@ async function getAssistantResponseTextOnly(
     }
 
     // เพิ่มข้อมูล token usage ต่อท้ายคำตอบ (ถ้าเปิดใช้งาน)
-    if (response.usage) {
-      const usage = response.usage;
+    if (finalResponse.usage) {
+      const usage = finalResponse.usage;
       const showTokenUsage = await getSettingValue("showTokenUsage", false);
 
       if (showTokenUsage) {
@@ -16025,6 +16141,407 @@ app.get("/admin/chat/orders", async (req, res) => {
     res.json({ success: false, error: err.message });
   }
 });
+
+// ============================ Category Management APIs ============================
+
+// 1. Get all categories
+app.get("/admin/api/categories", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const categories = await db.collection("categories")
+      .find({ isActive: true })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json({ success: true, categories });
+  } catch (err) {
+    console.error("Error getting categories:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Create new category
+app.post("/admin/api/categories", async (req, res) => {
+  try {
+    const { name, description, columns } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ success: false, error: "Category name is required" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    // Generate IDs for columns if not present
+    const processedColumns = (columns || []).map((col, index) => ({
+      id: col.id || new ObjectId().toString(),
+      index: index,
+      name: col.name,
+      type: col.type || "text"
+    }));
+
+    const categoryId = `cat_${new ObjectId().toString()}`;
+    const newCategory = {
+      categoryId,
+      name,
+      description,
+      columns: processedColumns,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    await db.collection("categories").insertOne(newCategory);
+
+    // Create empty table for this category
+    await db.collection("category_tables").insertOne({
+      categoryId,
+      data: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    res.json({ success: true, category: newCategory });
+  } catch (err) {
+    console.error("Error creating category:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Update category
+app.put("/admin/api/categories/:categoryId", async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { name, description, columns } = req.body;
+
+    const client = await connectDB();
+    const db = client.collection("chatbot");
+
+    // Process columns: preserve IDs for existing columns, generate for new ones
+    const processedColumns = (columns || []).map((col, index) => ({
+      id: col.id || new ObjectId().toString(),
+      index: index,
+      name: col.name,
+      type: col.type || "text"
+    }));
+
+    const updateDoc = {
+      updatedAt: new Date()
+    };
+    if (name) updateDoc.name = name;
+    if (description !== undefined) updateDoc.description = description;
+    if (columns) updateDoc.columns = processedColumns;
+
+    const result = await db.collection("categories").findOneAndUpdate(
+      { categoryId },
+      { $set: updateDoc },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      return res.status(404).json({ success: false, error: "Category not found" });
+    }
+
+    res.json({ success: true, category: result });
+  } catch (err) {
+    console.error("Error updating category:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. Delete category
+app.delete("/admin/api/categories/:categoryId", async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    // Delete category
+    await db.collection("categories").deleteOne({ categoryId });
+
+    // Delete associated table data
+    await db.collection("category_tables").deleteOne({ categoryId });
+
+    res.json({ success: true, message: "Category deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting category:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. Get category data
+app.get("/admin/api/categories/:categoryId/data", async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const table = await db.collection("category_tables").findOne({ categoryId });
+
+    if (!table) {
+      return res.json({ success: true, data: [] });
+    }
+
+    res.json({ success: true, data: table.data });
+  } catch (err) {
+    console.error("Error getting category data:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Add row
+app.post("/admin/api/categories/:categoryId/data", async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { values } = req.body; // values should be keyed by columnId
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const newRow = {
+      rowId: new ObjectId().toString(),
+      values: values || {},
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const result = await db.collection("category_tables").updateOne(
+      { categoryId },
+      {
+        $push: { data: newRow },
+        $set: { updatedAt: new Date() }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "Category table not found" });
+    }
+
+    res.json({ success: true, row: newRow });
+  } catch (err) {
+    console.error("Error adding row:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. Update row
+app.put("/admin/api/categories/:categoryId/data/:rowId", async (req, res) => {
+  try {
+    const { categoryId, rowId } = req.params;
+    const { values } = req.body;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const result = await db.collection("category_tables").updateOne(
+      { categoryId, "data.rowId": rowId },
+      {
+        $set: {
+          "data.$.values": values,
+          "data.$.updatedAt": new Date(),
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "Row not found" });
+    }
+
+    res.json({ success: true, message: "Row updated successfully" });
+  } catch (err) {
+    console.error("Error updating row:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. Delete row
+app.delete("/admin/api/categories/:categoryId/data/:rowId", async (req, res) => {
+  try {
+    const { categoryId, rowId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const result = await db.collection("category_tables").updateOne(
+      { categoryId },
+      {
+        $pull: { data: { rowId: rowId } },
+        $set: { updatedAt: new Date() }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "Category table not found" });
+    }
+
+    res.json({ success: true, message: "Row deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting row:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 9. Import Excel
+app.post("/admin/api/categories/:categoryId/import-excel", upload.single("file"), async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ success: false, error: "No file uploaded" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    // Get category to map columns
+    const category = await db.collection("categories").findOne({ categoryId });
+    if (!category) {
+      return res.status(404).json({ success: false, error: "Category not found" });
+    }
+
+    // Create a map of Column Name -> Column ID
+    const columnMap = {};
+    category.columns.forEach(col => {
+      columnMap[col.name.trim()] = col.id;
+    });
+
+    const workbook = XLSX.read(file.buffer, { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet);
+
+    const newRows = rows.map(row => {
+      const values = {};
+      Object.keys(row).forEach(header => {
+        const colId = columnMap[header.trim()];
+        if (colId) {
+          values[colId] = String(row[header]);
+        }
+      });
+      return {
+        rowId: new ObjectId().toString(),
+        values,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+    });
+
+    if (newRows.length > 0) {
+      await db.collection("category_tables").updateOne(
+        { categoryId },
+        {
+          $push: { data: { $each: newRows } },
+          $set: { updatedAt: new Date() }
+        }
+      );
+    }
+
+    res.json({ success: true, importedCount: newRows.length });
+  } catch (err) {
+    console.error("Error importing excel:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 10. Export Excel
+app.get("/admin/api/categories/:categoryId/export-excel", async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const category = await db.collection("categories").findOne({ categoryId });
+    if (!category) {
+      return res.status(404).json({ success: false, error: "Category not found" });
+    }
+
+    const table = await db.collection("category_tables").findOne({ categoryId });
+    const data = table ? table.data : [];
+
+    // Map data back to Column Names
+    const exportData = data.map(row => {
+      const rowObj = {};
+      category.columns.forEach(col => {
+        rowObj[col.name] = row.values[col.id] || "";
+      });
+      return rowObj;
+    });
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Data");
+
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(category.name)}.xlsx"`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.send(buffer);
+  } catch (err) {
+    console.error("Error exporting excel:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================ AI Tools for Categories ============================
+
+async function getCategories(db) {
+  const categories = await db.collection('categories')
+    .find({ isActive: true })
+    .project({ name: 1, description: 1 })
+    .toArray();
+  return { categories: categories.map(c => c.name) };
+}
+
+async function searchItemByCategory(db, categoryName, keyword) {
+  const categoryDoc = await db.collection('categories').findOne({ name: categoryName });
+  if (!categoryDoc) return { error: "Category not found" };
+
+  const firstColId = categoryDoc.columns[0].id;
+  const tableDoc = await db.collection('category_tables').findOne({ categoryId: categoryDoc.categoryId });
+  if (!tableDoc) return { data: [] };
+
+  const results = tableDoc.data.filter(row => {
+    const val = row.values[firstColId];
+    return val && String(val).toLowerCase().includes(keyword.toLowerCase());
+  });
+
+  // Map results to column names for AI readability
+  const mappedResults = results.slice(0, 20).map(row => {
+    const rowObj = {};
+    categoryDoc.columns.forEach(col => {
+      rowObj[col.name] = row.values[col.id] || "";
+    });
+    return rowObj;
+  });
+
+  return { data: mappedResults };
+}
+
+async function searchItemBroad(db, categoryName, keyword) {
+  const categoryDoc = await db.collection('categories').findOne({ name: categoryName });
+  if (!categoryDoc) return { error: "Category not found" };
+
+  const tableDoc = await db.collection('category_tables').findOne({ categoryId: categoryDoc.categoryId });
+  if (!tableDoc) return { data: [] };
+
+  const results = tableDoc.data.filter(row => {
+    return Object.values(row.values).some(val =>
+      val && String(val).toLowerCase().includes(keyword.toLowerCase())
+    );
+  });
+
+  // Map results to column names for AI readability
+  const mappedResults = results.slice(0, 20).map(row => {
+    const rowObj = {};
+    categoryDoc.columns.forEach(col => {
+      rowObj[col.name] = row.values[col.id] || "";
+    });
+    return rowObj;
+  });
+
+  return { data: mappedResults };
+}
 
 // Get all available tags in the system
 app.get("/admin/chat/available-tags", async (req, res) => {

@@ -56,6 +56,11 @@
             </a>
           </li>
           <li class="nav-item">
+            <a class="nav-link<%= current === 'categories' ? ' active' : '' %>" href="/admin/categories">
+              <i class="fas fa-database"></i> จัดการข้อมูล
+            </a>
+          </li>
+          <li class="nav-item">
             <a class="nav-link<%= (current === 'settings' || current === 'settings2') ? ' active' : '' %>"
               href="/admin/settings2">
               <i class="fas fa-cogs"></i> ตั้งค่า
@@ -86,7 +91,7 @@
       // Auth Logic
       window.adminAuth = window.adminAuth || {};
       window.adminAuth.requirePasscode = <%= isPasscodeRequired ? 'true' : 'false' %>;
-      window.adminAuth.user = <%- JSON.stringify(signedInUser || null) %>;
+      window.adminAuth.user = <% - JSON.stringify(signedInUser || null) %>;
 
       const logoutBtn = document.getElementById('adminLogoutBtn');
       if (logoutBtn) {
