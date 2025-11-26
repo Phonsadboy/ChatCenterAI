@@ -5954,6 +5954,12 @@ async function handleFacebookComment(
     }
   }
 
+  // Prevent self-reply loop: Check if commenter is the page itself
+  if (commenterId === pageId) {
+    console.log(`[Facebook Comment] Skip comment from page itself ${commentId}`);
+    return;
+  }
+
   const policy = await resolveCommentPolicyForPost(db, bot, postDoc);
   const shouldReply =
     policy?.isActive === true && policy.mode && policy.mode !== "off";
@@ -6008,13 +6014,18 @@ async function handleFacebookComment(
         ? replyMessage
         : `สวัสดีคุณ ${commenterName} ขอบคุณที่สนใจ สามารถทักแชทต่อได้เลยนะครับ`;
     try {
+      // Use specific function for private replies to comments
       await sendPrivateMessageFromComment(commentId, privateMessage, accessToken);
       privateSent = true;
+      console.log(`[Facebook Comment] Sent private reply to ${commentId}`);
     } catch (err) {
+      console.error(
+        `[Facebook Comment] Error sending private message:`,
+        err?.response?.data || err.message
+      );
       if (action !== "failed") {
-        action = "failed";
-        reason =
-          err?.response?.data?.error?.message || err?.message || "private_failed";
+        // Don't mark entire action as failed if only private reply failed, but log it
+        reason = "private_reply_failed: " + (err?.response?.data?.error?.message || err?.message);
       }
     }
 
@@ -9588,48 +9599,89 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
         }
 
         // Handle messaging events (existing code)
-        for (let messagingEvent of entry.messaging) {
-          // จัดการข้อความที่ส่งจากเพจเอง (echo) – ถือว่าเป็นข้อความจากแอดมินเพจ
-          if (messagingEvent.message?.is_echo) {
-            try {
-              const targetUserId = messagingEvent.recipient?.id; // ผู้ใช้ปลายทางของข้อความจากเพจ
-              const text = messagingEvent.message?.text?.trim();
-              const metadata = messagingEvent.message?.metadata || "";
+        if (entry.messaging && Array.isArray(entry.messaging)) {
+          for (let messagingEvent of entry.messaging) {
+            // จัดการข้อความที่ส่งจากเพจเอง (echo) – ถือว่าเป็นข้อความจากแอดมินเพจ
+            if (messagingEvent.message?.is_echo) {
+              try {
+                const targetUserId = messagingEvent.recipient?.id; // ผู้ใช้ปลายทางของข้อความจากเพจ
+                const text = messagingEvent.message?.text?.trim();
+                const metadata = messagingEvent.message?.metadata || "";
 
-              // ข้ามข้อความที่ระบบส่งอัตโนมัติ (เช่น AI / follow-up) เพื่อหลีกเลี่ยงการบันทึกซ้ำ
-              const automatedMetadata = ["ai_generated", "follow_up_auto"];
-              if (metadata && automatedMetadata.includes(metadata)) {
-                console.log(
-                  `[Facebook Bot: ${facebookBot.name}] Skip echo for automated message (${metadata}) to ${targetUserId}`,
+                // ข้ามข้อความที่ระบบส่งอัตโนมัติ (เช่น AI / follow-up) เพื่อหลีกเลี่ยงการบันทึกซ้ำ
+                const automatedMetadata = ["ai_generated", "follow_up_auto"];
+                if (metadata && automatedMetadata.includes(metadata)) {
+                  console.log(
+                    `[Facebook Bot: ${facebookBot.name}] Skip echo for automated message (${metadata}) to ${targetUserId}`,
+                  );
+                  continue;
+                }
+
+                if (!targetUserId) {
+                  continue;
+                }
+
+                const client = await connectDB();
+                const db = client.db("chatbot");
+                const coll = db.collection("chat_history");
+
+                // ตรวจสอบ keyword actions ก่อน (เช่น เปิด/ปิด AI, ปิดระบบติดตาม)
+                const keywordResult = await detectKeywordAction(
+                  text,
+                  facebookBot.keywordSettings || {},
+                  targetUserId,
+                  "facebook",
+                  facebookBot._id?.toString?.() || null,
+                  true, // isFromAdmin = true
                 );
-                continue;
-              }
 
-              if (!targetUserId) {
-                continue;
-              }
+                if (keywordResult.action) {
+                  // ถ้ามี keyword action และต้องการส่งข้อความตอบกลับ
+                  if (keywordResult.sendResponse && keywordResult.message) {
+                    const controlDoc = {
+                      senderId: targetUserId,
+                      role: "assistant",
+                      content: `[ระบบ] ${keywordResult.message}`,
+                      timestamp: new Date(),
+                      source: "admin_chat",
+                      platform: "facebook",
+                      botId: facebookBot?._id?.toString?.() || null,
+                    };
+                    const controlInsertResult = await coll.insertOne(controlDoc);
+                    if (controlInsertResult?.insertedId) {
+                      controlDoc._id = controlInsertResult.insertedId;
+                    }
+                    await appendOrderExtractionMessage(controlDoc);
 
-              const client = await connectDB();
-              const db = client.db("chatbot");
-              const coll = db.collection("chat_history");
+                    try {
+                      await resetUserUnreadCount(targetUserId);
+                    } catch (_) { }
 
-              // ตรวจสอบ keyword actions ก่อน (เช่น เปิด/ปิด AI, ปิดระบบติดตาม)
-              const keywordResult = await detectKeywordAction(
-                text,
-                facebookBot.keywordSettings || {},
-                targetUserId,
-                "facebook",
-                facebookBot._id?.toString?.() || null,
-                true, // isFromAdmin = true
-              );
+                    // แจ้ง UI แอดมินแบบเรียลไทม์
+                    try {
+                      io.emit("newMessage", {
+                        userId: targetUserId,
+                        message: controlDoc,
+                        sender: "assistant",
+                        timestamp: controlDoc.timestamp,
+                      });
+                    } catch (_) { }
+                  }
+                  continue;
+                }
 
-              if (keywordResult.action) {
-                // ถ้ามี keyword action และต้องการส่งข้อความตอบกลับ
-                if (keywordResult.sendResponse && keywordResult.message) {
+                // คำสั่งควบคุม [ปิด]/[เปิด] (legacy)
+                if (text === "[ปิด]" || text === "[เปิด]") {
+                  const enable = text === "[เปิด]";
+                  await setUserStatus(targetUserId, enable);
+
+                  const controlText = enable
+                    ? "เปิด AI สำหรับผู้ใช้นี้แล้ว"
+                    : "ปิด AI สำหรับผู้ใช้นี้ชั่วคราวแล้ว";
                   const controlDoc = {
                     senderId: targetUserId,
                     role: "assistant",
-                    content: `[ระบบ] ${keywordResult.message}`,
+                    content: `[ระบบ] ${controlText}`,
                     timestamp: new Date(),
                     source: "admin_chat",
                     platform: "facebook",
@@ -9654,215 +9706,175 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                       timestamp: controlDoc.timestamp,
                     });
                   } catch (_) { }
-                }
-                continue;
-              }
-
-              // คำสั่งควบคุม [ปิด]/[เปิด] (legacy)
-              if (text === "[ปิด]" || text === "[เปิด]") {
-                const enable = text === "[เปิด]";
-                await setUserStatus(targetUserId, enable);
-
-                const controlText = enable
-                  ? "เปิด AI สำหรับผู้ใช้นี้แล้ว"
-                  : "ปิด AI สำหรับผู้ใช้นี้ชั่วคราวแล้ว";
-                const controlDoc = {
-                  senderId: targetUserId,
-                  role: "assistant",
-                  content: `[ระบบ] ${controlText}`,
-                  timestamp: new Date(),
-                  source: "admin_chat",
-                  platform: "facebook",
-                  botId: facebookBot?._id?.toString?.() || null,
-                };
-                const controlInsertResult = await coll.insertOne(controlDoc);
-                if (controlInsertResult?.insertedId) {
-                  controlDoc._id = controlInsertResult.insertedId;
-                }
-                await appendOrderExtractionMessage(controlDoc);
-
-                try {
-                  await resetUserUnreadCount(targetUserId);
-                } catch (_) { }
-
-                // แจ้ง UI แอดมินแบบเรียลไทม์
-                try {
-                  io.emit("newMessage", {
-                    userId: targetUserId,
-                    message: controlDoc,
-                    sender: "assistant",
-                    timestamp: controlDoc.timestamp,
-                  });
-                } catch (_) { }
-              } else {
-                // บันทึกข้อความจากแอดมินเพจเป็น assistant (เฉพาะกรณีไม่ใช่คำสั่ง)
-                const baseDoc = {
-                  senderId: targetUserId,
-                  role: "assistant",
-                  content: text || "ไฟล์แนบ",
-                  timestamp: new Date(),
-                  source: "admin_chat", // ใช้ค่าเดียวกับแอดมินหน้าเว็บ เพื่อให้ UI แสดงเป็น "แอดมิน"
-                  platform: "facebook",
-                  botId: facebookBot?._id?.toString?.() || null,
-                };
-                const baseInsertResult = await coll.insertOne(baseDoc);
-                if (baseInsertResult?.insertedId) {
-                  baseDoc._id = baseInsertResult.insertedId;
-                }
-                await appendOrderExtractionMessage(baseDoc);
-                // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
-                try {
-                  await resetUserUnreadCount(targetUserId);
-                } catch (_) { }
-                try {
-                  io.emit("newMessage", {
-                    userId: targetUserId,
-                    message: baseDoc,
-                    sender: "assistant",
-                    timestamp: baseDoc.timestamp,
-                  });
-                } catch (_) { }
-              }
-            } catch (echoErr) {
-              console.error(
-                `[Facebook Bot: ${facebookBot.name}] Error handling admin echo:`,
-                echoErr.message,
-              );
-            }
-            continue;
-          }
-
-          if (messagingEvent.message) {
-            const senderId = messagingEvent.sender.id;
-            try {
-              await ensureFacebookProfileDisplayName(
-                senderId,
-                facebookBot.accessToken,
-              );
-            } catch (profileErr) {
-              console.warn(
-                `[Facebook Bot: ${facebookBot.name}] อัปเดตโปรไฟล์ ${senderId} ไม่สำเร็จ:`,
-                profileErr?.message || profileErr,
-              );
-            }
-            const queueOptions = { ...queueOptionsBase };
-            const itemsToQueue = [];
-            const audioAttachments = [];
-            const messageText = messagingEvent.message.text;
-
-            if (messageText) {
-              itemsToQueue.push({
-                data: { type: "text", text: messageText },
-              });
-            }
-
-            if (messagingEvent.message.attachments) {
-              for (const attachment of messagingEvent.message.attachments) {
-                if (attachment.type === "image" && attachment.payload?.url) {
-                  try {
-                    const base64 = await fetchFacebookImageAsBase64(
-                      attachment.payload.url,
-                    );
-                    itemsToQueue.push({
-                      data: {
-                        type: "image",
-                        base64,
-                        text: "ผู้ใช้ส่งรูปภาพมา",
-                      },
-                    });
-                  } catch (imgErr) {
-                    console.error(
-                      `[Facebook Bot: ${facebookBot.name}] Error fetching image:`,
-                      imgErr.message,
-                    );
+                } else {
+                  // บันทึกข้อความจากแอดมินเพจเป็น assistant (เฉพาะกรณีไม่ใช่คำสั่ง)
+                  const baseDoc = {
+                    senderId: targetUserId,
+                    role: "assistant",
+                    content: text || "ไฟล์แนบ",
+                    timestamp: new Date(),
+                    source: "admin_chat", // ใช้ค่าเดียวกับแอดมินหน้าเว็บ เพื่อให้ UI แสดงเป็น "แอดมิน"
+                    platform: "facebook",
+                    botId: facebookBot?._id?.toString?.() || null,
+                  };
+                  const baseInsertResult = await coll.insertOne(baseDoc);
+                  if (baseInsertResult?.insertedId) {
+                    baseDoc._id = baseInsertResult.insertedId;
                   }
-                } else if (attachment.type === "audio") {
-                  audioAttachments.push({
-                    type: "audio",
-                    payload: {
-                      url: attachment.payload?.url || null,
-                      id: attachment.payload?.id || null,
-                      duration: attachment.payload?.duration || null,
-                    },
-                  });
+                  await appendOrderExtractionMessage(baseDoc);
+                  // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
+                  try {
+                    await resetUserUnreadCount(targetUserId);
+                  } catch (_) { }
+                  try {
+                    io.emit("newMessage", {
+                      userId: targetUserId,
+                      message: baseDoc,
+                      sender: "assistant",
+                      timestamp: baseDoc.timestamp,
+                    });
+                  } catch (_) { }
                 }
-              }
-            }
-
-            if (audioAttachments.length > 0) {
-              try {
-                const audioResponseSetting = await getSettingValue(
-                  "audioAttachmentResponse",
-                  DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
-                );
-                const replyText =
-                  audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
-                const filteredReply = await filterMessage(replyText);
-                await sendFacebookMessage(
-                  senderId,
-                  filteredReply,
-                  facebookBot.accessToken,
-                  { metadata: "ai_generated" },
-                );
-                try {
-                  await saveChatHistory(
-                    senderId,
-                    { type: "audio", attachments: audioAttachments },
-                    filteredReply,
-                    "facebook",
-                    facebookBot._id ? facebookBot._id.toString() : null,
-                  );
-                } catch (historyErr) {
-                  console.error(
-                    `[Facebook Bot: ${facebookBot.name}] ไม่สามารถบันทึกประวัติไฟล์เสียงได้:`,
-                    historyErr.message || historyErr,
-                  );
-                }
-              } catch (audioErr) {
+              } catch (echoErr) {
                 console.error(
-                  `[Facebook Bot: ${facebookBot.name}] Error handling audio attachment:`,
-                  audioErr.message || audioErr,
-                );
-              }
-            }
-
-            if (itemsToQueue.length === 0) {
-              if (audioAttachments.length === 0) {
-                await sendFacebookMessage(
-                  senderId,
-                  "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้",
-                  facebookBot.accessToken,
-                  { metadata: "ai_generated" },
+                  `[Facebook Bot: ${facebookBot.name}] Error handling admin echo:`,
+                  echoErr.message,
                 );
               }
               continue;
             }
 
-            console.log(
-              `[Facebook Bot: ${facebookBot.name}] รับข้อความเข้าคิวจาก ${senderId}: ${messageText || "[มีรูปภาพ]"}`,
-            );
-
-            for (const item of itemsToQueue) {
+            if (messagingEvent.message) {
+              const senderId = messagingEvent.sender.id;
               try {
-                await addToQueue(senderId, { ...item }, queueOptions);
-              } catch (queueErr) {
-                console.error(
-                  `[Facebook Bot: ${facebookBot.name}] Error queuing message:`,
-                  queueErr,
+                await ensureFacebookProfileDisplayName(
+                  senderId,
+                  facebookBot.accessToken,
                 );
+              } catch (profileErr) {
+                console.warn(
+                  `[Facebook Bot: ${facebookBot.name}] อัปเดตโปรไฟล์ ${senderId} ไม่สำเร็จ:`,
+                  profileErr?.message || profileErr,
+                );
+              }
+              const queueOptions = { ...queueOptionsBase };
+              const itemsToQueue = [];
+              const audioAttachments = [];
+              const messageText = messagingEvent.message.text;
+
+              if (messageText) {
+                itemsToQueue.push({
+                  data: { type: "text", text: messageText },
+                });
+              }
+
+              if (messagingEvent.message.attachments) {
+                for (const attachment of messagingEvent.message.attachments) {
+                  if (attachment.type === "image" && attachment.payload?.url) {
+                    try {
+                      const base64 = await fetchFacebookImageAsBase64(
+                        attachment.payload.url,
+                      );
+                      itemsToQueue.push({
+                        data: {
+                          type: "image",
+                          base64,
+                          text: "ผู้ใช้ส่งรูปภาพมา",
+                        },
+                      });
+                    } catch (imgErr) {
+                      console.error(
+                        `[Facebook Bot: ${facebookBot.name}] Error fetching image:`,
+                        imgErr.message,
+                      );
+                    }
+                  } else if (attachment.type === "audio") {
+                    audioAttachments.push({
+                      type: "audio",
+                      payload: {
+                        url: attachment.payload?.url || null,
+                        id: attachment.payload?.id || null,
+                        duration: attachment.payload?.duration || null,
+                      },
+                    });
+                  }
+                }
+              }
+
+              if (audioAttachments.length > 0) {
+                try {
+                  const audioResponseSetting = await getSettingValue(
+                    "audioAttachmentResponse",
+                    DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+                  );
+                  const replyText =
+                    audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
+                  const filteredReply = await filterMessage(replyText);
+                  await sendFacebookMessage(
+                    senderId,
+                    filteredReply,
+                    facebookBot.accessToken,
+                    { metadata: "ai_generated" },
+                  );
+                  try {
+                    await saveChatHistory(
+                      senderId,
+                      { type: "audio", attachments: audioAttachments },
+                      filteredReply,
+                      "facebook",
+                      facebookBot._id ? facebookBot._id.toString() : null,
+                    );
+                  } catch (historyErr) {
+                    console.error(
+                      `[Facebook Bot: ${facebookBot.name}] ไม่สามารถบันทึกประวัติไฟล์เสียงได้:`,
+                      historyErr.message || historyErr,
+                    );
+                  }
+                } catch (audioErr) {
+                  console.error(
+                    `[Facebook Bot: ${facebookBot.name}] Error handling audio attachment:`,
+                    audioErr.message || audioErr,
+                  );
+                }
+              }
+
+              if (itemsToQueue.length === 0) {
+                if (audioAttachments.length === 0) {
+                  await sendFacebookMessage(
+                    senderId,
+                    "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้",
+                    facebookBot.accessToken,
+                    { metadata: "ai_generated" },
+                  );
+                }
+                continue;
+              }
+
+              console.log(
+                `[Facebook Bot: ${facebookBot.name}] รับข้อความเข้าคิวจาก ${senderId}: ${messageText || "[มีรูปภาพ]"}`,
+              );
+
+              for (const item of itemsToQueue) {
+                try {
+                  await addToQueue(senderId, { ...item }, queueOptions);
+                } catch (queueErr) {
+                  console.error(
+                    `[Facebook Bot: ${facebookBot.name}] Error queuing message:`,
+                    queueErr,
+                  );
+                }
               }
             }
           }
         }
       }
+    } catch (err) {
+      console.error("Error handling Facebook webhook:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
+      }
     }
-  } catch (err) {
-    console.error("Error handling Facebook webhook:", err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
-    }
-  }
-});
+  });
 
 // Helper function to send Facebook message
 async function sendFacebookMessage(
