@@ -644,12 +644,14 @@ function buildInstructionText(instructions, options = {}) {
 async function ensureCategoryIndexes(db) {
   try {
     const categories = db.collection("categories");
-    await categories.createIndex({ categoryId: 1 }, { unique: true });
-    await categories.createIndex({ name: 1 });
+    // Unique categoryId per bot
+    await categories.createIndex({ botId: 1, platform: 1, categoryId: 1 }, { unique: true });
+    await categories.createIndex({ botId: 1, platform: 1, name: 1 });
     await categories.createIndex({ isActive: 1, createdAt: -1 });
 
     const categoryTables = db.collection("category_tables");
     await categoryTables.createIndex({ categoryId: 1 }, { unique: true });
+    await categoryTables.createIndex({ botId: 1, platform: 1 });
     // Wildcard text index for broad search across all columns
     await categoryTables.createIndex({ "data.values.$**": "text" });
 
@@ -5181,6 +5183,8 @@ async function processFlushedMessages(
         history,
         combinedText,
         aiModelOverride,
+        queueContext.botId,
+        "line"
       );
     }
 
@@ -7542,6 +7546,8 @@ async function getAssistantResponseTextOnly(
   history,
   userText,
   aiModel = null,
+  botId = null,
+  platform = null
 ) {
   try {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -7636,11 +7642,11 @@ async function getAssistantResponseTextOnly(
           let toolResult = { error: "Unknown tool" };
 
           if (functionName === "get_categories") {
-            toolResult = await getCategories(db);
+            toolResult = await getCategories(db, botId, platform);
           } else if (functionName === "search_item_by_category") {
-            toolResult = await searchItemByCategory(db, functionArgs.category, functionArgs.keyword);
+            toolResult = await searchItemByCategory(db, functionArgs.category, functionArgs.keyword, botId, platform);
           } else if (functionName === "search_item_broad") {
-            toolResult = await searchItemBroad(db, functionArgs.category, functionArgs.keyword);
+            toolResult = await searchItemBroad(db, functionArgs.category, functionArgs.keyword, botId, platform);
           }
 
           messages.push({
@@ -10579,6 +10585,8 @@ async function processFacebookMessageWithAI(
           history,
           combinedText,
           aiModel,
+          facebookBot._id.toString(),
+          "facebook"
         );
       }
 
@@ -16159,53 +16167,98 @@ app.get("/admin/chat/orders", async (req, res) => {
   }
 });
 
-// ============================ Category Management APIs ============================
+// ============================ Bot Management APIs ============================
 
-// 1. Get all categories
-app.get("/admin/api/categories", async (req, res) => {
+app.get("/admin/api/all-bots", requireAdmin, async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    const categories = await db.collection("categories")
-      .find({ isActive: true })
-      .sort({ createdAt: -1 })
-      .toArray();
-    res.json({ success: true, categories });
+
+    const lineBots = await db.collection("line_bots").find({}).project({ _id: 1, botName: 1 }).toArray();
+    const facebookBots = await db.collection("facebook_bots").find({}).project({ _id: 1, pageName: 1 }).toArray();
+
+    const bots = [
+      ...lineBots.map(b => ({ id: b._id, name: b.botName, platform: "line" })),
+      ...facebookBots.map(b => ({ id: b._id, name: b.pageName, platform: "facebook" }))
+    ];
+
+    res.json({ success: true, bots });
   } catch (err) {
-    console.error("Error getting categories:", err);
+    console.error("Error fetching all bots:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 2. Create new category
-app.post("/admin/api/categories", async (req, res) => {
-  try {
-    const { name, description, columns } = req.body;
+// ============================ Category Management APIs ============================
 
-    if (!name) {
-      return res.status(400).json({ success: false, error: "Category name is required" });
+// GET: List all categories (filtered by botId and platform)
+app.get("/admin/api/categories", requireAdmin, async (req, res) => {
+  try {
+    const { botId, platform } = req.query;
+    const query = { isActive: true };
+
+    if (botId) query.botId = botId;
+    if (platform) query.platform = platform;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const categories = await db
+      .collection("categories")
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json({ success: true, categories });
+  } catch (err) {
+    console.error("Error fetching categories:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST: Create a new category
+app.post("/admin/api/categories", requireAdmin, async (req, res) => {
+  try {
+    const { name, description, columns, botId, platform } = req.body;
+
+    if (!name || !columns || !Array.isArray(columns) || !botId || !platform) {
+      return res.status(400).json({ success: false, error: "Missing required fields" });
     }
 
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    // Generate IDs for columns if not present
-    const processedColumns = (columns || []).map((col, index) => ({
-      id: col.id || new ObjectId().toString(),
+    // Check for duplicate name in the same bot
+    const existing = await db.collection("categories").findOne({
+      name,
+      botId,
+      platform,
+      isActive: true
+    });
+
+    if (existing) {
+      return res.status(400).json({ success: false, error: "Category name already exists for this bot" });
+    }
+
+    const categoryId = `cat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Ensure columns have IDs
+    const columnsWithIds = columns.map((col, index) => ({
+      id: col.id || `col_${Math.random().toString(36).substr(2, 9)}`,
       index: index,
       name: col.name,
-      type: col.type || "text"
+      type: col.type || "text",
     }));
 
-    const categoryId = `cat_${new ObjectId().toString()}`;
     const newCategory = {
       categoryId,
+      botId,
+      platform,
       name,
       description,
-      columns: processedColumns,
+      columns: columnsWithIds,
       isActive: true,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
 
     await db.collection("categories").insertOne(newCategory);
@@ -16213,9 +16266,11 @@ app.post("/admin/api/categories", async (req, res) => {
     // Create empty table for this category
     await db.collection("category_tables").insertOne({
       categoryId,
+      botId,
+      platform,
       data: [],
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     });
 
     res.json({ success: true, category: newCategory });
@@ -16502,16 +16557,24 @@ app.get("/admin/api/categories/:categoryId/export-excel", async (req, res) => {
 
 // ============================ AI Tools for Categories ============================
 
-async function getCategories(db) {
+async function getCategories(db, botId, platform) {
+  const query = { isActive: true };
+  if (botId) query.botId = botId;
+  if (platform) query.platform = platform;
+
   const categories = await db.collection('categories')
-    .find({ isActive: true })
+    .find(query)
     .project({ name: 1, description: 1 })
     .toArray();
   return { categories: categories.map(c => c.name) };
 }
 
-async function searchItemByCategory(db, categoryName, keyword) {
-  const categoryDoc = await db.collection('categories').findOne({ name: categoryName });
+async function searchItemByCategory(db, categoryName, keyword, botId, platform) {
+  const query = { name: categoryName, isActive: true };
+  if (botId) query.botId = botId;
+  if (platform) query.platform = platform;
+
+  const categoryDoc = await db.collection('categories').findOne(query);
   if (!categoryDoc) return { error: "Category not found" };
 
   const firstColId = categoryDoc.columns[0].id;
@@ -16535,8 +16598,12 @@ async function searchItemByCategory(db, categoryName, keyword) {
   return { data: mappedResults };
 }
 
-async function searchItemBroad(db, categoryName, keyword) {
-  const categoryDoc = await db.collection('categories').findOne({ name: categoryName });
+async function searchItemBroad(db, categoryName, keyword, botId, platform) {
+  const query = { name: categoryName, isActive: true };
+  if (botId) query.botId = botId;
+  if (platform) query.platform = platform;
+
+  const categoryDoc = await db.collection('categories').findOne(query);
   if (!categoryDoc) return { error: "Category not found" };
 
   const tableDoc = await db.collection('category_tables').findOne({ categoryId: categoryDoc.categoryId });

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="th">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,16 +14,19 @@
             font-family: "Mali", "Inter", sans-serif;
             background-color: #f8f9fa;
         }
+
         .category-card {
             transition: transform 0.2s, box-shadow 0.2s;
             border: none;
             border-radius: 12px;
             overflow: hidden;
         }
+
         .category-card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
         }
+
         .category-icon {
             width: 60px;
             height: 60px;
@@ -35,6 +39,7 @@
             color: white;
             margin-bottom: 15px;
         }
+
         .column-badge {
             background-color: #e2e8f0;
             color: #4a5568;
@@ -45,6 +50,7 @@
             margin-bottom: 5px;
             display: inline-block;
         }
+
         .action-btn {
             width: 32px;
             height: 32px;
@@ -54,119 +60,170 @@
             border-radius: 6px;
             transition: all 0.2s;
         }
+
         .action-btn:hover {
             background-color: #edf2f7;
         }
     </style>
 </head>
+
 <body>
     <%- include('partials/admin-navbar', { activePage: 'categories' }) %>
 
-    <div class="container-fluid mt-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h4 class="mb-1"><i class="fas fa-database me-2 text-primary"></i>จัดการหมวดหมู่ข้อมูล</h4>
-                <p class="text-muted mb-0">สร้างและจัดการโครงสร้างข้อมูลสำหรับ AI</p>
-            </div>
-            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#categoryModal" onclick="resetForm()">
-                <i class="fas fa-plus me-2"></i>สร้างหมวดหมู่ใหม่
-            </button>
-        </div>
-
-        <div class="row g-4" id="categoriesList">
-            <!-- Categories will be loaded here -->
-            <div class="col-12 text-center py-5">
-                <div class="spinner-border text-primary" role="status">
-                    <span class="visually-hidden">Loading...</span>
+        <div class="container-fluid mt-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h4 class="mb-1"><i class="fas fa-database me-2 text-primary"></i>จัดการหมวดหมู่ข้อมูล</h4>
+                    <p class="text-muted mb-0">สร้างและจัดการโครงสร้างข้อมูลสำหรับ AI</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <select class="form-select" id="botSelector" style="width: 250px;" onchange="onBotChange()">
+                        <option value="" disabled selected>เลือกบอท...</option>
+                    </select>
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#categoryModal"
+                        onclick="resetForm()" id="createBtn" disabled>
+                        <i class="fas fa-plus me-2"></i>สร้างหมวดหมู่ใหม่
+                    </button>
                 </div>
             </div>
-        </div>
-    </div>
 
-    <!-- Category Modal -->
-    <div class="modal fade" id="categoryModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="modalTitle">สร้างหมวดหมู่ใหม่</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="categoryForm">
-                        <input type="hidden" id="categoryId">
-                        <div class="mb-3">
-                            <label class="form-label">ชื่อหมวดหมู่ <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="categoryName" required placeholder="เช่น สินค้า, ลูกค้า, สาขา">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">คำอธิบาย</label>
-                            <textarea class="form-control" id="categoryDescription" rows="2" placeholder="รายละเอียดเกี่ยวกับข้อมูลในหมวดหมู่นี้"></textarea>
-                        </div>
-
-                        <hr>
-
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <label class="form-label mb-0">โครงสร้างตาราง (Columns)</label>
-                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addColumn()">
-                                <i class="fas fa-plus me-1"></i>เพิ่ม Column
-                            </button>
-                        </div>
-
-                        <div class="alert alert-info py-2 small">
-                            <i class="fas fa-info-circle me-1"></i> 
-                            Column แรกจะเป็น <strong>Main Key</strong> สำหรับการค้นหาเสมอ (เช่น ชื่อสินค้า, รหัสลูกค้า)
-                        </div>
-
-                        <div id="columnsContainer">
-                            <!-- Dynamic Columns -->
-                        </div>
-                    </form>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-                    <button type="button" class="btn btn-primary" onclick="saveCategory()">บันทึก</button>
+            <div class="row g-4" id="categoriesList">
+                <!-- Categories will be loaded here -->
+                <div class="col-12 text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    
-    <script>
-        let categories = [];
+        <!-- Category Modal -->
+        <div class="modal fade" id="categoryModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="modalTitle">สร้างหมวดหมู่ใหม่</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="categoryForm">
+                            <input type="hidden" id="categoryId">
+                            <div class="mb-3">
+                                <label class="form-label">ชื่อหมวดหมู่ <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="categoryName" required
+                                    placeholder="เช่น สินค้า, ลูกค้า, สาขา">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">คำอธิบาย</label>
+                                <textarea class="form-control" id="categoryDescription" rows="2"
+                                    placeholder="รายละเอียดเกี่ยวกับข้อมูลในหมวดหมู่นี้"></textarea>
+                            </div>
 
-        document.addEventListener('DOMContentLoaded', loadCategories);
+                            <hr>
 
-        async function loadCategories() {
-            try {
-                const res = await fetch('/admin/api/categories');
-                const data = await res.json();
-                
-                if (data.success) {
-                    categories = data.categories;
-                    renderCategories();
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <label class="form-label mb-0">โครงสร้างตาราง (Columns)</label>
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addColumn()">
+                                    <i class="fas fa-plus me-1"></i>เพิ่ม Column
+                                </button>
+                            </div>
+
+                            <div class="alert alert-info py-2 small">
+                                <i class="fas fa-info-circle me-1"></i>
+                                Column แรกจะเป็น <strong>Main Key</strong> สำหรับการค้นหาเสมอ (เช่น ชื่อสินค้า,
+                                รหัสลูกค้า)
+                            </div>
+
+                            <div id="columnsContainer">
+                                <!-- Dynamic Columns -->
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                        <button type="button" class="btn btn-primary" onclick="saveCategory()">บันทึก</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+        <script>
+            let categories = [];
+            let currentBot = null;
+
+            document.addEventListener('DOMContentLoaded', async () => {
+                await loadBots();
+            });
+
+            async function loadBots() {
+                try {
+                    const res = await fetch('/admin/api/all-bots');
+                    const data = await res.json();
+
+                    if (data.success) {
+                        const selector = document.getElementById('botSelector');
+                        data.bots.forEach(bot => {
+                            const option = document.createElement('option');
+                            option.value = JSON.stringify({ id: bot.id, platform: bot.platform });
+                            option.text = `${bot.platform === 'line' ? 'LINE' : 'FB'}: ${bot.name}`;
+                            selector.appendChild(option);
+                        });
+
+                        // Select first bot if available
+                        if (data.bots.length > 0) {
+                            selector.value = JSON.stringify({ id: data.bots[0].id, platform: data.bots[0].platform });
+                            onBotChange();
+                        }
+                    }
+                } catch (err) {
+                    console.error(err);
+                    Swal.fire('Error', 'ไม่สามารถโหลดรายชื่อบอทได้', 'error');
                 }
-            } catch (err) {
-                console.error(err);
-                Swal.fire('Error', 'ไม่สามารถโหลดข้อมูลได้', 'error');
             }
-        }
 
-        function renderCategories() {
-            const container = document.getElementById('categoriesList');
-            
-            if (categories.length === 0) {
-                container.innerHTML = `
+            function onBotChange() {
+                const selector = document.getElementById('botSelector');
+                if (selector.value) {
+                    currentBot = JSON.parse(selector.value);
+                    document.getElementById('createBtn').disabled = false;
+                    loadCategories();
+                }
+            }
+
+            async function loadCategories() {
+                if (!currentBot) return;
+
+                try {
+                    const res = await fetch(`/admin/api/categories?botId=${currentBot.id}&platform=${currentBot.platform}`);
+                    const data = await res.json();
+
+                    if (data.success) {
+                        categories = data.categories;
+                        renderCategories();
+                    }
+                } catch (err) {
+                    console.error(err);
+                    Swal.fire('Error', 'ไม่สามารถโหลดข้อมูลได้', 'error');
+                }
+            }
+
+            function renderCategories() {
+                const container = document.getElementById('categoriesList');
+
+                if (categories.length === 0) {
+                    container.innerHTML = `
                     <div class="col-12 text-center py-5 text-muted">
                         <i class="fas fa-folder-open fa-3x mb-3 text-secondary opacity-50"></i>
-                        <p>ยังไม่มีหมวดหมู่ข้อมูล</p>
+                        <p>ยังไม่มีหมวดหมู่ข้อมูลสำหรับบอทนี้</p>
                     </div>
                 `;
-                return;
-            }
+                    return;
+                }
 
-            container.innerHTML = categories.map(cat => `
+                container.innerHTML = categories.map(cat => `
                 <div class="col-md-6 col-lg-4">
                     <div class="card category-card h-100 shadow-sm">
                         <div class="card-body">
@@ -190,9 +247,9 @@
                             <p class="card-text text-muted small mb-3">${cat.description || '-'}</p>
                             
                             <div class="mb-4">
-                                ${cat.columns.slice(0, 3).map(col => 
-                                    `<span class="column-badge">${col.name}</span>`
-                                ).join('')}
+                                ${cat.columns.slice(0, 3).map(col =>
+                    `<span class="column-badge">${col.name}</span>`
+                ).join('')}
                                 ${cat.columns.length > 3 ? `<span class="column-badge">+${cat.columns.length - 3}</span>` : ''}
                             </div>
 
@@ -203,26 +260,26 @@
                     </div>
                 </div>
             `).join('');
-        }
+            }
 
-        function resetForm() {
-            document.getElementById('categoryForm').reset();
-            document.getElementById('categoryId').value = '';
-            document.getElementById('modalTitle').innerText = 'สร้างหมวดหมู่ใหม่';
-            document.getElementById('columnsContainer').innerHTML = '';
-            
-            // Add default first column
-            addColumn('Main Key', true);
-            addColumn('Description');
-        }
+            function resetForm() {
+                document.getElementById('categoryForm').reset();
+                document.getElementById('categoryId').value = '';
+                document.getElementById('modalTitle').innerText = 'สร้างหมวดหมู่ใหม่';
+                document.getElementById('columnsContainer').innerHTML = '';
 
-        function addColumn(name = '', isFixed = false) {
-            const container = document.getElementById('columnsContainer');
-            const id = Date.now() + Math.random().toString(36).substr(2, 9);
-            
-            const div = document.createElement('div');
-            div.className = 'input-group mb-2 column-item';
-            div.innerHTML = `
+                // Add default first column
+                addColumn('Main Key', true);
+                addColumn('Description');
+            }
+
+            function addColumn(name = '', isFixed = false) {
+                const container = document.getElementById('columnsContainer');
+                const id = Date.now() + Math.random().toString(36).substr(2, 9);
+
+                const div = document.createElement('div');
+                div.className = 'input-group mb-2 column-item';
+                div.innerHTML = `
                 <span class="input-group-text bg-light">
                     <i class="fas fa-columns text-secondary"></i>
                 </span>
@@ -238,25 +295,25 @@
                 ` : ''}
                 <input type="hidden" name="colId" value="">
             `;
-            container.appendChild(div);
-        }
+                container.appendChild(div);
+            }
 
-        async function editCategory(id) {
-            const cat = categories.find(c => c.categoryId === id);
-            if (!cat) return;
+            async function editCategory(id) {
+                const cat = categories.find(c => c.categoryId === id);
+                if (!cat) return;
 
-            document.getElementById('categoryId').value = cat.categoryId;
-            document.getElementById('categoryName').value = cat.name;
-            document.getElementById('categoryDescription').value = cat.description || '';
-            document.getElementById('modalTitle').innerText = 'แก้ไขหมวดหมู่';
+                document.getElementById('categoryId').value = cat.categoryId;
+                document.getElementById('categoryName').value = cat.name;
+                document.getElementById('categoryDescription').value = cat.description || '';
+                document.getElementById('modalTitle').innerText = 'แก้ไขหมวดหมู่';
 
-            const container = document.getElementById('columnsContainer');
-            container.innerHTML = '';
+                const container = document.getElementById('columnsContainer');
+                container.innerHTML = '';
 
-            cat.columns.forEach((col, index) => {
-                const div = document.createElement('div');
-                div.className = 'input-group mb-2 column-item';
-                div.innerHTML = `
+                cat.columns.forEach((col, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'input-group mb-2 column-item';
+                    div.innerHTML = `
                     <span class="input-group-text bg-light">
                         <i class="fas fa-columns text-secondary"></i>
                     </span>
@@ -272,90 +329,101 @@
                     ` : ''}
                     <input type="hidden" name="colId" value="${col.id}">
                 `;
-                container.appendChild(div);
-            });
+                    container.appendChild(div);
+                });
 
-            const modal = new bootstrap.Modal(document.getElementById('categoryModal'));
-            modal.show();
-        }
-
-        async function saveCategory() {
-            const id = document.getElementById('categoryId').value;
-            const name = document.getElementById('categoryName').value;
-            const description = document.getElementById('categoryDescription').value;
-            
-            if (!name) {
-                Swal.fire('Warning', 'กรุณาระบุชื่อหมวดหมู่', 'warning');
-                return;
+                const modal = new bootstrap.Modal(document.getElementById('categoryModal'));
+                modal.show();
             }
 
-            const columns = [];
-            document.querySelectorAll('.column-item').forEach(item => {
-                columns.push({
-                    name: item.querySelector('[name="colName"]').value,
-                    type: item.querySelector('[name="colType"]').value,
-                    id: item.querySelector('[name="colId"]').value || null
-                });
-            });
+            async function saveCategory() {
+                if (!currentBot) return;
 
-            if (columns.some(c => !c.name)) {
-                Swal.fire('Warning', 'กรุณาระบุชื่อ Column ให้ครบถ้วน', 'warning');
-                return;
-            }
+                const id = document.getElementById('categoryId').value;
+                const name = document.getElementById('categoryName').value;
+                const description = document.getElementById('categoryDescription').value;
 
-            const method = id ? 'PUT' : 'POST';
-            const url = id ? `/admin/api/categories/${id}` : '/admin/api/categories';
-
-            try {
-                const res = await fetch(url, {
-                    method: method,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, description, columns })
-                });
-                const data = await res.json();
-
-                if (data.success) {
-                    bootstrap.Modal.getInstance(document.getElementById('categoryModal')).hide();
-                    Swal.fire('Success', 'บันทึกข้อมูลเรียบร้อย', 'success');
-                    loadCategories();
-                } else {
-                    Swal.fire('Error', data.error, 'error');
+                if (!name) {
+                    Swal.fire('Warning', 'กรุณาระบุชื่อหมวดหมู่', 'warning');
+                    return;
                 }
-            } catch (err) {
-                console.error(err);
-                Swal.fire('Error', 'เกิดข้อผิดพลาดในการบันทึก', 'error');
-            }
-        }
 
-        async function deleteCategory(id) {
-            const result = await Swal.fire({
-                title: 'ยืนยันการลบ?',
-                text: "ข้อมูลทั้งหมดในหมวดหมู่นี้จะถูกลบและไม่สามารถกู้คืนได้!",
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#d33',
-                cancelButtonColor: '#3085d6',
-                confirmButtonText: 'ลบข้อมูล',
-                cancelButtonText: 'ยกเลิก'
-            });
+                const columns = [];
+                document.querySelectorAll('.column-item').forEach(item => {
+                    columns.push({
+                        name: item.querySelector('[name="colName"]').value,
+                        type: item.querySelector('[name="colType"]').value,
+                        id: item.querySelector('[name="colId"]').value || null
+                    });
+                });
 
-            if (result.isConfirmed) {
+                if (columns.some(c => !c.name)) {
+                    Swal.fire('Warning', 'กรุณาระบุชื่อ Column ให้ครบถ้วน', 'warning');
+                    return;
+                }
+
+                const method = id ? 'PUT' : 'POST';
+                const url = id ? `/admin/api/categories/${id}` : '/admin/api/categories';
+
+                const payload = {
+                    name,
+                    description,
+                    columns,
+                    botId: currentBot.id,
+                    platform: currentBot.platform
+                };
+
                 try {
-                    const res = await fetch(`/admin/api/categories/${id}`, { method: 'DELETE' });
+                    const res = await fetch(url, {
+                        method: method,
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
                     const data = await res.json();
 
                     if (data.success) {
-                        Swal.fire('Deleted!', 'ลบข้อมูลเรียบร้อยแล้ว', 'success');
+                        bootstrap.Modal.getInstance(document.getElementById('categoryModal')).hide();
+                        Swal.fire('Success', 'บันทึกข้อมูลเรียบร้อย', 'success');
                         loadCategories();
                     } else {
                         Swal.fire('Error', data.error, 'error');
                     }
                 } catch (err) {
                     console.error(err);
-                    Swal.fire('Error', 'เกิดข้อผิดพลาดในการลบ', 'error');
+                    Swal.fire('Error', 'เกิดข้อผิดพลาดในการบันทึก', 'error');
                 }
             }
-        }
-    </script>
+
+            async function deleteCategory(id) {
+                const result = await Swal.fire({
+                    title: 'ยืนยันการลบ?',
+                    text: "ข้อมูลทั้งหมดในหมวดหมู่นี้จะถูกลบและไม่สามารถกู้คืนได้!",
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#d33',
+                    cancelButtonColor: '#3085d6',
+                    confirmButtonText: 'ลบข้อมูล',
+                    cancelButtonText: 'ยกเลิก'
+                });
+
+                if (result.isConfirmed) {
+                    try {
+                        const res = await fetch(`/admin/api/categories/${id}`, { method: 'DELETE' });
+                        const data = await res.json();
+
+                        if (data.success) {
+                            Swal.fire('Deleted!', 'ลบข้อมูลเรียบร้อยแล้ว', 'success');
+                            loadCategories();
+                        } else {
+                            Swal.fire('Error', data.error, 'error');
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        Swal.fire('Error', 'เกิดข้อผิดพลาดในการลบ', 'error');
+                    }
+                }
+            }
+        </script>
 </body>
+
 </html>
