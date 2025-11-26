@@ -9868,13 +9868,14 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
           }
         }
       }
-    } catch (err) {
-      console.error("Error handling Facebook webhook:", err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
-      }
     }
-  });
+  } catch (err) {
+    console.error("Error handling Facebook webhook:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
+    }
+  }
+});
 
 // Helper function to send Facebook message
 async function sendFacebookMessage(
