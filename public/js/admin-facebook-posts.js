@@ -16,6 +16,12 @@
   );
   const defaultAiModel = document.getElementById("defaultAiModel");
   const defaultSystemPrompt = document.getElementById("defaultSystemPrompt");
+  const defaultPrivateReplyGroup = document.getElementById(
+    "defaultPrivateReplyGroup",
+  );
+  const defaultPrivateReplyMessage = document.getElementById(
+    "defaultPrivateReplyMessage",
+  );
   const defaultPullToChat = document.getElementById("defaultPullToChat");
   const defaultIsActive = document.getElementById("defaultIsActive");
   const defaultPolicyStatus = document.getElementById("defaultPolicyStatus");
@@ -77,6 +83,11 @@
     const mode = defaultMode.value;
     defaultTemplateGroup.style.display = mode === "template" ? "block" : "none";
     defaultAiGroup.style.display = mode === "ai" ? "block" : "none";
+    if (defaultPrivateReplyGroup) {
+      defaultPrivateReplyGroup.style.display = defaultPullToChat.checked
+        ? "block"
+        : "none";
+    }
   }
 
   async function loadDefaultPolicy(botId) {
@@ -91,6 +102,9 @@
       defaultTemplateMessage.value = policy.templateMessage || "";
       defaultAiModel.value = policy.aiModel || "";
       defaultSystemPrompt.value = policy.systemPrompt || "";
+      if (defaultPrivateReplyMessage) {
+        defaultPrivateReplyMessage.value = policy.privateReplyTemplate || "";
+      }
       defaultPullToChat.checked = Boolean(
         policy.pullToChat || policy.sendPrivateReply,
       );
@@ -112,6 +126,7 @@
       templateMessage: defaultTemplateMessage.value,
       aiModel: defaultAiModel.value,
       systemPrompt: defaultSystemPrompt.value,
+      privateReplyTemplate: defaultPrivateReplyMessage?.value || "",
       pullToChat: defaultPullToChat.checked,
       sendPrivateReply: defaultPullToChat.checked,
       isActive: defaultIsActive.checked && defaultMode.value !== "off",
@@ -225,6 +240,14 @@
           )}</textarea>
             </div>
             <div class="mt-2">
+              <label class="form-label form-label-sm">ข้อความตอบกลับแบบส่วนตัว (Inbox)</label>
+              <textarea class="form-control form-control-sm post-private-template" rows="2" data-post-id="${post.postId
+          }" placeholder="ส่งให้ลูกค้าทางข้อความส่วนตัว (รองรับ {{name}})">${escapeHtml(
+            rp.privateReplyTemplate || "",
+          )}</textarea>
+              <div class="form-text text-muted small">หากเว้นว่างจะใช้ข้อความตอบคอมเมนต์หรือข้อความเริ่มต้นแทน</div>
+            </div>
+            <div class="mt-2">
               <label class="form-label form-label-sm">System Prompt (AI)</label>
               <textarea class="form-control form-control-sm post-system" rows="2" data-post-id="${post.postId
           }" placeholder="ใช้เมื่อโหมดเป็น AI">${escapeHtml(
@@ -293,6 +316,9 @@
     const templateEl = document.querySelector(
       `.post-template[data-post-id="${CSS.escape(postId)}"]`,
     );
+    const privateTemplateEl = document.querySelector(
+      `.post-private-template[data-post-id="${CSS.escape(postId)}"]`,
+    );
     const systemEl = document.querySelector(
       `.post-system[data-post-id="${CSS.escape(postId)}"]`,
     );
@@ -307,11 +333,13 @@
       botId: currentBotId,
       mode: modeEl?.value || "off",
       templateMessage: templateEl?.value || "",
+      privateReplyTemplate: privateTemplateEl?.value || "",
       aiModel: aiModelEl?.value || "",
       systemPrompt: systemEl?.value || "",
       pullToChat: pullEl?.checked || false,
       sendPrivateReply: pullEl?.checked || false,
       isActive: activeEl?.checked && modeEl?.value !== "off",
+      overridePageDefault: true,
     };
 
     const original = buttonEl.innerHTML;
@@ -406,6 +434,9 @@
   }
   if (defaultMode) {
     defaultMode.addEventListener("change", setDefaultFormVisibility);
+  }
+  if (defaultPullToChat) {
+    defaultPullToChat.addEventListener("change", setDefaultFormVisibility);
   }
 
   setDefaultFormVisibility();

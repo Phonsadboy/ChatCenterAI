@@ -5625,11 +5625,32 @@ function buildDefaultReplyProfile() {
     templateMessage: "",
     aiModel: "",
     systemPrompt: "",
+    privateReplyTemplate: "",
     pullToChat: false,
     sendPrivateReply: false,
     isActive: false,
     status: "off",
+    overridePageDefault: false,
   };
+}
+
+function isReplyProfileEmpty(profile) {
+  if (!profile) return true;
+  const defaults = buildDefaultReplyProfile();
+  return (
+    (profile.mode || defaults.mode) === "off" &&
+    (profile.templateMessage || "") === "" &&
+    (profile.aiModel || "") === "" &&
+    (profile.systemPrompt || "") === "" &&
+    (profile.privateReplyTemplate || "") === "" &&
+    profile.pullToChat !== true &&
+    profile.sendPrivateReply !== true &&
+    !(
+      profile.isActive === true ||
+      profile.status === "active" ||
+      profile.overridePageDefault === true
+    )
+  );
 }
 
 function normalizeBotIdValue(bot) {
@@ -5838,15 +5859,35 @@ async function getPageDefaultPolicy(db, bot) {
 }
 
 async function resolveCommentPolicyForPost(db, bot, postDoc) {
-  if (postDoc?.replyProfile) {
-    return {
-      ...buildDefaultReplyProfile(),
-      ...postDoc.replyProfile,
-    };
-  }
   const pagePolicy = await getPageDefaultPolicy(db, bot);
-  if (pagePolicy) return pagePolicy;
-  return buildDefaultReplyProfile();
+  const basePolicy = pagePolicy
+    ? { ...buildDefaultReplyProfile(), ...pagePolicy }
+    : buildDefaultReplyProfile();
+
+  const postProfile = postDoc?.replyProfile;
+  if (
+    !postProfile ||
+    (postProfile.overridePageDefault !== true && isReplyProfileEmpty(postProfile))
+  ) {
+    return basePolicy;
+  }
+
+  const merged = {
+    ...basePolicy,
+    ...postProfile,
+  };
+
+  const postActive =
+    postProfile.isActive === true || postProfile.status === "active";
+  merged.isActive =
+    postProfile.overridePageDefault === true
+      ? postActive
+      : postActive || merged.isActive === true;
+  merged.status = merged.isActive
+    ? "active"
+    : postProfile.status || merged.status || "off";
+
+  return merged;
 }
 
 async function recordCommentEvent(db, eventDoc) {
@@ -6009,10 +6050,17 @@ async function handleFacebookComment(
   }
 
   if ((policy.pullToChat || policy.sendPrivateReply) && commenterId) {
-    const privateMessage =
-      policy.sendPrivateReply && replyMessage
-        ? replyMessage
-        : `สวัสดีคุณ ${commenterName} ขอบคุณที่สนใจ สามารถทักแชทต่อได้เลยนะครับ`;
+    const privateMessageRaw =
+      policy.privateReplyTemplate && policy.privateReplyTemplate.trim()
+        ? policy.privateReplyTemplate.trim()
+        : policy.sendPrivateReply && replyMessage
+          ? replyMessage
+          : "";
+    const privateFallback = `สวัสดีคุณ ${commenterName} ขอบคุณที่สนใจ สามารถทักแชทต่อได้เลยนะครับ`;
+    const privateMessage = (privateMessageRaw || privateFallback).replace(
+      /\{\{\s*name\s*\}\}/gi,
+      commenterName,
+    );
     try {
       // Use specific function for private replies to comments
       await sendPrivateMessageFromComment(commentId, privateMessage, accessToken);
@@ -11697,9 +11745,11 @@ app.patch(
         templateMessage,
         aiModel,
         systemPrompt,
+        privateReplyTemplate,
         pullToChat,
         sendPrivateReply,
         isActive,
+        overridePageDefault,
       } = req.body || {};
 
       if (!postId) {
@@ -11720,29 +11770,36 @@ app.patch(
         return res.status(404).json({ error: "ไม่พบโพสต์" });
       }
 
+      const currentProfile = existing.replyProfile || {};
       const mergedProfile = {
         ...buildDefaultReplyProfile(),
-        ...existing.replyProfile,
-        mode: mode || existing.replyProfile?.mode || "off",
-        templateMessage: templateMessage ?? existing.replyProfile?.templateMessage,
-        aiModel: aiModel ?? existing.replyProfile?.aiModel,
-        systemPrompt: systemPrompt ?? existing.replyProfile?.systemPrompt,
+        ...currentProfile,
+        mode: mode || currentProfile.mode || "off",
+        templateMessage: templateMessage ?? currentProfile.templateMessage,
+        aiModel: aiModel ?? currentProfile.aiModel,
+        systemPrompt: systemPrompt ?? currentProfile.systemPrompt,
+        privateReplyTemplate:
+          privateReplyTemplate ?? currentProfile.privateReplyTemplate,
         pullToChat:
           pullToChat === undefined
-            ? existing.replyProfile?.pullToChat || false
+            ? currentProfile.pullToChat || false
             : Boolean(pullToChat),
         sendPrivateReply:
           sendPrivateReply === undefined
-            ? existing.replyProfile?.sendPrivateReply || false
+            ? currentProfile.sendPrivateReply || false
             : Boolean(sendPrivateReply),
         isActive:
           isActive === undefined
-            ? existing.replyProfile?.isActive || false
+            ? currentProfile.isActive || false
             : Boolean(isActive),
         status:
           isActive === true
             ? "active"
-            : existing.replyProfile?.status || "off",
+            : currentProfile.status || "off",
+        overridePageDefault:
+          overridePageDefault === undefined
+            ? true
+            : Boolean(overridePageDefault),
       };
 
       await coll.updateOne(
@@ -11800,6 +11857,7 @@ app.put(
         templateMessage,
         aiModel,
         systemPrompt,
+        privateReplyTemplate,
         pullToChat,
         sendPrivateReply,
         isActive,
@@ -11829,6 +11887,7 @@ app.put(
         templateMessage: templateMessage || "",
         aiModel: aiModel || "",
         systemPrompt: systemPrompt || "",
+        privateReplyTemplate: privateReplyTemplate || "",
         pullToChat: Boolean(pullToChat),
         sendPrivateReply: Boolean(sendPrivateReply),
         isActive: Boolean(isActive),

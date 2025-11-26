@@ -134,6 +134,12 @@
                             title="เมื่อมีคนคอมเมนต์ ระบบจะทักแชทส่วนตัวไปหาลูกค้าด้วย (ต้องเปิดใช้งานใน Facebook Page Settings ด้วย)"></i>
                         </label>
                       </div>
+                      <div class="mb-3" id="defaultPrivateReplyGroup" style="display:none">
+                        <label class="form-label">ข้อความตอบกลับแบบส่วนตัว (Inbox)</label>
+                        <textarea id="defaultPrivateReplyMessage" class="form-control" rows="2"
+                          placeholder="ข้อความที่ส่งให้ลูกค้าทางแชท (รองรับ {{name}} สำหรับชื่อ)"></textarea>
+                        <small class="text-muted">หากเว้นว่างจะใช้ข้อความตอบคอมเมนต์หรือข้อความเริ่มต้นแทน</small>
+                      </div>
                       <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="defaultIsActive">
                         <label class="form-check-label" for="defaultIsActive">เปิดใช้งานนโยบายค่าเริ่มต้น</label>
