@@ -16173,12 +16173,12 @@ app.get("/admin/api/all-bots", requireAdmin, async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const lineBots = await db.collection("line_bots").find({}).project({ _id: 1, botName: 1 }).toArray();
-    const facebookBots = await db.collection("facebook_bots").find({}).project({ _id: 1, pageName: 1 }).toArray();
+    const lineBots = await db.collection("line_bots").find({}).project({ _id: 1, name: 1 }).toArray();
+    const facebookBots = await db.collection("facebook_bots").find({}).project({ _id: 1, name: 1 }).toArray();
 
     const bots = [
-      ...lineBots.map(b => ({ id: b._id, name: b.botName, platform: "line" })),
-      ...facebookBots.map(b => ({ id: b._id, name: b.pageName, platform: "facebook" }))
+      ...lineBots.map(b => ({ id: b._id, name: b.name, platform: "line" })),
+      ...facebookBots.map(b => ({ id: b._id, name: b.name, platform: "facebook" }))
     ];
 
     res.json({ success: true, bots });
