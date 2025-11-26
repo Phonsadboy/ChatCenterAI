@@ -14289,7 +14289,24 @@ app.get("/admin/image-collections", async (req, res) => {
   }
 });
 
-app.get("/api/image-collections", async (req, res) => {
+// Category Management Routes
+app.get("/admin/categories", requireAdmin, async (req, res) => {
+  res.render("admin-categories", {
+    user: req.session.adminUser,
+    activePage: "categories",
+  });
+});
+
+app.get("/admin/categories/:categoryId/data", requireAdmin, async (req, res) => {
+  const { categoryId } = req.params;
+  res.render("admin-category-data", {
+    user: req.session.adminUser,
+    activePage: "categories",
+    categoryId,
+  });
+});
+
+app.get("/admin/image-collections", async (req, res) => {
   try {
     const collections = await getImageCollections();
     res.json({ success: true, collections });
