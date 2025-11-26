@@ -16566,7 +16566,14 @@ async function getCategories(db, botId, platform) {
     .find(query)
     .project({ name: 1, description: 1 })
     .toArray();
-  return { categories: categories.map(c => c.name) };
+
+  // Return both name and description for better AI context
+  return {
+    categories: categories.map(c => ({
+      name: c.name,
+      description: c.description || ""
+    }))
+  };
 }
 
 async function searchItemByCategory(db, categoryName, keyword, botId, platform) {
