@@ -652,8 +652,6 @@ async function ensureCategoryIndexes(db) {
     const categoryTables = db.collection("category_tables");
     await categoryTables.createIndex({ categoryId: 1 }, { unique: true });
     await categoryTables.createIndex({ botId: 1, platform: 1 });
-    // Wildcard text index for broad search across all columns
-    await categoryTables.createIndex({ "data.values.$**": "text" });
 
     console.log("[DB] Category indexes ensured");
   } catch (err) {
@@ -14284,7 +14282,8 @@ function mapInstructionAssetResponse(asset) {
 }
 
 // GET: ดึงรายการ Image Collections ทั้งหมด
-app.get("/admin/image-collections", async (req, res) => {
+// GET: ดึงรายการ Image Collections ทั้งหมด
+app.get("/api/image-collections", async (req, res) => {
   try {
     const collections = await getImageCollections();
     res.json({ success: true, collections });
