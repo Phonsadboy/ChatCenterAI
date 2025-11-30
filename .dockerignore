@@ -1,3 +1,4 @@
+node_modules
 npm-debug.log
 .git
 .gitignore
@@ -10,3 +11,7 @@ README.md
 Thumbs.db
 .railwayignore
 railway.json
+.cursor
+scripts
+nixpacks.toml
+Procfile
