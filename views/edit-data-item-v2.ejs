@@ -812,30 +812,37 @@
                 let undoStack = [];
                 let redoStack = [];
                 const MAX_HISTORY = 50;
+                const cloneState = (state) => JSON.parse(JSON.stringify(state || {}));
 
                 return {
                     saveState(state) {
-                        undoStack.push(JSON.parse(JSON.stringify(state)));
+                        if (!state) return;
+                        undoStack.push(cloneState(state));
                         if (undoStack.length > MAX_HISTORY) {
                             undoStack.shift();
                         }
                         redoStack = [];
                     },
-                    undo() {
-                        if (undoStack.length > 0) {
-                            const state = undoStack.pop();
-                            redoStack.push(state);
-                            return state;
+                    undo(currentState) {
+                        if (undoStack.length === 0) return null;
+                        if (currentState) {
+                            redoStack.push(cloneState(currentState));
+                            if (redoStack.length > MAX_HISTORY) {
+                                redoStack.shift();
+                            }
                         }
-                        return null;
+                        return undoStack.pop();
                     },
-                    redo() {
-                        if (redoStack.length > 0) {
-                            const state = redoStack.pop();
-                            undoStack.push(state);
-                            return state;
+                    redo(currentState) {
+                        if (redoStack.length === 0) return null;
+                        const state = redoStack.pop();
+                        if (currentState) {
+                            undoStack.push(cloneState(currentState));
+                            if (undoStack.length > MAX_HISTORY) {
+                                undoStack.shift();
+                            }
                         }
-                        return null;
+                        return state;
                     },
                     canUndo() {
                         return undoStack.length > 0;
@@ -865,6 +872,30 @@
                 let columnSizes = new Array(columns.length).fill(DEFAULT_COLUMN_WIDTH);
                 let rowSizes = new Array(rows.length).fill(DEFAULT_ROW_HEIGHT);
                 let activeCell = { row: null, col: null };
+                const cloneRows = (sourceRows = []) => sourceRows.map(row => Array.isArray(row) ? [...row] : []);
+                const makeSnapshot = () => ({
+                    columns: [...columns],
+                    rows: cloneRows(rows),
+                    columnSizes: [...columnSizes],
+                    rowSizes: [...rowSizes]
+                });
+                const saveSnapshot = () => undoRedoManager.saveState(makeSnapshot());
+                const applySnapshot = (state) => {
+                    if (!state) return false;
+                    columns = Array.isArray(state.columns) ? [...state.columns] : columns;
+                    rows = cloneRows(Array.isArray(state.rows) ? state.rows : rows);
+                    if (!rows.length) {
+                        rows = [new Array((columns.length || 1)).fill('')];
+                    }
+                    columnSizes = Array.isArray(state.columnSizes) ? [...state.columnSizes] : new Array(columns.length).fill(DEFAULT_COLUMN_WIDTH);
+                    rowSizes = Array.isArray(state.rowSizes) ? [...state.rowSizes] : new Array(rows.length).fill(DEFAULT_ROW_HEIGHT);
+                    ensureColumnDefaults();
+                    ensureRowWidths();
+                    syncColumnSizesLength();
+                    syncRowSizesLength();
+                    render();
+                    return true;
+                };
 
                 const refs = {
                     colGroup: null,
@@ -1004,6 +1035,7 @@
                         input.addEventListener('input', event => {
                             const colIndex = Number(event.target.getAttribute('data-col-index'));
                             if (Number.isInteger(colIndex) && colIndex >= 0 && colIndex < columns.length) {
+                                saveSnapshot();
                                 columns[colIndex] = event.target.value;
                             }
                             updatePreview();
@@ -1025,6 +1057,7 @@
                                 showAlert('ต้องมีคอลัมน์อย่างน้อย 1 คอลัมน์', 'warning');
                                 return;
                             }
+                            saveSnapshot();
                             columns.splice(colIndex, 1);
                             if (columnSizes.length > colIndex) {
                                 columnSizes.splice(colIndex, 1);
@@ -1088,8 +1121,11 @@
                             const colIndex = Number(event.target.getAttribute('data-col-index'));
                             if (!Number.isInteger(rowIndex) || !Number.isInteger(colIndex)) return;
                             if (!rows[rowIndex]) rows[rowIndex] = [];
+                            saveSnapshot();
                             rows[rowIndex][colIndex] = event.target.value;
-                            showCellFlyout(event.target);
+                            if (!isSyncingFromFlyout && event.isTrusted) {
+                                showCellFlyout(event.target, { preserveSelection: true });
+                            }
                             updatePreview();
                         });
 
@@ -1132,7 +1168,7 @@
                             else if (event.key === 'Delete') {
                                 if (event.target.selectionStart === event.target.selectionEnd) {
                                     event.preventDefault();
-                                    undoRedoManager.saveState({ columns: columns, rows: JSON.parse(JSON.stringify(rows)) });
+                                    saveSnapshot();
                                     rows[currentRow][currentCol] = '';
                                     event.target.value = '';
                                     updatePreview();
@@ -1150,7 +1186,7 @@
                                 const value = event.target.value;
                                 copiedCellData = value;
                                 navigator.clipboard.writeText(value).catch(() => { });
-                                undoRedoManager.saveState({ columns: columns, rows: JSON.parse(JSON.stringify(rows)) });
+                                saveSnapshot();
                                 rows[currentRow][currentCol] = '';
                                 event.target.value = '';
                                 updatePreview();
@@ -1159,24 +1195,18 @@
                             // Ctrl+Z: Undo
                             else if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
                                 event.preventDefault();
-                                const state = undoRedoManager.undo();
+                                const state = undoRedoManager.undo(makeSnapshot());
                                 if (state) {
-                                    columns = state.columns || columns;
-                                    rows = state.rows || rows;
-                                    render();
-                                    updatePreview();
+                                    applySnapshot(state);
                                     showAlert('ยกเลิกการเปลี่ยนแปลง', 'info');
                                 }
                             }
                             // Ctrl+Y: Redo
                             else if ((event.ctrlKey || event.metaKey) && event.key === 'y') {
                                 event.preventDefault();
-                                const state = undoRedoManager.redo();
+                                const state = undoRedoManager.redo(makeSnapshot());
                                 if (state) {
-                                    columns = state.columns || columns;
-                                    rows = state.rows || rows;
-                                    render();
-                                    updatePreview();
+                                    applySnapshot(state);
                                     showAlert('ทำซ้ำการเปลี่ยนแปลง', 'info');
                                 }
                             }
@@ -1215,6 +1245,8 @@
 
                             const pasteRows = clipboardData.split(/\r\n|\n|\r/).map(row => row.split('\t'));
                             if (pasteRows.length === 0) return;
+
+                            saveSnapshot();
 
                             const startRow = Number(event.target.getAttribute('data-row-index'));
                             const startCol = Number(event.target.getAttribute('data-col-index'));
@@ -1281,6 +1313,7 @@
                         btn.addEventListener('click', () => {
                             const rowIndex = Number(btn.getAttribute('data-remove-row'));
                             if (!Number.isInteger(rowIndex)) return;
+                            saveSnapshot();
                             if (rows.length <= 1) {
                                 rows[0] = new Array(columns.length).fill('');
                                 rowSizes[0] = DEFAULT_ROW_HEIGHT;
@@ -1328,6 +1361,7 @@
                 };
 
                 const addColumn = () => {
+                    saveSnapshot();
                     columns.push(`คอลัมน์ ${columns.length + 1}`);
                     rows.forEach(row => row.push(''));
                     columnSizes.push(DEFAULT_COLUMN_WIDTH);
@@ -1336,6 +1370,7 @@
                 };
 
                 const addRow = () => {
+                    saveSnapshot();
                     const newRow = new Array(columns.length).fill('');
                     rows.push(newRow);
                     rowSizes.push(DEFAULT_ROW_HEIGHT);
@@ -1348,6 +1383,7 @@
                 };
 
                 const clear = () => {
+                    saveSnapshot();
                     columns = ['คอลัมน์ 1', 'คอลัมน์ 2'];
                     rows = [
                         ['', ''],
@@ -1715,6 +1751,7 @@
 
             let cellFlyout = null;
             let flyoutTarget = null;
+            let isSyncingFromFlyout = false;
             function ensureCellFlyout() {
                 if (cellFlyout) return cellFlyout;
                 const wrapper = document.createElement('div');
@@ -1730,7 +1767,9 @@
                     if (!flyoutTarget) return;
                     flyoutTarget.value = input.value;
                     // ส่ง event ต่อให้ input หลักจัดการอัปเดต state/preview
+                    isSyncingFromFlyout = true;
                     flyoutTarget.dispatchEvent(new Event('input', { bubbles: true }));
+                    isSyncingFromFlyout = false;
                 });
 
                 input.addEventListener('keydown', (e) => {
@@ -1755,9 +1794,10 @@
                 flyoutTarget = null;
             }
 
-            function showCellFlyout(textarea) {
+            function showCellFlyout(textarea, options = {}) {
                 if (!textarea) return;
                 const flyout = ensureCellFlyout();
+                const wasOpenForTarget = flyoutTarget === textarea && flyout.wrapper.style.display === 'block';
                 flyoutTarget = textarea;
                 const rect = textarea.getBoundingClientRect();
                 const scrollTop = window.scrollY || document.documentElement.scrollTop;
@@ -1773,8 +1813,13 @@
                 flyout.input.value = textarea.value || '';
                 flyout.input.style.height = 'auto';
                 flyout.input.style.height = `${Math.min(Math.max(flyout.input.scrollHeight, 80), maxHeight)}px`;
-                flyout.input.focus();
-                flyout.input.setSelectionRange(flyout.input.value.length, flyout.input.value.length);
+
+                if (!wasOpenForTarget) {
+                    const selectionStart = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : flyout.input.value.length;
+                    const selectionEnd = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : selectionStart;
+                    flyout.input.focus({ preventScroll: true });
+                    flyout.input.setSelectionRange(selectionStart, selectionEnd);
+                }
             }
 
             function updatePreview() {
@@ -1791,9 +1836,14 @@
                 const statusChip = document.getElementById('tableStatusSummary');
                 const selectionChip = document.getElementById('tableSelectionSummary');
 
-                const columnCount = document.querySelectorAll('#tableHeaderRow th[data-col-index]').length;
-                const rowCount = document.querySelectorAll('#tableBodyRows tr').length;
-                setChipText(statusChip, `${columnCount} คอลัมน์ • ${rowCount} แถว`);
+                const payload = instructionTableBuilder.getPayload ? instructionTableBuilder.getPayload() : null;
+                const columnCount = payload && Array.isArray(payload.columns)
+                    ? payload.columns.length
+                    : document.querySelectorAll('#tableHeaderRow th[data-col-index]').length;
+                const rowCount = payload && Array.isArray(payload.rows)
+                    ? payload.rows.length
+                    : document.querySelectorAll('#tableBodyRows tr').length;
+                setChipText(statusChip, `${columnCount} คอลัมน์ • ${rowCount} แถวที่จะบันทึก`);
 
                 const activeCell = instructionTableBuilder.getActiveCell ? instructionTableBuilder.getActiveCell() : null;
                 if (activeCell && Number.isInteger(activeCell.row) && Number.isInteger(activeCell.col)) {
@@ -1924,7 +1974,7 @@
                     });
 
                     contextMenu.querySelectorAll('.context-menu-item').forEach(item => {
-                        item.addEventListener('click', (e) => {
+                        item.addEventListener('click', async (e) => {
                             e.stopPropagation();
                             const action = item.dataset.action;
                             const targetRow = Number(contextMenu.dataset.targetRow);
@@ -1942,17 +1992,30 @@
                                     copiedCellData = value;
                                     navigator.clipboard.writeText(value).catch(() => { });
                                     targetElement.value = '';
-                                    const rows = instructionTableBuilder.getPayload().rows;
+                                    targetElement.dispatchEvent(new Event('input', { bubbles: true }));
                                     showAlert('ตัดแล้ว', 'success');
                                 } else if (action === 'paste') {
-                                    if (copiedCellData !== null) {
-                                        targetElement.value = copiedCellData;
-                                        targetElement.dispatchEvent(new Event('input'));
+                                    let pasteValue = copiedCellData;
+                                    if (navigator.clipboard && navigator.clipboard.readText) {
+                                        try {
+                                            const clipboardText = await navigator.clipboard.readText();
+                                            if (clipboardText !== undefined && clipboardText !== null) {
+                                                pasteValue = clipboardText;
+                                            }
+                                        } catch (err) {
+                                            console.warn('Clipboard read failed', err);
+                                        }
+                                    }
+                                    if (pasteValue !== null && pasteValue !== undefined) {
+                                        targetElement.value = pasteValue;
+                                        targetElement.dispatchEvent(new Event('input', { bubbles: true }));
                                         showAlert('วางแล้ว', 'success');
+                                    } else {
+                                        showAlert('ไม่มีข้อมูลสำหรับวาง', 'warning');
                                     }
                                 } else if (action === 'delete') {
                                     targetElement.value = '';
-                                    targetElement.dispatchEvent(new Event('input'));
+                                    targetElement.dispatchEvent(new Event('input', { bubbles: true }));
                                     showAlert('ล้างเซลล์แล้ว', 'success');
                                 }
                             }

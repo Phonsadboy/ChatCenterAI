@@ -477,6 +477,7 @@ async function loadSystemSettings() {
         setCheckboxValue('aiEnabled', settings.aiEnabled ?? true);
         setCheckboxValue('enableChatHistory', settings.enableChatHistory ?? true);
         setCheckboxValue('enableAdminNotifications', settings.enableAdminNotifications ?? true);
+        setCheckboxValue('showDebugInfo', settings.showDebugInfo ?? false);
         setInputValue('systemMode', settings.systemMode || 'production');
 
     } catch (error) {
@@ -493,6 +494,7 @@ async function saveSystemSettings(e) {
         aiEnabled: getCheckboxValue('aiEnabled'),
         enableChatHistory: getCheckboxValue('enableChatHistory'),
         enableAdminNotifications: getCheckboxValue('enableAdminNotifications'),
+        showDebugInfo: getCheckboxValue('showDebugInfo'),
         systemMode: getInputValue('systemMode')
     };
 
@@ -595,6 +597,9 @@ function setupEventListeners() {
     if (saveFbBtn) saveFbBtn.addEventListener('click', saveFacebookBot);
 
     document.addEventListener('change', handleInstructionSelectChange, true);
+
+    // Passcode Management
+    initPasscodeManagement();
 }
 
 function getInputValue(id) {
@@ -861,6 +866,7 @@ function updateInstructionChip(select, key) {
     chip.classList.toggle('chip-muted', !key);
 }
 
+
 function escapeHtml(value) {
     if (value === null || value === undefined) return '';
     return String(value)
@@ -869,4 +875,298 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+}
+
+
+// --- Passcode Management ---
+let passcodeCache = [];
+
+function isSuperadmin() {
+    return Boolean(window.adminAuth?.user?.role === 'superadmin');
+}
+
+function isPasscodeFeatureEnabled() {
+    return Boolean(window.adminAuth?.requirePasscode);
+}
+
+function initPasscodeManagement() {
+    if (!isSuperadmin() || !isPasscodeFeatureEnabled()) {
+        return;
+    }
+
+    const card = document.getElementById('passcodeManagementCard');
+    if (card) card.style.display = 'block';
+
+    setupPasscodeEventListeners();
+    refreshPasscodeList();
+}
+
+function setupPasscodeEventListeners() {
+    const toggleBtn = document.getElementById('togglePasscodeCreateBtn');
+    const createContainer = document.getElementById('passcodeCreateContainer');
+    const createForm = document.getElementById('createPasscodeForm');
+    const generateBtn = document.getElementById('generatePasscodeBtn');
+    const tableBody = document.getElementById('passcodeTableBody');
+
+    if (toggleBtn && createContainer) {
+        toggleBtn.addEventListener('click', () => {
+            const isVisible = createContainer.style.display !== 'none';
+            createContainer.style.display = isVisible ? 'none' : 'block';
+            toggleBtn.innerHTML = isVisible
+                ? '<i class="fas fa-plus-circle"></i> สร้างรหัสใหม่'
+                : '<i class="fas fa-times-circle"></i> ยกเลิก';
+        });
+    }
+
+    if (generateBtn) {
+        generateBtn.addEventListener('click', () => {
+            const input = document.getElementById('newPasscodeValue');
+            if (input) {
+                input.value = generateRandomPasscode();
+                input.focus();
+                input.select();
+            }
+        });
+    }
+
+    if (createForm) {
+        createForm.addEventListener('submit', handleCreatePasscode);
+    }
+
+    if (tableBody) {
+        tableBody.addEventListener('click', handlePasscodeTableClick);
+    }
+}
+
+function generateRandomPasscode() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const length = 8;
+    let value = '';
+    for (let i = 0; i < length; i++) {
+        const index = Math.floor(Math.random() * alphabet.length);
+        value += alphabet[index];
+    }
+    return value.replace(/(.{4})/g, '$1-').replace(/-$/, '');
+}
+
+async function refreshPasscodeList() {
+    if (!isSuperadmin()) return;
+
+    try {
+        const response = await fetch('/api/admin-passcodes');
+        if (!response.ok) {
+            throw new Error('ไม่สามารถโหลดข้อมูลรหัสผ่านได้');
+        }
+        const payload = await response.json();
+        passcodeCache = Array.isArray(payload.passcodes) ? payload.passcodes : [];
+        renderPasscodeTable();
+        setPasscodeMessage('', '');
+    } catch (error) {
+        console.error('[Passcode] load error:', error);
+        setPasscodeMessage('danger', error.message || 'ไม่สามารถโหลดข้อมูลรหัสผ่านได้');
+    }
+}
+
+function renderPasscodeTable() {
+    const tbody = document.getElementById('passcodeTableBody');
+    if (!tbody) return;
+
+    if (passcodeCache.length === 0) {
+        tbody.innerHTML = `
+            <tr id="passcodeEmptyState">
+                <td colspan="5" class="text-center text-muted py-4">
+                    <i class="fas fa-key me-2"></i>ยังไม่มีรหัสสำหรับทีมงาน เริ่มสร้างรหัสชุดแรกได้เลย
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = passcodeCache.map(passcode => {
+        const statusClass = passcode.isActive ? 'success' : 'secondary';
+        const statusText = passcode.isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
+        const toggleIcon = passcode.isActive ? 'toggle-on' : 'toggle-off';
+        const lastUsed = passcode.lastUsedAt ? new Date(passcode.lastUsedAt).toLocaleDateString('th-TH') : 'ไม่เคยใช้';
+
+        return `
+            <tr>
+                <td>${escapeHtml(passcode.label)}</td>
+                <td><span class="badge bg-${statusClass}">${statusText}</span></td>
+                <td>${lastUsed}</td>
+                <td>${passcode.usageCount || 0}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-${passcode.isActive ? 'warning' : 'success'}" 
+                            data-action="toggle" data-id="${passcode.id}">
+                        <i class="fas fa-${toggleIcon}"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" 
+                            data-action="delete" data-id="${passcode.id}">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function handlePasscodeTableClick(event) {
+    const target = event.target.closest('button[data-action]');
+    if (!target) return;
+
+    const action = target.getAttribute('data-action');
+    const id = target.getAttribute('data-id');
+    if (!id) return;
+
+    if (action === 'toggle') {
+        togglePasscodeStatus(id, target);
+    } else if (action === 'delete') {
+        deletePasscode(id, target);
+    }
+}
+
+async function togglePasscodeStatus(id, triggerBtn) {
+    const passcode = passcodeCache.find(item => item.id === id);
+    if (!passcode) return;
+
+    const willActivate = !passcode.isActive;
+    const confirmationMessage = willActivate
+        ? 'ต้องการเปิดใช้งานรหัสนี้หรือไม่?'
+        : 'การปิดรหัสจะทำให้ทีมงานที่ใช้รหัสนี้ไม่สามารถล็อกอินใหม่ได้ ต้องการดำเนินการต่อหรือไม่?';
+
+    if (!confirm(confirmationMessage)) return;
+
+    setLoading(triggerBtn, true);
+
+    try {
+        const response = await fetch(`/api/admin-passcodes/${id}/toggle`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isActive: willActivate })
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.success) {
+            throw new Error(payload.error || 'ปรับสถานะรหัสไม่สำเร็จ');
+        }
+
+        passcodeCache = passcodeCache.map(item =>
+            item.id === id ? payload.passcode : item
+        );
+        renderPasscodeTable();
+        setPasscodeMessage('success', 'อัปเดตรหัสเรียบร้อยแล้ว');
+    } catch (error) {
+        console.error('[Passcode] toggle error:', error);
+        setPasscodeMessage('danger', error.message || 'ปรับสถานะรหัสไม่สำเร็จ');
+    } finally {
+        setLoading(triggerBtn, false);
+    }
+}
+
+async function deletePasscode(id, triggerBtn) {
+    if (window.adminAuth?.user?.codeId === id) {
+        setPasscodeMessage('danger', 'ไม่สามารถลบรหัสที่คุณกำลังใช้งานอยู่ได้');
+        return;
+    }
+
+    if (!confirm('ต้องการลบรหัสนี้หรือไม่? เมื่อยืนยันแล้วจะไม่สามารถเรียกคืนได้')) {
+        return;
+    }
+
+    setLoading(triggerBtn, true);
+
+    try {
+        const response = await fetch(`/api/admin-passcodes/${id}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const payload = await response.json();
+            throw new Error(payload.error || 'ลบรหัสไม่สำเร็จ');
+        }
+
+        passcodeCache = passcodeCache.filter(item => item.id !== id);
+        renderPasscodeTable();
+        setPasscodeMessage('success', 'ลบรหัสเรียบร้อยแล้ว');
+    } catch (error) {
+        console.error('[Passcode] delete error:', error);
+        setPasscodeMessage('danger', error.message || 'ลบรหัสไม่สำเร็จ');
+    } finally {
+        setLoading(triggerBtn, false);
+    }
+}
+
+async function handleCreatePasscode(event) {
+    event.preventDefault();
+
+    const labelInput = document.getElementById('newPasscodeLabel');
+    const passcodeInput = document.getElementById('newPasscodeValue');
+    const submitBtn = document.getElementById('createPasscodeSubmitBtn');
+
+    if (!labelInput || !passcodeInput || !submitBtn) return;
+
+    const label = (labelInput.value || '').trim();
+    const passcode = (passcodeInput.value || '').trim();
+
+    if (!label || label.length < 2) {
+        setPasscodeMessage('warning', 'กรุณาระบุชื่อรหัสอย่างน้อย 2 ตัวอักษร');
+        return;
+    }
+
+    if (!passcode || passcode.length < 4) {
+        setPasscodeMessage('warning', 'กรุณาระบุรหัสอย่างน้อย 4 ตัวอักษร');
+        return;
+    }
+
+    setLoading(submitBtn, true);
+
+    try {
+        const response = await fetch('/api/admin-passcodes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label, passcode })
+        });
+
+        const payload = await response.json();
+        if (!response.ok || !payload.success) {
+            throw new Error(payload.error || 'ไม่สามารถสร้างรหัสได้');
+        }
+
+        labelInput.value = '';
+        passcodeInput.value = '';
+
+        const createContainer = document.getElementById('passcodeCreateContainer');
+        const toggleBtn = document.getElementById('togglePasscodeCreateBtn');
+        if (createContainer) createContainer.style.display = 'none';
+        if (toggleBtn) toggleBtn.innerHTML = '<i class="fas fa-plus-circle"></i> สร้างรหัสใหม่';
+
+        await refreshPasscodeList();
+        setPasscodeMessage('success', 'สร้างรหัสใหม่เรียบร้อยแล้ว');
+    } catch (error) {
+        console.error('[Passcode] create error:', error);
+        setPasscodeMessage('danger', error.message || 'ไม่สามารถสร้างรหัสได้');
+    } finally {
+        setLoading(submitBtn, false);
+    }
+}
+
+function setPasscodeMessage(type, message) {
+    const messageBox = document.getElementById('passcodeMessageBox');
+    if (!messageBox) return;
+
+    if (!message) {
+        messageBox.classList.add('d-none');
+        messageBox.textContent = '';
+        return;
+    }
+
+    messageBox.classList.remove('d-none', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
+    messageBox.classList.add(`alert-${type}`);
+    messageBox.textContent = message;
+
+    // Auto-hide after 5 seconds for success messages
+    if (type === 'success') {
+        setTimeout(() => {
+            messageBox.classList.add('d-none');
+        }, 5000);
+    }
 }

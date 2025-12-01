@@ -16826,6 +16826,7 @@ app.get("/api/settings", async (req, res) => {
       maxQueueMessages: 10,
       enableMessageMerging: true,
       showTokenUsage: false,
+      showDebugInfo: false,
       audioAttachmentResponse: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
       textModel: "gpt-5",
       visionModel: "gpt-5",
@@ -17037,6 +17038,7 @@ app.post("/api/settings/system", async (req, res) => {
       aiEnabled,
       enableChatHistory,
       enableAdminNotifications,
+      showDebugInfo,
       systemMode,
     } = req.body;
 
@@ -17069,6 +17071,12 @@ app.post("/api/settings/system", async (req, res) => {
     await coll.updateOne(
       { key: "enableAdminNotifications" },
       { $set: { value: enableAdminNotifications } },
+      { upsert: true },
+    );
+
+    await coll.updateOne(
+      { key: "showDebugInfo" },
+      { $set: { value: showDebugInfo } },
       { upsert: true },
     );
 

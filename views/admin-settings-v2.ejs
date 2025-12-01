@@ -433,6 +433,21 @@
                                             </div>
                                         </div>
                                         <div class="col-md-6">
+                                            <div
+                                                class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-0" for="showDebugInfo">แสดง Debug
+                                                        Information</label>
+                                                    <div class="form-text-v2 mt-0">แสดงข้อมูล debug ในคำตอบของ AI
+                                                    </div>
+                                                </div>
+                                                <div class="toggle-switch">
+                                                    <input type="checkbox" id="showDebugInfo">
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
                                             <div class="form-group-v2">
                                                 <label class="form-label-v2" for="systemMode">โหมดระบบ</label>
                                                 <select class="form-control-v2" id="systemMode">
@@ -462,6 +477,77 @@
                             </div>
                         </div>
 
+                        <!-- Passcode Management (Superadmin Only) -->
+                        <div class="settings-card mb-3" id="passcodeManagementCard" style="display: none;">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2"><i class="fas fa-key me-2"></i>การจัดการรหัสเข้าใช้งานทีม</h3>
+                                <button class="btn-v2 btn-v2-primary btn-v2-sm" id="togglePasscodeCreateBtn">
+                                    <i class="fas fa-plus-circle"></i> สร้างรหัสใหม่
+                                </button>
+                            </div>
+                            <div class="card-body-v2">
+                                <div class="alert alert-info d-none" id="passcodeMessageBox" role="alert"></div>
+
+                                <!-- Create Passcode Form -->
+                                <div class="card mb-3" id="passcodeCreateContainer" style="display: none;">
+                                    <div class="card-body">
+                                        <form id="createPasscodeForm" class="row g-3 align-items-end">
+                                            <div class="col-md-5">
+                                                <label for="newPasscodeLabel" class="form-label-v2">ชื่อรหัส <span
+                                                        class="text-danger">*</span></label>
+                                                <input type="text" id="newPasscodeLabel" class="form-control-v2"
+                                                    placeholder="เช่น ทีมขาย, ทีมบริการลูกค้า" required>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label for="newPasscodeValue" class="form-label-v2">รหัสสำหรับเข้าใช้งาน
+                                                    <span class="text-danger">*</span></label>
+                                                <div class="input-group">
+                                                    <input type="text" id="newPasscodeValue" class="form-control-v2"
+                                                        placeholder="กำหนดเองหรือกดสุ่ม" minlength="4" required>
+                                                    <button class="btn-v2 btn-v2-secondary" type="button"
+                                                        id="generatePasscodeBtn">
+                                                        <i class="fas fa-random"></i>
+                                                    </button>
+                                                </div>
+                                                <div class="form-text-v2">แนะนำใช้ความยาว 6-12 ตัวอักษร
+                                                    มีทั้งตัวเลข/ตัวอักษร</div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <button type="submit" class="btn-v2 btn-v2-primary w-100"
+                                                    id="createPasscodeSubmitBtn">
+                                                    <i class="fas fa-save"></i> บันทึกรหัส
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+
+                                <!-- Passcode List -->
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th style="min-width: 160px;">ชื่อรหัส</th>
+                                                <th style="min-width: 120px;">สถานะ</th>
+                                                <th style="min-width: 160px;">ใช้งานล่าสุด</th>
+                                                <th style="min-width: 100px;">จำนวนครั้งที่ใช้</th>
+                                                <th style="min-width: 140px;" class="text-end">การจัดการ</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="passcodeTableBody">
+                                            <tr id="passcodeEmptyState">
+                                                <td colspan="5" class="text-center text-muted py-4">
+                                                    <i class="fas fa-key me-2"></i>ยังไม่มีรหัสสำหรับทีมงาน
+                                                    เริ่มสร้างรหัสชุดแรกได้เลย
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Content Filtering -->
                         <div class="settings-card">
                             <div class="card-header-v2">
                                 <h3 class="card-title-v2">การกรองเนื้อหา (Content Filtering)</h3>
