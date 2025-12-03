@@ -690,6 +690,11 @@ const defaultAiConfig = {
     frequencyPenalty: ''
 };
 
+function isReasoningModel(modelId) {
+    if (!modelId || typeof modelId !== 'string') return false;
+    return modelId.toLowerCase().startsWith('gpt-5'); // GPT-5.x family supports reasoning_effort
+}
+
 function parseNumberOrNull(value) {
     if (value === null || value === undefined || value === '') return null;
     const num = Number(value);
@@ -720,6 +725,9 @@ function applyAiModeVisibility(prefix, apiMode) {
     const chatSection = document.getElementById(`${prefix}BotChatParams`);
     if (responsesSection) responsesSection.classList.toggle('d-none', mode !== 'responses');
     if (chatSection) chatSection.classList.toggle('d-none', mode !== 'chat');
+
+    updateReasoningVisibility(prefix);
+    updateChatSamplingVisibility(prefix);
 }
 
 function setAiConfigUI(prefix, config) {
@@ -734,11 +742,14 @@ function setAiConfigUI(prefix, config) {
     setRangeValue(`${prefix}BotFrequencyPenalty`, cfg.frequencyPenalty);
 
     applyAiModeVisibility(prefix, apiMode);
+    updateReasoningVisibility(prefix);
 }
 
 function readAiConfigFromUI(prefix) {
     const apiModeSelect = document.getElementById(`${prefix}BotApiMode`);
     const apiMode = apiModeSelect && apiModeSelect.value === 'chat' ? 'chat' : 'responses';
+    const modelId = getInputValue(`${prefix}BotAiModel`);
+    const reasoningModel = isReasoningModel(modelId);
 
     const config = {
         apiMode
@@ -752,10 +763,17 @@ function readAiConfigFromUI(prefix) {
         config.frequencyPenalty = null;
     } else {
         config.reasoningEffort = '';
-        config.temperature = parseNumberOrNull(getInputValue(`${prefix}BotTemperature`));
-        config.topP = parseNumberOrNull(getInputValue(`${prefix}BotTopP`));
-        config.presencePenalty = parseNumberOrNull(getInputValue(`${prefix}BotPresencePenalty`));
-        config.frequencyPenalty = parseNumberOrNull(getInputValue(`${prefix}BotFrequencyPenalty`));
+        if (reasoningModel) {
+            config.temperature = null;
+            config.topP = null;
+            config.presencePenalty = null;
+            config.frequencyPenalty = null;
+        } else {
+            config.temperature = parseNumberOrNull(getInputValue(`${prefix}BotTemperature`));
+            config.topP = parseNumberOrNull(getInputValue(`${prefix}BotTopP`));
+            config.presencePenalty = parseNumberOrNull(getInputValue(`${prefix}BotPresencePenalty`));
+            config.frequencyPenalty = parseNumberOrNull(getInputValue(`${prefix}BotFrequencyPenalty`));
+        }
     }
 
     return config;
@@ -772,7 +790,46 @@ function initAiModeListeners() {
         ['Temperature', 'TopP', 'PresencePenalty', 'FrequencyPenalty'].forEach(suffix => {
             attachRangeListener(`${prefix}Bot${suffix}`);
         });
+        const modelSelect = document.getElementById(`${prefix}BotAiModel`);
+        if (modelSelect) {
+            modelSelect.addEventListener('change', () => updateReasoningVisibility(prefix));
+            modelSelect.addEventListener('change', () => updateChatSamplingVisibility(prefix));
+        }
     });
+}
+
+function updateReasoningVisibility(prefix) {
+    const modelSelect = document.getElementById(`${prefix}BotAiModel`);
+    const modelId = modelSelect ? modelSelect.value : '';
+    const supported = isReasoningModel(modelId);
+    const group = document.getElementById(`${prefix}BotReasoningGroup`);
+    const note = document.getElementById(`${prefix}BotReasoningNote`);
+    if (group) group.classList.toggle('d-none', !supported);
+    if (note) note.classList.toggle('d-none', supported);
+    if (!supported) {
+        setInputValue(`${prefix}BotReasoningEffort`, '');
+    }
+}
+
+function updateChatSamplingVisibility(prefix) {
+    const modelSelect = document.getElementById(`${prefix}BotAiModel`);
+    const modelId = modelSelect ? modelSelect.value : '';
+    const apiModeSelect = document.getElementById(`${prefix}BotApiMode`);
+    const apiMode = apiModeSelect && apiModeSelect.value === 'chat' ? 'chat' : 'responses';
+    const isReasoning = isReasoningModel(modelId);
+    const controls = document.getElementById(`${prefix}BotChatControls`);
+    const note = document.getElementById(`${prefix}BotChatNote`);
+
+    const hideSampling = apiMode !== 'chat' || isReasoning;
+    if (controls) controls.classList.toggle('d-none', hideSampling);
+    if (note) note.classList.toggle('d-none', !isReasoning);
+
+    if (hideSampling) {
+        setRangeValue(`${prefix}BotTemperature`, '');
+        setRangeValue(`${prefix}BotTopP`, '');
+        setRangeValue(`${prefix}BotPresencePenalty`, '');
+        setRangeValue(`${prefix}BotFrequencyPenalty`, '');
+    }
 }
 
 function showLegacySettingsNotice() {

@@ -103,7 +103,7 @@
                                         </div>
                                         <div id="lineBotResponsesParams">
                                             <div class="row g-2">
-                                                <div class="col-md-6">
+                                                <div class="col-md-6" id="lineBotReasoningGroup">
                                                     <label class="form-label mb-1" for="lineBotReasoningEffort">reasoning_effort</label>
                                                     <select class="form-select form-select-sm" id="lineBotReasoningEffort">
                                                         <option value="">ตามค่า default ของโมเดล</option>
@@ -115,10 +115,15 @@
                                                     </select>
                                                     <div class="form-text">ใช้เฉพาะ Responses; หากเลือกค่านี้จะไม่ใช้ temperature/top_p/penalties</div>
                                                 </div>
+                                                <div class="col-md-6 d-none" id="lineBotReasoningNote">
+                                                    <div class="alert alert-info py-2 px-3 small mb-0">
+                                                        โมเดลนี้ไม่รองรับ reasoning_effort
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                         <div id="lineBotChatParams" class="d-none">
-                                            <div class="row g-2">
+                                            <div class="row g-2" id="lineBotChatControls">
                                                 <div class="col-md-6">
                                                     <label class="form-label mb-1" for="lineBotTemperature">temperature</label>
                                                     <input type="range" step="0.1" min="0" max="2" class="form-range" id="lineBotTemperature">
@@ -155,6 +160,9 @@
                                                         <small class="text-muted">2</small>
                                                     </div>
                                                 </div>
+                                            </div>
+                                            <div class="alert alert-info mt-2 mb-0 py-2 px-3 small d-none" id="lineBotChatNote">
+                                                โมเดล reasoning ไม่รองรับ temperature/top_p/penalties
                                             </div>
                                             <div class="alert alert-warning mt-2 mb-0 py-2 px-3 small">
                                                 Reasoning (reasoning_effort) + sampling params ใช้ร่วมกันไม่ได้ใน Chat API หากจะ reasoning ให้ใช้ Responses แทน
