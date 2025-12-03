@@ -1532,19 +1532,61 @@ const DEFAULT_ORDER_PROMPT_BODY = `วิเคราะห์บทสนทน
 - totalAmount: ยอดรวมทั้งหมด (ถ้าไม่ระบุให้คำนวณจาก items)
 - shippingAddress: ที่อยู่จัดส่ง (จำเป็นต้องมี ถ้าไม่มีให้สรุปว่าไม่มีออเดอร์)
 - phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
+- email: อีเมลลูกค้าหรือ null
 - paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
 - shippingCost: ค่าส่ง (ตัวเลข; หากไม่ระบุให้ใช้ 0 และถือว่าส่งฟรี)
+- customerName: ชื่อลูกค้า (ถ้าไม่ระบุให้เป็น null)
+- recipientName: ชื่อผู้รับพัสดุ (ถ้าไม่ระบุให้ใช้ชื่อลูกค้า)
+- addressSubDistrict: ตำบล/แขวง (ถ้าไม่พบให้ปล่อยว่าง)
+- addressDistrict: อำเภอ/เขต (ถ้าไม่พบให้ปล่อยว่าง)
+- addressProvince: จังหวัด (ถ้าไม่พบให้ปล่อยว่าง)
+- addressPostalCode: รหัสไปรษณีย์ (ถ้าไม่พบให้ปล่อยว่าง)
+- transferDate: วันที่โอนเงิน (รูปแบบ YYYY-MM-DD หรือ null)
+- transferTime: เวลาที่โอน (รูปแบบ HH:mm หรือ null)
+- paymentReceiver: ผู้รับเงิน (ถ้าไม่พบให้เป็น null)
+- notes: หมายเหตุเพิ่มเติม (ถ้าไม่พบให้เป็น null)
+
+รายละเอียดสินค้าที่สามารถระบุได้เพิ่มเติมแต่เว้นว่างได้:
+- shippingName: ชื่อสินค้า (สำหรับขนส่ง)
+- color: สีสินค้า
+- width: ความกว้าง (เซนติเมตร)
+- length: ความยาว (เซนติเมตร)
+- height: ความสูง (เซนติเมตร)
+- weight: น้ำหนัก (กิโลกรัม)
 - หากได้รับข้อมูลที่อยู่หรือชื่อลูกค้าจากออเดอร์ก่อนหน้า ให้ใช้เป็นค่าเริ่มต้นเมื่อไม่มีข้อมูลใหม่`;
 
 const ORDER_PROMPT_JSON_SUFFIX = `ตอบเป็น JSON เท่านั้น: {
   "hasOrder": true/false,
   "orderData": {
-    "items": [...],
+    "items": [
+      {
+        "product": "ชื่อสินค้า",
+        "quantity": จำนวน,
+        "price": ราคา,
+        "shippingName": "ชื่อสำหรับขนส่งหรือ null",
+        "color": "สีหรือ null",
+        "width": "ความกว้างหรือ null",
+        "length": "ความยาวหรือ null",
+        "height": "ความสูงหรือ null",
+        "weight": "น้ำหนักหรือ null"
+      }
+    ],
     "totalAmount": จำนวน,
     "shippingAddress": "ที่อยู่หรือ null",
     "phone": "เบอร์โทรหรือ null",
+    "email": "อีเมลหรือ null",
     "paymentMethod": "วิธีชำระหรือ null",
-    "shippingCost": จำนวน
+    "shippingCost": จำนวน,
+    "customerName": "ชื่อลูกค้าหรือ null",
+    "recipientName": "ชื่อผู้รับหรือ null",
+    "addressSubDistrict": "ตำบล/แขวงหรือ null",
+    "addressDistrict": "อำเภอ/เขตหรือ null",
+    "addressProvince": "จังหวัดหรือ null",
+    "addressPostalCode": "รหัสไปรษณีย์หรือ null",
+    "transferDate": "YYYY-MM-DD หรือ null",
+    "transferTime": "HH:mm หรือ null",
+    "paymentReceiver": "ผู้รับเงินหรือ null",
+    "notes": "หมายเหตุหรือ null"
   },
   "confidence": 0.0-1.0,
   "reason": "เหตุผลสั้นๆ (หากไม่มีที่อยู่ให้สรุปว่าไม่มีออเดอร์)"
@@ -2919,6 +2961,109 @@ function normalizeCustomerName(rawName) {
   return trimmed.length ? trimmed : null;
 }
 
+function sanitizeOptionalString(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function sanitizeOptionalNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = parseFloat(
+      value.replace(/[^\d.,-]/g, "").replace(/,/g, ""),
+    );
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function normalizeOrderAddress(orderData = {}) {
+  const addressSource =
+    orderData.shippingAddress ||
+    orderData.address ||
+    orderData.deliveryAddress ||
+    orderData.recipientAddress ||
+    null;
+
+  let fullAddress = "";
+  if (typeof addressSource === "string") {
+    fullAddress = addressSource.trim();
+  } else if (addressSource && typeof addressSource === "object") {
+    const addressParts = [
+      addressSource.line1 || addressSource.addressLine1,
+      addressSource.line2 || addressSource.addressLine2,
+      addressSource.name,
+    ].filter(Boolean);
+    fullAddress = addressParts.join(" ").trim();
+  }
+
+  const subDistrict =
+    sanitizeOptionalString(
+      orderData.addressSubDistrict ||
+        orderData.shippingSubDistrict ||
+        orderData.subDistrict ||
+        orderData.subdistrict ||
+        orderData.tambon ||
+        (addressSource && typeof addressSource === "object"
+          ? addressSource.subDistrict ||
+            addressSource.subdistrict ||
+            addressSource.tambon
+          : null),
+    ) || null;
+
+  const district =
+    sanitizeOptionalString(
+      orderData.addressDistrict ||
+        orderData.shippingDistrict ||
+        orderData.district ||
+        orderData.amphoe ||
+        (addressSource && typeof addressSource === "object"
+          ? addressSource.district || addressSource.amphoe
+          : null),
+    ) || null;
+
+  const province =
+    sanitizeOptionalString(
+      orderData.addressProvince ||
+        orderData.shippingProvince ||
+        orderData.province ||
+        orderData.state ||
+        (addressSource && typeof addressSource === "object"
+          ? addressSource.city ||
+            addressSource.province ||
+            addressSource.state
+          : null),
+    ) || null;
+
+  const postalCode =
+    sanitizeOptionalString(
+      orderData.addressPostalCode ||
+        orderData.postalCode ||
+        orderData.zip ||
+        orderData.zipCode ||
+        (addressSource && typeof addressSource === "object"
+          ? addressSource.postalCode ||
+            addressSource.zip ||
+            addressSource.zipCode
+          : null),
+    ) || null;
+
+  return {
+    fullAddress,
+    subDistrict,
+    district,
+    province,
+    postalCode,
+  };
+}
+
 // ============================ Order Buffer & Cutoff Helpers ============================
 
 const ORDER_BUFFER_COLLECTION = "order_extraction_buffers";
@@ -3436,6 +3581,19 @@ function buildOrderQuery(params = {}) {
     }
   }
 
+  const selectedIdsParam = params.selectedIds;
+  if (selectedIdsParam) {
+    const selectedIds = String(selectedIdsParam)
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+
+    if (selectedIds.length) {
+      query._id = { $in: selectedIds };
+    }
+  }
+
   const status = params.status;
   if (status && status !== "all") {
     query.status = status;
@@ -3545,6 +3703,7 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
 
     // ตรวจสอบความถูกต้องของข้อมูล
     if (parsed.hasOrder && parsed.orderData) {
+      const orderData = parsed.orderData || {};
       const {
         items,
         totalAmount,
@@ -3553,7 +3712,7 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
         paymentMethod,
         shippingCost,
         customerName,
-      } = parsed.orderData;
+      } = orderData;
 
       // ตรวจสอบ items
       if (!Array.isArray(items) || items.length === 0) {
@@ -3573,6 +3732,22 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
           typeof item.product === "string" ? item.product.trim() : "";
         const quantityNumber = Number(item.quantity);
         const priceNumber = Number(item.price);
+        const shippingName =
+          sanitizeOptionalString(item.shippingName) ||
+          sanitizeOptionalString(item.shippingProductName) ||
+          sanitizeOptionalString(item.productForShipping) ||
+          null;
+        const color = sanitizeOptionalString(item.color) || null;
+        const width = sanitizeOptionalNumber(
+          item.width ?? item.widthCm ?? item.itemWidth,
+        );
+        const length = sanitizeOptionalNumber(
+          item.length ?? item.lengthCm ?? item.itemLength,
+        );
+        const height = sanitizeOptionalNumber(
+          item.height ?? item.heightCm ?? item.itemHeight,
+        );
+        const weight = sanitizeOptionalNumber(item.weight ?? item.weightKg);
 
         if (!productName) {
           console.warn("[Order] ชื่อสินค้าว่าง:", item);
@@ -3604,11 +3779,32 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
           };
         }
 
-        sanitizedItems.push({
+        const sanitizedItem = {
           product: productName,
           quantity: quantityNumber,
           price: priceNumber,
-        });
+        };
+
+        if (shippingName) {
+          sanitizedItem.shippingName = shippingName;
+        }
+        if (color) {
+          sanitizedItem.color = color;
+        }
+        if (width !== null && width !== undefined) {
+          sanitizedItem.width = width;
+        }
+        if (length !== null && length !== undefined) {
+          sanitizedItem.length = length;
+        }
+        if (height !== null && height !== undefined) {
+          sanitizedItem.height = height;
+        }
+        if (weight !== null && weight !== undefined) {
+          sanitizedItem.weight = weight;
+        }
+
+        sanitizedItems.push(sanitizedItem);
       }
 
       // ต้องมีที่อยู่จัดส่ง
@@ -3637,17 +3833,58 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
 
       const normalizedShippingCost = normalizeShippingCostValue(shippingCost);
       const normalizedCustomerName = normalizeCustomerName(customerName);
+      const sanitizedEmail =
+        sanitizeOptionalString(orderData.email || orderData.customerEmail) ||
+        null;
+      const sanitizedRecipientName =
+        normalizeCustomerName(
+          orderData.recipientName || orderData.shippingName || customerName,
+        ) || normalizedCustomerName;
+      const addressParts = normalizeOrderAddress({
+        ...(orderData || {}),
+        shippingAddress,
+      });
+      const transferDate =
+        sanitizeOptionalString(
+          orderData.transferDate || orderData.paymentDate,
+        ) || null;
+      const transferTime =
+        sanitizeOptionalString(
+          orderData.transferTime || orderData.paymentTime,
+        ) || null;
+      const paymentReceiver =
+        sanitizeOptionalString(
+          orderData.paymentReceiver || orderData.receivedBy,
+        ) || null;
+      const sanitizedNotes = sanitizeOptionalString(orderData.notes) || null;
+      const shippingAddressText =
+        typeof shippingAddress === "string"
+          ? shippingAddress.trim()
+          : String(shippingAddress || "");
+      const paymentMethodValue =
+        sanitizeOptionalString(paymentMethod) || "เก็บเงินปลายทาง";
+      const sanitizedPhone = sanitizeOptionalString(phone) || null;
 
       return {
         hasOrder: true,
         orderData: {
           items: sanitizedItems,
           totalAmount: calculatedTotal,
-          shippingAddress: shippingAddress.trim(),
-          phone: phone || null,
-          paymentMethod: paymentMethod || "เก็บเงินปลายทาง",
+          shippingAddress: shippingAddressText,
+          phone: sanitizedPhone,
+          email: sanitizedEmail,
+          paymentMethod: paymentMethodValue,
           shippingCost: normalizedShippingCost,
           customerName: normalizedCustomerName,
+          recipientName: sanitizedRecipientName,
+          addressSubDistrict: addressParts.subDistrict,
+          addressDistrict: addressParts.district,
+          addressProvince: addressParts.province,
+          addressPostalCode: addressParts.postalCode,
+          transferDate,
+          transferTime,
+          paymentReceiver,
+          notes: sanitizedNotes,
         },
         confidence: parsed.confidence || 0.8,
         reason: parsed.reason || "พบออเดอร์ในบทสนทนา",
@@ -17408,6 +17645,7 @@ app.get("/admin/orders/data", async (req, res) => {
       const customerName = normalizeCustomerName(orderData.customerName);
       const displayName =
         customerName || profileMap[order.userId] || order.userId || "";
+      const addressInfo = normalizeOrderAddress(orderData);
       const platform = normalizeOrderPlatform(order.platform || "line");
       const rawBotId = order.botId || null;
       const botId =
@@ -17420,11 +17658,31 @@ app.get("/admin/orders/data", async (req, res) => {
         (botId
           ? `${platform === "facebook" ? "Facebook" : "LINE"} (${botId})`
           : null);
+      const recipientName =
+        normalizeCustomerName(orderData.recipientName) ||
+        customerName ||
+        displayName;
+      const email = orderData.email || orderData.customerEmail || "";
+      const noteText = order.notes || orderData.notes || "";
+      const transferDate =
+        orderData.transferDate || orderData.paymentDate || null;
+      const transferTime =
+        orderData.transferTime || orderData.paymentTime || null;
+      const paymentReceiver =
+        orderData.paymentReceiver || orderData.receivedBy || "";
+      const paymentMethod =
+        orderData.paymentMethod || orderData.paymentType || null;
+      const phone =
+        orderData.phone ||
+        orderData.customerPhone ||
+        orderData.shippingPhone ||
+        null;
       return {
         id: order._id?.toString?.() || "",
         userId: order.userId || "",
         displayName,
         customerName: customerName || "",
+        recipientName: recipientName || "",
         platform,
         botId,
         pageKey,
@@ -17432,12 +17690,21 @@ app.get("/admin/orders/data", async (req, res) => {
         status: order.status || "pending",
         totalAmount: orderData.totalAmount || 0,
         shippingCost: orderData.shippingCost || 0,
-        paymentMethod: orderData.paymentMethod || null,
-        shippingAddress: orderData.shippingAddress || null,
-        phone: orderData.phone || null,
+        paymentMethod,
+        shippingAddress:
+          addressInfo.fullAddress || orderData.shippingAddress || null,
+        addressSubDistrict: addressInfo.subDistrict || "",
+        addressDistrict: addressInfo.district || "",
+        addressProvince: addressInfo.province || "",
+        addressPostalCode: addressInfo.postalCode || "",
+        phone,
+        email,
         items: Array.isArray(orderData.items) ? orderData.items : [],
         extractedAt: order.extractedAt || null,
-        notes: order.notes || "",
+        notes: noteText,
+        transferDate,
+        transferTime,
+        paymentReceiver,
         isManualExtraction: !!order.isManualExtraction,
         extractedFrom: order.extractedFrom || null,
       };
@@ -17562,15 +17829,52 @@ app.get("/admin/orders/export", async (req, res) => {
     });
 
     const timezone = "Asia/Bangkok";
+
+    const formatItemsField = (items, getter) => {
+      if (!Array.isArray(items) || !items.length) return "";
+      return items
+        .map((item, idx) => {
+          const value = getter(item, idx);
+          return value ? String(value).trim() : "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    };
+
+    const formatDimensionValue = (value) => {
+      if (value === null || value === undefined || value === "") return "";
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        return String(numeric);
+      }
+      return String(value);
+    };
+
+    const formatDateValue = (value) => {
+      if (!value) return "";
+      const parsed = moment(value);
+      if (parsed.isValid()) {
+        return parsed.format("YYYY-MM-DD");
+      }
+      return String(value);
+    };
+
+    const formatTimeValue = (value) => {
+      if (!value) return "";
+      const trimmed = String(value).trim();
+      const match = trimmed.match(/^(\d{1,2}):(\d{2})/);
+      if (match) {
+        const hour = match[1].padStart(2, "0");
+        const minute = match[2];
+        return `${hour}:${minute}`;
+      }
+      return trimmed;
+    };
+
     const exportRows = orders.map((order, index) => {
       const orderData = order.orderData || {};
       const items = Array.isArray(orderData.items) ? orderData.items : [];
-      const itemsText = items
-        .map(
-          (item, idx) =>
-            `${idx + 1}. ${item.product} x${item.quantity} @ ${item.price}`,
-        )
-        .join("\n");
+      const addressInfo = normalizeOrderAddress(orderData);
       const platform = normalizeOrderPlatform(order.platform || "line");
       const rawBotId = order.botId || null;
       const botId =
@@ -17585,28 +17889,98 @@ app.get("/admin/orders/export", async (req, res) => {
           : platform === "facebook"
             ? "Facebook (default)"
             : "LINE (default)");
+      const recipientName =
+        normalizeCustomerName(orderData.recipientName) ||
+        normalizeCustomerName(orderData.customerName) ||
+        profileMap[order.userId] ||
+        order.userId ||
+        "";
+      const email = orderData.email || orderData.customerEmail || "";
+      const noteText = order.notes || orderData.notes || "";
+      const transferDate =
+        orderData.transferDate || orderData.paymentDate || "";
+      const transferTime =
+        orderData.transferTime || orderData.paymentTime || "";
+      const paymentReceiver =
+        orderData.paymentReceiver || orderData.receivedBy || "";
+      const paymentMethod =
+        orderData.paymentMethod || orderData.paymentType || "";
+      const phone =
+        orderData.phone ||
+        orderData.customerPhone ||
+        orderData.shippingPhone ||
+        "";
+      const productNames = formatItemsField(items, (item) => {
+        if (!item.product) return "";
+        const qtyText =
+          item.quantity && Number(item.quantity) !== 1
+            ? ` x${item.quantity}`
+            : "";
+        return `${item.product}${qtyText}`;
+      });
+      const shippingProductNames = formatItemsField(items, (item) => {
+        const name =
+          item.shippingName ||
+          item.shippingProductName ||
+          item.product ||
+          "";
+        if (!name) return "";
+        const qtyText =
+          item.quantity && Number(item.quantity) !== 1
+            ? ` x${item.quantity}`
+            : "";
+        return `${name}${qtyText}`;
+      });
+      const colors = formatItemsField(items, (item) => item.color || "");
+      const widths = formatItemsField(items, (item) =>
+        formatDimensionValue(
+          item.width ?? item.widthCm ?? item.itemWidth ?? "",
+        ),
+      );
+      const lengths = formatItemsField(items, (item) =>
+        formatDimensionValue(
+          item.length ?? item.lengthCm ?? item.itemLength ?? "",
+        ),
+      );
+      const heights = formatItemsField(items, (item) =>
+        formatDimensionValue(
+          item.height ?? item.heightCm ?? item.itemHeight ?? "",
+        ),
+      );
+      const weights = formatItemsField(items, (item) =>
+        formatDimensionValue(item.weight ?? item.weightKg ?? ""),
+      );
 
       return {
         ลำดับ: index + 1,
-        วันที่: order.extractedAt
-          ? moment(order.extractedAt).tz(timezone).format("YYYY-MM-DD HH:mm:ss")
-          : "",
-        ผู้ใช้: order.userId || "",
-        ชื่อลูกค้า:
-          normalizeCustomerName(orderData.customerName) ||
-          profileMap[order.userId] ||
-          "",
+        ชื่อผู้รับ: recipientName,
+        เบอร์โทร: phone,
+        ที่อยู่: addressInfo.fullAddress || orderData.shippingAddress || "",
+        ตำบล: addressInfo.subDistrict || "",
+        อำเภอ: addressInfo.district || "",
+        จังหวัด: addressInfo.province || "",
+        รหัสไปรษณีย์: addressInfo.postalCode || "",
+        อีเมล: email,
+        หมายเหตุ: noteText,
+        ชื่อสินค้า: productNames,
+        "ชื่อสินค้า (สำหรับขนส่ง)": shippingProductNames,
+        สีสินค้า: colors,
+        "ความกว้างของสินค้า(เว้นว่าง)": widths,
+        "ความยาวของสินค้า(เว้นว่าง)": lengths,
+        "ความสูงของสินค้า(เว้นว่าง)": heights,
+        "น้ำหนัก(กก.) (เว้นว่าง)": weights,
+        ประเภทการชำระ: paymentMethod,
+        จำนวนเงิน: Number(orderData.totalAmount) || 0,
+        วันที่โอนเงิน: formatDateValue(transferDate),
+        เวลาที่โอน: formatTimeValue(transferTime),
+        ผู้รับเงิน: paymentReceiver,
         แพลตฟอร์ม: order.platform || "line",
         เพจ: pageName,
-        สถานะ: order.status || "pending",
-        ยอดรวม: orderData.totalAmount || 0,
-        ค่าส่ง: orderData.shippingCost || 0,
-        วิธีชำระ: orderData.paymentMethod || "",
-        ที่อยู่: orderData.shippingAddress || "",
-        เบอร์โทร: orderData.phone || "",
-        รายการสินค้า: itemsText,
-        หมายเหตุ: order.notes || "",
-        ประเภท: order.isManualExtraction ? "Manual" : "Automatic",
+        วันที่ดึงออเดอร์: order.extractedAt
+          ? moment(order.extractedAt)
+            .tz(timezone)
+            .format("YYYY-MM-DD HH:mm:ss")
+          : "",
       };
     });
 

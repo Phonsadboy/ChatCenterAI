@@ -291,22 +291,74 @@ document.addEventListener("DOMContentLoaded", () => {
           order.userId ||
           order.customer ||
           "-";
+        const recipientName = order.recipientName || customerName || "-";
         const customerMeta =
+          customerName && customerName !== recipientName ? customerName : "";
+        const phoneText =
+          order.phone ||
           order.customerPhone ||
-          order.customerEmail ||
-          order.userTag ||
-          order.customerNote ||
-          "";
+          order.shippingPhone ||
+          "-";
+        const emailText =
+          order.email || order.customerEmail || order.userEmail || "-";
+        const subDistrict = order.addressSubDistrict || "";
+        const district = order.addressDistrict || "";
+        const province = order.addressProvince || "";
+        const postalCode = order.addressPostalCode || "";
+        let addressDisplay =
+          order.shippingAddress ||
+          order.shippingAddressText ||
+          order.addressText ||
+          order.fullAddress ||
+          [subDistrict, district, province, postalCode].filter(Boolean).join(" ") ||
+          "-";
         const pageLabel = getPageLabel(order);
         const platformKey = (order.platform || "").toLowerCase();
         const platformLabel =
           platformLabels[platformKey] || order.platform || "-";
         const platformIcon = getPlatformIcon(platformKey);
         const status = order.status || "pending";
-        const itemsHtml = renderOrderItems(order.items || []);
-        const shippingCost = formatCurrency(order.shippingCost || 0);
-        const totalAmountFormatted = formatCurrency(order.totalAmount || 0);
-        const payment = order.paymentMethod || order.paymentStatus || "-";
+        const items = Array.isArray(order.items) ? order.items : [];
+        const itemsHtml = renderOrderItems(items);
+        const shippingNamesHtml = renderItemAttributeList(items, {
+          field: "shippingName",
+          fallbackField: "shippingProductName",
+          fallbackToProduct: true,
+          includeQuantity: true,
+        });
+        const colorsHtml = renderItemAttributeList(items, {
+          field: "color",
+        });
+        const widthsHtml = renderItemAttributeList(items, {
+          field: "width",
+          fallbackField: "widthCm",
+          formatter: formatDimensionValue,
+        });
+        const lengthsHtml = renderItemAttributeList(items, {
+          field: "length",
+          fallbackField: "lengthCm",
+          formatter: formatDimensionValue,
+        });
+        const heightsHtml = renderItemAttributeList(items, {
+          field: "height",
+          fallbackField: "heightCm",
+          formatter: formatDimensionValue,
+        });
+        const weightsHtml = renderItemAttributeList(items, {
+          field: "weight",
+          fallbackField: "weightKg",
+          formatter: formatDimensionValue,
+        });
+        const totalAmountValue = Number(order.totalAmount) || 0;
+        const totalAmountFormatted = formatCurrency(totalAmountValue);
+        const paymentMethodText =
+          order.paymentMethod ||
+          order.paymentType ||
+          order.paymentStatus ||
+          "-";
+        const transferDateText = formatDateOnly(order.transferDate);
+        const transferTimeText = formatTimeLabel(order.transferTime);
+        const paymentReceiverText = order.paymentReceiver || "-";
         const notes = order.notes ? escapeHtml(order.notes) : "-";
         const orderCode =
           order.orderNumber ||
@@ -329,6 +381,9 @@ document.addEventListener("DOMContentLoaded", () => {
           "";
         const addressData = getOrderAddress(order);
         const hasAddress = !!addressData?.plain;
+        if (hasAddress && (!addressDisplay || addressDisplay === "-")) {
+          addressDisplay = addressData.plain;
+        }
         const isSelected = selectedOrders.has(orderId);
 
         return `
@@ -352,16 +407,6 @@ document.addEventListener("DOMContentLoaded", () => {
                   : ""
               }
             </td>
-            <td data-label="ลูกค้า">
-              <div class="fw-semibold">${escapeHtml(customerName)}</div>
-              ${
-                customerMeta
-                  ? `<div class="order-meta-small">${escapeHtml(
-                      customerMeta,
-                    )}</div>`
-                  : ""
-              }
-            </td>
             <td data-label="เพจ / แพลตฟอร์ม">
               <div class="d-flex align-items-center gap-2">
                 <span class="platform-icon ${platformKey}">
@@ -373,11 +418,52 @@ document.addEventListener("DOMContentLoaded", () => {
                 </div>
               </div>
             </td>
-            <td data-label="รายการสินค้า">
+            <td data-label="ชื่อผู้รับ">
+              <div class="fw-semibold">${escapeHtml(recipientName)}</div>
+              ${
+                customerMeta
+                  ? `<div class="order-meta-small text-muted">${escapeHtml(
+                      customerMeta,
+                    )}</div>`
+                  : ""
+              }
+            </td>
+            <td data-label="เบอร์โทร">${escapeHtml(phoneText || "-")}</td>
+            <td data-label="อีเมล">${
+              emailText && emailText !== "-"
+                ? escapeHtml(emailText)
+                : "-"
+            }</td>
+            <td data-label="ที่อยู่">
+              <div class="order-address-line text-break">${escapeHtml(addressDisplay || "-")}</div>
+            </td>
+            <td data-label="ตำบล">${escapeHtml(subDistrict || "-")}</td>
+            <td data-label="อำเภอ">${escapeHtml(district || "-")}</td>
+            <td data-label="จังหวัด">${escapeHtml(province || "-")}</td>
+            <td data-label="รหัสไปรษณีย์">${escapeHtml(postalCode || "-")}</td>
+            <td data-label="ชื่อสินค้า">
               ${itemsHtml}
             </td>
-            <td data-label="ค่าส่ง" class="text-end">${shippingCost}</td>
-            <td data-label="ยอดรวม" class="text-end">
+            <td data-label="ชื่อสินค้า (สำหรับขนส่ง)">
+              ${shippingNamesHtml}
+            </td>
+            <td data-label="สีสินค้า">
+              ${colorsHtml}
+            </td>
+            <td data-label="ความกว้างของสินค้า">
+              ${widthsHtml}
+            </td>
+            <td data-label="ความยาวของสินค้า">
+              ${lengthsHtml}
+            </td>
+            <td data-label="ความสูงของสินค้า">
+              ${heightsHtml}
+            </td>
+            <td data-label="น้ำหนัก (กก.)">
+              ${weightsHtml}
+            </td>
+            <td data-label="ประเภทการชำระ">${escapeHtml(paymentMethodText)}</td>
+            <td data-label="จำนวนเงิน" class="text-end">
               <span class="fw-semibold">${totalAmountFormatted}</span>
               <button
                 type="button"
@@ -389,11 +475,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 <i class="fas fa-copy"></i>
               </button>
             </td>
-            <td data-label="การชำระเงิน">${escapeHtml(payment)}</td>
+            <td data-label="วันที่โอนเงิน">${escapeHtml(transferDateText)}</td>
+            <td data-label="เวลาที่โอน">${escapeHtml(transferTimeText)}</td>
+            <td data-label="ผู้รับเงิน">${escapeHtml(paymentReceiverText || "-")}</td>
+            <td data-label="หมายเหตุ">${notes}</td>
             <td data-label="สถานะ">
               ${renderStatusDropdown(orderId, status)}
             </td>
-            <td data-label="หมายเหตุ">${notes}</td>
             <td data-label="การจัดการ" class="col-actions">
               <div class="d-flex flex-wrap gap-2 justify-content-end">
                 ${
@@ -405,7 +493,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         data-order-id="${escapeAttribute(orderId)}"
                         data-address-html="${escapeAttribute(addressData.html)}"
                         data-address-plain="${escapeAttribute(addressData.plain)}"
-                        data-customer="${escapeAttribute(customerName)}"
+                        data-customer="${escapeAttribute(recipientName)}"
                       >
                         <i class="fas fa-map-marker-alt"></i>
                       </button>`
@@ -415,8 +503,8 @@ document.addEventListener("DOMContentLoaded", () => {
                   type="button"
                   class="btn btn-outline-secondary btn-sm orders-action"
                   data-action="copy-customer"
-                  data-value="${escapeAttribute(customerName)}"
-                  title="คัดลอกชื่อลูกค้า"
+                  data-value="${escapeAttribute(recipientName)}"
+                  title="คัดลอกชื่อผู้รับ"
                 >
                   <i class="fas fa-user"></i>
                 </button>
@@ -485,6 +573,51 @@ document.addEventListener("DOMContentLoaded", () => {
       .join("");
 
     return `<div class="order-items-list">${list}</div>`;
+  }
+
+  function renderItemAttributeList(items, options = {}) {
+    const {
+      field,
+      fallbackField = null,
+      fallbackToProduct = false,
+      includeQuantity = false,
+      formatter = null,
+    } = options;
+
+    if (!items.length) {
+      return '<span class="text-muted">-</span>';
+    }
+
+    const rows = items.map((item) => {
+      let value = item[field];
+      if (
+        (value === null || value === undefined || value === "") &&
+        fallbackField
+      ) {
+        value = item[fallbackField];
+      }
+      if (
+        (value === null || value === undefined || value === "") &&
+        fallbackToProduct
+      ) {
+        value = item.product || "";
+      }
+      const processedValue =
+        value === null || value === undefined || value === ""
+          ? "-"
+          : formatter
+            ? formatter(value, item)
+            : value;
+      const quantityLabel =
+        includeQuantity && item.quantity
+          ? `<span class="text-muted"> x${escapeHtml(String(item.quantity))}</span>`
+          : "";
+      return `<div class="order-item-row">${escapeHtml(
+        String(processedValue),
+      )}${quantityLabel}</div>`;
+    });
+
+    return `<div class="order-items-list">${rows.join("")}</div>`;
   }
 
   function renderStatusDropdown(orderId, currentStatus) {
@@ -640,8 +773,16 @@ document.addEventListener("DOMContentLoaded", () => {
       order.shippingName || order.recipientName || order.customerName,
     );
     pushSegment(
-      order.customerPhone || order.shippingPhone || order.recipientPhone,
+      order.phone ||
+        order.customerPhone ||
+        order.shippingPhone ||
+        order.recipientPhone,
     );
+    pushSegment(order.addressSubDistrict);
+    pushSegment(order.addressDistrict);
+    pushSegment(order.addressProvince);
+    pushSegment(order.addressPostalCode);
+    pushSegment(order.email || order.customerEmail || order.userEmail);
 
     if (addressObj && typeof addressObj === "object") {
       pushSegment(addressObj.name);
@@ -694,6 +835,15 @@ document.addEventListener("DOMContentLoaded", () => {
     switch (key) {
       case "extractedAt":
         return order.extractedAt ? new Date(order.extractedAt).getTime() : 0;
+      case "recipientName":
+        return (
+          order.recipientName ||
+          order.customerName ||
+          order.displayName ||
+          order.userId ||
+          order.customer ||
+          ""
+        );
       case "customerName":
         return (
           order.customerName ||
@@ -1272,6 +1422,40 @@ document.addEventListener("DOMContentLoaded", () => {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     })}`;
+  }
+
+  function formatDateOnly(dateStr) {
+    if (!dateStr) return "-";
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return String(dateStr);
+    return date.toLocaleDateString("th-TH", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+  }
+
+  function formatTimeLabel(timeStr) {
+    if (!timeStr) return "-";
+    const trimmed = String(timeStr).trim();
+    const match = trimmed.match(/^(\d{1,2}):(\d{2})/);
+    if (match) {
+      const hour = match[1].padStart(2, "0");
+      const minute = match[2];
+      return `${hour}:${minute}`;
+    }
+    return trimmed;
+  }
+
+  function formatDimensionValue(value) {
+    if (value === null || value === undefined || value === "") {
+      return "-";
+    }
+    const number = Number(value);
+    if (!Number.isNaN(number)) {
+      return String(number);
+    }
+    return String(value);
   }
 
   function formatDateTime(dateStr) {
