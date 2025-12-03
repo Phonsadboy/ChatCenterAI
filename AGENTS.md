@@ -1,35 +1,33 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `index.js` คือแอป Express/Socket.IO หลัก เชื่อม MongoDB, OpenAI, LINE/Facebook; ใช้ EJS ใน `views/` สำหรับ admin UI
-- `public/` เก็บ asset ทั้งหมด (`css`, `js`, `assets/`); สี/ตัวแปรอยู่ใน `public/css/theme.css`, คอมโพเนนต์พื้นฐานใน `public/css/components.css`
-- `services/` รวมอินทิเกรชันภายนอก, `utils/` เป็น helper ทั่วไป, `scripts/` สำหรับงานดูแล (เช่น cleanup legacy)
-- `docs/` มีบันทึกการออกแบบและธีม (`docs/frontend-theme-spec.md`)
+- Entry point `index.js` runs Express/Socket.IO, wires MongoDB, OpenAI, and LINE/Facebook, and renders admin UI via EJS under `views/`.
+- Static assets live in `public/` (`css`, `js`, `assets/`); shared colors and variables in `public/css/theme.css`, base components in `public/css/components.css`, page-specific CSS can live alongside.
+- External integrations stay in `services/`; cross-cutting helpers in `utils/`; maintenance scripts (e.g., cleanups) in `scripts/`.
+- Design notes and theme specs sit in `docs/`.
 
 ## Build, Test, and Development Commands
-- `npm install` ติดตั้ง dependency (ต้องใช้ Node >=18)
-- `npm run dev` รันเซิร์ฟเวอร์พร้อม auto-reload ผ่าน `nodemon`
-- `npm start` โหมด production พื้นฐาน
-- `npm run build` ปัจจุบันไม่มีขั้นตอน build (placeholder)
-- `node scripts/drop-legacy-facebook-comment.js` ลบข้อมูลคอมเมนต์เก่า (ใช้เมื่อจำเป็นเท่านั้น)
+- `npm install` (Node >=18) installs dependencies.
+- `npm run dev` starts the server with nodemon auto-reload for local work.
+- `npm start` runs the production-style server.
+- `npm run build` placeholder (no build step yet).
+- `node scripts/drop-legacy-facebook-comment.js` only when you intentionally need to purge old FB comment data.
 
 ## Coding Style & Naming Conventions
-- JavaScript ใช้ semicolon, ย่อหน้า 2 ช่องว่าง, `const/let` แทน `var`, ใช้ `async/await` แทน promise chain
-- ชื่อไฟล์ asset ใช้ kebab-case, ฟังก์ชัน/ตัวแปรใช้ camelCase, คลาส/คอนสตรักเตอร์ใช้ PascalCase
-- UI: อ้างอิงตัวแปรสีจาก `theme.css` (`var(--color-primary-500)` เป็นต้น) และคอมโพเนนต์จาก `components.css`; แยกสไตล์เฉพาะหน้าเป็นไฟล์ย่อยใน `public/css/`
-- EJS แยก partials ใน `views/admin/partials/` เมื่อเป็น layout หรือเมนูร่วม
+- JavaScript: semicolons required, 2-space indentation, prefer `const`/`let`; use `async/await` over promise chains.
+- Naming: assets/files use kebab-case; variables/functions in camelCase; classes/constructors in PascalCase.
+- UI: use CSS variables from `theme.css` (e.g., `var(--color-primary-500)`) and shared pieces from `components.css`; keep shared layouts/menus as EJS partials in `views/admin/partials/`.
 
 ## Testing Guidelines
-- ยังไม่มี test suite กลาง; ถ้าเพิ่ม logic สำคัญ แนะนำวาง unit/integration test ใกล้ไฟล์ที่เกี่ยวข้อง (เช่น `services/__tests__/service.test.js` ด้วย Jest)
-- สำหรับงาน UI ตรวจด้วยตนเองผ่าน `npm run dev` และทดสอบ flow หลัก (แชท, broadcast, orders, settings); แนบสกรีนช็อต/ขั้นตอนทดสอบใน PR
+- No global test suite yet; if adding important logic, place Jest tests near the module (e.g., `services/__tests__/foo.test.js`).
+- For UI changes, run `npm run dev` and manually verify key flows (chat, broadcast, orders, settings); include steps or screenshots in PRs.
 
 ## Commit & Pull Request Guidelines
-- คอมมิตปัจจุบันเป็นคำสั้น ๆ (ไทย/อังกฤษ); ให้อยู่ในรูปคำสั่งสั้นและชัด เช่น `ปรับ theme chat ใหม่`, `fix follow-up timezone`
-- หนึ่งฟีเจอร์หรือแก้บั๊กต่อหนึ่งคอมมิต; อธิบายการเปลี่ยนแปลง/ผลกระทบ config ในข้อความ PR
-- PR ควรระบุ: วัตถุประสงค์, การเปลี่ยนแปลง schema/สคริปต์, env ที่ต้องตั้งเพิ่ม, ขั้นตอนทดสอบ, สกรีนช็อต UI ที่เกี่ยวข้อง
-- หลีกเลี่ยงการ commit ความลับ; ใช้ `.env` ตาม `env.example` และตรวจสอบค่าใน `index.js` ก่อนเผย endpoints ใหม่
+- Commits: short imperative titles (Thai/English both okay), one feature/bugfix per commit (e.g., `ปรับ theme chat ใหม่`, `fix follow-up timezone`).
+- PRs: state purpose, schema/script changes, new env vars, and testing steps; attach relevant UI screenshots.
+- Keep secrets in `.env` (see `env.example`); check `index.js` for any new endpoints/config needs before sharing.
 
 ## Security & Configuration Tips
-- ใช้ค่า `.env` สำหรับคีย์ทั้งหมด (OpenAI, Mongo, LINE/Facebook); ห้ามฝังคีย์ในโค้ดหรือ EJS
-- ตรวจสอบการ sanitization ของ input ทุกจุด (ObjectId, path, file upload) และคง middleware `helmet`/rate-limit เมื่อเพิ่ม route ใหม่
-- Assets ภายใน `public/assets/*` สามารถตั้งค่า base URL ผ่าน `PUBLIC_BASE_URL`; ถ้าเสิร์ฟจาก CDN ให้กำหนด SRI/เวอร์ชันคงที่
+- Never hardcode keys; load via `.env` for OpenAI, Mongo, LINE/Facebook.
+- Preserve input sanitization, `helmet`, and rate limiting on new routes.
+- If serving assets from a CDN, configure `PUBLIC_BASE_URL` and set SRI/versioning for `public/assets/*`.

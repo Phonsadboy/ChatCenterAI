@@ -66,17 +66,102 @@
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="lineBotAiModel" class="form-label">AI Model <span class="text-danger">*</span></label>
-                                <select class="form-select" id="lineBotAiModel" name="aiModel" required>
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <label for="lineBotAiModel" class="form-label mb-0">AI Model <span class="text-danger">*</span></label>
+                                    <button type="button"
+                                            class="btn btn-outline-secondary btn-sm ms-2"
+                                            data-bs-toggle="collapse"
+                                            data-bs-target="#lineBotAiParams"
+                                            aria-expanded="false"
+                                            aria-controls="lineBotAiParams"
+                                            title="กดเพื่อปรับโหมด API/พารามิเตอร์; ถ้าเลือก Chat API (ไม่รองรับ tool จัดการข้อมูล) ระบบจะตอบแบบไม่มี tool search/จัดการข้อมูล">
+                                        <i class="fas fa-cog"></i>
+                                    </button>
+                                </div>
+                                <select class="form-select mt-1" id="lineBotAiModel" name="aiModel" required>
+                                    <option value="gpt-5.1">GPT-5.1</option>
                                     <option value="gpt-5">GPT-5</option>
-                                    <option value="gpt-5-mini">GPT-5 Mini</option>
-                                    <option value="gpt-5-chat-latest">GPT-5 Chat Latest</option>
-                                    <option value="gpt-5-nano">GPT-5 Nano</option>
+                                    <option value="gpt-5-mini">GPT-5 mini</option>
+                                    <option value="gpt-5-nano">GPT-5 nano</option>
+                                    <option value="gpt-5-pro">GPT-5 pro</option>
                                     <option value="gpt-4.1">GPT-4.1</option>
-                                    <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-                                    <option value="o3">O3</option>
+                                    <option value="gpt-4.1-mini">GPT-4.1 mini</option>
+                                    <option value="gpt-4.1-nano">GPT-4.1 nano</option>
+                                    <option value="gpt-4o">GPT-4o</option>
+                                    <option value="gpt-4o-mini">GPT-4o mini</option>
                                 </select>
-                                <div class="form-text">เลือก AI Model ที่จะใช้สำหรับ Line Bot นี้</div>
+                                <div class="form-text">เลือก AI Model ที่จะใช้สำหรับ Line Bot นี้ — ถ้าเลือก Chat API (ใช้ tools ไม่ได้) ระบบจะไม่ส่ง tool จัดการข้อมูล/AI search ให้</div>
+                                <div class="collapse mt-2" id="lineBotAiParams">
+                                    <div class="p-3 border rounded bg-light">
+                                        <div class="mb-3">
+                                            <label for="lineBotApiMode" class="form-label mb-1">API Mode</label>
+                                            <select class="form-select form-select-sm" id="lineBotApiMode" name="apiMode">
+                                                <option value="responses">Responses API (รองรับ tools / reasoning)</option>
+                                                <option value="chat">Chat Completions API (ไม่รองรับ tool จัดการข้อมูล)</option>
+                                            </select>
+                                            <div class="form-text">Responses: เหมาะกับ reasoning + tools; Chat: เร็ว/คงไลบรารีเดิมแต่ไม่มี tools</div>
+                                        </div>
+                                        <div id="lineBotResponsesParams">
+                                            <div class="row g-2">
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1" for="lineBotReasoningEffort">reasoning_effort</label>
+                                                    <select class="form-select form-select-sm" id="lineBotReasoningEffort">
+                                                        <option value="">ตามค่า default ของโมเดล</option>
+                                                        <option value="none">none (GPT-5.1 เท่านั้น)</option>
+                                                        <option value="minimal">minimal (GPT-5 เท่านั้น)</option>
+                                                        <option value="low">low</option>
+                                                        <option value="medium">medium</option>
+                                                        <option value="high">high</option>
+                                                    </select>
+                                                    <div class="form-text">ใช้เฉพาะ Responses; หากเลือกค่านี้จะไม่ใช้ temperature/top_p/penalties</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div id="lineBotChatParams" class="d-none">
+                                            <div class="row g-2">
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1" for="lineBotTemperature">temperature</label>
+                                                    <input type="range" step="0.1" min="0" max="2" class="form-range" id="lineBotTemperature">
+                                                    <div class="d-flex justify-content-between">
+                                                        <small class="text-muted">0</small>
+                                                        <small id="lineBotTemperatureValue" class="fw-semibold">—</small>
+                                                        <small class="text-muted">2</small>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1" for="lineBotTopP">top_p</label>
+                                                    <input type="range" step="0.05" min="0" max="1" class="form-range" id="lineBotTopP">
+                                                    <div class="d-flex justify-content-between">
+                                                        <small class="text-muted">0</small>
+                                                        <small id="lineBotTopPValue" class="fw-semibold">—</small>
+                                                        <small class="text-muted">1</small>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1" for="lineBotPresencePenalty">presence_penalty</label>
+                                                    <input type="range" step="0.1" min="-2" max="2" class="form-range" id="lineBotPresencePenalty">
+                                                    <div class="d-flex justify-content-between">
+                                                        <small class="text-muted">-2</small>
+                                                        <small id="lineBotPresencePenaltyValue" class="fw-semibold">—</small>
+                                                        <small class="text-muted">2</small>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1" for="lineBotFrequencyPenalty">frequency_penalty</label>
+                                                    <input type="range" step="0.1" min="-2" max="2" class="form-range" id="lineBotFrequencyPenalty">
+                                                    <div class="d-flex justify-content-between">
+                                                        <small class="text-muted">-2</small>
+                                                        <small id="lineBotFrequencyPenaltyValue" class="fw-semibold">—</small>
+                                                        <small class="text-muted">2</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="alert alert-warning mt-2 mb-0 py-2 px-3 small">
+                                                Reasoning (reasoning_effort) + sampling params ใช้ร่วมกันไม่ได้ใน Chat API หากจะ reasoning ให้ใช้ Responses แทน
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <div class="col-md-6">

@@ -122,7 +122,11 @@ function renderLineBots(bots) {
                         ${bot.isDefault ? '<span class="badge badge-default">ค่าเริ่มต้น</span>' : ''}
                     </div>
                 </div>
-                <div class="bot-subtext">Model: ${escapeHtml(bot.aiModel || 'gpt-5')} • อัปเดต: ${formatBotUpdatedAt(bot.updatedAt)}</div>
+                <div class="bot-subtext">
+                    Model: ${escapeHtml(bot.aiModel || 'gpt-5')}
+                    • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
+                    • อัปเดต: ${formatBotUpdatedAt(bot.updatedAt)}
+                </div>
                 ${buildBotInlineControls(bot, 'line')}
             </div>
             <div class="bot-actions-compact">
@@ -157,7 +161,11 @@ function renderFacebookBots(bots) {
                         ${bot.isDefault ? '<span class="badge badge-default">ค่าเริ่มต้น</span>' : ''}
                     </div>
                 </div>
-                <div class="bot-subtext">Model: ${escapeHtml(bot.aiModel || 'gpt-5')} • Page: ${escapeHtml(bot.pageId || 'N/A')}</div>
+                <div class="bot-subtext">
+                    Model: ${escapeHtml(bot.aiModel || 'gpt-5')}
+                    • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
+                    • Page: ${escapeHtml(bot.pageId || 'N/A')}
+                </div>
                 ${buildBotInlineControls(bot, 'facebook')}
             </div>
             <div class="bot-actions-compact">
@@ -210,6 +218,12 @@ window.openAddLineBotModal = function () {
     if (form) form.reset();
     const idInput = document.getElementById('lineBotId');
     if (idInput) idInput.value = '';
+    setAiConfigUI('line', defaultAiConfig);
+    const collapseEl = document.getElementById('lineBotAiParams');
+    if (collapseEl && collapseEl.classList.contains('show')) {
+        const collapseInstance = bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+        collapseInstance.hide();
+    }
 
     const modalEl = document.getElementById('addLineBotModal');
     if (modalEl) {
@@ -242,6 +256,8 @@ window.openEditLineBotModal = async function (id) {
         const defaultCheck = document.getElementById('lineBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
 
+        setAiConfigUI('line', bot.aiConfig || defaultAiConfig);
+
         const modalEl = document.getElementById('addLineBotModal');
         if (modalEl) {
             const modal = new bootstrap.Modal(modalEl);
@@ -267,7 +283,8 @@ async function saveLineBot() {
         webhookUrl: document.getElementById('lineWebhookUrl').value,
         status: document.getElementById('lineBotStatus').value,
         aiModel: document.getElementById('lineBotAiModel').value,
-        isDefault: document.getElementById('lineBotDefault').checked
+        isDefault: document.getElementById('lineBotDefault').checked,
+        aiConfig: readAiConfigFromUI('line')
     };
 
     const url = botId ? `/api/line-bots/${botId}` : '/api/line-bots';
@@ -308,6 +325,12 @@ window.openAddFacebookBotModal = function () {
 
     const verifiedToggle = document.getElementById('fbVerifiedToggle');
     if (verifiedToggle) verifiedToggle.checked = false;
+    setAiConfigUI('facebook', defaultAiConfig);
+    const fbCollapseEl = document.getElementById('facebookBotAiParams');
+    if (fbCollapseEl && fbCollapseEl.classList.contains('show')) {
+        const collapseInstance = bootstrap.Collapse.getOrCreateInstance(fbCollapseEl, { toggle: false });
+        collapseInstance.hide();
+    }
 
     const title = document.getElementById('addFacebookBotModalLabel');
     if (title) title.innerHTML = '<i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่';
@@ -360,6 +383,8 @@ window.openEditFacebookBotModal = async function (id) {
         const defaultCheck = document.getElementById('facebookBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
 
+        setAiConfigUI('facebook', bot.aiConfig || defaultAiConfig);
+
         const title = document.getElementById('addFacebookBotModalLabel');
         if (title) title.innerHTML = '<i class="fab fa-facebook me-2"></i>แก้ไข Facebook Bot';
 
@@ -387,7 +412,8 @@ async function saveFacebookBot() {
         verifyToken: document.getElementById('facebookVerifyToken').value,
         webhookUrl: document.getElementById('facebookWebhookUrl').value,
         aiModel: document.getElementById('facebookBotAiModel').value,
-        isDefault: document.getElementById('facebookBotDefault').checked
+        isDefault: document.getElementById('facebookBotDefault').checked,
+        aiConfig: readAiConfigFromUI('facebook')
     };
 
     const url = botId ? `/api/facebook-bots/${botId}` : '/api/facebook-bots';
@@ -476,6 +502,7 @@ async function loadSystemSettings() {
 
         setCheckboxValue('aiEnabled', settings.aiEnabled ?? true);
         setCheckboxValue('enableChatHistory', settings.enableChatHistory ?? true);
+        setInputValue('aiHistoryLimit', settings.aiHistoryLimit ?? 20);
         setCheckboxValue('enableAdminNotifications', settings.enableAdminNotifications ?? true);
         setCheckboxValue('showDebugInfo', settings.showDebugInfo ?? false);
         setInputValue('systemMode', settings.systemMode || 'production');
@@ -493,10 +520,17 @@ async function saveSystemSettings(e) {
     const data = {
         aiEnabled: getCheckboxValue('aiEnabled'),
         enableChatHistory: getCheckboxValue('enableChatHistory'),
+        aiHistoryLimit: parseInt(getInputValue('aiHistoryLimit'), 10),
         enableAdminNotifications: getCheckboxValue('enableAdminNotifications'),
         showDebugInfo: getCheckboxValue('showDebugInfo'),
         systemMode: getInputValue('systemMode')
     };
+
+    if (Number.isNaN(data.aiHistoryLimit) || data.aiHistoryLimit < 1 || data.aiHistoryLimit > 100) {
+        showToast('จำนวนประวัติแชทต้องอยู่ระหว่าง 1-100 ข้อความ', 'danger');
+        setLoading(btn, false);
+        return;
+    }
 
     try {
         const res = await fetch('/api/settings/system', {
@@ -600,6 +634,9 @@ function setupEventListeners() {
 
     // Passcode Management
     initPasscodeManagement();
+
+    // AI mode toggle in bot modals
+    initAiModeListeners();
 }
 
 function getInputValue(id) {
@@ -641,6 +678,101 @@ function showToast(message, type = 'info') {
     toast.innerHTML = message;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
+}
+
+// --- AI Config Helpers ---
+const defaultAiConfig = {
+    apiMode: 'responses',
+    reasoningEffort: '',
+    temperature: '',
+    topP: '',
+    presencePenalty: '',
+    frequencyPenalty: ''
+};
+
+function parseNumberOrNull(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+}
+
+function setRangeValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const valToSet = value === null || value === undefined || value === '' ? el.defaultValue || '' : value;
+    el.value = valToSet;
+    const label = document.getElementById(`${id}Value`);
+    if (label) label.innerText = valToSet === '' ? '—' : valToSet;
+}
+
+function attachRangeListener(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+        const label = document.getElementById(`${id}Value`);
+        if (label) label.innerText = el.value;
+    });
+}
+
+function applyAiModeVisibility(prefix, apiMode) {
+    const mode = apiMode === 'chat' ? 'chat' : 'responses';
+    const responsesSection = document.getElementById(`${prefix}BotResponsesParams`);
+    const chatSection = document.getElementById(`${prefix}BotChatParams`);
+    if (responsesSection) responsesSection.classList.toggle('d-none', mode !== 'responses');
+    if (chatSection) chatSection.classList.toggle('d-none', mode !== 'chat');
+}
+
+function setAiConfigUI(prefix, config) {
+    const cfg = { ...defaultAiConfig, ...(config || {}) };
+    const apiMode = cfg.apiMode === 'chat' ? 'chat' : 'responses';
+
+    setInputValue(`${prefix}BotApiMode`, apiMode);
+    setInputValue(`${prefix}BotReasoningEffort`, cfg.reasoningEffort ?? '');
+    setRangeValue(`${prefix}BotTemperature`, cfg.temperature);
+    setRangeValue(`${prefix}BotTopP`, cfg.topP);
+    setRangeValue(`${prefix}BotPresencePenalty`, cfg.presencePenalty);
+    setRangeValue(`${prefix}BotFrequencyPenalty`, cfg.frequencyPenalty);
+
+    applyAiModeVisibility(prefix, apiMode);
+}
+
+function readAiConfigFromUI(prefix) {
+    const apiModeSelect = document.getElementById(`${prefix}BotApiMode`);
+    const apiMode = apiModeSelect && apiModeSelect.value === 'chat' ? 'chat' : 'responses';
+
+    const config = {
+        apiMode
+    };
+
+    if (apiMode === 'responses') {
+        config.reasoningEffort = getInputValue(`${prefix}BotReasoningEffort`) || '';
+        config.temperature = null;
+        config.topP = null;
+        config.presencePenalty = null;
+        config.frequencyPenalty = null;
+    } else {
+        config.reasoningEffort = '';
+        config.temperature = parseNumberOrNull(getInputValue(`${prefix}BotTemperature`));
+        config.topP = parseNumberOrNull(getInputValue(`${prefix}BotTopP`));
+        config.presencePenalty = parseNumberOrNull(getInputValue(`${prefix}BotPresencePenalty`));
+        config.frequencyPenalty = parseNumberOrNull(getInputValue(`${prefix}BotFrequencyPenalty`));
+    }
+
+    return config;
+}
+
+function initAiModeListeners() {
+    ['line', 'facebook'].forEach(prefix => {
+        const select = document.getElementById(`${prefix}BotApiMode`);
+        if (select) {
+            select.addEventListener('change', (e) => {
+                applyAiModeVisibility(prefix, e.target.value);
+            });
+        }
+        ['Temperature', 'TopP', 'PresencePenalty', 'FrequencyPenalty'].forEach(suffix => {
+            attachRangeListener(`${prefix}Bot${suffix}`);
+        });
+    });
 }
 
 function showLegacySettingsNotice() {

@@ -130,6 +130,9 @@
         const chatHistory = document.getElementById('enableChatHistory');
         if (chatHistory) chatHistory.checked = settings.enableChatHistory ?? true;
 
+        const aiHistoryLimit = document.getElementById('aiHistoryLimit');
+        if (aiHistoryLimit) aiHistoryLimit.value = settings.aiHistoryLimit ?? 20;
+
         const adminNoti = document.getElementById('enableAdminNotifications');
         if (adminNoti) adminNoti.checked = settings.enableAdminNotifications ?? true;
 
@@ -179,9 +182,16 @@
     async function saveSystemSettings(event) {
         if (event) event.preventDefault();
 
+        const historyLimitValue = parseInt(document.getElementById('aiHistoryLimit')?.value || '20', 10);
+        if (Number.isNaN(historyLimitValue) || historyLimitValue < 1 || historyLimitValue > 100) {
+            showAlert('จำนวนประวัติแชทต้องอยู่ระหว่าง 1-100 ข้อความ', 'danger');
+            return;
+        }
+
         const payload = {
             aiEnabled: Boolean(document.getElementById('aiEnabled')?.checked),
             enableChatHistory: Boolean(document.getElementById('enableChatHistory')?.checked),
+            aiHistoryLimit: historyLimitValue,
             enableAdminNotifications: Boolean(document.getElementById('enableAdminNotifications')?.checked),
             systemMode: document.getElementById('systemMode')?.value || 'production'
         };

@@ -455,6 +455,14 @@ function populateSettings() {
         const enableChatHistory = document.getElementById('enableChatHistory');
         if (enableChatHistory) enableChatHistory.checked = true;
     }
+
+    if (currentSettings.aiHistoryLimit !== undefined) {
+        const aiHistoryLimit = document.getElementById('aiHistoryLimit');
+        if (aiHistoryLimit) aiHistoryLimit.value = currentSettings.aiHistoryLimit;
+    } else {
+        const aiHistoryLimit = document.getElementById('aiHistoryLimit');
+        if (aiHistoryLimit) aiHistoryLimit.value = 20;
+    }
     
     if (currentSettings.enableAdminNotifications !== undefined) {
         const enableAdminNotifications = document.getElementById('enableAdminNotifications');
@@ -604,17 +612,25 @@ async function saveAISettings() {
 async function saveSystemSettings() {
     const aiEnabled = document.getElementById('aiEnabled');
     const enableChatHistory = document.getElementById('enableChatHistory');
+    const aiHistoryLimit = document.getElementById('aiHistoryLimit');
     const enableAdminNotifications = document.getElementById('enableAdminNotifications');
     const systemMode = document.getElementById('systemMode');
     
-    if (!aiEnabled || !enableChatHistory || !enableAdminNotifications || !systemMode) {
+    if (!aiEnabled || !enableChatHistory || !aiHistoryLimit || !enableAdminNotifications || !systemMode) {
         showAlert('ไม่พบฟอร์มการตั้งค่าระบบ', 'danger');
+        return;
+    }
+
+    const historyLimitValue = parseInt(aiHistoryLimit.value, 10);
+    if (Number.isNaN(historyLimitValue) || historyLimitValue < 1 || historyLimitValue > 100) {
+        showAlert('จำนวนประวัติแชทต้องอยู่ระหว่าง 1-100 ข้อความ', 'danger');
         return;
     }
     
     const settings = {
         aiEnabled: aiEnabled.checked,
         enableChatHistory: enableChatHistory.checked,
+        aiHistoryLimit: historyLimitValue,
         enableAdminNotifications: enableAdminNotifications.checked,
         systemMode: systemMode.value
     };

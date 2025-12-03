@@ -871,8 +871,12 @@ async function getAIHistory(userId) {
   const enableChatHistory = await getSettingValue("enableChatHistory", true);
   if (!enableChatHistory) return [];
 
-  // จำกัดจำนวนข้อความล่าสุด (ปรับได้จาก settings), ค่าเริ่มต้น 30
-  const historyLimit = await getSettingValue("aiHistoryLimit", 30);
+  // จำกัดจำนวนข้อความล่าสุด (ปรับได้จาก settings), ค่าเริ่มต้น 20
+  const historyLimitRaw = await getSettingValue("aiHistoryLimit", 20);
+  const historyLimit =
+    typeof historyLimitRaw === "number" && historyLimitRaw > 0
+      ? Math.min(Math.floor(historyLimitRaw), 100)
+      : 20;
 
   const client = await connectDB();
   const db = client.db("chatbot");
@@ -2930,6 +2934,44 @@ const ORDER_EXTRACTION_MODES = Object.freeze({
   SCHEDULED: "scheduled",
   REALTIME: "realtime",
 });
+
+function normalizeAiConfig(raw = {}) {
+  const allowedModes = ["responses", "chat"];
+  const parseNum = (val) => {
+    if (val === undefined || val === null || val === "") return null;
+    const num = Number(val);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  const apiMode = allowedModes.includes(raw.apiMode) ? raw.apiMode : "responses";
+  const cfg = {
+    apiMode,
+    reasoningEffort: "",
+    temperature: null,
+    topP: null,
+    presencePenalty: null,
+    frequencyPenalty: null,
+  };
+
+  if (apiMode === "responses") {
+    const effort =
+      raw.reasoningEffort ||
+      raw.reasoning_effort ||
+      (raw.reasoning && raw.reasoning.effort);
+    cfg.reasoningEffort = effort || "";
+  } else {
+    cfg.temperature = parseNum(raw.temperature);
+    cfg.topP = parseNum(raw.topP ?? raw.top_p);
+    cfg.presencePenalty = parseNum(
+      raw.presencePenalty ?? raw.presence_penalty,
+    );
+    cfg.frequencyPenalty = parseNum(
+      raw.frequencyPenalty ?? raw.frequency_penalty,
+    );
+  }
+
+  return cfg;
+}
 
 function normalizeOrderPlatform(platform) {
   if (typeof platform !== "string") return "line";
@@ -7597,6 +7639,24 @@ function extractThaiReply(aiResponse) {
   return aiResponse;
 }
 
+async function fetchBotAiConfig(botId, platform) {
+  try {
+    if (!botId) return normalizeAiConfig({});
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll =
+      platform === "facebook"
+        ? db.collection("facebook_bots")
+        : db.collection("line_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(botId) });
+    if (!bot) return normalizeAiConfig({});
+    return normalizeAiConfig(bot.aiConfig || {});
+  } catch (err) {
+    console.error("fetchBotAiConfig error:", err);
+    return normalizeAiConfig({});
+  }
+}
+
 // ฟังก์ชันสำหรับจัดการข้อความอย่างเดียว (ไม่มีรูปภาพ)
 async function getAssistantResponseTextOnly(
   systemInstructions,
@@ -7623,6 +7683,8 @@ async function getAssistantResponseTextOnly(
 
     // ใช้โมเดลที่ส่งมา หรือ fallback ไปใช้ global setting
     const textModel = aiModel || (await getSettingValue("textModel", "gpt-5"));
+    const botAiConfig = await fetchBotAiConfig(botId, platform);
+    const apiMode = botAiConfig.apiMode === "chat" ? "chat" : "responses";
 
     // Define Tools
     const tools = [
@@ -7671,53 +7733,79 @@ async function getAssistantResponseTextOnly(
     let toolLoopCount = 0;
     const MAX_TOOL_LOOPS = 5;
 
-    while (toolLoopCount < MAX_TOOL_LOOPS) {
-      const response = await openai.chat.completions.create({
+    if (apiMode === "chat") {
+      const payload = {
         model: textModel,
         messages,
-        tools: tools,
-        tool_choice: "auto",
-      });
+      };
+      if (botAiConfig.temperature !== null) {
+        payload.temperature = botAiConfig.temperature;
+      }
+      if (botAiConfig.topP !== null) {
+        payload.top_p = botAiConfig.topP;
+      }
+      if (botAiConfig.presencePenalty !== null) {
+        payload.presence_penalty = botAiConfig.presencePenalty;
+      }
+      if (botAiConfig.frequencyPenalty !== null) {
+        payload.frequency_penalty = botAiConfig.frequencyPenalty;
+      }
 
-      const responseMessage = response.choices[0].message;
-
-      // Check if tool calls
-      if (responseMessage.tool_calls) {
-        messages.push(responseMessage); // Add assistant's tool call message
-
-        console.log(`[LOG] AI ต้องการใช้ Tool: ${responseMessage.tool_calls.length} calls`);
-
-        const client = await connectDB();
-        const db = client.db("chatbot");
-
-        for (const toolCall of responseMessage.tool_calls) {
-          const functionName = toolCall.function.name;
-          const functionArgs = JSON.parse(toolCall.function.arguments);
-
-          console.log(`[LOG] Executing Tool: ${functionName}`, functionArgs);
-
-          let toolResult = { error: "Unknown tool" };
-
-          if (functionName === "get_categories") {
-            toolResult = await getCategories(db, botId, platform);
-          } else if (functionName === "search_item_by_category") {
-            toolResult = await searchItemByCategory(db, functionArgs.category, functionArgs.keyword, botId, platform);
-          } else if (functionName === "search_item_broad") {
-            toolResult = await searchItemBroad(db, functionArgs.category, functionArgs.keyword, botId, platform);
-          }
-
-          messages.push({
-            tool_call_id: toolCall.id,
-            role: "tool",
-            name: functionName,
-            content: JSON.stringify(toolResult),
-          });
+      finalResponse = await openai.chat.completions.create(payload);
+    } else {
+      while (toolLoopCount < MAX_TOOL_LOOPS) {
+        const payload = {
+          model: textModel,
+          messages,
+          tools: tools,
+          tool_choice: "auto",
+        };
+        if (botAiConfig.reasoningEffort) {
+          payload.reasoning_effort = botAiConfig.reasoningEffort;
         }
-        toolLoopCount++;
-      } else {
-        // No tool calls, this is the final response
-        finalResponse = response;
-        break;
+
+        const response = await openai.chat.completions.create(payload);
+
+        const responseMessage = response.choices[0].message;
+
+        // Check if tool calls
+        if (responseMessage.tool_calls) {
+          messages.push(responseMessage); // Add assistant's tool call message
+
+          console.log(`[LOG] AI ต้องการใช้ Tool: ${responseMessage.tool_calls.length} calls`);
+
+          const client = await connectDB();
+          const db = client.db("chatbot");
+
+          for (const toolCall of responseMessage.tool_calls) {
+            const functionName = toolCall.function.name;
+            const functionArgs = JSON.parse(toolCall.function.arguments);
+
+            console.log(`[LOG] Executing Tool: ${functionName}`, functionArgs);
+
+            let toolResult = { error: "Unknown tool" };
+
+            if (functionName === "get_categories") {
+              toolResult = await getCategories(db, botId, platform);
+            } else if (functionName === "search_item_by_category") {
+              toolResult = await searchItemByCategory(db, functionArgs.category, functionArgs.keyword, botId, platform);
+            } else if (functionName === "search_item_broad") {
+              toolResult = await searchItemBroad(db, functionArgs.category, functionArgs.keyword, botId, platform);
+            }
+
+            messages.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              name: functionName,
+              content: JSON.stringify(toolResult),
+            });
+          }
+          toolLoopCount++;
+        } else {
+          // No tool calls, this is the final response
+          finalResponse = response;
+          break;
+        }
       }
     }
 
@@ -10738,10 +10826,22 @@ async function processMessageWithAI(message, userId, lineBot) {
         console.log(
           `[Line AI] ประมวลผลข้อความ (${variant.label}, รอบที่ ${attemptIndex + 1}/${messageVariants.length}) สำหรับผู้ใช้ ${userId}`,
         );
-        const response = await openai.chat.completions.create({
+        const aiConfig = normalizeAiConfig(lineBot.aiConfig || {});
+        const payload = {
           model: aiModel,
           messages: payloadMessages,
-        });
+        };
+        if (aiConfig.apiMode === "responses" && aiConfig.reasoningEffort) {
+          payload.reasoning_effort = aiConfig.reasoningEffort;
+        }
+        if (aiConfig.apiMode === "chat") {
+          if (aiConfig.temperature !== null) payload.temperature = aiConfig.temperature;
+          if (aiConfig.topP !== null) payload.top_p = aiConfig.topP;
+          if (aiConfig.presencePenalty !== null) payload.presence_penalty = aiConfig.presencePenalty;
+          if (aiConfig.frequencyPenalty !== null) payload.frequency_penalty = aiConfig.frequencyPenalty;
+        }
+
+        const response = await openai.chat.completions.create(payload);
 
         let assistantReply = response.choices[0].message.content;
         if (typeof assistantReply !== "string") {
@@ -10817,6 +10917,7 @@ app.post("/api/line-bots", async (req, res) => {
       webhookUrl,
       status,
       isDefault,
+      aiModel,
       selectedInstructions,
       selectedImageCollections,
     } = req.body;
@@ -10861,7 +10962,8 @@ app.post("/api/line-bots", async (req, res) => {
       webhookUrl: finalWebhookUrl,
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
+      aiModel: aiModel || "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
+      aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
       keywordSettings: {
@@ -10908,6 +11010,11 @@ app.put("/api/line-bots/:id", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("line_bots");
 
+    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    if (!existing) {
+      return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
+    }
+
     // If this is default, unset other defaults
     if (isDefault) {
       await coll.updateMany(
@@ -10924,7 +11031,10 @@ app.put("/api/line-bots/:id", async (req, res) => {
       webhookUrl: webhookUrl || "",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: req.body.aiModel || "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
+      aiModel: req.body.aiModel || existing.aiModel || "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
+      aiConfig: normalizeAiConfig(
+        req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
+      ),
       updatedAt: new Date(),
     };
 
@@ -11307,6 +11417,11 @@ app.post("/api/facebook-bots", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
 
+    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    if (!existing) {
+      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+    }
+
     // If this is default, unset other defaults
     if (isDefault) {
       await coll.updateMany({}, { $set: { isDefault: false } });
@@ -11339,6 +11454,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       status: status || "active",
       isDefault: isDefault || false,
       aiModel: aiModel || "gpt-5",
+      aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
       keywordSettings: {
@@ -11401,7 +11517,10 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || "gpt-5",
+      aiModel: aiModel || existing.aiModel || "gpt-5",
+      aiConfig: normalizeAiConfig(
+        req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
+      ),
       updatedAt: new Date(),
     };
 
@@ -16836,6 +16955,7 @@ app.get("/api/settings", async (req, res) => {
       enableChatHistory: true,
       enableAdminNotifications: true,
       systemMode: "production",
+      aiHistoryLimit: 20,
       // การตั้งค่าการกรองข้อความ
       enableMessageFiltering: true,
       hiddenWords: "",
@@ -17040,6 +17160,7 @@ app.post("/api/settings/system", async (req, res) => {
       enableAdminNotifications,
       showDebugInfo,
       systemMode,
+      aiHistoryLimit,
     } = req.body;
 
     const client = await connectDB();
@@ -17053,6 +17174,21 @@ app.post("/api/settings/system", async (req, res) => {
       return res
         .status(400)
         .json({ success: false, error: "โหมดระบบไม่ถูกต้อง" });
+    }
+
+    const parsedHistoryLimit =
+      typeof aiHistoryLimit === "number"
+        ? aiHistoryLimit
+        : parseInt(aiHistoryLimit, 10);
+    if (
+      Number.isNaN(parsedHistoryLimit) ||
+      parsedHistoryLimit < 1 ||
+      parsedHistoryLimit > 100
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "จำนวนประวัติแชทต้องอยู่ระหว่าง 1-100 ข้อความ",
+      });
     }
 
     // Save settings
@@ -17083,6 +17219,12 @@ app.post("/api/settings/system", async (req, res) => {
     await coll.updateOne(
       { key: "systemMode" },
       { $set: { value: systemMode } },
+      { upsert: true },
+    );
+
+    await coll.updateOne(
+      { key: "aiHistoryLimit" },
+      { $set: { value: parsedHistoryLimit } },
       { upsert: true },
     );
 
