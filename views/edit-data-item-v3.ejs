@@ -169,45 +169,6 @@
             border: 1px solid var(--border-color);
         }
 
-        /* ===== Formula Bar ===== */
-        .formula-bar {
-            display: flex;
-            align-items: center;
-            height: 36px;
-            background: var(--card-bg);
-            border-bottom: 1px solid var(--border-color);
-            padding: 0 8px;
-            gap: 8px;
-        }
-
-        .cell-ref-input {
-            width: 60px;
-            height: 26px;
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            text-align: center;
-            font-size: var(--font-size-sm);
-            font-weight: 600;
-            background: var(--light-bg);
-            font-family: var(--font-family-mono);
-        }
-
-        .formula-input {
-            flex: 1;
-            height: 26px;
-            border: 1px solid transparent;
-            border-radius: 4px;
-            padding: 0 8px;
-            font-size: var(--font-size-base);
-        }
-
-        .formula-input:focus {
-            outline: none;
-            border-color: var(--primary);
-            background: #fff;
-            box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.1);
-        }
-
         /* ===== Spreadsheet ===== */
         .spreadsheet-wrapper {
             flex: 1;
@@ -349,13 +310,6 @@
         <span class="toolbar-info" id="cellInfo">คลิกเซลล์เพื่อแก้ไข</span>
     </div>
 
-    <!-- Formula Bar -->
-    <div class="formula-bar">
-        <input type="text" id="cellRef" class="cell-ref-input" value="A1" readonly>
-        <i class="fas fa-font" style="color: var(--text-light);"></i>
-        <input type="text" id="formulaInput" class="formula-input" placeholder="เนื้อหาเซลล์...">
-    </div>
-
     <!-- Spreadsheet -->
     <div id="spreadsheet" class="spreadsheet-wrapper"></div>
 
@@ -486,9 +440,8 @@
                 if (!sheet || !sheet.content) return;
                 var headerH = (document.querySelector('.editor-header') || {}).offsetHeight || 0;
                 var toolbarH = (document.querySelector('.editor-toolbar') || {}).offsetHeight || 0;
-                var formulaH = (document.querySelector('.formula-bar') || {}).offsetHeight || 0;
                 var statusH = (document.querySelector('.editor-statusbar') || {}).offsetHeight || 0;
-                var available = window.innerHeight - (headerH + toolbarH + formulaH + statusH);
+                var available = window.innerHeight - (headerH + toolbarH + statusH);
                 var height = Math.max(240, available);
                 sheet.content.style.height = height + 'px';
                 sheet.content.style.maxHeight = height + 'px';
@@ -516,11 +469,11 @@
                 if (!sheet) return;
                 var colName = jspreadsheet.getColumnName(x);
                 var ref = colName + (y + 1);
-                document.getElementById('cellRef').value = ref;
-                document.getElementById('selInfo').innerHTML = '<i class="fas fa-crosshairs me-1"></i>เลือก: ' + ref;
-
                 var val = sheet.getValue(ref) || '';
-                document.getElementById('formulaInput').value = val;
+                var selInfoEl = document.getElementById('selInfo');
+                var cellInfoEl = document.getElementById('cellInfo');
+                if (selInfoEl) selInfoEl.innerHTML = '<i class="fas fa-crosshairs me-1"></i>เลือก: ' + ref;
+                if (cellInfoEl) cellInfoEl.textContent = 'เซลล์ ' + ref + ': ' + val;
             }
 
             function updateDimensions() {
@@ -577,14 +530,6 @@
             document.getElementById('delColBtn').onclick = function () {
                 var sel = sheet.getSelected();
                 if (sel && sel.length) sheet.deleteColumn(sel[0][0]);
-            };
-
-            document.getElementById('formulaInput').onchange = function (e) {
-                var sel = sheet.getSelected();
-                if (sel && sel.length) {
-                    var ref = jspreadsheet.getColumnName(sel[0][0]) + (sel[0][1] + 1);
-                    sheet.setValue(ref, e.target.value);
-                }
             };
 
             document.getElementById('docTitle').oninput = function () { setDirty(true); };

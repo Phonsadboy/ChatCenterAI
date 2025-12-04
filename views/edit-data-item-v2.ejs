@@ -238,29 +238,37 @@
 
                 .row-resizer {
                     position: absolute;
-                    left: 6px;
-                    right: 6px;
-                    bottom: -3px;
-                    height: 8px;
+                    left: 4px;
+                    right: 4px;
+                    bottom: -6px;
+                    height: 12px;
                     cursor: row-resize;
-                    background: transparent;
+                    border-radius: 6px;
                     display: inline-flex;
                     align-items: center;
                     justify-content: center;
+                    background: transparent;
+                    transition: background-color 0.15s ease;
+                    z-index: 10;
+                }
+
+                .row-resizer:hover {
+                    background: rgba(76, 141, 255, 0.08);
                 }
 
                 .row-resizer::after {
                     content: '';
-                    width: 24px;
+                    width: 16px;
                     height: 2px;
                     background: #4c8dff;
                     border-radius: 2px;
-                    opacity: 0.6;
-                    transition: opacity 0.15s ease;
+                    opacity: 0.65;
+                    transition: opacity 0.15s ease, transform 0.15s ease;
                 }
 
                 .row-resizer:hover::after {
                     opacity: 1;
+                    transform: scaleX(1.2);
                 }
 
                 .table-builder-wrapper tr:hover td:not(.row-number-cell):not(.table-actions-col) {
@@ -542,179 +550,192 @@
     <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
 
         <div class="app-content">
-        <div class="container-fluid mt-0">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <div>
-                    <div class="parent-instruction-badge">
-                        <i class="fas fa-folder me-1"></i>
-                        <%= instruction.parentInstructionName %>
+            <div class="container-fluid mt-0">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <div class="parent-instruction-badge">
+                            <i class="fas fa-folder me-1"></i>
+                            <%= instruction.parentInstructionName %>
+                        </div>
+                        <h4 class="mb-0">
+                            <%= pageTitle %>
+                        </h4>
                     </div>
-                    <h4 class="mb-0">
-                        <%= pageTitle %>
-                    </h4>
+                    <a href="/admin/dashboard" class="btn btn-outline-secondary">
+                        <i class="fas fa-arrow-left me-1"></i> กลับแดชบอร์ด
+                    </a>
                 </div>
-                <a href="/admin/dashboard" class="btn btn-outline-secondary">
-                    <i class="fas fa-arrow-left me-1"></i> กลับแดชบอร์ด
-                </a>
-            </div>
 
-            <div class="row g-4">
-                <div class="col-12">
-                    <% const formAction=isNewItem ? '/admin/instructions-v2/' + instructionId + '/data-items/new'
-                        : '/admin/instructions-v2/' + instructionId + '/data-items/' + itemId + '/edit' ; %>
-                        <form id="editDataItemForm" method="POST" action="<%= formAction %>" class="needs-validation"
-                            novalidate>
-                            <div class="card shadow-sm mb-4">
-                                <div class="card-body">
-                                    <div class="mb-3 text-muted small">
-                                        <% if (isNewItem) { %>
-                                            รหัสชุดข้อมูลจะถูกสร้างอัตโนมัติเมื่อบันทึก
-                                            <% } else { %>
-                                                รหัสชุดข้อมูล: <span class="text-break">
-                                                    <%= itemId %>
+                <div class="row g-4">
+                    <div class="col-12">
+                        <% const formAction=isNewItem ? '/admin/instructions-v2/' + instructionId + '/data-items/new'
+                            : '/admin/instructions-v2/' + instructionId + '/data-items/' + itemId + '/edit' ; %>
+                            <form id="editDataItemForm" method="POST" action="<%= formAction %>"
+                                class="needs-validation" novalidate>
+                                <div class="card shadow-sm mb-4">
+                                    <div class="card-body">
+                                        <div class="mb-3 text-muted small">
+                                            <% if (isNewItem) { %>
+                                                รหัสชุดข้อมูลจะถูกสร้างอัตโนมัติเมื่อบันทึก
+                                                <% } else { %>
+                                                    รหัสชุดข้อมูล: <span class="text-break">
+                                                        <%= itemId %>
+                                                    </span>
+                                                    <% } %>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label" for="instructionType">
+                                                ประเภทข้อมูล
+                                            </label>
+                                            <select class="form-select" id="instructionType" name="type">
+                                                <option value="text" <%=instruction.type==='text' ? 'selected' : '' %>
+                                                    >ข้อความ (Text)</option>
+                                                <option value="table" <%=instruction.type==='table' ? 'selected' : '' %>
+                                                    >ตาราง (Table)</option>
+                                            </select>
+                                            <div class="form-text">
+                                                เลือกรูปแบบข้อมูลที่เหมาะกับชุดข้อมูลนี้
+                                            </div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label" for="instructionTitle">
+                                                ชื่อชุดข้อมูล <span class="text-danger">*</span>
+                                            </label>
+                                            <input type="text" class="form-control" id="instructionTitle" name="title"
+                                                value="<%= instruction.title || '' %>" required
+                                                placeholder="เช่น ข้อมูลสินค้า / ขั้นตอนบริการ / โปรโมชั่นล่าสุด">
+                                        </div>
+
+                                        <div id="textEditorSection" class="mb-3">
+                                            <label class="form-label" for="instructionContent">
+                                                เนื้อหาข้อความ
+                                            </label>
+                                            <textarea class="form-control" id="instructionContent" name="content"
+                                                rows="10"
+                                                placeholder="กรอกข้อมูลที่ต้องการให้ AI ใช้ตอบกลับให้ลูกค้า"><%= instruction.content || '' %></textarea>
+                                            <div class="form-text d-flex justify-content-between">
+                                                <span>
+                                                    <i class="fas fa-lightbulb me-1 text-warning"></i>
+                                                    เขียนให้กระชับและเข้าใจง่าย เพื่อให้ AI นำไปใช้ตอบได้แม่นยำ
                                                 </span>
-                                                <% } %>
-                                    </div>
-
-                                    <div class="mb-3">
-                                        <label class="form-label" for="instructionType">
-                                            ประเภทข้อมูล
-                                        </label>
-                                        <select class="form-select" id="instructionType" name="type">
-                                            <option value="text" <%=instruction.type==='text' ? 'selected' : '' %>
-                                                >ข้อความ (Text)</option>
-                                            <option value="table" <%=instruction.type==='table' ? 'selected' : '' %>
-                                                >ตาราง (Table)</option>
-                                        </select>
-                                        <div class="form-text">
-                                            เลือกรูปแบบข้อมูลที่เหมาะกับชุดข้อมูลนี้
-                                        </div>
-                                    </div>
-
-                                    <div class="mb-3">
-                                        <label class="form-label" for="instructionTitle">
-                                            ชื่อชุดข้อมูล <span class="text-danger">*</span>
-                                        </label>
-                                        <input type="text" class="form-control" id="instructionTitle" name="title"
-                                            value="<%= instruction.title || '' %>" required
-                                            placeholder="เช่น ข้อมูลสินค้า / ขั้นตอนบริการ / โปรโมชั่นล่าสุด">
-                                    </div>
-
-                                    <div id="textEditorSection" class="mb-3">
-                                        <label class="form-label" for="instructionContent">
-                                            เนื้อหาข้อความ
-                                        </label>
-                                        <textarea class="form-control" id="instructionContent" name="content" rows="10"
-                                            placeholder="กรอกข้อมูลที่ต้องการให้ AI ใช้ตอบกลับให้ลูกค้า"><%= instruction.content || '' %></textarea>
-                                        <div class="form-text d-flex justify-content-between">
-                                            <span>
-                                                <i class="fas fa-lightbulb me-1 text-warning"></i>
-                                                เขียนให้กระชับและเข้าใจง่าย เพื่อให้ AI นำไปใช้ตอบได้แม่นยำ
-                                            </span>
-                                            <span id="contentCharCount">0</span>
-                                        </div>
-                                    </div>
-
-                                    <div id="tableEditorSection" class="mb-3" style="display: none;">
-                                        <div
-                                            class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-                                            <div>
-                                                <label class="form-label mb-0">
-                                                    ตั้งค่าตารางข้อมูล
-                                                </label>
-                                                <div class="form-text">
-                                                    เพิ่ม/ลบคอลัมน์และแถวตามโครงสร้างข้อมูลที่ต้องการ
-                                                </div>
-                                            </div>
-                                            <div class="table-builder-toolbar btn-group btn-group-sm">
-                                                <button type="button" class="btn btn-outline-primary" id="addColumnBtn">
-                                                    <i class="fas fa-plus me-1"></i> เพิ่มคอลัมน์
-                                                </button>
-                                                <button type="button" class="btn btn-outline-primary" id="addRowBtn">
-                                                    <i class="fas fa-plus me-1"></i> เพิ่มแถว
-                                                </button>
-                                                <button type="button" class="btn btn-outline-danger" id="clearTableBtn">
-                                                    <i class="fas fa-trash me-1"></i> ล้างตาราง
-                                                </button>
+                                                <span id="contentCharCount">0</span>
                                             </div>
                                         </div>
 
-                                        <div class="d-flex flex-wrap align-items-center gap-2 table-toolbar-subtext mb-2">
-                                            <span class="table-hint-pill">
-                                                <i class="fas fa-clipboard-list me-1"></i> Paste จาก Excel / Google Sheets ได้ทันที
-                                            </span>
-                                            <span>ใช้ Tab / Shift+Tab / Enter เพื่อเลื่อนไปยังเซลล์ถัดไป • Shift+Enter เพื่อขึ้นบรรทัดใหม่ในเซลล์</span>
-                                        </div>
-
-                                        <div class="card border-0 shadow-sm table-builder-card sheet-shell">
-                                            <div class="card-body">
-                                                <div class="sheet-toolbar">
-                                                    <div class="d-flex align-items-center gap-2 flex-wrap">
-                                        <span class="sheet-label"><i class="fas fa-table me-1 text-primary"></i>Dataset Sheet</span>
-                                                        <span class="sheet-pill">
-                                                            <i class="fas fa-hand-pointer text-primary"></i> ลากขอบสีน้ำเงินเพื่อปรับความกว้างคอลัมน์
-                                                        </span>
-                                                        <span class="sheet-pill">
-                                                            <i class="fas fa-keyboard text-primary"></i> Enter ลงแถวใหม่ • Shift+Enter ขึ้นบรรทัดใหม่ในเซลล์
-                                                        </span>
-                                                    </div>
-                                                    <div class="d-flex align-items-center gap-2">
-                                                        <span class="badge bg-light text-secondary border">
-                                                            โหมดแก้ไขตาราง
-                                                        </span>
+                                        <div id="tableEditorSection" class="mb-3" style="display: none;">
+                                            <div
+                                                class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                                                <div>
+                                                    <label class="form-label mb-0">
+                                                        ตั้งค่าตารางข้อมูล
+                                                    </label>
+                                                    <div class="form-text">
+                                                        เพิ่ม/ลบคอลัมน์และแถวตามโครงสร้างข้อมูลที่ต้องการ
                                                     </div>
                                                 </div>
-                                                <div class="table-responsive table-builder-wrapper">
-                                                    <table class="sheet-grid" id="instructionTableBuilder">
-                                                        <colgroup id="tableColGroup"></colgroup>
-                                                        <thead>
-                                                            <tr id="tableHeaderRow"></tr>
-                                                        </thead>
-                                                        <tbody id="tableBodyRows"></tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                            <div class="table-status-bar">
-                                                <div class="d-flex flex-wrap align-items-center gap-2">
-                                                    <span class="status-chip" id="tableStatusSummary">
-                                                        <i class="fas fa-table"></i>
-                                                        <span>0 คอลัมน์ • 0 แถว</span>
-                                                    </span>
-                                                    <span class="status-chip" id="tableSelectionSummary">
-                                                        <i class="fas fa-crosshairs"></i>
-                                                        <span>คลิกเซลล์เพื่อแก้ไข</span>
-                                                    </span>
-                                                </div>
-                                                <div class="table-quick-actions d-flex align-items-center gap-2">
-                                                    <button type="button" class="btn btn-light btn-sm" id="quickAddRowBtn">
-                                                        <i class="fas fa-plus me-1"></i> เพิ่มแถวถัดไป
+                                                <div class="table-builder-toolbar btn-group btn-group-sm">
+                                                    <button type="button" class="btn btn-outline-primary"
+                                                        id="addColumnBtn">
+                                                        <i class="fas fa-plus me-1"></i> เพิ่มคอลัมน์
                                                     </button>
-                                                    <button type="button" class="btn btn-outline-secondary btn-sm" id="copyTsvBtn">
-                                                        <i class="fas fa-copy me-1"></i> คัดลอกเป็น TSV
+                                                    <button type="button" class="btn btn-outline-primary"
+                                                        id="addRowBtn">
+                                                        <i class="fas fa-plus me-1"></i> เพิ่มแถว
+                                                    </button>
+                                                    <button type="button" class="btn btn-outline-danger"
+                                                        id="clearTableBtn">
+                                                        <i class="fas fa-trash me-1"></i> ล้างตาราง
                                                     </button>
                                                 </div>
                                             </div>
-                                        </div>
-                                        <input type="hidden" id="tableDataInput" name="tableData">
-                                    </div>
 
+                                            <div
+                                                class="d-flex flex-wrap align-items-center gap-2 table-toolbar-subtext mb-2">
+                                                <span class="table-hint-pill">
+                                                    <i class="fas fa-clipboard-list me-1"></i> Paste จาก Excel / Google
+                                                    Sheets ได้ทันที
+                                                </span>
+                                                <span>ใช้ Tab / Shift+Tab / Enter เพื่อเลื่อนไปยังเซลล์ถัดไป •
+                                                    Shift+Enter เพื่อขึ้นบรรทัดใหม่ในเซลล์</span>
+                                            </div>
+
+                                            <div class="card border-0 shadow-sm table-builder-card sheet-shell">
+                                                <div class="card-body">
+                                                    <div class="sheet-toolbar">
+                                                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                            <span class="sheet-label"><i
+                                                                    class="fas fa-table me-1 text-primary"></i>Dataset
+                                                                Sheet</span>
+                                                            <span class="sheet-pill">
+                                                                <i class="fas fa-hand-pointer text-primary"></i>
+                                                                ลากขอบสีน้ำเงินเพื่อปรับความกว้างคอลัมน์
+                                                            </span>
+                                                            <span class="sheet-pill">
+                                                                <i class="fas fa-keyboard text-primary"></i> Enter
+                                                                ลงแถวใหม่ • Shift+Enter ขึ้นบรรทัดใหม่ในเซลล์
+                                                            </span>
+                                                        </div>
+                                                        <div class="d-flex align-items-center gap-2">
+                                                            <span class="badge bg-light text-secondary border">
+                                                                โหมดแก้ไขตาราง
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="table-responsive table-builder-wrapper">
+                                                        <table class="sheet-grid" id="instructionTableBuilder">
+                                                            <colgroup id="tableColGroup"></colgroup>
+                                                            <thead>
+                                                                <tr id="tableHeaderRow"></tr>
+                                                            </thead>
+                                                            <tbody id="tableBodyRows"></tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                                <div class="table-status-bar">
+                                                    <div class="d-flex flex-wrap align-items-center gap-2">
+                                                        <span class="status-chip" id="tableStatusSummary">
+                                                            <i class="fas fa-table"></i>
+                                                            <span>0 คอลัมน์ • 0 แถว</span>
+                                                        </span>
+                                                        <span class="status-chip" id="tableSelectionSummary">
+                                                            <i class="fas fa-crosshairs"></i>
+                                                            <span>คลิกเซลล์เพื่อแก้ไข</span>
+                                                        </span>
+                                                    </div>
+                                                    <div class="table-quick-actions d-flex align-items-center gap-2">
+                                                        <button type="button" class="btn btn-light btn-sm"
+                                                            id="quickAddRowBtn">
+                                                            <i class="fas fa-plus me-1"></i> เพิ่มแถวถัดไป
+                                                        </button>
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                                            id="copyTsvBtn">
+                                                            <i class="fas fa-copy me-1"></i> คัดลอกเป็น TSV
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <input type="hidden" id="tableDataInput" name="tableData">
+                                        </div>
+
+                                    </div>
                                 </div>
-                            </div>
 
-                            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                                <a href="/admin/dashboard" class="btn btn-outline-secondary">
-                                    <i class="fas fa-times me-1"></i> ยกเลิก
-                                </a>
-                                <button type="submit" class="btn btn-primary" id="saveInstructionBtn">
-                                    <i class="fas fa-save me-1"></i>
-                                    <%= isNewItem ? 'สร้างชุดข้อมูล' : 'บันทึกการแก้ไข' %>
-                                </button>
-                            </div>
-                        </form>
+                                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                    <a href="/admin/dashboard" class="btn btn-outline-secondary">
+                                        <i class="fas fa-times me-1"></i> ยกเลิก
+                                    </a>
+                                    <button type="submit" class="btn btn-primary" id="saveInstructionBtn">
+                                        <i class="fas fa-save me-1"></i>
+                                        <%= isNewItem ? 'สร้างชุดข้อมูล' : 'บันทึกการแก้ไข' %>
+                                    </button>
+                                </div>
+                            </form>
+                    </div>
+
                 </div>
-
             </div>
-        </div>
         </div>
 
         <!-- Context Menu -->
@@ -760,14 +781,14 @@
                 <span>ช่องก่อนหน้า</span>
                 <span class="shortcut-key">Shift+Tab</span>
             </div>
-                    <div class="shortcut-item">
-                        <span>ลงแถวถัดไป</span>
-                        <span class="shortcut-key">Enter</span>
-                    </div>
-                    <div class="shortcut-item">
-                        <span>ขึ้นบรรทัดใหม่ในเซลล์เดิม</span>
-                        <span class="shortcut-key">Shift+Enter</span>
-                    </div>
+            <div class="shortcut-item">
+                <span>ลงแถวถัดไป</span>
+                <span class="shortcut-key">Enter</span>
+            </div>
+            <div class="shortcut-item">
+                <span>ขึ้นบรรทัดใหม่ในเซลล์เดิม</span>
+                <span class="shortcut-key">Shift+Enter</span>
+            </div>
             <div class="shortcut-item">
                 <span>คัดลอก</span>
                 <span class="shortcut-key">Ctrl+C</span>
@@ -800,11 +821,11 @@
         <script>
             const initialInstruction = {
                 id: '<%= instruction._id.toString() %>',
-                instructionId: <%- JSON.stringify(instruction.instructionId || '') %>,
+                instructionId: <% - JSON.stringify(instruction.instructionId || '') %>,
                 type: '<%= instruction.type %>',
-                title: <%- JSON.stringify(instruction.title || '') %>,
-                content: <%- JSON.stringify(instruction.content || '') %>,
-                data: <%- JSON.stringify(instruction.data || null) %>,
+                title: <% - JSON.stringify(instruction.title || '') %>,
+                content: <% - JSON.stringify(instruction.content || '') %>,
+                data: <% - JSON.stringify(instruction.data || null) %>,
                 createdAt: '<%= instruction.createdAt ? new Date(instruction.createdAt).toISOString() : '' %>',
                 updatedAt: '<%= instruction.updatedAt ? new Date(instruction.updatedAt).toISOString() : '' %>'
         };
