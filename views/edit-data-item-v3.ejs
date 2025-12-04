@@ -11,9 +11,9 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 
-    <!-- Jspreadsheet CE -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.css">
+    <!-- Jspreadsheet CE (v5 to match jsuites@5) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@5.0.4/dist/jspreadsheet.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.css">
 
     <!-- Main Styles -->
     <link href="/css/style.css" rel="stylesheet">
@@ -375,8 +375,8 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@5.0.4/dist/index.js"></script>
 
     <!-- Server Data -->
     <script id="serverDataScript" type="application/json"><%- JSON.stringify(instruction.data || null) %></script>
@@ -428,6 +428,13 @@
             // ===== INIT SPREADSHEET =====
             var converted = toJsData(serverData);
             console.log('Converted:', converted);
+
+            if (typeof jspreadsheet === 'undefined') {
+                console.error('jspreadsheet library failed to load');
+                var container = document.getElementById('spreadsheet');
+                container.innerHTML = '<div class="p-3 text-danger">ไม่สามารถโหลดตัวแก้ไขตารางได้ กรุณารีเฟรชหรือเชื่อมต่ออินเทอร์เน็ต</div>';
+                return;
+            }
 
             var sheet = jspreadsheet(document.getElementById('spreadsheet'), {
                 data: converted.data,
