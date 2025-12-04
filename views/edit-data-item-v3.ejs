@@ -378,19 +378,23 @@
     <script src="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.js"></script>
 
+    <!-- Server Data -->
+    <script id="serverDataScript" type="application/json"><%- JSON.stringify(instruction.data || null) %></script>
+
     <script>
         (function () {
             // ===== DATA FROM SERVER =====
             var serverData = null;
-            <% if (instruction.data) { %>
             try {
-                    serverData = <% -JSON.stringify(instruction.data) %>;
-                } catch (e) {
-                    console.error('Parse error:', e);
+                var dataEl = document.getElementById('serverDataScript');
+                if (dataEl && dataEl.textContent) {
+                    serverData = JSON.parse(dataEl.textContent);
                 }
-            <% } %>
+            } catch (e) {
+                console.error('Parse error:', e);
+            }
 
-                console.log('=== V3 Spreadsheet Editor ===');
+            console.log('=== V3 Spreadsheet Editor ===');
             console.log('Server data:', serverData);
 
             // ===== CONVERT DATA =====
