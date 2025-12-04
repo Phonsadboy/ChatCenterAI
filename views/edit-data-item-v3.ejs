@@ -220,6 +220,9 @@
                     tableData: <% - JSON.stringify(instruction.data || null) %>
         };
 
+        // Debug log
+        console.log('Initial data loaded:', initialData);
+
         // Spreadsheet instance
         let spreadsheet = null;
         let isDirty = false;
