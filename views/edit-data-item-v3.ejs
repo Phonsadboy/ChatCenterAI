@@ -280,6 +280,8 @@
         .jexcel>tbody>tr>td {
             border-color: var(--border-color) !important;
             color: var(--text-dark) !important;
+            white-space: pre-wrap !important;
+            word-break: break-word;
         }
 
         .jexcel>tbody>tr>td:first-child {
@@ -402,16 +404,16 @@
                 if (!data || !data.columns || !data.rows) {
                     return {
                         columns: [
-                            { title: 'คอลัมน์ 1', width: 200 },
-                            { title: 'คอลัมน์ 2', width: 200 },
-                            { title: 'คอลัมน์ 3', width: 200 }
+                            { title: 'คอลัมน์ 1', width: 200, wordWrap: true },
+                            { title: 'คอลัมน์ 2', width: 200, wordWrap: true },
+                            { title: 'คอลัมน์ 3', width: 200, wordWrap: true }
                         ],
                         data: [['', '', ''], ['', '', ''], ['', '', '']]
                     };
                 }
 
                 var cols = data.columns.map(function (c, i) {
-                    return { title: c || 'คอลัมน์ ' + (i + 1), width: 200 };
+                    return { title: c || 'คอลัมน์ ' + (i + 1), width: 200, wordWrap: true };
                 });
 
                 var rows = data.rows && data.rows.length > 0 ? data.rows : [[]];
@@ -451,7 +453,6 @@
                 contextMenu: true,
                 tableOverflow: true,
                 tableWidth: '100%',
-                tableHeight: 'calc(100vh - 162px)',
                 defaultColWidth: 200,
                 onchange: function () {
                     setDirty(true);
@@ -479,6 +480,22 @@
                 fallback.innerHTML = '<div class="p-3 text-danger">โหลดตัวแก้ไขตารางไม่สำเร็จ กรุณารีเฟรช</div>';
                 return;
             }
+
+            // Responsive height for the sheet content
+            function applyTableHeight() {
+                if (!sheet || !sheet.content) return;
+                var headerH = (document.querySelector('.editor-header') || {}).offsetHeight || 0;
+                var toolbarH = (document.querySelector('.editor-toolbar') || {}).offsetHeight || 0;
+                var formulaH = (document.querySelector('.formula-bar') || {}).offsetHeight || 0;
+                var statusH = (document.querySelector('.editor-statusbar') || {}).offsetHeight || 0;
+                var available = window.innerHeight - (headerH + toolbarH + formulaH + statusH);
+                var height = Math.max(240, available);
+                sheet.content.style.height = height + 'px';
+                sheet.content.style.maxHeight = height + 'px';
+            }
+
+            applyTableHeight();
+            window.addEventListener('resize', applyTableHeight);
 
             // ===== STATE =====
             var dirty = false;
