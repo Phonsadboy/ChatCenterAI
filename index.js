@@ -3007,52 +3007,52 @@ function normalizeOrderAddress(orderData = {}) {
   const subDistrict =
     sanitizeOptionalString(
       orderData.addressSubDistrict ||
-        orderData.shippingSubDistrict ||
-        orderData.subDistrict ||
-        orderData.subdistrict ||
-        orderData.tambon ||
-        (addressSource && typeof addressSource === "object"
-          ? addressSource.subDistrict ||
-            addressSource.subdistrict ||
-            addressSource.tambon
-          : null),
+      orderData.shippingSubDistrict ||
+      orderData.subDistrict ||
+      orderData.subdistrict ||
+      orderData.tambon ||
+      (addressSource && typeof addressSource === "object"
+        ? addressSource.subDistrict ||
+        addressSource.subdistrict ||
+        addressSource.tambon
+        : null),
     ) || null;
 
   const district =
     sanitizeOptionalString(
       orderData.addressDistrict ||
-        orderData.shippingDistrict ||
-        orderData.district ||
-        orderData.amphoe ||
-        (addressSource && typeof addressSource === "object"
-          ? addressSource.district || addressSource.amphoe
-          : null),
+      orderData.shippingDistrict ||
+      orderData.district ||
+      orderData.amphoe ||
+      (addressSource && typeof addressSource === "object"
+        ? addressSource.district || addressSource.amphoe
+        : null),
     ) || null;
 
   const province =
     sanitizeOptionalString(
       orderData.addressProvince ||
-        orderData.shippingProvince ||
-        orderData.province ||
-        orderData.state ||
-        (addressSource && typeof addressSource === "object"
-          ? addressSource.city ||
-            addressSource.province ||
-            addressSource.state
-          : null),
+      orderData.shippingProvince ||
+      orderData.province ||
+      orderData.state ||
+      (addressSource && typeof addressSource === "object"
+        ? addressSource.city ||
+        addressSource.province ||
+        addressSource.state
+        : null),
     ) || null;
 
   const postalCode =
     sanitizeOptionalString(
       orderData.addressPostalCode ||
-        orderData.postalCode ||
-        orderData.zip ||
-        orderData.zipCode ||
-        (addressSource && typeof addressSource === "object"
-          ? addressSource.postalCode ||
-            addressSource.zip ||
-            addressSource.zipCode
-          : null),
+      orderData.postalCode ||
+      orderData.zip ||
+      orderData.zipCode ||
+      (addressSource && typeof addressSource === "object"
+        ? addressSource.postalCode ||
+        addressSource.zip ||
+        addressSource.zipCode
+        : null),
     ) || null;
 
   return {
@@ -17999,6 +17999,248 @@ app.get("/admin/orders/export", async (req, res) => {
     res.send(buffer);
   } catch (error) {
     console.error("[Orders] ไม่สามารถส่งออกออเดอร์ได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================ Orders V2 APIs ============================
+
+// API: เปลี่ยนสถานะออเดอร์เดี่ยว
+app.patch("/admin/orders/:orderId/status", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body || {};
+
+    const validStatuses = ["pending", "confirmed", "shipped", "completed", "cancelled"];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: "สถานะไม่ถูกต้อง กรุณาระบุ: pending, confirmed, shipped, completed, หรือ cancelled",
+      });
+    }
+
+    if (!ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(orderId) },
+      { $set: { status, updatedAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    console.log(`[Orders] อัปเดตสถานะออเดอร์ ${orderId} เป็น ${status}`);
+    res.json({ success: true, orderId, status });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถอัปเดตสถานะได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: เปลี่ยนสถานะหลายออเดอร์พร้อมกัน (Bulk)
+app.patch("/admin/orders/bulk/status", async (req, res) => {
+  try {
+    const { orderIds, status } = req.body || {};
+
+    const validStatuses = ["pending", "confirmed", "shipped", "completed", "cancelled"];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: "สถานะไม่ถูกต้อง กรุณาระบุ: pending, confirmed, shipped, completed, หรือ cancelled",
+      });
+    }
+
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุรายการออเดอร์" });
+    }
+
+    if (orderIds.length > 100) {
+      return res.status(400).json({ success: false, error: "สามารถอัปเดตได้สูงสุด 100 รายการต่อครั้ง" });
+    }
+
+    const validIds = orderIds.filter((id) => ObjectId.isValid(id));
+    if (validIds.length === 0) {
+      return res.status(400).json({ success: false, error: "ไม่พบรหัสออเดอร์ที่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const result = await coll.updateMany(
+      { _id: { $in: validIds.map((id) => new ObjectId(id)) } },
+      { $set: { status, updatedAt: new Date() } }
+    );
+
+    console.log(`[Orders] อัปเดตสถานะ ${result.modifiedCount} ออเดอร์เป็น ${status}`);
+    res.json({
+      success: true,
+      modifiedCount: result.modifiedCount,
+      status,
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถอัปเดตสถานะแบบกลุ่มได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: อัปเดต notes ของออเดอร์
+app.patch("/admin/orders/:orderId/notes", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { notes } = req.body || {};
+
+    if (!ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
+    }
+
+    const sanitizedNotes = typeof notes === "string" ? notes.trim().slice(0, 2000) : "";
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(orderId) },
+      { $set: { notes: sanitizedNotes, updatedAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    console.log(`[Orders] อัปเดต notes ออเดอร์ ${orderId}`);
+    res.json({ success: true, orderId, notes: sanitizedNotes });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถอัปเดต notes ได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: Generate Print Label HTML
+app.get("/admin/orders/:orderId/print-label", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const order = await coll.findOne({ _id: new ObjectId(orderId) });
+    if (!order) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    const orderData = order.orderData || {};
+    const addressInfo = normalizeOrderAddress(orderData);
+
+    // สร้าง items list
+    const items = Array.isArray(orderData.items) ? orderData.items : [];
+    const itemsHtml = items
+      .map((item) => {
+        const name = item.shippingName || item.product || "สินค้า";
+        const qty = item.quantity || 1;
+        const color = item.color ? ` (${item.color})` : "";
+        return `<li>${name}${color} x${qty}</li>`;
+      })
+      .join("");
+
+    // Format Order ID
+    const shortId = orderId.slice(-8).toUpperCase();
+    const orderDate = order.extractedAt
+      ? moment(order.extractedAt).tz("Asia/Bangkok").format("DD/MM/YYYY HH:mm")
+      : "-";
+
+    // สร้าง address string
+    const addressParts = [
+      addressInfo.fullAddress,
+      addressInfo.subDistrict ? `ต.${addressInfo.subDistrict}` : "",
+      addressInfo.district ? `อ.${addressInfo.district}` : "",
+      addressInfo.province || "",
+      addressInfo.postalCode || "",
+    ].filter(Boolean);
+    const fullAddress = addressParts.join(" ");
+
+    // Payment info
+    const paymentMethod = orderData.paymentMethod || "เก็บเงินปลายทาง";
+    const totalAmount = orderData.totalAmount || 0;
+    const shippingCost = orderData.shippingCost || 0;
+
+    // Generate HTML
+    const html = `<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>ใบปะหน้าพัสดุ - ${shortId}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Sarabun', 'Arial', sans-serif; font-size: 14px; }
+    .label { width: 100mm; padding: 8mm; border: 2px solid #000; }
+    .header { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 10px; border-bottom: 2px solid #000; padding-bottom: 8px; }
+    .section { margin-bottom: 10px; }
+    .section-title { font-weight: bold; font-size: 12px; color: #666; margin-bottom: 4px; }
+    .recipient { font-size: 16px; font-weight: bold; }
+    .phone { font-size: 14px; margin-top: 4px; }
+    .address { font-size: 13px; line-height: 1.4; margin-top: 8px; }
+    .items { margin-top: 10px; border-top: 1px dashed #ccc; padding-top: 8px; }
+    .items ul { padding-left: 20px; }
+    .items li { font-size: 12px; margin-bottom: 3px; }
+    .total { font-size: 16px; font-weight: bold; margin-top: 10px; text-align: right; }
+    .footer { margin-top: 10px; border-top: 1px solid #000; padding-top: 8px; font-size: 11px; color: #666; display: flex; justify-content: space-between; }
+    @media print {
+      body { margin: 0; }
+      .label { border: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="label">
+    <div class="header">📦 ใบปะหน้าพัสดุ</div>
+    
+    <div class="section">
+      <div class="section-title">ผู้รับ:</div>
+      <div class="recipient">${orderData.recipientName || orderData.customerName || "-"}</div>
+      <div class="phone">📞 ${orderData.phone || "-"}</div>
+    </div>
+    
+    <div class="section">
+      <div class="section-title">ที่อยู่จัดส่ง:</div>
+      <div class="address">${fullAddress || "-"}</div>
+    </div>
+    
+    <div class="items">
+      <div class="section-title">รายการสินค้า:</div>
+      <ul>${itemsHtml || "<li>-</li>"}</ul>
+    </div>
+    
+    <div class="total">
+      รวม: ฿${totalAmount.toLocaleString()}${shippingCost > 0 ? ` (ค่าส่ง ฿${shippingCost.toLocaleString()})` : ""} (${paymentMethod})
+    </div>
+    
+    <div class="footer">
+      <span>Order #${shortId}</span>
+      <span>${orderDate}</span>
+    </div>
+  </div>
+  <script>window.onload = function() { window.print(); }</script>
+</body>
+</html>`;
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถสร้าง print label ได้:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

@@ -143,7 +143,8 @@
                     border: none;
                     background: transparent;
                     color: #1f2a44;
-                    overflow: hidden;
+                    overflow: auto;
+                    overscroll-behavior: contain;
                 }
 
                 /* Excel-like active cell highlighting */
@@ -316,17 +317,17 @@
                     border-radius: 10px;
                     box-shadow: 0 12px 30px rgba(16, 29, 57, 0.2);
                     padding: 8px;
-                    min-width: 220px;
-                    max-width: 520px;
-                    min-height: 80px;
-                    max-height: 360px;
-                    overflow: hidden;
+                    min-width: 0;
+                    max-width: min(520px, 90vw);
+                    min-height: 0;
+                    max-height: none;
+                    overflow: visible;
                 }
 
                 .cell-flyout textarea {
                     width: 100%;
-                    min-height: 80px;
-                    max-height: 320px;
+                    min-height: 40px;
+                    max-height: 60vh;
                     resize: vertical;
                     border: none;
                     outline: none;
@@ -335,6 +336,7 @@
                     font-size: 14px;
                     line-height: 1.45;
                     color: #1f2a44;
+                    overflow: auto;
                 }
 
                 .table-toolbar-subtext {
@@ -1802,17 +1804,27 @@
                 const rect = textarea.getBoundingClientRect();
                 const scrollTop = window.scrollY || document.documentElement.scrollTop;
                 const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
-                const width = Math.min(Math.max(rect.width, 260), 520);
-                const maxHeight = 320;
+                const viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+                const viewportHeight = document.documentElement.clientHeight || window.innerHeight || 0;
+                const padding = 12;
+                const rawWidth = rect.width || textarea.offsetWidth || 0;
+                const minFlyoutWidth = 40;
+                const maxAvailableWidth = Math.max(minFlyoutWidth, (viewportWidth || minFlyoutWidth) - padding);
+                const targetWidth = Math.min(Math.max(rawWidth || minFlyoutWidth, minFlyoutWidth), maxAvailableWidth);
+                const rawHeight = rect.height || textarea.offsetHeight || 0;
+                const targetHeight = Math.max(rawHeight, 40);
+                const maxFlyoutHeight = Math.max(targetHeight, Math.min(viewportHeight - padding * 2, 420));
 
-                flyout.wrapper.style.width = `${width}px`;
-                flyout.wrapper.style.left = `${rect.left + scrollLeft}px`;
+                const maxLeft = scrollLeft + Math.max(0, viewportWidth - targetWidth - padding);
+                flyout.wrapper.style.width = `${targetWidth}px`;
+                flyout.wrapper.style.left = `${Math.min(rect.left + scrollLeft, maxLeft)}px`;
                 flyout.wrapper.style.top = `${rect.top + scrollTop}px`;
                 flyout.wrapper.style.display = 'block';
 
                 flyout.input.value = textarea.value || '';
-                flyout.input.style.height = 'auto';
-                flyout.input.style.height = `${Math.min(Math.max(flyout.input.scrollHeight, 80), maxHeight)}px`;
+                flyout.input.style.height = `${targetHeight}px`;
+                flyout.input.style.minHeight = `${targetHeight}px`;
+                flyout.input.style.maxHeight = `${maxFlyoutHeight}px`;
 
                 if (!wasOpenForTarget) {
                     const selectionStart = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : flyout.input.value.length;
@@ -1883,7 +1895,22 @@
             }
 
             document.addEventListener('DOMContentLoaded', () => {
-                window.addEventListener('scroll', hideCellFlyout, true);
+                const shouldKeepFlyoutOnScroll = (event) => {
+                    const target = event?.target;
+                    if (!target) return false;
+                    if (cellFlyout?.wrapper && cellFlyout.wrapper.contains(target)) {
+                        return true;
+                    }
+                    if (typeof target.closest === 'function' && target.closest('.table-builder-wrapper')) {
+                        return true;
+                    }
+                    return false;
+                };
+
+                window.addEventListener('scroll', (event) => {
+                    if (shouldKeepFlyoutOnScroll(event)) return;
+                    hideCellFlyout();
+                }, true);
                 window.addEventListener('resize', hideCellFlyout);
 
                 const params = new URLSearchParams(window.location.search);
