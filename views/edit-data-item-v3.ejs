@@ -215,9 +215,9 @@
             instructionId: '<%= instructionId %>',
             itemId: '<%= itemId %>',
             isNew: <%= isNewItem %>,
-            title: <% - JSON.stringify(instruction.title || '') %>,
-                type: '<%= instruction.type || "table" %>',
-                    tableData: <% - JSON.stringify(instruction.data || null) %>
+            title: "<%- (instruction.title || '').replace(/"/g, '\\"') %> ",
+        type: '<%= instruction.type || "table" %>',
+            tableData: <% - JSON.stringify(instruction.data) %> || null
         };
 
         // Debug log
