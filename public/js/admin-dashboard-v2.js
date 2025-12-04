@@ -460,20 +460,20 @@
                     body: JSON.stringify({ name })
                 });
 
-            const data = await res.json();
+                const data = await res.json();
 
-            if (data.success) {
-                showToast('คัดลอก Instruction แล้ว', 'success');
-                setTimeout(() => location.reload(), 280);
-            } else {
-                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+                if (data.success) {
+                    showToast('คัดลอก Instruction แล้ว', 'success');
+                    setTimeout(() => location.reload(), 280);
+                } else {
+                    showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+                }
+            } catch (err) {
+                console.error('Error duplicating instruction:', err);
+                showToast('เกิดข้อผิดพลาด', 'error');
             }
-        } catch (err) {
-            console.error('Error duplicating instruction:', err);
-            showToast('เกิดข้อผิดพลาด', 'error');
-        }
+        });
     });
-});
 
     // Preview Instruction
     document.querySelectorAll('.preview-instruction').forEach(btn => {
@@ -506,8 +506,8 @@
             const instructionId = btn.dataset.instructionId;
             const itemId = btn.dataset.itemId;
 
-            // Redirect to full page editor
-            window.location.href = `/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit`;
+            // Redirect to full page editor (V3)
+            window.location.href = `/admin/instructions-v3/${instructionId}/data-items/${itemId}/edit`;
         });
     });
 
@@ -524,20 +524,20 @@
                     method: 'DELETE'
                 });
 
-            const data = await res.json();
+                const data = await res.json();
 
-            if (data.success) {
-                showToast('ลบข้อมูลแล้ว', 'success');
-                setTimeout(() => location.reload(), 280);
-            } else {
-                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+                if (data.success) {
+                    showToast('ลบข้อมูลแล้ว', 'success');
+                    setTimeout(() => location.reload(), 280);
+                } else {
+                    showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+                }
+            } catch (err) {
+                console.error('Error deleting data item:', err);
+                showToast('เกิดข้อผิดพลาด', 'error');
             }
-        } catch (err) {
-            console.error('Error deleting data item:', err);
-            showToast('เกิดข้อผิดพลาด', 'error');
-        }
+        });
     });
-});
 
     // Duplicate Data Item
     document.querySelectorAll('.duplicate-data-item').forEach(btn => {
@@ -550,20 +550,20 @@
                     method: 'POST'
                 });
 
-            const data = await res.json();
+                const data = await res.json();
 
-            if (data.success) {
-                showToast('คัดลอกข้อมูลแล้ว', 'success');
-                setTimeout(() => location.reload(), 280);
-            } else {
-                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+                if (data.success) {
+                    showToast('คัดลอกข้อมูลแล้ว', 'success');
+                    setTimeout(() => location.reload(), 280);
+                } else {
+                    showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+                }
+            } catch (err) {
+                console.error('Error duplicating data item:', err);
+                showToast('เกิดข้อผิดพลาด', 'error');
             }
-        } catch (err) {
-            console.error('Error duplicating data item:', err);
-            showToast('เกิดข้อผิดพลาด', 'error');
-        }
+        });
     });
-});
 
     // Add Data Item
     document.querySelectorAll('.add-data-item').forEach(btn => {
@@ -572,7 +572,7 @@
             if (!instructionId) {
                 return;
             }
-            window.location.href = `/admin/instructions-v2/${instructionId}/data-items/new`;
+            window.location.href = `/admin/instructions-v3/${instructionId}/data-items/new`;
         });
     });
 
