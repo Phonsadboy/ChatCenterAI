@@ -1078,9 +1078,9 @@
                             return;
                         }
                     }
-                    // Navigate back to the instruction dashboard without saving
+                    // Navigate back to the dashboard without saving
                     window.onbeforeunload = null; // Disable the unsaved warning
-                    window.location.href = '/admin/instructions-v3/<%= instructionId %>';
+                    window.location.href = '/admin/dashboard?instructionId=<%= instructionId %>';
                 };
 
                 // ===== EXPORT FUNCTIONALITY =====
