@@ -9,6 +9,7 @@ class ChatManager {
         this.users = [];
         this.allUsers = [];
         this.chatHistory = {};
+        this.messageInputBaseHeight = 0;
         
         // Filter state
         this.currentFilters = {
@@ -214,18 +215,37 @@ class ChatManager {
         const charCount = document.getElementById('charCount');
         
         if (messageInput) {
-            messageInput.addEventListener('input', (e) => {
-                // Update character count
+            const updateCharCount = (value = '') => {
                 if (charCount) {
-                    charCount.textContent = e.target.value.length;
+                    charCount.textContent = value.length;
                 }
-                
-                // Auto-resize textarea
-                e.target.style.height = 'auto';
-                e.target.style.height = e.target.scrollHeight + 'px';
+            };
+
+            const fallbackBaseHeight = messageInput.offsetHeight || 48;
+            const measuredBase = messageInput.scrollHeight || messageInput.clientHeight || 0;
+            this.messageInputBaseHeight = measuredBase > 0 ? measuredBase : fallbackBaseHeight;
+            const resizeMessageInput = () => {
+                const baseHeight =
+                    this.messageInputBaseHeight ||
+                    messageInput.scrollHeight ||
+                    messageInput.clientHeight ||
+                    fallbackBaseHeight;
+                messageInput.style.height = 'auto';
+                const nextHeight = Math.max(baseHeight, messageInput.scrollHeight);
+                messageInput.style.height = `${nextHeight}px`;
+            };
+
+            this.resizeMessageInput = resizeMessageInput;
+            updateCharCount(messageInput.value);
+            resizeMessageInput();
+
+            messageInput.addEventListener('input', (e) => {
+                updateCharCount(e.target.value);
+                resizeMessageInput();
             });
             
             messageInput.addEventListener('keydown', (e) => {
+                if (e.isComposing) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     this.sendMessage();
@@ -609,6 +629,9 @@ class ChatManager {
         
         if (messageInputArea) {
             messageInputArea.style.display = 'block';
+        }
+        if (typeof this.resizeMessageInput === 'function') {
+            this.resizeMessageInput();
         }
         
         if (emptyState) {
@@ -1004,8 +1027,15 @@ class ChatManager {
 
         // Clear input immediately
         messageInput.value = '';
-        messageInput.style.height = 'auto';
-        document.getElementById('charCount').textContent = '0';
+        if (typeof this.resizeMessageInput === 'function') {
+            this.resizeMessageInput();
+        } else {
+            messageInput.style.height = 'auto';
+        }
+        const charCountEl = document.getElementById('charCount');
+        if (charCountEl) {
+            charCountEl.textContent = '0';
+        }
 
         try {
             const response = await fetch('/admin/chat/send', {

@@ -623,6 +623,22 @@ function setupEventListeners() {
     const securityForm = document.getElementById('securitySettingsForm');
     if (securityForm) securityForm.addEventListener('submit', saveSecuritySettings);
 
+    const lineBotForm = document.getElementById('lineBotForm');
+    if (lineBotForm) {
+        lineBotForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveLineBot();
+        });
+    }
+
+    const facebookBotForm = document.getElementById('facebookBotForm');
+    if (facebookBotForm) {
+        facebookBotForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveFacebookBot();
+        });
+    }
+
     // Modal Save Buttons
     const saveLineBtn = document.getElementById('saveLineBotBtn');
     if (saveLineBtn) saveLineBtn.addEventListener('click', saveLineBot);
