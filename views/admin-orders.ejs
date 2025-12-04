@@ -54,16 +54,6 @@
             </div>
           </div>
 
-          <!-- Page/Bot Filter -->
-          <div class="orders-filter-section">
-            <div class="orders-filter-title">
-              <i class="fas fa-robot"></i> เพจ/บอท
-            </div>
-            <select class="orders-page-select" id="ordersPageSelect">
-              <option value="">ทุกเพจ/บอท</option>
-            </select>
-          </div>
-
           <!-- Search -->
           <div class="orders-filter-section">
             <div class="orders-filter-title">
@@ -86,6 +76,11 @@
         <main class="orders-main">
           <!-- Toolbar -->
           <div class="orders-toolbar">
+            <div class="orders-toolbar-left">
+              <select class="orders-page-select" id="ordersPageSelect" style="min-width: 180px;">
+                <option value="">ทุกเพจ/บอท</option>
+              </select>
+            </div>
             <div class="orders-toolbar-actions">
               <button class="orders-btn orders-btn-primary" id="ordersExportBtn">
                 <i class="fas fa-file-export"></i> ส่งออก Excel
@@ -192,7 +187,7 @@
       </div>
     </div>
 
-    <!-- Settings Modal (Optional - can be added later) -->
+    <!-- Settings Modal -->
     <div class="modal fade" id="ordersSettingsModal" tabindex="-1">
       <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -201,8 +196,49 @@
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body" id="ordersSettingsBody">
-            <!-- Settings content here -->
-            <p class="text-muted">กำลังพัฒนา...</p>
+            <!-- Mode Selection -->
+            <div class="mb-4">
+              <label class="form-label fw-semibold">โหมดการสกัดออเดอร์</label>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="extractionMode" id="modeRealtime" value="realtime">
+                <label class="form-check-label" for="modeRealtime">
+                  <strong>แบบทันที (Realtime)</strong>
+                  <div class="text-muted small">สกัดออเดอร์ทันทีเมื่อลูกค้ายืนยัน</div>
+                </label>
+              </div>
+              <div class="form-check mt-2">
+                <input class="form-check-input" type="radio" name="extractionMode" id="modeScheduled" value="scheduled">
+                <label class="form-check-label" for="modeScheduled">
+                  <strong>แบบตัดรอบ (Scheduled)</strong>
+                  <div class="text-muted small">รวบรวมออเดอร์และตัดรอบตามเวลาที่กำหนด</div>
+                </label>
+              </div>
+            </div>
+
+            <!-- Cutoff Time Settings -->
+            <div id="cutoffTimeSettings" style="display:none;">
+              <hr>
+              <label class="form-label fw-semibold">เวลาตัดรอบของแต่ละเพจ</label>
+              <div class="table-responsive">
+                <table class="table table-sm" id="cutoffPagesTable">
+                  <thead>
+                    <tr>
+                      <th>เพจ/บอท</th>
+                      <th style="width:140px;">เวลาตัดรอบ</th>
+                      <th style="width:80px;">บันทึก</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cutoffPagesBody">
+                    <tr>
+                      <td colspan="3" class="text-muted text-center">กำลังโหลด...</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
           </div>
         </div>
       </div>
@@ -231,9 +267,128 @@
         }
       });
 
-      // Settings modal
+      // ========== Cutoff Settings ==========
+      let cutoffPages = [];
+
+      // Mode radio change
+      document.querySelectorAll('input[name="extractionMode"]').forEach(radio => {
+        radio.addEventListener('change', async function () {
+          const mode = this.value;
+          document.getElementById('cutoffTimeSettings').style.display = mode === 'scheduled' ? 'block' : 'none';
+
+          // Save mode
+          try {
+            await fetch('/admin/orders/settings/scheduling', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mode })
+            });
+          } catch (e) { console.error(e); }
+        });
+      });
+
+      async function loadCutoffSettings() {
+        try {
+          // Load mode
+          const modeRes = await fetch('/api/settings?keys=orderExtractionMode');
+          const modeData = await modeRes.json();
+          const currentMode = modeData.settings?.orderExtractionMode || 'realtime';
+
+          document.getElementById(currentMode === 'scheduled' ? 'modeScheduled' : 'modeRealtime').checked = true;
+          document.getElementById('cutoffTimeSettings').style.display = currentMode === 'scheduled' ? 'block' : 'none';
+
+          // Load pages
+          const pagesRes = await fetch('/admin/orders/pages');
+          const pagesData = await pagesRes.json();
+
+          if (pagesData.success && pagesData.pages) {
+            cutoffPages = pagesData.pages;
+            renderCutoffPages();
+          }
+        } catch (e) {
+          console.error('Load cutoff settings error:', e);
+        }
+      }
+
+      function renderCutoffPages() {
+        const tbody = document.getElementById('cutoffPagesBody');
+        if (!cutoffPages.length) {
+          tbody.innerHTML = '<tr><td colspan="3" class="text-muted text-center">ไม่พบเพจ/บอท</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = cutoffPages.map(page => {
+          const label = page.name || page.pageKey || 'Unknown';
+          const time = page.cutoffTime || '23:59';
+          return `
+            <tr data-page-key="${page.pageKey}">
+              <td>
+                <div class="d-flex align-items-center gap-2">
+                  <i class="fab fa-${page.platform === 'facebook' ? 'facebook' : 'line'}" 
+                     style="color: ${page.platform === 'facebook' ? '#1877f2' : '#06c755'}"></i>
+                  <span>${escapeHtml(label)}</span>
+                </div>
+              </td>
+              <td>
+                <input type="time" class="form-control form-control-sm cutoff-time-input" 
+                       value="${time}" data-page-key="${page.pageKey}" 
+                       data-platform="${page.platform}" data-bot-id="${page.botId || ''}">
+              </td>
+              <td>
+                <button class="btn btn-sm btn-primary save-cutoff-btn" data-page-key="${page.pageKey}">
+                  <i class="fas fa-save"></i>
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        // Bind save buttons
+        tbody.querySelectorAll('.save-cutoff-btn').forEach(btn => {
+          btn.addEventListener('click', async function () {
+            const pageKey = this.dataset.pageKey;
+            const row = this.closest('tr');
+            const input = row.querySelector('.cutoff-time-input');
+            const cutoffTime = input.value;
+            const platform = input.dataset.platform;
+            const botId = input.dataset.botId;
+
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+            try {
+              const res = await fetch('/admin/orders/pages/cutoff', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pageKey, platform, botId, cutoffTime })
+              });
+              const data = await res.json();
+
+              if (data.success) {
+                this.innerHTML = '<i class="fas fa-check"></i>';
+                setTimeout(() => { this.innerHTML = '<i class="fas fa-save"></i>'; }, 1500);
+              } else {
+                alert(data.error || 'เกิดข้อผิดพลาด');
+                this.innerHTML = '<i class="fas fa-save"></i>';
+              }
+            } catch (e) {
+              alert('เกิดข้อผิดพลาด');
+              this.innerHTML = '<i class="fas fa-save"></i>';
+            }
+            this.disabled = false;
+          });
+        });
+      }
+
+      function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      // Settings modal - load on open
       document.getElementById('ordersSettingsLink')?.addEventListener('click', function (e) {
         e.preventDefault();
+        loadCutoffSettings();
         const modal = new bootstrap.Modal(document.getElementById('ordersSettingsModal'));
         modal.show();
       });
