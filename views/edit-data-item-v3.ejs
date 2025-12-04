@@ -2,206 +2,375 @@
 <html lang="th">
 
 <head>
-    <% const isNewItem=typeof isNew !=='undefined' ? isNew : false; %>
-        <% const pageTitle=isNewItem ? 'สร้างชุดข้อมูล' : 'แก้ไขชุดข้อมูล' ; %>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>
-                <%= pageTitle %> - <%= instruction.parentInstructionName || instruction.title || 'ไม่มีชื่อ' %>
-            </title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>แก้ไขชุดข้อมูล - <%= instruction.title || instruction.parentInstructionName || 'ไม่มีชื่อ' %>
+    </title>
 
-            <!-- Bootstrap & Icons -->
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Bootstrap & Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 
-            <!-- Jspreadsheet CE -->
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.css"
-                type="text/css" />
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.css" type="text/css" />
+    <!-- Jspreadsheet CE -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.css">
 
-            <!-- Custom Styles -->
-            <link href="/css/style.css" rel="stylesheet">
-            <link href="/css/spreadsheet-v3.css" rel="stylesheet">
+    <!-- Main Styles -->
+    <link href="/css/style.css" rel="stylesheet">
+
+    <style>
+        /* ===== Layout ===== */
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: var(--light-bg, #F6F7FB);
+        }
+
+        /* ===== Header ===== */
+        .editor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 56px;
+            padding: 0 16px;
+            background: var(--card-bg, #fff);
+            border-bottom: 1px solid var(--border-color, #E1E5EF);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-back {
+            width: 40px;
+            height: 40px;
+            border: none;
+            background: transparent;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-light, #5C6372);
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        .btn-back:hover {
+            background: var(--light-bg);
+            color: var(--primary);
+        }
+
+        .parent-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 12px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: #fff;
+            font-size: var(--font-size-sm);
+            font-weight: 500;
+            border-radius: 16px;
+        }
+
+        .title-input {
+            border: none;
+            font-size: var(--font-size-xl);
+            font-weight: 600;
+            font-family: var(--font-family-heading);
+            padding: 4px 8px;
+            border-radius: 6px;
+            min-width: 200px;
+            background: transparent;
+            color: var(--text-dark);
+        }
+
+        .title-input:hover,
+        .title-input:focus {
+            background: var(--light-bg);
+            outline: none;
+        }
+
+        .save-status {
+            font-size: var(--font-size-sm);
+            color: var(--text-light);
+            padding: 4px 12px;
+            border-radius: 16px;
+            background: var(--light-bg);
+        }
+
+        .save-status.dirty {
+            background: rgba(var(--warning-rgb, 223, 169, 75), 0.15);
+            color: var(--warning);
+        }
+
+        .save-status.saving {
+            background: rgba(var(--info-rgb, 61, 127, 193), 0.15);
+            color: var(--info);
+        }
+
+        .save-status.saved {
+            background: rgba(var(--success-rgb, 45, 143, 111), 0.15);
+            color: var(--success);
+        }
+
+        /* ===== Toolbar ===== */
+        .editor-toolbar {
+            display: flex;
+            align-items: center;
+            height: 42px;
+            padding: 0 12px;
+            background: var(--card-bg, #fff);
+            border-bottom: 1px solid var(--border-color);
+            gap: 4px;
+        }
+
+        .toolbar-btn {
+            width: 34px;
+            height: 34px;
+            border: none;
+            background: transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--text-light);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .toolbar-btn:hover {
+            background: var(--light-bg);
+            color: var(--primary);
+        }
+
+        .toolbar-divider {
+            width: 1px;
+            height: 24px;
+            background: var(--border-color);
+            margin: 0 8px;
+        }
+
+        .toolbar-spacer {
+            flex: 1;
+        }
+
+        .toolbar-info {
+            font-size: var(--font-size-sm);
+            color: var(--text-light);
+            padding: 4px 12px;
+            background: var(--light-bg);
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+        }
+
+        /* ===== Formula Bar ===== */
+        .formula-bar {
+            display: flex;
+            align-items: center;
+            height: 36px;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0 8px;
+            gap: 8px;
+        }
+
+        .cell-ref-input {
+            width: 60px;
+            height: 26px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            text-align: center;
+            font-size: var(--font-size-sm);
+            font-weight: 600;
+            background: var(--light-bg);
+            font-family: var(--font-family-mono);
+        }
+
+        .formula-input {
+            flex: 1;
+            height: 26px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            padding: 0 8px;
+            font-size: var(--font-size-base);
+        }
+
+        .formula-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: #fff;
+            box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.1);
+        }
+
+        /* ===== Spreadsheet ===== */
+        .spreadsheet-wrapper {
+            flex: 1;
+            overflow: auto;
+            background: #fff;
+        }
+
+        /* ===== Status Bar ===== */
+        .editor-statusbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 28px;
+            background: var(--light-bg);
+            border-top: 1px solid var(--border-color);
+            padding: 0 12px;
+            font-size: var(--meta-size);
+            color: var(--text-light);
+        }
+
+        /* ===== Toast ===== */
+        .toast-msg {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 20px;
+            background: var(--text-dark);
+            color: #fff;
+            border-radius: var(--border-radius);
+            font-size: var(--font-size-base);
+            z-index: 9999;
+            box-shadow: var(--shadow-lg);
+            animation: slideUp 0.3s ease;
+        }
+
+        .toast-msg.success {
+            background: var(--success);
+        }
+
+        .toast-msg.error {
+            background: var(--danger);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+        }
+
+        /* ===== Jspreadsheet Overrides ===== */
+        .jexcel {
+            font-family: var(--font-family-base) !important;
+            font-size: var(--font-size-base) !important;
+        }
+
+        .jexcel>thead>tr>td {
+            background: linear-gradient(180deg, var(--light-bg) 0%, #e8eaef 100%) !important;
+            font-weight: 600 !important;
+            color: var(--text-dark) !important;
+            border-color: var(--border-color) !important;
+        }
+
+        .jexcel>tbody>tr>td {
+            border-color: var(--border-color) !important;
+            color: var(--text-dark) !important;
+        }
+
+        .jexcel>tbody>tr>td:first-child {
+            background: var(--light-bg) !important;
+            font-weight: 600 !important;
+            color: var(--text-light) !important;
+        }
+
+        .jexcel>tbody>tr:hover>td {
+            background: rgba(var(--primary-rgb), 0.05) !important;
+        }
+
+        .jexcel>tbody>tr>td.highlight,
+        .jexcel>tbody>tr>td.selected {
+            background: rgba(var(--primary-rgb), 0.12) !important;
+        }
+
+        .jexcel_corner {
+            background: var(--primary) !important;
+        }
+
+        /* Context menu */
+        .jcontextmenu {
+            font-family: var(--font-family-base) !important;
+            border-radius: var(--border-radius) !important;
+            box-shadow: var(--shadow-lg) !important;
+        }
+    </style>
 </head>
 
-<body class="spreadsheet-editor-body">
-    <!-- Top Header -->
+<body>
+    <!-- Header -->
     <header class="editor-header">
         <div class="header-left">
-            <a href="/admin/dashboard" class="btn-back" title="กลับแดชบอร์ด">
-                <i class="fas fa-arrow-left"></i>
-            </a>
-            <div class="document-info">
-                <div class="breadcrumb-path">
-                    <span class="parent-badge">
-                        <i class="fas fa-folder me-1"></i>
-                        <%= instruction.parentInstructionName %>
-                    </span>
+            <a href="/admin/dashboard" class="btn-back"><i class="fas fa-arrow-left"></i></a>
+            <div>
+                <span class="parent-badge"><i class="fas fa-folder me-1"></i>
+                    <%= instruction.parentInstructionName %>
+                </span>
+                <div style="margin-top: 4px;">
+                    <input type="text" id="docTitle" class="title-input" value="<%= instruction.title || '' %>"
+                        placeholder="ชื่อชุดข้อมูล...">
                 </div>
-                <input type="text" id="documentTitle" class="title-input" value="<%= instruction.title || '' %>"
-                    placeholder="ชื่อชุดข้อมูล...">
             </div>
         </div>
-        <div class="header-center">
-            <span class="save-status" id="saveStatus">
-                <i class="fas fa-check-circle"></i> พร้อมใช้งาน
-            </span>
-        </div>
-        <div class="header-right">
-            <div class="btn-group me-2">
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="undoBtn" title="Undo (Ctrl+Z)">
-                    <i class="fas fa-undo"></i>
-                </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="redoBtn" title="Redo (Ctrl+Y)">
-                    <i class="fas fa-redo"></i>
-                </button>
-            </div>
-            <button type="button" class="btn btn-outline-secondary btn-sm me-2" id="exportBtn" title="Export">
-                <i class="fas fa-download me-1"></i> Export
-            </button>
-            <button type="button" class="btn btn-primary" id="saveBtn">
-                <i class="fas fa-save me-1"></i> บันทึก
-            </button>
+        <span class="save-status" id="saveStatus"><i class="fas fa-check-circle me-1"></i>พร้อมใช้งาน</span>
+        <div>
+            <button class="btn btn-outline-secondary btn-sm me-2" id="exportBtn"><i
+                    class="fas fa-download me-1"></i>Export</button>
+            <button class="btn btn-primary" id="saveBtn"><i class="fas fa-save me-1"></i>บันทึก</button>
         </div>
     </header>
 
     <!-- Toolbar -->
     <div class="editor-toolbar">
-        <div class="toolbar-section">
-            <button class="toolbar-btn" id="insertRowAboveBtn" title="แทรกแถวด้านบน">
-                <i class="fas fa-arrow-up"></i>
-            </button>
-            <button class="toolbar-btn" id="insertRowBelowBtn" title="แทรกแถวด้านล่าง">
-                <i class="fas fa-arrow-down"></i>
-            </button>
-            <button class="toolbar-btn" id="deleteRowBtn" title="ลบแถว">
-                <i class="fas fa-minus"></i>
-            </button>
-        </div>
-
+        <button class="toolbar-btn" id="undoBtn" title="Undo (Ctrl+Z)"><i class="fas fa-undo"></i></button>
+        <button class="toolbar-btn" id="redoBtn" title="Redo (Ctrl+Y)"><i class="fas fa-redo"></i></button>
         <div class="toolbar-divider"></div>
-
-        <div class="toolbar-section">
-            <button class="toolbar-btn" id="insertColLeftBtn" title="แทรกคอลัมน์ซ้าย">
-                <i class="fas fa-arrow-left"></i>
-            </button>
-            <button class="toolbar-btn" id="insertColRightBtn" title="แทรกคอลัมน์ขวา">
-                <i class="fas fa-arrow-right"></i>
-            </button>
-            <button class="toolbar-btn" id="deleteColBtn" title="ลบคอลัมน์">
-                <i class="fas fa-columns"></i><i class="fas fa-times" style="font-size: 8px; margin-left: 2px;"></i>
-            </button>
-        </div>
-
+        <button class="toolbar-btn" id="addRowBtn" title="เพิ่มแถว"><i class="fas fa-plus"></i></button>
+        <button class="toolbar-btn" id="delRowBtn" title="ลบแถว"><i class="fas fa-minus"></i></button>
         <div class="toolbar-divider"></div>
-
-        <div class="toolbar-section">
-            <button class="toolbar-btn" id="sortAZBtn" title="เรียง A → Z">
-                <i class="fas fa-sort-alpha-down"></i>
-            </button>
-            <button class="toolbar-btn" id="sortZABtn" title="เรียง Z → A">
-                <i class="fas fa-sort-alpha-up"></i>
-            </button>
-        </div>
-
-        <div class="toolbar-divider"></div>
-
-        <div class="toolbar-section">
-            <button class="toolbar-btn" id="searchBtn" title="ค้นหา (Ctrl+F)">
-                <i class="fas fa-search"></i>
-            </button>
-        </div>
-
+        <button class="toolbar-btn" id="addColBtn" title="เพิ่มคอลัมน์"><i class="fas fa-columns"></i></button>
+        <button class="toolbar-btn" id="delColBtn" title="ลบคอลัมน์"><i class="fas fa-times"></i></button>
         <div class="toolbar-spacer"></div>
-
-        <div class="toolbar-section">
-            <span class="toolbar-info" id="cellInfo">คลิกเซลล์เพื่อแก้ไข</span>
-        </div>
+        <span class="toolbar-info" id="cellInfo">คลิกเซลล์เพื่อแก้ไข</span>
     </div>
 
     <!-- Formula Bar -->
     <div class="formula-bar">
-        <div class="cell-reference">
-            <input type="text" id="cellReference" value="A1" readonly>
-        </div>
-        <div class="formula-icon">
-            <i class="fas fa-font"></i>
-        </div>
-        <div class="formula-input">
-            <input type="text" id="formulaInput" placeholder="เนื้อหาเซลล์...">
-        </div>
+        <input type="text" id="cellRef" class="cell-ref-input" value="A1" readonly>
+        <i class="fas fa-font" style="color: var(--text-light);"></i>
+        <input type="text" id="formulaInput" class="formula-input" placeholder="เนื้อหาเซลล์...">
     </div>
 
-    <!-- Spreadsheet Container -->
-    <div id="spreadsheet-container" class="spreadsheet-container"></div>
+    <!-- Spreadsheet -->
+    <div id="spreadsheet" class="spreadsheet-wrapper"></div>
 
     <!-- Status Bar -->
     <footer class="editor-statusbar">
-        <div class="status-left">
-            <span class="status-item" id="dataTypeStatus">
-                <i class="fas fa-table"></i> ตาราง
-            </span>
-        </div>
-        <div class="status-center">
-            <span class="status-item" id="selectionStatus">
-                <i class="fas fa-crosshairs"></i> เลือก: -
-            </span>
-        </div>
-        <div class="status-right">
-            <span class="status-item" id="dimensionStatus">
-                <i class="fas fa-th"></i> <span id="rowCount">0</span> แถว × <span id="colCount">0</span> คอลัมน์
-            </span>
-            <span class="status-item">
-                <span class="zoom-controls">
-                    <button id="zoomOutBtn" class="zoom-btn">−</button>
-                    <span id="zoomLevel">100%</span>
-                    <button id="zoomInBtn" class="zoom-btn">+</button>
-                </span>
-            </span>
-        </div>
+        <span><i class="fas fa-table me-1"></i>ตาราง</span>
+        <span id="selInfo"><i class="fas fa-crosshairs me-1"></i>เลือก: -</span>
+        <span><i class="fas fa-th me-1"></i><span id="rowCount">0</span> แถว × <span id="colCount">0</span>
+            คอลัมน์</span>
     </footer>
 
-    <!-- Search Modal -->
-    <div class="modal fade" id="searchModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title"><i class="fas fa-search me-2"></i>ค้นหาและแทนที่</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">ค้นหา</label>
-                        <input type="text" class="form-control" id="searchInput" placeholder="พิมพ์คำค้นหา...">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">แทนที่ด้วย</label>
-                        <input type="text" class="form-control" id="replaceInput" placeholder="แทนที่ด้วย...">
-                    </div>
-                    <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-outline-primary" id="findNextBtn">
-                            <i class="fas fa-search me-1"></i> ค้นหาถัดไป
-                        </button>
-                        <button type="button" class="btn btn-primary" id="replaceBtn">
-                            <i class="fas fa-exchange-alt me-1"></i> แทนที่
-                        </button>
-                        <button type="button" class="btn btn-warning" id="replaceAllBtn">
-                            <i class="fas fa-sync me-1"></i> แทนที่ทั้งหมด
-                        </button>
-                    </div>
-                    <div class="mt-2 text-muted small" id="searchResult"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Hidden Form for submission -->
-    <form id="saveForm" method="POST" action="<%= isNewItem 
-        ? '/admin/instructions-v3/' + instructionId + '/data-items/new' 
-        : '/admin/instructions-v3/' + instructionId + '/data-items/' + itemId + '/edit' %>">
+    <!-- Form -->
+    <form id="saveForm" method="POST"
+        action="<%= typeof isNew !== 'undefined' && isNew ? '/admin/instructions-v3/' + instructionId + '/data-items/new' : '/admin/instructions-v3/' + instructionId + '/data-items/' + itemId + '/edit' %>">
         <input type="hidden" name="type" value="table">
-        <input type="hidden" name="title" id="formTitle">
-        <input type="hidden" name="tableData" id="formTableData">
+        <input type="hidden" name="title" id="frmTitle">
+        <input type="hidden" name="tableData" id="frmTableData">
     </form>
 
     <!-- Scripts -->
@@ -210,155 +379,56 @@
     <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.js"></script>
 
     <script>
-        // Initial data from server
-        const initialData = {
-            instructionId: '<%= instructionId %>',
-            itemId: '<%= itemId %>',
-            isNew: <%= isNewItem %>,
-            title: "<%- (instruction.title || '').replace(/"/g, '\\"') %> ",
-        type: '<%= instruction.type || "table" %>',
-            tableData: <% - JSON.stringify(instruction.data) %> || null
-        };
-
-        // Debug log
-        console.log('Initial data loaded:', initialData);
-
-        // Spreadsheet instance
-        let spreadsheet = null;
-        let isDirty = false;
-        let zoomLevel = 100;
-
-        // Convert data format
-        function convertToJspreadsheetData(data) {
-            if (!data || !data.columns || !data.rows) {
-                return {
-                    columns: [
-                        { title: 'คอลัมน์ 1', width: 200 },
-                        { title: 'คอลัมน์ 2', width: 200 }
-                    ],
-                    data: [['', ''], ['', ''], ['', '']]
-                };
-            }
-
-            const columns = data.columns.map((col, idx) => ({
-                title: col || `คอลัมน์ ${idx + 1}`,
-                width: 200
-            }));
-
-            const rows = data.rows.length > 0 ? data.rows : [new Array(columns.length).fill('')];
-
-            return { columns, data: rows };
-        }
-
-        // Convert back to our format
-        function convertFromJspreadsheet() {
-            if (!spreadsheet) return null;
-
-            const headers = spreadsheet.getHeaders().split(',');
-            const data = spreadsheet.getData();
-
-            // Filter empty rows
-            const filteredRows = data.filter(row => row.some(cell => cell !== '' && cell !== null));
-
-            return {
-                columns: headers,
-                rows: filteredRows.length > 0 ? filteredRows : data
-            };
-        }
-
-        // Update status
-        function updateSaveStatus(status, type = 'info') {
-            const el = document.getElementById('saveStatus');
-            const icons = {
-                'info': 'fa-check-circle',
-                'saving': 'fa-spinner fa-spin',
-                'saved': 'fa-check-circle',
-                'error': 'fa-exclamation-circle',
-                'dirty': 'fa-circle'
-            };
-            el.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${status}`;
-            el.className = `save-status status-${type}`;
-        }
-
-        // Update cell info
-        function updateCellInfo(x, y) {
-            const colLabel = jspreadsheet.getColumnName(x);
-            const cellRef = `${colLabel}${y + 1}`;
-            document.getElementById('cellReference').value = cellRef;
-            document.getElementById('selectionStatus').innerHTML = `<i class="fas fa-crosshairs"></i> เลือก: ${cellRef}`;
-
-            // Update formula bar
-            const value = spreadsheet.getValue(`${colLabel}${y + 1}`) || '';
-            document.getElementById('formulaInput').value = value;
-        }
-
-        // Update dimensions
-        function updateDimensions() {
-            const data = spreadsheet.getData();
-            const headers = spreadsheet.getHeaders().split(',');
-            document.getElementById('rowCount').textContent = data.length;
-            document.getElementById('colCount').textContent = headers.length;
-        }
-
-        // Show toast
-        function showToast(message, type = 'info') {
-            const existing = document.querySelector('.toast-notification');
-            if (existing) existing.remove();
-
-            const toast = document.createElement('div');
-            toast.className = `toast-notification toast-${type}`;
-            toast.innerHTML = `
-                <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-times-circle' : 'fa-info-circle'}"></i>
-                <span>${message}</span>
-            `;
-            document.body.appendChild(toast);
-
-            setTimeout(() => {
-                toast.classList.add('fade-out');
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
-        }
-
-        // Save function
-        async function saveData(showMessage = true) {
-            const title = document.getElementById('documentTitle').value.trim();
-
-            if (!title) {
-                showToast('กรุณาระบุชื่อชุดข้อมูล', 'error');
-                document.getElementById('documentTitle').focus();
-                return false;
-            }
-
-            updateSaveStatus('กำลังบันทึก...', 'saving');
-
+        (function () {
+            // ===== DATA FROM SERVER =====
+            var serverData = null;
+            <% if (instruction.data) { %>
             try {
-                const tableData = convertFromJspreadsheet();
+                    serverData = <% - JSON.stringify(instruction.data) %>;
+                } catch (e) {
+                    console.error('Parse error:', e);
+                }
+            <% } %>
 
-                document.getElementById('formTitle').value = title;
-                document.getElementById('formTableData').value = JSON.stringify(tableData);
+                console.log('=== V3 Spreadsheet Editor ===');
+            console.log('Server data:', serverData);
 
-                document.getElementById('saveForm').submit();
-                return true;
-            } catch (error) {
-                console.error('Save error:', error);
-                updateSaveStatus('เกิดข้อผิดพลาด', 'error');
-                showToast('ไม่สามารถบันทึกได้: ' + error.message, 'error');
-                return false;
+            // ===== CONVERT DATA =====
+            function toJsData(data) {
+                if (!data || !data.columns || !data.rows) {
+                    return {
+                        columns: [
+                            { title: 'คอลัมน์ 1', width: 200 },
+                            { title: 'คอลัมน์ 2', width: 200 },
+                            { title: 'คอลัมน์ 3', width: 200 }
+                        ],
+                        data: [['', '', ''], ['', '', ''], ['', '', '']]
+                    };
+                }
+
+                var cols = data.columns.map(function (c, i) {
+                    return { title: c || 'คอลัมน์ ' + (i + 1), width: 200 };
+                });
+
+                var rows = data.rows && data.rows.length > 0 ? data.rows : [[]];
+
+                return { columns: cols, data: rows };
             }
-        }
 
-        // Initialize spreadsheet
-        function initSpreadsheet() {
-            const container = document.getElementById('spreadsheet-container');
-            const converted = convertToJspreadsheetData(initialData.tableData);
+            function fromJsData(sheet) {
+                var headers = sheet.getHeaders().split(',');
+                var data = sheet.getData();
+                return { columns: headers, rows: data };
+            }
 
-            spreadsheet = jspreadsheet(container, {
+            // ===== INIT SPREADSHEET =====
+            var converted = toJsData(serverData);
+            console.log('Converted:', converted);
+
+            var sheet = jspreadsheet(document.getElementById('spreadsheet'), {
                 data: converted.data,
                 columns: converted.columns,
-
-                // Features
                 search: true,
-                pagination: false,
                 allowInsertRow: true,
                 allowInsertColumn: true,
                 allowDeleteRow: true,
@@ -367,359 +437,138 @@
                 columnSorting: true,
                 columnDrag: true,
                 rowDrag: true,
-
-                // Context menu
-                contextMenu: function (el, x, y, e) {
-                    const items = [];
-
-                    if (y !== null) {
-                        // Row context menu
-                        items.push({
-                            title: 'แทรกแถวด้านบน',
-                            onclick: function () {
-                                spreadsheet.insertRow(1, y, true);
-                            }
-                        });
-                        items.push({
-                            title: 'แทรกแถวด้านล่าง',
-                            onclick: function () {
-                                spreadsheet.insertRow(1, y);
-                            }
-                        });
-                        items.push({ type: 'line' });
-                        items.push({
-                            title: 'ลบแถวนี้',
-                            onclick: function () {
-                                spreadsheet.deleteRow(y);
-                            }
-                        });
-                    }
-
-                    if (x !== null) {
-                        if (items.length > 0) items.push({ type: 'line' });
-                        items.push({
-                            title: 'แทรกคอลัมน์ซ้าย',
-                            onclick: function () {
-                                spreadsheet.insertColumn(1, x, true);
-                            }
-                        });
-                        items.push({
-                            title: 'แทรกคอลัมน์ขวา',
-                            onclick: function () {
-                                spreadsheet.insertColumn(1, x);
-                            }
-                        });
-                        items.push({ type: 'line' });
-                        items.push({
-                            title: 'ลบคอลัมน์นี้',
-                            onclick: function () {
-                                spreadsheet.deleteColumn(x);
-                            }
-                        });
-                    }
-
-                    items.push({ type: 'line' });
-                    items.push({
-                        title: 'คัดลอก',
-                        shortcut: 'Ctrl+C',
-                        onclick: function () {
-                            spreadsheet.copy();
-                        }
-                    });
-                    items.push({
-                        title: 'วาง',
-                        shortcut: 'Ctrl+V',
-                        onclick: function () {
-                            spreadsheet.paste();
-                        }
-                    });
-
-                    return items;
-                },
-
-                // Callbacks
-                onchange: function (instance, cell, x, y, value) {
-                    isDirty = true;
-                    updateSaveStatus('มีการเปลี่ยนแปลง', 'dirty');
-                    updateDimensions();
-                },
-
-                onselection: function (instance, x1, y1, x2, y2) {
-                    updateCellInfo(x1, y1);
-                },
-
-                oninsertrow: function () {
-                    isDirty = true;
-                    updateSaveStatus('มีการเปลี่ยนแปลง', 'dirty');
-                    updateDimensions();
-                },
-
-                oninsertcolumn: function () {
-                    isDirty = true;
-                    updateSaveStatus('มีการเปลี่ยนแปลง', 'dirty');
-                    updateDimensions();
-                },
-
-                ondeleterow: function () {
-                    isDirty = true;
-                    updateSaveStatus('มีการเปลี่ยนแปลง', 'dirty');
-                    updateDimensions();
-                },
-
-                ondeletecolumn: function () {
-                    isDirty = true;
-                    updateSaveStatus('มีการเปลี่ยนแปลง', 'dirty');
-                    updateDimensions();
-                },
-
-                // Table dimensions
+                contextMenu: true,
                 tableOverflow: true,
                 tableWidth: '100%',
-                tableHeight: 'calc(100vh - 180px)',
-
-                // Default column width
+                tableHeight: 'calc(100vh - 162px)',
                 defaultColWidth: 200,
-
-                // Row height
-                defaultRowHeight: 40,
-
-                // Allow HTML
-                parseFormulas: false,
-
-                // Style
-                style: {},
+                onchange: function () {
+                    setDirty(true);
+                    updateDimensions();
+                },
+                onselection: function (el, x1, y1) {
+                    updateCellInfo(x1, y1);
+                },
+                oninsertrow: function () { setDirty(true); updateDimensions(); },
+                ondeleterow: function () { setDirty(true); updateDimensions(); },
+                oninsertcolumn: function () { setDirty(true); updateDimensions(); },
+                ondeletecolumn: function () { setDirty(true); updateDimensions(); }
             });
 
-            // Initial update
-            updateDimensions();
-        }
+            // ===== STATE =====
+            var dirty = false;
 
-        // Bind toolbar events
-        function bindToolbarEvents() {
-            // Row operations
-            document.getElementById('insertRowAboveBtn').addEventListener('click', () => {
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    spreadsheet.insertRow(1, sel[0][1], true);
+            function setDirty(val) {
+                dirty = val;
+                var el = document.getElementById('saveStatus');
+                if (dirty) {
+                    el.innerHTML = '<i class="fas fa-circle me-1"></i>มีการเปลี่ยนแปลง';
+                    el.className = 'save-status dirty';
                 } else {
-                    spreadsheet.insertRow(1, 0, true);
+                    el.innerHTML = '<i class="fas fa-check-circle me-1"></i>บันทึกแล้ว';
+                    el.className = 'save-status saved';
                 }
-            });
+            }
 
-            document.getElementById('insertRowBelowBtn').addEventListener('click', () => {
-                const sel = spreadsheet.getSelected();
+            function updateCellInfo(x, y) {
+                var colName = jspreadsheet.getColumnName(x);
+                var ref = colName + (y + 1);
+                document.getElementById('cellRef').value = ref;
+                document.getElementById('selInfo').innerHTML = '<i class="fas fa-crosshairs me-1"></i>เลือก: ' + ref;
+
+                var val = sheet.getValue(ref) || '';
+                document.getElementById('formulaInput').value = val;
+            }
+
+            function updateDimensions() {
+                var data = sheet.getData();
+                var headers = sheet.getHeaders().split(',');
+                document.getElementById('rowCount').textContent = data.length;
+                document.getElementById('colCount').textContent = headers.length;
+            }
+
+            function showToast(msg, type) {
+                var old = document.querySelector('.toast-msg');
+                if (old) old.remove();
+
+                var t = document.createElement('div');
+                t.className = 'toast-msg ' + (type || '');
+                t.textContent = msg;
+                document.body.appendChild(t);
+
+                setTimeout(function () { t.remove(); }, 3000);
+            }
+
+            // ===== SAVE =====
+            function save() {
+                var title = document.getElementById('docTitle').value.trim();
+                if (!title) {
+                    showToast('กรุณาระบุชื่อชุดข้อมูล', 'error');
+                    document.getElementById('docTitle').focus();
+                    return;
+                }
+
+                var el = document.getElementById('saveStatus');
+                el.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>กำลังบันทึก...';
+                el.className = 'save-status saving';
+
+                var tableData = fromJsData(sheet);
+
+                document.getElementById('frmTitle').value = title;
+                document.getElementById('frmTableData').value = JSON.stringify(tableData);
+                document.getElementById('saveForm').submit();
+            }
+
+            // ===== EVENT BINDINGS =====
+            document.getElementById('saveBtn').onclick = save;
+            document.getElementById('exportBtn').onclick = function () { sheet.download(); };
+            document.getElementById('undoBtn').onclick = function () { sheet.undo(); };
+            document.getElementById('redoBtn').onclick = function () { sheet.redo(); };
+            document.getElementById('addRowBtn').onclick = function () { sheet.insertRow(); };
+            document.getElementById('delRowBtn').onclick = function () {
+                var sel = sheet.getSelected();
+                if (sel && sel.length) sheet.deleteRow(sel[0][1]);
+            };
+            document.getElementById('addColBtn').onclick = function () { sheet.insertColumn(); };
+            document.getElementById('delColBtn').onclick = function () {
+                var sel = sheet.getSelected();
+                if (sel && sel.length) sheet.deleteColumn(sel[0][0]);
+            };
+
+            document.getElementById('formulaInput').onchange = function (e) {
+                var sel = sheet.getSelected();
                 if (sel && sel.length) {
-                    spreadsheet.insertRow(1, sel[0][1]);
-                } else {
-                    spreadsheet.insertRow();
+                    var ref = jspreadsheet.getColumnName(sel[0][0]) + (sel[0][1] + 1);
+                    sheet.setValue(ref, e.target.value);
                 }
-            });
+            };
 
-            document.getElementById('deleteRowBtn').addEventListener('click', () => {
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    spreadsheet.deleteRow(sel[0][1]);
-                }
-            });
+            document.getElementById('docTitle').oninput = function () { setDirty(true); };
 
-            // Column operations
-            document.getElementById('insertColLeftBtn').addEventListener('click', () => {
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    spreadsheet.insertColumn(1, sel[0][0], true);
-                } else {
-                    spreadsheet.insertColumn(1, 0, true);
-                }
-            });
-
-            document.getElementById('insertColRightBtn').addEventListener('click', () => {
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    spreadsheet.insertColumn(1, sel[0][0]);
-                } else {
-                    spreadsheet.insertColumn();
-                }
-            });
-
-            document.getElementById('deleteColBtn').addEventListener('click', () => {
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    spreadsheet.deleteColumn(sel[0][0]);
-                }
-            });
-
-            // Sorting
-            document.getElementById('sortAZBtn').addEventListener('click', () => {
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    spreadsheet.orderBy(sel[0][0], 0);
-                }
-            });
-
-            document.getElementById('sortZABtn').addEventListener('click', () => {
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    spreadsheet.orderBy(sel[0][0], 1);
-                }
-            });
-
-            // Search
-            document.getElementById('searchBtn').addEventListener('click', () => {
-                const modal = new bootstrap.Modal(document.getElementById('searchModal'));
-                modal.show();
-            });
-
-            // Find operations
-            let searchResults = [];
-            let searchIndex = 0;
-
-            document.getElementById('findNextBtn').addEventListener('click', () => {
-                const query = document.getElementById('searchInput').value;
-                if (!query) return;
-
-                searchResults = spreadsheet.search(query);
-                if (searchResults.length > 0) {
-                    searchIndex = (searchIndex + 1) % searchResults.length;
-                    const result = searchResults[searchIndex];
-                    spreadsheet.updateSelectionFromCoords(result[0], result[1], result[0], result[1]);
-                    document.getElementById('searchResult').textContent = `พบ ${searchResults.length} รายการ (${searchIndex + 1}/${searchResults.length})`;
-                } else {
-                    document.getElementById('searchResult').textContent = 'ไม่พบข้อมูล';
-                }
-            });
-
-            document.getElementById('replaceBtn').addEventListener('click', () => {
-                const query = document.getElementById('searchInput').value;
-                const replacement = document.getElementById('replaceInput').value;
-                if (!query) return;
-
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    const x = sel[0][0], y = sel[0][1];
-                    const currentValue = spreadsheet.getValue(jspreadsheet.getColumnName(x) + (y + 1));
-                    if (currentValue && currentValue.includes(query)) {
-                        spreadsheet.setValue(jspreadsheet.getColumnName(x) + (y + 1), currentValue.replace(query, replacement));
-                        showToast('แทนที่เรียบร้อย', 'success');
-                    }
-                }
-            });
-
-            document.getElementById('replaceAllBtn').addEventListener('click', () => {
-                const query = document.getElementById('searchInput').value;
-                const replacement = document.getElementById('replaceInput').value;
-                if (!query) return;
-
-                const data = spreadsheet.getData();
-                let count = 0;
-
-                for (let y = 0; y < data.length; y++) {
-                    for (let x = 0; x < data[y].length; x++) {
-                        if (data[y][x] && data[y][x].includes(query)) {
-                            const cellName = jspreadsheet.getColumnName(x) + (y + 1);
-                            spreadsheet.setValue(cellName, data[y][x].replaceAll(query, replacement));
-                            count++;
-                        }
-                    }
-                }
-
-                document.getElementById('searchResult').textContent = `แทนที่ ${count} รายการ`;
-                showToast(`แทนที่ ${count} รายการ`, 'success');
-            });
-
-            // Undo/Redo
-            document.getElementById('undoBtn').addEventListener('click', () => {
-                spreadsheet.undo();
-            });
-
-            document.getElementById('redoBtn').addEventListener('click', () => {
-                spreadsheet.redo();
-            });
-
-            // Save
-            document.getElementById('saveBtn').addEventListener('click', saveData);
-
-            // Export
-            document.getElementById('exportBtn').addEventListener('click', () => {
-                spreadsheet.download();
-            });
-
-            // Zoom
-            document.getElementById('zoomInBtn').addEventListener('click', () => {
-                if (zoomLevel < 150) {
-                    zoomLevel += 10;
-                    document.getElementById('spreadsheet-container').style.transform = `scale(${zoomLevel / 100})`;
-                    document.getElementById('spreadsheet-container').style.transformOrigin = 'top left';
-                    document.getElementById('zoomLevel').textContent = `${zoomLevel}%`;
-                }
-            });
-
-            document.getElementById('zoomOutBtn').addEventListener('click', () => {
-                if (zoomLevel > 50) {
-                    zoomLevel -= 10;
-                    document.getElementById('spreadsheet-container').style.transform = `scale(${zoomLevel / 100})`;
-                    document.getElementById('spreadsheet-container').style.transformOrigin = 'top left';
-                    document.getElementById('zoomLevel').textContent = `${zoomLevel}%`;
-                }
-            });
-
-            // Formula bar sync
-            document.getElementById('formulaInput').addEventListener('change', (e) => {
-                const sel = spreadsheet.getSelected();
-                if (sel && sel.length) {
-                    const cellName = jspreadsheet.getColumnName(sel[0][0]) + (sel[0][1] + 1);
-                    spreadsheet.setValue(cellName, e.target.value);
-                }
-            });
-
-            // Title change
-            document.getElementById('documentTitle').addEventListener('input', () => {
-                isDirty = true;
-                updateSaveStatus('มีการเปลี่ยนแปลง', 'dirty');
-            });
-        }
-
-        // Keyboard shortcuts
-        function bindKeyboardShortcuts() {
-            document.addEventListener('keydown', (e) => {
-                // Ctrl/Cmd + S = Save
+            // Keyboard shortcuts
+            document.onkeydown = function (e) {
                 if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                     e.preventDefault();
-                    saveData();
+                    save();
                 }
+            };
 
-                // Ctrl/Cmd + F = Find
-                if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+            // Warn before leave
+            window.onbeforeunload = function (e) {
+                if (dirty) {
                     e.preventDefault();
-                    const modal = new bootstrap.Modal(document.getElementById('searchModal'));
-                    modal.show();
+                    return '';
                 }
-            });
-        }
+            };
 
-        // Warn before leaving
-        window.addEventListener('beforeunload', (e) => {
-            if (isDirty) {
-                e.preventDefault();
-                e.returnValue = '';
-                return '';
-            }
-        });
+            // Init
+            updateDimensions();
 
-        // Initialize on DOM ready
-        document.addEventListener('DOMContentLoaded', () => {
-            initSpreadsheet();
-            bindToolbarEvents();
-            bindKeyboardShortcuts();
-
-            // Check for URL parameters
-            const params = new URLSearchParams(window.location.search);
-            if (params.get('success')) {
-                showToast(params.get('success'), 'success');
-            }
-            if (params.get('error')) {
-                showToast(params.get('error'), 'error');
-            }
-        });
+            // URL params
+            var params = new URLSearchParams(window.location.search);
+            if (params.get('success')) showToast(params.get('success'), 'success');
+            if (params.get('error')) showToast(params.get('error'), 'error');
+        })();
     </script>
 </body>
 
