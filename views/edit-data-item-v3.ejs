@@ -384,7 +384,7 @@
             var serverData = null;
             <% if (instruction.data) { %>
             try {
-                    serverData = <% - JSON.stringify(instruction.data) %>;
+                    serverData = <% -JSON.stringify(instruction.data) %>;
                 } catch (e) {
                     console.error('Parse error:', e);
                 }
