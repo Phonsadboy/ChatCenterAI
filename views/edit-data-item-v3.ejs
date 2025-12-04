@@ -266,6 +266,29 @@
             color: var(--primary);
         }
 
+        /* ===== Cancel Button ===== */
+        .btn-cancel {
+            background: #6c757d;
+            border: 1px solid #5a6268;
+            color: #fff;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .btn-cancel:hover {
+            background: #5a6268;
+            border-color: #545b62;
+            color: #fff;
+        }
+
+        .btn-cancel:active {
+            background: #545b62;
+            transform: scale(0.98);
+        }
+
         /* ===== Header Actions ===== */
         .header-actions {
             display: flex;
@@ -643,6 +666,9 @@
             <div class="header-actions">
                 <button class="btn btn-outline-secondary btn-sm" id="exportBtn" title="ดาวน์โหลดไฟล์ Excel">
                     <i class="fas fa-file-excel me-1"></i><span class="btn-label">ส่งออก</span>
+                </button>
+                <button class="btn btn-cancel" id="cancelBtn" title="ยกเลิกและกลับไปหน้าหลัก">
+                    <i class="fas fa-times me-1"></i><span class="btn-label">ยกเลิก</span>
                 </button>
                 <button class="btn btn-primary" id="saveBtn" title="บันทึกข้อมูล (Ctrl+S)">
                     <i class="fas fa-save me-1"></i><span class="btn-label">บันทึก</span>
@@ -1042,6 +1068,19 @@
 
                 // ===== EVENT BINDINGS =====
                 document.getElementById('saveBtn').onclick = save;
+
+                // ===== CANCEL BUTTON =====
+                document.getElementById('cancelBtn').onclick = function () {
+                    if (dirty) {
+                        var confirmLeave = confirm('คุณต้องการกลับไปหน้าหลักใช่ไหม?\n\nข้อมูลที่แก้ไขจะไม่ถูกบันทึก');
+                        if (!confirmLeave) {
+                            return;
+                        }
+                    }
+                    // Navigate back to the instruction dashboard without saving
+                    window.onbeforeunload = null; // Disable the unsaved warning
+                    window.location.href = '/admin/instructions-v3/<%= instructionId %>';
+                };
 
                 // ===== EXPORT FUNCTIONALITY =====
                 var exportModal = new bootstrap.Modal(document.getElementById('exportModal'));
