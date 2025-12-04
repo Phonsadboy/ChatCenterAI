@@ -17,6 +17,37 @@ class InstructionDataService {
         this.collection = db.collection("instructions_v2");
     }
 
+    normalizeTableRows(item) {
+        if (!item) return [];
+        const tryParse = (val) => {
+            if (typeof val === "string") {
+                try {
+                    const parsed = JSON.parse(val);
+                    return parsed;
+                } catch {
+                    return null;
+                }
+            }
+            return val;
+        };
+
+        const candidate = tryParse(item.data ?? item.content);
+
+        if (Array.isArray(candidate)) {
+            return candidate;
+        }
+
+        if (candidate && typeof candidate === "object") {
+            // Handle common shapes like { rows: [...] }
+            if (Array.isArray(candidate.rows)) {
+                return candidate.rows;
+            }
+            return [candidate];
+        }
+
+        return [];
+    }
+
     /**
      * Parse Excel file and return list of sheets with preview data
      * @param {string} filePath - Path to the uploaded file
@@ -209,11 +240,30 @@ class InstructionDataService {
                 counter++;
             }
 
-            // Find table data (priority to table, fallback to empty)
-            const tableItem = (inst.dataItems || []).find(i => i.type === 'table');
-            const data = tableItem && Array.isArray(tableItem.data) ? tableItem.data : [];
-            
-            const worksheet = XLSX.utils.json_to_sheet(data);
+            const dataItems = Array.isArray(inst.dataItems) ? inst.dataItems : [];
+            const tableItem = dataItems.find(i => i.type === 'table');
+            const normalizedRows = this.normalizeTableRows(tableItem);
+            const hasTableData = normalizedRows.length > 0;
+
+            let worksheet;
+            if (hasTableData) {
+                worksheet = XLSX.utils.json_to_sheet(normalizedRows);
+            } else {
+                // Fallback: export all data items as rows soไฟล์ไม่เปล่า
+                const rows = dataItems.map(item => ({
+                    type: item.type || '',
+                    title: item.title || '',
+                    content: item.content || '',
+                    order: item.order ?? ''
+                }));
+
+                if (!rows.length) {
+                    rows.push({ note: 'ไม่มีข้อมูลใน instruction นี้' });
+                }
+
+                worksheet = XLSX.utils.json_to_sheet(rows);
+            }
+
             XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
         }
         
