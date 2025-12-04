@@ -630,9 +630,6 @@
         <!-- Editor Header -->
         <header class="editor-header">
             <div class="header-left">
-                <a href="/admin/instructions-v3/<%= instructionId %>" class="btn-back" title="กลับ">
-                    <i class="fas fa-arrow-left"></i>
-                </a>
                 <span class="parent-badge">
                     <i class="fas fa-folder me-1"></i>
                     <%= instruction.parentInstructionName %>
@@ -676,13 +673,7 @@
                     <span class="toolbar-label">เพิ่มคอลัมน์</span>
                 </button>
             </div>
-            <div class="toolbar-divider"></div>
-            <div class="toolbar-group">
-                <button class="toolbar-btn" id="searchBtn" title="ค้นหา (Ctrl+F)">
-                    <i class="fas fa-search"></i>
-                    <span class="toolbar-label">ค้นหา</span>
-                </button>
-            </div>
+
             <div class="toolbar-spacer"></div>
             <!-- Save Reminder -->
             <div class="save-reminder" id="saveReminder" style="display: none;">
@@ -861,7 +852,7 @@
                 var sheetConfig = {
                     data: converted.data,
                     columns: converted.columns,
-                    search: true,
+                    search: false,
                     allowInsertRow: true,
                     allowInsertColumn: true,
                     allowDeleteRow: true,
@@ -1212,25 +1203,6 @@
                 document.getElementById('redoBtn').onclick = function () { sheet.redo(); };
                 document.getElementById('addRowBtn').onclick = function () { sheet.insertRow(); };
                 document.getElementById('addColBtn').onclick = function () { sheet.insertColumn(); };
-
-                // Search functionality
-                document.getElementById('searchBtn').onclick = function () {
-                    // Open jspreadsheet search (Ctrl+F simulation)
-                    if (sheet && sheet.showSearch) {
-                        sheet.showSearch();
-                    } else {
-                        // Fallback: prompt-based search
-                        var searchTerm = prompt('ค้นหาข้อความ:');
-                        if (searchTerm && searchTerm.trim()) {
-                            var found = sheet.search(searchTerm.trim());
-                            if (!found || found.length === 0) {
-                                showToast('ไม่พบ "' + searchTerm + '"', 'error');
-                            } else {
-                                showToast('พบ ' + found.length + ' รายการ', 'success');
-                            }
-                        }
-                    }
-                };
 
                 document.getElementById('docTitle').oninput = function () { setDirty(true); };
 
