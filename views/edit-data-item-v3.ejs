@@ -123,50 +123,107 @@
         .editor-toolbar {
             display: flex;
             align-items: center;
-            height: 42px;
-            padding: 0 12px;
+            height: 48px;
+            padding: 0 16px;
             background: var(--card-bg, #fff);
             border-bottom: 1px solid var(--border-color);
+            gap: 8px;
+        }
+
+        .toolbar-group {
+            display: flex;
+            align-items: center;
             gap: 4px;
         }
 
         .toolbar-btn {
-            width: 34px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
             height: 34px;
             border: none;
-            background: transparent;
+            background: var(--light-bg);
             border-radius: 6px;
             cursor: pointer;
             color: var(--text-light);
+            font-size: var(--font-size-sm);
+            font-weight: 500;
             transition: var(--transition);
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        }
+
+        .toolbar-btn i {
+            font-size: 12px;
+        }
+
+        .toolbar-label {
+            display: none;
+        }
+
+        @media (min-width: 768px) {
+            .toolbar-label {
+                display: inline;
+            }
         }
 
         .toolbar-btn:hover {
-            background: var(--light-bg);
+            background: rgba(var(--primary-rgb), 0.1);
             color: var(--primary);
+        }
+
+        .toolbar-btn:active {
+            transform: scale(0.97);
+        }
+
+        .toolbar-btn-success:hover {
+            background: rgba(var(--success-rgb, 45, 143, 111), 0.15);
+            color: var(--success, #2d8f6f);
+        }
+
+        .toolbar-btn-danger:hover {
+            background: rgba(var(--danger-rgb, 220, 53, 69), 0.15);
+            color: var(--danger, #dc3545);
         }
 
         .toolbar-divider {
             width: 1px;
             height: 24px;
             background: var(--border-color);
-            margin: 0 8px;
+            margin: 0 4px;
         }
 
         .toolbar-spacer {
             flex: 1;
         }
 
-        .toolbar-info {
+        .toolbar-help {
             font-size: var(--font-size-sm);
             color: var(--text-light);
-            padding: 4px 12px;
-            background: var(--light-bg);
+            padding: 6px 12px;
+            background: linear-gradient(135deg, rgba(var(--warning-rgb, 223, 169, 75), 0.1) 0%, rgba(var(--warning-rgb, 223, 169, 75), 0.05) 100%);
             border-radius: 6px;
-            border: 1px solid var(--border-color);
+            border: 1px solid rgba(var(--warning-rgb, 223, 169, 75), 0.2);
+        }
+
+        .toolbar-help i {
+            color: var(--warning, #dfa94b);
+        }
+
+        /* ===== Header Actions ===== */
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-actions .btn-label {
+            display: none;
+        }
+
+        @media (min-width: 576px) {
+            .header-actions .btn-label {
+                display: inline;
+            }
         }
 
         /* ===== Spreadsheet ===== */
@@ -181,12 +238,154 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            height: 28px;
-            background: var(--light-bg);
+            height: 32px;
+            background: linear-gradient(180deg, var(--light-bg) 0%, #e8eaef 100%);
             border-top: 1px solid var(--border-color);
-            padding: 0 12px;
-            font-size: var(--meta-size);
+            padding: 0 16px;
+            font-size: 11px;
             color: var(--text-light);
+        }
+
+        .status-left,
+        .status-center,
+        .status-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .status-shortcut {
+            padding: 2px 8px;
+            background: rgba(var(--primary-rgb), 0.1);
+            border-radius: 4px;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        @media (max-width: 768px) {
+
+            .status-center,
+            .status-shortcut {
+                display: none;
+            }
+        }
+
+        /* ===== Export Modal ===== */
+        .export-format-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .export-format-option {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: #fff;
+        }
+
+        .export-format-option:hover {
+            border-color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.02);
+        }
+
+        .export-format-option.active {
+            border-color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.05);
+        }
+
+        .export-format-option input[type="radio"] {
+            display: none;
+        }
+
+        .format-icon {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #217346 0%, #185c37 100%);
+            color: #fff;
+            font-size: 20px;
+        }
+
+        .format-icon.csv {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+        }
+
+        .format-info {
+            flex: 1;
+        }
+
+        .format-info strong {
+            display: block;
+            font-size: 15px;
+            color: var(--text-dark);
+            margin-bottom: 4px;
+        }
+
+        .format-info span {
+            font-size: 12px;
+            color: var(--text-light);
+        }
+
+        .export-preview {
+            background: var(--light-bg);
+            border-radius: 8px;
+            padding: 12px 16px;
+        }
+
+        .preview-header {
+            font-weight: 600;
+            color: var(--text-dark);
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .preview-stats {
+            display: flex;
+            gap: 24px;
+        }
+
+        .preview-stats span {
+            font-size: 12px;
+            color: var(--text-light);
+        }
+
+        .preview-stats i {
+            color: var(--primary);
+        }
+
+        #exportModal .modal-content {
+            border-radius: 16px;
+            border: none;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
+        }
+
+        #exportModal .modal-header {
+            border-bottom: 1px solid var(--border-color);
+            padding: 20px 24px;
+        }
+
+        #exportModal .modal-body {
+            padding: 24px;
+        }
+
+        #exportModal .modal-footer {
+            border-top: 1px solid var(--border-color);
+            padding: 16px 24px;
         }
 
         /* ===== Toast ===== */
@@ -327,11 +526,44 @@
             cursor: row-resize !important;
         }
 
-        /* Context menu */
+        /* Context menu - Thai styled */
         .jcontextmenu {
             font-family: var(--font-family-base) !important;
-            border-radius: var(--border-radius) !important;
-            box-shadow: var(--shadow-lg) !important;
+            border-radius: 8px !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15) !important;
+            border: 1px solid var(--border-color) !important;
+            padding: 6px 0 !important;
+            min-width: 200px !important;
+        }
+
+        .jcontextmenu>div {
+            padding: 8px 16px !important;
+            font-size: 13px !important;
+            display: flex !important;
+            align-items: center !important;
+            transition: background 0.15s ease !important;
+        }
+
+        .jcontextmenu>div:hover {
+            background: rgba(var(--primary-rgb), 0.08) !important;
+        }
+
+        .jcontextmenu>div i {
+            width: 20px;
+        }
+
+        .jcontextmenu>div.line {
+            height: 1px !important;
+            background: var(--border-color) !important;
+            margin: 4px 12px !important;
+            padding: 0 !important;
+        }
+
+        .jcontextmenu>div span {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--text-light);
+            opacity: 0.7;
         }
     </style>
 </head>
@@ -340,37 +572,69 @@
     <!-- Header -->
     <header class="editor-header">
         <div class="header-left">
-            <a href="/admin/dashboard" class="btn-back"><i class="fas fa-arrow-left"></i></a>
+            <a href="/admin/dashboard" class="btn-back" title="กลับไปหน้าแดชบอร์ด">
+                <i class="fas fa-arrow-left"></i>
+            </a>
             <div>
                 <span class="parent-badge"><i class="fas fa-folder me-1"></i>
                     <%= instruction.parentInstructionName %>
                 </span>
                 <div style="margin-top: 4px;">
                     <input type="text" id="docTitle" class="title-input" value="<%= instruction.title || '' %>"
-                        placeholder="ชื่อชุดข้อมูล...">
+                        placeholder="ระบุชื่อชุดข้อมูล...">
                 </div>
             </div>
         </div>
         <span class="save-status" id="saveStatus"><i class="fas fa-check-circle me-1"></i>พร้อมใช้งาน</span>
-        <div>
-            <button class="btn btn-outline-secondary btn-sm me-2" id="exportBtn"><i
-                    class="fas fa-download me-1"></i>Export</button>
-            <button class="btn btn-primary" id="saveBtn"><i class="fas fa-save me-1"></i>บันทึก</button>
+        <div class="header-actions">
+            <button class="btn btn-outline-secondary btn-sm" id="exportBtn" title="ดาวน์โหลดไฟล์ Excel">
+                <i class="fas fa-file-excel me-1"></i><span class="btn-label">ส่งออก Excel</span>
+            </button>
+            <button class="btn btn-primary" id="saveBtn" title="บันทึกข้อมูล (Ctrl+S)">
+                <i class="fas fa-save me-1"></i><span class="btn-label">บันทึก</span>
+            </button>
         </div>
     </header>
 
     <!-- Toolbar -->
     <div class="editor-toolbar">
-        <button class="toolbar-btn" id="undoBtn" title="Undo (Ctrl+Z)"><i class="fas fa-undo"></i></button>
-        <button class="toolbar-btn" id="redoBtn" title="Redo (Ctrl+Y)"><i class="fas fa-redo"></i></button>
+        <div class="toolbar-group">
+            <button class="toolbar-btn" id="undoBtn" title="เลิกทำ (Ctrl+Z)">
+                <i class="fas fa-undo"></i>
+                <span class="toolbar-label">เลิกทำ</span>
+            </button>
+            <button class="toolbar-btn" id="redoBtn" title="ทำซ้ำ (Ctrl+Y)">
+                <i class="fas fa-redo"></i>
+                <span class="toolbar-label">ทำซ้ำ</span>
+            </button>
+        </div>
         <div class="toolbar-divider"></div>
-        <button class="toolbar-btn" id="addRowBtn" title="เพิ่มแถว"><i class="fas fa-plus"></i></button>
-        <button class="toolbar-btn" id="delRowBtn" title="ลบแถว"><i class="fas fa-minus"></i></button>
+        <div class="toolbar-group">
+            <button class="toolbar-btn toolbar-btn-success" id="addRowBtn" title="เพิ่มแถวใหม่">
+                <i class="fas fa-plus"></i>
+                <span class="toolbar-label">เพิ่มแถว</span>
+            </button>
+            <button class="toolbar-btn toolbar-btn-danger" id="delRowBtn" title="ลบแถวที่เลือก">
+                <i class="fas fa-trash-alt"></i>
+                <span class="toolbar-label">ลบแถว</span>
+            </button>
+        </div>
         <div class="toolbar-divider"></div>
-        <button class="toolbar-btn" id="addColBtn" title="เพิ่มคอลัมน์"><i class="fas fa-columns"></i></button>
-        <button class="toolbar-btn" id="delColBtn" title="ลบคอลัมน์"><i class="fas fa-times"></i></button>
+        <div class="toolbar-group">
+            <button class="toolbar-btn toolbar-btn-success" id="addColBtn" title="เพิ่มคอลัมน์ใหม่">
+                <i class="fas fa-columns"></i>
+                <span class="toolbar-label">เพิ่มคอลัมน์</span>
+            </button>
+            <button class="toolbar-btn toolbar-btn-danger" id="delColBtn" title="ลบคอลัมน์ที่เลือก">
+                <i class="fas fa-times"></i>
+                <span class="toolbar-label">ลบคอลัมน์</span>
+            </button>
+        </div>
         <div class="toolbar-spacer"></div>
-        <span class="toolbar-info" id="cellInfo">คลิกเซลล์เพื่อแก้ไข</span>
+        <div class="toolbar-help">
+            <i class="fas fa-lightbulb me-1"></i>
+            <span id="cellInfo">คลิกเซลล์เพื่อแก้ไข หรือลากขอบเซลล์เพื่อปรับขนาด</span>
+        </div>
     </div>
 
     <!-- Spreadsheet -->
@@ -378,10 +642,21 @@
 
     <!-- Status Bar -->
     <footer class="editor-statusbar">
-        <span><i class="fas fa-table me-1"></i>ตาราง</span>
-        <span id="selInfo"><i class="fas fa-crosshairs me-1"></i>เลือก: -</span>
-        <span><i class="fas fa-th me-1"></i><span id="rowCount">0</span> แถว × <span id="colCount">0</span>
-            คอลัมน์</span>
+        <div class="status-left">
+            <span class="status-item"><i class="fas fa-table me-1"></i>ตารางข้อมูล</span>
+        </div>
+        <div class="status-center">
+            <span class="status-item" id="selInfo"><i class="fas fa-mouse-pointer me-1"></i>เซลล์: ยังไม่ได้เลือก</span>
+        </div>
+        <div class="status-right">
+            <span class="status-item">
+                <i class="fas fa-th-large me-1"></i>
+                <span id="rowCount">0</span> แถว × <span id="colCount">0</span> คอลัมน์
+            </span>
+            <span class="status-item status-shortcut" title="คีย์ลัด">
+                <i class="fas fa-keyboard me-1"></i>Ctrl+S บันทึก
+            </span>
+        </div>
     </footer>
 
     <!-- Form -->
@@ -391,6 +666,79 @@
         <input type="hidden" name="title" id="frmTitle">
         <input type="hidden" name="tableData" id="frmTableData">
     </form>
+
+    <!-- Export Modal -->
+    <div class="modal fade" id="exportModal" tabindex="-1" aria-labelledby="exportModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exportModalLabel">
+                        <i class="fas fa-file-export me-2 text-primary"></i>ส่งออกข้อมูล
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="ปิด"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold">
+                            <i class="fas fa-file me-1"></i>ชื่อไฟล์
+                        </label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="exportFilename"
+                                value="<%= instruction.title || 'data-export' %>" placeholder="ระบุชื่อไฟล์...">
+                            <span class="input-group-text" id="exportExtension">.xlsx</span>
+                        </div>
+                        <small class="text-muted">ชื่อไฟล์จะถูกสร้างอัตโนมัติพร้อมวันที่</small>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold">
+                            <i class="fas fa-file-alt me-1"></i>รูปแบบไฟล์
+                        </label>
+                        <div class="export-format-options">
+                            <label class="export-format-option active" data-format="xlsx">
+                                <input type="radio" name="exportFormat" value="xlsx" checked>
+                                <div class="format-icon">
+                                    <i class="fas fa-file-excel"></i>
+                                </div>
+                                <div class="format-info">
+                                    <strong>Excel (.xlsx)</strong>
+                                    <span>เปิดได้ใน Microsoft Excel, Google Sheets</span>
+                                </div>
+                            </label>
+                            <label class="export-format-option" data-format="csv">
+                                <input type="radio" name="exportFormat" value="csv">
+                                <div class="format-icon csv">
+                                    <i class="fas fa-file-csv"></i>
+                                </div>
+                                <div class="format-info">
+                                    <strong>CSV (.csv)</strong>
+                                    <span>ไฟล์ข้อความ รองรับทุกโปรแกรม</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="export-preview">
+                        <div class="preview-header">
+                            <i class="fas fa-eye me-1"></i>ตัวอย่างข้อมูล
+                        </div>
+                        <div class="preview-stats">
+                            <span><i class="fas fa-columns me-1"></i><span id="previewCols">0</span> คอลัมน์</span>
+                            <span><i class="fas fa-list me-1"></i><span id="previewRows">0</span> แถว</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                        <i class="fas fa-times me-1"></i>ยกเลิก
+                    </button>
+                    <button type="button" class="btn btn-success" id="confirmExportBtn">
+                        <i class="fas fa-download me-1"></i>ดาวน์โหลดไฟล์
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -467,10 +815,71 @@
                 columnSorting: true,
                 columnDrag: true,
                 rowDrag: true,
-                contextMenu: true,
                 tableOverflow: true,
                 tableWidth: '100%',
                 defaultColWidth: 200,
+                // Thai context menu
+                contextMenu: function (obj, x, y, e) {
+                    var items = [];
+
+                    // Copy & Paste
+                    items.push({
+                        title: '<i class="fas fa-copy me-2"></i>คัดลอก',
+                        shortcut: 'Ctrl+C',
+                        onclick: function () { obj.copy(); }
+                    });
+                    items.push({
+                        title: '<i class="fas fa-paste me-2"></i>วาง',
+                        shortcut: 'Ctrl+V',
+                        onclick: function () { obj.paste(); }
+                    });
+                    items.push({ type: 'line' });
+
+                    // Row operations
+                    items.push({
+                        title: '<i class="fas fa-plus me-2 text-success"></i>เพิ่มแถวด้านบน',
+                        onclick: function () { obj.insertRow(1, y, true); }
+                    });
+                    items.push({
+                        title: '<i class="fas fa-plus me-2 text-success"></i>เพิ่มแถวด้านล่าง',
+                        onclick: function () { obj.insertRow(1, y); }
+                    });
+                    items.push({
+                        title: '<i class="fas fa-trash-alt me-2 text-danger"></i>ลบแถวนี้',
+                        onclick: function () { obj.deleteRow(y); }
+                    });
+                    items.push({ type: 'line' });
+
+                    // Column operations
+                    items.push({
+                        title: '<i class="fas fa-columns me-2 text-success"></i>เพิ่มคอลัมน์ด้านซ้าย',
+                        onclick: function () { obj.insertColumn(1, x, true); }
+                    });
+                    items.push({
+                        title: '<i class="fas fa-columns me-2 text-success"></i>เพิ่มคอลัมน์ด้านขวา',
+                        onclick: function () { obj.insertColumn(1, x); }
+                    });
+                    items.push({
+                        title: '<i class="fas fa-times me-2 text-danger"></i>ลบคอลัมน์นี้',
+                        onclick: function () { obj.deleteColumn(x); }
+                    });
+                    items.push({ type: 'line' });
+
+                    // Edit column name
+                    items.push({
+                        title: '<i class="fas fa-edit me-2"></i>เปลี่ยนชื่อคอลัมน์',
+                        onclick: function () {
+                            var currentName = obj.getHeader(x);
+                            var newName = prompt('ระบุชื่อคอลัมน์ใหม่:', currentName);
+                            if (newName !== null && newName.trim() !== '') {
+                                obj.setHeader(x, newName.trim());
+                                setDirty(true);
+                            }
+                        }
+                    });
+
+                    return items;
+                },
                 onchange: function () {
                     setDirty(true);
                     updateDimensions();
@@ -535,8 +944,11 @@
                 var val = sheet.getValue(ref) || '';
                 var selInfoEl = document.getElementById('selInfo');
                 var cellInfoEl = document.getElementById('cellInfo');
-                if (selInfoEl) selInfoEl.innerHTML = '<i class="fas fa-crosshairs me-1"></i>เลือก: ' + ref;
-                if (cellInfoEl) cellInfoEl.textContent = 'เซลล์ ' + ref + ': ' + val;
+                if (selInfoEl) selInfoEl.innerHTML = '<i class="fas fa-mouse-pointer me-1"></i>เซลล์: ' + ref;
+                if (cellInfoEl) {
+                    var displayVal = val.length > 50 ? val.substring(0, 50) + '...' : val;
+                    cellInfoEl.textContent = displayVal ? 'กำลังแก้ไข ' + ref + ': ' + displayVal : 'เซลล์ ' + ref + ' (ว่าง)';
+                }
             }
 
             function updateDimensions() {
@@ -581,7 +993,163 @@
 
             // ===== EVENT BINDINGS =====
             document.getElementById('saveBtn').onclick = save;
-            document.getElementById('exportBtn').onclick = function () { sheet.download(); };
+
+            // ===== EXPORT FUNCTIONALITY =====
+            var exportModal = new bootstrap.Modal(document.getElementById('exportModal'));
+
+            // Open export modal
+            document.getElementById('exportBtn').onclick = function () {
+                // Update preview stats
+                if (sheet) {
+                    var data = sheet.getData();
+                    var headers = sheet.getHeaders().split(',');
+                    document.getElementById('previewCols').textContent = headers.length;
+                    document.getElementById('previewRows').textContent = data.length;
+                }
+                exportModal.show();
+            };
+
+            // Format selection
+            document.querySelectorAll('.export-format-option').forEach(function (option) {
+                option.addEventListener('click', function () {
+                    document.querySelectorAll('.export-format-option').forEach(function (o) {
+                        o.classList.remove('active');
+                    });
+                    this.classList.add('active');
+                    var format = this.getAttribute('data-format');
+                    this.querySelector('input[type="radio"]').checked = true;
+                    document.getElementById('exportExtension').textContent = '.' + format;
+                });
+            });
+
+            // Export confirmation
+            document.getElementById('confirmExportBtn').onclick = function () {
+                if (!sheet) return;
+
+                var format = document.querySelector('input[name="exportFormat"]:checked').value;
+                var baseFilename = document.getElementById('exportFilename').value.trim() || 'data-export';
+
+                // Add date suffix
+                var now = new Date();
+                var dateSuffix = now.getFullYear() +
+                    String(now.getMonth() + 1).padStart(2, '0') +
+                    String(now.getDate()).padStart(2, '0') + '_' +
+                    String(now.getHours()).padStart(2, '0') +
+                    String(now.getMinutes()).padStart(2, '0');
+
+                var filename = baseFilename.replace(/[^a-zA-Z0-9ก-๙\s\-_]/g, '') + '_' + dateSuffix;
+
+                // Get correct headers from column configuration
+                var headers = getCorrectHeaders();
+                var data = sheet.getData();
+
+                if (format === 'xlsx') {
+                    // Export as Excel using custom method for correct columns
+                    exportAsExcel(filename, headers, data);
+                } else {
+                    // Export as CSV
+                    exportAsCSV(filename, headers, data);
+                }
+
+                exportModal.hide();
+                showToast('ส่งออกข้อมูลสำเร็จ!', 'success');
+            };
+
+            // Get correct column headers from the spreadsheet
+            function getCorrectHeaders() {
+                var headers = [];
+
+                // Try to get headers from the column header row in DOM
+                var headerCells = document.querySelectorAll('.jexcel > thead > tr > td');
+                if (headerCells && headerCells.length > 1) {
+                    // Skip first cell (row number header)
+                    for (var i = 1; i < headerCells.length; i++) {
+                        var text = headerCells[i].textContent || headerCells[i].innerText || '';
+                        headers.push(text.trim());
+                    }
+                }
+
+                // Fallback: use getHeaders if DOM method fails
+                if (headers.length === 0 && sheet.getHeaders) {
+                    var rawHeaders = sheet.getHeaders();
+                    if (typeof rawHeaders === 'string') {
+                        headers = rawHeaders.split(',').map(function (h) { return h.trim(); });
+                    }
+                }
+
+                // Last fallback: use original columns from config
+                if (headers.length === 0 && converted && converted.columns) {
+                    headers = converted.columns.map(function (col) {
+                        return col.title || 'คอลัมน์';
+                    });
+                }
+
+                return headers;
+            }
+
+            // CSV Export function (fixed)
+            function exportAsCSV(filename, headers, data) {
+                // Build CSV content with BOM for Thai support
+                var csvContent = '\uFEFF'; // UTF-8 BOM
+
+                // Add headers
+                csvContent += headers.map(function (h) {
+                    return '"' + String(h).replace(/"/g, '""') + '"';
+                }).join(',') + '\n';
+
+                // Add data rows - ensure correct column count
+                data.forEach(function (row) {
+                    var rowData = [];
+                    for (var i = 0; i < headers.length; i++) {
+                        var value = (row && row[i] !== null && row[i] !== undefined) ? String(row[i]) : '';
+                        rowData.push('"' + value.replace(/"/g, '""') + '"');
+                    }
+                    csvContent += rowData.join(',') + '\n';
+                });
+
+                // Download
+                var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                var link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = filename + '.csv';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+            }
+
+            // Excel Export function (custom for correct columns)
+            function exportAsExcel(filename, headers, data) {
+                // Build CSV-like content for Excel (jspreadsheet's download may have issues)
+                var csvContent = '\uFEFF'; // UTF-8 BOM for Excel Thai support
+
+                // Add headers
+                csvContent += headers.map(function (h) {
+                    return '"' + String(h).replace(/"/g, '""') + '"';
+                }).join('\t') + '\n';
+
+                // Add data rows
+                data.forEach(function (row) {
+                    var rowData = [];
+                    for (var i = 0; i < headers.length; i++) {
+                        var value = (row && row[i] !== null && row[i] !== undefined) ? String(row[i]) : '';
+                        rowData.push('"' + value.replace(/"/g, '""') + '"');
+                    }
+                    csvContent += rowData.join('\t') + '\n';
+                });
+
+                // Download as .xlsx (Excel can open TSV)
+                // For true xlsx, we'd need a library like SheetJS
+                var blob = new Blob([csvContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+                var link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = filename + '.xlsx';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+            }
+
             document.getElementById('undoBtn').onclick = function () { sheet.undo(); };
             document.getElementById('redoBtn').onclick = function () { sheet.redo(); };
             document.getElementById('addRowBtn').onclick = function () { sheet.insertRow(); };
