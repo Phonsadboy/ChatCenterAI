@@ -13045,6 +13045,223 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
   }
 });
 
+// ============================================
+// Instructions V3 - Jspreadsheet Editor
+// ============================================
+
+// View/Edit Data Item (V3) - Jspreadsheet Full Page Editor
+app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (req, res) => {
+  try {
+    const { instructionId, itemId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    // ดึง instruction
+    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    if (!instruction) {
+      return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+
+    // หา data item
+    const dataItem = (instruction.dataItems || []).find(item => item.itemId === itemId);
+    if (!dataItem) {
+      return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
+    }
+
+    // สร้าง instruction object สำหรับ EJS
+    const instructionForEdit = {
+      _id: instructionId,
+      instructionId: dataItem.itemId,
+      type: dataItem.type || 'table',
+      title: dataItem.title || '',
+      content: dataItem.content || '',
+      data: dataItem.data || null,
+      createdAt: dataItem.createdAt,
+      updatedAt: dataItem.updatedAt,
+      parentInstructionName: instruction.name
+    };
+
+    res.render("edit-data-item-v3", {
+      instruction: instructionForEdit,
+      instructionId: instructionId,
+      itemId: itemId,
+      isNew: false,
+    });
+  } catch (err) {
+    console.error("Error rendering V3 edit data item page:", err);
+    res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
+  }
+});
+
+// Create Data Item (V3) - Jspreadsheet Full Page Editor
+app.get("/admin/instructions-v3/:instructionId/data-items/new", async (req, res) => {
+  try {
+    const { instructionId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    if (!instruction) {
+      return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+
+    const templateDataItem = {
+      _id: instructionId,
+      instructionId: "",
+      type: "table",
+      title: "",
+      content: "",
+      data: null,
+      createdAt: null,
+      updatedAt: null,
+      parentInstructionName: instruction.name,
+    };
+
+    res.render("edit-data-item-v3", {
+      instruction: templateDataItem,
+      instructionId,
+      itemId: "",
+      isNew: true,
+    });
+  } catch (err) {
+    console.error("Error rendering V3 create data item page:", err);
+    res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message || "Error"));
+  }
+});
+
+// Save New Data Item (V3)
+app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res) => {
+  try {
+    const { instructionId } = req.params;
+    let { type = "table", title = "", content = "", tableData } = req.body;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    if (!instruction) {
+      return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+
+    title = (title || "").trim();
+    if (!title) {
+      return res.redirect(
+        `/admin/instructions-v3/${instructionId}/data-items/new?error=` +
+        encodeURIComponent("กรุณาระบุชื่อชุดข้อมูล")
+      );
+    }
+
+    const items = Array.isArray(instruction.dataItems) ? instruction.dataItems : [];
+    const now = new Date();
+    const newItem = {
+      itemId: generateDataItemId(),
+      title,
+      type: "table",
+      content: "",
+      data: null,
+      order: items.length + 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (tableData && tableData.trim() !== "") {
+      try {
+        const parsedData = JSON.parse(tableData);
+        if (parsedData && typeof parsedData === "object") {
+          newItem.data = parsedData;
+        }
+      } catch (parseErr) {
+        console.error("V3: Invalid table data payload:", parseErr);
+        return res.redirect(
+          `/admin/instructions-v3/${instructionId}/data-items/new?error=` +
+          encodeURIComponent("ข้อมูลตารางไม่ถูกต้อง")
+        );
+      }
+    }
+
+    await coll.updateOne(
+      { _id: new ObjectId(instructionId) },
+      {
+        $push: { dataItems: newItem },
+        $set: { updatedAt: now },
+      }
+    );
+
+    res.redirect(
+      `/admin/dashboard?success=${encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}`
+    );
+  } catch (err) {
+    console.error("V3: Error creating data item:", err);
+    res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message || "Error"));
+  }
+});
+
+// Save Edit Data Item (V3)
+app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (req, res) => {
+  try {
+    const { instructionId, itemId } = req.params;
+    const { type, title, content, tableData } = req.body;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instructions_v2");
+
+    // ดึง instruction
+    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    if (!instruction) {
+      return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
+    }
+
+    // หา index ของ data item
+    const itemIndex = (instruction.dataItems || []).findIndex(item => item.itemId === itemId);
+    if (itemIndex === -1) {
+      return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
+    }
+
+    const now = new Date();
+    const updateFields = {};
+
+    // อัปเดต title
+    if (title !== undefined) {
+      updateFields[`dataItems.${itemIndex}.title`] = (title || "").trim();
+    }
+
+    // อัปเดต table data
+    if (tableData && tableData.trim() !== "") {
+      try {
+        const parsedData = JSON.parse(tableData);
+        if (parsedData && typeof parsedData === "object") {
+          updateFields[`dataItems.${itemIndex}.data`] = parsedData;
+        }
+      } catch (parseErr) {
+        console.error("V3: Error parsing table data:", parseErr);
+        return res.redirect(
+          `/admin/instructions-v3/${instructionId}/data-items/${itemId}/edit?error=${encodeURIComponent("ข้อมูลตารางไม่ถูกต้อง")}`
+        );
+      }
+    }
+
+    updateFields[`dataItems.${itemIndex}.type`] = "table";
+    updateFields[`dataItems.${itemIndex}.content`] = "";
+    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
+    updateFields.updatedAt = now;
+
+    // บันทึกลง database
+    await coll.updateOne(
+      { _id: new ObjectId(instructionId) },
+      { $set: updateFields }
+    );
+
+    res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
+  } catch (err) {
+    console.error("V3: Error saving data item:", err);
+    res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
+  }
+});
+
 // Admin settings page
 app.get("/admin/settings", async (req, res) => {
   try {
