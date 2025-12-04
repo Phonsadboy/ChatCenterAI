@@ -238,37 +238,29 @@
 
                 .row-resizer {
                     position: absolute;
-                    left: 4px;
-                    right: 4px;
-                    bottom: -6px;
-                    height: 12px;
+                    left: 6px;
+                    right: 6px;
+                    bottom: -3px;
+                    height: 8px;
                     cursor: row-resize;
-                    border-radius: 6px;
+                    background: transparent;
                     display: inline-flex;
                     align-items: center;
                     justify-content: center;
-                    background: transparent;
-                    transition: background-color 0.15s ease;
-                    z-index: 10;
-                }
-
-                .row-resizer:hover {
-                    background: rgba(76, 141, 255, 0.08);
                 }
 
                 .row-resizer::after {
                     content: '';
-                    width: 16px;
+                    width: 24px;
                     height: 2px;
                     background: #4c8dff;
                     border-radius: 2px;
-                    opacity: 0.65;
-                    transition: opacity 0.15s ease, transform 0.15s ease;
+                    opacity: 0.6;
+                    transition: opacity 0.15s ease;
                 }
 
                 .row-resizer:hover::after {
                     opacity: 1;
-                    transform: scaleX(1.2);
                 }
 
                 .table-builder-wrapper tr:hover td:not(.row-number-cell):not(.table-actions-col) {

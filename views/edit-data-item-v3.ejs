@@ -264,6 +264,69 @@
             background: var(--primary) !important;
         }
 
+        /* ===== Row Resizer - Real-time like Column Resize ===== */
+        .jexcel>tbody>tr>td:first-child {
+            position: relative !important;
+        }
+
+        .row-resize-handle {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: -3px;
+            height: 6px;
+            cursor: row-resize;
+            z-index: 10;
+            background: transparent;
+            transition: background 0.15s ease;
+        }
+
+        .row-resize-handle:hover,
+        .row-resize-handle.active {
+            background: rgba(var(--primary-rgb, 59, 130, 246), 0.3);
+        }
+
+        .row-resize-handle::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            bottom: 2px;
+            transform: translateX(-50%);
+            width: 20px;
+            height: 2px;
+            background: var(--primary, #3b82f6);
+            border-radius: 2px;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+
+        .row-resize-handle:hover::after,
+        .row-resize-handle.active::after {
+            opacity: 1;
+        }
+
+        /* Resize guide line */
+        .row-resize-guide {
+            position: fixed;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--primary, #3b82f6);
+            pointer-events: none;
+            z-index: 9999;
+            box-shadow: 0 0 4px rgba(var(--primary-rgb, 59, 130, 246), 0.5);
+        }
+
+        /* Prevent text selection during resize */
+        body.resizing-row {
+            cursor: row-resize !important;
+            user-select: none !important;
+        }
+
+        body.resizing-row * {
+            cursor: row-resize !important;
+        }
+
         /* Context menu */
         .jcontextmenu {
             font-family: var(--font-family-base) !important;
@@ -552,6 +615,140 @@
 
             // Init
             updateDimensions();
+
+            // ===== ROW RESIZE FUNCTIONALITY (Real-time like Column) =====
+            var MIN_ROW_HEIGHT = 28;
+            var resizingRow = null;
+            var startY = 0;
+            var startHeight = 0;
+            var resizeGuide = null;
+
+            function createRowResizeHandles() {
+                // Remove existing handles first
+                document.querySelectorAll('.row-resize-handle').forEach(function (h) { h.remove(); });
+
+                var tbody = document.querySelector('.jexcel > tbody');
+                if (!tbody) return;
+
+                var rows = tbody.querySelectorAll('tr');
+                rows.forEach(function (row, index) {
+                    var firstCell = row.querySelector('td:first-child');
+                    if (!firstCell) return;
+
+                    var handle = document.createElement('div');
+                    handle.className = 'row-resize-handle';
+                    handle.setAttribute('data-row-index', index);
+                    firstCell.appendChild(handle);
+
+                    handle.addEventListener('mousedown', function (e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        startRowResize(row, index, e);
+                    });
+                });
+            }
+
+            function startRowResize(row, rowIndex, e) {
+                resizingRow = row;
+                startY = e.clientY;
+                startHeight = row.offsetHeight;
+
+                // Add active class to handle
+                var handle = row.querySelector('.row-resize-handle');
+                if (handle) handle.classList.add('active');
+
+                // Create resize guide line
+                resizeGuide = document.createElement('div');
+                resizeGuide.className = 'row-resize-guide';
+                resizeGuide.style.top = (row.getBoundingClientRect().bottom) + 'px';
+                document.body.appendChild(resizeGuide);
+
+                // Add resizing class to body
+                document.body.classList.add('resizing-row');
+
+                document.addEventListener('mousemove', onRowResize);
+                document.addEventListener('mouseup', stopRowResize);
+            }
+
+            function onRowResize(e) {
+                if (!resizingRow) return;
+
+                var deltaY = e.clientY - startY;
+                var newHeight = Math.max(MIN_ROW_HEIGHT, startHeight + deltaY);
+
+                // Update row height in real-time
+                resizingRow.style.height = newHeight + 'px';
+
+                // Update all cells in the row
+                resizingRow.querySelectorAll('td').forEach(function (cell) {
+                    cell.style.height = newHeight + 'px';
+                    cell.style.minHeight = newHeight + 'px';
+                });
+
+                // Update guide position
+                if (resizeGuide) {
+                    resizeGuide.style.top = (resizingRow.getBoundingClientRect().bottom) + 'px';
+                }
+            }
+
+            function stopRowResize() {
+                if (resizingRow) {
+                    // Remove active class from handle
+                    var handle = resizingRow.querySelector('.row-resize-handle');
+                    if (handle) handle.classList.remove('active');
+
+                    setDirty(true);
+                }
+
+                resizingRow = null;
+                startY = 0;
+                startHeight = 0;
+
+                // Remove resize guide
+                if (resizeGuide) {
+                    resizeGuide.remove();
+                    resizeGuide = null;
+                }
+
+                // Remove resizing class from body
+                document.body.classList.remove('resizing-row');
+
+                document.removeEventListener('mousemove', onRowResize);
+                document.removeEventListener('mouseup', stopRowResize);
+            }
+
+            // Create handles after spreadsheet is ready
+            setTimeout(createRowResizeHandles, 100);
+
+            // Re-create handles when rows change
+            var originalInsertRow = sheet.insertRow;
+            sheet.insertRow = function () {
+                var result = originalInsertRow.apply(sheet, arguments);
+                setTimeout(createRowResizeHandles, 50);
+                return result;
+            };
+
+            var originalDeleteRow = sheet.deleteRow;
+            sheet.deleteRow = function () {
+                var result = originalDeleteRow.apply(sheet, arguments);
+                setTimeout(createRowResizeHandles, 50);
+                return result;
+            };
+
+            // Also observe DOM changes for any dynamic row additions
+            var tableObserver = new MutationObserver(function (mutations) {
+                var shouldRecreate = mutations.some(function (m) {
+                    return m.type === 'childList' && m.target.tagName === 'TBODY';
+                });
+                if (shouldRecreate) {
+                    setTimeout(createRowResizeHandles, 50);
+                }
+            });
+
+            var spreadsheetEl = document.getElementById('spreadsheet');
+            if (spreadsheetEl) {
+                tableObserver.observe(spreadsheetEl, { childList: true, subtree: true });
+            }
 
             // URL params
             var params = new URLSearchParams(window.location.search);
