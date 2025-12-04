@@ -436,7 +436,7 @@
                 return;
             }
 
-            var sheet = jspreadsheet(document.getElementById('spreadsheet'), {
+            var sheetConfig = {
                 data: converted.data,
                 columns: converted.columns,
                 search: true,
@@ -464,7 +464,21 @@
                 ondeleterow: function () { setDirty(true); updateDimensions(); },
                 oninsertcolumn: function () { setDirty(true); updateDimensions(); },
                 ondeletecolumn: function () { setDirty(true); updateDimensions(); }
+            };
+
+            var spreadsheet = jspreadsheet(document.getElementById('spreadsheet'), {
+                worksheets: [sheetConfig],
+                toolbar: false
             });
+
+            var sheet = Array.isArray(spreadsheet) ? spreadsheet[0] : spreadsheet;
+
+            if (!sheet || typeof sheet.getData !== 'function') {
+                console.error('jspreadsheet worksheet failed to initialize');
+                var fallback = document.getElementById('spreadsheet');
+                fallback.innerHTML = '<div class="p-3 text-danger">โหลดตัวแก้ไขตารางไม่สำเร็จ กรุณารีเฟรช</div>';
+                return;
+            }
 
             // ===== STATE =====
             var dirty = false;
@@ -482,6 +496,7 @@
             }
 
             function updateCellInfo(x, y) {
+                if (!sheet) return;
                 var colName = jspreadsheet.getColumnName(x);
                 var ref = colName + (y + 1);
                 document.getElementById('cellRef').value = ref;
@@ -492,6 +507,7 @@
             }
 
             function updateDimensions() {
+                if (!sheet) return;
                 var data = sheet.getData();
                 var headers = sheet.getHeaders().split(',');
                 document.getElementById('rowCount').textContent = data.length;
