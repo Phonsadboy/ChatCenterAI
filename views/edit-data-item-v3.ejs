@@ -382,7 +382,7 @@
     <script id="serverDataScript" type="application/json"><%- JSON.stringify(instruction.data || null) %></script>
 
     <script>
-        (function () {
+        document.addEventListener('DOMContentLoaded', function () {
             // ===== DATA FROM SERVER =====
             var serverData = null;
             try {
@@ -572,7 +572,7 @@
             var params = new URLSearchParams(window.location.search);
             if (params.get('success')) showToast(params.get('success'), 'success');
             if (params.get('error')) showToast(params.get('error'), 'error');
-        })();
+        });
     </script>
 </body>
 
