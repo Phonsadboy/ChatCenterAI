@@ -15445,36 +15445,6 @@ app.get("/admin/followup", async (req, res) => {
   }
 });
 
-// Follow-up v2 page (new design)
-app.get("/admin/followup2", async (req, res) => {
-  try {
-    const baseConfig = await getFollowUpBaseConfig();
-    res.render("admin-followup-v2", {
-      followUpConfig: {
-        analysisEnabled: baseConfig.analysisEnabled !== false,
-        showDashboard: baseConfig.showInDashboard !== false,
-      },
-      orderPromptDefaults: {
-        instructions:
-          baseConfig.orderPromptInstructions || DEFAULT_ORDER_PROMPT_BODY,
-        jsonSuffix: ORDER_PROMPT_JSON_SUFFIX,
-      },
-    });
-  } catch (error) {
-    console.error("[FollowUp] ไม่สามารถโหลดหน้าติดตามลูกค้า V2 ได้:", error);
-    res.render("admin-followup-v2", {
-      followUpConfig: {
-        analysisEnabled: false,
-        showDashboard: false,
-      },
-      orderPromptDefaults: {
-        instructions: DEFAULT_ORDER_PROMPT_BODY,
-        jsonSuffix: ORDER_PROMPT_JSON_SUFFIX,
-      },
-    });
-  }
-});
-
 // Follow-up status page now redirects to unified dashboard
 app.get("/admin/followup/status", (req, res) => {
   return res.redirect("/admin/followup");

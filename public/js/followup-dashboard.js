@@ -27,11 +27,6 @@
         analysisLabel: document.getElementById('followupAnalysisLabel'),
         analysisSubtitle: document.getElementById('followupAnalysisSubtitle'),
         modalRoot: document.getElementById('followupSettingsModal'),
-        // modalAnalysis removed - always enabled
-        // modalShowChat removed - always enabled
-        // modalShowDashboard removed - always enabled
-        modalModel: document.getElementById('followupModalModel'),
-        modalUpdatedAt: document.getElementById('followupModalUpdatedAt'),
         modalAutoSend: document.getElementById('followupModalAutoSend'),
         modalRoundsContainer: document.getElementById('followupModalRoundsContainer'),
         modalRounds: document.getElementById('followupModalRounds'),
@@ -39,8 +34,6 @@
         modalResetBtn: document.getElementById('followupModalResetBtn'),
         modalSaveBtn: document.getElementById('followupModalSaveBtn'),
         modalTitle: document.getElementById('followupModalTitle'),
-        modalPrompt: document.getElementById('followupModalPrompt'),
-        modalPromptJson: document.getElementById('followupModalPromptJson'),
         pageGrid: document.getElementById('followupPageGrid'),
         summaryActive: document.getElementById('followupMetricActive'),
         summaryActiveMeta: document.getElementById('followupMetricActiveMeta'),
@@ -1414,29 +1407,13 @@
         }
     };
 
-    const populateModalOptions = () => {
-        if (!el.modalModel) return;
-        el.modalModel.innerHTML = MODEL_OPTIONS.map(model => `<option value="${model.value}">${model.label}</option>`).join('');
-    };
-
     const openSettingsModal = () => {
         if (!state.currentPage || !modalInstance) return;
         const cfg = state.currentContextConfig || state.currentPage.settings || {};
         if (el.modalTitle) {
             el.modalTitle.textContent = `ตั้งค่าเพจ: ${state.currentPage.name}`;
         }
-        // analysisEnabled, showInChat, showInDashboard are always true (hidden from UI)
         if (el.modalAutoSend) el.modalAutoSend.checked = cfg.autoFollowUpEnabled !== false;
-        if (el.modalModel) el.modalModel.value = cfg.model || MODEL_OPTIONS[0].value;
-        if (el.modalPromptJson) {
-            el.modalPromptJson.textContent = getPromptJsonSuffix();
-        }
-        if (el.modalPrompt) {
-            const promptValue = typeof cfg.orderPromptInstructions === 'string'
-                ? cfg.orderPromptInstructions
-                : '';
-            el.modalPrompt.value = promptValue || getDefaultPromptInstructions();
-        }
         state.modalRounds = Array.isArray(cfg.rounds)
             ? cfg.rounds.map(round => ({
                 delayMinutes: Number(round.delayMinutes) || '',
@@ -1448,13 +1425,6 @@
             : [];
         renderModalRounds();
         handleAutoSendToggle();
-        if (el.modalUpdatedAt) {
-            if (state.currentPage.updatedAt) {
-                el.modalUpdatedAt.textContent = `ปรับปรุงล่าสุด: ${formatDateTime(state.currentPage.updatedAt)}`;
-            } else {
-                el.modalUpdatedAt.textContent = 'ใช้ค่าจากการตั้งค่าหลัก';
-            }
-        }
         if (el.modalResetBtn) {
             el.modalResetBtn.disabled = !state.currentPage.hasOverride;
         }
@@ -1467,14 +1437,10 @@
             platform: state.currentPage.platform,
             botId: state.currentPage.botId,
             settings: {
-                analysisEnabled: true,  // always enabled
+                analysisEnabled: true,
                 autoFollowUpEnabled: !!(el.modalAutoSend && el.modalAutoSend.checked),
-                showInChat: true,  // always enabled
-                showInDashboard: true,  // always enabled
-                model: el.modalModel ? el.modalModel.value : undefined,
-                orderPromptInstructions: el.modalPrompt
-                    ? (el.modalPrompt.value || '').trim()
-                    : ''
+                showInChat: true,
+                showInDashboard: true
             }
         };
         payload.settings.rounds = collectRoundsPayload();
