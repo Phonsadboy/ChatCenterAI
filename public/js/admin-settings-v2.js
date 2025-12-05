@@ -225,6 +225,14 @@ window.openAddLineBotModal = function () {
         collapseInstance.hide();
     }
 
+    // Hide delete button for new bot
+    const deleteBtn = document.getElementById('deleteLineBotBtn');
+    if (deleteBtn) deleteBtn.style.display = 'none';
+
+    // Update modal title
+    const title = document.getElementById('addLineBotModalLabel');
+    if (title) title.innerHTML = '<i class="fab fa-line me-2"></i>เพิ่ม Line Bot ใหม่';
+
     const modalEl = document.getElementById('addLineBotModal');
     if (modalEl) {
         const modal = new bootstrap.Modal(modalEl);
@@ -257,6 +265,14 @@ window.openEditLineBotModal = async function (id) {
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
 
         setAiConfigUI('line', bot.aiConfig || defaultAiConfig);
+
+        // Update modal title for edit mode
+        const title = document.getElementById('addLineBotModalLabel');
+        if (title) title.innerHTML = '<i class="fab fa-line me-2"></i>แก้ไข Line Bot';
+
+        // Show delete button for existing bot
+        const deleteBtn = document.getElementById('deleteLineBotBtn');
+        if (deleteBtn) deleteBtn.style.display = 'inline-block';
 
         const modalEl = document.getElementById('addLineBotModal');
         if (modalEl) {
@@ -442,6 +458,60 @@ async function saveFacebookBot() {
     } catch (error) {
         console.error('Error saving bot:', error);
         showToast('บันทึกข้อมูลไม่สำเร็จ', 'danger');
+    }
+}
+
+// Delete Line Bot
+async function deleteLineBot(botId) {
+    if (!confirm('ต้องการลบ Line Bot นี้หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้')) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/line-bots/${botId}`, {
+            method: 'DELETE'
+        });
+
+        if (res.ok) {
+            showToast('ลบ Line Bot เรียบร้อยแล้ว', 'success');
+            const modalEl = document.getElementById('addLineBotModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+            loadBotSettings();
+        } else {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'ลบไม่สำเร็จ');
+        }
+    } catch (error) {
+        console.error('Error deleting Line Bot:', error);
+        showToast(error.message || 'ไม่สามารถลบ Line Bot ได้', 'danger');
+    }
+}
+
+// Delete Facebook Bot
+async function deleteFacebookBot(botId) {
+    if (!confirm('ต้องการลบ Facebook Bot นี้หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้')) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/facebook-bots/${botId}`, {
+            method: 'DELETE'
+        });
+
+        if (res.ok) {
+            showToast('ลบ Facebook Bot เรียบร้อยแล้ว', 'success');
+            const modalEl = document.getElementById('addFacebookBotModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+            loadBotSettings();
+        } else {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'ลบไม่สำเร็จ');
+        }
+    } catch (error) {
+        console.error('Error deleting Facebook Bot:', error);
+        showToast(error.message || 'ไม่สามารถลบ Facebook Bot ได้', 'danger');
     }
 }
 
@@ -645,6 +715,23 @@ function setupEventListeners() {
 
     const saveFbBtn = document.getElementById('saveFacebookBotBtn');
     if (saveFbBtn) saveFbBtn.addEventListener('click', saveFacebookBot);
+
+    // Modal Delete Buttons
+    const deleteLineBtn = document.getElementById('deleteLineBotBtn');
+    if (deleteLineBtn) {
+        deleteLineBtn.addEventListener('click', () => {
+            const botId = document.getElementById('lineBotId').value;
+            if (botId) deleteLineBot(botId);
+        });
+    }
+
+    const deleteFbBtn = document.getElementById('deleteFacebookBotBtn');
+    if (deleteFbBtn) {
+        deleteFbBtn.addEventListener('click', () => {
+            const botId = document.getElementById('facebookBotId').value;
+            if (botId) deleteFacebookBot(botId);
+        });
+    }
 
     document.addEventListener('change', handleInstructionSelectChange, true);
 

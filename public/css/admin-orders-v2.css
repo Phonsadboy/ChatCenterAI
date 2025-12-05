@@ -945,7 +945,7 @@
 
 .orders-status-dropdown-menu {
   position: absolute;
-  top: 100%;
+  bottom: 100%;
   left: 0;
   min-width: 160px;
   background: var(--card-bg, #fff);
@@ -955,14 +955,15 @@
   z-index: 50;
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-8px);
+  transform: translateY(8px);
   transition: all 0.15s ease;
+  margin-bottom: 4px;
 }
 
 .orders-status-dropdown.open .orders-status-dropdown-menu {
   opacity: 1;
   visibility: visible;
-  transform: translateY(4px);
+  transform: translateY(0);
 }
 
 .orders-status-option {

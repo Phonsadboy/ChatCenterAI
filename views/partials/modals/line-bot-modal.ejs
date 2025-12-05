@@ -11,33 +11,36 @@
             <div class="modal-body">
                 <form id="lineBotForm">
                     <input type="hidden" id="lineBotId" name="id">
-                    
+
                     <div class="mb-3">
-                        <label for="lineBotName" class="form-label">ชื่อ Line Bot <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="lineBotName" name="name" 
-                               placeholder="เช่น: ฝ่ายขาย, ฝ่ายบริการลูกค้า, ฝ่ายเทคนิค" required>
+                        <label for="lineBotName" class="form-label">ชื่อ Line Bot <span
+                                class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="lineBotName" name="name"
+                            placeholder="เช่น: ฝ่ายขาย, ฝ่ายบริการลูกค้า, ฝ่ายเทคนิค" required>
                         <div class="form-text">ชื่อที่แสดงในระบบและใช้เรียก Line Bot นี้</div>
                     </div>
 
                     <div class="mb-3">
                         <label for="lineBotDescription" class="form-label">คำอธิบาย</label>
                         <textarea class="form-control" id="lineBotDescription" name="description" rows="2"
-                                  placeholder="อธิบายหน้าที่หรือวัตถุประสงค์ของ Line Bot นี้"></textarea>
+                            placeholder="อธิบายหน้าที่หรือวัตถุประสงค์ของ Line Bot นี้"></textarea>
                     </div>
 
                     <div class="row">
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="lineChannelAccessToken" class="form-label">Channel Access Token <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="lineChannelAccessToken" name="channelAccessToken" 
-                                       placeholder="U1234567890abcdef..." required>
+                                <label for="lineChannelAccessToken" class="form-label">Channel Access Token <span
+                                        class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="lineChannelAccessToken"
+                                    name="channelAccessToken" placeholder="U1234567890abcdef..." required>
                             </div>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="lineChannelSecret" class="form-label">Channel Secret <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="lineChannelSecret" name="channelSecret" 
-                                       placeholder="abcdef123456..." required>
+                                <label for="lineChannelSecret" class="form-label">Channel Secret <span
+                                        class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="lineChannelSecret" name="channelSecret"
+                                    placeholder="abcdef123456..." required>
                             </div>
                         </div>
                     </div>
@@ -46,9 +49,10 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="lineWebhookUrl" class="form-label">Webhook URL</label>
-                                <input type="text" class="form-control" id="lineWebhookUrl" name="webhookUrl" 
-                                       placeholder="https://yourdomain.com/webhook/line/xyz123" readonly>
-                                <div class="form-text">URL ที่จะใช้เป็น Webhook สำหรับ Line Bot นี้ (ระบบจะสร้างให้อัตโนมัติเมื่อบันทึก)</div>
+                                <input type="text" class="form-control" id="lineWebhookUrl" name="webhookUrl"
+                                    placeholder="https://yourdomain.com/webhook/line/xyz123" readonly>
+                                <div class="form-text">URL ที่จะใช้เป็น Webhook สำหรับ Line Bot นี้
+                                    (ระบบจะสร้างให้อัตโนมัติเมื่อบันทึก)</div>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -67,14 +71,12 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <div class="d-flex align-items-center justify-content-between">
-                                    <label for="lineBotAiModel" class="form-label mb-0">AI Model <span class="text-danger">*</span></label>
-                                    <button type="button"
-                                            class="btn btn-outline-secondary btn-sm ms-2"
-                                            data-bs-toggle="collapse"
-                                            data-bs-target="#lineBotAiParams"
-                                            aria-expanded="false"
-                                            aria-controls="lineBotAiParams"
-                                            title="กดเพื่อปรับโหมด API/พารามิเตอร์; ถ้าเลือก Chat API (ไม่รองรับ tool จัดการข้อมูล) ระบบจะตอบแบบไม่มี tool search/จัดการข้อมูล">
+                                    <label for="lineBotAiModel" class="form-label mb-0">AI Model <span
+                                            class="text-danger">*</span></label>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm ms-2"
+                                        data-bs-toggle="collapse" data-bs-target="#lineBotAiParams"
+                                        aria-expanded="false" aria-controls="lineBotAiParams"
+                                        title="กดเพื่อปรับโหมด API/พารามิเตอร์; ถ้าเลือก Chat API (ไม่รองรับ tool จัดการข้อมูล) ระบบจะตอบแบบไม่มี tool search/จัดการข้อมูล">
                                         <i class="fas fa-cog"></i>
                                     </button>
                                 </div>
@@ -90,22 +92,29 @@
                                     <option value="gpt-4o">GPT-4o</option>
                                     <option value="gpt-4o-mini">GPT-4o mini</option>
                                 </select>
-                                <div class="form-text">เลือก AI Model ที่จะใช้สำหรับ Line Bot นี้ — ถ้าเลือก Chat API (ใช้ tools ไม่ได้) ระบบจะไม่ส่ง tool จัดการข้อมูล/AI search ให้</div>
+                                <div class="form-text">เลือก AI Model ที่จะใช้สำหรับ Line Bot นี้ — ถ้าเลือก Chat API
+                                    (ใช้ tools ไม่ได้) ระบบจะไม่ส่ง tool จัดการข้อมูล/AI search ให้</div>
                                 <div class="collapse mt-2" id="lineBotAiParams">
                                     <div class="p-3 border rounded bg-light">
                                         <div class="mb-3">
                                             <label for="lineBotApiMode" class="form-label mb-1">API Mode</label>
-                                            <select class="form-select form-select-sm" id="lineBotApiMode" name="apiMode">
-                                                <option value="responses">Responses API (รองรับ tools / reasoning)</option>
-                                                <option value="chat">Chat Completions API (ไม่รองรับ tool จัดการข้อมูล)</option>
+                                            <select class="form-select form-select-sm" id="lineBotApiMode"
+                                                name="apiMode">
+                                                <option value="responses">Responses API (รองรับ tools / reasoning)
+                                                </option>
+                                                <option value="chat">Chat Completions API (ไม่รองรับ tool จัดการข้อมูล)
+                                                </option>
                                             </select>
-                                            <div class="form-text">Responses: เหมาะกับ reasoning + tools; Chat: เร็ว/คงไลบรารีเดิมแต่ไม่มี tools</div>
+                                            <div class="form-text">Responses: เหมาะกับ reasoning + tools; Chat:
+                                                เร็ว/คงไลบรารีเดิมแต่ไม่มี tools</div>
                                         </div>
                                         <div id="lineBotResponsesParams">
                                             <div class="row g-2">
                                                 <div class="col-md-6" id="lineBotReasoningGroup">
-                                                    <label class="form-label mb-1" for="lineBotReasoningEffort">reasoning_effort</label>
-                                                    <select class="form-select form-select-sm" id="lineBotReasoningEffort">
+                                                    <label class="form-label mb-1"
+                                                        for="lineBotReasoningEffort">reasoning_effort</label>
+                                                    <select class="form-select form-select-sm"
+                                                        id="lineBotReasoningEffort">
                                                         <option value="">ตามค่า default ของโมเดล</option>
                                                         <option value="none">none (GPT-5.1 เท่านั้น)</option>
                                                         <option value="minimal">minimal (GPT-5 เท่านั้น)</option>
@@ -113,7 +122,8 @@
                                                         <option value="medium">medium</option>
                                                         <option value="high">high</option>
                                                     </select>
-                                                    <div class="form-text">ใช้เฉพาะ Responses; หากเลือกค่านี้จะไม่ใช้ temperature/top_p/penalties</div>
+                                                    <div class="form-text">ใช้เฉพาะ Responses; หากเลือกค่านี้จะไม่ใช้
+                                                        temperature/top_p/penalties</div>
                                                 </div>
                                                 <div class="col-md-6 d-none" id="lineBotReasoningNote">
                                                     <div class="alert alert-info py-2 px-3 small mb-0">
@@ -125,17 +135,21 @@
                                         <div id="lineBotChatParams" class="d-none">
                                             <div class="row g-2" id="lineBotChatControls">
                                                 <div class="col-md-6">
-                                                    <label class="form-label mb-1" for="lineBotTemperature">temperature</label>
-                                                    <input type="range" step="0.1" min="0" max="2" class="form-range form-range-primary" id="lineBotTemperature">
+                                                    <label class="form-label mb-1"
+                                                        for="lineBotTemperature">temperature</label>
+                                                    <input type="range" step="0.1" min="0" max="2"
+                                                        class="form-range form-range-primary" id="lineBotTemperature">
                                                     <div class="d-flex justify-content-between">
                                                         <small class="text-muted">0</small>
-                                                        <small id="lineBotTemperatureValue" class="fw-semibold">—</small>
+                                                        <small id="lineBotTemperatureValue"
+                                                            class="fw-semibold">—</small>
                                                         <small class="text-muted">2</small>
                                                     </div>
                                                 </div>
                                                 <div class="col-md-6">
                                                     <label class="form-label mb-1" for="lineBotTopP">top_p</label>
-                                                    <input type="range" step="0.05" min="0" max="1" class="form-range form-range-primary" id="lineBotTopP">
+                                                    <input type="range" step="0.05" min="0" max="1"
+                                                        class="form-range form-range-primary" id="lineBotTopP">
                                                     <div class="d-flex justify-content-between">
                                                         <small class="text-muted">0</small>
                                                         <small id="lineBotTopPValue" class="fw-semibold">—</small>
@@ -143,29 +157,39 @@
                                                     </div>
                                                 </div>
                                                 <div class="col-md-6">
-                                                    <label class="form-label mb-1" for="lineBotPresencePenalty">presence_penalty</label>
-                                                    <input type="range" step="0.1" min="-2" max="2" class="form-range form-range-primary" id="lineBotPresencePenalty">
+                                                    <label class="form-label mb-1"
+                                                        for="lineBotPresencePenalty">presence_penalty</label>
+                                                    <input type="range" step="0.1" min="-2" max="2"
+                                                        class="form-range form-range-primary"
+                                                        id="lineBotPresencePenalty">
                                                     <div class="d-flex justify-content-between">
                                                         <small class="text-muted">-2</small>
-                                                        <small id="lineBotPresencePenaltyValue" class="fw-semibold">—</small>
+                                                        <small id="lineBotPresencePenaltyValue"
+                                                            class="fw-semibold">—</small>
                                                         <small class="text-muted">2</small>
                                                     </div>
                                                 </div>
                                                 <div class="col-md-6">
-                                                    <label class="form-label mb-1" for="lineBotFrequencyPenalty">frequency_penalty</label>
-                                                    <input type="range" step="0.1" min="-2" max="2" class="form-range form-range-primary" id="lineBotFrequencyPenalty">
+                                                    <label class="form-label mb-1"
+                                                        for="lineBotFrequencyPenalty">frequency_penalty</label>
+                                                    <input type="range" step="0.1" min="-2" max="2"
+                                                        class="form-range form-range-primary"
+                                                        id="lineBotFrequencyPenalty">
                                                     <div class="d-flex justify-content-between">
                                                         <small class="text-muted">-2</small>
-                                                        <small id="lineBotFrequencyPenaltyValue" class="fw-semibold">—</small>
+                                                        <small id="lineBotFrequencyPenaltyValue"
+                                                            class="fw-semibold">—</small>
                                                         <small class="text-muted">2</small>
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div class="alert alert-info mt-2 mb-0 py-2 px-3 small d-none" id="lineBotChatNote">
+                                            <div class="alert alert-info mt-2 mb-0 py-2 px-3 small d-none"
+                                                id="lineBotChatNote">
                                                 โมเดล reasoning ไม่รองรับ temperature/top_p/penalties
                                             </div>
                                             <div class="alert alert-warning mt-2 mb-0 py-2 px-3 small">
-                                                Reasoning (reasoning_effort) + sampling params ใช้ร่วมกันไม่ได้ใน Chat API หากจะ reasoning ให้ใช้ Responses แทน
+                                                Reasoning (reasoning_effort) + sampling params ใช้ร่วมกันไม่ได้ใน Chat
+                                                API หากจะ reasoning ให้ใช้ Responses แทน
                                             </div>
                                         </div>
                                     </div>
@@ -175,7 +199,8 @@
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="lineBotDefault" name="isDefault">
+                                    <input class="form-check-input" type="checkbox" id="lineBotDefault"
+                                        name="isDefault">
                                     <label class="form-check-label" for="lineBotDefault">
                                         ตั้งเป็น Line Bot หลัก (Default)
                                     </label>
@@ -188,6 +213,9 @@
                 </form>
             </div>
             <div class="modal-footer">
+                <button type="button" class="btn btn-danger me-auto" id="deleteLineBotBtn" style="display: none;">
+                    <i class="fas fa-trash me-2"></i>ลบ
+                </button>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
                 <button type="button" class="btn btn-primary" id="saveLineBotBtn">
                     <i class="fas fa-save me-2"></i>บันทึก
