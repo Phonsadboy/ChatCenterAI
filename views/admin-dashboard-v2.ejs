@@ -400,6 +400,39 @@
                     </div>
                 </div>
 
+                <!-- Modal: Select Data Item Type -->
+                <div class="modal fade" id="selectDataTypeModal" tabindex="-1">
+                    <div class="modal-dialog modal-dialog-centered modal-sm">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">
+                                    <i class="fas fa-plus-circle text-primary me-2"></i>เพิ่มชุดข้อมูลใหม่
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="text-muted mb-3">เลือกประเภทข้อมูลที่ต้องการสร้าง:</p>
+                                <input type="hidden" id="newDataItemInstructionId" value="">
+                                <div class="d-grid gap-2">
+                                    <button type="button" class="btn btn-outline-primary btn-lg"
+                                        id="createTextDataItem">
+                                        <i class="fas fa-font me-2"></i>
+                                        <span>ข้อความ (Text)</span>
+                                        <small class="d-block text-muted mt-1">สำหรับข้อมูลแบบข้อความยาว</small>
+                                    </button>
+                                    <button type="button" class="btn btn-outline-success btn-lg"
+                                        id="createTableDataItem">
+                                        <i class="fas fa-table me-2"></i>
+                                        <span>ตาราง (Table)</span>
+                                        <small class="d-block text-muted mt-1">สำหรับข้อมูลแบบตาราง เช่น
+                                            รายการสินค้า</small>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <%- include('partials/modals/import-export-sheets-modal') %>
 
                     <div id="dashboardToastContainer" class="app-toast-container"></div>

@@ -570,15 +570,38 @@
         });
     });
 
-    // Add Data Item
+    // Add Data Item - Show type selection modal
+    const selectDataTypeModal = new bootstrap.Modal(document.getElementById('selectDataTypeModal'));
+    const newDataItemInstructionIdInput = document.getElementById('newDataItemInstructionId');
+
     document.querySelectorAll('.add-data-item').forEach(btn => {
         btn.addEventListener('click', () => {
             const instructionId = btn.dataset.instructionId;
             if (!instructionId) {
                 return;
             }
-            window.location.href = `/admin/instructions-v3/${instructionId}/data-items/new`;
+            // Store the instruction ID and show the selection modal
+            newDataItemInstructionIdInput.value = instructionId;
+            selectDataTypeModal.show();
         });
+    });
+
+    // Handle Text data item creation
+    document.getElementById('createTextDataItem').addEventListener('click', () => {
+        const instructionId = newDataItemInstructionIdInput.value;
+        if (!instructionId) return;
+        selectDataTypeModal.hide();
+        // V2 editor for text type
+        window.location.href = `/admin/instructions-v2/${instructionId}/data-items/new`;
+    });
+
+    // Handle Table data item creation
+    document.getElementById('createTableDataItem').addEventListener('click', () => {
+        const instructionId = newDataItemInstructionIdInput.value;
+        if (!instructionId) return;
+        selectDataTypeModal.hide();
+        // V3 editor for table type
+        window.location.href = `/admin/instructions-v3/${instructionId}/data-items/new`;
     });
 
     // Search Instructions
