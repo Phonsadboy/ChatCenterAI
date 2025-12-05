@@ -10,34 +10,34 @@ class ChatManager {
         this.allUsers = [];
         this.chatHistory = {};
         this.messageInputBaseHeight = 0;
-        
+
         // Filter state
         this.currentFilters = {
             status: 'all',
             tags: [],
             search: ''
         };
-        
+
         // Tags
         this.availableTags = [];
-        
+
         // Follow-up config
         this.followUpConfig = {
             analysisEnabled: true,
             showInChat: true
         };
-        
+
         // Orders
         this.currentOrders = [];
         this.isExtractingOrder = false;
 
         // Feedback tracking
         this.feedbackRequests = new Set();
-        
+
         // Initialize
         this.init();
     }
-    
+
     init() {
         console.log('Initializing Chat Manager...');
         this.initializeSocket();
@@ -47,34 +47,34 @@ class ChatManager {
         this.setupAutoRefresh();
         this.hideTypingIndicator();
     }
-    
+
     // ========================================
     // Socket.IO
     // ========================================
-    
+
     initializeSocket() {
         this.socket = io();
-        
+
         this.socket.on('connect', () => {
             console.log('✅ Socket.IO connected');
             this.showToast('เชื่อมต่อสำเร็จ', 'success');
         });
-        
+
         this.socket.on('disconnect', () => {
             console.log('❌ Socket.IO disconnected');
             this.showToast('การเชื่อมต่อขาดหาย', 'warning');
         });
-        
+
         this.socket.on('newMessage', (data) => {
             console.log('📨 New message:', data);
             this.handleNewMessage(data);
         });
-        
+
         this.socket.on('followUpTagged', (data) => {
             console.log('⭐ Follow-up tagged:', data);
             this.handleFollowUpTagged(data);
         });
-        
+
         this.socket.on('chatCleared', (data) => {
             console.log('🗑️ Chat cleared:', data);
             if (data.userId === this.currentUserId) {
@@ -82,7 +82,7 @@ class ChatManager {
             }
             this.loadUsers();
         });
-        
+
         this.socket.on('userTagsUpdated', (data) => {
             console.log('🏷️ Tags updated:', data);
             const user = this.allUsers.find(u => u.userId === data.userId);
@@ -91,7 +91,7 @@ class ChatManager {
                 this.applyFilters();
             }
         });
-        
+
         this.socket.on('userPurchaseStatusUpdated', (data) => {
             console.log('🛒 Purchase status updated:', data);
             const user = this.allUsers.find(u => u.userId === data.userId);
@@ -100,7 +100,7 @@ class ChatManager {
                 this.applyFilters();
             }
         });
-        
+
         // Order events
         this.socket.on('orderExtracted', (data) => {
             console.log('📦 Order extracted:', data);
@@ -110,14 +110,14 @@ class ChatManager {
             // Update user list to show order badge
             this.loadUsers();
         });
-        
+
         this.socket.on('orderUpdated', (data) => {
             console.log('✏️ Order updated:', data);
             if (data.userId === this.currentUserId) {
                 this.loadOrders();
             }
         });
-        
+
         this.socket.on('orderDeleted', (data) => {
             console.log('🗑️ Order deleted:', data);
             if (data.userId === this.currentUserId) {
@@ -140,11 +140,11 @@ class ChatManager {
             this.updateMessageStatus(data.messageId, data.status);
         });
     }
-    
+
     // ========================================
     // Event Listeners
     // ========================================
-    
+
     setupEventListeners() {
         // Search
         const userSearch = document.getElementById('userSearch');
@@ -154,7 +154,7 @@ class ChatManager {
                 this.applyFilters();
             });
         }
-        
+
         // Clear filters
         const clearFilters = document.getElementById('clearFilters');
         if (clearFilters) {
@@ -162,7 +162,7 @@ class ChatManager {
                 this.clearFilters();
             });
         }
-        
+
         // Status filter buttons
         document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -173,7 +173,7 @@ class ChatManager {
                 this.applyFilters();
             });
         });
-        
+
         // Extract order button
         const btnExtractOrder = document.getElementById('btnExtractOrder');
         if (btnExtractOrder) {
@@ -181,39 +181,39 @@ class ChatManager {
                 this.extractOrder();
             });
         }
-        
+
         // Sidebar toggle (mobile)
         const toggleSidebar = document.getElementById('toggleSidebar');
         const closeSidebar = document.getElementById('closeSidebar');
         const sidebarOverlay = document.getElementById('sidebarOverlay');
         const chatSidebar = document.getElementById('chatSidebar');
-        
+
         if (toggleSidebar) {
             toggleSidebar.addEventListener('click', () => {
                 chatSidebar.classList.add('show');
                 sidebarOverlay.classList.add('show');
             });
         }
-        
+
         if (closeSidebar) {
             closeSidebar.addEventListener('click', () => {
                 chatSidebar.classList.remove('show');
                 sidebarOverlay.classList.remove('show');
             });
         }
-        
+
         if (sidebarOverlay) {
             sidebarOverlay.addEventListener('click', () => {
                 chatSidebar.classList.remove('show');
                 sidebarOverlay.classList.remove('show');
             });
         }
-        
+
         // Message input
         const messageInput = document.getElementById('messageInput');
         const btnSend = document.getElementById('btnSend');
         const charCount = document.getElementById('charCount');
-        
+
         if (messageInput) {
             const updateCharCount = (value = '') => {
                 if (charCount) {
@@ -243,7 +243,7 @@ class ChatManager {
                 updateCharCount(e.target.value);
                 resizeMessageInput();
             });
-            
+
             messageInput.addEventListener('keydown', (e) => {
                 if (e.isComposing) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -252,13 +252,13 @@ class ChatManager {
                 }
             });
         }
-        
+
         if (btnSend) {
             btnSend.addEventListener('click', () => {
                 this.sendMessage();
             });
         }
-        
+
         // Header actions
         const btnTogglePurchase = document.getElementById('btnTogglePurchase');
         const btnManageTags = document.getElementById('btnManageTags');
@@ -273,13 +273,29 @@ class ChatManager {
                 this.togglePurchaseStatus();
             });
         }
-        
+
         if (btnManageTags) {
             btnManageTags.addEventListener('click', () => {
                 this.openTagModal();
             });
         }
-        
+
+        // User Notes button
+        const btnUserNotes = document.getElementById('btnUserNotes');
+        if (btnUserNotes) {
+            btnUserNotes.addEventListener('click', () => {
+                this.openUserNotesModal();
+            });
+        }
+
+        // Save User Notes button
+        const saveUserNotesBtn = document.getElementById('saveUserNotesBtn');
+        if (saveUserNotesBtn) {
+            saveUserNotesBtn.addEventListener('click', () => {
+                this.saveUserNotes();
+            });
+        }
+
         if (btnToggleAI) {
             btnToggleAI.addEventListener('click', () => {
                 this.toggleAI();
@@ -309,7 +325,23 @@ class ChatManager {
                 this.toggleOrderSidebarMobile(false);
             });
         }
-        
+
+        // Order sidebar collapse button
+        const btnCollapseOrderSidebar = document.getElementById('btnCollapseOrderSidebar');
+        if (btnCollapseOrderSidebar) {
+            btnCollapseOrderSidebar.addEventListener('click', () => {
+                this.toggleOrderSidebarCollapse();
+            });
+            // Restore collapsed state from localStorage
+            const isCollapsed = localStorage.getItem('orderSidebarCollapsed') === 'true';
+            if (isCollapsed) {
+                const orderSidebar = document.getElementById('orderSidebar');
+                if (orderSidebar) {
+                    orderSidebar.classList.add('collapsed');
+                }
+            }
+        }
+
         // Template button
         const btnTemplate = document.getElementById('btnTemplate');
         if (btnTemplate) {
@@ -342,7 +374,7 @@ class ChatManager {
                 }
             });
         }
-        
+
         // Save order button
         const saveOrderBtn = document.getElementById('saveOrderBtn');
         if (saveOrderBtn) {
@@ -350,7 +382,7 @@ class ChatManager {
                 this.saveOrder();
             });
         }
-        
+
         // Image modal
         const downloadImage = document.getElementById('downloadImage');
         if (downloadImage) {
@@ -358,16 +390,16 @@ class ChatManager {
                 this.downloadImage();
             });
         }
-        
+
         // Tag modal
         const addTagBtn = document.getElementById('addTagBtn');
         const newTagInput = document.getElementById('newTagInput');
-        
+
         if (addTagBtn && newTagInput) {
             addTagBtn.addEventListener('click', () => {
                 this.addTag(newTagInput.value.trim());
             });
-            
+
             newTagInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
@@ -399,16 +431,16 @@ class ChatManager {
             });
         }
     }
-    
+
     // ========================================
     // User Management
     // ========================================
-    
+
     async loadUsers() {
         try {
             const response = await fetch('/admin/chat/users');
             const data = await response.json();
-            
+
             if (data.success) {
                 this.allUsers = (data.users || []).map(user => {
                     const normalizedUser = { ...user };
@@ -430,10 +462,10 @@ class ChatManager {
             this.showToast('เกิดข้อผิดพลาดในการโหลดข้อมูล', 'error');
         }
     }
-    
+
     applyFilters() {
         let filtered = [...this.allUsers];
-        
+
         // Status filter
         if (this.currentFilters.status !== 'all') {
             filtered = filtered.filter(user => {
@@ -449,16 +481,16 @@ class ChatManager {
                 }
             });
         }
-        
+
         // Tag filter
         if (this.currentFilters.tags.length > 0) {
             filtered = filtered.filter(user => {
-                return user.tags && user.tags.some(tag => 
+                return user.tags && user.tags.some(tag =>
                     this.currentFilters.tags.includes(tag)
                 );
             });
         }
-        
+
         // Search filter
         if (this.currentFilters.search) {
             const search = this.currentFilters.search.toLowerCase();
@@ -469,19 +501,19 @@ class ChatManager {
                 );
             });
         }
-        
+
         this.users = filtered;
         this.renderUserList();
         this.updateFilterBadge();
     }
-    
+
     renderUserList() {
         const userList = document.getElementById('userList');
         const userCountBadge = document.getElementById('userCountBadge');
         const filteredCount = document.getElementById('filteredCount');
-        
+
         if (!userList) return;
-        
+
         // Update counts
         if (userCountBadge) {
             userCountBadge.textContent = this.users.length;
@@ -489,7 +521,7 @@ class ChatManager {
         if (filteredCount) {
             filteredCount.textContent = this.users.length;
         }
-        
+
         // Render users
         if (this.users.length === 0) {
             userList.innerHTML = `
@@ -500,10 +532,10 @@ class ChatManager {
             `;
             return;
         }
-        
+
         userList.innerHTML = this.users.map(user => this.renderUserItem(user)).join('');
     }
-    
+
     renderUserItem(user) {
         const isActive = user.userId === this.currentUserId;
         const hasUnread = user.unreadCount > 0;
@@ -511,51 +543,93 @@ class ChatManager {
         const isFollowUp = user.followUp && user.followUp.isFollowUp;
         const aiEnabled = user.aiEnabled !== false;
         const hasOrders = user.hasOrders || false;
-        
-        const avatar = user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U';
+
+        const avatarLetter = user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U';
         const lastMessage = user.lastMessage ? this.truncateText(user.lastMessage, 50) : 'ไม่มีข้อความ';
         const time = user.lastMessageTime ? this.formatRelativeTime(user.lastMessageTime) : '';
-        
-        const badges = [];
-        if (aiEnabled) badges.push('<span class="badge-sm badge-ai">AI</span>');
-        if (isFollowUp) badges.push('<span class="badge-sm badge-followup">ติดตาม</span>');
-        if (isPurchased) badges.push('<span class="badge-sm badge-purchased">ซื้อแล้ว</span>');
-        if (hasOrders) badges.push('<span class="badge-sm badge-has-order">มีออเดอร์</span>');
-        
-        const tags = user.tags && user.tags.length > 0 
-            ? user.tags.slice(0, 2).map(tag => 
+
+        // Build status indicators
+        const statusDots = [];
+        statusDots.push(`
+            <div class="status-dot ${aiEnabled ? 'ai-active' : 'ai-disabled'}" 
+                 title="${aiEnabled ? 'AI เปิดใช้งาน' : 'AI ปิดใช้งาน'}">
+                <span class="status-tooltip">${aiEnabled ? 'AI เปิด' : 'AI ปิด'}</span>
+            </div>
+        `);
+        if (isFollowUp) {
+            statusDots.push(`
+                <div class="status-dot followup" title="ต้องติดตาม">
+                    <span class="status-tooltip">ติดตาม</span>
+                </div>
+            `);
+        }
+        if (isPurchased) {
+            statusDots.push(`
+                <div class="status-dot purchased" title="ซื้อสินค้าแล้ว">
+                    <span class="status-tooltip">ซื้อแล้ว</span>
+                </div>
+            `);
+        }
+        if (hasOrders) {
+            statusDots.push(`
+                <div class="status-dot has-orders" title="มีออเดอร์">
+                    <span class="status-tooltip">มีออเดอร์</span>
+                </div>
+            `);
+        }
+
+        // Build avatar HTML with profile picture or fallback letter
+        let avatarContent;
+        if (user.pictureUrl) {
+            avatarContent = `
+                <img src="${this.escapeHtml(user.pictureUrl)}" 
+                     alt="${this.escapeHtml(user.displayName || 'User')}"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <span class="avatar-fallback" style="display: none;">${avatarLetter}</span>
+            `;
+        } else {
+            avatarContent = `<span class="avatar-fallback">${avatarLetter}</span>`;
+        }
+
+        const tags = user.tags && user.tags.length > 0
+            ? user.tags.slice(0, 2).map(tag =>
                 `<span class="tag-badge">${this.escapeHtml(tag)}</span>`
-              ).join('')
+            ).join('')
             : '';
-        
+
         return `
             <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" 
                  onclick="chatManager.selectUser('${user.userId}')">
-                <div class="user-avatar ${isPurchased ? 'purchased' : ''}">${avatar}</div>
+                <div class="user-avatar">
+                    ${avatarContent}
+                    <div class="user-status-indicators">
+                        ${statusDots.slice(0, 2).join('')}
+                    </div>
+                </div>
                 <div class="user-item-content">
                     <div class="user-item-header">
                         <div class="user-name">${this.escapeHtml(user.displayName || user.userId)}</div>
                         <div class="user-time">${time}</div>
                     </div>
                     <div class="user-last-message">${this.escapeHtml(lastMessage)}</div>
-                    ${badges.length > 0 ? `<div class="user-badges">${badges.join('')}</div>` : ''}
                     ${tags ? `<div class="user-tags">${tags}</div>` : ''}
                 </div>
                 ${hasUnread ? `<div class="unread-count">${user.unreadCount}</div>` : ''}
             </div>
         `;
     }
-    
+
+
     async selectUser(userId) {
         this.currentUserId = userId;
-        
+
         // Close sidebar on mobile
         const chatSidebar = document.getElementById('chatSidebar');
         const sidebarOverlay = document.getElementById('sidebarOverlay');
         if (chatSidebar) chatSidebar.classList.remove('show');
         if (sidebarOverlay) sidebarOverlay.classList.remove('show');
         this.toggleOrderSidebarMobile(false);
-        
+
         // Update UI
         this.renderUserList();
         this.updateChatHeader();
@@ -564,14 +638,14 @@ class ChatManager {
 
         // Load chat history
         await this.loadChatHistory(userId);
-        
+
         // Load orders
         await this.loadOrders();
-        
+
         // Mark as read
         this.markAsRead(userId);
     }
-    
+
     updateChatHeader() {
         const btnRefreshProfile = document.getElementById('btnRefreshProfile');
         const user = this.users.find(u => u.userId === this.currentUserId);
@@ -583,32 +657,42 @@ class ChatManager {
             }
             return;
         }
-        
+
         const chatAvatar = document.getElementById('chatAvatar');
         const chatUserName = document.getElementById('chatUserName');
         const chatUserMeta = document.getElementById('chatUserMeta');
         const chatHeaderActions = document.getElementById('chatHeaderActions');
         const messageCount = document.getElementById('messageCount');
-        
-        const avatar = user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U';
-        const isPurchased = user.hasPurchased;
-        
+
+        const avatarLetter = user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U';
+
         if (chatAvatar) {
-            chatAvatar.innerHTML = avatar;
-            chatAvatar.className = `chat-avatar ${isPurchased ? 'purchased' : ''}`;
+            // Use profile picture if available, fallback to letter
+            if (user.pictureUrl) {
+                chatAvatar.innerHTML = `
+                    <img src="${this.escapeHtml(user.pictureUrl)}" 
+                         alt="${this.escapeHtml(user.displayName || 'User')}"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                    <span class="avatar-fallback" style="display: none;">${avatarLetter}</span>
+                `;
+            } else {
+                chatAvatar.innerHTML = `<span class="avatar-fallback">${avatarLetter}</span>`;
+            }
+            chatAvatar.className = 'chat-avatar';
         }
-        
+
+
         if (chatUserName) {
             chatUserName.textContent = user.displayName || user.userId;
         }
-        
+
         if (chatUserMeta) {
             const messages = this.chatHistory[this.currentUserId] || [];
             if (messageCount) {
                 messageCount.textContent = messages.length;
             }
         }
-        
+
         if (chatHeaderActions) {
             chatHeaderActions.style.display = 'flex';
         }
@@ -626,28 +710,28 @@ class ChatManager {
     showMessageInput() {
         const messageInputArea = document.getElementById('messageInputArea');
         const emptyState = document.getElementById('emptyState');
-        
+
         if (messageInputArea) {
             messageInputArea.style.display = 'block';
         }
         if (typeof this.resizeMessageInput === 'function') {
             this.resizeMessageInput();
         }
-        
+
         if (emptyState) {
             emptyState.style.display = 'none';
         }
     }
-    
+
     // ========================================
     // Chat History
     // ========================================
-    
+
     async loadChatHistory(userId) {
         try {
             const response = await fetch(`/admin/chat/history/${userId}`);
             const data = await response.json();
-            
+
             if (data.success) {
                 this.chatHistory[userId] = (data.messages || []).map(msg => {
                     const normalized = { ...msg };
@@ -670,16 +754,16 @@ class ChatManager {
             this.showToast('เกิดข้อผิดพลาดในการโหลดข้อมูล', 'error');
         }
     }
-    
+
     renderMessages() {
         const messagesContainer = document.getElementById('messagesContainer');
         if (!messagesContainer) return;
-        
+
         const messages = this.chatHistory[this.currentUserId] || [];
 
         // Clear typing indicator when rerendering actual messages
         this.hideTypingIndicator();
-        
+
         if (messages.length === 0) {
             messagesContainer.innerHTML = `
                 <div class="app-empty">
@@ -692,7 +776,7 @@ class ChatManager {
             `;
             return;
         }
-        
+
         let lastDateLabel = '';
         const blocks = [];
         messages.forEach(msg => {
@@ -705,11 +789,11 @@ class ChatManager {
         });
 
         messagesContainer.innerHTML = blocks.join('');
-        
+
         // Scroll to bottom
         this.scrollToBottom();
     }
-    
+
     renderMessage(message) {
         const role = message.role || 'user';
         const displayText = this.extractDisplayText(message);
@@ -721,15 +805,15 @@ class ChatManager {
         const feedbackState = message.feedback || null;
         const isSending = message.sending;
         const deliveryStatus = message.deliveryStatus || '';
-        
+
         const roleLabels = {
             user: 'ผู้ใช้',
             admin: 'แอดมิน',
             assistant: 'AI'
         };
-        
+
         const roleLabel = roleLabels[role] || role;
-        
+
         let imagesHtml = '';
         if (message.images && message.images.length > 0) {
             imagesHtml = `
@@ -766,7 +850,7 @@ class ChatManager {
                 </div>
             `;
         }
-        
+
         return `
             <div class="message ${role}">
                 <div class="message-bubble">
@@ -971,7 +1055,7 @@ class ChatManager {
             label.classList.toggle('active', Boolean(feedback));
         }
     }
-    
+
     scrollToBottom() {
         const messagesWrapper = document.getElementById('messagesWrapper');
         if (messagesWrapper) {
@@ -998,19 +1082,28 @@ class ChatManager {
             }
         }
     }
-    
+
+    toggleOrderSidebarCollapse() {
+        const orderSidebar = document.getElementById('orderSidebar');
+        if (!orderSidebar) return;
+
+        const isCollapsed = orderSidebar.classList.toggle('collapsed');
+        localStorage.setItem('orderSidebarCollapsed', isCollapsed);
+    }
+
+
     // ========================================
     // Send Message
     // ========================================
-    
+
     async sendMessage() {
         const messageInput = document.getElementById('messageInput');
         if (!messageInput || !this.currentUserId) return;
-        
+
         const rawMessage = messageInput.value;
         if (!rawMessage.trim()) return;
         const message = rawMessage.replace(/\r\n/g, '\n');
-        
+
         // Optimistic UI: append temp message
         const tempMessage = {
             role: 'admin',
@@ -1048,9 +1141,9 @@ class ChatManager {
                     message: message
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success && data.message) {
                 // Replace last temp message
                 const history = this.chatHistory[this.currentUserId] || [];
@@ -1077,19 +1170,19 @@ class ChatManager {
             }
         }
     }
-    
+
     // ========================================
     // Actions
     // ========================================
-    
+
     async togglePurchaseStatus() {
         if (!this.currentUserId) return;
-        
+
         const user = this.users.find(u => u.userId === this.currentUserId);
         if (!user) return;
-        
+
         const newStatus = !user.hasPurchased;
-        
+
         try {
             const response = await fetch(`/admin/chat/purchase-status/${this.currentUserId}`, {
                 method: 'POST',
@@ -1100,9 +1193,9 @@ class ChatManager {
                     hasPurchased: newStatus
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 user.hasPurchased = newStatus;
                 this.renderUserList();
@@ -1211,16 +1304,16 @@ class ChatManager {
             }
         }
     }
-    
+
     async toggleAI() {
         if (!this.currentUserId) return;
-        
+
         const user = this.users.find(u => u.userId === this.currentUserId);
         if (!user) return;
-        
+
         const currentStatus = user.aiEnabled !== false;
         const newStatus = !currentStatus;
-        
+
         try {
             const response = await fetch('/admin/chat/user-status', {
                 method: 'POST',
@@ -1232,9 +1325,9 @@ class ChatManager {
                     aiEnabled: newStatus
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 user.aiEnabled = newStatus;
                 this.renderUserList();
@@ -1248,21 +1341,21 @@ class ChatManager {
             this.showToast('เกิดข้อผิดพลาด', 'error');
         }
     }
-    
+
     async clearChat() {
         if (!this.currentUserId) return;
-        
+
         if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการล้างประวัติการสนทนาทั้งหมด?')) {
             return;
         }
-        
+
         try {
             const response = await fetch(`/admin/chat/clear/${this.currentUserId}`, {
                 method: 'DELETE'
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 this.clearChatDisplay();
                 this.showToast('ล้างประวัติการสนทนาแล้ว', 'success');
@@ -1274,21 +1367,21 @@ class ChatManager {
             this.showToast('เกิดข้อผิดพลาด', 'error');
         }
     }
-    
+
     clearChatDisplay() {
         this.chatHistory[this.currentUserId] = [];
         this.renderMessages();
     }
-    
+
     // ========================================
     // Tag Management
     // ========================================
-    
+
     async loadAvailableTags() {
         try {
             const response = await fetch('/admin/chat/available-tags');
             const data = await response.json();
-            
+
             if (data.success) {
                 // API returns array of {tag, count} objects
                 this.availableTags = data.tags ? data.tags.map(t => t.tag || t) : [];
@@ -1298,23 +1391,23 @@ class ChatManager {
             console.error('Error loading tags:', error);
         }
     }
-    
+
     renderTagFilters() {
         const tagFilters = document.getElementById('tagFilters');
         if (!tagFilters) return;
-        
+
         if (this.availableTags.length === 0) {
             tagFilters.innerHTML = '<span class="no-tags">ไม่มีแท็ก</span>';
             return;
         }
-        
+
         tagFilters.innerHTML = this.availableTags.slice(0, 10).map(tag => `
             <button class="tag-filter-btn" onclick="chatManager.toggleTagFilter('${this.escapeHtml(tag)}')">
                 ${this.escapeHtml(tag)}
             </button>
         `).join('');
     }
-    
+
     toggleTagFilter(tag) {
         const index = this.currentFilters.tags.indexOf(tag);
         if (index > -1) {
@@ -1322,10 +1415,10 @@ class ChatManager {
         } else {
             this.currentFilters.tags.push(tag);
         }
-        
+
         this.applyFilters();
         this.renderTagFilters();
-        
+
         // Update active state
         document.querySelectorAll('.tag-filter-btn').forEach(btn => {
             if (btn.textContent.trim() === tag) {
@@ -1333,23 +1426,23 @@ class ChatManager {
             }
         });
     }
-    
+
     openTagModal() {
         if (!this.currentUserId) return;
-        
+
         const user = this.users.find(u => u.userId === this.currentUserId);
         if (!user) return;
-        
+
         const modal = new bootstrap.Modal(document.getElementById('tagModal'));
         const tagModalUserName = document.getElementById('tagModalUserName');
         const currentTags = document.getElementById('currentTags');
         const popularTags = document.getElementById('popularTags');
         const newTagInput = document.getElementById('newTagInput');
-        
+
         if (tagModalUserName) {
             tagModalUserName.textContent = user.displayName || user.userId;
         }
-        
+
         if (currentTags) {
             if (user.tags && user.tags.length > 0) {
                 currentTags.innerHTML = user.tags.map(tag => `
@@ -1364,7 +1457,7 @@ class ChatManager {
                 currentTags.innerHTML = '<span class="text-muted">ไม่มีแท็ก</span>';
             }
         }
-        
+
         if (popularTags) {
             if (this.availableTags.length > 0) {
                 popularTags.innerHTML = this.availableTags.slice(0, 10).map(tag => `
@@ -1376,28 +1469,28 @@ class ChatManager {
                 popularTags.innerHTML = '<span class="text-muted">ไม่มีแท็ก</span>';
             }
         }
-        
+
         if (newTagInput) {
             newTagInput.value = '';
         }
-        
+
         modal.show();
     }
-    
+
     async addTag(tag) {
         if (!tag || !this.currentUserId) return;
-        
+
         const user = this.users.find(u => u.userId === this.currentUserId);
         if (!user) return;
-        
+
         const tags = user.tags || [];
         if (tags.includes(tag)) {
             this.showToast('แท็กนี้มีอยู่แล้ว', 'warning');
             return;
         }
-        
+
         tags.push(tag);
-        
+
         try {
             const response = await fetch(`/admin/chat/tags/${this.currentUserId}`, {
                 method: 'POST',
@@ -1408,9 +1501,9 @@ class ChatManager {
                     tags: tags
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 user.tags = tags;
                 this.loadAvailableTags();
@@ -1424,15 +1517,112 @@ class ChatManager {
             this.showToast('เกิดข้อผิดพลาด', 'error');
         }
     }
-    
+
+    // ========================================
+    // User Notes
+    // ========================================
+
+    async openUserNotesModal() {
+        if (!this.currentUserId) {
+            this.showToast('กรุณาเลือกผู้ใช้ก่อน', 'warning');
+            return;
+        }
+
+        const user = this.users.find(u => u.userId === this.currentUserId);
+        const notesModalUserName = document.getElementById('notesModalUserName');
+        const userNotesTextarea = document.getElementById('userNotesTextarea');
+        const notesLastUpdated = document.getElementById('notesLastUpdated');
+        const notesUpdatedTime = document.getElementById('notesUpdatedTime');
+
+        if (notesModalUserName) {
+            notesModalUserName.textContent = user?.displayName || this.currentUserId;
+        }
+
+        if (userNotesTextarea) {
+            userNotesTextarea.value = '';
+        }
+
+        if (notesLastUpdated) {
+            notesLastUpdated.style.display = 'none';
+        }
+
+        // Load existing notes
+        try {
+            const response = await fetch(`/api/users/${this.currentUserId}/notes`);
+            const data = await response.json();
+
+            if (data.success && userNotesTextarea) {
+                userNotesTextarea.value = data.notes || '';
+
+                if (data.updatedAt && notesLastUpdated && notesUpdatedTime) {
+                    notesUpdatedTime.textContent = this.formatRelativeTime(data.updatedAt);
+                    notesLastUpdated.style.display = 'block';
+                }
+            }
+        } catch (error) {
+            console.error('Error loading user notes:', error);
+        }
+
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('userNotesModal'));
+        modal.show();
+    }
+
+    async saveUserNotes() {
+        if (!this.currentUserId) return;
+
+        const userNotesTextarea = document.getElementById('userNotesTextarea');
+        const notes = userNotesTextarea?.value || '';
+
+        const saveBtn = document.getElementById('saveUserNotesBtn');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>กำลังบันทึก...';
+        }
+
+        try {
+            const response = await fetch(`/api/users/${this.currentUserId}/notes`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ notes })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                this.showToast('บันทึกโน้ตแล้ว', 'success');
+
+                // Update last updated time
+                const notesLastUpdated = document.getElementById('notesLastUpdated');
+                const notesUpdatedTime = document.getElementById('notesUpdatedTime');
+                if (notesLastUpdated && notesUpdatedTime) {
+                    notesUpdatedTime.textContent = 'เมื่อสักครู่';
+                    notesLastUpdated.style.display = 'block';
+                }
+            } else {
+                this.showToast('ไม่สามารถบันทึกโน้ตได้', 'error');
+            }
+        } catch (error) {
+            console.error('Error saving user notes:', error);
+            this.showToast('เกิดข้อผิดพลาด', 'error');
+        } finally {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '<i class="fas fa-save me-2"></i>บันทึก';
+            }
+        }
+    }
+
     async removeTag(tag) {
         if (!this.currentUserId) return;
-        
+
         const user = this.users.find(u => u.userId === this.currentUserId);
         if (!user) return;
-        
+
         const tags = (user.tags || []).filter(t => t !== tag);
-        
+
         try {
             const response = await fetch(`/admin/chat/tags/${this.currentUserId}`, {
                 method: 'POST',
@@ -1443,9 +1633,9 @@ class ChatManager {
                     tags: tags
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 user.tags = tags;
                 this.loadAvailableTags();
@@ -1459,45 +1649,45 @@ class ChatManager {
             this.showToast('เกิดข้อผิดพลาด', 'error');
         }
     }
-    
+
     // ========================================
     // Template Modal
     // ========================================
-    
+
     openTemplateModal() {
         // TODO: Implement template modal
         this.showToast('ฟีเจอร์ Template กำลังพัฒนา', 'info');
     }
-    
+
     // ========================================
     // Image Modal
     // ========================================
-    
+
     showImageModal(imageUrl) {
         const modal = new bootstrap.Modal(document.getElementById('imageModal'));
         const modalImage = document.getElementById('modalImage');
-        
+
         if (modalImage) {
             modalImage.src = imageUrl;
         }
-        
+
         modal.show();
     }
-    
+
     downloadImage() {
         const modalImage = document.getElementById('modalImage');
         if (!modalImage || !modalImage.src) return;
-        
+
         const link = document.createElement('a');
         link.href = modalImage.src;
         link.download = 'image.jpg';
         link.click();
     }
-    
+
     // ========================================
     // Socket.IO Handlers
     // ========================================
-    
+
     handleNewMessage(data) {
         const { userId, message } = data;
         const normalizedMessage = {
@@ -1525,11 +1715,11 @@ class ChatManager {
         if (userId === this.currentUserId) {
             this.renderMessages();
         }
-        
+
         // Update user list
         this.loadUsers();
     }
-    
+
     handleFollowUpTagged(data) {
         const user = this.allUsers.find(u => u.userId === data.userId);
         if (user) {
@@ -1537,7 +1727,7 @@ class ChatManager {
             this.applyFilters();
         }
     }
-    
+
     async markAsRead(userId) {
         try {
             await fetch(`/admin/chat/mark-read/${userId}`, {
@@ -1547,41 +1737,41 @@ class ChatManager {
             console.error('Error marking as read:', error);
         }
     }
-    
+
     // ========================================
     // Filters
     // ========================================
-    
+
     clearFilters() {
         this.currentFilters = {
             status: 'all',
             tags: [],
             search: ''
         };
-        
+
         // Reset UI
         document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.filter === 'all');
         });
-        
+
         const userSearch = document.getElementById('userSearch');
         if (userSearch) {
             userSearch.value = '';
         }
-        
+
         this.renderTagFilters();
         this.applyFilters();
     }
-    
+
     updateFilterBadge() {
         const filterBadge = document.getElementById('filterBadge');
         if (!filterBadge) return;
-        
+
         let count = 0;
         if (this.currentFilters.status !== 'all') count++;
         count += this.currentFilters.tags.length;
         if (this.currentFilters.search) count++;
-        
+
         if (count > 0) {
             filterBadge.textContent = count;
             filterBadge.style.display = 'block';
@@ -1589,11 +1779,11 @@ class ChatManager {
             filterBadge.style.display = 'none';
         }
     }
-    
+
     // ========================================
     // Auto Refresh
     // ========================================
-    
+
     setupAutoRefresh() {
         // Refresh user list every 30 seconds
         setInterval(() => {
@@ -1602,11 +1792,11 @@ class ChatManager {
             }
         }, 30000);
     }
-    
+
     // ========================================
     // Utility Functions
     // ========================================
-    
+
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -1686,33 +1876,33 @@ class ChatManager {
         const text = temp.textContent || temp.innerText || '';
         return text.replace(/\u00a0/g, ' ');
     }
-    
+
     truncateText(text, maxLength) {
         if (text.length <= maxLength) return text;
         return text.substring(0, maxLength) + '...';
     }
-    
+
     formatRelativeTime(timestamp) {
         const now = new Date();
         const time = new Date(timestamp);
         const diff = now - time;
-        
+
         const seconds = Math.floor(diff / 1000);
         const minutes = Math.floor(seconds / 60);
         const hours = Math.floor(minutes / 60);
         const days = Math.floor(hours / 24);
-        
+
         if (seconds < 60) return 'เมื่อสักครู่';
         if (minutes < 60) return `${minutes} นาทีที่แล้ว`;
         if (hours < 24) return `${hours} ชั่วโมงที่แล้ว`;
         if (days < 7) return `${days} วันที่แล้ว`;
-        
+
         return time.toLocaleDateString('th-TH', {
             day: 'numeric',
             month: 'short'
         });
     }
-    
+
     formatTime(timestamp) {
         const time = new Date(timestamp);
         return time.toLocaleTimeString('th-TH', {
@@ -1731,7 +1921,7 @@ class ChatManager {
             year: sameYear ? undefined : 'numeric'
         });
     }
-    
+
     showToast(message, type = 'info') {
         const typeMap = {
             success: { icon: 'fa-check-circle', className: 'app-toast--success' },
@@ -1770,18 +1960,18 @@ class ChatManager {
 
         setTimeout(removeToast, 3200);
     }
-    
+
     // ========================================
     // Order Management
     // ========================================
-    
+
     async loadOrders() {
         if (!this.currentUserId) return;
-        
+
         try {
             const response = await fetch(`/admin/chat/orders/${this.currentUserId}`);
             const data = await response.json();
-            
+
             if (data.success) {
                 this.currentOrders = data.orders || [];
                 this.renderOrders();
@@ -1796,18 +1986,18 @@ class ChatManager {
             this.renderOrders();
         }
     }
-    
+
     renderOrders() {
         const orderContent = document.getElementById('orderContent');
         const orderCountBadge = document.getElementById('orderCountBadge');
-        
+
         if (!orderContent) return;
-        
+
         // Update count badge
         if (orderCountBadge) {
             orderCountBadge.textContent = this.currentOrders.length;
         }
-        
+
         // Render orders
         if (this.currentOrders.length === 0) {
             orderContent.innerHTML = `
@@ -1823,10 +2013,10 @@ class ChatManager {
             `;
             return;
         }
-        
+
         orderContent.innerHTML = this.currentOrders.map(order => this.renderOrderCard(order)).join('');
     }
-    
+
     renderOrderCard(order) {
         const statusLabels = {
             pending: 'รอดำเนินการ',
@@ -1835,7 +2025,7 @@ class ChatManager {
             completed: 'เสร็จสิ้น',
             cancelled: 'ยกเลิก'
         };
-        
+
         const statusLabel = statusLabels[order.status] || order.status;
         const extractedDate = new Date(order.extractedAt).toLocaleDateString('th-TH', {
             day: '2-digit',
@@ -1843,7 +2033,7 @@ class ChatManager {
             hour: '2-digit',
             minute: '2-digit'
         });
-        
+
         const orderData = order.orderData || {};
         const items = orderData.items || [];
         const totalAmount = orderData.totalAmount || 0;
@@ -1858,7 +2048,7 @@ class ChatManager {
         }
         const shippingLabel = shippingCost > 0 ? `฿${this.formatNumber(shippingCost)}` : 'ส่งฟรี';
         const shippingAmountClass = shippingCost > 0 ? '' : 'free';
-        
+
         const itemsHtml = items.map(item => `
             <div class="order-item">
                 <span class="order-item-name">${this.escapeHtml(item.product)}</span>
@@ -1866,9 +2056,18 @@ class ChatManager {
                 <span class="order-item-price">฿${this.formatNumber(item.price)}</span>
             </div>
         `).join('');
-        
+
         let metaHtml = '';
-        if (orderData.customerName || orderData.shippingAddress || orderData.phone || orderData.paymentMethod) {
+        // Build full address from address parts
+        const addressParts = [];
+        if (orderData.shippingAddress) addressParts.push(orderData.shippingAddress);
+        if (orderData.addressSubDistrict) addressParts.push(orderData.addressSubDistrict);
+        if (orderData.addressDistrict) addressParts.push(orderData.addressDistrict);
+        if (orderData.addressProvince) addressParts.push(orderData.addressProvince);
+        if (orderData.addressPostalCode) addressParts.push(orderData.addressPostalCode);
+        const fullAddress = addressParts.join(' ');
+
+        if (orderData.customerName || fullAddress || orderData.phone || orderData.paymentMethod) {
             metaHtml = '<div class="order-meta">';
 
             if (orderData.customerName) {
@@ -1881,16 +2080,16 @@ class ChatManager {
                 `;
             }
 
-            if (orderData.shippingAddress) {
+            if (fullAddress) {
                 metaHtml += `
                     <div class="order-meta-item">
                         <i class="fas fa-map-marker-alt"></i>
                         <span class="order-meta-label">ที่อยู่:</span>
-                        <span>${this.escapeHtml(orderData.shippingAddress)}</span>
+                        <span>${this.escapeHtml(fullAddress)}</span>
                     </div>
                 `;
             }
-            
+
             if (orderData.phone) {
                 metaHtml += `
                     <div class="order-meta-item">
@@ -1900,7 +2099,7 @@ class ChatManager {
                     </div>
                 `;
             }
-            
+
             if (orderData.paymentMethod) {
                 metaHtml += `
                     <div class="order-meta-item">
@@ -1910,10 +2109,10 @@ class ChatManager {
                     </div>
                 `;
             }
-            
+
             metaHtml += '</div>';
         }
-        
+
         return `
             <div class="order-card" data-order-id="${order._id}">
                 <div class="order-card-header">
@@ -1948,21 +2147,21 @@ class ChatManager {
             </div>
         `;
     }
-    
+
     async extractOrder() {
         if (!this.currentUserId) {
             this.showToast('กรุณาเลือกผู้ใช้ก่อน', 'warning');
             return;
         }
-        
+
         if (this.isExtractingOrder) {
             this.showToast('กำลังสกัดออเดอร์อยู่...', 'info');
             return;
         }
-        
+
         this.isExtractingOrder = true;
         this.showToast('กำลังวิเคราะห์บทสนทนา...', 'info');
-        
+
         try {
             const response = await fetch('/admin/chat/orders/extract', {
                 method: 'POST',
@@ -1973,9 +2172,9 @@ class ChatManager {
                     userId: this.currentUserId
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 if (data.hasOrder) {
                     this.showToast('สกัดออเดอร์สำเร็จ!', 'success');
@@ -1994,20 +2193,39 @@ class ChatManager {
             this.isExtractingOrder = false;
         }
     }
-    
+
     editOrder(orderId) {
         const order = this.currentOrders.find(o => o._id === orderId);
         if (!order) return;
-        
+
         // Populate modal with order data
         document.getElementById('editOrderId').value = orderId;
         document.getElementById('editOrderStatus').value = order.status || 'pending';
         document.getElementById('editOrderNotes').value = order.notes || '';
-        
+
         const orderData = order.orderData || {};
         document.getElementById('editShippingAddress').value = orderData.shippingAddress || '';
         document.getElementById('editPhone').value = orderData.phone || '';
         document.getElementById('editPaymentMethod').value = orderData.paymentMethod || 'เก็บเงินปลายทาง';
+
+        // Populate address fields
+        const addressSubDistrictInput = document.getElementById('editAddressSubDistrict');
+        if (addressSubDistrictInput) {
+            addressSubDistrictInput.value = orderData.addressSubDistrict || '';
+        }
+        const addressDistrictInput = document.getElementById('editAddressDistrict');
+        if (addressDistrictInput) {
+            addressDistrictInput.value = orderData.addressDistrict || '';
+        }
+        const addressProvinceInput = document.getElementById('editAddressProvince');
+        if (addressProvinceInput) {
+            addressProvinceInput.value = orderData.addressProvince || '';
+        }
+        const addressPostalCodeInput = document.getElementById('editAddressPostalCode');
+        if (addressPostalCodeInput) {
+            addressPostalCodeInput.value = orderData.addressPostalCode || '';
+        }
+
         const customerNameInput = document.getElementById('editCustomerName');
         if (customerNameInput) {
             customerNameInput.value = orderData.customerName || '';
@@ -2025,7 +2243,7 @@ class ChatManager {
             }
             shippingCostInput.value = shippingCost;
         }
-        
+
         // Render order items
         const editOrderItems = document.getElementById('editOrderItems');
         if (editOrderItems && orderData.items) {
@@ -2044,24 +2262,24 @@ class ChatManager {
                 </button>
             `;
         }
-        
+
         // Show modal
         const modal = new bootstrap.Modal(document.getElementById('orderEditModal'));
         modal.show();
     }
-    
+
     async deleteOrder(orderId) {
         if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบออเดอร์นี้?')) {
             return;
         }
-        
+
         try {
             const response = await fetch(`/admin/chat/orders/${orderId}`, {
                 method: 'DELETE'
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 this.showToast('ลบออเดอร์สำเร็จ', 'success');
                 await this.loadOrders();
@@ -2074,24 +2292,24 @@ class ChatManager {
             this.showToast('เกิดข้อผิดพลาดในการลบออเดอร์', 'error');
         }
     }
-    
+
     removeOrderItem(index) {
         const editOrderItems = document.getElementById('editOrderItems');
         if (!editOrderItems) return;
-        
+
         const itemElements = editOrderItems.querySelectorAll('.order-item-edit');
         if (itemElements[index]) {
             itemElements[index].remove();
         }
     }
-    
+
     addOrderItem() {
         const editOrderItems = document.getElementById('editOrderItems');
         if (!editOrderItems) return;
-        
+
         const addButton = editOrderItems.querySelector('.btn-add-item');
         const newIndex = editOrderItems.querySelectorAll('.order-item-edit').length;
-        
+
         const newItem = document.createElement('div');
         newItem.className = 'order-item-edit';
         newItem.dataset.index = newIndex;
@@ -2103,38 +2321,38 @@ class ChatManager {
                 <i class="fas fa-times"></i>
             </button>
         `;
-        
+
         if (addButton) {
             addButton.before(newItem);
         } else {
             editOrderItems.appendChild(newItem);
         }
     }
-    
+
     async saveOrder() {
         const orderId = document.getElementById('editOrderId').value;
         if (!orderId) return;
-        
+
         // Collect order items
         const editOrderItems = document.getElementById('editOrderItems');
         const itemElements = editOrderItems.querySelectorAll('.order-item-edit');
         const items = [];
-        
+
         itemElements.forEach((element) => {
             const product = element.querySelector('[data-field="product"]').value.trim();
             const quantity = parseInt(element.querySelector('[data-field="quantity"]').value) || 0;
             const price = parseFloat(element.querySelector('[data-field="price"]').value) || 0;
-            
+
             if (product && quantity > 0) {
                 items.push({ product, quantity, price });
             }
         });
-        
+
         if (items.length === 0) {
             this.showToast('กรุณาเพิ่มสินค้าอย่างน้อย 1 รายการ', 'warning');
             return;
         }
-        
+
         const shippingCostInput = document.getElementById('editShippingCost');
         let shippingCost = 0;
         if (shippingCostInput) {
@@ -2143,15 +2361,39 @@ class ChatManager {
                 shippingCost = parsed;
             }
         }
-        
+
         // Calculate total (รวมค่าส่ง)
         const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.price), 0) + shippingCost;
-        
+
         // Collect other data
         const orderData = {
             items,
             totalAmount,
             shippingAddress: document.getElementById('editShippingAddress').value.trim() || null,
+            addressSubDistrict: (() => {
+                const input = document.getElementById('editAddressSubDistrict');
+                if (!input) return null;
+                const value = input.value.trim();
+                return value || null;
+            })(),
+            addressDistrict: (() => {
+                const input = document.getElementById('editAddressDistrict');
+                if (!input) return null;
+                const value = input.value.trim();
+                return value || null;
+            })(),
+            addressProvince: (() => {
+                const input = document.getElementById('editAddressProvince');
+                if (!input) return null;
+                const value = input.value.trim();
+                return value || null;
+            })(),
+            addressPostalCode: (() => {
+                const input = document.getElementById('editAddressPostalCode');
+                if (!input) return null;
+                const value = input.value.trim();
+                return value || null;
+            })(),
             phone: document.getElementById('editPhone').value.trim() || null,
             paymentMethod: document.getElementById('editPaymentMethod').value || null,
             shippingCost,
@@ -2162,10 +2404,10 @@ class ChatManager {
                 return value || null;
             })()
         };
-        
+
         const status = document.getElementById('editOrderStatus').value;
         const notes = document.getElementById('editOrderNotes').value.trim();
-        
+
         try {
             const response = await fetch(`/admin/chat/orders/${orderId}`, {
                 method: 'PUT',
@@ -2178,13 +2420,13 @@ class ChatManager {
                     notes
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 this.showToast('บันทึกออเดอร์สำเร็จ', 'success');
                 await this.loadOrders();
-                
+
                 // Close modal
                 const modal = bootstrap.Modal.getInstance(document.getElementById('orderEditModal'));
                 if (modal) modal.hide();
@@ -2197,7 +2439,7 @@ class ChatManager {
             this.showToast('เกิดข้อผิดพลาดในการบันทึกออเดอร์', 'error');
         }
     }
-    
+
     formatNumber(num) {
         return new Intl.NumberFormat('th-TH', {
             minimumFractionDigits: 0,

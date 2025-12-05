@@ -18537,6 +18537,71 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
   }
 });
 
+// ========================================
+// User Notes API
+// ========================================
+
+// API: ดึงโน้ตของผู้ใช้
+app.get("/api/users/:userId/notes", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId || typeof userId !== "string") {
+      return res.status(400).json({ success: false, error: "ไม่พบรหัสผู้ใช้" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("user_notes");
+
+    const doc = await coll.findOne({ userId });
+    const notes = doc?.notes || "";
+    const updatedAt = doc?.updatedAt || null;
+
+    res.json({ success: true, userId, notes, updatedAt });
+  } catch (error) {
+    console.error("[UserNotes] ไม่สามารถดึงโน้ตได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: บันทึกโน้ตของผู้ใช้
+app.patch("/api/users/:userId/notes", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { notes } = req.body || {};
+
+    if (!userId || typeof userId !== "string") {
+      return res.status(400).json({ success: false, error: "ไม่พบรหัสผู้ใช้" });
+    }
+
+    const sanitizedNotes = typeof notes === "string" ? notes.trim().slice(0, 5000) : "";
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("user_notes");
+
+    await coll.updateOne(
+      { userId },
+      {
+        $set: {
+          notes: sanitizedNotes,
+          updatedAt: new Date()
+        },
+        $setOnInsert: {
+          createdAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+
+    console.log(`[UserNotes] บันทึกโน้ตสำหรับผู้ใช้ ${userId.substring(0, 8)}...`);
+    res.json({ success: true, userId, notes: sanitizedNotes });
+  } catch (error) {
+    console.error("[UserNotes] ไม่สามารถบันทึกโน้ตได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // API: Generate Print Label HTML
 app.get("/admin/orders/:orderId/print-label", async (req, res) => {
   try {

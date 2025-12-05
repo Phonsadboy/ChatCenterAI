@@ -14,7 +14,7 @@ class ChatManager {
             tags: [],
             search: ''
         };
-        this.closeSidebarForMobile = () => {};
+        this.closeSidebarForMobile = () => { };
         this.mobileMediaQuery = null;
         this.updateAppHeight = this.updateAppHeight.bind(this);
         const followUpConfig = window.chatCenterFollowUpConfig || {};
@@ -22,27 +22,27 @@ class ChatManager {
             analysisEnabled: typeof followUpConfig.analysisEnabled === 'boolean' ? followUpConfig.analysisEnabled : true,
             showInChat: typeof followUpConfig.showInChat === 'boolean' ? followUpConfig.showInChat : true
         };
-        
+
         // ✅ Initialize performance utilities
         this.optimizedFetch = new window.performanceUtils.OptimizedFetch();
         this.lazyLoader = new window.performanceUtils.LazyImageLoader();
         this.smartPoller = null;
-        
+
         // ✅ Debounced search
         this.debouncedSearch = this.debounce(this.performSearch.bind(this), 300);
-        
+
         // ✅ NEW: Quick Replies & Templates
         this.quickReplies = [];
         this.currentEditingTemplateId = null;
-        
+
         // ✅ NEW: Chat Search
         this.chatSearchResults = [];
         this.currentSearchResultIndex = -1;
-        
+
         // ✅ NEW: Message Selection for Forwarding
         this.selectedMessages = new Set();
         this.isSelectionMode = false;
-        
+
         // ✅ NEW: Keyboard Shortcuts
         this.shortcuts = {
             'ctrl+k': () => this.openChatSearch(),
@@ -52,7 +52,7 @@ class ChatManager {
             'ctrl+/': () => this.openShortcutsModal(),
             'esc': () => this.handleEscapeKey()
         };
-        
+
         this.init();
     }
 
@@ -149,7 +149,7 @@ class ChatManager {
         this.loadUsers();
         this.loadAvailableTags();
         this.setupAutoRefresh();
-        
+
         // ✅ NEW: Setup new features
         this.setupTemplateListeners();
         this.setupChatSearchListeners();
@@ -164,7 +164,7 @@ class ChatManager {
 
     initializeSocket() {
         this.socket = io();
-        
+
         this.socket.on('connect', () => {
             console.log('เชื่อมต่อ Socket.IO สำเร็จ');
             window.showSuccess('เชื่อมต่อสำเร็จ');
@@ -235,13 +235,13 @@ class ChatManager {
         messageInput.addEventListener('input', (e) => {
             const count = e.target.value.length;
             charCount.textContent = count;
-            
+
             if (count > 900) {
                 charCount.classList.add('text-danger');
             } else {
                 charCount.classList.remove('text-danger');
             }
-            
+
             // ปรับขนาด textarea อัตโนมัติ
             this.autoResizeTextarea(e.target);
         });
@@ -253,7 +253,7 @@ class ChatManager {
                 this.openTemplateModal();
                 return;
             }
-            
+
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 this.sendMessage();
@@ -419,12 +419,12 @@ class ChatManager {
     autoResizeTextarea(textarea) {
         // รีเซ็ตความสูงก่อน
         textarea.style.height = 'auto';
-        
+
         // คำนวณความสูงที่เหมาะสม
         const scrollHeight = textarea.scrollHeight;
         const minHeight = 48; // min-height จาก CSS
         const maxHeight = 120; // max-height จาก CSS
-        
+
         // กำหนดความสูงใหม่
         const newHeight = Math.min(Math.max(scrollHeight, minHeight), maxHeight);
         textarea.style.height = newHeight + 'px';
@@ -432,24 +432,24 @@ class ChatManager {
 
     async loadUsers() {
         if (this.isLoading) return;
-        
+
         this.isLoading = true;
         const userList = document.getElementById('userList');
-        
+
         // ✅ แสดง skeleton loading
         userList.innerHTML = LoadingStateManager.createSkeleton('userItem', 5);
 
         try {
             // ✅ ใช้ optimized fetch พร้อม cache
             const data = await this.optimizedFetch.fetch('/admin/chat/users');
-            
+
             if (data.success) {
                 // เก็บข้อมูลผู้ใช้ทั้งหมด
                 this.allUsers = data.users || [];
-                
+
                 // ใช้ filters
                 this.applyFilters();
-                
+
                 if (this.currentUserId) {
                     const current = this.allUsers.find(u => u.userId === this.currentUserId);
                     if (current) {
@@ -459,7 +459,7 @@ class ChatManager {
             } else {
                 console.error('ไม่สามารถโหลดรายชื่อผู้ใช้ได้:', data.error);
                 userList.innerHTML = LoadingStateManager.createErrorState(
-                    'ไม่สามารถโหลดข้อมูลได้', 
+                    'ไม่สามารถโหลดข้อมูลได้',
                     'chatManager.loadUsers()'
                 );
             }
@@ -487,7 +487,7 @@ class ChatManager {
 
     renderUserList() {
         const userList = document.getElementById('userList');
-        
+
         if (this.users.length === 0) {
             userList.innerHTML = `
                 <div class="empty-state">
@@ -508,7 +508,7 @@ class ChatManager {
             const showFollowUp = (user.followUp && typeof user.followUp.showInChat === 'boolean')
                 ? user.followUp.showInChat
                 : this.followUpOptions.showInChat;
-            
+
             // ใช้ข้อมูลที่แปลงแล้วจาก backend
             let lastMsg = '';
             if (user.lastMessage) {
@@ -521,20 +521,20 @@ class ChatManager {
                     lastMsg = user.lastMessage;
                 }
             }
-            
+
             const aiBadge = user.aiEnabled ? `<span class="badge bg-success ms-1" style="font-size: 0.65rem;">AI</span>` : '';
-            const followUpBadge = (showFollowUp && user.hasFollowUp) 
+            const followUpBadge = (showFollowUp && user.hasFollowUp)
                 ? `<span class="badge followup-badge ms-1" style="font-size: 0.65rem;" title="${this.escapeAttribute(user.followUpReason || 'ลูกค้ายืนยันสั่งซื้อแล้ว')}">ติดตาม</span>`
                 : '';
-            
-            const purchasedIcon = user.hasPurchased 
-                ? `<i class="fas fa-shopping-cart text-success ms-1" title="เคยซื้อแล้ว"></i>` 
+
+            const purchasedIcon = user.hasPurchased
+                ? `<i class="fas fa-shopping-cart text-success ms-1" title="เคยซื้อแล้ว"></i>`
                 : '';
-            
-            const orderBadge = user.hasOrders 
-                ? `<span class="user-has-order" title="มีออเดอร์ ${user.orderCount || 1} รายการ">🛒</span>` 
+
+            const orderBadge = user.hasOrders
+                ? `<span class="user-has-order" title="มีออเดอร์ ${user.orderCount || 1} รายการ">🛒</span>`
                 : '';
-            
+
             // แสดงแท็ก (สูงสุด 2 tags)
             let tagsHtml = '';
             if (user.tags && user.tags.length > 0) {
@@ -547,7 +547,7 @@ class ChatManager {
                     tagsHtml += `<span class="badge bg-secondary ms-1" style="font-size: 0.6rem;">+${user.tags.length - 2}</span>`;
                 }
             }
-            
+
             const initials = displayName.charAt(0).toUpperCase();
 
             return `
@@ -582,7 +582,7 @@ class ChatManager {
     updateUserCount() {
         const userCount = document.getElementById('userCount');
         userCount.textContent = this.users.length;
-        
+
         const filteredUserCount = document.getElementById('filteredUserCount');
         if (filteredUserCount) {
             filteredUserCount.textContent = this.users.length;
@@ -690,7 +690,7 @@ class ChatManager {
         try {
             const response = await fetch('/admin/chat/available-tags');
             const data = await response.json();
-            
+
             if (data.success) {
                 this.availableTags = data.tags || [];
                 this.renderTagFilters();
@@ -740,7 +740,7 @@ class ChatManager {
         try {
             const response = await fetch(`/admin/chat/tags/${userId}`);
             const data = await response.json();
-            
+
             if (data.success) {
                 this.renderCurrentTags(data.tags || []);
             }
@@ -819,7 +819,7 @@ class ChatManager {
             // Get current tags
             const response = await fetch(`/admin/chat/tags/${this.currentUserId}`);
             const data = await response.json();
-            
+
             if (!data.success) {
                 this.showToast('ไม่สามารถโหลดแท็กได้', 'error');
                 return;
@@ -845,7 +845,7 @@ class ChatManager {
         try {
             const response = await fetch(`/admin/chat/tags/${this.currentUserId}`);
             const data = await response.json();
-            
+
             if (!data.success) return;
 
             const currentTags = data.tags || [];
@@ -903,7 +903,7 @@ class ChatManager {
                     this.updateChatHeader(user);
                 }
                 this.showToast(
-                    newStatus ? 'ทำเครื่องหมายว่าเคยซื้อแล้ว' : 'ยกเลิกเครื่องหมายการซื้อ', 
+                    newStatus ? 'ทำเครื่องหมายว่าเคยซื้อแล้ว' : 'ยกเลิกเครื่องหมายการซื้อ',
                     'success'
                 );
             } else {
@@ -918,7 +918,7 @@ class ChatManager {
     getTagColorClass(tag) {
         // สุ่มสีตามชื่อแท็ก (consistent)
         const colors = [
-            'bg-primary', 'bg-success', 'bg-info', 'bg-warning', 
+            'bg-primary', 'bg-success', 'bg-info', 'bg-warning',
             'bg-danger', 'bg-secondary', 'bg-dark'
         ];
         let hash = 0;
@@ -930,7 +930,7 @@ class ChatManager {
 
     async selectUser(userId) {
         if (this.currentUserId === userId) return;
-        
+
         this.currentUserId = userId;
 
         // Update UI: toggle active state using data attribute selector
@@ -955,16 +955,16 @@ class ChatManager {
                 const res = await fetch(`/admin/chat/user-status/${userId}`);
                 const data = await res.json();
                 if (data.success) user.aiEnabled = !!data.aiEnabled;
-            } catch (_) {}
+            } catch (_) { }
             this.updateChatHeader(user);
         }
-        
+
         // Show message input
         document.getElementById('messageInputContainer').style.display = 'block';
-        
+
         // Load chat history
         await this.loadChatHistory(userId);
-        
+
         // Load orders for current user
         await this.renderOrderSidebar();
     }
@@ -984,7 +984,7 @@ class ChatManager {
             ? user.followUp.showInChat
             : this.followUpOptions.showInChat;
         const shouldShowFollowUp = showFollowUp && user.hasFollowUp;
-        
+
         // Purchase status
         const purchasedBtnClass = user.hasPurchased ? 'btn-success' : 'btn-outline-secondary';
         const purchasedIcon = user.hasPurchased ? 'fa-check-circle' : 'fa-shopping-cart';
@@ -1063,7 +1063,7 @@ class ChatManager {
         try {
             const response = await fetch(`/admin/chat/history/${userId}`);
             const data = await response.json();
-            
+
             if (data.success) {
                 this.chatHistory[userId] = data.messages;
                 this.renderChatHistory(userId);
@@ -1080,7 +1080,7 @@ class ChatManager {
     renderChatHistory(userId) {
         const container = document.getElementById('messagesContainer');
         const messages = this.chatHistory[userId] || [];
-        
+
         if (messages.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
@@ -1095,14 +1095,14 @@ class ChatManager {
         }
 
         const chatHtml = messages.map(message => {
-            const messageClass = message.role === 'user' ? 'user' : 
-                               message.source === 'admin_chat' ? 'admin' : 'assistant';
-            const senderLabel = message.role === 'user' ? 'ผู้ใช้' : 
-                              message.source === 'admin_chat' ? 'แอดมิน' : 'AI Assistant';
-            
+            const messageClass = message.role === 'user' ? 'user' :
+                message.source === 'admin_chat' ? 'admin' : 'assistant';
+            const senderLabel = message.role === 'user' ? 'ผู้ใช้' :
+                message.source === 'admin_chat' ? 'แอดมิน' : 'AI Assistant';
+
             // Normalize base content
             const baseContent = (message && (message.content ?? message.text ?? message.message)) || '';
-            
+
             // Process message content
             let displayContent = baseContent;
             if (message.role !== 'user' && displayContent.includes('<reply>')) {
@@ -1134,7 +1134,7 @@ class ChatManager {
                     displayContent = safe ? `<div class="message-text">${this.escapeHtml(safe)}</div>` : '';
                 }
             }
-            
+
             return `
                 <div class="message ${messageClass}">
                     <div class="message-header">
@@ -1156,7 +1156,7 @@ class ChatManager {
     async sendMessage() {
         const messageInput = document.getElementById('messageInput');
         const messageText = messageInput.value.trim();
-        
+
         if (!messageText || !this.currentUserId) return;
 
         try {
@@ -1191,23 +1191,23 @@ class ChatManager {
                     timestamp: new Date(),
                     source: 'admin_chat'
                 };
-                
+
                 if (!this.chatHistory[this.currentUserId]) {
                     this.chatHistory[this.currentUserId] = [];
                 }
                 this.chatHistory[this.currentUserId].push(newMessage);
-                
+
                 // Update display
                 this.renderChatHistory(this.currentUserId);
-                
+
                 // Clear input
                 messageInput.value = '';
                 document.getElementById('charCount').textContent = '0';
                 this.autoResizeTextarea(messageInput); // รีเซ็ตขนาด textarea
-                
+
                 // Update user list
                 this.loadUsers();
-                
+
                 this.showToast('ส่งข้อความสำเร็จ', 'success');
             } else {
                 this.showToast('ไม่สามารถส่งข้อความได้: ' + data.error, 'error');
@@ -1227,10 +1227,10 @@ class ChatManager {
             }
             user.lastMessage = this.normalizeContentToPreview(data.message?.content);
             user.lastTimestamp = data.timestamp || data.message?.timestamp || new Date().toISOString();
-            
+
             // Update display
             this.renderUserList();
-            
+
             // If it's the current user, update chat
             if (data.userId === this.currentUserId) {
                 if (!this.chatHistory[this.currentUserId]) {
@@ -1265,7 +1265,7 @@ class ChatManager {
 
     async clearUserChat() {
         if (!this.currentUserId) return;
-        
+
         if (!confirm('คุณแน่ใจหรือไม่ที่จะล้างประวัติการสนทนาของผู้ใช้นี้?')) {
             return;
         }
@@ -1300,9 +1300,9 @@ class ChatManager {
                 <p>เลือกผู้ใช้จากรายชื่อด้านซ้ายเพื่อเริ่มการสนทนา</p>
             </div>
         `;
-        
+
         document.getElementById('messageInputContainer').style.display = 'none';
-        
+
         const chatHeader = document.getElementById('chatHeader');
         chatHeader.innerHTML = `
             <div class="header-content">
@@ -1317,7 +1317,7 @@ class ChatManager {
                 </div>
             </div>
         `;
-        
+
         this.currentUserId = null;
     }
 
@@ -1340,7 +1340,7 @@ class ChatManager {
         if (diffMins < 60) return `${diffMins} นาทีที่แล้ว`;
         if (diffHours < 24) return `${diffHours} ชั่วโมงที่แล้ว`;
         if (diffDays < 7) return `${diffDays} วันที่แล้ว`;
-        
+
         return date.toLocaleDateString('th-TH', {
             year: 'numeric',
             month: 'short',
@@ -1393,7 +1393,7 @@ class ChatManager {
     openImageModal(imageSrc) {
         const modal = new bootstrap.Modal(document.getElementById('imageModal'));
         const modalImage = document.getElementById('modalImage');
-        
+
         modalImage.src = imageSrc;
         this.currentImageSrc = imageSrc;
         modal.show();
@@ -1401,20 +1401,20 @@ class ChatManager {
 
     downloadImage() {
         if (!this.currentImageSrc) return;
-        
+
         const link = document.createElement('a');
         link.href = this.currentImageSrc;
         link.download = 'line_image.jpg';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        
+
         this.showToast('ดาวน์โหลดรูปภาพเรียบร้อยแล้ว', 'success');
     }
 
     async copyImage() {
         if (!this.currentImageSrc) return;
-        
+
         try {
             const response = await fetch(this.currentImageSrc);
             const blob = await response.blob();
@@ -1423,7 +1423,7 @@ class ChatManager {
                     [blob.type]: blob
                 })
             ]);
-            
+
             this.showToast('คัดลอกรูปภาพเรียบร้อยแล้ว', 'success');
         } catch (error) {
             console.error('ไม่สามารถคัดลอกรูปภาพได้:', error);
@@ -1512,7 +1512,7 @@ class ChatManager {
     createImageMessageHTML(imageData, index = 0) {
         const base64Size = Math.ceil((imageData.base64.length * 3) / 4);
         const sizeKB = (base64Size / 1024).toFixed(1);
-        
+
         return `
             <div class="message-image">
                 <img src="data:image/jpeg;base64,${imageData.base64}" 
@@ -1535,7 +1535,7 @@ class ChatManager {
 
     createCompactMessageHTML(processed) {
         let contentHtml = '';
-        
+
         // Show text
         if (processed.textParts.length > 0) {
             const textContent = processed.textParts.join('\n'); // ใช้ \n แทน space เพื่อรักษาการเว้นบรรทัด
@@ -1543,7 +1543,7 @@ class ChatManager {
                 contentHtml += `<div class="message-text">${this.escapeHtml(textContent)}</div>`;
             }
         }
-        
+
         // Show images
         if (processed.imageParts.length > 0) {
             if (processed.imageParts.length === 1) {
@@ -1567,7 +1567,7 @@ class ChatManager {
                 </div>`;
             }
         }
-        
+
         return contentHtml;
     }
 
@@ -1575,20 +1575,19 @@ class ChatManager {
         const toast = document.getElementById('toast');
         const toastBody = document.getElementById('toastBody');
         const toastHeader = toast.querySelector('.toast-header');
-        
+
         toastBody.textContent = message;
-        
+
         // Update toast styling based on type
         toast.className = `toast ${type}`;
-        
+
         const icon = toastHeader.querySelector('i');
-        icon.className = `fas ${
-            type === 'success' ? 'fa-check-circle text-success' :
+        icon.className = `fas ${type === 'success' ? 'fa-check-circle text-success' :
             type === 'error' ? 'fa-exclamation-circle text-danger' :
-            type === 'warning' ? 'fa-exclamation-triangle text-warning' :
-            'fa-info-circle text-primary'
-        } me-2`;
-        
+                type === 'warning' ? 'fa-exclamation-triangle text-warning' :
+                    'fa-info-circle text-primary'
+            } me-2`;
+
         const bsToast = new bootstrap.Toast(toast);
         bsToast.show();
     }
@@ -1605,7 +1604,7 @@ class ChatManager {
     // ==================== NEW FEATURES ====================
 
     // ========== 1. Quick Replies & Templates ==========
-    
+
     setupTemplateListeners() {
         // Template Modal - Save button
         const saveTemplateBtn = document.getElementById('saveTemplateBtn');
@@ -1644,7 +1643,7 @@ class ChatManager {
         try {
             const response = await fetch('/admin/chat/templates');
             if (!response.ok) throw new Error('Failed to load templates');
-            
+
             const data = await response.json();
             this.quickReplies = data.templates || [];
             this.renderQuickReplies();
@@ -1749,7 +1748,7 @@ class ChatManager {
         items.forEach(item => {
             const title = item.querySelector('.template-title').textContent.toLowerCase();
             const preview = item.querySelector('.template-preview').textContent.toLowerCase();
-            
+
             if (title.includes(term) || preview.includes(term)) {
                 item.style.display = '';
             } else {
@@ -1763,7 +1762,7 @@ class ChatManager {
         document.getElementById('addTemplateModalLabel').textContent = 'เพิ่ม Template ใหม่';
         document.getElementById('templateTitleInput').value = '';
         document.getElementById('templateMessageInput').value = '';
-        
+
         const addModal = new bootstrap.Modal(document.getElementById('addTemplateModal'));
         addModal.show();
     }
@@ -1827,10 +1826,10 @@ class ChatManager {
         };
 
         try {
-            const url = this.currentEditingTemplateId 
+            const url = this.currentEditingTemplateId
                 ? `/admin/chat/templates/${this.currentEditingTemplateId}`
                 : '/admin/chat/templates';
-            
+
             const response = await fetch(url, {
                 method: this.currentEditingTemplateId ? 'PUT' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1846,13 +1845,13 @@ class ChatManager {
                 } else {
                     this.quickReplies.push(templateData);
                 }
-                
+
                 this.renderQuickReplies();
                 this.renderTemplateList();
-                
+
                 const addModal = bootstrap.Modal.getInstance(document.getElementById('addTemplateModal'));
                 if (addModal) addModal.hide();
-                
+
                 window.showSuccess(this.currentEditingTemplateId ? 'แก้ไข Template สำเร็จ' : 'เพิ่ม Template สำเร็จ');
             } else {
                 throw new Error('Failed to save template');
@@ -1868,13 +1867,13 @@ class ChatManager {
             } else {
                 this.quickReplies.push(templateData);
             }
-            
+
             this.renderQuickReplies();
             this.renderTemplateList();
-            
+
             const addModal = bootstrap.Modal.getInstance(document.getElementById('addTemplateModal'));
             if (addModal) addModal.hide();
-            
+
             window.showSuccess(this.currentEditingTemplateId ? 'แก้ไข Template สำเร็จ' : 'เพิ่ม Template สำเร็จ');
         }
     }
@@ -1892,7 +1891,7 @@ class ChatManager {
     }
 
     // ========== 2. Chat Search ==========
-    
+
     setupChatSearchListeners() {
         const searchChatBtn = document.getElementById('searchChatBtn');
         if (searchChatBtn) {
@@ -1933,7 +1932,7 @@ class ChatManager {
 
         const modal = new bootstrap.Modal(document.getElementById('chatSearchModal'));
         modal.show();
-        
+
         // Focus on search input
         setTimeout(() => {
             const input = document.getElementById('chatSearchInput');
@@ -1974,7 +1973,7 @@ class ChatManager {
         if (this.chatSearchResults.length === 0) return;
 
         this.currentSearchResultIndex += direction;
-        
+
         if (this.currentSearchResultIndex < 0) {
             this.currentSearchResultIndex = this.chatSearchResults.length - 1;
         } else if (this.currentSearchResultIndex >= this.chatSearchResults.length) {
@@ -1992,7 +1991,7 @@ class ChatManager {
         // Scroll to the message
         const messagesContainer = document.getElementById('messagesContainer');
         const messageElements = messagesContainer.querySelectorAll('.message-item');
-        
+
         // Remove previous highlights
         messageElements.forEach(el => el.classList.remove('search-highlight'));
 
@@ -2019,7 +2018,7 @@ class ChatManager {
     }
 
     // ========== 3. Message Forwarding ==========
-    
+
     setupForwardListeners() {
         const forwardMessageBtn = document.getElementById('forwardMessageBtn');
         if (forwardMessageBtn) {
@@ -2137,7 +2136,7 @@ class ChatManager {
     }
 
     // ========== 4. Chat Assignment ==========
-    
+
     setupAssignmentListeners() {
         const assignChatBtn = document.getElementById('assignChatBtn');
         if (assignChatBtn) {
@@ -2174,7 +2173,7 @@ class ChatManager {
             if (response.ok) {
                 const data = await response.json();
                 const admins = data.admins || [];
-                
+
                 if (admins.length === 0) {
                     list.innerHTML = '<div class="text-center text-muted py-4">ไม่มีผู้ดูแลระบบ</div>';
                     return;
@@ -2238,7 +2237,7 @@ class ChatManager {
     }
 
     // ========== 5. Chat Statistics ==========
-    
+
     setupStatisticsListeners() {
         const showStatsBtn = document.getElementById('showStatsBtn');
         if (showStatsBtn) {
@@ -2261,7 +2260,7 @@ class ChatManager {
 
     calculateStatistics() {
         const messages = this.chatHistory[this.currentUserId] || [];
-        
+
         const stats = {
             totalMessages: messages.length,
             userMessages: messages.filter(m => m.isUser).length,
@@ -2277,7 +2276,7 @@ class ChatManager {
 
     calculateAvgResponseTime(messages) {
         const responseTimes = [];
-        
+
         for (let i = 1; i < messages.length; i++) {
             if (messages[i - 1].isUser && !messages[i].isUser) {
                 const prevTime = new Date(messages[i - 1].timestamp);
@@ -2288,7 +2287,7 @@ class ChatManager {
         }
 
         if (responseTimes.length === 0) return 0;
-        
+
         const avg = responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length;
         return Math.round(avg * 10) / 10; // round to 1 decimal
     }
@@ -2374,7 +2373,7 @@ class ChatManager {
     }
 
     // ========== 6. Export Chat ==========
-    
+
     setupExportListeners() {
         const exportChatBtn = document.getElementById('exportChatBtn');
         if (exportChatBtn) {
@@ -2444,7 +2443,7 @@ class ChatManager {
     async exportAsPDF(messages, fileName, user) {
         // For PDF export, we'll create a simple HTML version and use the browser's print function
         // In a production environment, you might want to use a library like jsPDF or pdfmake
-        
+
         const printWindow = window.open('', '', 'height=600,width=800');
         printWindow.document.write('<html><head><title>Export Chat</title>');
         printWindow.document.write('<style>');
@@ -2458,12 +2457,12 @@ class ChatManager {
         `);
         printWindow.document.write('</style></head><body>');
         printWindow.document.write(`<h1>ประวัติการสนทนา - ${this.escapeHtml(user ? user.displayName : this.currentUserId)}</h1>`);
-        
+
         messages.forEach(msg => {
             const time = new Date(msg.timestamp).toLocaleString('th-TH');
             const cssClass = msg.isUser ? 'user' : 'admin';
             const sender = msg.isUser ? 'ผู้ใช้' : 'แอดมิน';
-            
+
             printWindow.document.write(`
                 <div class="message ${cssClass}">
                     <div><strong>${sender}:</strong> ${this.escapeHtml(msg.text || '')}</div>
@@ -2471,10 +2470,10 @@ class ChatManager {
                 </div>
             `);
         });
-        
+
         printWindow.document.write('</body></html>');
         printWindow.document.close();
-        
+
         setTimeout(() => {
             printWindow.print();
         }, 500);
@@ -2483,7 +2482,7 @@ class ChatManager {
     exportAsText(messages, fileName, user) {
         let text = `ประวัติการสนทนา - ${user ? user.displayName : this.currentUserId}\n`;
         text += `สร้างเมื่อ: ${new Date().toLocaleString('th-TH')}\n`;
-        text += '=' .repeat(60) + '\n\n';
+        text += '='.repeat(60) + '\n\n';
 
         messages.forEach(msg => {
             const time = new Date(msg.timestamp).toLocaleString('th-TH');
@@ -2528,7 +2527,7 @@ class ChatManager {
     }
 
     // ========== 7. Keyboard Shortcuts ==========
-    
+
     setupKeyboardShortcuts() {
         document.addEventListener('keydown', (e) => {
             // Build shortcut key combination
@@ -2536,7 +2535,7 @@ class ChatManager {
             if (e.ctrlKey || e.metaKey) keys.push('ctrl');
             if (e.shiftKey) keys.push('shift');
             if (e.altKey) keys.push('alt');
-            
+
             // Add the actual key (lowercase)
             if (e.key !== 'Control' && e.key !== 'Shift' && e.key !== 'Alt' && e.key !== 'Meta') {
                 keys.push(e.key.toLowerCase());
@@ -2588,14 +2587,14 @@ class ChatManager {
     }
 
     // ========== 8. Order Management ==========
-    
+
     async loadUserOrders(userId) {
         if (!userId) return [];
-        
+
         try {
             const response = await fetch(`/admin/chat/orders/${userId}`);
             const data = await response.json();
-            
+
             if (data.success) {
                 return data.orders || [];
             } else {
@@ -2727,7 +2726,7 @@ class ChatManager {
 
         try {
             const orders = await this.loadUserOrders(this.currentUserId);
-            
+
             if (orders.length === 0) {
                 orderContent.innerHTML = '';
                 orderEmptyState.style.display = 'flex';
@@ -2761,7 +2760,16 @@ class ChatManager {
     renderOrderCard(order) {
         const items = order.orderData?.items || [];
         const totalAmount = order.orderData?.totalAmount || 0;
-        const shippingAddress = order.orderData?.shippingAddress || 'ไม่ระบุ';
+
+        // Build full address from address parts
+        const addressParts = [];
+        if (order.orderData?.shippingAddress) addressParts.push(order.orderData.shippingAddress);
+        if (order.orderData?.addressSubDistrict) addressParts.push(order.orderData.addressSubDistrict);
+        if (order.orderData?.addressDistrict) addressParts.push(order.orderData.addressDistrict);
+        if (order.orderData?.addressProvince) addressParts.push(order.orderData.addressProvince);
+        if (order.orderData?.addressPostalCode) addressParts.push(order.orderData.addressPostalCode);
+        const shippingAddress = addressParts.length > 0 ? addressParts.join(' ') : 'ไม่ระบุ';
+
         const phone = order.orderData?.phone || 'ไม่ระบุ';
         const paymentMethod = order.orderData?.paymentMethod || 'ไม่ระบุ';
         const status = order.status || 'pending';
@@ -2871,7 +2879,7 @@ class ChatManager {
         try {
             const orders = await this.loadUserOrders(this.currentUserId);
             const order = orders.find(o => o._id === orderId);
-            
+
             if (!order) {
                 window.showError('ไม่พบออเดอร์');
                 return;
@@ -2884,6 +2892,24 @@ class ChatManager {
             document.getElementById('editShippingAddress').value = order.orderData?.shippingAddress || '';
             document.getElementById('editPhone').value = order.orderData?.phone || '';
             document.getElementById('editPaymentMethod').value = order.orderData?.paymentMethod || 'เก็บเงินปลายทาง';
+
+            // Populate address fields
+            const addressSubDistrictInput = document.getElementById('editAddressSubDistrict');
+            if (addressSubDistrictInput) {
+                addressSubDistrictInput.value = order.orderData?.addressSubDistrict || '';
+            }
+            const addressDistrictInput = document.getElementById('editAddressDistrict');
+            if (addressDistrictInput) {
+                addressDistrictInput.value = order.orderData?.addressDistrict || '';
+            }
+            const addressProvinceInput = document.getElementById('editAddressProvince');
+            if (addressProvinceInput) {
+                addressProvinceInput.value = order.orderData?.addressProvince || '';
+            }
+            const addressPostalCodeInput = document.getElementById('editAddressPostalCode');
+            if (addressPostalCodeInput) {
+                addressPostalCodeInput.value = order.orderData?.addressPostalCode || '';
+            }
 
             // Populate order items (read-only for now)
             const itemsContainer = document.getElementById('editOrderItems');
@@ -2944,7 +2970,7 @@ class ChatManager {
             // Get current order data first
             const orders = await this.loadUserOrders(this.currentUserId);
             const currentOrder = orders.find(o => o._id === orderId);
-            
+
             if (!currentOrder) {
                 window.showError('ไม่พบออเดอร์');
                 return;
@@ -2954,6 +2980,30 @@ class ChatManager {
             const updatedOrderData = {
                 ...currentOrder.orderData,
                 shippingAddress: shippingAddress || null,
+                addressSubDistrict: (() => {
+                    const input = document.getElementById('editAddressSubDistrict');
+                    if (!input) return currentOrder.orderData?.addressSubDistrict || null;
+                    const value = input.value.trim();
+                    return value || null;
+                })(),
+                addressDistrict: (() => {
+                    const input = document.getElementById('editAddressDistrict');
+                    if (!input) return currentOrder.orderData?.addressDistrict || null;
+                    const value = input.value.trim();
+                    return value || null;
+                })(),
+                addressProvince: (() => {
+                    const input = document.getElementById('editAddressProvince');
+                    if (!input) return currentOrder.orderData?.addressProvince || null;
+                    const value = input.value.trim();
+                    return value || null;
+                })(),
+                addressPostalCode: (() => {
+                    const input = document.getElementById('editAddressPostalCode');
+                    if (!input) return currentOrder.orderData?.addressPostalCode || null;
+                    const value = input.value.trim();
+                    return value || null;
+                })(),
                 phone: phone || null,
                 paymentMethod: paymentMethod || 'เก็บเงินปลายทาง'
             };
@@ -3002,10 +3052,10 @@ class ChatManager {
     }
 
     // ========== 9. Socket Event Handlers ==========
-    
+
     handleOrderExtracted(data) {
         const { userId, orderId, orderData, isManualExtraction, extractedAt } = data;
-        
+
         // Update user list to show order badge
         const user = this.allUsers.find(u => u.userId === userId);
         if (user) {
@@ -3029,7 +3079,7 @@ class ChatManager {
 
     handleOrderUpdated(data) {
         const { userId, orderId, orderData, status, notes, updatedAt } = data;
-        
+
         // If this is the current user, reload order sidebar
         if (userId === this.currentUserId) {
             this.renderOrderSidebar();
@@ -3041,7 +3091,7 @@ class ChatManager {
 
     handleOrderDeleted(data) {
         const { userId, orderId } = data;
-        
+
         // Update user list
         const user = this.allUsers.find(u => u.userId === userId);
         if (user) {
@@ -3064,7 +3114,7 @@ class ChatManager {
 
 // Initialize chat manager when DOM is loaded
 let chatManager;
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     chatManager = new ChatManager();
 });
 
@@ -3082,7 +3132,7 @@ function openImageModal(imageSrc) {
 }
 
 // Global function for image modal (can be called from HTML)
-window.openImageModal = function(imageSrc) {
+window.openImageModal = function (imageSrc) {
     if (chatManager) {
         chatManager.openImageModal(imageSrc);
     }
