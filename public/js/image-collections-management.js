@@ -164,6 +164,21 @@
         elements.botCollectionsSearch = document.getElementById('botCollectionsSearch');
         elements.botCollectionsList = document.getElementById('botImageCollectionsList');
         elements.saveBotCollectionsBtn = document.getElementById('saveBotImageCollectionsBtn');
+
+        // New UI Elements for Enhanced Gallery
+        elements.mobileTabs = document.getElementById('galleryMobileTabs');
+        elements.uploadPanel = document.getElementById('uploadPanel');
+        elements.collectionsPanel = document.getElementById('collectionsPanel');
+        elements.overallProgress = document.getElementById('galleryOverallProgress');
+        elements.overallProgressBar = document.getElementById('overallProgressBar');
+        elements.overallProgressCount = document.getElementById('overallProgressCount');
+        elements.viewToggleGroup = document.getElementById('viewToggleGroup');
+        elements.fab = document.getElementById('galleryFab');
+        elements.fabMainBtn = document.getElementById('fabMainBtn');
+        elements.fabUploadAction = document.getElementById('fabUploadAction');
+        elements.fabCreateCollectionAction = document.getElementById('fabCreateCollectionAction');
+        elements.fabRefreshAction = document.getElementById('fabRefreshAction');
+        elements.collectionFilterControl = document.getElementById('collectionFilterControl');
     };
 
     const bindEvents = () => {
@@ -340,6 +355,127 @@
                 }
             });
         }
+
+        // Mobile Tabs Navigation
+        if (elements.mobileTabs) {
+            elements.mobileTabs.addEventListener('click', (event) => {
+                const tabBtn = event.target.closest('.tab-btn');
+                if (!tabBtn) return;
+
+                const panel = tabBtn.dataset.panel;
+                if (!panel) return;
+
+                // Update tab buttons
+                elements.mobileTabs.querySelectorAll('.tab-btn').forEach(btn => {
+                    btn.classList.toggle('active', btn === tabBtn);
+                });
+
+                // Show/hide panels
+                if (elements.uploadPanel && elements.collectionsPanel) {
+                    if (panel === 'upload') {
+                        elements.uploadPanel.classList.remove('hidden');
+                        elements.collectionsPanel.classList.add('hidden');
+                    } else {
+                        elements.uploadPanel.classList.add('hidden');
+                        elements.collectionsPanel.classList.remove('hidden');
+                    }
+                }
+            });
+        }
+
+        // Floating Action Button
+        if (elements.fab && elements.fabMainBtn) {
+            elements.fabMainBtn.addEventListener('click', () => {
+                elements.fab.classList.toggle('open');
+            });
+
+            // Close FAB when clicking outside
+            document.addEventListener('click', (event) => {
+                if (!elements.fab.contains(event.target)) {
+                    elements.fab.classList.remove('open');
+                }
+            });
+
+            // FAB Actions
+            if (elements.fabUploadAction) {
+                elements.fabUploadAction.addEventListener('click', () => {
+                    elements.fab.classList.remove('open');
+                    // Switch to upload tab on mobile
+                    if (elements.mobileTabs) {
+                        const uploadTab = elements.mobileTabs.querySelector('[data-panel="upload"]');
+                        if (uploadTab) uploadTab.click();
+                    }
+                    // Trigger file select
+                    setTimeout(() => {
+                        elements.assetFile?.click();
+                    }, 100);
+                });
+            }
+
+            if (elements.fabCreateCollectionAction) {
+                elements.fabCreateCollectionAction.addEventListener('click', () => {
+                    elements.fab.classList.remove('open');
+                    // Switch to collections tab on mobile
+                    if (elements.mobileTabs) {
+                        const collectionsTab = elements.mobileTabs.querySelector('[data-panel="collections"]');
+                        if (collectionsTab) collectionsTab.click();
+                    }
+                    // Open create collection modal
+                    setTimeout(() => {
+                        openCollectionModal();
+                    }, 100);
+                });
+            }
+
+            if (elements.fabRefreshAction) {
+                elements.fabRefreshAction.addEventListener('click', () => {
+                    elements.fab.classList.remove('open');
+                    refreshAll();
+                });
+            }
+        }
+
+        // View Toggle (List/Grid)
+        if (elements.viewToggleGroup) {
+            elements.viewToggleGroup.addEventListener('click', (event) => {
+                const btn = event.target.closest('.view-toggle-btn');
+                if (!btn) return;
+
+                const view = btn.dataset.view;
+                if (!view) return;
+
+                // Update toggle buttons
+                elements.viewToggleGroup.querySelectorAll('.view-toggle-btn').forEach(b => {
+                    b.classList.toggle('active', b === btn);
+                });
+
+                // Toggle grid/list view on assets list
+                if (elements.assetsList) {
+                    elements.assetsList.classList.toggle('grid-view', view === 'grid');
+                }
+
+                // Store preference
+                try {
+                    localStorage.setItem('gallery-view-mode', view);
+                } catch (e) {
+                    console.warn('Could not save view preference');
+                }
+            });
+
+            // Restore saved view preference
+            try {
+                const savedView = localStorage.getItem('gallery-view-mode');
+                if (savedView === 'grid') {
+                    const gridBtn = elements.viewToggleGroup.querySelector('[data-view="grid"]');
+                    if (gridBtn) gridBtn.click();
+                }
+            } catch (e) {
+                console.warn('Could not restore view preference');
+            }
+        }
+
+        // Image Lightbox
+        setupImageLightbox();
     };
 
     const runDataConsistencyCheck = async () => {
@@ -400,6 +536,88 @@
                 secretFixBtn.style.opacity = '';
             }
         }
+    };
+
+    // Image Lightbox Setup
+    const setupImageLightbox = () => {
+        // Create lightbox if not exists
+        let lightbox = document.getElementById('imageLightbox');
+        if (!lightbox) {
+            lightbox = document.createElement('div');
+            lightbox.id = 'imageLightbox';
+            lightbox.className = 'image-lightbox';
+            lightbox.innerHTML = `
+                <button class="lightbox-close" aria-label="ปิด"><i class="fas fa-times"></i></button>
+                <img src="" alt="Preview">
+                <div class="lightbox-info">
+                    <div class="lightbox-title"></div>
+                    <div class="lightbox-desc"></div>
+                </div>
+            `;
+            document.body.appendChild(lightbox);
+
+            // Close on background click
+            lightbox.addEventListener('click', (e) => {
+                if (e.target === lightbox || e.target.classList.contains('lightbox-close') || e.target.closest('.lightbox-close')) {
+                    lightbox.classList.remove('active');
+                    document.body.style.overflow = '';
+                }
+            });
+
+            // Close on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && lightbox.classList.contains('active')) {
+                    lightbox.classList.remove('active');
+                    document.body.style.overflow = '';
+                }
+            });
+        }
+
+        // Handle image clicks in assets list
+        if (elements.assetsList) {
+            elements.assetsList.addEventListener('click', (e) => {
+                const thumb = e.target.closest('.image-asset-thumb img');
+                if (!thumb) return;
+
+                const assetItem = thumb.closest('.image-asset-item');
+                if (!assetItem) return;
+
+                const assetLabel = assetItem.dataset.assetLabel || '';
+                const assetDesc = assetItem.dataset.assetDesc || '';
+                const imgSrc = thumb.src;
+
+                // Open lightbox
+                const lightboxImg = lightbox.querySelector('img');
+                const lightboxTitle = lightbox.querySelector('.lightbox-title');
+                const lightboxDesc = lightbox.querySelector('.lightbox-desc');
+
+                lightboxImg.src = imgSrc;
+                lightboxTitle.textContent = assetLabel;
+                lightboxDesc.textContent = assetDesc;
+
+                lightbox.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            });
+        }
+    };
+
+    // Overall Progress Bar Helpers
+    const showOverallProgress = (current, total) => {
+        if (!elements.overallProgress) return;
+        elements.overallProgress.classList.add('active');
+        updateOverallProgress(current, total);
+    };
+
+    const updateOverallProgress = (current, total) => {
+        if (!elements.overallProgressBar || !elements.overallProgressCount) return;
+        const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+        elements.overallProgressBar.style.width = `${percent}%`;
+        elements.overallProgressCount.textContent = `${current}/${total}`;
+    };
+
+    const hideOverallProgress = () => {
+        if (!elements.overallProgress) return;
+        elements.overallProgress.classList.remove('active');
     };
 
     const init = () => {
@@ -781,10 +999,10 @@
 
         const filtered = filter
             ? assets.filter((asset) => {
-                  const label = (asset.label || '').toLowerCase();
-                  const description = (asset.description || asset.alt || '').toLowerCase();
-                  return label.includes(filter) || description.includes(filter);
-              })
+                const label = (asset.label || '').toLowerCase();
+                const description = (asset.description || asset.alt || '').toLowerCase();
+                return label.includes(filter) || description.includes(filter);
+            })
             : assets;
 
         if (filtered.length === 0) {
@@ -923,7 +1141,7 @@
 
         elements.assetSelectionToolbar.style.display = 'flex';
         if (elements.assetSelectionCount) {
-            elements.assetSelectionCount.textContent = `เลือก ${count} รูป`; 
+            elements.assetSelectionCount.textContent = `เลือก ${count} รูป`;
         }
         if (elements.bulkDeleteAssetsBtn) {
             elements.bulkDeleteAssetsBtn.disabled = state.isUploading;
