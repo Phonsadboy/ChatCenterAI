@@ -18416,46 +18416,9 @@ app.get("/admin/orders/export", async (req, res) => {
 
 // ============================ Orders V2 APIs ============================
 
-// API: เปลี่ยนสถานะออเดอร์เดี่ยว
-app.patch("/admin/orders/:orderId/status", async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const { status } = req.body || {};
-
-    const validStatuses = ["pending", "confirmed", "shipped", "completed", "cancelled"];
-    if (!status || !validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        error: "สถานะไม่ถูกต้อง กรุณาระบุ: pending, confirmed, shipped, completed, หรือ cancelled",
-      });
-    }
-
-    if (!ObjectId.isValid(orderId)) {
-      return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
-    const result = await coll.updateOne(
-      { _id: new ObjectId(orderId) },
-      { $set: { status, updatedAt: new Date() } }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
-    }
-
-    console.log(`[Orders] อัปเดตสถานะออเดอร์ ${orderId} เป็น ${status}`);
-    res.json({ success: true, orderId, status });
-  } catch (error) {
-    console.error("[Orders] ไม่สามารถอัปเดตสถานะได้:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // API: เปลี่ยนสถานะหลายออเดอร์พร้อมกัน (Bulk)
+// NOTE: This route MUST be defined BEFORE the parameterized route below
+// to prevent Express from matching "bulk" as an :orderId parameter
 app.patch("/admin/orders/bulk/status", async (req, res) => {
   try {
     const { orderIds, status } = req.body || {};
@@ -18498,6 +18461,45 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
     });
   } catch (error) {
     console.error("[Orders] ไม่สามารถอัปเดตสถานะแบบกลุ่มได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: เปลี่ยนสถานะออเดอร์เดี่ยว
+app.patch("/admin/orders/:orderId/status", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body || {};
+
+    const validStatuses = ["pending", "confirmed", "shipped", "completed", "cancelled"];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: "สถานะไม่ถูกต้อง กรุณาระบุ: pending, confirmed, shipped, completed, หรือ cancelled",
+      });
+    }
+
+    if (!ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const result = await coll.updateOne(
+      { _id: new ObjectId(orderId) },
+      { $set: { status, updatedAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    console.log(`[Orders] อัปเดตสถานะออเดอร์ ${orderId} เป็น ${status}`);
+    res.json({ success: true, orderId, status });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถอัปเดตสถานะได้:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
