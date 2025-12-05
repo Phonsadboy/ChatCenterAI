@@ -21,11 +21,10 @@
         emptyState: document.getElementById('followupEmptyState'),
         search: document.getElementById('followupSearch'),
         refresh: document.getElementById('followupRefreshBtn'),
+        editBtn: document.getElementById('followupEditBtn'),
         pageSelector: document.getElementById('followupPageSelector'),
         pageLabel: document.getElementById('followupPageLabel'),
-        pageStatus: document.getElementById('followupPageStatus'),
-        analysisLabel: document.getElementById('followupAnalysisLabel'),
-        analysisSubtitle: document.getElementById('followupAnalysisSubtitle'),
+        statusPills: document.getElementById('followupStatusPills'),
         modalRoot: document.getElementById('followupSettingsModal'),
         modalAutoSend: document.getElementById('followupModalAutoSend'),
         modalRoundsContainer: document.getElementById('followupModalRoundsContainer'),
@@ -34,18 +33,17 @@
         modalResetBtn: document.getElementById('followupModalResetBtn'),
         modalSaveBtn: document.getElementById('followupModalSaveBtn'),
         modalTitle: document.getElementById('followupModalTitle'),
-        pageGrid: document.getElementById('followupPageGrid'),
         summaryActive: document.getElementById('followupMetricActive'),
-        summaryActiveMeta: document.getElementById('followupMetricActiveMeta'),
         summaryCompleted: document.getElementById('followupMetricCompleted'),
-        summaryCompletedMeta: document.getElementById('followupMetricCompletedMeta'),
         summaryCanceled: document.getElementById('followupMetricCanceled'),
-        summaryCanceledMeta: document.getElementById('followupMetricCanceledMeta'),
         summaryFailed: document.getElementById('followupMetricFailed'),
-        summaryFailedMeta: document.getElementById('followupMetricFailedMeta'),
+        countAll: document.getElementById('countAll'),
+        countActive: document.getElementById('countActive'),
+        countCompleted: document.getElementById('countCompleted'),
+        countCanceled: document.getElementById('countCanceled'),
+        countFailed: document.getElementById('countFailed'),
         schedulePreview: document.getElementById('followupSchedulePreview'),
-        autoStatusBadge: document.getElementById('followupAutoStatusBadge'),
-        filterButtons: document.querySelectorAll('.followup-filter-btn')
+        autoStatusBadge: document.getElementById('followupAutoStatusBadge')
     };
 
     const modalInstance = el.modalRoot ? new bootstrap.Modal(el.modalRoot) : null;
@@ -630,22 +628,18 @@
     const renderPageSelector = () => {
         if (!el.pageSelector) return;
         if (!state.pages.length) {
-            el.pageSelector.innerHTML = '<div class="text-muted small">ยังไม่มีข้อมูลเพจ โปรดเพิ่ม LINE Bot หรือ Facebook Page ก่อน</div>';
+            el.pageSelector.innerHTML = '<div class="text-muted small py-2">ยังไม่มีเพจ</div>';
             return;
         }
         const html = state.pages.map(page => {
             const active = state.currentPage && page.id === state.currentPage.id;
-            const disabled = page.settings.showInDashboard === false;
-            const analysisOff = page.settings.analysisEnabled === false;
-            const autoOff = page.settings.autoFollowUpEnabled === false;
-            const overrideBadge = page.hasOverride ? '<span class="pill-dot" title="ตั้งค่ากำหนดเองแล้ว"></span>' : '';
+            const group = getGroupForPage(page.id);
+            const activeCount = group?.stats?.active || 0;
+            const icon = page.platform === 'facebook' ? 'fab fa-facebook' : 'fab fa-line';
             return `
-                <button class="followup-page-pill ${active ? 'active' : ''} ${disabled ? 'disabled' : ''}" data-page-id="${page.id}">
-                    <span class="pill-name">${escapeHtml(page.name)}</span>
-                    ${analysisOff ? '<span class="pill-status off">ปิดวิเคราะห์</span>' : ''}
-                    ${autoOff ? '<span class="pill-status muted">ปิดส่งอัตโนมัติ</span>' : ''}
-                    ${disabled ? '<span class="pill-status muted">ซ่อน</span>' : ''}
-                    ${overrideBadge}
+                <button class="followup-page-item ${active ? 'active' : ''}" data-page-id="${page.id}">
+                    <span><i class="${icon} page-icon"></i>${escapeHtml(page.name)}</span>
+                    ${activeCount > 0 ? `<span class="page-count">${activeCount}</span>` : ''}
                 </button>
             `;
         }).join('');
@@ -677,9 +671,6 @@
                 };
                 if (state.pages.length) {
                     renderPageSelector();
-                    renderPageGrid();
-                } else if (el.pageGrid) {
-                    renderPageGrid();
                 }
                 updateMetrics();
             } else if (!options.silent) {
@@ -920,72 +911,54 @@
         const globalSummary = state.overview?.summary || defaultSummary();
         const currentGroup = state.currentPage ? getGroupForPage(state.currentPage.id) : null;
         const currentStats = currentGroup?.stats || state.summary || defaultSummary();
-        const selectedUsers = state.users && state.users.length
-            ? state.users
-            : (Array.isArray(currentGroup?.users) ? currentGroup.users : []);
 
+        // Update summary cards
         if (el.summaryActive) el.summaryActive.textContent = globalSummary.active || 0;
         if (el.summaryCompleted) el.summaryCompleted.textContent = globalSummary.completed || 0;
         if (el.summaryCanceled) el.summaryCanceled.textContent = globalSummary.canceled || 0;
         if (el.summaryFailed) el.summaryFailed.textContent = globalSummary.failed || 0;
 
-        const now = Date.now();
-        const dueSoonSelected = selectedUsers.filter(user => {
-            if (user.status !== 'active' || !user.nextScheduledAt) return false;
-            const time = new Date(user.nextScheduledAt).getTime();
-            if (Number.isNaN(time)) return false;
-            const diff = time - now;
-            return diff >= 0 && diff <= 30 * 60000;
-        }).length;
-
-        if (el.summaryActiveMeta) {
-            el.summaryActiveMeta.textContent = `เพจนี้กำลังติดตาม ${currentStats.active || 0} ราย • รอส่งใน 30 นาทีนี้ ${dueSoonSelected} ราย`;
-        }
-
-        if (el.summaryCompletedMeta) {
-            el.summaryCompletedMeta.textContent = `เพจนี้ส่งครบแล้ว ${currentStats.completed || 0} ราย`;
-        }
-
-        if (el.summaryCanceledMeta) {
-            el.summaryCanceledMeta.textContent = `เพจนี้ยกเลิกแล้ว ${currentStats.canceled || 0} ราย`;
-        }
-
-        if (el.summaryFailedMeta) {
-            el.summaryFailedMeta.textContent = `เพจนี้ส่งไม่สำเร็จ ${currentStats.failed || 0} ราย`;
-        }
+        // Update sidebar status counts
+        const total = (currentStats.active || 0) + (currentStats.completed || 0) +
+            (currentStats.canceled || 0) + (currentStats.failed || 0);
+        if (el.countAll) el.countAll.textContent = total;
+        if (el.countActive) el.countActive.textContent = currentStats.active || 0;
+        if (el.countCompleted) el.countCompleted.textContent = currentStats.completed || 0;
+        if (el.countCanceled) el.countCanceled.textContent = currentStats.canceled || 0;
+        if (el.countFailed) el.countFailed.textContent = currentStats.failed || 0;
     };
 
     const updateToolbar = () => {
         if (!state.currentPage) {
-            if (el.pageLabel) el.pageLabel.textContent = 'เลือกหน้าเพจที่ต้องการติดตาม';
-            if (el.pageStatus) el.pageStatus.textContent = '';
+            if (el.pageLabel) el.pageLabel.textContent = 'เลือกเพจเพื่อดูรายการ';
+            if (el.autoStatusBadge) {
+                el.autoStatusBadge.textContent = 'ปิดส่งอัตโนมัติ';
+                el.autoStatusBadge.classList.remove('active');
+            }
+            if (el.editBtn) el.editBtn.disabled = true;
             if (el.search) {
                 el.search.value = '';
                 el.search.disabled = true;
             }
-            if (el.refresh) el.refresh.disabled = true;
-            updateConfigDisplay(null);
             return;
         }
+
+        const cfg = state.currentContextConfig || state.currentPage.settings || {};
 
         if (el.pageLabel) {
             el.pageLabel.textContent = state.currentPage.name;
         }
 
-        if (el.pageStatus) {
-            const cfg = state.currentContextConfig || state.currentPage.settings;
-            const statusTexts = [];
-            statusTexts.push(state.currentPage.platform === 'facebook' ? 'Facebook' : 'LINE');
-            statusTexts.push(`ส่งอัตโนมัติ: ${cfg.autoFollowUpEnabled === false ? 'ปิด' : 'เปิด'}`);
-            statusTexts.push(`วิเคราะห์ด้วย AI: ${cfg.analysisEnabled !== false ? 'เปิด' : 'ปิด'}`);
-            el.pageStatus.textContent = statusTexts.join(' • ');
+        if (el.autoStatusBadge) {
+            const autoOn = cfg.autoFollowUpEnabled !== false;
+            el.autoStatusBadge.textContent = autoOn ? 'ส่งอัตโนมัติ: เปิด' : 'ส่งอัตโนมัติ: ปิด';
+            el.autoStatusBadge.classList.toggle('active', autoOn);
         }
 
+        if (el.editBtn) el.editBtn.disabled = false;
+
         if (el.search) {
-            el.search.disabled = state.currentContextConfig && state.currentContextConfig.showInDashboard === false;
-            if (el.search.disabled) {
-                el.search.value = '';
-            }
+            el.search.disabled = false;
         }
 
         const disabledDashboard = state.currentContextConfig && state.currentContextConfig.showInDashboard === false;
@@ -1550,6 +1523,13 @@
                 loadUsers(true);
             });
         }
+        if (el.editBtn) {
+            el.editBtn.addEventListener('click', () => {
+                if (state.currentPage) {
+                    openSettingsModal();
+                }
+            });
+        }
         if (el.modalSaveBtn) {
             el.modalSaveBtn.addEventListener('click', () => {
                 saveSettings();
@@ -1560,11 +1540,15 @@
                 resetSettings();
             });
         }
-        if (el.filterButtons && typeof el.filterButtons.forEach === 'function') {
-            el.filterButtons.forEach(btn => {
+        // Status pill filters
+        if (el.statusPills) {
+            el.statusPills.querySelectorAll('.followup-status-pill').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const status = btn.getAttribute('data-status') || 'all';
                     setStatusFilter(status);
+                    // Update active state
+                    el.statusPills.querySelectorAll('.followup-status-pill').forEach(p => p.classList.remove('active'));
+                    btn.classList.add('active');
                 });
             });
         }
@@ -1581,7 +1565,6 @@
     };
 
     const init = async () => {
-        populateModalOptions();
         setupEventListeners();
         setStatusFilter(state.statusFilter || 'all');
         await loadOverview({ silent: true });
