@@ -472,8 +472,9 @@
     const ids = Array.from(state.selectedIds);
     if (ids.length === 0) return;
 
+    // Backend expects selectedIds as comma-separated string
     const params = new URLSearchParams();
-    ids.forEach(id => params.append('ids', id));
+    params.set('selectedIds', ids.join(','));
     window.location.href = `/admin/orders/export?${params.toString()}`;
   }
 
@@ -481,8 +482,9 @@
     // If there are selected orders, export only those
     if (state.selectedIds.size > 0) {
       const ids = Array.from(state.selectedIds);
+      // Backend expects selectedIds as comma-separated string
       const params = new URLSearchParams();
-      ids.forEach(id => params.append('ids', id));
+      params.set('selectedIds', ids.join(','));
       window.location.href = `/admin/orders/export?${params.toString()}`;
     } else {
       // Export all orders matching current filters
