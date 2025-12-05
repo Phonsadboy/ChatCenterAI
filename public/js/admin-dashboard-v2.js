@@ -500,14 +500,19 @@
         });
     });
 
-    // Edit Data Item - Redirect to Full Page Editor
+    // Edit Data Item - Redirect to appropriate editor based on type
     document.querySelectorAll('.edit-data-item').forEach(btn => {
         btn.addEventListener('click', () => {
             const instructionId = btn.dataset.instructionId;
             const itemId = btn.dataset.itemId;
+            const itemType = btn.dataset.itemType || 'table'; // default to table if not specified
 
-            // Redirect to full page editor (V3)
-            window.location.href = `/admin/instructions-v3/${instructionId}/data-items/${itemId}/edit`;
+            // Use V2 editor for text type, V3 for table type
+            if (itemType === 'text') {
+                window.location.href = `/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit`;
+            } else {
+                window.location.href = `/admin/instructions-v3/${instructionId}/data-items/${itemId}/edit`;
+            }
         });
     });
 

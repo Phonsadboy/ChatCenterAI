@@ -7734,10 +7734,10 @@ function scheduleDailyRefresh() {
   }, 60 * 1000); // ตรวจสอบทุก 1 นาที เพื่อให้ตรงกับเวลาที่กำหนด
 }
 
-async function buildSystemInstructions(history) {
+async function buildSystemInstructions(history, selectedImageCollections = null) {
   // ดึง instructions จากฐานข้อมูลเท่านั้น ไม่ใช้ Google Docs/Sheets อีกต่อไป
   const instructions = await getInstructions();
-  const assetsText = await getAssetsInstructionsText();
+  const assetsText = await getAssetsInstructionsText(selectedImageCollections);
 
   let systemText = "คุณเป็น AI chatbot ภาษาไทย\n\n";
 
@@ -7780,14 +7780,48 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
   let systemPrompt = "";
   let client = null;
   let db = null;
-  let selectedImageCollections = null;
+  let selectedImageCollections = Array.isArray(
+    queueContext.selectedImageCollections,
+  )
+    ? queueContext.selectedImageCollections
+    : null;
+
+  const ensureDb = async () => {
+    if (!db) {
+      client = await connectDB();
+      db = client.db("chatbot");
+    }
+    return db;
+  };
+
+  const loadSelectedImageCollections = async () => {
+    if (!queueContext.botId) return;
+    try {
+      const database = await ensureDb();
+      const botCollection =
+        botKind === "facebook" ? "facebook_bots" : "line_bots";
+      const botId =
+        queueContext.botId instanceof ObjectId
+          ? queueContext.botId
+          : toObjectId(queueContext.botId) || queueContext.botId;
+
+      const botDoc = await database.collection(botCollection).findOne({
+        _id: botId,
+      });
+
+      if (botDoc && botDoc.selectedImageCollections) {
+        selectedImageCollections = botDoc.selectedImageCollections;
+      }
+    } catch (error) {
+      console.error("[LOG] ไม่สามารถดึง selectedImageCollections:", error);
+    }
+  };
 
   if (supportsCustomSelections) {
     try {
-      client = await connectDB();
-      db = client.db("chatbot");
+      const database = await ensureDb();
       systemPrompt = (
-        await buildSystemPromptFromSelections(normalizedSelections, db)
+        await buildSystemPromptFromSelections(normalizedSelections, database)
       ).trim();
     } catch (error) {
       console.error(
@@ -7804,15 +7838,12 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
         "",
       );
       if (defaultInstructionKey) {
-        if (!db) {
-          client = await connectDB();
-          db = client.db("chatbot");
-        }
+        const database = await ensureDb();
         const fallbackSelections = normalizeInstructionSelections([
           defaultInstructionKey,
         ]);
         systemPrompt = (
-          await buildSystemPromptFromSelections(fallbackSelections, db)
+          await buildSystemPromptFromSelections(fallbackSelections, database)
         ).trim();
       }
     } catch (error) {
@@ -7823,30 +7854,10 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
     }
   }
 
+  await loadSelectedImageCollections();
+
   if (!systemPrompt) {
-    return await buildSystemInstructions(history);
-  }
-
-  // ดึง selectedImageCollections จาก bot config
-  try {
-    if (queueContext.botId) {
-      if (!db) {
-        client = await connectDB();
-        db = client.db("chatbot");
-      }
-
-      const botCollection =
-        botKind === "facebook" ? "facebook_bots" : "line_bots";
-      const botDoc = await db.collection(botCollection).findOne({
-        _id: queueContext.botId,
-      });
-
-      if (botDoc && botDoc.selectedImageCollections) {
-        selectedImageCollections = botDoc.selectedImageCollections;
-      }
-    }
-  } catch (error) {
-    console.error("[LOG] ไม่สามารถดึง selectedImageCollections:", error);
+    return await buildSystemInstructions(history, selectedImageCollections);
   }
 
   const assetsText = await getAssetsInstructionsText(selectedImageCollections);
@@ -9116,6 +9127,12 @@ async function getAssetsMapForBot(selectedCollectionIds = null) {
     }
   }
 
+  // If collections are explicitly selected, do not fall back to the full asset list.
+  // This prevents the bot from accessing images outside the allowed collections.
+  if (hasSelections) {
+    return map;
+  }
+
   let fallbackAssets = [];
   try {
     fallbackAssets = await getInstructionAssets();
@@ -9127,28 +9144,9 @@ async function getAssetsMapForBot(selectedCollectionIds = null) {
   }
 
   if (Array.isArray(fallbackAssets) && fallbackAssets.length > 0) {
-    const missingLabels =
-      hasSelections && Object.keys(map).length > 0 ? new Set() : null;
     for (const asset of fallbackAssets) {
       if (!asset) continue;
-      const alreadyResolvable =
-        !hasSelections ||
-        !missingLabels ||
-        !!findAssetInLookup(map, asset.label || asset.slug || asset.fileName);
       addAssetToLookup(map, asset);
-      if (missingLabels && !alreadyResolvable && asset.label) {
-        missingLabels.add(asset.label);
-      }
-    }
-    if (missingLabels && missingLabels.size > 0) {
-      const sample = Array.from(missingLabels).slice(0, 5);
-      console.warn(
-        "[Assets] Some instruction assets are not linked to selected collections:",
-        sample.join(", "),
-        missingLabels.size > sample.length
-          ? `(+${missingLabels.size - sample.length})`
-          : "",
-      );
     }
   }
 
@@ -11739,6 +11737,12 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
+
+    // Fetch existing bot data first
+    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    if (!existing) {
+      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+    }
 
     // If this is default, unset other defaults
     if (isDefault) {

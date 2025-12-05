@@ -3,196 +3,196 @@
    ================================================================ */
 
 (function () {
-    'use strict';
+  'use strict';
 
-    // ============ State ============
-    const state = {
-        orders: [],
-        filteredOrders: [],
-        selectedIds: new Set(),
-        pagination: { page: 1, limit: 50, total: 0, pages: 1 },
-        summary: { totalOrders: 0, totalAmount: 0, totalShipping: 0 },
-        statusCounts: {},
-        filters: {
-            status: 'all',
-            search: '',
-            pageKey: '',
-            startDate: '',
-            endDate: '',
-            quickDate: ''
-        },
-        sort: { column: 'extractedAt', direction: 'desc' },
-        pages: [],
-        loading: false,
-        detailOrderId: null
-    };
+  // ============ State ============
+  const state = {
+    orders: [],
+    filteredOrders: [],
+    selectedIds: new Set(),
+    pagination: { page: 1, limit: 50, total: 0, pages: 1 },
+    summary: { totalOrders: 0, totalAmount: 0, totalShipping: 0 },
+    statusCounts: {},
+    filters: {
+      status: 'all',
+      search: '',
+      pageKey: '',
+      startDate: '',
+      endDate: '',
+      quickDate: ''
+    },
+    sort: { column: 'extractedAt', direction: 'desc' },
+    pages: [],
+    loading: false,
+    detailOrderId: null
+  };
 
-    // ============ Status Config ============
-    const STATUS_CONFIG = {
-        all: { label: 'ทั้งหมด', icon: 'fa-list' },
-        pending: { label: 'รอดำเนินการ', color: '#DFA94B', icon: 'fa-clock' },
-        confirmed: { label: 'ยืนยันแล้ว', color: '#4A6FA5', icon: 'fa-check-circle' },
-        shipped: { label: 'จัดส่งแล้ว', color: '#3D7FC1', icon: 'fa-truck' },
-        completed: { label: 'เสร็จสิ้น', color: '#2D8F6F', icon: 'fa-check-double' },
-        cancelled: { label: 'ยกเลิก', color: '#D2555A', icon: 'fa-times-circle' }
-    };
+  // ============ Status Config ============
+  const STATUS_CONFIG = {
+    all: { label: 'ทั้งหมด', icon: 'fa-list' },
+    pending: { label: 'รอดำเนินการ', color: '#DFA94B', icon: 'fa-clock' },
+    confirmed: { label: 'ยืนยันแล้ว', color: '#4A6FA5', icon: 'fa-check-circle' },
+    shipped: { label: 'จัดส่งแล้ว', color: '#3D7FC1', icon: 'fa-truck' },
+    completed: { label: 'เสร็จสิ้น', color: '#2D8F6F', icon: 'fa-check-double' },
+    cancelled: { label: 'ยกเลิก', color: '#D2555A', icon: 'fa-times-circle' }
+  };
 
-    // ============ DOM Elements ============
-    const els = {};
+  // ============ DOM Elements ============
+  const els = {};
 
-    // ============ Init ============
-    function init() {
-        cacheElements();
-        bindEvents();
-        restoreFilters();
-        loadPages();
-        loadOrders();
+  // ============ Init ============
+  function init() {
+    cacheElements();
+    bindEvents();
+    restoreFilters();
+    loadPages();
+    loadOrders();
+  }
+
+  function cacheElements() {
+    els.summaryCards = document.getElementById('ordersSummaryCards');
+    els.statusPills = document.getElementById('ordersStatusPills');
+    els.tableBody = document.getElementById('ordersTableBody');
+    els.pagination = document.getElementById('ordersPagination');
+    els.paginationInfo = document.getElementById('ordersPaginationInfo');
+    els.searchInput = document.getElementById('ordersSearchInput');
+    els.pageSelect = document.getElementById('ordersPageSelect');
+    els.startDate = document.getElementById('ordersStartDate');
+    els.endDate = document.getElementById('ordersEndDate');
+    els.bulkBar = document.getElementById('ordersBulkBar');
+    els.bulkCount = document.getElementById('ordersBulkCount');
+    els.selectAll = document.getElementById('ordersSelectAll');
+    els.detailOverlay = document.getElementById('ordersDetailOverlay');
+    els.detailPanel = document.getElementById('ordersDetailPanel');
+    els.exportBtn = document.getElementById('ordersExportBtn');
+  }
+
+  function bindEvents() {
+    // Search
+    if (els.searchInput) {
+      els.searchInput.addEventListener('input', debounce(handleSearch, 300));
     }
 
-    function cacheElements() {
-        els.summaryCards = document.getElementById('ordersSummaryCards');
-        els.statusPills = document.getElementById('ordersStatusPills');
-        els.tableBody = document.getElementById('ordersTableBody');
-        els.pagination = document.getElementById('ordersPagination');
-        els.paginationInfo = document.getElementById('ordersPaginationInfo');
-        els.searchInput = document.getElementById('ordersSearchInput');
-        els.pageSelect = document.getElementById('ordersPageSelect');
-        els.startDate = document.getElementById('ordersStartDate');
-        els.endDate = document.getElementById('ordersEndDate');
-        els.bulkBar = document.getElementById('ordersBulkBar');
-        els.bulkCount = document.getElementById('ordersBulkCount');
-        els.selectAll = document.getElementById('ordersSelectAll');
-        els.detailOverlay = document.getElementById('ordersDetailOverlay');
-        els.detailPanel = document.getElementById('ordersDetailPanel');
-        els.exportBtn = document.getElementById('ordersExportBtn');
+    // Page Select
+    if (els.pageSelect) {
+      els.pageSelect.addEventListener('change', handlePageSelect);
     }
 
-    function bindEvents() {
-        // Search
-        if (els.searchInput) {
-            els.searchInput.addEventListener('input', debounce(handleSearch, 300));
-        }
+    // Date Range
+    if (els.startDate) els.startDate.addEventListener('change', handleDateChange);
+    if (els.endDate) els.endDate.addEventListener('change', handleDateChange);
 
-        // Page Select
-        if (els.pageSelect) {
-            els.pageSelect.addEventListener('change', handlePageSelect);
-        }
+    // Quick Date Buttons
+    document.querySelectorAll('.orders-quick-date-btn').forEach(btn => {
+      btn.addEventListener('click', handleQuickDate);
+    });
 
-        // Date Range
-        if (els.startDate) els.startDate.addEventListener('change', handleDateChange);
-        if (els.endDate) els.endDate.addEventListener('change', handleDateChange);
-
-        // Quick Date Buttons
-        document.querySelectorAll('.orders-quick-date-btn').forEach(btn => {
-            btn.addEventListener('click', handleQuickDate);
-        });
-
-        // Select All
-        if (els.selectAll) {
-            els.selectAll.addEventListener('change', handleSelectAll);
-        }
-
-        // Bulk Actions
-        document.getElementById('ordersBulkCancel')?.addEventListener('click', clearSelection);
-        document.getElementById('ordersBulkExport')?.addEventListener('click', handleBulkExport);
-
-        // Detail Panel Close
-        els.detailOverlay?.addEventListener('click', (e) => {
-            if (e.target === els.detailOverlay) closeDetail();
-        });
-        document.getElementById('ordersDetailClose')?.addEventListener('click', closeDetail);
-
-        // Export
-        if (els.exportBtn) {
-            els.exportBtn.addEventListener('click', handleExport);
-        }
-
-        // Keyboard
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && state.detailOrderId) {
-                closeDetail();
-            }
-        });
+    // Select All
+    if (els.selectAll) {
+      els.selectAll.addEventListener('change', handleSelectAll);
     }
 
-    // ============ Data Loading ============
-    async function loadOrders() {
-        if (state.loading) return;
-        state.loading = true;
-        showLoading();
+    // Bulk Actions
+    document.getElementById('ordersBulkCancel')?.addEventListener('click', clearSelection);
+    document.getElementById('ordersBulkExport')?.addEventListener('click', handleBulkExport);
 
-        try {
-            const params = buildQueryParams();
-            const response = await fetch(`/admin/orders/data?${params.toString()}`);
-            const data = await response.json();
+    // Detail Panel Close
+    els.detailOverlay?.addEventListener('click', (e) => {
+      if (e.target === els.detailOverlay) closeDetail();
+    });
+    document.getElementById('ordersDetailClose')?.addEventListener('click', closeDetail);
 
-            if (data.success) {
-                state.orders = data.orders || [];
-                state.pagination = data.pagination || state.pagination;
-                state.summary = data.summary || state.summary;
-                state.statusCounts = data.statusCounts || {};
-
-                renderSummary();
-                renderStatusPills();
-                renderTable();
-                renderPagination();
-            }
-        } catch (error) {
-            console.error('[Orders] Load error:', error);
-            showError('ไม่สามารถโหลดข้อมูลออเดอร์ได้');
-        } finally {
-            state.loading = false;
-        }
+    // Export
+    if (els.exportBtn) {
+      els.exportBtn.addEventListener('click', handleExport);
     }
 
-    async function loadPages() {
-        try {
-            const response = await fetch('/admin/orders/pages');
-            const data = await response.json();
+    // Keyboard
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state.detailOrderId) {
+        closeDetail();
+      }
+    });
+  }
 
-            if (data.success && data.pages) {
-                state.pages = data.pages;
-                renderPageSelect();
-            }
-        } catch (error) {
-            console.error('[Orders] Load pages error:', error);
-        }
+  // ============ Data Loading ============
+  async function loadOrders() {
+    if (state.loading) return;
+    state.loading = true;
+    showLoading();
+
+    try {
+      const params = buildQueryParams();
+      const response = await fetch(`/admin/orders/data?${params.toString()}`);
+      const data = await response.json();
+
+      if (data.success) {
+        state.orders = data.orders || [];
+        state.pagination = data.pagination || state.pagination;
+        state.summary = data.summary || state.summary;
+        state.statusCounts = data.statusCounts || {};
+
+        renderSummary();
+        renderStatusPills();
+        renderTable();
+        renderPagination();
+      }
+    } catch (error) {
+      console.error('[Orders] Load error:', error);
+      showError('ไม่สามารถโหลดข้อมูลออเดอร์ได้');
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  async function loadPages() {
+    try {
+      const response = await fetch('/admin/orders/pages');
+      const data = await response.json();
+
+      if (data.success && data.pages) {
+        state.pages = data.pages;
+        renderPageSelect();
+      }
+    } catch (error) {
+      console.error('[Orders] Load pages error:', error);
+    }
+  }
+
+  function buildQueryParams() {
+    const params = new URLSearchParams();
+    params.set('page', state.pagination.page);
+    params.set('limit', state.pagination.limit);
+
+    if (state.filters.status && state.filters.status !== 'all') {
+      params.set('status', state.filters.status);
+    }
+    if (state.filters.search) {
+      params.set('search', state.filters.search);
+    }
+    if (state.filters.pageKey) {
+      params.set('pageKey', state.filters.pageKey);
+    }
+    if (state.filters.startDate) {
+      params.set('startDate', state.filters.startDate);
+    }
+    if (state.filters.endDate) {
+      params.set('endDate', state.filters.endDate);
     }
 
-    function buildQueryParams() {
-        const params = new URLSearchParams();
-        params.set('page', state.pagination.page);
-        params.set('limit', state.pagination.limit);
+    return params;
+  }
 
-        if (state.filters.status && state.filters.status !== 'all') {
-            params.set('status', state.filters.status);
-        }
-        if (state.filters.search) {
-            params.set('search', state.filters.search);
-        }
-        if (state.filters.pageKey) {
-            params.set('pageKey', state.filters.pageKey);
-        }
-        if (state.filters.startDate) {
-            params.set('startDate', state.filters.startDate);
-        }
-        if (state.filters.endDate) {
-            params.set('endDate', state.filters.endDate);
-        }
+  // ============ Render Functions ============
+  function renderSummary() {
+    if (!els.summaryCards) return;
 
-        return params;
-    }
+    const { totalOrders, totalAmount, totalShipping } = state.summary;
+    const avgOrder = totalOrders > 0 ? Math.round(totalAmount / totalOrders) : 0;
+    const completedCount = state.statusCounts.completed || 0;
+    const completionRate = totalOrders > 0 ? Math.round((completedCount / totalOrders) * 100) : 0;
 
-    // ============ Render Functions ============
-    function renderSummary() {
-        if (!els.summaryCards) return;
-
-        const { totalOrders, totalAmount, totalShipping } = state.summary;
-        const avgOrder = totalOrders > 0 ? Math.round(totalAmount / totalOrders) : 0;
-        const completedCount = state.statusCounts.completed || 0;
-        const completionRate = totalOrders > 0 ? Math.round((completedCount / totalOrders) * 100) : 0;
-
-        els.summaryCards.innerHTML = `
+    els.summaryCards.innerHTML = `
       <div class="orders-summary-card">
         <div class="orders-summary-icon icon-primary"><i class="fas fa-shopping-bag"></i></div>
         <div class="orders-summary-content">
@@ -229,20 +229,20 @@
         </div>
       </div>
     `;
-    }
+  }
 
-    function renderStatusPills() {
-        if (!els.statusPills) return;
+  function renderStatusPills() {
+    if (!els.statusPills) return;
 
-        const statuses = ['all', 'pending', 'confirmed', 'shipped', 'completed', 'cancelled'];
-        const total = Object.values(state.statusCounts).reduce((a, b) => a + b, 0);
+    const statuses = ['all', 'pending', 'confirmed', 'shipped', 'completed', 'cancelled'];
+    const total = Object.values(state.statusCounts).reduce((a, b) => a + b, 0);
 
-        els.statusPills.innerHTML = statuses.map(status => {
-            const config = STATUS_CONFIG[status];
-            const count = status === 'all' ? total : (state.statusCounts[status] || 0);
-            const isActive = state.filters.status === status;
+    els.statusPills.innerHTML = statuses.map(status => {
+      const config = STATUS_CONFIG[status];
+      const count = status === 'all' ? total : (state.statusCounts[status] || 0);
+      const isActive = state.filters.status === status;
 
-            return `
+      return `
         <button class="orders-status-pill ${isActive ? 'active' : ''}" 
                 data-status="${status}" 
                 onclick="window.OrdersV2.setStatus('${status}')">
@@ -253,14 +253,14 @@
           <span class="pill-count">${count}</span>
         </button>
       `;
-        }).join('');
-    }
+    }).join('');
+  }
 
-    function renderTable() {
-        if (!els.tableBody) return;
+  function renderTable() {
+    if (!els.tableBody) return;
 
-        if (state.orders.length === 0) {
-            els.tableBody.innerHTML = `
+    if (state.orders.length === 0) {
+      els.tableBody.innerHTML = `
         <tr>
           <td colspan="7">
             <div class="orders-empty-state">
@@ -271,18 +271,18 @@
           </td>
         </tr>
       `;
-            return;
-        }
+      return;
+    }
 
-        els.tableBody.innerHTML = state.orders.map(order => {
-            const isSelected = state.selectedIds.has(order.id);
-            const date = order.extractedAt ? formatDate(order.extractedAt) : '-';
-            const items = order.items || [];
-            const itemsPreview = items.slice(0, 2).map(i => i.product || i.shippingName || 'สินค้า').join(', ');
-            const itemsMore = items.length > 2 ? ` +${items.length - 2}` : '';
-            const statusConfig = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
+    els.tableBody.innerHTML = state.orders.map(order => {
+      const isSelected = state.selectedIds.has(order.id);
+      const date = order.extractedAt ? formatDate(order.extractedAt) : '-';
+      const items = order.items || [];
+      const itemsPreview = items.slice(0, 2).map(i => i.product || i.shippingName || 'สินค้า').join(', ');
+      const itemsMore = items.length > 2 ? ` +${items.length - 2}` : '';
+      const statusConfig = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
 
-            return `
+      return `
         <tr class="${isSelected ? 'selected' : ''}" data-order-id="${order.id}">
           <td>
             <input type="checkbox" class="orders-checkbox" 
@@ -323,296 +323,305 @@
           </td>
         </tr>
       `;
-        }).join('');
+    }).join('');
 
-        updateSelectAllState();
+    updateSelectAllState();
+  }
+
+  function renderPagination() {
+    if (!els.pagination) return;
+
+    const { page, pages, total } = state.pagination;
+    const start = (page - 1) * state.pagination.limit + 1;
+    const end = Math.min(page * state.pagination.limit, total);
+
+    if (els.paginationInfo) {
+      els.paginationInfo.textContent = `แสดง ${start}-${end} จาก ${total} รายการ`;
     }
 
-    function renderPagination() {
-        if (!els.pagination) return;
+    let paginationHtml = '';
 
-        const { page, pages, total } = state.pagination;
-        const start = (page - 1) * state.pagination.limit + 1;
-        const end = Math.min(page * state.pagination.limit, total);
-
-        if (els.paginationInfo) {
-            els.paginationInfo.textContent = `แสดง ${start}-${end} จาก ${total} รายการ`;
-        }
-
-        let paginationHtml = '';
-
-        // Previous
-        paginationHtml += `
+    // Previous
+    paginationHtml += `
       <button class="orders-page-btn" ${page <= 1 ? 'disabled' : ''} onclick="window.OrdersV2.goToPage(${page - 1})">
         <i class="fas fa-chevron-left"></i>
       </button>
     `;
 
-        // Page numbers
-        const maxVisible = 5;
-        let startPage = Math.max(1, page - Math.floor(maxVisible / 2));
-        let endPage = Math.min(pages, startPage + maxVisible - 1);
-        if (endPage - startPage < maxVisible - 1) {
-            startPage = Math.max(1, endPage - maxVisible + 1);
-        }
+    // Page numbers
+    const maxVisible = 5;
+    let startPage = Math.max(1, page - Math.floor(maxVisible / 2));
+    let endPage = Math.min(pages, startPage + maxVisible - 1);
+    if (endPage - startPage < maxVisible - 1) {
+      startPage = Math.max(1, endPage - maxVisible + 1);
+    }
 
-        if (startPage > 1) {
-            paginationHtml += `<button class="orders-page-btn" onclick="window.OrdersV2.goToPage(1)">1</button>`;
-            if (startPage > 2) paginationHtml += `<span class="orders-page-ellipsis">...</span>`;
-        }
+    if (startPage > 1) {
+      paginationHtml += `<button class="orders-page-btn" onclick="window.OrdersV2.goToPage(1)">1</button>`;
+      if (startPage > 2) paginationHtml += `<span class="orders-page-ellipsis">...</span>`;
+    }
 
-        for (let i = startPage; i <= endPage; i++) {
-            paginationHtml += `
+    for (let i = startPage; i <= endPage; i++) {
+      paginationHtml += `
         <button class="orders-page-btn ${i === page ? 'active' : ''}" onclick="window.OrdersV2.goToPage(${i})">${i}</button>
       `;
-        }
+    }
 
-        if (endPage < pages) {
-            if (endPage < pages - 1) paginationHtml += `<span class="orders-page-ellipsis">...</span>`;
-            paginationHtml += `<button class="orders-page-btn" onclick="window.OrdersV2.goToPage(${pages})">${pages}</button>`;
-        }
+    if (endPage < pages) {
+      if (endPage < pages - 1) paginationHtml += `<span class="orders-page-ellipsis">...</span>`;
+      paginationHtml += `<button class="orders-page-btn" onclick="window.OrdersV2.goToPage(${pages})">${pages}</button>`;
+    }
 
-        // Next
-        paginationHtml += `
+    // Next
+    paginationHtml += `
       <button class="orders-page-btn" ${page >= pages ? 'disabled' : ''} onclick="window.OrdersV2.goToPage(${page + 1})">
         <i class="fas fa-chevron-right"></i>
       </button>
     `;
 
-        els.pagination.querySelector('.orders-pagination-controls').innerHTML = paginationHtml;
+    els.pagination.querySelector('.orders-pagination-controls').innerHTML = paginationHtml;
+  }
+
+  function renderPageSelect() {
+    if (!els.pageSelect) return;
+
+    let options = '<option value="">ทุกเพจ/บอท</option>';
+    state.pages.forEach(page => {
+      const label = page.name || page.pageKey || 'Unknown';
+      options += `<option value="${page.pageKey}">${escapeHtml(label)}</option>`;
+    });
+
+    els.pageSelect.innerHTML = options;
+    if (state.filters.pageKey) {
+      els.pageSelect.value = state.filters.pageKey;
+    }
+  }
+
+  // ============ Event Handlers ============
+  function handleSearch(e) {
+    state.filters.search = e.target.value.trim();
+    state.pagination.page = 1;
+    saveFilters();
+    loadOrders();
+  }
+
+  function handlePageSelect(e) {
+    state.filters.pageKey = e.target.value;
+    state.pagination.page = 1;
+    saveFilters();
+    loadOrders();
+  }
+
+  function handleDateChange() {
+    state.filters.startDate = els.startDate?.value || '';
+    state.filters.endDate = els.endDate?.value || '';
+    state.filters.quickDate = '';
+    document.querySelectorAll('.orders-quick-date-btn').forEach(btn => btn.classList.remove('active'));
+    state.pagination.page = 1;
+    saveFilters();
+    loadOrders();
+  }
+
+  function handleQuickDate(e) {
+    const btn = e.currentTarget;
+    const range = btn.dataset.range;
+
+    document.querySelectorAll('.orders-quick-date-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    const today = new Date();
+    let startDate = '';
+    let endDate = formatDateInput(today);
+
+    if (range === 'today') {
+      startDate = endDate;
+    } else if (range === '7days') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 7);
+      startDate = formatDateInput(d);
+    } else if (range === '30days') {
+      const d = new Date(today);
+      d.setDate(d.getDate() - 30);
+      startDate = formatDateInput(d);
     }
 
-    function renderPageSelect() {
-        if (!els.pageSelect) return;
+    state.filters.startDate = startDate;
+    state.filters.endDate = endDate;
+    state.filters.quickDate = range;
 
-        let options = '<option value="">ทุกเพจ/บอท</option>';
-        state.pages.forEach(page => {
-            const label = page.name || page.pageKey || 'Unknown';
-            options += `<option value="${page.pageKey}">${escapeHtml(label)}</option>`;
-        });
+    if (els.startDate) els.startDate.value = startDate;
+    if (els.endDate) els.endDate.value = endDate;
 
-        els.pageSelect.innerHTML = options;
-        if (state.filters.pageKey) {
-            els.pageSelect.value = state.filters.pageKey;
-        }
+    state.pagination.page = 1;
+    saveFilters();
+    loadOrders();
+  }
+
+  function handleSelectAll(e) {
+    const checked = e.target.checked;
+    if (checked) {
+      state.orders.forEach(order => state.selectedIds.add(order.id));
+    } else {
+      state.selectedIds.clear();
     }
+    renderTable();
+    updateBulkBar();
+  }
 
-    // ============ Event Handlers ============
-    function handleSearch(e) {
-        state.filters.search = e.target.value.trim();
-        state.pagination.page = 1;
-        saveFilters();
+  function handleBulkExport() {
+    const ids = Array.from(state.selectedIds);
+    if (ids.length === 0) return;
+
+    const params = new URLSearchParams();
+    ids.forEach(id => params.append('ids', id));
+    window.location.href = `/admin/orders/export?${params.toString()}`;
+  }
+
+  function handleExport() {
+    // If there are selected orders, export only those
+    if (state.selectedIds.size > 0) {
+      const ids = Array.from(state.selectedIds);
+      const params = new URLSearchParams();
+      ids.forEach(id => params.append('ids', id));
+      window.location.href = `/admin/orders/export?${params.toString()}`;
+    } else {
+      // Export all orders matching current filters
+      const params = buildQueryParams();
+      window.location.href = `/admin/orders/export?${params.toString()}`;
+    }
+  }
+
+  // ============ Selection ============
+  function toggleSelect(orderId) {
+    if (state.selectedIds.has(orderId)) {
+      state.selectedIds.delete(orderId);
+    } else {
+      state.selectedIds.add(orderId);
+    }
+    renderTable();
+    updateBulkBar();
+  }
+
+  function clearSelection() {
+    state.selectedIds.clear();
+    if (els.selectAll) els.selectAll.checked = false;
+    renderTable();
+    updateBulkBar();
+  }
+
+  function updateSelectAllState() {
+    if (!els.selectAll) return;
+    const allSelected = state.orders.length > 0 && state.orders.every(o => state.selectedIds.has(o.id));
+    const someSelected = state.orders.some(o => state.selectedIds.has(o.id));
+    els.selectAll.checked = allSelected;
+    els.selectAll.indeterminate = someSelected && !allSelected;
+  }
+
+  function updateBulkBar() {
+    if (!els.bulkBar) return;
+    const count = state.selectedIds.size;
+    if (count > 0) {
+      els.bulkBar.classList.add('visible');
+      if (els.bulkCount) els.bulkCount.textContent = `เลือก ${count} รายการ`;
+    } else {
+      els.bulkBar.classList.remove('visible');
+    }
+  }
+
+  // ============ Status ============
+  function setStatus(status) {
+    state.filters.status = status;
+    state.pagination.page = 1;
+    saveFilters();
+    loadOrders();
+  }
+
+  async function updateStatus(orderId, newStatus) {
+    try {
+      const response = await fetch(`/admin/orders/${orderId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        showToast('อัปเดตสถานะเรียบร้อย', 'success');
         loadOrders();
+      } else {
+        showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+      }
+    } catch (error) {
+      console.error('[Orders] Update status error:', error);
+      showToast('ไม่สามารถอัปเดตสถานะได้', 'error');
     }
+  }
 
-    function handlePageSelect(e) {
-        state.filters.pageKey = e.target.value;
-        state.pagination.page = 1;
-        saveFilters();
+  async function bulkUpdateStatus(newStatus) {
+    const ids = Array.from(state.selectedIds);
+    if (ids.length === 0) return;
+
+    try {
+      const response = await fetch('/admin/orders/bulk/status', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderIds: ids, status: newStatus })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        showToast(`อัปเดต ${data.modifiedCount} ออเดอร์เรียบร้อย`, 'success');
+        clearSelection();
         loadOrders();
+      } else {
+        showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+      }
+    } catch (error) {
+      console.error('[Orders] Bulk update error:', error);
+      showToast('ไม่สามารถอัปเดตสถานะได้', 'error');
     }
+  }
 
-    function handleDateChange() {
-        state.filters.startDate = els.startDate?.value || '';
-        state.filters.endDate = els.endDate?.value || '';
-        state.filters.quickDate = '';
-        document.querySelectorAll('.orders-quick-date-btn').forEach(btn => btn.classList.remove('active'));
-        state.pagination.page = 1;
-        saveFilters();
-        loadOrders();
+  // ============ Detail Panel ============
+  function openDetail(orderId) {
+    const order = state.orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    state.detailOrderId = orderId;
+    renderDetailPanel(order);
+
+    if (els.detailOverlay) {
+      els.detailOverlay.classList.add('open');
+      document.body.style.overflow = 'hidden';
     }
+  }
 
-    function handleQuickDate(e) {
-        const btn = e.currentTarget;
-        const range = btn.dataset.range;
-
-        document.querySelectorAll('.orders-quick-date-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        const today = new Date();
-        let startDate = '';
-        let endDate = formatDateInput(today);
-
-        if (range === 'today') {
-            startDate = endDate;
-        } else if (range === '7days') {
-            const d = new Date(today);
-            d.setDate(d.getDate() - 7);
-            startDate = formatDateInput(d);
-        } else if (range === '30days') {
-            const d = new Date(today);
-            d.setDate(d.getDate() - 30);
-            startDate = formatDateInput(d);
-        }
-
-        state.filters.startDate = startDate;
-        state.filters.endDate = endDate;
-        state.filters.quickDate = range;
-
-        if (els.startDate) els.startDate.value = startDate;
-        if (els.endDate) els.endDate.value = endDate;
-
-        state.pagination.page = 1;
-        saveFilters();
-        loadOrders();
+  function closeDetail() {
+    state.detailOrderId = null;
+    if (els.detailOverlay) {
+      els.detailOverlay.classList.remove('open');
+      document.body.style.overflow = '';
     }
+  }
 
-    function handleSelectAll(e) {
-        const checked = e.target.checked;
-        if (checked) {
-            state.orders.forEach(order => state.selectedIds.add(order.id));
-        } else {
-            state.selectedIds.clear();
-        }
-        renderTable();
-        updateBulkBar();
-    }
+  function renderDetailPanel(order) {
+    const body = document.getElementById('ordersDetailBody');
+    if (!body) return;
 
-    function handleBulkExport() {
-        const ids = Array.from(state.selectedIds);
-        if (ids.length === 0) return;
+    const statusConfig = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
+    const items = order.items || [];
+    const date = order.extractedAt ? formatDate(order.extractedAt, true) : '-';
 
-        const params = new URLSearchParams();
-        ids.forEach(id => params.append('ids', id));
-        window.location.href = `/admin/orders/export?${params.toString()}`;
-    }
+    // Build address
+    const addressParts = [
+      order.shippingAddress,
+      order.addressSubDistrict ? `ต.${order.addressSubDistrict}` : '',
+      order.addressDistrict ? `อ.${order.addressDistrict}` : '',
+      order.addressProvince,
+      order.addressPostalCode
+    ].filter(Boolean);
 
-    function handleExport() {
-        const params = buildQueryParams();
-        window.location.href = `/admin/orders/export?${params.toString()}`;
-    }
-
-    // ============ Selection ============
-    function toggleSelect(orderId) {
-        if (state.selectedIds.has(orderId)) {
-            state.selectedIds.delete(orderId);
-        } else {
-            state.selectedIds.add(orderId);
-        }
-        renderTable();
-        updateBulkBar();
-    }
-
-    function clearSelection() {
-        state.selectedIds.clear();
-        if (els.selectAll) els.selectAll.checked = false;
-        renderTable();
-        updateBulkBar();
-    }
-
-    function updateSelectAllState() {
-        if (!els.selectAll) return;
-        const allSelected = state.orders.length > 0 && state.orders.every(o => state.selectedIds.has(o.id));
-        const someSelected = state.orders.some(o => state.selectedIds.has(o.id));
-        els.selectAll.checked = allSelected;
-        els.selectAll.indeterminate = someSelected && !allSelected;
-    }
-
-    function updateBulkBar() {
-        if (!els.bulkBar) return;
-        const count = state.selectedIds.size;
-        if (count > 0) {
-            els.bulkBar.classList.add('visible');
-            if (els.bulkCount) els.bulkCount.textContent = `เลือก ${count} รายการ`;
-        } else {
-            els.bulkBar.classList.remove('visible');
-        }
-    }
-
-    // ============ Status ============
-    function setStatus(status) {
-        state.filters.status = status;
-        state.pagination.page = 1;
-        saveFilters();
-        loadOrders();
-    }
-
-    async function updateStatus(orderId, newStatus) {
-        try {
-            const response = await fetch(`/admin/orders/${orderId}/status`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: newStatus })
-            });
-
-            const data = await response.json();
-            if (data.success) {
-                showToast('อัปเดตสถานะเรียบร้อย', 'success');
-                loadOrders();
-            } else {
-                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
-            }
-        } catch (error) {
-            console.error('[Orders] Update status error:', error);
-            showToast('ไม่สามารถอัปเดตสถานะได้', 'error');
-        }
-    }
-
-    async function bulkUpdateStatus(newStatus) {
-        const ids = Array.from(state.selectedIds);
-        if (ids.length === 0) return;
-
-        try {
-            const response = await fetch('/admin/orders/bulk/status', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ orderIds: ids, status: newStatus })
-            });
-
-            const data = await response.json();
-            if (data.success) {
-                showToast(`อัปเดต ${data.modifiedCount} ออเดอร์เรียบร้อย`, 'success');
-                clearSelection();
-                loadOrders();
-            } else {
-                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
-            }
-        } catch (error) {
-            console.error('[Orders] Bulk update error:', error);
-            showToast('ไม่สามารถอัปเดตสถานะได้', 'error');
-        }
-    }
-
-    // ============ Detail Panel ============
-    function openDetail(orderId) {
-        const order = state.orders.find(o => o.id === orderId);
-        if (!order) return;
-
-        state.detailOrderId = orderId;
-        renderDetailPanel(order);
-
-        if (els.detailOverlay) {
-            els.detailOverlay.classList.add('open');
-            document.body.style.overflow = 'hidden';
-        }
-    }
-
-    function closeDetail() {
-        state.detailOrderId = null;
-        if (els.detailOverlay) {
-            els.detailOverlay.classList.remove('open');
-            document.body.style.overflow = '';
-        }
-    }
-
-    function renderDetailPanel(order) {
-        const body = document.getElementById('ordersDetailBody');
-        if (!body) return;
-
-        const statusConfig = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
-        const items = order.items || [];
-        const date = order.extractedAt ? formatDate(order.extractedAt, true) : '-';
-
-        // Build address
-        const addressParts = [
-            order.shippingAddress,
-            order.addressSubDistrict ? `ต.${order.addressSubDistrict}` : '',
-            order.addressDistrict ? `อ.${order.addressDistrict}` : '',
-            order.addressProvince,
-            order.addressPostalCode
-        ].filter(Boolean);
-
-        body.innerHTML = `
+    body.innerHTML = `
       <div class="orders-detail-section">
         <div class="orders-detail-section-title"><i class="fas fa-user"></i> ข้อมูลลูกค้า</div>
         <div class="orders-detail-row">
@@ -694,100 +703,100 @@
         <div class="orders-detail-section-title"><i class="fas fa-exchange-alt"></i> เปลี่ยนสถานะ</div>
         <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
           ${['pending', 'confirmed', 'shipped', 'completed', 'cancelled'].map(s => {
-            const cfg = STATUS_CONFIG[s];
-            const isActive = order.status === s;
-            return `
+      const cfg = STATUS_CONFIG[s];
+      const isActive = order.status === s;
+      return `
               <button class="orders-btn ${isActive ? 'orders-btn-primary' : 'orders-btn-outline'}" 
                       onclick="window.OrdersV2.updateStatus('${order.id}', '${s}')">
                 ${cfg.label}
               </button>
             `;
-        }).join('')}
+    }).join('')}
         </div>
       </div>
     `;
 
-        // Update title
-        const titleEl = document.getElementById('ordersDetailTitle');
-        if (titleEl) {
-            titleEl.textContent = `Order #${order.id.slice(-8).toUpperCase()}`;
+    // Update title
+    const titleEl = document.getElementById('ordersDetailTitle');
+    if (titleEl) {
+      titleEl.textContent = `Order #${order.id.slice(-8).toUpperCase()}`;
+    }
+  }
+
+  async function saveNotes(orderId) {
+    const textarea = document.getElementById('ordersDetailNotes');
+    if (!textarea) return;
+
+    try {
+      const response = await fetch(`/admin/orders/${orderId}/notes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: textarea.value })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        showToast('บันทึกหมายเหตุเรียบร้อย', 'success');
+        // Update local state
+        const order = state.orders.find(o => o.id === orderId);
+        if (order) order.notes = textarea.value;
+      } else {
+        showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
+      }
+    } catch (error) {
+      console.error('[Orders] Save notes error:', error);
+      showToast('ไม่สามารถบันทึกหมายเหตุได้', 'error');
+    }
+  }
+
+  // ============ Actions ============
+  function printLabel(orderId) {
+    window.open(`/admin/orders/${orderId}/print-label`, '_blank', 'width=450,height=600');
+  }
+
+  function goToChat(userId) {
+    if (userId) {
+      window.location.href = `/admin/chat?user=${userId}`;
+    }
+  }
+
+  function goToPage(page) {
+    if (page < 1 || page > state.pagination.pages) return;
+    state.pagination.page = page;
+    loadOrders();
+  }
+
+  // ============ Filters Persistence ============
+  function saveFilters() {
+    try {
+      localStorage.setItem('ordersV2Filters', JSON.stringify(state.filters));
+    } catch (e) { }
+  }
+
+  function restoreFilters() {
+    try {
+      const saved = localStorage.getItem('ordersV2Filters');
+      if (saved) {
+        const filters = JSON.parse(saved);
+        state.filters = { ...state.filters, ...filters };
+
+        // Apply to inputs
+        if (els.searchInput) els.searchInput.value = state.filters.search || '';
+        if (els.startDate) els.startDate.value = state.filters.startDate || '';
+        if (els.endDate) els.endDate.value = state.filters.endDate || '';
+
+        // Quick date active
+        if (state.filters.quickDate) {
+          document.querySelector(`.orders-quick-date-btn[data-range="${state.filters.quickDate}"]`)?.classList.add('active');
         }
-    }
+      }
+    } catch (e) { }
+  }
 
-    async function saveNotes(orderId) {
-        const textarea = document.getElementById('ordersDetailNotes');
-        if (!textarea) return;
-
-        try {
-            const response = await fetch(`/admin/orders/${orderId}/notes`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ notes: textarea.value })
-            });
-
-            const data = await response.json();
-            if (data.success) {
-                showToast('บันทึกหมายเหตุเรียบร้อย', 'success');
-                // Update local state
-                const order = state.orders.find(o => o.id === orderId);
-                if (order) order.notes = textarea.value;
-            } else {
-                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
-            }
-        } catch (error) {
-            console.error('[Orders] Save notes error:', error);
-            showToast('ไม่สามารถบันทึกหมายเหตุได้', 'error');
-        }
-    }
-
-    // ============ Actions ============
-    function printLabel(orderId) {
-        window.open(`/admin/orders/${orderId}/print-label`, '_blank', 'width=450,height=600');
-    }
-
-    function goToChat(userId) {
-        if (userId) {
-            window.location.href = `/admin/chat?user=${userId}`;
-        }
-    }
-
-    function goToPage(page) {
-        if (page < 1 || page > state.pagination.pages) return;
-        state.pagination.page = page;
-        loadOrders();
-    }
-
-    // ============ Filters Persistence ============
-    function saveFilters() {
-        try {
-            localStorage.setItem('ordersV2Filters', JSON.stringify(state.filters));
-        } catch (e) { }
-    }
-
-    function restoreFilters() {
-        try {
-            const saved = localStorage.getItem('ordersV2Filters');
-            if (saved) {
-                const filters = JSON.parse(saved);
-                state.filters = { ...state.filters, ...filters };
-
-                // Apply to inputs
-                if (els.searchInput) els.searchInput.value = state.filters.search || '';
-                if (els.startDate) els.startDate.value = state.filters.startDate || '';
-                if (els.endDate) els.endDate.value = state.filters.endDate || '';
-
-                // Quick date active
-                if (state.filters.quickDate) {
-                    document.querySelector(`.orders-quick-date-btn[data-range="${state.filters.quickDate}"]`)?.classList.add('active');
-                }
-            }
-        } catch (e) { }
-    }
-
-    // ============ Utilities ============
-    function showLoading() {
-        if (els.tableBody) {
-            els.tableBody.innerHTML = `
+  // ============ Utilities ============
+  function showLoading() {
+    if (els.tableBody) {
+      els.tableBody.innerHTML = `
         <tr>
           <td colspan="7">
             <div class="orders-loading">
@@ -797,12 +806,12 @@
           </td>
         </tr>
       `;
-        }
     }
+  }
 
-    function showError(message) {
-        if (els.tableBody) {
-            els.tableBody.innerHTML = `
+  function showError(message) {
+    if (els.tableBody) {
+      els.tableBody.innerHTML = `
         <tr>
           <td colspan="7">
             <div class="orders-empty-state">
@@ -813,15 +822,15 @@
           </td>
         </tr>
       `;
-        }
     }
+  }
 
-    function showToast(message, type = 'info') {
-        // Simple toast implementation
-        const toast = document.createElement('div');
-        toast.className = `orders-toast orders-toast-${type}`;
-        toast.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'info-circle'}"></i> ${escapeHtml(message)}`;
-        toast.style.cssText = `
+  function showToast(message, type = 'info') {
+    // Simple toast implementation
+    const toast = document.createElement('div');
+    toast.className = `orders-toast orders-toast-${type}`;
+    toast.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'times-circle' : 'info-circle'}"></i> ${escapeHtml(message)}`;
+    toast.style.cssText = `
       position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
       background: ${type === 'success' ? '#2D8F6F' : type === 'error' ? '#D2555A' : '#4A6FA5'};
       color: #fff; padding: 0.75rem 1.25rem; border-radius: 8px;
@@ -829,70 +838,70 @@
       display: flex; align-items: center; gap: 0.5rem;
       animation: fadeIn 0.2s ease;
     `;
-        document.body.appendChild(toast);
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            setTimeout(() => toast.remove(), 200);
-        }, 3000);
-    }
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      setTimeout(() => toast.remove(), 200);
+    }, 3000);
+  }
 
-    function formatDate(dateStr, full = false) {
-        if (!dateStr) return '-';
-        const d = new Date(dateStr);
-        const day = d.getDate().toString().padStart(2, '0');
-        const month = (d.getMonth() + 1).toString().padStart(2, '0');
-        const year = d.getFullYear() + 543; // พ.ศ.
-        if (full) {
-            const hour = d.getHours().toString().padStart(2, '0');
-            const min = d.getMinutes().toString().padStart(2, '0');
-            return `${day}/${month}/${year} ${hour}:${min}`;
-        }
-        return `${day}/${month}`;
+  function formatDate(dateStr, full = false) {
+    if (!dateStr) return '-';
+    const d = new Date(dateStr);
+    const day = d.getDate().toString().padStart(2, '0');
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    const year = d.getFullYear() + 543; // พ.ศ.
+    if (full) {
+      const hour = d.getHours().toString().padStart(2, '0');
+      const min = d.getMinutes().toString().padStart(2, '0');
+      return `${day}/${month}/${year} ${hour}:${min}`;
     }
+    return `${day}/${month}`;
+  }
 
-    function formatDateInput(date) {
-        const y = date.getFullYear();
-        const m = (date.getMonth() + 1).toString().padStart(2, '0');
-        const d = date.getDate().toString().padStart(2, '0');
-        return `${y}-${m}-${d}`;
-    }
+  function formatDateInput(date) {
+    const y = date.getFullYear();
+    const m = (date.getMonth() + 1).toString().padStart(2, '0');
+    const d = date.getDate().toString().padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
 
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
 
-    function debounce(fn, delay) {
-        let timer;
-        return function (...args) {
-            clearTimeout(timer);
-            timer = setTimeout(() => fn.apply(this, args), delay);
-        };
-    }
-
-    // ============ Public API ============
-    window.OrdersV2 = {
-        init,
-        setStatus,
-        updateStatus,
-        bulkUpdateStatus,
-        toggleSelect,
-        openDetail,
-        closeDetail,
-        printLabel,
-        goToChat,
-        goToPage,
-        saveNotes
+  function debounce(fn, delay) {
+    let timer;
+    return function (...args) {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(this, args), delay);
     };
+  }
 
-    // Auto init
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
+  // ============ Public API ============
+  window.OrdersV2 = {
+    init,
+    setStatus,
+    updateStatus,
+    bulkUpdateStatus,
+    toggleSelect,
+    openDetail,
+    closeDetail,
+    printLabel,
+    goToChat,
+    goToPage,
+    saveNotes
+  };
+
+  // Auto init
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();

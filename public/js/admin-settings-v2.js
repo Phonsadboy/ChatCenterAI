@@ -708,7 +708,13 @@ const defaultAiConfig = {
 
 function isReasoningModel(modelId) {
     if (!modelId || typeof modelId !== 'string') return false;
-    return modelId.toLowerCase().startsWith('gpt-5'); // GPT-5.x family supports reasoning_effort
+    const id = modelId.toLowerCase();
+    // Models that support reasoning_effort:
+    // - o1, o1-mini, o1-preview (OpenAI reasoning models)
+    // - o3, o3-mini (OpenAI reasoning models)
+    // - gpt-5 (future GPT-5 models)
+    // GPT-4, GPT-4.1, GPT-4o do NOT support reasoning_effort
+    return id.startsWith('o1') || id.startsWith('o3') || id.startsWith('gpt-5');
 }
 
 function parseNumberOrNull(value) {
