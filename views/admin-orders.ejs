@@ -66,10 +66,6 @@
             </div>
           </div>
 
-          <!-- Settings Link -->
-          <a href="#" class="orders-settings-link" id="ordersSettingsLink">
-            <i class="fas fa-cog"></i> ตั้งค่าตัดรอบออเดอร์
-          </a>
         </aside>
 
         <!-- Main Content -->
@@ -80,6 +76,9 @@
               <select class="orders-page-select" id="ordersPageSelect" style="min-width: 180px;">
                 <option value="">ทุกเพจ/บอท</option>
               </select>
+              <button class="orders-btn orders-btn-icon" id="ordersSettingsBtn" title="ตั้งค่าการสกัดออเดอร์">
+                <i class="fas fa-cog"></i>
+              </button>
             </div>
             <div class="orders-toolbar-actions">
               <button class="orders-btn orders-btn-primary" id="ordersExportBtn">
@@ -187,54 +186,105 @@
       </div>
     </div>
 
-    <!-- Settings Modal -->
-    <div class="modal fade" id="ordersSettingsModal" tabindex="-1">
+    <!-- AI Settings Modal -->
+    <div class="modal fade" id="ordersAISettingsModal" tabindex="-1">
       <div class="modal-dialog modal-lg">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title"><i class="fas fa-cog me-2"></i>ตั้งค่าตัดรอบออเดอร์</h5>
+            <h5 class="modal-title"><i class="fas fa-cog me-2"></i>ตั้งค่าการสกัดออเดอร์</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
           </div>
-          <div class="modal-body" id="ordersSettingsBody">
-            <!-- Mode Selection -->
-            <div class="mb-4">
-              <label class="form-label fw-semibold">โหมดการสกัดออเดอร์</label>
-              <div class="form-check">
-                <input class="form-check-input" type="radio" name="extractionMode" id="modeRealtime" value="realtime">
-                <label class="form-check-label" for="modeRealtime">
-                  <strong>แบบทันที (Realtime)</strong>
-                  <div class="text-muted small">สกัดออเดอร์ทันทีเมื่อลูกค้ายืนยัน</div>
-                </label>
-              </div>
-              <div class="form-check mt-2">
-                <input class="form-check-input" type="radio" name="extractionMode" id="modeScheduled" value="scheduled">
-                <label class="form-check-label" for="modeScheduled">
-                  <strong>แบบตัดรอบ (Scheduled)</strong>
-                  <div class="text-muted small">รวบรวมออเดอร์และตัดรอบตามเวลาที่กำหนด</div>
-                </label>
+          <div class="modal-body" id="ordersAISettingsBody">
+            <!-- Extraction Mode Settings -->
+            <div class="card border-0 bg-light mb-4">
+              <div class="card-body">
+                <h6 class="mb-3"><i class="fas fa-clock me-2"></i>โหมดการสกัดออเดอร์</h6>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="extractionMode" id="modeRealtime" value="realtime">
+                  <label class="form-check-label" for="modeRealtime">
+                    <strong>แบบทันที (Realtime)</strong>
+                    <div class="text-muted small">สกัดออเดอร์ทันทีเมื่อลูกค้ายืนยัน</div>
+                  </label>
+                </div>
+                <div class="form-check mt-2">
+                  <input class="form-check-input" type="radio" name="extractionMode" id="modeScheduled"
+                    value="scheduled">
+                  <label class="form-check-label" for="modeScheduled">
+                    <strong>แบบตัดรอบ (Scheduled)</strong>
+                    <div class="text-muted small">รวบรวมออเดอร์และตัดรอบตามเวลาที่กำหนด</div>
+                  </label>
+                </div>
               </div>
             </div>
 
-            <!-- Cutoff Time Settings -->
-            <div id="cutoffTimeSettings" style="display:none;">
-              <hr>
-              <label class="form-label fw-semibold">เวลาตัดรอบของแต่ละเพจ</label>
-              <div class="table-responsive">
-                <table class="table table-sm" id="cutoffPagesTable">
-                  <thead>
-                    <tr>
-                      <th>เพจ/บอท</th>
-                      <th style="width:140px;">เวลาตัดรอบ</th>
-                      <th style="width:80px;">บันทึก</th>
-                    </tr>
-                  </thead>
-                  <tbody id="cutoffPagesBody">
-                    <tr>
-                      <td colspan="3" class="text-muted text-center">กำลังโหลด...</td>
-                    </tr>
-                  </tbody>
-                </table>
+            <hr class="my-4">
+
+            <!-- Page Selector -->
+            <h6 class="mb-3"><i class="fas fa-robot me-2"></i>ตั้งค่า AI แยกตามเพจ</h6>
+            <div class="mb-3">
+              <label class="form-label">เลือกเพจ/บอท</label>
+              <select class="form-select" id="aiSettingsPageSelect">
+                <option value="">-- เลือกเพจที่ต้องการตั้งค่า --</option>
+              </select>
+            </div>
+
+            <!-- Settings Panel (hidden until page selected) -->
+            <div id="aiSettingsPanel" style="display: none;">
+              <div class="card border-0 bg-light">
+                <div class="card-body">
+                  <!-- Page Name Display -->
+                  <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h6 class="mb-0" id="aiSettingsPageName">-</h6>
+                    <span class="badge bg-secondary" id="aiSettingsPagePlatform">-</span>
+                  </div>
+
+                  <!-- Enable/Disable Toggle -->
+                  <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="aiSettingsEnabled" checked>
+                    <label class="form-check-label fw-semibold" for="aiSettingsEnabled">
+                      เปิดใช้งานการสกัดออเดอร์
+                    </label>
+                    <div class="text-muted small">ถ้าปิด ระบบจะไม่สกัดออเดอร์จากเพจนี้</div>
+                  </div>
+
+                  <hr>
+
+                  <!-- Model Selection -->
+                  <div class="mb-3">
+                    <label class="form-label fw-semibold">โมเดล AI ที่ใช้วิเคราะห์</label>
+                    <select class="form-select" id="aiSettingsModel">
+                      <option value="gpt-4.1-nano">GPT-4.1 Nano (ค่าเริ่มต้น - ประหยัดสุด)</option>
+                      <option value="gpt-4.1-mini">GPT-4.1 Mini (สมดุล)</option>
+                      <option value="gpt-4.1">GPT-4.1</option>
+                      <option value="gpt-5-nano">GPT-5 Nano</option>
+                      <option value="gpt-5-mini">GPT-5 Mini</option>
+                      <option value="gpt-5">GPT-5</option>
+                      <option value="o3">O3 (ทรงพลังสุด)</option>
+                    </select>
+                    <small class="text-muted">Nano เร็วและประหยัด | Mini สมดุล | O3 แม่นยำสุด</small>
+                  </div>
+
+                  <!-- Custom Prompt -->
+                  <div class="mb-3">
+                    <label class="form-label fw-semibold">คำสั่งให้ AI วิเคราะห์ออเดอร์</label>
+                    <textarea class="form-control" id="aiSettingsPrompt" rows="6"
+                      placeholder="ปล่อยว่างเพื่อใช้ค่าเริ่มต้นของระบบ"></textarea>
+                    <small class="text-muted">ระบุคำสั่งเพิ่มเติมสำหรับ AI
+                      หากต้องการปรับแต่งการสกัดออเดอร์สำหรับเพจนี้</small>
+                  </div>
+
+                  <!-- Save Button -->
+                  <button type="button" class="btn btn-primary w-100" id="aiSettingsSaveBtn">
+                    <i class="fas fa-save me-1"></i> บันทึกการตั้งค่า
+                  </button>
+                </div>
               </div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="aiSettingsEmpty" class="text-center text-muted py-4">
+              <i class="fas fa-hand-pointer fa-2x mb-2"></i>
+              <p class="mb-0">เลือกเพจ/บอทด้านบนเพื่อตั้งค่า</p>
             </div>
           </div>
           <div class="modal-footer">
@@ -267,16 +317,41 @@
         }
       });
 
-      // ========== Cutoff Settings ==========
-      let cutoffPages = [];
+      function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
 
-      // Mode radio change
+
+      // ========== AI Model Settings ==========
+      let aiSettingsPages = [];
+      let selectedPageKey = null;
+
+      async function loadAISettings() {
+        try {
+          // Load extraction mode
+          const modeRes = await fetch('/api/settings?keys=orderExtractionMode');
+          const modeData = await modeRes.json();
+          const currentMode = modeData.settings?.orderExtractionMode || 'realtime';
+          document.getElementById(currentMode === 'scheduled' ? 'modeScheduled' : 'modeRealtime').checked = true;
+
+          // Load pages
+          const pagesRes = await fetch('/admin/orders/pages');
+          const pagesData = await pagesRes.json();
+
+          if (pagesData.success && pagesData.pages) {
+            aiSettingsPages = pagesData.pages;
+            renderAISettingsPageDropdown();
+          }
+        } catch (e) {
+          console.error('Load AI settings error:', e);
+        }
+      }
+
+      // Save extraction mode on change
       document.querySelectorAll('input[name="extractionMode"]').forEach(radio => {
         radio.addEventListener('change', async function () {
           const mode = this.value;
-          document.getElementById('cutoffTimeSettings').style.display = mode === 'scheduled' ? 'block' : 'none';
-
-          // Save mode
           try {
             await fetch('/admin/orders/settings/scheduling', {
               method: 'POST',
@@ -287,109 +362,112 @@
         });
       });
 
-      async function loadCutoffSettings() {
-        try {
-          // Load mode
-          const modeRes = await fetch('/api/settings?keys=orderExtractionMode');
-          const modeData = await modeRes.json();
-          const currentMode = modeData.settings?.orderExtractionMode || 'realtime';
+      function renderAISettingsPageDropdown() {
+        const select = document.getElementById('aiSettingsPageSelect');
+        if (!select) return;
 
-          document.getElementById(currentMode === 'scheduled' ? 'modeScheduled' : 'modeRealtime').checked = true;
-          document.getElementById('cutoffTimeSettings').style.display = currentMode === 'scheduled' ? 'block' : 'none';
-
-          // Load pages
-          const pagesRes = await fetch('/admin/orders/pages');
-          const pagesData = await pagesRes.json();
-
-          if (pagesData.success && pagesData.pages) {
-            cutoffPages = pagesData.pages;
-            renderCutoffPages();
-          }
-        } catch (e) {
-          console.error('Load cutoff settings error:', e);
-        }
+        select.innerHTML = '<option value="">-- เลือกเพจที่ต้องการตั้งค่า --</option>' +
+          aiSettingsPages.map(page => {
+            const icon = page.platform === 'facebook' ? '📘' : '💚';
+            const label = page.name || page.pageKey || 'Unknown';
+            return `<option value="${page.pageKey}" data-platform="${page.platform}" data-bot-id="${page.botId || ''}">${icon} ${escapeHtml(label)}</option>`;
+          }).join('');
       }
 
-      function renderCutoffPages() {
-        const tbody = document.getElementById('cutoffPagesBody');
-        if (!cutoffPages.length) {
-          tbody.innerHTML = '<tr><td colspan="3" class="text-muted text-center">ไม่พบเพจ/บอท</td></tr>';
+      function showPageSettings(pageKey) {
+        const page = aiSettingsPages.find(p => p.pageKey === pageKey);
+        const panel = document.getElementById('aiSettingsPanel');
+        const empty = document.getElementById('aiSettingsEmpty');
+
+        if (!page) {
+          panel.style.display = 'none';
+          empty.style.display = 'block';
+          selectedPageKey = null;
           return;
         }
 
-        tbody.innerHTML = cutoffPages.map(page => {
-          const label = page.name || page.pageKey || 'Unknown';
-          const time = page.cutoffTime || '23:59';
-          return `
-            <tr data-page-key="${page.pageKey}">
-              <td>
-                <div class="d-flex align-items-center gap-2">
-                  <i class="fab fa-${page.platform === 'facebook' ? 'facebook' : 'line'}" 
-                     style="color: ${page.platform === 'facebook' ? '#1877f2' : '#06c755'}"></i>
-                  <span>${escapeHtml(label)}</span>
-                </div>
-              </td>
-              <td>
-                <input type="time" class="form-control form-control-sm cutoff-time-input" 
-                       value="${time}" data-page-key="${page.pageKey}" 
-                       data-platform="${page.platform}" data-bot-id="${page.botId || ''}">
-              </td>
-              <td>
-                <button class="btn btn-sm btn-primary save-cutoff-btn" data-page-key="${page.pageKey}">
-                  <i class="fas fa-save"></i>
-                </button>
-              </td>
-            </tr>
-          `;
-        }).join('');
+        selectedPageKey = pageKey;
+        panel.style.display = 'block';
+        empty.style.display = 'none';
 
-        // Bind save buttons
-        tbody.querySelectorAll('.save-cutoff-btn').forEach(btn => {
-          btn.addEventListener('click', async function () {
-            const pageKey = this.dataset.pageKey;
-            const row = this.closest('tr');
-            const input = row.querySelector('.cutoff-time-input');
-            const cutoffTime = input.value;
-            const platform = input.dataset.platform;
-            const botId = input.dataset.botId;
+        // Update display
+        document.getElementById('aiSettingsPageName').textContent = page.name || pageKey;
+        const platformBadge = document.getElementById('aiSettingsPagePlatform');
+        platformBadge.textContent = page.platform === 'facebook' ? 'Facebook' : 'LINE';
+        platformBadge.className = page.platform === 'facebook' ? 'badge bg-primary' : 'badge bg-success';
 
-            this.disabled = true;
-            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        // Set values
+        document.getElementById('aiSettingsEnabled').checked = page.orderExtractionEnabled !== false;
+        document.getElementById('aiSettingsModel').value = page.orderModel || 'gpt-4.1-nano';
+        document.getElementById('aiSettingsPrompt').value = page.orderPromptInstructions || '';
+      }
 
-            try {
-              const res = await fetch('/admin/orders/pages/cutoff', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pageKey, platform, botId, cutoffTime })
-              });
-              const data = await res.json();
+      async function savePageAISettings() {
+        const page = aiSettingsPages.find(p => p.pageKey === selectedPageKey);
+        if (!page) return;
 
-              if (data.success) {
-                this.innerHTML = '<i class="fas fa-check"></i>';
-                setTimeout(() => { this.innerHTML = '<i class="fas fa-save"></i>'; }, 1500);
-              } else {
-                alert(data.error || 'เกิดข้อผิดพลาด');
-                this.innerHTML = '<i class="fas fa-save"></i>';
-              }
-            } catch (e) {
-              alert('เกิดข้อผิดพลาด');
-              this.innerHTML = '<i class="fas fa-save"></i>';
-            }
-            this.disabled = false;
+        const enabled = document.getElementById('aiSettingsEnabled').checked;
+        const orderModel = document.getElementById('aiSettingsModel').value;
+        const prompt = document.getElementById('aiSettingsPrompt').value.trim();
+
+        const btn = document.getElementById('aiSettingsSaveBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> กำลังบันทึก...';
+
+        try {
+          const res = await fetch('/admin/orders/pages/ai-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pageKey: page.pageKey,
+              platform: page.platform,
+              botId: page.botId,
+              orderExtractionEnabled: enabled,
+              orderModel: orderModel,
+              orderPromptInstructions: prompt
+            })
           });
-        });
+          const data = await res.json();
+
+          if (data.success) {
+            btn.innerHTML = '<i class="fas fa-check me-1"></i> บันทึกแล้ว';
+            // Update local data
+            page.orderExtractionEnabled = enabled;
+            page.orderModel = orderModel;
+            page.orderPromptInstructions = prompt;
+            setTimeout(() => {
+              btn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการตั้งค่า';
+            }, 2000);
+          } else {
+            alert(data.error || 'เกิดข้อผิดพลาด');
+            btn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการตั้งค่า';
+          }
+        } catch (e) {
+          alert('เกิดข้อผิดพลาดในการบันทึก');
+          btn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการตั้งค่า';
+        }
+        btn.disabled = false;
       }
 
-      function escapeHtml(str) {
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      }
+      // Page select change event
+      document.getElementById('aiSettingsPageSelect')?.addEventListener('change', function () {
+        showPageSettings(this.value);
+      });
 
-      // Settings modal - load on open
-      document.getElementById('ordersSettingsLink')?.addEventListener('click', function (e) {
+      // Save button click event
+      document.getElementById('aiSettingsSaveBtn')?.addEventListener('click', savePageAISettings);
+
+      // AI Settings modal - load on open (from gear button)
+      document.getElementById('ordersSettingsBtn')?.addEventListener('click', function (e) {
         e.preventDefault();
-        loadCutoffSettings();
-        const modal = new bootstrap.Modal(document.getElementById('ordersSettingsModal'));
+        // Reset state
+        selectedPageKey = null;
+        document.getElementById('aiSettingsPageSelect').value = '';
+        document.getElementById('aiSettingsPanel').style.display = 'none';
+        document.getElementById('aiSettingsEmpty').style.display = 'block';
+
+        loadAISettings();
+        const modal = new bootstrap.Modal(document.getElementById('ordersAISettingsModal'));
         modal.show();
       });
     </script>

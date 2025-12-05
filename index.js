@@ -1530,21 +1530,23 @@ const DEFAULT_ORDER_PROMPT_BODY = `วิเคราะห์บทสนทน
 ข้อมูลที่ต้องสกัด:
 - items: รายการสินค้า [{product: "ชื่อสินค้า", quantity: จำนวน, price: ราคาต่อชิ้น}]
 - totalAmount: ยอดรวมทั้งหมด (ถ้าไม่ระบุให้คำนวณจาก items)
-- shippingAddress: ที่อยู่จัดส่ง (จำเป็นต้องมี ถ้าไม่มีให้สรุปว่าไม่มีออเดอร์)
+- shippingAddress: ที่อยู่จัดส่ง เฉพาะบ้านเลขที่/หมู่/ซอย/ถนน เท่านั้น (ห้ามใส่ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ เพราะมี field แยกต่างหาก) จำเป็นต้องมี ถ้าไม่มีให้สรุปว่าไม่มีออเดอร์
 - phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
 - email: อีเมลลูกค้าหรือ null
 - paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
 - shippingCost: ค่าส่ง (ตัวเลข; หากไม่ระบุให้ใช้ 0 และถือว่าส่งฟรี)
 - customerName: ชื่อลูกค้า (ถ้าไม่ระบุให้เป็น null)
 - recipientName: ชื่อผู้รับพัสดุ (ถ้าไม่ระบุให้ใช้ชื่อลูกค้า)
-- addressSubDistrict: ตำบล/แขวง (ถ้าไม่พบให้ปล่อยว่าง)
-- addressDistrict: อำเภอ/เขต (ถ้าไม่พบให้ปล่อยว่าง)
-- addressProvince: จังหวัด (ถ้าไม่พบให้ปล่อยว่าง)
-- addressPostalCode: รหัสไปรษณีย์ (ถ้าไม่พบให้ปล่อยว่าง)
+- addressSubDistrict: ตำบล/แขวง (สกัดจากที่อยู่ ถ้าไม่พบให้เป็น null)
+- addressDistrict: อำเภอ/เขต (สกัดจากที่อยู่ ถ้าไม่พบให้เป็น null)
+- addressProvince: จังหวัด (สกัดจากที่อยู่ ถ้าไม่พบให้เป็น null)
+- addressPostalCode: รหัสไปรษณีย์ (สกัดจากที่อยู่ ถ้าไม่พบให้เป็น null)
 - transferDate: วันที่โอนเงิน (รูปแบบ YYYY-MM-DD หรือ null)
 - transferTime: เวลาที่โอน (รูปแบบ HH:mm หรือ null)
 - paymentReceiver: ผู้รับเงิน (ถ้าไม่พบให้เป็น null)
 - notes: หมายเหตุเพิ่มเติม (ถ้าไม่พบให้เป็น null)
+
+⚠️ สำคัญ: shippingAddress ต้องไม่รวมตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์ - ให้แยกไปใส่ใน addressSubDistrict, addressDistrict, addressProvince, addressPostalCode แทน
 
 รายละเอียดสินค้าที่สามารถระบุได้เพิ่มเติมแต่เว้นว่างได้:
 - shippingName: ชื่อสินค้า (สำหรับขนส่ง)
@@ -1572,7 +1574,7 @@ const ORDER_PROMPT_JSON_SUFFIX = `ตอบเป็น JSON เท่านั�
       }
     ],
     "totalAmount": จำนวน,
-    "shippingAddress": "ที่อยู่หรือ null",
+    "shippingAddress": "บ้านเลขที่/หมู่/ซอย/ถนน เท่านั้น (ไม่รวมตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์)",
     "phone": "เบอร์โทรหรือ null",
     "email": "อีเมลหรือ null",
     "paymentMethod": "วิธีชำระหรือ null",
@@ -3315,7 +3317,7 @@ async function listOrderCutoffPages() {
   const client = await connectDB();
   const db = client.db("chatbot");
 
-  const [lineBots, facebookBots, settingsDocs] = await Promise.all([
+  const [lineBots, facebookBots, settingsDocs, pageSettingsDocs] = await Promise.all([
     db
       .collection("line_bots")
       .find({})
@@ -3327,12 +3329,22 @@ async function listOrderCutoffPages() {
       .project({ _id: 1, name: 1, pageName: 1 })
       .toArray(),
     db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION).find({}).toArray(),
+    db.collection("follow_up_page_settings").find({}).toArray(),
   ]);
 
   const settingsMap = new Map();
   settingsDocs.forEach((doc) => {
     if (doc && doc.pageKey) {
       settingsMap.set(doc.pageKey, doc);
+    }
+  });
+
+  // Build map for page settings (orderModel)
+  const pageSettingsMap = new Map();
+  pageSettingsDocs.forEach((doc) => {
+    if (doc && doc.platform) {
+      const key = `${doc.platform}:${doc.botId || "default"}`;
+      pageSettingsMap.set(key, doc);
     }
   });
 
@@ -3350,6 +3362,7 @@ async function listOrderCutoffPages() {
       lastCutoffDateKey: null,
       lastRunSummary: null,
     };
+    const pageSettings = pageSettingsMap.get(`line:${botId || "default"}`) || {};
     pages.push({
       pageKey,
       platform: "line",
@@ -3363,6 +3376,9 @@ async function listOrderCutoffPages() {
       lastProcessedAt: settings.lastProcessedAt || null,
       lastCutoffDateKey: settings.lastCutoffDateKey || null,
       lastRunSummary: settings.lastRunSummary || null,
+      orderModel: pageSettings.orderModel || "gpt-4.1-nano",
+      orderExtractionEnabled: pageSettings.orderExtractionEnabled !== false,
+      orderPromptInstructions: pageSettings.orderPromptInstructions || "",
     });
   });
 
@@ -3378,6 +3394,7 @@ async function listOrderCutoffPages() {
       lastCutoffDateKey: null,
       lastRunSummary: null,
     };
+    const pageSettings = pageSettingsMap.get(`facebook:${botId || "default"}`) || {};
     pages.push({
       pageKey,
       platform: "facebook",
@@ -3390,6 +3407,9 @@ async function listOrderCutoffPages() {
       lastProcessedAt: settings.lastProcessedAt || null,
       lastCutoffDateKey: settings.lastCutoffDateKey || null,
       lastRunSummary: settings.lastRunSummary || null,
+      orderModel: pageSettings.orderModel || "gpt-4.1-nano",
+      orderExtractionEnabled: pageSettings.orderExtractionEnabled !== false,
+      orderPromptInstructions: pageSettings.orderPromptInstructions || "",
     });
   });
 
@@ -3644,10 +3664,37 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
     botId = null,
   } = options || {};
 
-  const orderModel =
-    modelOverride || (await getSettingValue("orderModel", "gpt-4.1-mini"));
+  // Get page settings
+  let pageSettings = null;
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    pageSettings = await db.collection("follow_up_page_settings").findOne({
+      platform: platform || "line",
+      botId: botId || null,
+    });
+  } catch (e) {
+    console.warn("[Order] ไม่สามารถโหลด page settings:", e.message);
+  }
+
+  // Check if order extraction is enabled for this page
+  if (pageSettings && pageSettings.orderExtractionEnabled === false) {
+    console.log(`[Order] การสกัดออเดอร์ถูกปิดสำหรับ ${platform}/${botId}`);
+    return null;
+  }
+
+  // Get orderModel from page settings if not overridden
+  const orderModel = modelOverride || pageSettings?.orderModel || (await getSettingValue("orderModel", "gpt-4.1-nano"));
+
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-  const promptBody = (await getOrderPromptBody(platform, botId)).trim();
+
+  // Use page-specific prompt if available, otherwise use default
+  let promptBody;
+  if (pageSettings?.orderPromptInstructions && pageSettings.orderPromptInstructions.trim()) {
+    promptBody = pageSettings.orderPromptInstructions.trim();
+  } else {
+    promptBody = (await getOrderPromptBody(platform, botId)).trim();
+  }
   const systemPrompt = `${promptBody}\n\n${ORDER_PROMPT_JSON_SUFFIX}`;
 
   // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่
@@ -15933,6 +15980,149 @@ app.post("/admin/orders/settings/scheduling", async (req, res) => {
     res.json({ success: false, error: error.message });
   }
 });
+
+// Save AI model per page
+app.post("/admin/orders/pages/ai-model", async (req, res) => {
+  try {
+    const { pageKey, platform, botId, orderModel } = req.body || {};
+
+    let targetPlatform = platform ? normalizeOrderPlatform(platform) : null;
+    let targetBotId = typeof botId === "string" ? botId : null;
+
+    if (pageKey && pageKey !== "all") {
+      const parsed = parseOrderPageKey(pageKey);
+      targetPlatform = parsed.platform || targetPlatform;
+      targetBotId = parsed.botId === null ? null : parsed.botId || targetBotId;
+    }
+
+    if (!targetPlatform) {
+      return res.json({
+        success: false,
+        error: "ไม่พบเพจที่ต้องการตั้งค่า",
+      });
+    }
+
+    const normalizedBotId =
+      targetBotId === "default" ? null : normalizeOrderBotId(targetBotId);
+
+    // Save to follow_up_page_settings collection (same as followup)
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("follow_up_page_settings");
+
+    const filter = {
+      platform: targetPlatform,
+      botId: normalizedBotId || null,
+    };
+
+    await coll.updateOne(
+      filter,
+      {
+        $set: {
+          orderModel: orderModel || "gpt-4.1-nano",
+          updatedAt: new Date(),
+        },
+        $setOnInsert: {
+          platform: targetPlatform,
+          botId: normalizedBotId || null,
+          createdAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+
+    res.json({
+      success: true,
+      orderModel: orderModel || "gpt-4.1-nano",
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถบันทึก AI model ได้:", error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// Save global order extraction prompt
+app.post("/admin/orders/settings/prompt", async (req, res) => {
+  try {
+    const { prompt } = req.body || {};
+    const trimmedPrompt = typeof prompt === "string" ? prompt.trim() : "";
+
+    await setSettingValue("orderPromptInstructions", trimmedPrompt);
+
+    res.json({
+      success: true,
+      prompt: trimmedPrompt,
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถบันทึก prompt ได้:", error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// Save all AI settings per page (enabled, model, prompt)
+app.post("/admin/orders/pages/ai-settings", async (req, res) => {
+  try {
+    const { pageKey, platform, botId, orderExtractionEnabled, orderModel, orderPromptInstructions } = req.body || {};
+
+    let targetPlatform = platform ? normalizeOrderPlatform(platform) : null;
+    let targetBotId = typeof botId === "string" ? botId : null;
+
+    if (pageKey && pageKey !== "all") {
+      const parsed = parseOrderPageKey(pageKey);
+      targetPlatform = parsed.platform || targetPlatform;
+      targetBotId = parsed.botId === null ? null : parsed.botId || targetBotId;
+    }
+
+    if (!targetPlatform) {
+      return res.json({
+        success: false,
+        error: "ไม่พบเพจที่ต้องการตั้งค่า",
+      });
+    }
+
+    const normalizedBotId =
+      targetBotId === "default" ? null : normalizeOrderBotId(targetBotId);
+
+    // Save to follow_up_page_settings collection
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("follow_up_page_settings");
+
+    const filter = {
+      platform: targetPlatform,
+      botId: normalizedBotId || null,
+    };
+
+    const updateFields = {
+      orderExtractionEnabled: orderExtractionEnabled !== false,
+      orderModel: orderModel || "gpt-4.1-nano",
+      orderPromptInstructions: typeof orderPromptInstructions === "string" ? orderPromptInstructions.trim() : "",
+      updatedAt: new Date(),
+    };
+
+    await coll.updateOne(
+      filter,
+      {
+        $set: updateFields,
+        $setOnInsert: {
+          platform: targetPlatform,
+          botId: normalizedBotId || null,
+          createdAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+
+    res.json({
+      success: true,
+      settings: updateFields,
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถบันทึกการตั้งค่า AI ได้:", error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
 
 // Get users who have chatted
 app.get("/admin/chat/users", async (req, res) => {

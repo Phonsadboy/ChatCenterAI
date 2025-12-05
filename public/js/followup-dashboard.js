@@ -27,9 +27,9 @@
         analysisLabel: document.getElementById('followupAnalysisLabel'),
         analysisSubtitle: document.getElementById('followupAnalysisSubtitle'),
         modalRoot: document.getElementById('followupSettingsModal'),
-        modalAnalysis: document.getElementById('followupModalAnalysis'),
-        modalShowChat: document.getElementById('followupModalShowChat'),
-        modalShowDashboard: document.getElementById('followupModalShowDashboard'),
+        // modalAnalysis removed - always enabled
+        // modalShowChat removed - always enabled
+        // modalShowDashboard removed - always enabled
         modalModel: document.getElementById('followupModalModel'),
         modalUpdatedAt: document.getElementById('followupModalUpdatedAt'),
         modalAutoSend: document.getElementById('followupModalAutoSend'),
@@ -824,7 +824,7 @@
                 const enabled = event.target.checked;
                 try {
                     await updatePageAutoSend(pageId, enabled, event.target);
-                } catch (_) {}
+                } catch (_) { }
             });
         });
 
@@ -1042,49 +1042,49 @@
         return `
             <div class="followup-timeline">
                 ${rounds.map((round, index) => {
-                    const status = round?.status || 'pending';
-                    let displayStatus = status;
-                    let statusLabel = 'รอส่ง';
-                    if (status === 'sent') {
-                        statusLabel = 'ส่งแล้ว';
-                    } else if (status === 'failed') {
-                        statusLabel = 'ส่งไม่สำเร็จ';
-                    } else if (user.status === 'canceled') {
-                        statusLabel = 'ถูกยกเลิก';
-                        displayStatus = 'canceled';
-                    }
+            const status = round?.status || 'pending';
+            let displayStatus = status;
+            let statusLabel = 'รอส่ง';
+            if (status === 'sent') {
+                statusLabel = 'ส่งแล้ว';
+            } else if (status === 'failed') {
+                statusLabel = 'ส่งไม่สำเร็จ';
+            } else if (user.status === 'canceled') {
+                statusLabel = 'ถูกยกเลิก';
+                displayStatus = 'canceled';
+            }
 
-                    const scheduledAt = round?.scheduledAt ? formatDateTime(round.scheduledAt) : null;
-                    const relative = round?.sentAt
-                        ? `ส่งเมื่อ ${formatRelativeTime(round.sentAt)}`
-                        : scheduledAt
-                            ? `กำหนดส่ง ${formatRelativeTime(round.scheduledAt)}`
-                            : `หลัง +${formatDelayMinutes(round?.delayMinutes)}`;
-                    const absolute = scheduledAt || `+${formatDelayMinutes(round?.delayMinutes)}`;
-                    const messageText = typeof round?.message === 'string' ? round.message.trim() : '';
-                    const messageHtml = messageText
-                        ? `<div class="timeline-message">${escapeHtml(messageText)}</div>`
-                        : '';
-                    const images = Array.isArray(round?.images) ? round.images : [];
-                    const imagesHtml = images.length
-                        ? `<div class="timeline-images mt-2">
+            const scheduledAt = round?.scheduledAt ? formatDateTime(round.scheduledAt) : null;
+            const relative = round?.sentAt
+                ? `ส่งเมื่อ ${formatRelativeTime(round.sentAt)}`
+                : scheduledAt
+                    ? `กำหนดส่ง ${formatRelativeTime(round.scheduledAt)}`
+                    : `หลัง +${formatDelayMinutes(round?.delayMinutes)}`;
+            const absolute = scheduledAt || `+${formatDelayMinutes(round?.delayMinutes)}`;
+            const messageText = typeof round?.message === 'string' ? round.message.trim() : '';
+            const messageHtml = messageText
+                ? `<div class="timeline-message">${escapeHtml(messageText)}</div>`
+                : '';
+            const images = Array.isArray(round?.images) ? round.images : [];
+            const imagesHtml = images.length
+                ? `<div class="timeline-images mt-2">
                                 ${images.map(img => {
-                                    const preview = escapeAttr(img.previewUrl || img.thumbUrl || img.url || '');
-                                    const full = escapeAttr(img.url || '');
-                                    const caption = escapeHtml(img.caption || img.alt || 'รูปภาพจากระบบติดตาม');
-                                    return `
+                    const preview = escapeAttr(img.previewUrl || img.thumbUrl || img.url || '');
+                    const full = escapeAttr(img.url || '');
+                    const caption = escapeHtml(img.caption || img.alt || 'รูปภาพจากระบบติดตาม');
+                    return `
                                         <a href="${full}" target="_blank" rel="noopener" class="timeline-image-link">
                                             <img src="${preview}" alt="${caption}" class="timeline-image-thumb">
                                         </a>
                                     `;
-                                }).join('')}
+                }).join('')}
                             </div>`
-                        : '';
-                    const emptyContent = !messageText && images.length === 0
-                        ? '<div class="timeline-message text-muted">ไม่มีข้อความ</div>'
-                        : '';
+                : '';
+            const emptyContent = !messageText && images.length === 0
+                ? '<div class="timeline-message text-muted">ไม่มีข้อความ</div>'
+                : '';
 
-                    return `
+            return `
                         <div class="followup-timeline-item ${displayStatus}">
                             <div class="timeline-dot"></div>
                             <div class="timeline-body">
@@ -1098,7 +1098,7 @@
                             </div>
                         </div>
                     `;
-                }).join('')}
+        }).join('')}
             </div>
         `;
     };
@@ -1399,9 +1399,9 @@
         if (el.search) {
             el.search.value = '';
         }
-    if (options.skipReload) {
-        state.users = [];
-        state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
+        if (options.skipReload) {
+            state.users = [];
+            state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
         }
         renderPageSelector();
         renderPageGrid();
@@ -1425,10 +1425,8 @@
         if (el.modalTitle) {
             el.modalTitle.textContent = `ตั้งค่าเพจ: ${state.currentPage.name}`;
         }
-        if (el.modalAnalysis) el.modalAnalysis.checked = cfg.analysisEnabled !== false;
+        // analysisEnabled, showInChat, showInDashboard are always true (hidden from UI)
         if (el.modalAutoSend) el.modalAutoSend.checked = cfg.autoFollowUpEnabled !== false;
-        if (el.modalShowChat) el.modalShowChat.checked = cfg.showInChat !== false;
-        if (el.modalShowDashboard) el.modalShowDashboard.checked = cfg.showInDashboard !== false;
         if (el.modalModel) el.modalModel.value = cfg.model || MODEL_OPTIONS[0].value;
         if (el.modalPromptJson) {
             el.modalPromptJson.textContent = getPromptJsonSuffix();
@@ -1469,10 +1467,10 @@
             platform: state.currentPage.platform,
             botId: state.currentPage.botId,
             settings: {
-                analysisEnabled: !!(el.modalAnalysis && el.modalAnalysis.checked),
+                analysisEnabled: true,  // always enabled
                 autoFollowUpEnabled: !!(el.modalAutoSend && el.modalAutoSend.checked),
-                showInChat: !!(el.modalShowChat && el.modalShowChat.checked),
-                showInDashboard: !!(el.modalShowDashboard && el.modalShowDashboard.checked),
+                showInChat: true,  // always enabled
+                showInDashboard: true,  // always enabled
                 model: el.modalModel ? el.modalModel.value : undefined,
                 orderPromptInstructions: el.modalPrompt
                     ? (el.modalPrompt.value || '').trim()

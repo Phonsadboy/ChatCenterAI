@@ -614,15 +614,6 @@
     const items = order.items || [];
     const date = order.extractedAt ? formatDate(order.extractedAt, true) : '-';
 
-    // Build address
-    const addressParts = [
-      order.shippingAddress,
-      order.addressSubDistrict ? `ต.${order.addressSubDistrict}` : '',
-      order.addressDistrict ? `อ.${order.addressDistrict}` : '',
-      order.addressProvince,
-      order.addressPostalCode
-    ].filter(Boolean);
-
     body.innerHTML = `
       <div class="orders-detail-section">
         <div class="orders-detail-section-title"><i class="fas fa-user"></i> ข้อมูลลูกค้า</div>
@@ -642,7 +633,26 @@
 
       <div class="orders-detail-section">
         <div class="orders-detail-section-title"><i class="fas fa-map-marker-alt"></i> ที่อยู่จัดส่ง</div>
-        <div class="orders-detail-value" style="line-height: 1.6;">${addressParts.join(' ') || '-'}</div>
+        <div class="orders-detail-row">
+          <div class="orders-detail-label">ที่อยู่</div>
+          <div class="orders-detail-value">${escapeHtml(order.shippingAddress) || '-'}</div>
+        </div>
+        <div class="orders-detail-row">
+          <div class="orders-detail-label">ตำบล/แขวง</div>
+          <div class="orders-detail-value">${escapeHtml(order.addressSubDistrict) || '-'}</div>
+        </div>
+        <div class="orders-detail-row">
+          <div class="orders-detail-label">อำเภอ/เขต</div>
+          <div class="orders-detail-value">${escapeHtml(order.addressDistrict) || '-'}</div>
+        </div>
+        <div class="orders-detail-row">
+          <div class="orders-detail-label">จังหวัด</div>
+          <div class="orders-detail-value">${escapeHtml(order.addressProvince) || '-'}</div>
+        </div>
+        <div class="orders-detail-row">
+          <div class="orders-detail-label">รหัสไปรษณีย์</div>
+          <div class="orders-detail-value">${order.addressPostalCode || '-'}</div>
+        </div>
       </div>
 
       <div class="orders-detail-section">
