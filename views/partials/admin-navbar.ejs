@@ -23,16 +23,33 @@
       </button>
       <div class="collapse navbar-collapse" id="navbarNav">
         <ul class="navbar-nav ms-auto align-items-lg-center">
-          <li class="nav-item">
-            <a class="nav-link<%= current === 'dashboard' ? ' active' : '' %>" href="/admin/dashboard">
-              <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
+          <!-- 1. จัดการ AI/ระบบ (Dropdown) -->
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle<%= (current === 'dashboard' || current === 'categories' || current === 'settings' || current === 'settings2') ? ' active' : '' %>"
+              href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+              <i class="fas fa-robot"></i> จัดการ AI/ระบบ
             </a>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li>
+                <a class="dropdown-item<%= current === 'dashboard' ? ' active' : '' %>" href="/admin/dashboard">
+                  <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item<%= current === 'categories' ? ' active' : '' %>" href="/admin/categories">
+                  <i class="fas fa-database"></i> จัดการข้อมูล
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item<%= (current === 'settings' || current === 'settings2') ? ' active' : '' %>"
+                  href="/admin/settings2">
+                  <i class="fas fa-cogs"></i> ตั้งค่า
+                </a>
+              </li>
+            </ul>
           </li>
-          <li class="nav-item">
-            <a class="nav-link<%= current === 'broadcast' ? ' active' : '' %>" href="/admin/broadcast">
-              <i class="fas fa-bullhorn"></i> บรอดแคสต์
-            </a>
-          </li>
+
+          <!-- 2. แชท (ลิงก์ตรง) -->
           <li class="nav-item position-relative">
             <a class="nav-link<%= current === 'chat' ? ' active' : '' %>" href="/admin/chat">
               <i class="fas fa-comments"></i> แชท
@@ -40,32 +57,39 @@
                 style="display: none;">0</span>
             </a>
           </li>
-          <li class="nav-item">
-            <a class="nav-link<%= current === 'orders' ? ' active' : '' %>" href="/admin/orders">
-              <i class="fas fa-shopping-basket"></i> ออเดอร์
+
+          <!-- 3. ลูกค้า (Dropdown) -->
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle<%= (current === 'orders' || current === 'followup' || current === 'broadcast' || current === 'facebook-posts') ? ' active' : '' %>"
+              href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+              <i class="fas fa-store"></i> ลูกค้า
             </a>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li>
+                <a class="dropdown-item<%= current === 'orders' ? ' active' : '' %>" href="/admin/orders">
+                  <i class="fas fa-shopping-basket"></i> ออเดอร์
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item<%= current === 'followup' ? ' active' : '' %>" href="/admin/followup">
+                  <i class="fas fa-user-clock"></i> ติดตามลูกค้า
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item<%= current === 'broadcast' ? ' active' : '' %>" href="/admin/broadcast">
+                  <i class="fas fa-bullhorn"></i> บรอดแคสต์
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item<%= current === 'facebook-posts' ? ' active' : '' %>"
+                  href="/admin/facebook-posts">
+                  <i class="fas fa-comment-dots"></i> โพสต์ FB/คอมเมนต์
+                </a>
+              </li>
+            </ul>
           </li>
-          <li class="nav-item">
-            <a class="nav-link<%= current === 'followup' ? ' active' : '' %>" href="/admin/followup">
-              <i class="fas fa-user-clock"></i> ติดตามลูกค้า
-            </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link<%= current === 'facebook-posts' ? ' active' : '' %>" href="/admin/facebook-posts">
-              <i class="fas fa-comment-dots"></i> โพสต์ FB/คอมเมนต์
-            </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link<%= current === 'categories' ? ' active' : '' %>" href="/admin/categories">
-              <i class="fas fa-database"></i> จัดการข้อมูล
-            </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link<%= (current === 'settings' || current === 'settings2') ? ' active' : '' %>"
-              href="/admin/settings2">
-              <i class="fas fa-cogs"></i> ตั้งค่า
-            </a>
-          </li>
+
+          <!-- User Info & Logout -->
           <% if (signedInUser) { %>
             <li class="nav-item d-flex align-items-center nav-user-pill">
               <span class="badge rounded-pill bg-light text-dark">
@@ -91,7 +115,7 @@
       // Auth Logic
       window.adminAuth = window.adminAuth || {};
       window.adminAuth.requirePasscode = <%= isPasscodeRequired ? 'true' : 'false' %>;
-      window.adminAuth.user = <%- JSON.stringify(signedInUser || null) %>;
+      window.adminAuth.user = <% - JSON.stringify(signedInUser || null) %>;
 
       const logoutBtn = document.getElementById('adminLogoutBtn');
       if (logoutBtn) {
