@@ -19183,6 +19183,313 @@ app.get("/api/openai-usage", async (req, res) => {
   }
 });
 
+// GET: Drill-down usage by specific Bot
+app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
+  try {
+    const { botId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const match = { botId };
+    if (startDate || endDate) {
+      match.timestamp = {};
+      if (startDate) match.timestamp.$gte = new Date(startDate);
+      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
+    }
+
+    // Get usage breakdown by model
+    const byModel = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$model",
+          count: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          promptTokens: { $sum: "$promptTokens" },
+          completionTokens: { $sum: "$completionTokens" },
+          estimatedCost: { $sum: "$estimatedCost" }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]).toArray();
+
+    // Get usage breakdown by API key
+    const byKey = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$apiKeyId",
+          count: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          estimatedCost: { $sum: "$estimatedCost" }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]).toArray();
+
+    // Get daily trend
+    const byDay = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+          count: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          estimatedCost: { $sum: "$estimatedCost" }
+        }
+      },
+      { $sort: { _id: -1 } },
+      { $limit: 30 }
+    ]).toArray();
+
+    // Get recent logs
+    const recentLogs = await db.collection("openai_usage_logs")
+      .find(match)
+      .sort({ timestamp: -1 })
+      .limit(20)
+      .toArray();
+
+    // Get totals
+    const totals = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalCalls: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          totalCost: { $sum: "$estimatedCost" }
+        }
+      }
+    ]).toArray();
+
+    // Get API key names
+    const keyIds = byKey.map(k => k._id).filter(id => id);
+    const keyDocs = keyIds.length > 0 ? await db.collection("openai_api_keys")
+      .find({ _id: { $in: keyIds.map(id => new ObjectId(id)) } })
+      .toArray() : [];
+    const keyMap = Object.fromEntries(keyDocs.map(k => [k._id.toString(), k.name]));
+
+    res.json({
+      success: true,
+      botId,
+      totals: totals[0] || { totalCalls: 0, totalTokens: 0, totalCost: 0 },
+      byModel: byModel.map(m => ({ model: m._id || 'unknown', ...m })),
+      byKey: byKey.map(k => ({ keyId: k._id?.toString(), keyName: keyMap[k._id?.toString()] || 'Env Variable', ...k })),
+      byDay: byDay.map(d => ({ date: d._id, ...d })),
+      recentLogs: recentLogs.map(l => ({
+        id: l._id.toString(),
+        model: l.model,
+        totalTokens: l.totalTokens,
+        estimatedCost: l.estimatedCost,
+        timestamp: l.timestamp,
+        functionName: l.functionName
+      }))
+    });
+  } catch (err) {
+    console.error("[OpenAI Usage] Error getting bot drill-down:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET: Drill-down usage by specific Model
+app.get("/api/openai-usage/by-model/:model", async (req, res) => {
+  try {
+    const { model } = req.params;
+    const { startDate, endDate } = req.query;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const match = { model };
+    if (startDate || endDate) {
+      match.timestamp = {};
+      if (startDate) match.timestamp.$gte = new Date(startDate);
+      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
+    }
+
+    // Get usage breakdown by bot
+    const byBot = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { botId: "$botId", platform: "$platform" },
+          count: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          estimatedCost: { $sum: "$estimatedCost" }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]).toArray();
+
+    // Get daily trend
+    const byDay = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+          count: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          estimatedCost: { $sum: "$estimatedCost" }
+        }
+      },
+      { $sort: { _id: -1 } },
+      { $limit: 30 }
+    ]).toArray();
+
+    // Get totals
+    const totals = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalCalls: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          totalCost: { $sum: "$estimatedCost" }
+        }
+      }
+    ]).toArray();
+
+    // Enrich bot names
+    const botIds = byBot.map(b => b._id.botId).filter(id => id);
+    const lineBots = await db.collection("line_bots").find({ _id: { $in: botIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } }).toArray();
+    const fbBots = await db.collection("facebook_bots").find({ _id: { $in: botIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } }).toArray();
+    const botMap = Object.fromEntries([...lineBots, ...fbBots].map(b => [b._id.toString(), b.name]));
+
+    res.json({
+      success: true,
+      model,
+      totals: totals[0] || { totalCalls: 0, totalTokens: 0, totalCost: 0 },
+      byBot: byBot.map(b => ({
+        botId: b._id.botId,
+        botName: botMap[b._id.botId] || b._id.botId || 'Unknown',
+        platform: b._id.platform,
+        count: b.count,
+        totalTokens: b.totalTokens,
+        estimatedCost: b.estimatedCost
+      })),
+      byDay: byDay.map(d => ({ date: d._id, ...d }))
+    });
+  } catch (err) {
+    console.error("[OpenAI Usage] Error getting model drill-down:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET: Drill-down usage by specific API Key
+app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
+  try {
+    const { keyId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const match = {};
+    if (keyId === 'env') {
+      match.apiKeyId = null;
+    } else if (ObjectId.isValid(keyId)) {
+      match.apiKeyId = new ObjectId(keyId);
+    }
+
+    if (startDate || endDate) {
+      match.timestamp = {};
+      if (startDate) match.timestamp.$gte = new Date(startDate);
+      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
+    }
+
+    // Get usage breakdown by bot
+    const byBot = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { botId: "$botId", platform: "$platform" },
+          count: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          estimatedCost: { $sum: "$estimatedCost" }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]).toArray();
+
+    // Get usage breakdown by model
+    const byModel = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$model",
+          count: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          estimatedCost: { $sum: "$estimatedCost" }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]).toArray();
+
+    // Get daily trend
+    const byDay = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+          count: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          estimatedCost: { $sum: "$estimatedCost" }
+        }
+      },
+      { $sort: { _id: -1 } },
+      { $limit: 30 }
+    ]).toArray();
+
+    // Get totals
+    const totals = await db.collection("openai_usage_logs").aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalCalls: { $sum: 1 },
+          totalTokens: { $sum: "$totalTokens" },
+          totalCost: { $sum: "$estimatedCost" }
+        }
+      }
+    ]).toArray();
+
+    // Get key info
+    let keyInfo = { name: 'Environment Variable' };
+    if (keyId !== 'env' && ObjectId.isValid(keyId)) {
+      const keyDoc = await db.collection("openai_api_keys").findOne({ _id: new ObjectId(keyId) });
+      if (keyDoc) keyInfo = { name: keyDoc.name, maskedKey: maskApiKey(keyDoc.apiKey) };
+    }
+
+    // Enrich bot names
+    const botIds = byBot.map(b => b._id.botId).filter(id => id);
+    const lineBots = await db.collection("line_bots").find({ _id: { $in: botIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } }).toArray();
+    const fbBots = await db.collection("facebook_bots").find({ _id: { $in: botIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } }).toArray();
+    const botMap = Object.fromEntries([...lineBots, ...fbBots].map(b => [b._id.toString(), b.name]));
+
+    res.json({
+      success: true,
+      keyId,
+      keyInfo,
+      totals: totals[0] || { totalCalls: 0, totalTokens: 0, totalCost: 0 },
+      byBot: byBot.map(b => ({
+        botId: b._id.botId,
+        botName: botMap[b._id.botId] || b._id.botId || 'Unknown',
+        platform: b._id.platform,
+        count: b.count,
+        totalTokens: b.totalTokens,
+        estimatedCost: b.estimatedCost
+      })),
+      byModel: byModel.map(m => ({ model: m._id || 'unknown', ...m })),
+      byDay: byDay.map(d => ({ date: d._id, ...d }))
+    });
+  } catch (err) {
+    console.error("[OpenAI Usage] Error getting key drill-down:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get("/admin/orders/data", async (req, res) => {
   try {
     const { query } = buildOrderQuery(req.query || {});

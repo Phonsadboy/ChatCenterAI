@@ -1,9 +1,35 @@
-/* API Usage Page Styles */
+/* API Usage Page Styles - Enhanced Dashboard */
 
 .page-title {
     font-size: 1.75rem;
     font-weight: 600;
     color: var(--text-primary);
+}
+
+/* Tab Navigation */
+.usage-tabs {
+    border-bottom: 2px solid var(--border-color);
+}
+
+.usage-tabs .nav-link {
+    color: var(--text-secondary);
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    padding: 0.75rem 1.25rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.usage-tabs .nav-link:hover {
+    color: var(--text-primary);
+    border-bottom-color: var(--border-color);
+}
+
+.usage-tabs .nav-link.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    background: transparent;
 }
 
 /* Summary Cards */
@@ -114,6 +140,20 @@
     background-color: var(--bg-secondary);
 }
 
+/* Clickable table rows */
+.clickable-table tbody tr {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.clickable-table tbody tr:hover {
+    background-color: rgba(59, 130, 246, 0.05);
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
 /* Platform badges */
 .platform-badge {
     display: inline-flex;
@@ -151,32 +191,26 @@
     font-family: monospace;
 }
 
-/* Token stats */
-.token-stat {
-    font-family: monospace;
-    font-size: 0.8125rem;
+/* Drill-down modal */
+#drilldownModal .modal-dialog {
+    max-width: 900px;
 }
 
-.token-stat.input {
-    color: #3b82f6;
+#drilldownModal .summary-card {
+    padding: 1rem;
 }
 
-.token-stat.output {
-    color: #10b981;
+#drilldownModal .summary-value {
+    font-size: 1.25rem;
 }
 
-/* Cost display */
-.cost-value {
-    font-weight: 600;
-    color: var(--text-primary);
+#drilldownModal .card {
+    margin-bottom: 0;
 }
 
-.cost-value.usd {
-    color: #f59e0b;
-}
-
-.cost-value.thb {
-    color: #8b5cf6;
+#drilldownModal .card-header {
+    padding: 0.75rem 1rem;
+    background: var(--bg-secondary);
 }
 
 /* Responsive */
@@ -189,5 +223,14 @@
         width: 40px;
         height: 40px;
         font-size: 1rem;
+    }
+
+    .usage-tabs .nav-link {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+    }
+
+    .usage-tabs .nav-link i {
+        display: none;
     }
 }

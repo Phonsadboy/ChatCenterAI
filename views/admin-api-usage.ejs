@@ -25,7 +25,7 @@
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <div>
                         <h1 class="page-title mb-1">สถิติการใช้งาน API</h1>
-                        <p class="text-muted mb-0">ดูข้อมูลการใช้งาน OpenAI API และค่าใช้จ่ายโดยประมาณ</p>
+                        <p class="text-muted mb-0">วิเคราะห์การใช้งาน OpenAI API แบบละเอียด</p>
                     </div>
                     <div class="d-flex gap-2">
                         <select class="form-select" id="dateRangeSelect" style="width: 200px;">
@@ -34,71 +34,224 @@
                             <option value="30days">30 วันที่ผ่านมา</option>
                             <option value="all">ทั้งหมด</option>
                         </select>
-                        <button class="btn btn-outline-secondary" onclick="loadUsageStats()">
+                        <button class="btn btn-outline-secondary" onclick="refreshCurrentTab()">
                             <i class="fas fa-sync-alt"></i>
                         </button>
                     </div>
                 </div>
 
-                <!-- Summary Cards -->
-                <div class="row g-3 mb-4">
-                    <div class="col-md-3">
-                        <div class="summary-card">
-                            <div class="summary-icon bg-primary-soft text-primary">
-                                <i class="fas fa-comments"></i>
-                            </div>
-                            <div class="summary-content">
-                                <div class="summary-label">การเรียกใช้ API</div>
-                                <div class="summary-value" id="totalCalls">-</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="summary-card">
-                            <div class="summary-icon bg-success-soft text-success">
-                                <i class="fas fa-coins"></i>
-                            </div>
-                            <div class="summary-content">
-                                <div class="summary-label">Token ทั้งหมด</div>
-                                <div class="summary-value" id="totalTokens">-</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="summary-card">
-                            <div class="summary-icon bg-warning-soft text-warning">
-                                <i class="fas fa-dollar-sign"></i>
-                            </div>
-                            <div class="summary-content">
-                                <div class="summary-label">ค่าใช้จ่าย (USD)</div>
-                                <div class="summary-value" id="totalCostUSD">-</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="summary-card">
-                            <div class="summary-icon bg-info-soft text-info">
-                                <i class="fas fa-baht-sign"></i>
-                            </div>
-                            <div class="summary-content">
-                                <div class="summary-label">ค่าใช้จ่าย (THB)</div>
-                                <div class="summary-value" id="totalCostTHB">-</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <!-- Tab Navigation -->
+                <ul class="nav nav-tabs usage-tabs mb-4" id="usageTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab"
+                            data-bs-target="#overview" type="button" role="tab">
+                            <i class="fas fa-chart-pie me-2"></i>ภาพรวม
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="bots-tab" data-bs-toggle="tab" data-bs-target="#bots" type="button"
+                            role="tab">
+                            <i class="fas fa-robot me-2"></i>เพจ/Bot
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="models-tab" data-bs-toggle="tab" data-bs-target="#models"
+                            type="button" role="tab">
+                            <i class="fas fa-microchip me-2"></i>โมเดล
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="keys-tab" data-bs-toggle="tab" data-bs-target="#keys" type="button"
+                            role="tab">
+                            <i class="fas fa-key me-2"></i>API Key
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="logs-tab" data-bs-toggle="tab" data-bs-target="#logs" type="button"
+                            role="tab">
+                            <i class="fas fa-list-alt me-2"></i>บันทึกละเอียด
+                        </button>
+                    </li>
+                </ul>
 
-                <!-- Usage Tables -->
-                <div class="row g-4">
-                    <!-- By Model -->
-                    <div class="col-lg-6">
+                <!-- Tab Content -->
+                <div class="tab-content" id="usageTabContent">
+
+                    <!-- Tab 1: Overview -->
+                    <div class="tab-pane fade show active" id="overview" role="tabpanel">
+                        <!-- Summary Cards -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-3">
+                                <div class="summary-card">
+                                    <div class="summary-icon bg-primary-soft text-primary">
+                                        <i class="fas fa-comments"></i>
+                                    </div>
+                                    <div class="summary-content">
+                                        <div class="summary-label">การเรียกใช้ API</div>
+                                        <div class="summary-value" id="totalCalls">-</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="summary-card">
+                                    <div class="summary-icon bg-success-soft text-success">
+                                        <i class="fas fa-coins"></i>
+                                    </div>
+                                    <div class="summary-content">
+                                        <div class="summary-label">Token ทั้งหมด</div>
+                                        <div class="summary-value" id="totalTokens">-</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="summary-card">
+                                    <div class="summary-icon bg-warning-soft text-warning">
+                                        <i class="fas fa-dollar-sign"></i>
+                                    </div>
+                                    <div class="summary-content">
+                                        <div class="summary-label">ค่าใช้จ่าย (USD)</div>
+                                        <div class="summary-value" id="totalCostUSD">-</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="summary-card">
+                                    <div class="summary-icon bg-info-soft text-info">
+                                        <i class="fas fa-baht-sign"></i>
+                                    </div>
+                                    <div class="summary-content">
+                                        <div class="summary-label">ค่าใช้จ่าย (THB)</div>
+                                        <div class="summary-value" id="totalCostTHB">-</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Overview Tables -->
+                        <div class="row g-4">
+                            <div class="col-lg-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5 class="card-title mb-0"><i class="fas fa-robot me-2"></i>Top เพจ/Bot</h5>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="table-responsive">
+                                            <table class="table table-hover mb-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Bot/Page</th>
+                                                        <th class="text-end">Calls</th>
+                                                        <th class="text-end">Cost</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="overviewBotTable">
+                                                    <tr>
+                                                        <td colspan="3" class="text-center text-muted py-3">กำลังโหลด...
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5 class="card-title mb-0"><i class="fas fa-microchip me-2"></i>Top โมเดล</h5>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="table-responsive">
+                                            <table class="table table-hover mb-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Model</th>
+                                                        <th class="text-end">Calls</th>
+                                                        <th class="text-end">Cost</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="overviewModelTable">
+                                                    <tr>
+                                                        <td colspan="3" class="text-center text-muted py-3">กำลังโหลด...
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5 class="card-title mb-0"><i
+                                                class="fas fa-calendar-alt me-2"></i>การใช้งานรายวัน</h5>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="table-responsive" style="max-height: 280px;">
+                                            <table class="table table-hover mb-0">
+                                                <thead style="position: sticky; top: 0; background: white;">
+                                                    <tr>
+                                                        <th>วันที่</th>
+                                                        <th class="text-end">Calls</th>
+                                                        <th class="text-end">Tokens</th>
+                                                        <th class="text-end">Cost (USD)</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="overviewDayTable">
+                                                    <tr>
+                                                        <td colspan="4" class="text-center text-muted py-3">กำลังโหลด...
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tab 2: By Bot/Page -->
+                    <div class="tab-pane fade" id="bots" role="tabpanel">
                         <div class="card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0"><i class="fas fa-robot me-2"></i>ใช้งานตาม Model</h5>
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="card-title mb-0">การใช้งานแยกตามเพจ/Bot</h5>
+                                <small class="text-muted">คลิกแถวเพื่อดูรายละเอียด</small>
                             </div>
                             <div class="card-body p-0">
                                 <div class="table-responsive">
-                                    <table class="table table-hover mb-0">
+                                    <table class="table table-hover clickable-table mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Bot/Page</th>
+                                                <th>Platform</th>
+                                                <th class="text-end">Calls</th>
+                                                <th class="text-end">Tokens</th>
+                                                <th class="text-end">Cost (USD)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="botsTable">
+                                            <tr>
+                                                <td colspan="5" class="text-center text-muted py-3">กำลังโหลด...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tab 3: By Model -->
+                    <div class="tab-pane fade" id="models" role="tabpanel">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="card-title mb-0">การใช้งานแยกตามโมเดล</h5>
+                                <small class="text-muted">คลิกแถวเพื่อดูรายละเอียด</small>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-hover clickable-table mb-0">
                                         <thead>
                                             <tr>
                                                 <th>Model</th>
@@ -107,11 +260,9 @@
                                                 <th class="text-end">Cost (USD)</th>
                                             </tr>
                                         </thead>
-                                        <tbody id="usageByModelTable">
+                                        <tbody id="modelsTable">
                                             <tr>
-                                                <td colspan="4" class="text-center text-muted py-3">
-                                                    <i class="fas fa-spinner fa-spin me-2"></i>กำลังโหลด...
-                                                </td>
+                                                <td colspan="4" class="text-center text-muted py-3">กำลังโหลด...</td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -120,46 +271,16 @@
                         </div>
                     </div>
 
-                    <!-- By Bot/Page -->
-                    <div class="col-lg-6">
+                    <!-- Tab 4: By API Key -->
+                    <div class="tab-pane fade" id="keys" role="tabpanel">
                         <div class="card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0"><i class="fas fa-layer-group me-2"></i>ใช้งานตาม Bot/Page
-                                </h5>
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="card-title mb-0">การใช้งานแยกตาม API Key</h5>
+                                <small class="text-muted">คลิกแถวเพื่อดูรายละเอียด</small>
                             </div>
                             <div class="card-body p-0">
                                 <div class="table-responsive">
-                                    <table class="table table-hover mb-0">
-                                        <thead>
-                                            <tr>
-                                                <th>Bot/Page</th>
-                                                <th class="text-end">Calls</th>
-                                                <th class="text-end">Tokens</th>
-                                                <th class="text-end">Cost (USD)</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="usageByBotTable">
-                                            <tr>
-                                                <td colspan="4" class="text-center text-muted py-3">
-                                                    <i class="fas fa-spinner fa-spin me-2"></i>กำลังโหลด...
-                                                </td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- By API Key -->
-                    <div class="col-lg-6">
-                        <div class="card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0"><i class="fas fa-key me-2"></i>ใช้งานตาม API Key</h5>
-                            </div>
-                            <div class="card-body p-0">
-                                <div class="table-responsive">
-                                    <table class="table table-hover mb-0">
+                                    <table class="table table-hover clickable-table mb-0">
                                         <thead>
                                             <tr>
                                                 <th>API Key</th>
@@ -168,11 +289,9 @@
                                                 <th class="text-end">Cost (USD)</th>
                                             </tr>
                                         </thead>
-                                        <tbody id="usageByKeyTable">
+                                        <tbody id="keysTable">
                                             <tr>
-                                                <td colspan="4" class="text-center text-muted py-3">
-                                                    <i class="fas fa-spinner fa-spin me-2"></i>กำลังโหลด...
-                                                </td>
+                                                <td colspan="4" class="text-center text-muted py-3">กำลังโหลด...</td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -181,77 +300,102 @@
                         </div>
                     </div>
 
-                    <!-- Daily Usage -->
-                    <div class="col-lg-6">
+                    <!-- Tab 5: Detailed Logs -->
+                    <div class="tab-pane fade" id="logs" role="tabpanel">
+                        <!-- Filters -->
+                        <div class="card mb-3">
+                            <div class="card-body">
+                                <div class="row g-3 align-items-end">
+                                    <div class="col-md-3">
+                                        <label class="form-label small">Platform</label>
+                                        <select class="form-select form-select-sm" id="filterPlatform">
+                                            <option value="">ทั้งหมด</option>
+                                            <option value="line">Line</option>
+                                            <option value="facebook">Facebook</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label small">Bot</label>
+                                        <select class="form-select form-select-sm" id="filterBot">
+                                            <option value="">ทั้งหมด</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label small">Model</label>
+                                        <select class="form-select form-select-sm" id="filterModel">
+                                            <option value="">ทั้งหมด</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label small">แสดง</label>
+                                        <select class="form-select form-select-sm" id="logsLimit">
+                                            <option value="25">25</option>
+                                            <option value="50" selected>50</option>
+                                            <option value="100">100</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-1">
+                                        <button class="btn btn-primary btn-sm w-100" onclick="loadDetailedLogs()">
+                                            <i class="fas fa-search"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Logs Table -->
                         <div class="card">
-                            <div class="card-header">
-                                <h5 class="card-title mb-0"><i class="fas fa-calendar-alt me-2"></i>ใช้งานรายวัน</h5>
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="card-title mb-0">บันทึกทั้งหมด</h5>
+                                <button class="btn btn-outline-success btn-sm" onclick="exportToCSV()">
+                                    <i class="fas fa-download me-1"></i>Export CSV
+                                </button>
                             </div>
                             <div class="card-body p-0">
-                                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
-                                    <table class="table table-hover mb-0">
-                                        <thead style="position: sticky; top: 0; background: white;">
+                                <div class="table-responsive">
+                                    <table class="table table-hover table-sm mb-0">
+                                        <thead>
                                             <tr>
-                                                <th>วันที่</th>
-                                                <th class="text-end">Calls</th>
-                                                <th class="text-end">Tokens</th>
-                                                <th class="text-end">Cost (USD)</th>
+                                                <th>เวลา</th>
+                                                <th>Model</th>
+                                                <th>Bot</th>
+                                                <th>Platform</th>
+                                                <th class="text-end">Input</th>
+                                                <th class="text-end">Output</th>
+                                                <th class="text-end">Total</th>
+                                                <th class="text-end">Cost</th>
                                             </tr>
                                         </thead>
-                                        <tbody id="usageByDayTable">
+                                        <tbody id="logsTable">
                                             <tr>
-                                                <td colspan="4" class="text-center text-muted py-3">
-                                                    <i class="fas fa-spinner fa-spin me-2"></i>กำลังโหลด...
-                                                </td>
+                                                <td colspan="8" class="text-center text-muted py-3">กำลังโหลด...</td>
                                             </tr>
                                         </tbody>
                                     </table>
                                 </div>
                             </div>
+                            <div class="card-footer">
+                                <nav id="logsPagination"></nav>
+                            </div>
                         </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- Drill-down Modal -->
+        <div class="modal fade" id="drilldownModal" tabindex="-1">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="drilldownTitle">รายละเอียด</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body" id="drilldownContent">
+                        <div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>
                     </div>
                 </div>
-
-                <!-- Recent Usage Logs -->
-                <div class="card mt-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="card-title mb-0"><i class="fas fa-history me-2"></i>บันทึกการใช้งานล่าสุด</h5>
-                        <div class="d-flex gap-2">
-                            <select class="form-select form-select-sm" id="logsLimitSelect" style="width: 100px;">
-                                <option value="10">10 รายการ</option>
-                                <option value="25" selected>25 รายการ</option>
-                                <option value="50">50 รายการ</option>
-                                <option value="100">100 รายการ</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-hover mb-0">
-                                <thead>
-                                    <tr>
-                                        <th>เวลา</th>
-                                        <th>Model</th>
-                                        <th>Bot/Page</th>
-                                        <th>Platform</th>
-                                        <th class="text-end">Input</th>
-                                        <th class="text-end">Output</th>
-                                        <th class="text-end">Total</th>
-                                        <th class="text-end">Cost</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="recentLogsTable">
-                                    <tr>
-                                        <td colspan="8" class="text-center text-muted py-3">
-                                            <i class="fas fa-spinner fa-spin me-2"></i>กำลังโหลด...
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
             </div>
         </div>
 

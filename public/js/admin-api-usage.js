@@ -1,226 +1,425 @@
 /**
  * Admin API Usage Page JavaScript
- * Loads and displays OpenAI API usage statistics
+ * Enhanced statistics dashboard with tabs and drill-down
  */
 
+var usageData = null;
+var drilldownModal = null;
+
 document.addEventListener('DOMContentLoaded', function () {
-    loadUsageStats();
+    drilldownModal = new bootstrap.Modal(document.getElementById('drilldownModal'));
 
-    // Add event listeners
-    document.getElementById('dateRangeSelect').addEventListener('change', loadUsageStats);
-    document.getElementById('logsLimitSelect').addEventListener('change', loadRecentLogs);
-});
+    // Load initial data
+    loadOverviewTab();
 
-async function loadUsageStats() {
-    var dateRange = document.getElementById('dateRangeSelect').value || '7days';
-
-    // Calculate date range
-    var dateInfo = getDateRange(dateRange);
-
-    try {
-        var params = new URLSearchParams();
-        if (dateInfo.startDate) params.append('startDate', dateInfo.startDate.toISOString());
-        if (dateInfo.endDate) params.append('endDate', dateInfo.endDate.toISOString());
-
-        var response = await fetch('/api/openai-usage/summary?' + params);
-        if (!response.ok) throw new Error('Failed to load usage stats');
-
-        var data = await response.json();
-
-        // Update summary cards
-        updateSummaryCards(data);
-
-        // Update tables
-        updateModelTable(data.byModel || []);
-        updateBotTable(data.byBot || []);
-        updateKeyTable(data.byKey || []);
-        updateDayTable(data.byDay || []);
-
-        // Load recent logs
-        loadRecentLogs();
-
-    } catch (error) {
-        console.error('Error loading usage stats:', error);
-        showError('ไม่สามารถโหลดสถิติได้');
-    }
-}
-
-function getDateRange(range) {
-    var now = new Date();
-    var startDate = null;
-    var endDate = now;
-
-    switch (range) {
-        case 'today':
-            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            break;
-        case '7days':
-            startDate = new Date(now);
-            startDate.setDate(startDate.getDate() - 7);
-            break;
-        case '30days':
-            startDate = new Date(now);
-            startDate.setDate(startDate.getDate() - 30);
-            break;
-        case 'all':
-        default:
-            startDate = null;
-            break;
-    }
-
-    return { startDate: startDate, endDate: endDate };
-}
-
-function updateSummaryCards(data) {
-    document.getElementById('totalCalls').textContent = formatNumber(data.totalCalls || 0);
-    document.getElementById('totalTokens').textContent = formatNumber(data.totalTokens || 0);
-    document.getElementById('totalCostUSD').textContent = '$' + formatCost(data.totalCostUSD || 0);
-    document.getElementById('totalCostTHB').textContent = '฿' + formatCost(data.totalCostTHB || 0);
-}
-
-function updateModelTable(data) {
-    var tbody = document.getElementById('usageByModelTable');
-    if (!tbody) return;
-
-    if (!data.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
-        return;
-    }
-
-    var html = '';
-    for (var i = 0; i < data.length; i++) {
-        var item = data[i];
-        html += '<tr>';
-        html += '<td><span class="model-badge">' + escapeHtml(item.model || 'unknown') + '</span></td>';
-        html += '<td class="text-end">' + formatNumber(item.count || 0) + '</td>';
-        html += '<td class="text-end">' + formatNumber(item.totalTokens || 0) + '</td>';
-        html += '<td class="text-end cost-value usd">$' + formatCost(item.estimatedCost || 0) + '</td>';
-        html += '</tr>';
-    }
-    tbody.innerHTML = html;
-}
-
-function updateBotTable(data) {
-    var tbody = document.getElementById('usageByBotTable');
-    if (!tbody) return;
-
-    if (!data.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
-        return;
-    }
-
-    var html = '';
-    for (var i = 0; i < data.length; i++) {
-        var item = data[i];
-        var platform = item.platform || 'unknown';
-        html += '<tr>';
-        html += '<td><span class="platform-badge ' + platform + '">';
-        html += '<i class="fab fa-' + platform + '"></i> ';
-        html += escapeHtml(item.botName || item.botId || 'ไม่ระบุ');
-        html += '</span></td>';
-        html += '<td class="text-end">' + formatNumber(item.count || 0) + '</td>';
-        html += '<td class="text-end">' + formatNumber(item.totalTokens || 0) + '</td>';
-        html += '<td class="text-end cost-value usd">$' + formatCost(item.estimatedCost || 0) + '</td>';
-        html += '</tr>';
-    }
-    tbody.innerHTML = html;
-}
-
-function updateKeyTable(data) {
-    var tbody = document.getElementById('usageByKeyTable');
-    if (!tbody) return;
-
-    if (!data.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
-        return;
-    }
-
-    var html = '';
-    for (var i = 0; i < data.length; i++) {
-        var item = data[i];
-        html += '<tr>';
-        html += '<td><i class="fas fa-key text-muted me-1"></i>' + escapeHtml(item.keyName || 'Environment Variable') + '</td>';
-        html += '<td class="text-end">' + formatNumber(item.count || 0) + '</td>';
-        html += '<td class="text-end">' + formatNumber(item.totalTokens || 0) + '</td>';
-        html += '<td class="text-end cost-value usd">$' + formatCost(item.estimatedCost || 0) + '</td>';
-        html += '</tr>';
-    }
-    tbody.innerHTML = html;
-}
-
-function updateDayTable(data) {
-    var tbody = document.getElementById('usageByDayTable');
-    if (!tbody) return;
-
-    if (!data.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
-        return;
-    }
-
-    // Sort by date descending
-    var sorted = data.slice().sort(function (a, b) {
-        return new Date(b.date) - new Date(a.date);
+    // Tab change listeners
+    document.querySelectorAll('#usageTabs button[data-bs-toggle="tab"]').forEach(function (tab) {
+        tab.addEventListener('shown.bs.tab', function (e) {
+            var target = e.target.getAttribute('data-bs-target');
+            if (target === '#overview') loadOverviewTab();
+            else if (target === '#bots') loadBotsTab();
+            else if (target === '#models') loadModelsTab();
+            else if (target === '#keys') loadKeysTab();
+            else if (target === '#logs') loadDetailedLogs();
+        });
     });
 
-    var html = '';
-    for (var i = 0; i < sorted.length; i++) {
-        var item = sorted[i];
-        html += '<tr>';
-        html += '<td>' + formatDate(item.date) + '</td>';
-        html += '<td class="text-end">' + formatNumber(item.count || 0) + '</td>';
-        html += '<td class="text-end">' + formatNumber(item.totalTokens || 0) + '</td>';
-        html += '<td class="text-end cost-value usd">$' + formatCost(item.estimatedCost || 0) + '</td>';
-        html += '</tr>';
+    // Date range change
+    document.getElementById('dateRangeSelect').addEventListener('change', refreshCurrentTab);
+});
+
+function getDateParams() {
+    var range = document.getElementById('dateRangeSelect').value;
+    var now = new Date();
+    var startDate = null;
+
+    if (range === 'today') {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (range === '7days') {
+        startDate = new Date(now);
+        startDate.setDate(startDate.getDate() - 7);
+    } else if (range === '30days') {
+        startDate = new Date(now);
+        startDate.setDate(startDate.getDate() - 30);
     }
-    tbody.innerHTML = html;
+
+    var params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate.toISOString());
+    params.append('endDate', now.toISOString());
+    return params;
 }
 
-async function loadRecentLogs() {
-    var limitSelect = document.getElementById('logsLimitSelect');
-    var limit = limitSelect ? limitSelect.value : 25;
-    var tbody = document.getElementById('recentLogsTable');
-    if (!tbody) return;
+function refreshCurrentTab() {
+    var activeTab = document.querySelector('#usageTabs .nav-link.active');
+    if (!activeTab) return;
+    var target = activeTab.getAttribute('data-bs-target');
+    if (target === '#overview') loadOverviewTab();
+    else if (target === '#bots') loadBotsTab();
+    else if (target === '#models') loadModelsTab();
+    else if (target === '#keys') loadKeysTab();
+    else if (target === '#logs') loadDetailedLogs();
+}
+
+// =============== TAB 1: Overview ===============
+async function loadOverviewTab() {
+    try {
+        var response = await fetch('/api/openai-usage/summary?' + getDateParams());
+        var data = await response.json();
+        usageData = data;
+
+        // Summary cards
+        document.getElementById('totalCalls').textContent = formatNumber(data.totalCalls || 0);
+        document.getElementById('totalTokens').textContent = formatNumber(data.totalTokens || 0);
+        document.getElementById('totalCostUSD').textContent = '$' + formatCost(data.totalCostUSD || 0);
+        document.getElementById('totalCostTHB').textContent = '฿' + formatCost(data.totalCostTHB || 0);
+
+        // Top bots
+        renderSimpleTable('overviewBotTable', (data.byBot || []).slice(0, 5), function (item) {
+            return '<tr><td>' + escapeHtml(item.botName || item.botId || '-') + '</td>' +
+                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+        });
+
+        // Top models
+        renderSimpleTable('overviewModelTable', (data.byModel || []).slice(0, 5), function (item) {
+            return '<tr><td><span class="model-badge">' + escapeHtml(item.model) + '</span></td>' +
+                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+        });
+
+        // Daily usage
+        var byDay = (data.byDay || []).sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
+        renderSimpleTable('overviewDayTable', byDay.slice(0, 14), function (item) {
+            return '<tr><td>' + formatDate(item.date) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.totalTokens) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+        });
+
+    } catch (err) {
+        console.error('Error loading overview:', err);
+    }
+}
+
+// =============== TAB 2: Bots ===============
+async function loadBotsTab() {
+    try {
+        var response = await fetch('/api/openai-usage/summary?' + getDateParams());
+        var data = await response.json();
+
+        var tbody = document.getElementById('botsTable');
+        var items = data.byBot || [];
+
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            html += '<tr class="cursor-pointer" onclick="showBotDrilldown(\'' + (item.botId || '') + '\', \'' + escapeHtml(item.botName || item.botId || '-') + '\')">' +
+                '<td><i class="fab fa-' + (item.platform || 'robot') + ' me-2"></i>' + escapeHtml(item.botName || item.botId || '-') + '</td>' +
+                '<td><span class="platform-badge ' + (item.platform || '') + '">' + (item.platform || '-') + '</span></td>' +
+                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.totalTokens) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+        }
+        tbody.innerHTML = html;
+
+    } catch (err) {
+        console.error('Error loading bots tab:', err);
+    }
+}
+
+async function showBotDrilldown(botId, botName) {
+    document.getElementById('drilldownTitle').textContent = 'รายละเอียด: ' + botName;
+    document.getElementById('drilldownContent').innerHTML = '<div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>';
+    drilldownModal.show();
 
     try {
-        var response = await fetch('/api/openai-usage?limit=' + limit);
-        if (!response.ok) throw new Error('Failed to load logs');
-
+        var response = await fetch('/api/openai-usage/by-bot/' + encodeURIComponent(botId) + '?' + getDateParams());
         var data = await response.json();
+
+        var html = '<div class="row g-3 mb-4">' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(data.totals.totalCalls) + '</div></div></div></div>' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(data.totals.totalTokens) + '</div></div></div></div>' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Cost</div><div class="summary-value">$' + formatCost(data.totals.totalCost) + '</div></div></div></div>' +
+            '</div>';
+
+        html += '<div class="row g-4">';
+
+        // Models used
+        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>โมเดลที่ใช้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Model</th><th class="text-end">Calls</th><th class="text-end">Tokens</th><th class="text-end">Cost</th></tr></thead><tbody>';
+        (data.byModel || []).forEach(function (m) {
+            html += '<tr><td><span class="model-badge">' + escapeHtml(m.model) + '</span></td><td class="text-end">' + formatNumber(m.count) + '</td><td class="text-end">' + formatNumber(m.totalTokens) + '</td><td class="text-end">$' + formatCost(m.estimatedCost) + '</td></tr>';
+        });
+        html += '</tbody></table></div></div></div>';
+
+        // API Keys used
+        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>API Key ที่ใช้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Key</th><th class="text-end">Calls</th><th class="text-end">Cost</th></tr></thead><tbody>';
+        (data.byKey || []).forEach(function (k) {
+            html += '<tr><td><i class="fas fa-key text-muted me-1"></i>' + escapeHtml(k.keyName) + '</td><td class="text-end">' + formatNumber(k.count) + '</td><td class="text-end">$' + formatCost(k.estimatedCost) + '</td></tr>';
+        });
+        html += '</tbody></table></div></div></div>';
+
+        // Recent logs
+        html += '<div class="col-12"><div class="card"><div class="card-header"><strong>บันทึกล่าสุด</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>เวลา</th><th>Model</th><th class="text-end">Tokens</th><th class="text-end">Cost</th></tr></thead><tbody>';
+        (data.recentLogs || []).forEach(function (l) {
+            html += '<tr><td>' + formatDateTime(l.timestamp) + '</td><td><span class="model-badge">' + escapeHtml(l.model) + '</span></td><td class="text-end">' + formatNumber(l.totalTokens) + '</td><td class="text-end">$' + formatCost(l.estimatedCost) + '</td></tr>';
+        });
+        html += '</tbody></table></div></div></div>';
+
+        html += '</div>';
+
+        document.getElementById('drilldownContent').innerHTML = html;
+
+    } catch (err) {
+        document.getElementById('drilldownContent').innerHTML = '<div class="alert alert-danger">ไม่สามารถโหลดข้อมูลได้</div>';
+    }
+}
+
+// =============== TAB 3: Models ===============
+async function loadModelsTab() {
+    try {
+        var response = await fetch('/api/openai-usage/summary?' + getDateParams());
+        var data = await response.json();
+
+        var tbody = document.getElementById('modelsTable');
+        var items = data.byModel || [];
+
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            html += '<tr class="cursor-pointer" onclick="showModelDrilldown(\'' + escapeHtml(item.model) + '\')">' +
+                '<td><span class="model-badge">' + escapeHtml(item.model) + '</span></td>' +
+                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.totalTokens) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+        }
+        tbody.innerHTML = html;
+
+    } catch (err) {
+        console.error('Error loading models tab:', err);
+    }
+}
+
+async function showModelDrilldown(model) {
+    document.getElementById('drilldownTitle').textContent = 'รายละเอียด Model: ' + model;
+    document.getElementById('drilldownContent').innerHTML = '<div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>';
+    drilldownModal.show();
+
+    try {
+        var response = await fetch('/api/openai-usage/by-model/' + encodeURIComponent(model) + '?' + getDateParams());
+        var data = await response.json();
+
+        var html = '<div class="row g-3 mb-4">' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(data.totals.totalCalls) + '</div></div></div></div>' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(data.totals.totalTokens) + '</div></div></div></div>' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Cost</div><div class="summary-value">$' + formatCost(data.totals.totalCost) + '</div></div></div></div>' +
+            '</div>';
+
+        // Bots using this model
+        html += '<div class="card"><div class="card-header"><strong>Bot/Page ที่ใช้โมเดลนี้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Bot</th><th>Platform</th><th class="text-end">Calls</th><th class="text-end">Tokens</th><th class="text-end">Cost</th></tr></thead><tbody>';
+        (data.byBot || []).forEach(function (b) {
+            html += '<tr><td>' + escapeHtml(b.botName) + '</td><td><span class="platform-badge ' + (b.platform || '') + '">' + (b.platform || '-') + '</span></td><td class="text-end">' + formatNumber(b.count) + '</td><td class="text-end">' + formatNumber(b.totalTokens) + '</td><td class="text-end">$' + formatCost(b.estimatedCost) + '</td></tr>';
+        });
+        html += '</tbody></table></div></div>';
+
+        document.getElementById('drilldownContent').innerHTML = html;
+
+    } catch (err) {
+        document.getElementById('drilldownContent').innerHTML = '<div class="alert alert-danger">ไม่สามารถโหลดข้อมูลได้</div>';
+    }
+}
+
+// =============== TAB 4: API Keys ===============
+async function loadKeysTab() {
+    try {
+        var response = await fetch('/api/openai-usage/summary?' + getDateParams());
+        var data = await response.json();
+
+        var tbody = document.getElementById('keysTable');
+        var items = data.byKey || [];
+
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            var keyId = item.keyId || 'env';
+            html += '<tr class="cursor-pointer" onclick="showKeyDrilldown(\'' + keyId + '\', \'' + escapeHtml(item.keyName || 'Env Variable') + '\')">' +
+                '<td><i class="fas fa-key text-muted me-2"></i>' + escapeHtml(item.keyName || 'Environment Variable') + '</td>' +
+                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.totalTokens) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+        }
+        tbody.innerHTML = html;
+
+    } catch (err) {
+        console.error('Error loading keys tab:', err);
+    }
+}
+
+async function showKeyDrilldown(keyId, keyName) {
+    document.getElementById('drilldownTitle').textContent = 'รายละเอียด API Key: ' + keyName;
+    document.getElementById('drilldownContent').innerHTML = '<div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>';
+    drilldownModal.show();
+
+    try {
+        var response = await fetch('/api/openai-usage/by-key/' + encodeURIComponent(keyId) + '?' + getDateParams());
+        var data = await response.json();
+
+        var html = '<div class="row g-3 mb-4">' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(data.totals.totalCalls) + '</div></div></div></div>' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(data.totals.totalTokens) + '</div></div></div></div>' +
+            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Cost</div><div class="summary-value">$' + formatCost(data.totals.totalCost) + '</div></div></div></div>' +
+            '</div>';
+
+        html += '<div class="row g-4">';
+
+        // Bots using this key
+        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>Bot/Page ที่ใช้ Key นี้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Bot</th><th class="text-end">Calls</th><th class="text-end">Cost</th></tr></thead><tbody>';
+        (data.byBot || []).forEach(function (b) {
+            html += '<tr><td><i class="fab fa-' + (b.platform || 'robot') + ' me-2"></i>' + escapeHtml(b.botName) + '</td><td class="text-end">' + formatNumber(b.count) + '</td><td class="text-end">$' + formatCost(b.estimatedCost) + '</td></tr>';
+        });
+        html += '</tbody></table></div></div></div>';
+
+        // Models used with this key
+        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>Model ที่ใช้กับ Key นี้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Model</th><th class="text-end">Calls</th><th class="text-end">Cost</th></tr></thead><tbody>';
+        (data.byModel || []).forEach(function (m) {
+            html += '<tr><td><span class="model-badge">' + escapeHtml(m.model) + '</span></td><td class="text-end">' + formatNumber(m.count) + '</td><td class="text-end">$' + formatCost(m.estimatedCost) + '</td></tr>';
+        });
+        html += '</tbody></table></div></div></div>';
+
+        html += '</div>';
+
+        document.getElementById('drilldownContent').innerHTML = html;
+
+    } catch (err) {
+        document.getElementById('drilldownContent').innerHTML = '<div class="alert alert-danger">ไม่สามารถโหลดข้อมูลได้</div>';
+    }
+}
+
+// =============== TAB 5: Detailed Logs ===============
+async function loadDetailedLogs() {
+    var limit = document.getElementById('logsLimit').value || 50;
+    var platform = document.getElementById('filterPlatform').value;
+    var botId = document.getElementById('filterBot').value;
+
+    var params = getDateParams();
+    params.append('limit', limit);
+    if (platform) params.append('platform', platform);
+    if (botId) params.append('botId', botId);
+
+    try {
+        var response = await fetch('/api/openai-usage?' + params);
+        var data = await response.json();
+
+        var tbody = document.getElementById('logsTable');
         var logs = data.logs || [];
 
         if (!logs.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">ไม่มีบันทึกการใช้งาน</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">ไม่มีบันทึก</td></tr>';
             return;
         }
 
         var html = '';
         for (var i = 0; i < logs.length; i++) {
-            var log = logs[i];
-            var platform = log.platform || 'unknown';
-            html += '<tr>';
-            html += '<td>' + formatDateTime(log.timestamp) + '</td>';
-            html += '<td><span class="model-badge">' + escapeHtml(log.model || '-') + '</span></td>';
-            html += '<td>' + escapeHtml(log.botName || log.botId || '-') + '</td>';
-            html += '<td><span class="platform-badge ' + platform + '">';
-            html += '<i class="fab fa-' + platform + '"></i> ' + platform;
-            html += '</span></td>';
-            html += '<td class="text-end token-stat input">' + formatNumber(log.promptTokens || 0) + '</td>';
-            html += '<td class="text-end token-stat output">' + formatNumber(log.completionTokens || 0) + '</td>';
-            html += '<td class="text-end">' + formatNumber(log.totalTokens || 0) + '</td>';
-            html += '<td class="text-end cost-value usd">$' + formatCost(log.estimatedCost || 0) + '</td>';
-            html += '</tr>';
+            var l = logs[i];
+            html += '<tr>' +
+                '<td>' + formatDateTime(l.timestamp) + '</td>' +
+                '<td><span class="model-badge">' + escapeHtml(l.model || '-') + '</span></td>' +
+                '<td>' + escapeHtml(l.botId || '-') + '</td>' +
+                '<td><span class="platform-badge ' + (l.platform || '') + '">' + (l.platform || '-') + '</span></td>' +
+                '<td class="text-end">' + formatNumber(l.promptTokens || 0) + '</td>' +
+                '<td class="text-end">' + formatNumber(l.completionTokens || 0) + '</td>' +
+                '<td class="text-end">' + formatNumber(l.totalTokens || 0) + '</td>' +
+                '<td class="text-end">$' + formatCost(l.estimatedCostUSD || 0) + '</td></tr>';
         }
         tbody.innerHTML = html;
 
-    } catch (error) {
-        console.error('Error loading recent logs:', error);
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">ไม่สามารถโหลดบันทึกได้</td></tr>';
+        // Populate filter dropdowns
+        populateFilterDropdowns();
+
+    } catch (err) {
+        console.error('Error loading logs:', err);
     }
 }
 
-// Utility functions
+async function populateFilterDropdowns() {
+    if (!usageData) {
+        try {
+            var response = await fetch('/api/openai-usage/summary?' + getDateParams());
+            usageData = await response.json();
+        } catch (e) { return; }
+    }
+
+    var botSelect = document.getElementById('filterBot');
+    var modelSelect = document.getElementById('filterModel');
+
+    // Clear existing options except first
+    while (botSelect.options.length > 1) botSelect.remove(1);
+    while (modelSelect.options.length > 1) modelSelect.remove(1);
+
+    // Add bots
+    (usageData.byBot || []).forEach(function (b) {
+        var opt = document.createElement('option');
+        opt.value = b.botId || '';
+        opt.textContent = b.botName || b.botId || '-';
+        botSelect.appendChild(opt);
+    });
+
+    // Add models
+    (usageData.byModel || []).forEach(function (m) {
+        var opt = document.createElement('option');
+        opt.value = m.model || '';
+        opt.textContent = m.model || '-';
+        modelSelect.appendChild(opt);
+    });
+}
+
+function exportToCSV() {
+    if (!usageData) return;
+
+    var csv = 'Date,Calls,Tokens,Cost USD\n';
+    (usageData.byDay || []).forEach(function (d) {
+        csv += d.date + ',' + d.count + ',' + d.totalTokens + ',' + (d.estimatedCost || 0).toFixed(4) + '\n';
+    });
+
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'api-usage-' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+}
+
+// =============== Utilities ===============
+function renderSimpleTable(tableId, items, rowRenderer) {
+    var tbody = document.getElementById(tableId);
+    if (!tbody) return;
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
+        return;
+    }
+    var html = '';
+    for (var i = 0; i < items.length; i++) {
+        html += rowRenderer(items[i]);
+    }
+    tbody.innerHTML = html;
+}
+
 function formatNumber(num) {
-    return new Intl.NumberFormat('th-TH').format(num);
+    return new Intl.NumberFormat('th-TH').format(num || 0);
 }
 
 function formatCost(cost) {
@@ -229,38 +428,15 @@ function formatCost(cost) {
 
 function formatDate(dateStr) {
     var date = new Date(dateStr);
-    return date.toLocaleDateString('th-TH', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-    });
+    return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function formatDateTime(dateStr) {
     var date = new Date(dateStr);
-    return date.toLocaleString('th-TH', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+    return date.toLocaleString('th-TH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function escapeHtml(str) {
     if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-}
-
-function showError(message) {
-    var alert = document.createElement('div');
-    alert.className = 'alert alert-danger position-fixed top-0 end-0 m-3';
-    alert.style.zIndex = '9999';
-    alert.innerHTML = '<i class="fas fa-exclamation-circle me-2"></i>' + message;
-    document.body.appendChild(alert);
-    setTimeout(function () { alert.remove(); }, 5000);
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
