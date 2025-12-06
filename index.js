@@ -5496,6 +5496,8 @@ async function processFlushedMessages(
         history,
         contentSequence,
         aiModelOverride,
+        queueContext.botId,
+        "line"
       );
     } else {
       const preview = combinedText.substring(0, 100);
@@ -6104,12 +6106,15 @@ async function sendPrivateMessageFromComment(commentId, message, accessToken) {
   }
 }
 
-async function processCommentWithAI(commentText, systemPrompt, aiModel) {
+async function processCommentWithAI(commentText, systemPrompt, aiModel, botId = null) {
   const startTime = Date.now();
 
   try {
-    if (!OPENAI_API_KEY) {
-      console.error("[Facebook Comment AI] OPENAI_API_KEY not configured");
+    // Get per-bot API key or fallback to default
+    const apiKeyToUse = await getOpenAIApiKeyForBot(botId, 'facebook');
+
+    if (!apiKeyToUse.key) {
+      console.error("[Facebook Comment AI] No API key available");
       return "";
     }
 
@@ -6118,7 +6123,7 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel) {
       return "";
     }
 
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    const openai = new OpenAI({ apiKey: apiKeyToUse.key });
     const messages = [
       {
         role: "system",
@@ -6151,6 +6156,20 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel) {
       tokensUsed: completion.usage?.total_tokens,
       processingTime: `${processingTime}ms`,
     });
+
+    // Log usage to database
+    if (completion.usage) {
+      await logOpenAIUsage({
+        apiKeyId: apiKeyToUse.id,
+        botId,
+        platform: 'facebook',
+        model: aiModel || 'gpt-4o-mini',
+        promptTokens: completion.usage.prompt_tokens,
+        completionTokens: completion.usage.completion_tokens,
+        totalTokens: completion.usage.total_tokens,
+        functionName: 'processCommentWithAI'
+      });
+    }
 
     return reply.trim();
   } catch (error) {
@@ -6349,6 +6368,7 @@ async function handleFacebookComment(
       commentText,
       policy.systemPrompt,
       policy.aiModel,
+      botId
     );
   }
   replyMessage = (replyMessage || "").trim();
@@ -7962,7 +7982,9 @@ async function getAssistantResponseTextOnly(
   platform = null
 ) {
   try {
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    // Get per-bot API key or fallback to default
+    const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
+    const openai = new OpenAI({ apiKey: apiKeyToUse.key });
 
     console.log(
       `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (ข้อความอย่างเดียว)...`,
@@ -8135,6 +8157,18 @@ async function getAssistantResponseTextOnly(
       console.log(
         `[LOG] Token usage (text): ${usage.total_tokens} total (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion)`,
       );
+
+      // Log usage to database
+      await logOpenAIUsage({
+        apiKeyId: apiKeyToUse.id,
+        botId,
+        platform,
+        model: textModel,
+        promptTokens: usage.prompt_tokens,
+        completionTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens,
+        functionName: 'getAssistantResponseTextOnly'
+      });
     }
 
     // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
@@ -8153,9 +8187,13 @@ async function getAssistantResponseMultimodal(
   history,
   contentSequence,
   aiModel = null,
+  botId = null,
+  platform = null
 ) {
   try {
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    // Get per-bot API key or fallback to default
+    const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
+    const openai = new OpenAI({ apiKey: apiKeyToUse.key });
 
     console.log(
       `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (multimodal)...`,
@@ -8273,6 +8311,18 @@ async function getAssistantResponseMultimodal(
       console.log(
         `[LOG] Token usage (multimodal): ${usage.total_tokens} total (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion) with ${imageCount} images`,
       );
+
+      // Log usage to database
+      await logOpenAIUsage({
+        apiKeyId: apiKeyToUse.id,
+        botId,
+        platform,
+        model: visionModel,
+        promptTokens: usage.prompt_tokens,
+        completionTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens,
+        functionName: 'getAssistantResponseMultimodal'
+      });
     }
 
     // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
@@ -11003,6 +11053,8 @@ async function processFacebookMessageWithAI(
           history,
           sanitizedSequence,
           aiModel,
+          facebookBot._id.toString(),
+          "facebook"
         );
       } else {
         const preview = combinedText.substring(0, 100);
