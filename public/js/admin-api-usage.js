@@ -76,16 +76,22 @@ async function loadOverviewTab() {
 
         // Top bots - use name, calls, costUSD
         renderSimpleTable('overviewBotTable', (data.byBot || []).slice(0, 5), function (item) {
+            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
+            var avgCostTHB = avgCostUSD * 33;
             return '<tr><td>' + escapeHtml(item.name || item.botId || '-') + '</td>' +
                 '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
+                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
         });
 
         // Top models - use calls, costUSD
         renderSimpleTable('overviewModelTable', (data.byModel || []).slice(0, 5), function (item) {
+            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
+            var avgCostTHB = avgCostUSD * 33;
             return '<tr><td><span class="model-badge">' + escapeHtml(item.model) + '</span></td>' +
                 '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
+                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
         });
 
         // Daily usage - use data.daily, and _id as date, calls, tokens, cost
@@ -112,7 +118,7 @@ async function loadBotsTab() {
         var items = data.byBot || [];
 
         if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
             return;
         }
 
@@ -120,12 +126,15 @@ async function loadBotsTab() {
         for (var i = 0; i < items.length; i++) {
             var item = items[i];
             var platformIcon = getPlatformIcon(item.platform);
+            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
+            var avgCostTHB = avgCostUSD * 33;
             html += '<tr class="cursor-pointer" onclick="showBotDrilldown(\'' + (item.botId || '') + '\', \'' + escapeHtml(item.name || item.botId || '-') + '\')">' +
                 '<td><i class="' + platformIcon + ' me-2"></i>' + escapeHtml(item.name || item.botId || '-') + '</td>' +
                 '<td><span class="platform-badge ' + (item.platform || '') + '">' + capitalize(item.platform || '-') + '</span></td>' +
                 '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
                 '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
+                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
         }
         tbody.innerHTML = html;
 
@@ -196,18 +205,21 @@ async function loadModelsTab() {
         var items = data.byModel || [];
 
         if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
             return;
         }
 
         var html = '';
         for (var i = 0; i < items.length; i++) {
             var item = items[i];
+            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
+            var avgCostTHB = avgCostUSD * 33;
             html += '<tr class="cursor-pointer" onclick="showModelDrilldown(\'' + escapeHtml(item.model) + '\')">' +
                 '<td><span class="model-badge">' + escapeHtml(item.model) + '</span></td>' +
                 '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
                 '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
+                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
         }
         tbody.innerHTML = html;
 
@@ -260,7 +272,7 @@ async function loadKeysTab() {
         var items = data.byKey || [];
 
         if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
             return;
         }
 
@@ -268,11 +280,14 @@ async function loadKeysTab() {
         for (var i = 0; i < items.length; i++) {
             var item = items[i];
             var keyId = item.keyId || 'env';
+            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
+            var avgCostTHB = avgCostUSD * 33;
             html += '<tr class="cursor-pointer" onclick="showKeyDrilldown(\'' + keyId + '\', \'' + escapeHtml(item.name || 'Env Variable') + '\')">' +
                 '<td><i class="fas fa-key text-muted me-2"></i>' + escapeHtml(item.name || 'Environment Variable') + '</td>' +
                 '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
                 '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
+                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
         }
         tbody.innerHTML = html;
 
