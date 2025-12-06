@@ -498,6 +498,7 @@ function renderGroupedTable(tableHeader, tableBody) {
     items.forEach((item, index) => {
         const avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
         const avgCostTHB = avgCostUSD * THB_RATE;
+        const totalCostTHB = (item.costUSD || 0) * THB_RATE;
         const costPercent = maxCost > 0 ? ((item.costUSD || 0) / maxCost * 100) : 0;
 
         html += `
@@ -514,7 +515,7 @@ function renderGroupedTable(tableHeader, tableBody) {
                 <td class="text-end">${formatNumber(item.calls)}</td>
                 <td class="text-end">${formatNumber(item.tokens)}</td>
                 <td class="text-end">
-                    <div class="cost-display">$${formatCost(item.costUSD)}</div>
+                    <div class="cost-display">$${formatCost(item.costUSD)} <span class="cost-sub">(฿${totalCostTHB.toFixed(2)})</span></div>
                     <div class="cost-bar"><div class="cost-bar-fill primary" style="width: ${costPercent}%"></div></div>
                 </td>
                 <td class="text-end">

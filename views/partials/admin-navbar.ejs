@@ -74,12 +74,6 @@
             </a>
             <ul class="dropdown-menu dropdown-menu-end">
               <li>
-                <a class="dropdown-item<%= current === 'customer-stats' ? ' active' : '' %>"
-                  href="/admin/customer-stats">
-                  <i class="fas fa-chart-bar"></i> สถิติลูกค้า
-                </a>
-              </li>
-              <li>
                 <a class="dropdown-item<%= current === 'orders' ? ' active' : '' %>" href="/admin/orders">
                   <i class="fas fa-shopping-basket"></i> ออเดอร์
                 </a>
@@ -95,9 +89,21 @@
                 </a>
               </li>
               <li>
+                <hr class="dropdown-divider">
+              </li>
+              <li>
                 <a class="dropdown-item<%= current === 'facebook-posts' ? ' active' : '' %>"
                   href="/admin/facebook-posts">
                   <i class="fas fa-comment-dots"></i> โพสต์ FB/คอมเมนต์
+                </a>
+              </li>
+              <li>
+                <hr class="dropdown-divider">
+              </li>
+              <li>
+                <a class="dropdown-item<%= current === 'customer-stats' ? ' active' : '' %>"
+                  href="/admin/customer-stats">
+                  <i class="fas fa-chart-bar"></i> สถิติลูกค้า
                 </a>
               </li>
             </ul>
@@ -130,7 +136,7 @@
       // Auth Logic
       window.adminAuth = window.adminAuth || {};
       window.adminAuth.requirePasscode = <%= isPasscodeRequired ? 'true' : 'false' %>;
-      window.adminAuth.user = <%-JSON.stringify(signedInUser || null) %>;
+      window.adminAuth.user = <% -JSON.stringify(signedInUser || null) %>;
 
       const logoutBtn = document.getElementById('adminLogoutBtn');
       if (logoutBtn) {
