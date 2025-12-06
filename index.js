@@ -15301,6 +15301,251 @@ app.get("/admin/instructions/:id/json", async (req, res) => {
   }
 });
 
+// ==========================================
+// Broadcast System - Queue & Helpers
+// ==========================================
+
+const activeBroadcasts = new Map();
+
+class BroadcastQueue {
+  constructor(jobId, data, options = {}) {
+    this.jobId = jobId;
+    this.data = data; // { messages, targets, channels }
+    this.options = options; // { batchSize, batchDelay, messageDelay }
+    this.stats = {
+      total: data.targets.length,
+      sent: 0,
+      failed: 0,
+      status: "pending", // pending, running, completed, cancelled, failed
+      startTime: null,
+      endTime: null,
+      errors: [],
+    };
+    this.isCancelled = false;
+    this.botsCache = new Map(); // Cache bot data
+  }
+
+  async start() {
+    this.stats.status = "running";
+    this.stats.startTime = new Date();
+    await this.saveHistory();
+
+    const { targets } = this.data;
+    const { batchSize = 10, batchDelay = 60, messageDelay = 1 } = this.options;
+
+    try {
+      // Pre-fetch bot data
+      await this.loadBots();
+
+      for (let i = 0; i < targets.length; i += batchSize) {
+        if (this.isCancelled) break;
+
+        const batch = targets.slice(i, i + batchSize);
+
+        // Process batch safely
+        const batchPromises = batch.map(async (target, index) => {
+          if (this.isCancelled) return;
+          // Add delay between messages in the same batch
+          if (messageDelay > 0 && index > 0) {
+            await new Promise((r) => setTimeout(r, index * messageDelay * 1000));
+          }
+          if (this.isCancelled) return;
+          await this.sendToTarget(target);
+        });
+
+        await Promise.allSettled(batchPromises);
+
+        await this.updateProgress();
+
+        // Wait for batch delay if not the last batch
+        if (i + batchSize < targets.length && !this.isCancelled) {
+          await new Promise((r) => setTimeout(r, batchDelay * 1000));
+        }
+      }
+
+      this.stats.status = this.isCancelled ? "cancelled" : "completed";
+    } catch (error) {
+      console.error(`[Broadcast] Job ${this.jobId} failed:`, error);
+      this.stats.status = "failed";
+      this.stats.errors.push({ error: error.message, timestamp: new Date() });
+    } finally {
+      this.stats.endTime = new Date();
+      await this.saveHistory();
+    }
+  }
+
+  async loadBots() {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    // Unique bots needed
+    const botKeys = new Set(this.data.targets.map(t => `${t.platform}:${t.botId}`));
+
+    for (const key of botKeys) {
+      const [platform, botId] = key.split(":");
+      if (!botId || !ObjectId.isValid(botId)) continue;
+
+      let bot;
+      if (platform === 'facebook') {
+        bot = await db.collection("facebook_bots").findOne({ _id: new ObjectId(botId) });
+      } else if (platform === 'line') {
+        bot = await db.collection("line_bots").findOne({ _id: new ObjectId(botId) });
+      }
+
+      if (bot) {
+        this.botsCache.set(key, bot);
+      }
+    }
+  }
+
+  async sendToTarget(target) {
+    const { userId, platform, botId } = target;
+    const { messages } = this.data;
+    const bot = this.botsCache.get(`${platform}:${botId}`);
+
+    if (!bot) {
+      this.stats.failed++;
+      this.stats.errors.push({ userId, error: "Bot not found" });
+      return;
+    }
+
+    try {
+      if (platform === "facebook") {
+        for (const msg of messages) {
+          // Send each message sequentially
+          if (msg.type === 'text') {
+            await sendFacebookMessage(userId, msg.content, bot.accessToken, { metadata: "broadcast_auto" });
+          } else if (msg.type === 'image') {
+            // For image, we accept URL or fileId. 
+            // Assuming msg.url is a public URL (e.g. from our upload)
+            // Re-using sendFacebookMessage or direct axios if needed.
+            // The sendFacebookMessage logic handles simple text. 
+            // Let's try to construct a payload that sendFacebookMessage might prefer or just call axios directly.
+            // Since sendFacebookMessage is complex, let's call axios directly for image to be safe.
+            await axios.post(
+              `https://graph.facebook.com/v18.0/me/messages`,
+              {
+                recipient: { id: userId },
+                message: {
+                  attachment: {
+                    type: "image",
+                    payload: { url: msg.url, is_reusable: true }
+                  },
+                  metadata: "broadcast_auto"
+                }
+              },
+              {
+                params: { access_token: bot.accessToken },
+                headers: { "Content-Type": "application/json" }
+              }
+            );
+          }
+        }
+      } else if (platform === "line") {
+        const client = createLineClient(bot.channelAccessToken, bot.channelSecret);
+        const lineMessages = messages.map(msg => {
+          if (msg.type === 'text') return { type: 'text', text: msg.content };
+          if (msg.type === 'image') return { type: 'image', originalContentUrl: msg.url, previewImageUrl: msg.url };
+          return null;
+        }).filter(Boolean);
+
+        if (lineMessages.length > 0) {
+          await client.pushMessage(userId, lineMessages);
+        }
+      }
+      this.stats.sent++;
+    } catch (e) {
+      console.error(`[Broadcast] Failed to send to ${userId}: ${e.message}`);
+      this.stats.failed++;
+      // Limit error size
+      if (this.stats.errors.length < 100) {
+        this.stats.errors.push({ userId, error: e.message });
+      }
+    }
+  }
+
+  cancel() {
+    this.isCancelled = true;
+  }
+
+  async saveHistory() {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("broadcast_history");
+
+      await coll.updateOne(
+        { _id: new ObjectId(this.jobId) },
+        {
+          $set: {
+            stats: this.stats,
+            updatedAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+    } catch (e) {
+      console.error("[Broadcast] Failed to save history:", e);
+    }
+  }
+
+  async updateProgress() {
+    // In-memory update is instant, but we might want to emit socket event here
+    if (typeof io !== 'undefined') {
+      io.emit('broadcastProgress', {
+        jobId: this.jobId,
+        stats: this.stats
+      });
+    }
+    // Periodically save to DB? `saveHistory` handles that.
+    // Maybe save every N updates.
+    await this.saveHistory();
+  }
+}
+
+async function getBroadcastAudience(channels, audienceType) {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const chatColl = db.collection("chat_history");
+  const followUpColl = db.collection("follow_up_status");
+
+  let users = [];
+
+  for (const ch of channels) {
+    const [platform, botId] = ch.split(":");
+
+    // Base query: all users for this bot
+    let userIds = await chatColl.distinct("senderId", { platform, botId });
+
+    if (typeof userIds[0] === 'number') userIds = userIds.map(String); // ensure string
+
+    if (audienceType === 'all') {
+      // No filter
+    } else if (audienceType === 'tagged') {
+      // Filter only those with hasFollowUp: true
+      const taggedUsers = await followUpColl.find({
+        senderId: { $in: userIds },
+        hasFollowUp: true
+      }).project({ senderId: 1 }).toArray();
+      const taggedSet = new Set(taggedUsers.map(u => u.senderId));
+      userIds = userIds.filter(id => taggedSet.has(id));
+    } else if (audienceType === 'untagged') {
+      // Filter exclude hasFollowUp: true
+      const taggedUsers = await followUpColl.find({
+        senderId: { $in: userIds },
+        hasFollowUp: true
+      }).project({ senderId: 1 }).toArray();
+      const taggedSet = new Set(taggedUsers.map(u => u.senderId));
+      userIds = userIds.filter(id => !taggedSet.has(id));
+    }
+
+    // Map to target objects
+    users.push(...userIds.map(id => ({ userId: id, platform, botId })));
+  }
+
+  return users;
+}
+
 // Broadcast page
 app.get("/admin/broadcast", async (req, res) => {
   try {
@@ -15323,95 +15568,171 @@ app.get("/admin/broadcast", async (req, res) => {
 });
 
 // Broadcast action
-app.post("/admin/broadcast", async (req, res) => {
-  const { message, audience } = req.body;
-  let { channels } = req.body;
-
-  if (!Array.isArray(channels)) {
-    channels = channels ? [channels] : [];
-  }
-
+// Preview Audience
+app.post("/admin/broadcast/preview", async (req, res) => {
   try {
-    if (!message || channels.length === 0) {
+    const { channels = [], audience = "all" } = req.body;
+    if (!channels.length) {
+      return res.json({ success: true, count: 0, users: [] });
+    }
+    const users = await getBroadcastAudience(channels, audience);
+
+    const lineCount = users.filter((u) => u.platform === "line").length;
+    const fbCount = users.filter((u) => u.platform === "facebook").length;
+
+    res.json({
+      success: true,
+      count: users.length,
+      counts: { total: users.length, line: lineCount, facebook: fbCount },
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Start Broadcast (with Queue & Image Upload)
+app.post("/admin/broadcast", upload.array("images"), async (req, res) => {
+  try {
+    let { messages, audience, channels, settings } = req.body;
+
+    // Parse JSON fields if multipart
+    const parseJSON = (val) => {
+      if (typeof val === "string") {
+        try {
+          return JSON.parse(val);
+        } catch (e) {
+          return val;
+        }
+      }
+      return val;
+    };
+
+    messages = parseJSON(messages);
+    channels = parseJSON(channels);
+    audience = parseJSON(audience);
+    settings = parseJSON(settings);
+
+    // Default settings if not provided
+    settings = {
+      batchSize: parseInt(settings?.batchSize || 10),
+      batchDelay: parseInt(settings?.batchDelay || 60),
+      messageDelay: parseFloat(settings?.messageDelay || 1)
+    };
+
+    if (!messages || !channels || channels.length === 0) {
       throw new Error("กรุณากรอกข้อความและเลือกช่องทาง");
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const chatColl = db.collection("chat_history");
+    // Wrap single message if legacy format (string)
+    if (typeof messages === 'string') {
+      messages = [{ type: 'text', content: messages }];
+    }
 
-    for (const ch of channels) {
-      const [type, botId] = ch.split(":");
-      const userIds = await chatColl.distinct("senderId", {
-        platform: type,
-        botId,
-      });
+    // Process uploaded images
+    if (req.files && req.files.length > 0) {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const bucket = new GridFSBucket(db, { bucketName: "broadcastAssets" });
+      const { Readable } = require("stream");
 
-      if (type === "facebook") {
-        const fbBot = await db
-          .collection("facebook_bots")
-          .findOne({ _id: new ObjectId(botId) });
-        if (!fbBot) continue;
-        for (const userId of userIds) {
-          try {
-            await sendFacebookMessage(userId, message, fbBot.accessToken, {
-              metadata: "broadcast_auto",
+      let fileIndex = 0;
+      for (let i = 0; i < messages.length; i++) {
+        if (
+          messages[i].type === "image" &&
+          !messages[i].url &&
+          fileIndex < req.files.length
+        ) {
+          const file = req.files[fileIndex++];
+          const filename = `broadcast-${Date.now()}-${file.originalname}`;
+
+          // Upload to GridFS
+          await new Promise((resolve, reject) => {
+            const uploadStream = bucket.openUploadStream(filename, {
+              contentType: file.mimetype,
             });
-          } catch (e) {
-            console.log(
-              `[Broadcast] Failed to send to Facebook user ${userId}: ${e.message}`,
-            );
-          }
-        }
-      } else if (type === "line") {
-        const lineBot = await db
-          .collection("line_bots")
-          .findOne({ _id: new ObjectId(botId) });
-        if (!lineBot) continue;
-        const clientLine = createLineClient(
-          lineBot.channelAccessToken,
-          lineBot.channelSecret,
-        );
-        for (const userId of userIds) {
-          try {
-            await clientLine.pushMessage(userId, {
-              type: "text",
-              text: message,
-            });
-          } catch (e) {
-            console.log(
-              `[Broadcast] Failed to send to LINE user ${userId}: ${e.message}`,
-            );
-          }
+            const bufferStream = new Readable();
+            bufferStream.push(file.buffer);
+            bufferStream.push(null);
+
+            bufferStream
+              .pipe(uploadStream)
+              .on("error", reject)
+              .on("finish", () => resolve());
+          });
+
+          // Set URL
+          messages[i].url = `/broadcast/assets/${filename}`;
         }
       }
     }
 
-    const lineBots = await db.collection("line_bots").find({}).toArray();
-    const facebookBots = await db
-      .collection("facebook_bots")
-      .find({})
-      .toArray();
-    res.render("admin-broadcast", {
-      lineBots,
-      facebookBots,
-      success: "ส่งข้อความเรียบร้อยแล้ว",
-    });
+    // Get targets
+    const users = await getBroadcastAudience(channels, audience);
+    if (users.length === 0) {
+      return res.json({ success: false, error: "ไม่พบกลุ่มเป้าหมายตามเงื่อนไขที่เลือก" });
+    }
+
+    // Create Job
+    const jobId = new ObjectId().toString();
+    const job = new BroadcastQueue(
+      jobId,
+      {
+        messages,
+        targets: users,
+        channels,
+      },
+      settings,
+    );
+
+    activeBroadcasts.set(jobId, job);
+
+    // Start in background
+    job.start();
+
+    res.json({ success: true, broadcastId: jobId, count: users.length });
   } catch (err) {
-    console.error("Broadcast error:", err);
-    let lineBots = [],
-      facebookBots = [];
-    try {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      lineBots = await db.collection("line_bots").find({}).toArray();
-      facebookBots = await db.collection("facebook_bots").find({}).toArray();
-    } catch (e) { }
-    res.render("admin-broadcast", {
-      lineBots,
-      facebookBots,
-      error: err.message,
-    });
+    console.error("Broadcast failed:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Check Status
+app.get("/admin/broadcast/status/:jobId", (req, res) => {
+  const job = activeBroadcasts.get(req.params.jobId);
+  if (!job) {
+    return res.json({ success: false, error: "ไม่พบรายการ หรือรายการเสร็จสิ้นแล้ว" });
+  }
+  res.json({ success: true, stats: job.stats });
+});
+
+// Cancel Broadcast
+app.delete("/admin/broadcast/cancel/:jobId", (req, res) => {
+  const job = activeBroadcasts.get(req.params.jobId);
+  if (job) {
+    job.cancel();
+    return res.json({ success: true });
+  }
+  res.json({ success: false, error: "ไม่พบรายการ" });
+});
+
+// Serve Broadcast Assets
+app.get("/broadcast/assets/:filename", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const bucket = new GridFSBucket(db, { bucketName: "broadcastAssets" });
+
+    const files = await bucket
+      .find({ filename: req.params.filename })
+      .toArray();
+    if (!files || files.length === 0)
+      return res.status(404).send("File not found");
+
+    const downloadStream = bucket.openDownloadStreamByName(req.params.filename);
+    res.set("Content-Type", files[0].contentType || "image/jpeg");
+    downloadStream.pipe(res);
+  } catch (e) {
+    res.status(500).send("Error");
   }
 });
 

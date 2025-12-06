@@ -11,7 +11,7 @@
   border: 1px solid var(--border, #E1E5EF);
   border-radius: var(--broadcast-radius);
   background: var(--bg-card, #fff);
-  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
   margin-bottom: 1rem;
 }
 
@@ -66,7 +66,7 @@
 .broadcast-card {
   border-radius: var(--broadcast-radius);
   border: 1px solid var(--border, #E1E5EF);
-  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
 }
 
 .audience-options {
@@ -157,7 +157,7 @@
 .broadcast-preview-card {
   border-radius: var(--broadcast-radius);
   border: 1px solid var(--border, #E1E5EF);
-  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+  box-shadow: var(--shadow-soft, 0 1px 3px rgba(0, 0, 0, 0.06));
 }
 
 .preview-message {
@@ -182,11 +182,30 @@
   background: #f9fafc;
 }
 
+/* API Message Item Styles */
+.message-item {
+  border: 1px solid var(--border, #E1E5EF);
+  background-color: #fff;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.message-item:hover {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.message-item.empty-state {
+  background-color: #f9fafc;
+  color: #9aa0ac;
+  border: 1px dashed #e1e5ef;
+}
+
 @media (max-width: 767.98px) {
   .broadcast-header {
     flex-direction: column;
     align-items: flex-start;
   }
+
   .top-actions {
     width: 100%;
     justify-content: flex-start;
