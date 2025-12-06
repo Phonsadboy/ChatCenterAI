@@ -1,0 +1,193 @@
+/* API Usage Page Styles */
+
+.page-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Summary Cards */
+.summary-card {
+    background: white;
+    border-radius: 12px;
+    padding: 1.25rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.summary-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.summary-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    flex-shrink: 0;
+}
+
+.summary-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.summary-label {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+}
+
+.summary-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+
+/* Color variants */
+.bg-primary-soft {
+    background-color: rgba(59, 130, 246, 0.1);
+}
+
+.bg-success-soft {
+    background-color: rgba(34, 197, 94, 0.1);
+}
+
+.bg-warning-soft {
+    background-color: rgba(234, 179, 8, 0.1);
+}
+
+.bg-info-soft {
+    background-color: rgba(139, 92, 246, 0.1);
+}
+
+/* Cards */
+.card {
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+    background-color: white;
+    border-bottom: 1px solid var(--border-color);
+    padding: 1rem 1.25rem;
+}
+
+.card-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Tables */
+.table {
+    margin-bottom: 0;
+}
+
+.table thead th {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 0.75rem 1rem;
+    background: var(--bg-secondary);
+}
+
+.table tbody td {
+    padding: 0.75rem 1rem;
+    vertical-align: middle;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+.table-hover tbody tr:hover {
+    background-color: var(--bg-secondary);
+}
+
+/* Platform badges */
+.platform-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.platform-badge.line {
+    background: rgba(0, 185, 0, 0.1);
+    color: #00b900;
+}
+
+.platform-badge.facebook {
+    background: rgba(24, 119, 242, 0.1);
+    color: #1877f2;
+}
+
+.platform-badge.unknown {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+/* Model badges */
+.model-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-family: monospace;
+}
+
+/* Token stats */
+.token-stat {
+    font-family: monospace;
+    font-size: 0.8125rem;
+}
+
+.token-stat.input {
+    color: #3b82f6;
+}
+
+.token-stat.output {
+    color: #10b981;
+}
+
+/* Cost display */
+.cost-value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.cost-value.usd {
+    color: #f59e0b;
+}
+
+.cost-value.thb {
+    color: #8b5cf6;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .summary-value {
+        font-size: 1.25rem;
+    }
+
+    .summary-icon {
+        width: 40px;
+        height: 40px;
+        font-size: 1rem;
+    }
+}

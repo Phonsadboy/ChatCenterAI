@@ -212,8 +212,41 @@ async function toggleBotStatus(type, id, isActive) {
 
 // --- Modal Logic for Bots ---
 
+// Helper to populate API key dropdowns in bot modals
+async function populateApiKeyDropdowns(selectId, selectedValue = '') {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    // Clear existing options except first (default)
+    select.innerHTML = '<option value="">ใช้ Key หลัก (Default)</option>';
+
+    try {
+        // Use cached API keys if available, otherwise fetch
+        let keys = apiKeysCache;
+        if (!keys || keys.length === 0) {
+            const response = await fetch('/api/openai-keys');
+            if (response.ok) {
+                const data = await response.json();
+                keys = Array.isArray(data.keys) ? data.keys : [];
+                apiKeysCache = keys;
+            }
+        }
+
+        // Add active keys as options
+        keys.filter(k => k.isActive).forEach(key => {
+            const option = document.createElement('option');
+            option.value = key.id;
+            option.textContent = key.name + (key.isDefault ? ' (หลัก)' : '');
+            if (selectedValue === key.id) option.selected = true;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('[API Keys] Error loading keys for dropdown:', error);
+    }
+}
+
 // Line Bot
-window.openAddLineBotModal = function () {
+window.openAddLineBotModal = async function () {
     const form = document.getElementById('lineBotForm');
     if (form) form.reset();
     const idInput = document.getElementById('lineBotId');
@@ -224,6 +257,9 @@ window.openAddLineBotModal = function () {
         const collapseInstance = bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
         collapseInstance.hide();
     }
+
+    // Populate API key dropdown
+    await populateApiKeyDropdowns('lineBotApiKeyId');
 
     // Hide delete button for new bot
     const deleteBtn = document.getElementById('deleteLineBotBtn');
@@ -266,6 +302,9 @@ window.openEditLineBotModal = async function (id) {
 
         setAiConfigUI('line', bot.aiConfig || defaultAiConfig);
 
+        // Populate API key dropdown and set selected value
+        await populateApiKeyDropdowns('lineBotApiKeyId', bot.openaiApiKeyId || '');
+
         // Update modal title for edit mode
         const title = document.getElementById('addLineBotModalLabel');
         if (title) title.innerHTML = '<i class="fab fa-line me-2"></i>แก้ไข Line Bot';
@@ -300,7 +339,8 @@ async function saveLineBot() {
         status: document.getElementById('lineBotStatus').value,
         aiModel: document.getElementById('lineBotAiModel').value,
         isDefault: document.getElementById('lineBotDefault').checked,
-        aiConfig: readAiConfigFromUI('line')
+        aiConfig: readAiConfigFromUI('line'),
+        openaiApiKeyId: document.getElementById('lineBotApiKeyId')?.value || ''
     };
 
     const url = botId ? `/api/line-bots/${botId}` : '/api/line-bots';
@@ -329,7 +369,7 @@ async function saveLineBot() {
 }
 
 // Facebook Bot
-window.openAddFacebookBotModal = function () {
+window.openAddFacebookBotModal = async function () {
     const form = document.getElementById('facebookBotForm');
     if (form) form.reset();
 
@@ -347,6 +387,9 @@ window.openAddFacebookBotModal = function () {
         const collapseInstance = bootstrap.Collapse.getOrCreateInstance(fbCollapseEl, { toggle: false });
         collapseInstance.hide();
     }
+
+    // Populate API key dropdown
+    await populateApiKeyDropdowns('facebookBotApiKeyId');
 
     const title = document.getElementById('addFacebookBotModalLabel');
     if (title) title.innerHTML = '<i class="fab fa-facebook me-2"></i>เพิ่ม Facebook Bot ใหม่';
@@ -381,6 +424,9 @@ window.openAddFacebookBotModal = function () {
 };
 
 window.openEditFacebookBotModal = async function (id) {
+    // Populate API key dropdown first
+    await populateApiKeyDropdowns('facebookBotApiKeyId');
+
     try {
         const res = await fetch(`/api/facebook-bots/${id}`);
         const bot = await res.json();
@@ -400,6 +446,10 @@ window.openEditFacebookBotModal = async function (id) {
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
 
         setAiConfigUI('facebook', bot.aiConfig || defaultAiConfig);
+
+        // Set API key dropdown value
+        const apiKeySelect = document.getElementById('facebookBotApiKeyId');
+        if (apiKeySelect) apiKeySelect.value = bot.openaiApiKeyId || '';
 
         const title = document.getElementById('addFacebookBotModalLabel');
         if (title) title.innerHTML = '<i class="fab fa-facebook me-2"></i>แก้ไข Facebook Bot';
@@ -429,7 +479,8 @@ async function saveFacebookBot() {
         webhookUrl: document.getElementById('facebookWebhookUrl').value,
         aiModel: document.getElementById('facebookBotAiModel').value,
         isDefault: document.getElementById('facebookBotDefault').checked,
-        aiConfig: readAiConfigFromUI('facebook')
+        aiConfig: readAiConfigFromUI('facebook'),
+        openaiApiKeyId: document.getElementById('facebookBotApiKeyId')?.value || ''
     };
 
     const url = botId ? `/api/facebook-bots/${botId}` : '/api/facebook-bots';
@@ -1468,3 +1519,319 @@ function setPasscodeMessage(type, message) {
         }, 5000);
     }
 }
+
+// --- API Keys Management ---
+let apiKeysCache = [];
+
+async function loadApiKeys() {
+    const tbody = document.getElementById('apiKeysTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="5" class="text-center text-muted py-4">
+                <i class="fas fa-spinner fa-spin me-2"></i>กำลังโหลด...
+            </td>
+        </tr>
+    `;
+
+    try {
+        const response = await fetch('/api/openai-keys');
+        if (!response.ok) {
+            throw new Error('ไม่สามารถโหลดข้อมูล API Keys ได้');
+        }
+        const data = await response.json();
+        apiKeysCache = Array.isArray(data.keys) ? data.keys : [];
+        renderApiKeys();
+    } catch (error) {
+        console.error('[API Keys] load error:', error);
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center text-danger py-4">
+                    <i class="fas fa-exclamation-circle me-2"></i>${escapeHtml(error.message)}
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function renderApiKeys() {
+    const tbody = document.getElementById('apiKeysTableBody');
+    if (!tbody) return;
+
+    if (apiKeysCache.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center text-muted py-4">
+                    <i class="fas fa-key me-2"></i>ยังไม่มี API Key ในระบบ กดปุ่ม "เพิ่ม API Key" เพื่อเริ่มใช้งาน
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = apiKeysCache.map(key => {
+        const statusClass = key.isActive ? 'success' : 'secondary';
+        const statusText = key.isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
+        const defaultBadge = key.isDefault ? '<span class="badge bg-primary ms-1">หลัก</span>' : '';
+        const lastUsed = key.lastUsedAt ? formatBotUpdatedAt(key.lastUsedAt) : 'ยังไม่มี';
+        const usage = key.usageCount || 0;
+
+        return `
+            <tr>
+                <td>
+                    <strong>${escapeHtml(key.name)}</strong>
+                    ${defaultBadge}
+                </td>
+                <td>
+                    <code class="text-muted">${escapeHtml(key.maskedKey)}</code>
+                </td>
+                <td class="text-center">
+                    <span class="badge bg-${statusClass}">${statusText}</span>
+                </td>
+                <td class="text-center">
+                    <small>${usage} ครั้ง</small>
+                    <br>
+                    <small class="text-muted">${lastUsed}</small>
+                </td>
+                <td class="text-end">
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-info" title="ทดสอบ" onclick="testApiKey('${key.id}')">
+                            <i class="fas fa-check-circle"></i>
+                        </button>
+                        <button class="btn btn-outline-primary" title="แก้ไข" onclick="openEditApiKeyModal('${key.id}')">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-outline-${key.isActive ? 'warning' : 'success'}" title="${key.isActive ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}" 
+                                onclick="toggleApiKeyStatus('${key.id}', ${!key.isActive})">
+                            <i class="fas fa-${key.isActive ? 'pause' : 'play'}"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" title="ลบ" onclick="deleteApiKey('${key.id}', '${escapeHtml(key.name)}')">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function openAddApiKeyModal() {
+    document.getElementById('apiKeyId').value = '';
+    document.getElementById('apiKeyName').value = '';
+    document.getElementById('apiKeyValue').value = '';
+    document.getElementById('apiKeyIsDefault').checked = false;
+    document.getElementById('apiKeyModalLabel').innerHTML = '<i class="fas fa-key me-2"></i>เพิ่ม API Key';
+    document.getElementById('apiKeyTestResult').classList.add('d-none');
+
+    const modal = new bootstrap.Modal(document.getElementById('apiKeyModal'));
+    modal.show();
+}
+
+function openEditApiKeyModal(id) {
+    const key = apiKeysCache.find(k => k.id === id);
+    if (!key) {
+        showToast('ไม่พบ API Key', 'danger');
+        return;
+    }
+
+    document.getElementById('apiKeyId').value = key.id;
+    document.getElementById('apiKeyName').value = key.name;
+    document.getElementById('apiKeyValue').value = key.maskedKey; // Show masked key
+    document.getElementById('apiKeyValue').placeholder = 'ใส่ใหม่เพื่อเปลี่ยน หรือปล่อยว่าง';
+    document.getElementById('apiKeyIsDefault').checked = key.isDefault;
+    document.getElementById('apiKeyModalLabel').innerHTML = '<i class="fas fa-edit me-2"></i>แก้ไข API Key';
+    document.getElementById('apiKeyTestResult').classList.add('d-none');
+
+    const modal = new bootstrap.Modal(document.getElementById('apiKeyModal'));
+    modal.show();
+}
+
+async function saveApiKey() {
+    const id = document.getElementById('apiKeyId').value;
+    const name = document.getElementById('apiKeyName').value.trim();
+    const apiKey = document.getElementById('apiKeyValue').value.trim();
+    const isDefault = document.getElementById('apiKeyIsDefault').checked;
+    const saveBtn = document.getElementById('saveApiKeyBtn');
+
+    if (!name) {
+        showToast('กรุณาระบุชื่อ API Key', 'warning');
+        return;
+    }
+
+    const isEdit = Boolean(id);
+    const existingKey = isEdit ? apiKeysCache.find(k => k.id === id) : null;
+    const isNewKey = !isEdit || (apiKey && !apiKey.startsWith('sk-...'));
+
+    if (!isEdit && (!apiKey || !apiKey.startsWith('sk-'))) {
+        showToast('กรุณาระบุ API Key ที่ถูกต้อง (ขึ้นต้นด้วย sk-)', 'warning');
+        return;
+    }
+
+    setLoading(saveBtn, true);
+
+    try {
+        const payload = { name, isDefault };
+        // Only send apiKey if it's a new key or if it's been changed (not the masked value)
+        if (isNewKey && apiKey && !apiKey.startsWith('sk-...')) {
+            payload.apiKey = apiKey;
+        }
+
+        const url = isEdit ? `/api/openai-keys/${id}` : '/api/openai-keys';
+        const method = isEdit ? 'PUT' : 'POST';
+
+        const response = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'ไม่สามารถบันทึก API Key ได้');
+        }
+
+        const modal = bootstrap.Modal.getInstance(document.getElementById('apiKeyModal'));
+        if (modal) modal.hide();
+
+        showToast(isEdit ? 'อัปเดต API Key เรียบร้อย' : 'เพิ่ม API Key เรียบร้อย', 'success');
+        await loadApiKeys();
+    } catch (error) {
+        console.error('[API Keys] save error:', error);
+        showToast(error.message || 'บันทึกไม่สำเร็จ', 'danger');
+    } finally {
+        setLoading(saveBtn, false);
+    }
+}
+
+async function deleteApiKey(id, name) {
+    if (!confirm(`ยืนยันการลบ API Key "${name}"?\n\nหมายเหตุ: Bot ที่ใช้ key นี้จะสลับไปใช้ key หลักหรือ Environment Variable แทน`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/openai-keys/${id}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const result = await response.json();
+            throw new Error(result.error || 'ลบ API Key ไม่สำเร็จ');
+        }
+
+        showToast('ลบ API Key เรียบร้อย', 'success');
+        await loadApiKeys();
+    } catch (error) {
+        console.error('[API Keys] delete error:', error);
+        showToast(error.message || 'ลบไม่สำเร็จ', 'danger');
+    }
+}
+
+async function testApiKey(id) {
+    const key = apiKeysCache.find(k => k.id === id);
+    if (!key) return;
+
+    showToast(`กำลังทดสอบ "${key.name}"...`, 'info');
+
+    try {
+        const response = await fetch(`/api/openai-keys/${id}/test`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'ทดสอบ API Key ไม่สำเร็จ');
+        }
+
+        showToast(`✅ ${result.message}`, 'success');
+    } catch (error) {
+        console.error('[API Keys] test error:', error);
+        showToast(`❌ ${error.message || 'ทดสอบไม่สำเร็จ'}`, 'danger');
+    }
+}
+
+async function testApiKeyFromModal() {
+    const apiKey = document.getElementById('apiKeyValue').value.trim();
+    const resultDiv = document.getElementById('apiKeyTestResult');
+    const testBtn = document.getElementById('testApiKeyBtn');
+
+    if (!apiKey || apiKey.startsWith('sk-...')) {
+        resultDiv.classList.remove('d-none', 'alert-success', 'alert-danger');
+        resultDiv.classList.add('alert-warning');
+        resultDiv.textContent = 'กรุณาใส่ API Key ใหม่เพื่อทดสอบ';
+        return;
+    }
+
+    const id = document.getElementById('apiKeyId').value;
+    if (id) {
+        // Existing key - test via API
+        await testApiKey(id);
+        return;
+    }
+
+    // New key - test directly (not implemented yet, just show message)
+    resultDiv.classList.remove('d-none', 'alert-success', 'alert-danger');
+    resultDiv.classList.add('alert-info');
+    resultDiv.textContent = 'กรุณาบันทึก API Key ก่อน แล้วทดสอบจากตาราง';
+}
+
+async function toggleApiKeyStatus(id, isActive) {
+    try {
+        const response = await fetch(`/api/openai-keys/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isActive })
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'ไม่สามารถเปลี่ยนสถานะได้');
+        }
+
+        showToast(isActive ? 'เปิดใช้งาน API Key แล้ว' : 'ปิดใช้งาน API Key แล้ว', 'success');
+        await loadApiKeys();
+    } catch (error) {
+        console.error('[API Keys] toggle error:', error);
+        showToast(error.message || 'เปลี่ยนสถานะไม่สำเร็จ', 'danger');
+    }
+}
+
+// Toggle API key visibility
+document.addEventListener('DOMContentLoaded', function () {
+    const toggleBtn = document.getElementById('toggleApiKeyVisibility');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', function () {
+            const input = document.getElementById('apiKeyValue');
+            if (input.type === 'password') {
+                input.type = 'text';
+                toggleBtn.innerHTML = '<i class="fas fa-eye-slash"></i>';
+            } else {
+                input.type = 'password';
+                toggleBtn.innerHTML = '<i class="fas fa-eye"></i>';
+            }
+        });
+    }
+});
+
+// Auto-load API keys when section becomes visible
+const originalInitNavigation = initNavigation;
+initNavigation = function () {
+    originalInitNavigation();
+
+    // Add observer for API keys section
+    const observer = new MutationObserver(function (mutations) {
+        mutations.forEach(function (mutation) {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                const section = document.getElementById('api-keys-settings');
+                if (section && !section.classList.contains('d-none')) {
+                    loadApiKeys();
+                }
+            }
+        });
+    });
+
+    const apiKeysSection = document.getElementById('api-keys-settings');
+    if (apiKeysSection) {
+        observer.observe(apiKeysSection, { attributes: true });
+    }
+};

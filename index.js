@@ -11202,6 +11202,7 @@ app.post("/api/line-bots", async (req, res) => {
       aiModel,
       selectedInstructions,
       selectedImageCollections,
+      openaiApiKeyId,
     } = req.body;
 
     if (!name || !channelAccessToken || !channelSecret) {
@@ -11248,6 +11249,7 @@ app.post("/api/line-bots", async (req, res) => {
       aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
+      openaiApiKeyId: openaiApiKeyId || null,
       keywordSettings: {
         enableAI: { keyword: "", response: "" },
         disableAI: { keyword: "", response: "" },
@@ -11317,6 +11319,7 @@ app.put("/api/line-bots/:id", async (req, res) => {
       aiConfig: normalizeAiConfig(
         req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
       ),
+      openaiApiKeyId: req.body.openaiApiKeyId !== undefined ? (req.body.openaiApiKeyId || null) : existing.openaiApiKeyId,
       updatedAt: new Date(),
     };
 
@@ -11687,6 +11690,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       aiModel,
       selectedInstructions,
       selectedImageCollections,
+      openaiApiKeyId,
     } = req.body;
 
     if (!name || !pageId || !accessToken) {
@@ -11739,6 +11743,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
+      openaiApiKeyId: openaiApiKeyId || null,
       keywordSettings: {
         enableAI: { keyword: "", response: "" },
         disableAI: { keyword: "", response: "" },
@@ -11809,6 +11814,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       aiConfig: normalizeAiConfig(
         req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
       ),
+      openaiApiKeyId: req.body.openaiApiKeyId !== undefined ? (req.body.openaiApiKeyId || null) : existing.openaiApiKeyId,
       updatedAt: new Date(),
     };
 
@@ -12834,6 +12840,11 @@ app.get("/admin/dashboard", async (req, res) => {
       error: err.message,
     });
   }
+});
+
+// API Usage Statistics Page
+app.get("/admin/api-usage", async (req, res) => {
+  res.render("admin-api-usage");
 });
 
 // Create Data Item (V2) - Full Page Editor
@@ -18523,6 +18534,599 @@ app.post("/api/settings/filter", async (req, res) => {
     });
   } catch (err) {
     console.error("Error saving filter settings:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================ OpenAI API Key Management ============================
+
+// Model pricing (USD per 1M tokens) - OpenAI Standard tier prices (Dec 2024)
+const OPENAI_MODEL_PRICING = {
+  // GPT-5 series
+  "gpt-5": { input: 1.25, output: 10.0 },
+  "gpt-5.1": { input: 1.25, output: 10.0 },
+  "gpt-5-mini": { input: 0.25, output: 2.0 },
+  "gpt-5-nano": { input: 0.05, output: 0.4 },
+  "gpt-5-pro": { input: 15.0, output: 120.0 },
+  // GPT-4.1 series
+  "gpt-4.1": { input: 2.0, output: 8.0 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6 },
+  "gpt-4.1-nano": { input: 0.1, output: 0.4 },
+  // GPT-4o series
+  "gpt-4o": { input: 2.5, output: 10.0 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  // O-series reasoning models
+  "o1": { input: 15.0, output: 60.0 },
+  "o1-mini": { input: 1.1, output: 4.4 },
+  "o1-pro": { input: 150.0, output: 600.0 },
+  "o3": { input: 2.0, output: 8.0 },
+  "o3-mini": { input: 1.1, output: 4.4 },
+  "o3-pro": { input: 20.0, output: 80.0 },
+  "o4-mini": { input: 1.1, output: 4.4 },
+  // Legacy models
+  "gpt-4-turbo": { input: 10.0, output: 30.0 },
+  "gpt-3.5-turbo": { input: 0.5, output: 1.5 },
+  // Default fallback
+  "default": { input: 1.0, output: 4.0 },
+};
+
+// Helper: Calculate estimated cost
+function calculateOpenAICost(model, promptTokens, completionTokens) {
+  const pricing = OPENAI_MODEL_PRICING[model] || OPENAI_MODEL_PRICING["default"];
+  const inputCost = (promptTokens / 1000000) * pricing.input;
+  const outputCost = (completionTokens / 1000000) * pricing.output;
+  return inputCost + outputCost;
+}
+
+// Helper: Mask API key for display
+function maskApiKey(apiKey) {
+  if (!apiKey || apiKey.length < 10) return "sk-***";
+  return apiKey.substring(0, 7) + "..." + apiKey.substring(apiKey.length - 4);
+}
+
+// Helper: Get API key for a bot (with fallback to default key or env var)
+async function getOpenAIApiKeyForBot(botId, platform) {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    // First, check if bot has a specific key assigned
+    let bot = null;
+    if (botId) {
+      const collection = platform === "facebook" ? "facebook_bots" : "line_bots";
+      bot = await db.collection(collection).findOne({
+        _id: ObjectId.isValid(botId) ? new ObjectId(botId) : botId
+      });
+    }
+
+    if (bot && bot.openaiApiKeyId) {
+      const keyDoc = await db.collection("openai_api_keys").findOne({
+        _id: new ObjectId(bot.openaiApiKeyId),
+        isActive: true
+      });
+      if (keyDoc && keyDoc.apiKey) {
+        return { apiKey: keyDoc.apiKey, keyId: keyDoc._id.toString(), keyName: keyDoc.name };
+      }
+    }
+
+    // Fallback to default key
+    const defaultKey = await db.collection("openai_api_keys").findOne({
+      isDefault: true,
+      isActive: true
+    });
+    if (defaultKey && defaultKey.apiKey) {
+      return { apiKey: defaultKey.apiKey, keyId: defaultKey._id.toString(), keyName: defaultKey.name };
+    }
+
+    // Fallback to any active key
+    const anyKey = await db.collection("openai_api_keys").findOne({ isActive: true });
+    if (anyKey && anyKey.apiKey) {
+      return { apiKey: anyKey.apiKey, keyId: anyKey._id.toString(), keyName: anyKey.name };
+    }
+
+    // Final fallback to environment variable
+    if (OPENAI_API_KEY) {
+      return { apiKey: OPENAI_API_KEY, keyId: null, keyName: "Environment Variable" };
+    }
+
+    return { apiKey: null, keyId: null, keyName: null };
+  } catch (err) {
+    console.error("[OpenAI Keys] Error getting API key for bot:", err);
+    return { apiKey: OPENAI_API_KEY, keyId: null, keyName: "Environment Variable (fallback)" };
+  }
+}
+
+// Helper: Log OpenAI API usage
+async function logOpenAIUsage(data) {
+  try {
+    const {
+      apiKeyId, botId, platform, model,
+      promptTokens, completionTokens, totalTokens,
+      functionName
+    } = data;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const estimatedCost = calculateOpenAICost(model, promptTokens || 0, completionTokens || 0);
+
+    await db.collection("openai_usage_logs").insertOne({
+      apiKeyId: apiKeyId ? new ObjectId(apiKeyId) : null,
+      botId: botId || null,
+      platform: platform || null,
+      model: model || "unknown",
+      promptTokens: promptTokens || 0,
+      completionTokens: completionTokens || 0,
+      totalTokens: totalTokens || 0,
+      estimatedCost,
+      functionName: functionName || null,
+      timestamp: new Date(),
+    });
+
+    // Update usage count on API key
+    if (apiKeyId) {
+      await db.collection("openai_api_keys").updateOne(
+        { _id: new ObjectId(apiKeyId) },
+        {
+          $inc: { usageCount: 1 },
+          $set: { lastUsedAt: new Date() }
+        }
+      );
+    }
+  } catch (err) {
+    console.error("[OpenAI Usage] Error logging usage:", err);
+  }
+}
+
+// GET: List all API keys (masked)
+app.get("/api/openai-keys", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const keys = await db.collection("openai_api_keys")
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    const maskedKeys = keys.map(key => ({
+      id: key._id.toString(),
+      name: key.name,
+      maskedKey: key.maskedKey || maskApiKey(key.apiKey),
+      isActive: key.isActive !== false,
+      isDefault: key.isDefault === true,
+      usageCount: key.usageCount || 0,
+      lastUsedAt: key.lastUsedAt || null,
+      createdAt: key.createdAt,
+      updatedAt: key.updatedAt,
+    }));
+
+    res.json({ success: true, keys: maskedKeys });
+  } catch (err) {
+    console.error("[OpenAI Keys] Error listing keys:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST: Create new API key
+app.post("/api/openai-keys", async (req, res) => {
+  try {
+    const { name, apiKey, isDefault } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุชื่อ API Key" });
+    }
+    if (!apiKey || !apiKey.trim()) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุ API Key" });
+    }
+    if (!apiKey.startsWith("sk-")) {
+      return res.status(400).json({ success: false, error: "API Key ต้องขึ้นต้นด้วย 'sk-'" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("openai_api_keys");
+
+    // If setting as default, unset other defaults
+    if (isDefault) {
+      await coll.updateMany({}, { $set: { isDefault: false } });
+    }
+
+    const now = new Date();
+    const keyDoc = {
+      name: name.trim(),
+      apiKey: apiKey.trim(),
+      maskedKey: maskApiKey(apiKey.trim()),
+      isActive: true,
+      isDefault: isDefault === true,
+      usageCount: 0,
+      lastUsedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const result = await coll.insertOne(keyDoc);
+
+    res.json({
+      success: true,
+      key: {
+        id: result.insertedId.toString(),
+        name: keyDoc.name,
+        maskedKey: keyDoc.maskedKey,
+        isActive: keyDoc.isActive,
+        isDefault: keyDoc.isDefault,
+        createdAt: keyDoc.createdAt,
+      }
+    });
+  } catch (err) {
+    console.error("[OpenAI Keys] Error creating key:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT: Update API key
+app.put("/api/openai-keys/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, apiKey, isActive, isDefault } = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("openai_api_keys");
+
+    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+    }
+
+    const updateData = { updatedAt: new Date() };
+
+    if (name !== undefined) updateData.name = name.trim();
+    if (isActive !== undefined) updateData.isActive = isActive;
+    if (apiKey && apiKey.trim() && apiKey !== existing.maskedKey) {
+      if (!apiKey.startsWith("sk-")) {
+        return res.status(400).json({ success: false, error: "API Key ต้องขึ้นต้นด้วย 'sk-'" });
+      }
+      updateData.apiKey = apiKey.trim();
+      updateData.maskedKey = maskApiKey(apiKey.trim());
+    }
+
+    if (isDefault === true) {
+      await coll.updateMany({ _id: { $ne: new ObjectId(id) } }, { $set: { isDefault: false } });
+      updateData.isDefault = true;
+    } else if (isDefault === false) {
+      updateData.isDefault = false;
+    }
+
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+
+    const updated = await coll.findOne({ _id: new ObjectId(id) });
+
+    res.json({
+      success: true,
+      key: {
+        id: updated._id.toString(),
+        name: updated.name,
+        maskedKey: updated.maskedKey,
+        isActive: updated.isActive,
+        isDefault: updated.isDefault,
+        usageCount: updated.usageCount,
+        lastUsedAt: updated.lastUsedAt,
+        updatedAt: updated.updatedAt,
+      }
+    });
+  } catch (err) {
+    console.error("[OpenAI Keys] Error updating key:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE: Delete API key
+app.delete("/api/openai-keys/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("openai_api_keys");
+
+    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+    }
+
+    // Remove references from bots
+    await db.collection("line_bots").updateMany(
+      { openaiApiKeyId: id },
+      { $unset: { openaiApiKeyId: "" } }
+    );
+    await db.collection("facebook_bots").updateMany(
+      { openaiApiKeyId: id },
+      { $unset: { openaiApiKeyId: "" } }
+    );
+
+    res.json({ success: true, message: "ลบ API Key เรียบร้อยแล้ว" });
+  } catch (err) {
+    console.error("[OpenAI Keys] Error deleting key:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST: Test API key
+app.post("/api/openai-keys/:id/test", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const keyDoc = await db.collection("openai_api_keys").findOne({ _id: new ObjectId(id) });
+
+    if (!keyDoc) {
+      return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+    }
+
+    try {
+      const testOpenai = new OpenAI({ apiKey: keyDoc.apiKey });
+      const response = await testOpenai.models.list();
+
+      res.json({
+        success: true,
+        message: `API Key ใช้งานได้! พบ ${response.data?.length || 0} โมเดล`,
+        modelsCount: response.data?.length || 0,
+      });
+    } catch (apiError) {
+      res.status(400).json({
+        success: false,
+        error: `API Key ไม่ถูกต้องหรือหมดอายุ: ${apiError.message}`
+      });
+    }
+  } catch (err) {
+    console.error("[OpenAI Keys] Error testing key:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET: Usage statistics summary
+app.get("/api/openai-usage/summary", async (req, res) => {
+  try {
+    const { startDate, endDate, keyId, botId, platform } = req.query;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const match = {};
+
+    if (startDate || endDate) {
+      match.timestamp = {};
+      if (startDate) match.timestamp.$gte = new Date(startDate);
+      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
+    }
+    if (keyId && ObjectId.isValid(keyId)) {
+      match.apiKeyId = new ObjectId(keyId);
+    }
+    if (botId) match.botId = botId;
+    if (platform) match.platform = platform;
+
+    const [totals, byModel, byBot, byKey, daily] = await Promise.all([
+      // Overall totals
+      db.collection("openai_usage_logs").aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            totalCalls: { $sum: 1 },
+            totalPromptTokens: { $sum: "$promptTokens" },
+            totalCompletionTokens: { $sum: "$completionTokens" },
+            totalTokens: { $sum: "$totalTokens" },
+            totalCost: { $sum: "$estimatedCost" },
+          }
+        }
+      ]).toArray(),
+
+      // By model
+      db.collection("openai_usage_logs").aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: "$model",
+            calls: { $sum: 1 },
+            tokens: { $sum: "$totalTokens" },
+            cost: { $sum: "$estimatedCost" },
+          }
+        },
+        { $sort: { cost: -1 } },
+        { $limit: 10 }
+      ]).toArray(),
+
+      // By bot
+      db.collection("openai_usage_logs").aggregate([
+        { $match: { ...match, botId: { $ne: null } } },
+        {
+          $group: {
+            _id: { botId: "$botId", platform: "$platform" },
+            calls: { $sum: 1 },
+            tokens: { $sum: "$totalTokens" },
+            cost: { $sum: "$estimatedCost" },
+          }
+        },
+        { $sort: { cost: -1 } },
+        { $limit: 20 }
+      ]).toArray(),
+
+      // By key
+      db.collection("openai_usage_logs").aggregate([
+        { $match: { ...match, apiKeyId: { $ne: null } } },
+        {
+          $group: {
+            _id: "$apiKeyId",
+            calls: { $sum: 1 },
+            tokens: { $sum: "$totalTokens" },
+            cost: { $sum: "$estimatedCost" },
+          }
+        },
+        { $sort: { cost: -1 } }
+      ]).toArray(),
+
+      // Daily usage (last 30 days)
+      db.collection("openai_usage_logs").aggregate([
+        {
+          $match: {
+            ...match,
+            timestamp: { $gte: moment().subtract(30, "days").toDate() }
+          }
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+            calls: { $sum: 1 },
+            tokens: { $sum: "$totalTokens" },
+            cost: { $sum: "$estimatedCost" },
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]).toArray(),
+    ]);
+
+    // Enrich bot data with names
+    const botIds = byBot.map(b => b._id.botId).filter(Boolean);
+    const lineBotIds = botIds.filter(id => ObjectId.isValid(id));
+    const [lineBots, facebookBots] = await Promise.all([
+      lineBotIds.length > 0
+        ? db.collection("line_bots").find({ _id: { $in: lineBotIds.map(id => new ObjectId(id)) } }).toArray()
+        : [],
+      lineBotIds.length > 0
+        ? db.collection("facebook_bots").find({ _id: { $in: lineBotIds.map(id => new ObjectId(id)) } }).toArray()
+        : [],
+    ]);
+
+    const botNameMap = {};
+    [...lineBots, ...facebookBots].forEach(b => {
+      botNameMap[b._id.toString()] = b.name || b.pageName || b._id.toString();
+    });
+
+    // Enrich key data with names
+    const keyIds = byKey.map(k => k._id).filter(id => id && ObjectId.isValid(id));
+    const keys = keyIds.length > 0
+      ? await db.collection("openai_api_keys").find({ _id: { $in: keyIds } }).toArray()
+      : [];
+
+    const keyNameMap = {};
+    keys.forEach(k => {
+      keyNameMap[k._id.toString()] = k.name;
+    });
+
+    const summary = totals[0] || {
+      totalCalls: 0, totalPromptTokens: 0, totalCompletionTokens: 0, totalTokens: 0, totalCost: 0
+    };
+
+    res.json({
+      success: true,
+      summary: {
+        totalCalls: summary.totalCalls,
+        totalPromptTokens: summary.totalPromptTokens,
+        totalCompletionTokens: summary.totalCompletionTokens,
+        totalTokens: summary.totalTokens,
+        totalCostUSD: summary.totalCost,
+        totalCostTHB: summary.totalCost * 35, // Approximate USD to THB
+      },
+      byModel: byModel.map(m => ({
+        model: m._id || "unknown",
+        calls: m.calls,
+        tokens: m.tokens,
+        costUSD: m.cost,
+      })),
+      byBot: byBot.map(b => ({
+        botId: b._id.botId,
+        platform: b._id.platform,
+        name: botNameMap[b._id.botId] || b._id.botId,
+        calls: b.calls,
+        tokens: b.tokens,
+        costUSD: b.cost,
+      })),
+      byKey: byKey.map(k => ({
+        keyId: k._id?.toString(),
+        name: keyNameMap[k._id?.toString()] || "Unknown Key",
+        calls: k.calls,
+        tokens: k.tokens,
+        costUSD: k.cost,
+      })),
+      daily,
+    });
+  } catch (err) {
+    console.error("[OpenAI Usage] Error getting summary:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET: Detailed usage logs
+app.get("/api/openai-usage", async (req, res) => {
+  try {
+    const { startDate, endDate, keyId, botId, platform, page = 1, limit = 50 } = req.query;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const match = {};
+
+    if (startDate || endDate) {
+      match.timestamp = {};
+      if (startDate) match.timestamp.$gte = new Date(startDate);
+      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
+    }
+    if (keyId && ObjectId.isValid(keyId)) {
+      match.apiKeyId = new ObjectId(keyId);
+    }
+    if (botId) match.botId = botId;
+    if (platform) match.platform = platform;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [logs, total] = await Promise.all([
+      db.collection("openai_usage_logs")
+        .find(match)
+        .sort({ timestamp: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .toArray(),
+      db.collection("openai_usage_logs").countDocuments(match),
+    ]);
+
+    res.json({
+      success: true,
+      logs: logs.map(l => ({
+        id: l._id.toString(),
+        apiKeyId: l.apiKeyId?.toString(),
+        botId: l.botId,
+        platform: l.platform,
+        model: l.model,
+        promptTokens: l.promptTokens,
+        completionTokens: l.completionTokens,
+        totalTokens: l.totalTokens,
+        estimatedCostUSD: l.estimatedCost,
+        functionName: l.functionName,
+        timestamp: l.timestamp,
+      })),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (err) {
+    console.error("[OpenAI Usage] Error getting logs:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
