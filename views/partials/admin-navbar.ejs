@@ -60,11 +60,17 @@
 
           <!-- 3. ลูกค้า (Dropdown) -->
           <li class="nav-item dropdown">
-            <a class="nav-link dropdown-toggle<%= (current === 'orders' || current === 'followup' || current === 'broadcast' || current === 'facebook-posts') ? ' active' : '' %>"
+            <a class="nav-link dropdown-toggle<%= (current === 'orders' || current === 'followup' || current === 'broadcast' || current === 'facebook-posts' || current === 'customer-stats') ? ' active' : '' %>"
               href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
               <i class="fas fa-store"></i> ลูกค้า
             </a>
             <ul class="dropdown-menu dropdown-menu-end">
+              <li>
+                <a class="dropdown-item<%= current === 'customer-stats' ? ' active' : '' %>"
+                  href="/admin/customer-stats">
+                  <i class="fas fa-chart-bar"></i> สถิติลูกค้า
+                </a>
+              </li>
               <li>
                 <a class="dropdown-item<%= current === 'orders' ? ' active' : '' %>" href="/admin/orders">
                   <i class="fas fa-shopping-basket"></i> ออเดอร์
@@ -88,6 +94,7 @@
               </li>
             </ul>
           </li>
+
 
           <!-- User Info & Logout -->
           <% if (signedInUser) { %>

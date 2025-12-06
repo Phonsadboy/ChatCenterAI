@@ -16169,6 +16169,269 @@ app.get("/admin/orders", async (req, res) => {
   }
 });
 
+// ============================ Customer Statistics Routes ============================
+
+app.get("/admin/customer-stats", async (req, res) => {
+  try {
+    res.render("admin-customer-stats");
+  } catch (error) {
+    console.error("[CustomerStats] ไม่สามารถโหลดหน้าสถิติลูกค้าได้:", error);
+    res.render("admin-customer-stats");
+  }
+});
+
+app.get("/admin/customer-stats/data", async (req, res) => {
+  try {
+    const { pageKey, startDate, endDate } = req.query;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    // Parse date filters
+    let dateStart = startDate ? new Date(startDate + "T00:00:00+07:00") : new Date();
+    let dateEnd = endDate ? new Date(endDate + "T23:59:59+07:00") : new Date();
+    dateStart.setHours(0, 0, 0, 0);
+    dateEnd.setHours(23, 59, 59, 999);
+
+    // Parse pageKey to get platform and botId
+    let filterPlatform = null;
+    let filterBotId = null;
+    if (pageKey) {
+      const parsed = parseOrderPageKey(pageKey);
+      filterPlatform = parsed.platform;
+      filterBotId = parsed.botId;
+    }
+
+    // Build base query for orders
+    const orderQuery = {
+      extractedAt: { $gte: dateStart, $lte: dateEnd }
+    };
+    if (filterPlatform) orderQuery.platform = filterPlatform;
+    if (filterBotId) orderQuery.botId = filterBotId;
+
+    // Build base query for chat history
+    const chatQuery = {
+      timestamp: { $gte: dateStart, $lte: dateEnd },
+      role: "user"
+    };
+    if (filterPlatform) chatQuery.platform = filterPlatform;
+    if (filterBotId) chatQuery.botId = filterBotId;
+
+    // Get orders
+    const orders = await db.collection("orders").find(orderQuery).toArray();
+
+    // Get chat messages for hourly distribution
+    const chatMessages = await db.collection("chat_history")
+      .find(chatQuery)
+      .project({ senderId: 1, timestamp: 1 })
+      .toArray();
+
+    // Calculate overview stats
+    const uniqueUsers = new Set(chatMessages.map(m => m.senderId));
+    const totalActiveUsers = uniqueUsers.size;
+    const totalMessages = chatMessages.length;
+
+    // Find new users (first message in the period)
+    const userFirstMessages = {};
+    chatMessages.forEach(m => {
+      const ts = new Date(m.timestamp).getTime();
+      if (!userFirstMessages[m.senderId] || ts < userFirstMessages[m.senderId]) {
+        userFirstMessages[m.senderId] = ts;
+      }
+    });
+
+    // Check if user had messages before dateStart
+    const allUserIds = [...uniqueUsers];
+    let newUsers = 0;
+    if (allUserIds.length > 0) {
+      const existingUsers = await db.collection("chat_history")
+        .aggregate([
+          {
+            $match: {
+              senderId: { $in: allUserIds },
+              timestamp: { $lt: dateStart },
+              role: "user"
+            }
+          },
+          { $group: { _id: "$senderId" } }
+        ])
+        .toArray();
+      const existingUserIds = new Set(existingUsers.map(u => u._id));
+      newUsers = allUserIds.filter(id => !existingUserIds.has(id)).length;
+    }
+
+    // Calculate sales stats
+    const uniqueBuyers = new Set(orders.map(o => o.userId)).size;
+    const totalOrders = orders.length;
+    const pendingOrders = orders.filter(o => o.status === "pending").length;
+    const confirmedOrders = orders.filter(o => o.status === "confirmed").length;
+    const shippedOrders = orders.filter(o => o.status === "shipped").length;
+    const completedOrders = orders.filter(o => o.status === "completed").length;
+    const cancelledOrders = orders.filter(o => o.status === "cancelled").length;
+
+    let totalSales = 0;
+    let totalShipping = 0;
+    orders.forEach(order => {
+      const orderData = order.orderData || {};
+      const items = Array.isArray(orderData.items) ? orderData.items : [];
+      items.forEach(item => {
+        totalSales += (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 0);
+      });
+      totalShipping += parseFloat(orderData.shippingCost) || 0;
+    });
+
+    // Calculate conversion rates
+    const conversionRate = totalActiveUsers > 0 ? (uniqueBuyers / totalActiveUsers * 100) : 0;
+    const orderConfirmationRate = totalOrders > 0 ? ((confirmedOrders + shippedOrders + completedOrders) / totalOrders * 100) : 0;
+    const orderCompletionRate = totalOrders > 0 ? (completedOrders / totalOrders * 100) : 0;
+    const avgOrderValue = totalOrders > 0 ? Math.round(totalSales / totalOrders) : 0;
+    const avgCustomerValue = uniqueBuyers > 0 ? Math.round(totalSales / uniqueBuyers) : 0;
+
+    // Calculate hourly message distribution
+    const hourlyMessages = Array(24).fill(0);
+    const hourlyUsers = Array(24).fill().map(() => new Set());
+    chatMessages.forEach(m => {
+      const hour = new Date(m.timestamp).getHours();
+      hourlyUsers[hour].add(m.senderId);
+    });
+    hourlyUsers.forEach((set, i) => {
+      hourlyMessages[i] = set.size;
+    });
+
+    // Get follow-up stats
+    const followUpQuery = {
+      dateKey: getDateKey()
+    };
+    if (filterPlatform) followUpQuery.platform = filterPlatform;
+    if (filterBotId) followUpQuery.botId = normalizeFollowUpBotId(filterBotId);
+
+    const followUpTasks = await db.collection("follow_up_tasks").find(followUpQuery).toArray();
+    const followUpActive = followUpTasks.filter(t => t.status === "active").length;
+    const followUpCompleted = followUpTasks.filter(t => t.status === "completed").length;
+    const followUpCanceled = followUpTasks.filter(t => t.status === "canceled").length;
+    const followUpFailed = followUpTasks.filter(t => t.status === "failed").length;
+
+    // Calculate payment methods
+    let codCount = 0;
+    let transferCount = 0;
+    let otherCount = 0;
+    orders.forEach(order => {
+      const payment = (order.orderData?.paymentMethod || "").toLowerCase();
+      if (payment.includes("ปลายทาง") || payment.includes("cod")) {
+        codCount++;
+      } else if (payment.includes("โอน") || payment.includes("transfer")) {
+        transferCount++;
+      } else if (payment) {
+        otherCount++;
+      }
+    });
+
+    // Calculate top products
+    const productStats = {};
+    orders.forEach(order => {
+      const items = Array.isArray(order.orderData?.items) ? order.orderData.items : [];
+      items.forEach(item => {
+        const name = item.product || "ไม่ระบุ";
+        if (!productStats[name]) {
+          productStats[name] = { name, quantity: 0, revenue: 0 };
+        }
+        productStats[name].quantity += parseInt(item.quantity) || 0;
+        productStats[name].revenue += (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 0);
+      });
+    });
+    const topProducts = Object.values(productStats)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+
+    // Calculate top customers
+    const customerStats = {};
+    orders.forEach(order => {
+      const userId = order.userId;
+      if (!userId) return;
+      if (!customerStats[userId]) {
+        customerStats[userId] = {
+          userId,
+          name: order.orderData?.customerName || null,
+          orderCount: 0,
+          totalSpent: 0
+        };
+      }
+      customerStats[userId].orderCount++;
+      const items = Array.isArray(order.orderData?.items) ? order.orderData.items : [];
+      items.forEach(item => {
+        customerStats[userId].totalSpent += (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 0);
+      });
+    });
+
+    // Get display names for top customers
+    const topCustomersRaw = Object.values(customerStats)
+      .sort((a, b) => b.totalSpent - a.totalSpent)
+      .slice(0, 5);
+
+    const customerUserIds = topCustomersRaw.map(c => c.userId).filter(Boolean);
+    let profileMap = {};
+    if (customerUserIds.length > 0) {
+      const profiles = await db.collection("user_profiles")
+        .find({ userId: { $in: customerUserIds } })
+        .project({ userId: 1, displayName: 1 })
+        .toArray();
+      profiles.forEach(p => {
+        profileMap[p.userId] = p.displayName;
+      });
+    }
+
+    const topCustomers = topCustomersRaw.map(c => ({
+      ...c,
+      name: c.name || profileMap[c.userId] || c.userId?.substring(0, 12) || "ไม่ระบุ"
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        overview: {
+          newUsers,
+          totalActiveUsers,
+          totalMessages
+        },
+        sales: {
+          uniqueBuyers,
+          totalOrders,
+          pendingOrders,
+          confirmedOrders,
+          shippedOrders,
+          completedOrders,
+          cancelledOrders,
+          totalSales: Math.round(totalSales),
+          totalShipping: Math.round(totalShipping)
+        },
+        conversion: {
+          conversionRate,
+          orderConfirmationRate,
+          orderCompletionRate,
+          avgOrderValue,
+          avgCustomerValue
+        },
+        followUp: {
+          active: followUpActive,
+          completed: followUpCompleted,
+          canceled: followUpCanceled,
+          failed: followUpFailed
+        },
+        hourlyMessages,
+        topProducts,
+        topCustomers,
+        paymentMethods: {
+          cod: codCount,
+          transfer: transferCount,
+          other: otherCount
+        }
+      }
+    });
+  } catch (error) {
+    console.error("[CustomerStats] ไม่สามารถดึงข้อมูลสถิติได้:", error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
 app.get("/admin/orders/pages", async (req, res) => {
   try {
     const [pages, extractionMode] = await Promise.all([
