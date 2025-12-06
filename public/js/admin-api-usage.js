@@ -142,18 +142,23 @@ async function showBotDrilldown(botId, botName) {
         var response = await fetch('/api/openai-usage/by-bot/' + encodeURIComponent(botId) + '?' + getDateParams());
         var data = await response.json();
 
+        var totals = data.totals || {};
+        var avgCostPerCall = totals.totalCalls > 0 ? (totals.totalCost / totals.totalCalls) : 0;
+
         var html = '<div class="row g-3 mb-4">' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(data.totals.totalCalls) + '</div></div></div></div>' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(data.totals.totalTokens) + '</div></div></div></div>' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Cost</div><div class="summary-value">$' + formatCost(data.totals.totalCost) + '</div></div></div></div>' +
+            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(totals.totalCalls) + '</div></div></div></div>' +
+            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(totals.totalTokens) + '</div></div></div></div>' +
+            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">ต้นทุนรวม</div><div class="summary-value">$' + formatCost(totals.totalCost) + '</div></div></div></div>' +
+            '<div class="col-md-3"><div class="summary-card bg-info-soft"><div class="summary-content"><div class="summary-label">ต้นทุน/ครั้ง</div><div class="summary-value">$' + avgCostPerCall.toFixed(6) + '</div></div></div></div>' +
             '</div>';
 
         html += '<div class="row g-4">';
 
-        // Models used
-        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>โมเดลที่ใช้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Model</th><th class="text-end">Calls</th><th class="text-end">Tokens</th><th class="text-end">Cost</th></tr></thead><tbody>';
+        // Models used - with avg cost per call column
+        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>โมเดลที่ใช้ (แยกต้นทุน/ครั้ง)</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Model</th><th class="text-end">Calls</th><th class="text-end">Cost</th><th class="text-end">ต้นทุน/ครั้ง</th></tr></thead><tbody>';
         (data.byModel || []).forEach(function (m) {
-            html += '<tr><td><span class="model-badge">' + escapeHtml(m.model) + '</span></td><td class="text-end">' + formatNumber(m.count) + '</td><td class="text-end">' + formatNumber(m.totalTokens) + '</td><td class="text-end">$' + formatCost(m.estimatedCost) + '</td></tr>';
+            var avgCost = m.count > 0 ? (m.estimatedCost / m.count) : 0;
+            html += '<tr><td><span class="model-badge">' + escapeHtml(m.model) + '</span></td><td class="text-end">' + formatNumber(m.count) + '</td><td class="text-end">$' + formatCost(m.estimatedCost) + '</td><td class="text-end text-info"><strong>$' + avgCost.toFixed(6) + '</strong></td></tr>';
         });
         html += '</tbody></table></div></div></div>';
 
@@ -219,16 +224,21 @@ async function showModelDrilldown(model) {
         var response = await fetch('/api/openai-usage/by-model/' + encodeURIComponent(model) + '?' + getDateParams());
         var data = await response.json();
 
+        var totals = data.totals || {};
+        var avgCostPerCall = totals.totalCalls > 0 ? (totals.totalCost / totals.totalCalls) : 0;
+
         var html = '<div class="row g-3 mb-4">' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(data.totals.totalCalls) + '</div></div></div></div>' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(data.totals.totalTokens) + '</div></div></div></div>' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Cost</div><div class="summary-value">$' + formatCost(data.totals.totalCost) + '</div></div></div></div>' +
+            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(totals.totalCalls) + '</div></div></div></div>' +
+            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(totals.totalTokens) + '</div></div></div></div>' +
+            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">ต้นทุนรวม</div><div class="summary-value">$' + formatCost(totals.totalCost) + '</div></div></div></div>' +
+            '<div class="col-md-3"><div class="summary-card bg-info-soft"><div class="summary-content"><div class="summary-label">ต้นทุน/ครั้ง (รวม)</div><div class="summary-value">$' + avgCostPerCall.toFixed(6) + '</div></div></div></div>' +
             '</div>';
 
-        // Bots using this model
-        html += '<div class="card"><div class="card-header"><strong>Bot/Page ที่ใช้โมเดลนี้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Bot</th><th>Platform</th><th class="text-end">Calls</th><th class="text-end">Tokens</th><th class="text-end">Cost</th></tr></thead><tbody>';
+        // Bots using this model - with avg cost per call column
+        html += '<div class="card"><div class="card-header"><strong>Bot/Page ที่ใช้โมเดลนี้ (แยกต้นทุน/ครั้ง)</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Bot</th><th>Platform</th><th class="text-end">Calls</th><th class="text-end">Cost</th><th class="text-end">ต้นทุน/ครั้ง</th></tr></thead><tbody>';
         (data.byBot || []).forEach(function (b) {
-            html += '<tr><td>' + escapeHtml(b.botName) + '</td><td><span class="platform-badge ' + (b.platform || '') + '">' + (b.platform || '-') + '</span></td><td class="text-end">' + formatNumber(b.count) + '</td><td class="text-end">' + formatNumber(b.totalTokens) + '</td><td class="text-end">$' + formatCost(b.estimatedCost) + '</td></tr>';
+            var avgCost = b.count > 0 ? (b.estimatedCost / b.count) : 0;
+            html += '<tr><td>' + escapeHtml(b.botName) + '</td><td><span class="platform-badge ' + (b.platform || '') + '">' + (b.platform || '-') + '</span></td><td class="text-end">' + formatNumber(b.count) + '</td><td class="text-end">$' + formatCost(b.estimatedCost) + '</td><td class="text-end text-info"><strong>$' + avgCost.toFixed(6) + '</strong></td></tr>';
         });
         html += '</tbody></table></div></div>';
 
@@ -425,6 +435,11 @@ function formatNumber(num) {
 
 function formatCost(cost) {
     return (cost || 0).toFixed(4);
+}
+
+function formatAvgCost(cost, calls) {
+    if (!calls || calls === 0) return '-';
+    return '$' + (cost / calls).toFixed(6);
 }
 
 function formatDate(dateStr) {
