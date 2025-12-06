@@ -16286,16 +16286,28 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     const avgOrderValue = totalOrders > 0 ? Math.round(totalSales / totalOrders) : 0;
     const avgCustomerValue = uniqueBuyers > 0 ? Math.round(totalSales / uniqueBuyers) : 0;
 
-    // Calculate hourly message distribution
-    const hourlyMessages = Array(24).fill(0);
-    const hourlyUsers = Array(24).fill().map(() => new Set());
+    // Calculate hourly message distribution (3 modes: all, buyers, non-buyers)
+    const buyerUserIds = new Set(orders.map(o => o.userId).filter(Boolean));
+
+    const hourlyAll = Array(24).fill().map(() => new Set());
+    const hourlyBuyers = Array(24).fill().map(() => new Set());
+    const hourlyNonBuyers = Array(24).fill().map(() => new Set());
+
     chatMessages.forEach(m => {
       const hour = new Date(m.timestamp).getHours();
-      hourlyUsers[hour].add(m.senderId);
+      hourlyAll[hour].add(m.senderId);
+      if (buyerUserIds.has(m.senderId)) {
+        hourlyBuyers[hour].add(m.senderId);
+      } else {
+        hourlyNonBuyers[hour].add(m.senderId);
+      }
     });
-    hourlyUsers.forEach((set, i) => {
-      hourlyMessages[i] = set.size;
-    });
+
+    const hourlyMessages = {
+      all: hourlyAll.map(set => set.size),
+      buyers: hourlyBuyers.map(set => set.size),
+      nonBuyers: hourlyNonBuyers.map(set => set.size)
+    };
 
     // Get follow-up stats
     const followUpQuery = {

@@ -3,179 +3,194 @@
    ================================================================ */
 
 (function () {
-    'use strict';
+  'use strict';
 
-    // ============ State ============
-    const state = {
-        pages: [],
-        stats: null,
-        filters: {
-            pageKey: '',
-            startDate: '',
-            endDate: '',
-            quickDate: 'today'
-        },
-        isLoading: false
-    };
+  // ============ State ============
+  const state = {
+    pages: [],
+    stats: null,
+    filters: {
+      pageKey: '',
+      startDate: '',
+      endDate: '',
+      quickDate: 'today'
+    },
+    chartMode: 'all', // 'all', 'buyers', 'nonBuyers'
+    isLoading: false
+  };
 
-    // ============ DOM Elements ============
-    const els = {};
+  // ============ DOM Elements ============
+  const els = {};
 
-    // ============ Initialization ============
-    function init() {
-        cacheElements();
-        bindEvents();
-        setDefaultDates();
-        loadPages();
-        loadStats();
+  // ============ Initialization ============
+  function init() {
+    cacheElements();
+    bindEvents();
+    setDefaultDates();
+    loadPages();
+    loadStats();
+  }
+
+  function cacheElements() {
+    els.summaryCards = document.getElementById('statsSummaryCards');
+    els.pageSelect = document.getElementById('statsPageSelect');
+    els.startDate = document.getElementById('statsStartDate');
+    els.endDate = document.getElementById('statsEndDate');
+    els.refreshBtn = document.getElementById('statsRefreshBtn');
+    els.hourlyChart = document.getElementById('statsHourlyChart');
+    els.salesSection = document.getElementById('statsSalesSection');
+    els.conversionSection = document.getElementById('statsConversionSection');
+    els.followUpSection = document.getElementById('statsFollowUpSection');
+    els.paymentSection = document.getElementById('statsPaymentSection');
+    els.topProducts = document.getElementById('statsTopProducts');
+    els.topCustomers = document.getElementById('statsTopCustomers');
+  }
+
+  function bindEvents() {
+    els.pageSelect?.addEventListener('change', handlePageChange);
+    els.startDate?.addEventListener('change', handleDateChange);
+    els.endDate?.addEventListener('change', handleDateChange);
+    els.refreshBtn?.addEventListener('click', () => loadStats());
+
+    // Quick date buttons
+    document.querySelectorAll('.stats-quick-date-btn').forEach(btn => {
+      btn.addEventListener('click', () => handleQuickDate(btn.dataset.range));
+    });
+
+    // Chart mode buttons
+    document.querySelectorAll('.stats-chart-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => handleChartModeChange(btn.dataset.mode));
+    });
+  }
+
+  function setDefaultDates() {
+    const today = new Date();
+    const todayStr = formatDateForInput(today);
+    state.filters.startDate = todayStr;
+    state.filters.endDate = todayStr;
+    els.startDate.value = todayStr;
+    els.endDate.value = todayStr;
+  }
+
+  // ============ Event Handlers ============
+  function handlePageChange(e) {
+    state.filters.pageKey = e.target.value;
+    loadStats();
+  }
+
+  function handleDateChange() {
+    state.filters.startDate = els.startDate.value;
+    state.filters.endDate = els.endDate.value;
+    state.filters.quickDate = '';
+    updateQuickDateButtons();
+    loadStats();
+  }
+
+  function handleQuickDate(range) {
+    state.filters.quickDate = range;
+    const today = new Date();
+    let startDate = new Date();
+
+    if (range === 'today') {
+      startDate = today;
+    } else if (range === '7days') {
+      startDate.setDate(today.getDate() - 6);
+    } else if (range === '30days') {
+      startDate.setDate(today.getDate() - 29);
     }
 
-    function cacheElements() {
-        els.summaryCards = document.getElementById('statsSummaryCards');
-        els.pageSelect = document.getElementById('statsPageSelect');
-        els.startDate = document.getElementById('statsStartDate');
-        els.endDate = document.getElementById('statsEndDate');
-        els.refreshBtn = document.getElementById('statsRefreshBtn');
-        els.hourlyChart = document.getElementById('statsHourlyChart');
-        els.salesSection = document.getElementById('statsSalesSection');
-        els.conversionSection = document.getElementById('statsConversionSection');
-        els.followUpSection = document.getElementById('statsFollowUpSection');
-        els.paymentSection = document.getElementById('statsPaymentSection');
-        els.topProducts = document.getElementById('statsTopProducts');
-        els.topCustomers = document.getElementById('statsTopCustomers');
+    state.filters.startDate = formatDateForInput(startDate);
+    state.filters.endDate = formatDateForInput(today);
+    els.startDate.value = state.filters.startDate;
+    els.endDate.value = state.filters.endDate;
+    updateQuickDateButtons();
+    loadStats();
+  }
+
+  function updateQuickDateButtons() {
+    document.querySelectorAll('.stats-quick-date-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.range === state.filters.quickDate);
+    });
+  }
+
+  function handleChartModeChange(mode) {
+    if (state.chartMode === mode) return;
+    state.chartMode = mode;
+    document.querySelectorAll('.stats-chart-mode-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    renderHourlyChart();
+  }
+
+  // ============ Data Loading ============
+  async function loadPages() {
+    try {
+      const res = await fetch('/admin/orders/pages');
+      const data = await res.json();
+      if (data.success && data.pages) {
+        state.pages = data.pages;
+        renderPageSelect();
+      }
+    } catch (e) {
+      console.error('Load pages error:', e);
     }
+  }
 
-    function bindEvents() {
-        els.pageSelect?.addEventListener('change', handlePageChange);
-        els.startDate?.addEventListener('change', handleDateChange);
-        els.endDate?.addEventListener('change', handleDateChange);
-        els.refreshBtn?.addEventListener('click', () => loadStats());
+  async function loadStats() {
+    if (state.isLoading) return;
+    state.isLoading = true;
+    showLoading();
 
-        // Quick date buttons
-        document.querySelectorAll('.stats-quick-date-btn').forEach(btn => {
-            btn.addEventListener('click', () => handleQuickDate(btn.dataset.range));
-        });
+    try {
+      const params = new URLSearchParams();
+      if (state.filters.pageKey) params.set('pageKey', state.filters.pageKey);
+      if (state.filters.startDate) params.set('startDate', state.filters.startDate);
+      if (state.filters.endDate) params.set('endDate', state.filters.endDate);
+
+      const res = await fetch(`/admin/customer-stats/data?${params.toString()}`);
+      const data = await res.json();
+
+      if (data.success) {
+        state.stats = data.data;
+        renderAll();
+      } else {
+        showError('ไม่สามารถโหลดข้อมูลได้');
+      }
+    } catch (e) {
+      console.error('Load stats error:', e);
+      showError('เกิดข้อผิดพลาดในการโหลดข้อมูล');
+    } finally {
+      state.isLoading = false;
     }
+  }
 
-    function setDefaultDates() {
-        const today = new Date();
-        const todayStr = formatDateForInput(today);
-        state.filters.startDate = todayStr;
-        state.filters.endDate = todayStr;
-        els.startDate.value = todayStr;
-        els.endDate.value = todayStr;
-    }
+  // ============ Rendering ============
+  function renderAll() {
+    renderSummaryCards();
+    renderHourlyChart();
+    renderSalesStats();
+    renderConversionStats();
+    renderFollowUpStats();
+    renderPaymentMethods();
+    renderTopProducts();
+    renderTopCustomers();
+  }
 
-    // ============ Event Handlers ============
-    function handlePageChange(e) {
-        state.filters.pageKey = e.target.value;
-        loadStats();
-    }
+  function renderPageSelect() {
+    if (!els.pageSelect) return;
+    els.pageSelect.innerHTML = '<option value="">ทุกเพจ/บอท</option>' +
+      state.pages.map(page => {
+        const icon = page.platform === 'facebook' ? '📘' : '💚';
+        const label = page.name || page.pageKey || 'Unknown';
+        return `<option value="${escapeHtml(page.pageKey)}">${icon} ${escapeHtml(label)}</option>`;
+      }).join('');
+  }
 
-    function handleDateChange() {
-        state.filters.startDate = els.startDate.value;
-        state.filters.endDate = els.endDate.value;
-        state.filters.quickDate = '';
-        updateQuickDateButtons();
-        loadStats();
-    }
+  function renderSummaryCards() {
+    if (!els.summaryCards || !state.stats) return;
+    const { overview, sales } = state.stats;
 
-    function handleQuickDate(range) {
-        state.filters.quickDate = range;
-        const today = new Date();
-        let startDate = new Date();
-
-        if (range === 'today') {
-            startDate = today;
-        } else if (range === '7days') {
-            startDate.setDate(today.getDate() - 6);
-        } else if (range === '30days') {
-            startDate.setDate(today.getDate() - 29);
-        }
-
-        state.filters.startDate = formatDateForInput(startDate);
-        state.filters.endDate = formatDateForInput(today);
-        els.startDate.value = state.filters.startDate;
-        els.endDate.value = state.filters.endDate;
-        updateQuickDateButtons();
-        loadStats();
-    }
-
-    function updateQuickDateButtons() {
-        document.querySelectorAll('.stats-quick-date-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.range === state.filters.quickDate);
-        });
-    }
-
-    // ============ Data Loading ============
-    async function loadPages() {
-        try {
-            const res = await fetch('/admin/orders/pages');
-            const data = await res.json();
-            if (data.success && data.pages) {
-                state.pages = data.pages;
-                renderPageSelect();
-            }
-        } catch (e) {
-            console.error('Load pages error:', e);
-        }
-    }
-
-    async function loadStats() {
-        if (state.isLoading) return;
-        state.isLoading = true;
-        showLoading();
-
-        try {
-            const params = new URLSearchParams();
-            if (state.filters.pageKey) params.set('pageKey', state.filters.pageKey);
-            if (state.filters.startDate) params.set('startDate', state.filters.startDate);
-            if (state.filters.endDate) params.set('endDate', state.filters.endDate);
-
-            const res = await fetch(`/admin/customer-stats/data?${params.toString()}`);
-            const data = await res.json();
-
-            if (data.success) {
-                state.stats = data.data;
-                renderAll();
-            } else {
-                showError('ไม่สามารถโหลดข้อมูลได้');
-            }
-        } catch (e) {
-            console.error('Load stats error:', e);
-            showError('เกิดข้อผิดพลาดในการโหลดข้อมูล');
-        } finally {
-            state.isLoading = false;
-        }
-    }
-
-    // ============ Rendering ============
-    function renderAll() {
-        renderSummaryCards();
-        renderHourlyChart();
-        renderSalesStats();
-        renderConversionStats();
-        renderFollowUpStats();
-        renderPaymentMethods();
-        renderTopProducts();
-        renderTopCustomers();
-    }
-
-    function renderPageSelect() {
-        if (!els.pageSelect) return;
-        els.pageSelect.innerHTML = '<option value="">ทุกเพจ/บอท</option>' +
-            state.pages.map(page => {
-                const icon = page.platform === 'facebook' ? '📘' : '💚';
-                const label = page.name || page.pageKey || 'Unknown';
-                return `<option value="${escapeHtml(page.pageKey)}">${icon} ${escapeHtml(label)}</option>`;
-            }).join('');
-    }
-
-    function renderSummaryCards() {
-        if (!els.summaryCards || !state.stats) return;
-        const { overview, sales } = state.stats;
-
-        els.summaryCards.innerHTML = `
+    els.summaryCards.innerHTML = `
       <div class="stats-summary-card">
         <div class="stats-summary-icon icon-primary">
           <i class="fas fa-comments"></i>
@@ -213,40 +228,59 @@
         </div>
       </div>
     `;
+  }
+
+  function renderHourlyChart() {
+    if (!els.hourlyChart || !state.stats) return;
+
+    // Support both old (array) and new (object) format
+    const hourlyMessagesData = state.stats.hourlyMessages || {};
+    let hourlyData;
+    if (Array.isArray(hourlyMessagesData)) {
+      // Old format - single array
+      hourlyData = hourlyMessagesData;
+    } else {
+      // New format - object with all, buyers, nonBuyers
+      hourlyData = hourlyMessagesData[state.chartMode] || hourlyMessagesData.all || Array(24).fill(0);
     }
 
-    function renderHourlyChart() {
-        if (!els.hourlyChart || !state.stats) return;
-        const hourlyData = state.stats.hourlyMessages || Array(24).fill(0);
-        const maxValue = Math.max(...hourlyData, 1);
-        const peakHour = hourlyData.indexOf(maxValue);
+    const maxValue = Math.max(...hourlyData, 1);
+    const peakHour = hourlyData.indexOf(maxValue);
 
-        let html = '';
-        for (let i = 0; i < 24; i++) {
-            const value = hourlyData[i] || 0;
-            const height = Math.max((value / maxValue) * 100, 2);
-            const isPeak = i === peakHour && value > 0;
-            const label = i.toString().padStart(2, '0');
+    // Determine bar color based on mode
+    const modeColors = {
+      all: '',
+      buyers: ' is-buyers',
+      nonBuyers: ' is-non-buyers'
+    };
+    const modeClass = modeColors[state.chartMode] || '';
 
-            html += `
+    let html = '';
+    for (let i = 0; i < 24; i++) {
+      const value = hourlyData[i] || 0;
+      const height = Math.max((value / maxValue) * 100, 2);
+      const isPeak = i === peakHour && value > 0;
+      const label = i.toString().padStart(2, '0');
+
+      html += `
         <div class="chart-bar-wrapper">
           <div class="chart-bar">
-            <div class="chart-bar-fill${isPeak ? ' is-peak' : ''}" style="height: ${height}%">
+            <div class="chart-bar-fill${isPeak ? ' is-peak' : ''}${modeClass}" style="height: ${height}%">
               <div class="chart-bar-tooltip">${label}:00 - ${formatNumber(value)} คน</div>
             </div>
           </div>
           <div class="chart-bar-label">${label}</div>
         </div>
       `;
-        }
-        els.hourlyChart.innerHTML = html;
     }
+    els.hourlyChart.innerHTML = html;
+  }
 
-    function renderSalesStats() {
-        if (!els.salesSection || !state.stats) return;
-        const { sales } = state.stats;
+  function renderSalesStats() {
+    if (!els.salesSection || !state.stats) return;
+    const { sales } = state.stats;
 
-        els.salesSection.innerHTML = `
+    els.salesSection.innerHTML = `
       <div class="stats-item-grid">
         <div class="stats-item">
           <div class="stats-item-value text-success">${formatNumber(sales?.uniqueBuyers || 0)}</div>
@@ -292,17 +326,17 @@
         </div>
       </div>
     `;
-    }
+  }
 
-    function renderConversionStats() {
-        if (!els.conversionSection || !state.stats) return;
-        const { conversion } = state.stats;
+  function renderConversionStats() {
+    if (!els.conversionSection || !state.stats) return;
+    const { conversion } = state.stats;
 
-        const conversionRate = conversion?.conversionRate || 0;
-        const confirmRate = conversion?.orderConfirmationRate || 0;
-        const completionRate = conversion?.orderCompletionRate || 0;
+    const conversionRate = conversion?.conversionRate || 0;
+    const confirmRate = conversion?.orderConfirmationRate || 0;
+    const completionRate = conversion?.orderCompletionRate || 0;
 
-        els.conversionSection.innerHTML = `
+    els.conversionSection.innerHTML = `
       <div class="stats-progress-item">
         <div class="stats-progress-header">
           <span class="stats-progress-label">Conversion Rate (คนซื้อ/คนทัก)</span>
@@ -341,30 +375,30 @@
         </div>
       </div>
     `;
-    }
+  }
 
-    function renderFollowUpStats() {
-        if (!els.followUpSection || !state.stats) return;
-        const { followUp } = state.stats;
-        const total = (followUp?.active || 0) + (followUp?.completed || 0) +
-            (followUp?.canceled || 0) + (followUp?.failed || 0);
+  function renderFollowUpStats() {
+    if (!els.followUpSection || !state.stats) return;
+    const { followUp } = state.stats;
+    const total = (followUp?.active || 0) + (followUp?.completed || 0) +
+      (followUp?.canceled || 0) + (followUp?.failed || 0);
 
-        if (total === 0) {
-            els.followUpSection.innerHTML = `
+    if (total === 0) {
+      els.followUpSection.innerHTML = `
         <div class="stats-empty">
           <i class="fas fa-user-clock"></i>
           <p>ไม่มีข้อมูลการติดตาม</p>
         </div>
       `;
-            return;
-        }
+      return;
+    }
 
-        const activeRate = total > 0 ? ((followUp?.active || 0) / total * 100) : 0;
-        const completedRate = total > 0 ? ((followUp?.completed || 0) / total * 100) : 0;
-        const canceledRate = total > 0 ? ((followUp?.canceled || 0) / total * 100) : 0;
-        const failedRate = total > 0 ? ((followUp?.failed || 0) / total * 100) : 0;
+    const activeRate = total > 0 ? ((followUp?.active || 0) / total * 100) : 0;
+    const completedRate = total > 0 ? ((followUp?.completed || 0) / total * 100) : 0;
+    const canceledRate = total > 0 ? ((followUp?.canceled || 0) / total * 100) : 0;
+    const failedRate = total > 0 ? ((followUp?.failed || 0) / total * 100) : 0;
 
-        els.followUpSection.innerHTML = `
+    els.followUpSection.innerHTML = `
       <div class="stats-progress-item">
         <div class="stats-progress-header">
           <span class="stats-progress-label">กำลังติดตาม</span>
@@ -402,31 +436,31 @@
         </div>
       </div>
     `;
-    }
+  }
 
-    function renderPaymentMethods() {
-        if (!els.paymentSection || !state.stats) return;
-        const { paymentMethods } = state.stats;
-        const cod = paymentMethods?.cod || 0;
-        const transfer = paymentMethods?.transfer || 0;
-        const other = paymentMethods?.other || 0;
-        const total = cod + transfer + other;
+  function renderPaymentMethods() {
+    if (!els.paymentSection || !state.stats) return;
+    const { paymentMethods } = state.stats;
+    const cod = paymentMethods?.cod || 0;
+    const transfer = paymentMethods?.transfer || 0;
+    const other = paymentMethods?.other || 0;
+    const total = cod + transfer + other;
 
-        if (total === 0) {
-            els.paymentSection.innerHTML = `
+    if (total === 0) {
+      els.paymentSection.innerHTML = `
         <div class="stats-empty">
           <i class="fas fa-credit-card"></i>
           <p>ไม่มีข้อมูลการชำระเงิน</p>
         </div>
       `;
-            return;
-        }
+      return;
+    }
 
-        const codRate = (cod / total * 100);
-        const transferRate = (transfer / total * 100);
-        const otherRate = (other / total * 100);
+    const codRate = (cod / total * 100);
+    const transferRate = (transfer / total * 100);
+    const otherRate = (other / total * 100);
 
-        els.paymentSection.innerHTML = `
+    els.paymentSection.innerHTML = `
       <div class="stats-progress-item">
         <div class="stats-progress-header">
           <span class="stats-progress-label">เก็บเงินปลายทาง (COD)</span>
@@ -457,23 +491,23 @@
       </div>
       ` : ''}
     `;
-    }
+  }
 
-    function renderTopProducts() {
-        if (!els.topProducts || !state.stats) return;
-        const products = state.stats.topProducts || [];
+  function renderTopProducts() {
+    if (!els.topProducts || !state.stats) return;
+    const products = state.stats.topProducts || [];
 
-        if (products.length === 0) {
-            els.topProducts.innerHTML = `
+    if (products.length === 0) {
+      els.topProducts.innerHTML = `
         <div class="stats-empty">
           <i class="fas fa-star"></i>
           <p>ไม่มีข้อมูลสินค้า</p>
         </div>
       `;
-            return;
-        }
+      return;
+    }
 
-        els.topProducts.innerHTML = `
+    els.topProducts.innerHTML = `
       <div class="stats-ranking-list">
         ${products.map((p, i) => `
           <div class="stats-ranking-item">
@@ -487,23 +521,23 @@
         `).join('')}
       </div>
     `;
-    }
+  }
 
-    function renderTopCustomers() {
-        if (!els.topCustomers || !state.stats) return;
-        const customers = state.stats.topCustomers || [];
+  function renderTopCustomers() {
+    if (!els.topCustomers || !state.stats) return;
+    const customers = state.stats.topCustomers || [];
 
-        if (customers.length === 0) {
-            els.topCustomers.innerHTML = `
+    if (customers.length === 0) {
+      els.topCustomers.innerHTML = `
         <div class="stats-empty">
           <i class="fas fa-crown"></i>
           <p>ไม่มีข้อมูลลูกค้า</p>
         </div>
       `;
-            return;
-        }
+      return;
+    }
 
-        els.topCustomers.innerHTML = `
+    els.topCustomers.innerHTML = `
       <div class="stats-ranking-list">
         ${customers.map((c, i) => `
           <div class="stats-ranking-item">
@@ -517,54 +551,54 @@
         `).join('')}
       </div>
     `;
-    }
+  }
 
-    // ============ UI Helpers ============
-    function showLoading() {
-        const sections = [els.salesSection, els.conversionSection, els.followUpSection,
-        els.paymentSection, els.topProducts, els.topCustomers];
-        sections.forEach(el => {
-            if (el) el.innerHTML = '<div class="stats-loading"><div class="stats-spinner"></div></div>';
-        });
-    }
+  // ============ UI Helpers ============
+  function showLoading() {
+    const sections = [els.salesSection, els.conversionSection, els.followUpSection,
+    els.paymentSection, els.topProducts, els.topCustomers];
+    sections.forEach(el => {
+      if (el) el.innerHTML = '<div class="stats-loading"><div class="stats-spinner"></div></div>';
+    });
+  }
 
-    function showError(message) {
-        const sections = [els.salesSection, els.conversionSection, els.followUpSection,
-        els.paymentSection, els.topProducts, els.topCustomers];
-        sections.forEach(el => {
-            if (el) el.innerHTML = `<div class="stats-empty"><i class="fas fa-exclamation-triangle"></i><p>${escapeHtml(message)}</p></div>`;
-        });
-    }
+  function showError(message) {
+    const sections = [els.salesSection, els.conversionSection, els.followUpSection,
+    els.paymentSection, els.topProducts, els.topCustomers];
+    sections.forEach(el => {
+      if (el) el.innerHTML = `<div class="stats-empty"><i class="fas fa-exclamation-triangle"></i><p>${escapeHtml(message)}</p></div>`;
+    });
+  }
 
-    // ============ Utilities ============
-    function formatNumber(num) {
-        if (typeof num !== 'number') num = parseFloat(num) || 0;
-        return num.toLocaleString('th-TH');
-    }
+  // ============ Utilities ============
+  function formatNumber(num) {
+    if (typeof num !== 'number') num = parseFloat(num) || 0;
+    return num.toLocaleString('th-TH');
+  }
 
-    function formatDateForInput(date) {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-    }
+  function formatDateForInput(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
 
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
 
-    // ============ Init on DOM Ready ============
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
+  // ============ Init on DOM Ready ============
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 
-    // Expose for debugging
-    window.CustomerStats = { state, loadStats };
+  // Expose for debugging
+  window.CustomerStats = { state, loadStats };
 })();

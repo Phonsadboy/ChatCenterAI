@@ -260,6 +260,44 @@
     color: var(--text-light);
 }
 
+/* Chart Controls */
+.stats-chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.stats-chart-mode-btns {
+    display: flex;
+    gap: 0.25rem;
+    background: rgba(0, 0, 0, 0.04);
+    padding: 0.2rem;
+    border-radius: 8px;
+}
+
+.stats-chart-mode-btn {
+    padding: 0.35rem 0.75rem;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 0.75rem;
+    color: var(--text-light);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.stats-chart-mode-btn:hover {
+    color: var(--text-dark);
+}
+
+.stats-chart-mode-btn.active {
+    background: var(--card-bg, #fff);
+    color: var(--primary, #4A6FA5);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    font-weight: 500;
+}
+
 .legend-peak {
     display: flex;
     align-items: center;
@@ -308,6 +346,24 @@
 
 .chart-bar-fill.is-peak {
     background: linear-gradient(180deg, #2D8F6F 0%, #4DB892 100%);
+}
+
+/* Buyers mode - green */
+.chart-bar-fill.is-buyers {
+    background: linear-gradient(180deg, #2D8F6F 0%, #4DB892 100%);
+}
+
+.chart-bar-fill.is-buyers.is-peak {
+    background: linear-gradient(180deg, #1D7F5F 0%, #3DA882 100%);
+}
+
+/* Non-buyers mode - orange */
+.chart-bar-fill.is-non-buyers {
+    background: linear-gradient(180deg, #DFA94B 0%, #F5C97D 100%);
+}
+
+.chart-bar-fill.is-non-buyers.is-peak {
+    background: linear-gradient(180deg, #CF993B 0%, #E5B96D 100%);
 }
 
 .chart-bar-fill:hover {
