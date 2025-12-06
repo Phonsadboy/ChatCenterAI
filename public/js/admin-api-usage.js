@@ -1,37 +1,113 @@
 /**
- * Admin API Usage Page JavaScript
- * Enhanced statistics dashboard with tabs and drill-down
+ * Admin API Usage Dashboard - Consolidated View
+ * Single page with charts, filters, and unified data table
  */
 
-var usageData = null;
-var drilldownModal = null;
+// ==================== Global State ====================
+const State = {
+    data: null,
+    filteredData: [],
+    viewMode: 'grouped', // 'grouped' or 'detailed'
+    sortColumn: 'cost',
+    sortDirection: 'desc',
+    filters: {
+        bot: '',
+        model: '',
+        platform: '',
+        key: '',
+        search: ''
+    },
+    charts: {
+        daily: null,
+        pie: null
+    },
+    expandedRow: null
+};
 
+const THB_RATE = 33;
+
+// ==================== Initialization ====================
 document.addEventListener('DOMContentLoaded', function () {
-    drilldownModal = new bootstrap.Modal(document.getElementById('drilldownModal'));
+    initEventListeners();
+    loadDashboardData();
+});
 
-    // Load initial data
-    loadOverviewTab();
+function initEventListeners() {
+    // Date range
+    document.getElementById('dateRangeSelect').addEventListener('change', loadDashboardData);
 
-    // Tab change listeners
-    document.querySelectorAll('#usageTabs button[data-bs-toggle="tab"]').forEach(function (tab) {
-        tab.addEventListener('shown.bs.tab', function (e) {
-            var target = e.target.getAttribute('data-bs-target');
-            if (target === '#overview') loadOverviewTab();
-            else if (target === '#bots') loadBotsTab();
-            else if (target === '#models') loadModelsTab();
-            else if (target === '#keys') loadKeysTab();
-            else if (target === '#logs') loadDetailedLogs();
+    // Refresh button
+    document.getElementById('refreshBtn').addEventListener('click', function () {
+        this.querySelector('i').classList.add('fa-spin');
+        loadDashboardData().finally(() => {
+            this.querySelector('i').classList.remove('fa-spin');
         });
     });
 
-    // Date range change
-    document.getElementById('dateRangeSelect').addEventListener('change', refreshCurrentTab);
-});
+    // Export button
+    document.getElementById('exportBtn').addEventListener('click', exportToCSV);
+
+    // Filters
+    ['filterBot', 'filterModel', 'filterPlatform', 'filterKey'].forEach(id => {
+        document.getElementById(id).addEventListener('change', applyFilters);
+    });
+
+    // Search with debounce
+    let searchTimeout;
+    document.getElementById('searchInput').addEventListener('input', function () {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(applyFilters, 300);
+    });
+
+    // Clear filters
+    document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
+
+    // View mode toggle
+    document.querySelectorAll('#viewModeToggle button').forEach(btn => {
+        btn.addEventListener('click', function () {
+            document.querySelectorAll('#viewModeToggle button').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            State.viewMode = this.dataset.view;
+            renderTable();
+        });
+    });
+
+    // Close expanded panel
+    document.getElementById('closeExpandedPanel').addEventListener('click', closeExpandedPanel);
+}
+
+// ==================== Data Loading ====================
+async function loadDashboardData() {
+    try {
+        showLoadingState();
+
+        const params = getDateParams();
+        const response = await fetch('/api/openai-usage/summary?' + params);
+        const data = await response.json();
+
+        State.data = data;
+
+        // Populate filter dropdowns
+        populateFilterDropdowns(data);
+
+        // Update UI
+        updateSummaryCards(data.summary || {});
+        updateCharts(data);
+        applyFilters();
+
+        return data;
+
+    } catch (err) {
+        console.error('Error loading dashboard data:', err);
+        showErrorState();
+        throw err;
+    }
+}
 
 function getDateParams() {
-    var range = document.getElementById('dateRangeSelect').value;
-    var now = new Date();
-    var startDate = null;
+    const range = document.getElementById('dateRangeSelect').value;
+    const now = new Date();
+    let startDate = null;
 
     if (range === 'today') {
         startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -43,421 +119,769 @@ function getDateParams() {
         startDate.setDate(startDate.getDate() - 30);
     }
 
-    var params = new URLSearchParams();
+    const params = new URLSearchParams();
     if (startDate) params.append('startDate', startDate.toISOString());
     params.append('endDate', now.toISOString());
     return params;
 }
 
-function refreshCurrentTab() {
-    var activeTab = document.querySelector('#usageTabs .nav-link.active');
-    if (!activeTab) return;
-    var target = activeTab.getAttribute('data-bs-target');
-    if (target === '#overview') loadOverviewTab();
-    else if (target === '#bots') loadBotsTab();
-    else if (target === '#models') loadModelsTab();
-    else if (target === '#keys') loadKeysTab();
-    else if (target === '#logs') loadDetailedLogs();
-}
+// ==================== Summary Cards ====================
+function updateSummaryCards(summary) {
+    const totalCalls = summary.totalCalls || 0;
+    const totalTokens = summary.totalTokens || 0;
+    const totalCostUSD = summary.totalCostUSD || 0;
+    const avgCostPerCall = totalCalls > 0 ? totalCostUSD / totalCalls : 0;
 
-// =============== TAB 1: Overview ===============
-async function loadOverviewTab() {
-    try {
-        var response = await fetch('/api/openai-usage/summary?' + getDateParams());
-        var data = await response.json();
-        usageData = data;
+    animateValue('totalCalls', 0, totalCalls, 800, formatNumber);
+    animateValue('totalTokens', 0, totalTokens, 800, formatNumber);
 
-        // Summary cards - use data.summary object
-        var summary = data.summary || {};
-        document.getElementById('totalCalls').textContent = formatNumber(summary.totalCalls || 0);
-        document.getElementById('totalTokens').textContent = formatNumber(summary.totalTokens || 0);
-        document.getElementById('totalCostUSD').textContent = '$' + formatCost(summary.totalCostUSD || 0);
-        document.getElementById('totalCostTHB').textContent = '฿' + formatCost(summary.totalCostTHB || 0);
+    document.getElementById('totalCost').textContent = '$' + formatCost(totalCostUSD);
+    document.getElementById('totalCostTHB').textContent = '~฿' + formatNumber(Math.round(totalCostUSD * THB_RATE));
 
-        // Top bots - use name, calls, costUSD
-        renderSimpleTable('overviewBotTable', (data.byBot || []).slice(0, 5), function (item) {
-            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
-            var avgCostTHB = avgCostUSD * 33;
-            return '<tr><td>' + escapeHtml(item.name || item.botId || '-') + '</td>' +
-                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
-                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
-        });
+    document.getElementById('avgCostPerCall').textContent = '$' + avgCostPerCall.toFixed(4);
+    document.getElementById('avgCostPerCallTHB').textContent = '~฿' + (avgCostPerCall * THB_RATE).toFixed(2);
 
-        // Top models - use calls, costUSD
-        renderSimpleTable('overviewModelTable', (data.byModel || []).slice(0, 5), function (item) {
-            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
-            var avgCostTHB = avgCostUSD * 33;
-            return '<tr><td><span class="model-badge">' + escapeHtml(item.model) + '</span></td>' +
-                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
-                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
-        });
-
-        // Daily usage - use data.daily, and _id as date, calls, tokens, cost
-        var daily = (data.daily || []).sort(function (a, b) { return new Date(b._id) - new Date(a._id); });
-        renderSimpleTable('overviewDayTable', daily.slice(0, 14), function (item) {
-            return '<tr><td>' + formatDate(item._id) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.cost) + '</td></tr>';
-        });
-
-    } catch (err) {
-        console.error('Error loading overview:', err);
+    // Token breakdown (if available)
+    if (summary.totalInputTokens !== undefined) {
+        document.getElementById('inputTokens').textContent = formatNumber(summary.totalInputTokens);
+        document.getElementById('outputTokens').textContent = formatNumber(summary.totalOutputTokens || 0);
     }
 }
 
-// =============== TAB 2: Bots ===============
-async function loadBotsTab() {
-    try {
-        var response = await fetch('/api/openai-usage/summary?' + getDateParams());
-        var data = await response.json();
-
-        var tbody = document.getElementById('botsTable');
-        var items = data.byBot || [];
-
-        if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
-            return;
-        }
-
-        var html = '';
-        for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            var platformIcon = getPlatformIcon(item.platform);
-            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
-            var avgCostTHB = avgCostUSD * 33;
-            html += '<tr class="cursor-pointer" onclick="showBotDrilldown(\'' + (item.botId || '') + '\', \'' + escapeHtml(item.name || item.botId || '-') + '\')">' +
-                '<td><i class="' + platformIcon + ' me-2"></i>' + escapeHtml(item.name || item.botId || '-') + '</td>' +
-                '<td><span class="platform-badge ' + (item.platform || '') + '">' + capitalize(item.platform || '-') + '</span></td>' +
-                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
-                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
-        }
-        tbody.innerHTML = html;
-
-    } catch (err) {
-        console.error('Error loading bots tab:', err);
+function animateValue(elementId, start, end, duration, formatter) {
+    const element = document.getElementById(elementId);
+    if (!element || end === 0) {
+        element.textContent = formatter(end);
+        return;
     }
+
+    const range = end - start;
+    const startTime = performance.now();
+
+    function update(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        // Ease out cubic
+        const easeProgress = 1 - Math.pow(1 - progress, 3);
+        const current = Math.round(start + range * easeProgress);
+
+        element.textContent = formatter(current);
+
+        if (progress < 1) {
+            requestAnimationFrame(update);
+        }
+    }
+
+    requestAnimationFrame(update);
 }
 
-async function showBotDrilldown(botId, botName) {
-    document.getElementById('drilldownTitle').textContent = 'รายละเอียด: ' + botName;
-    document.getElementById('drilldownContent').innerHTML = '<div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>';
-    drilldownModal.show();
-
-    try {
-        var response = await fetch('/api/openai-usage/by-bot/' + encodeURIComponent(botId) + '?' + getDateParams());
-        var data = await response.json();
-
-        var totals = data.totals || {};
-        var avgCostPerCall = totals.totalCalls > 0 ? (totals.totalCost / totals.totalCalls) : 0;
-
-        var html = '<div class="row g-3 mb-4">' +
-            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(totals.totalCalls) + '</div></div></div></div>' +
-            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(totals.totalTokens) + '</div></div></div></div>' +
-            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">ต้นทุนรวม</div><div class="summary-value">$' + formatCost(totals.totalCost) + '</div></div></div></div>' +
-            '<div class="col-md-3"><div class="summary-card bg-info-soft"><div class="summary-content"><div class="summary-label">ต้นทุน/ครั้ง</div><div class="summary-value">$' + avgCostPerCall.toFixed(6) + '</div></div></div></div>' +
-            '</div>';
-
-        html += '<div class="row g-4">';
-
-        // Models used - with avg cost per call column
-        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>โมเดลที่ใช้ (แยกต้นทุน/ครั้ง)</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Model</th><th class="text-end">Calls</th><th class="text-end">Cost</th><th class="text-end">ต้นทุน/ครั้ง</th></tr></thead><tbody>';
-        (data.byModel || []).forEach(function (m) {
-            var avgCost = m.count > 0 ? (m.estimatedCost / m.count) : 0;
-            html += '<tr><td><span class="model-badge">' + escapeHtml(m.model) + '</span></td><td class="text-end">' + formatNumber(m.count) + '</td><td class="text-end">$' + formatCost(m.estimatedCost) + '</td><td class="text-end text-info"><strong>$' + avgCost.toFixed(6) + '</strong></td></tr>';
-        });
-        html += '</tbody></table></div></div></div>';
-
-        // API Keys used
-        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>API Key ที่ใช้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Key</th><th class="text-end">Calls</th><th class="text-end">Cost</th></tr></thead><tbody>';
-        (data.byKey || []).forEach(function (k) {
-            html += '<tr><td><i class="fas fa-key text-muted me-1"></i>' + escapeHtml(k.keyName) + '</td><td class="text-end">' + formatNumber(k.count) + '</td><td class="text-end">$' + formatCost(k.estimatedCost) + '</td></tr>';
-        });
-        html += '</tbody></table></div></div></div>';
-
-        // Recent logs
-        html += '<div class="col-12"><div class="card"><div class="card-header"><strong>บันทึกล่าสุด</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>เวลา</th><th>Model</th><th class="text-end">Tokens</th><th class="text-end">Cost</th></tr></thead><tbody>';
-        (data.recentLogs || []).forEach(function (l) {
-            html += '<tr><td>' + formatDateTime(l.timestamp) + '</td><td><span class="model-badge">' + escapeHtml(l.model) + '</span></td><td class="text-end">' + formatNumber(l.totalTokens) + '</td><td class="text-end">$' + formatCost(l.estimatedCost) + '</td></tr>';
-        });
-        html += '</tbody></table></div></div></div>';
-
-        html += '</div>';
-
-        document.getElementById('drilldownContent').innerHTML = html;
-
-    } catch (err) {
-        document.getElementById('drilldownContent').innerHTML = '<div class="alert alert-danger">ไม่สามารถโหลดข้อมูลได้</div>';
-    }
+// ==================== Charts ====================
+function updateCharts(data) {
+    updateDailyChart(data.daily || []);
+    updatePieChart(data.byModel || []);
 }
 
-// =============== TAB 3: Models ===============
-async function loadModelsTab() {
-    try {
-        var response = await fetch('/api/openai-usage/summary?' + getDateParams());
-        var data = await response.json();
+function updateDailyChart(dailyData) {
+    const canvas = document.getElementById('dailyUsageChart');
+    const ctx = canvas.getContext('2d');
 
-        var tbody = document.getElementById('modelsTable');
-        var items = data.byModel || [];
+    // Sort by date
+    const sorted = [...dailyData].sort((a, b) => new Date(a._id) - new Date(b._id));
 
-        if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
-            return;
-        }
+    const labels = sorted.map(d => formatShortDate(d._id));
+    const callsData = sorted.map(d => d.calls || 0);
+    const costData = sorted.map(d => d.cost || 0);
 
-        var html = '';
-        for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
-            var avgCostTHB = avgCostUSD * 33;
-            html += '<tr class="cursor-pointer" onclick="showModelDrilldown(\'' + escapeHtml(item.model) + '\')">' +
-                '<td><span class="model-badge">' + escapeHtml(item.model) + '</span></td>' +
-                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
-                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
-        }
-        tbody.innerHTML = html;
-
-    } catch (err) {
-        console.error('Error loading models tab:', err);
+    // Destroy existing chart
+    if (State.charts.daily) {
+        State.charts.daily.destroy();
     }
+
+    State.charts.daily = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Calls',
+                    data: callsData,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Cost ($)',
+                    data: costData,
+                    borderColor: '#8b5cf6',
+                    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    align: 'end',
+                    labels: {
+                        boxWidth: 12,
+                        padding: 15,
+                        font: { size: 11 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 12,
+                    titleFont: { size: 12 },
+                    bodyFont: { size: 11 },
+                    callbacks: {
+                        label: function (context) {
+                            if (context.dataset.label === 'Cost ($)') {
+                                return `Cost: $${context.parsed.y.toFixed(4)}`;
+                            }
+                            return `Calls: ${formatNumber(context.parsed.y)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { font: { size: 10 } }
+                },
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' },
+                    ticks: {
+                        font: { size: 10 },
+                        callback: val => formatNumber(val)
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    ticks: {
+                        font: { size: 10 },
+                        callback: val => '$' + val.toFixed(2)
+                    }
+                }
+            }
+        }
+    });
 }
 
-async function showModelDrilldown(model) {
-    document.getElementById('drilldownTitle').textContent = 'รายละเอียด Model: ' + model;
-    document.getElementById('drilldownContent').innerHTML = '<div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>';
-    drilldownModal.show();
+function updatePieChart(modelData) {
+    const canvas = document.getElementById('modelPieChart');
+    const ctx = canvas.getContext('2d');
 
-    try {
-        var response = await fetch('/api/openai-usage/by-model/' + encodeURIComponent(model) + '?' + getDateParams());
-        var data = await response.json();
+    // Sort by cost and take top 5
+    const sorted = [...modelData].sort((a, b) => (b.costUSD || 0) - (a.costUSD || 0)).slice(0, 6);
 
-        var totals = data.totals || {};
-        var avgCostPerCall = totals.totalCalls > 0 ? (totals.totalCost / totals.totalCalls) : 0;
+    const labels = sorted.map(m => m.model);
+    const data = sorted.map(m => m.costUSD || 0);
 
-        var html = '<div class="row g-3 mb-4">' +
-            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(totals.totalCalls) + '</div></div></div></div>' +
-            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(totals.totalTokens) + '</div></div></div></div>' +
-            '<div class="col-md-3"><div class="summary-card"><div class="summary-content"><div class="summary-label">ต้นทุนรวม</div><div class="summary-value">$' + formatCost(totals.totalCost) + '</div></div></div></div>' +
-            '<div class="col-md-3"><div class="summary-card bg-info-soft"><div class="summary-content"><div class="summary-label">ต้นทุน/ครั้ง (รวม)</div><div class="summary-value">$' + avgCostPerCall.toFixed(6) + '</div></div></div></div>' +
-            '</div>';
+    const colors = [
+        '#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6366f1'
+    ];
 
-        // Bots using this model - with avg cost per call column
-        html += '<div class="card"><div class="card-header"><strong>Bot/Page ที่ใช้โมเดลนี้ (แยกต้นทุน/ครั้ง)</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Bot</th><th>Platform</th><th class="text-end">Calls</th><th class="text-end">Cost</th><th class="text-end">ต้นทุน/ครั้ง</th></tr></thead><tbody>';
-        (data.byBot || []).forEach(function (b) {
-            var avgCost = b.count > 0 ? (b.estimatedCost / b.count) : 0;
-            html += '<tr><td>' + escapeHtml(b.botName) + '</td><td><span class="platform-badge ' + (b.platform || '') + '">' + (b.platform || '-') + '</span></td><td class="text-end">' + formatNumber(b.count) + '</td><td class="text-end">$' + formatCost(b.estimatedCost) + '</td><td class="text-end text-info"><strong>$' + avgCost.toFixed(6) + '</strong></td></tr>';
-        });
-        html += '</tbody></table></div></div>';
-
-        document.getElementById('drilldownContent').innerHTML = html;
-
-    } catch (err) {
-        document.getElementById('drilldownContent').innerHTML = '<div class="alert alert-danger">ไม่สามารถโหลดข้อมูลได้</div>';
+    // Destroy existing chart
+    if (State.charts.pie) {
+        State.charts.pie.destroy();
     }
+
+    State.charts.pie = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: colors,
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '55%',
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'right',
+                    labels: {
+                        boxWidth: 10,
+                        padding: 8,
+                        font: { size: 10 },
+                        generateLabels: function (chart) {
+                            const data = chart.data;
+                            const total = data.datasets[0].data.reduce((a, b) => a + b, 0);
+                            return data.labels.map((label, i) => {
+                                const value = data.datasets[0].data[i];
+                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                return {
+                                    text: `${label} (${percentage}%)`,
+                                    fillStyle: colors[i],
+                                    hidden: false,
+                                    index: i
+                                };
+                            });
+                        }
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            const value = context.parsed;
+                            return `$${value.toFixed(4)} (~฿${(value * THB_RATE).toFixed(2)})`;
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
-// =============== TAB 4: API Keys ===============
-async function loadKeysTab() {
-    try {
-        var response = await fetch('/api/openai-usage/summary?' + getDateParams());
-        var data = await response.json();
-
-        var tbody = document.getElementById('keysTable');
-        var items = data.byKey || [];
-
-        if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
-            return;
-        }
-
-        var html = '';
-        for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            var keyId = item.keyId || 'env';
-            var avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
-            var avgCostTHB = avgCostUSD * 33;
-            html += '<tr class="cursor-pointer" onclick="showKeyDrilldown(\'' + keyId + '\', \'' + escapeHtml(item.name || 'Env Variable') + '\')">' +
-                '<td><i class="fas fa-key text-muted me-2"></i>' + escapeHtml(item.name || 'Environment Variable') + '</td>' +
-                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.costUSD) + '</td>' +
-                '<td class="text-end"><span class="text-info">$' + avgCostUSD.toFixed(4) + '</span> <small class="text-muted">(฿' + avgCostTHB.toFixed(2) + ')</small></td></tr>';
-        }
-        tbody.innerHTML = html;
-
-    } catch (err) {
-        console.error('Error loading keys tab:', err);
-    }
-}
-
-async function showKeyDrilldown(keyId, keyName) {
-    document.getElementById('drilldownTitle').textContent = 'รายละเอียด API Key: ' + keyName;
-    document.getElementById('drilldownContent').innerHTML = '<div class="text-center py-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>';
-    drilldownModal.show();
-
-    try {
-        var response = await fetch('/api/openai-usage/by-key/' + encodeURIComponent(keyId) + '?' + getDateParams());
-        var data = await response.json();
-
-        var html = '<div class="row g-3 mb-4">' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Calls</div><div class="summary-value">' + formatNumber(data.totals.totalCalls) + '</div></div></div></div>' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Tokens</div><div class="summary-value">' + formatNumber(data.totals.totalTokens) + '</div></div></div></div>' +
-            '<div class="col-md-4"><div class="summary-card"><div class="summary-content"><div class="summary-label">Cost</div><div class="summary-value">$' + formatCost(data.totals.totalCost) + '</div></div></div></div>' +
-            '</div>';
-
-        html += '<div class="row g-4">';
-
-        // Bots using this key
-        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>Bot/Page ที่ใช้ Key นี้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Bot</th><th class="text-end">Calls</th><th class="text-end">Cost</th></tr></thead><tbody>';
-        (data.byBot || []).forEach(function (b) {
-            var platformIcon = getPlatformIcon(b.platform);
-            html += '<tr><td><i class="' + platformIcon + ' me-2"></i>' + escapeHtml(b.botName) + '</td><td class="text-end">' + formatNumber(b.count) + '</td><td class="text-end">$' + formatCost(b.estimatedCost) + '</td></tr>';
-        });
-        html += '</tbody></table></div></div></div>';
-
-        // Models used with this key
-        html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>Model ที่ใช้กับ Key นี้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Model</th><th class="text-end">Calls</th><th class="text-end">Cost</th></tr></thead><tbody>';
-        (data.byModel || []).forEach(function (m) {
-            html += '<tr><td><span class="model-badge">' + escapeHtml(m.model) + '</span></td><td class="text-end">' + formatNumber(m.count) + '</td><td class="text-end">$' + formatCost(m.estimatedCost) + '</td></tr>';
-        });
-        html += '</tbody></table></div></div></div>';
-
-        html += '</div>';
-
-        document.getElementById('drilldownContent').innerHTML = html;
-
-    } catch (err) {
-        document.getElementById('drilldownContent').innerHTML = '<div class="alert alert-danger">ไม่สามารถโหลดข้อมูลได้</div>';
-    }
-}
-
-// =============== TAB 5: Detailed Logs ===============
-async function loadDetailedLogs() {
-    var limit = document.getElementById('logsLimit').value || 50;
-    var platform = document.getElementById('filterPlatform').value;
-    var botId = document.getElementById('filterBot').value;
-
-    var params = getDateParams();
-    params.append('limit', limit);
-    if (platform) params.append('platform', platform);
-    if (botId) params.append('botId', botId);
-
-    try {
-        var response = await fetch('/api/openai-usage?' + params);
-        var data = await response.json();
-
-        var tbody = document.getElementById('logsTable');
-        var logs = data.logs || [];
-
-        if (!logs.length) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">ไม่มีบันทึก</td></tr>';
-            return;
-        }
-
-        // Build bot name map from usageData cache
-        var botNameMap = {};
-        if (usageData && usageData.byBot) {
-            usageData.byBot.forEach(function (b) {
-                if (b.botId) botNameMap[b.botId] = b.name || b.botId;
-            });
-        }
-
-        var html = '';
-        for (var i = 0; i < logs.length; i++) {
-            var l = logs[i];
-            var botName = botNameMap[l.botId] || l.botId || '-';
-            var platformIcon = getPlatformIcon(l.platform);
-            var costTHB = (l.estimatedCostUSD || 0) * 33;
-            html += '<tr>' +
-                '<td>' + formatDateTime(l.timestamp) + '</td>' +
-                '<td><span class="model-badge">' + escapeHtml(l.model || '-') + '</span></td>' +
-                '<td>' + escapeHtml(botName) + '</td>' +
-                '<td><i class="' + platformIcon + ' me-1"></i>' + capitalize(l.platform || '-') + '</td>' +
-                '<td class="text-end">' + formatNumber(l.promptTokens || 0) + '</td>' +
-                '<td class="text-end">' + formatNumber(l.completionTokens || 0) + '</td>' +
-                '<td class="text-end">' + formatNumber(l.totalTokens || 0) + '</td>' +
-                '<td class="text-end">$' + formatCost(l.estimatedCostUSD || 0) + '</td>' +
-                '<td class="text-end">฿' + formatCost(costTHB) + '</td></tr>';
-        }
-        tbody.innerHTML = html;
-
-        // Populate filter dropdowns
-        populateFilterDropdowns();
-
-    } catch (err) {
-        console.error('Error loading logs:', err);
-    }
-}
-
-async function populateFilterDropdowns() {
-    if (!usageData) {
-        try {
-            var response = await fetch('/api/openai-usage/summary?' + getDateParams());
-            usageData = await response.json();
-        } catch (e) { return; }
-    }
-
-    var botSelect = document.getElementById('filterBot');
-    var modelSelect = document.getElementById('filterModel');
-
-    // Clear existing options except first
-    while (botSelect.options.length > 1) botSelect.remove(1);
-    while (modelSelect.options.length > 1) modelSelect.remove(1);
-
-    // Add bots
-    (usageData.byBot || []).forEach(function (b) {
-        var opt = document.createElement('option');
+// ==================== Filter Dropdowns ====================
+function populateFilterDropdowns(data) {
+    // Bots
+    const botSelect = document.getElementById('filterBot');
+    botSelect.innerHTML = '<option value="">ทั้งหมด</option>';
+    (data.byBot || []).forEach(b => {
+        const opt = document.createElement('option');
         opt.value = b.botId || '';
         opt.textContent = b.name || b.botId || '-';
         botSelect.appendChild(opt);
     });
 
-    // Add models
-    (usageData.byModel || []).forEach(function (m) {
-        var opt = document.createElement('option');
+    // Models
+    const modelSelect = document.getElementById('filterModel');
+    modelSelect.innerHTML = '<option value="">ทั้งหมด</option>';
+    (data.byModel || []).forEach(m => {
+        const opt = document.createElement('option');
         opt.value = m.model || '';
         opt.textContent = m.model || '-';
         modelSelect.appendChild(opt);
     });
+
+    // Keys
+    const keySelect = document.getElementById('filterKey');
+    keySelect.innerHTML = '<option value="">ทั้งหมด</option>';
+    (data.byKey || []).forEach(k => {
+        const opt = document.createElement('option');
+        opt.value = k.keyId || 'env';
+        opt.textContent = k.name || 'Environment Variable';
+        keySelect.appendChild(opt);
+    });
 }
 
-function exportToCSV() {
-    if (!usageData) return;
+// ==================== Filtering & Sorting ====================
+function applyFilters() {
+    State.filters = {
+        bot: document.getElementById('filterBot').value,
+        model: document.getElementById('filterModel').value,
+        platform: document.getElementById('filterPlatform').value,
+        key: document.getElementById('filterKey').value,
+        search: document.getElementById('searchInput').value.toLowerCase()
+    };
 
-    var csv = 'Date,Calls,Tokens,Cost USD\n';
-    (usageData.daily || []).forEach(function (d) {
-        csv += (d._id || d.date) + ',' + (d.calls || 0) + ',' + (d.tokens || 0) + ',' + (d.cost || 0).toFixed(4) + '\n';
+    // Update filtered summary if filters are active
+    updateFilteredSummary();
+    renderTable();
+}
+
+function clearFilters() {
+    document.getElementById('filterBot').value = '';
+    document.getElementById('filterModel').value = '';
+    document.getElementById('filterPlatform').value = '';
+    document.getElementById('filterKey').value = '';
+    document.getElementById('searchInput').value = '';
+    applyFilters();
+}
+
+function updateFilteredSummary() {
+    // If any filter is active, recalculate summary
+    const hasFilters = Object.values(State.filters).some(v => v !== '');
+
+    if (!hasFilters && State.data) {
+        updateSummaryCards(State.data.summary || {});
+    }
+    // For filtered view, summary would need to be recalculated from filtered data
+    // This would require additional logic based on view mode
+}
+
+// ==================== Table Rendering ====================
+function renderTable() {
+    if (!State.data) return;
+
+    const tableHeader = document.getElementById('tableHeader');
+    const tableBody = document.getElementById('tableBody');
+
+    if (State.viewMode === 'grouped') {
+        renderGroupedTable(tableHeader, tableBody);
+    } else {
+        renderDetailedTable(tableHeader, tableBody);
+    }
+}
+
+function renderGroupedTable(tableHeader, tableBody) {
+    // Headers
+    tableHeader.innerHTML = `
+        <tr>
+            <th class="sortable" data-sort="name">Bot/Page</th>
+            <th class="sortable" data-sort="platform">Platform</th>
+            <th class="sortable text-end" data-sort="calls">Calls</th>
+            <th class="sortable text-end" data-sort="tokens">Tokens</th>
+            <th class="sortable text-end" data-sort="cost">Cost (USD)</th>
+            <th class="sortable text-end" data-sort="avgCost">ต้นทุน/ครั้ง</th>
+            <th class="text-center" style="width: 50px;"></th>
+        </tr>
+    `;
+
+    // Add sort click handlers
+    tableHeader.querySelectorAll('.sortable').forEach(th => {
+        th.addEventListener('click', () => handleSort(th.dataset.sort));
     });
 
-    var blob = new Blob([csv], { type: 'text/csv' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'api-usage-' + new Date().toISOString().slice(0, 10) + '.csv';
-    a.click();
-}
+    // Get filtered bot data
+    let items = [...(State.data.byBot || [])];
 
-// =============== Utilities ===============
-function renderSimpleTable(tableId, items, rowRenderer) {
-    var tbody = document.getElementById(tableId);
-    if (!tbody) return;
-    if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">ไม่มีข้อมูล</td></tr>';
+    // Apply filters
+    items = items.filter(item => {
+        if (State.filters.platform && item.platform !== State.filters.platform) return false;
+        if (State.filters.search) {
+            const name = (item.name || item.botId || '').toLowerCase();
+            if (!name.includes(State.filters.search)) return false;
+        }
+        return true;
+    });
+
+    // Sort
+    items = sortData(items);
+
+    // Update count
+    document.getElementById('resultCount').textContent = formatNumber(items.length);
+
+    // Render rows
+    if (items.length === 0) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="7" class="empty-state">
+                    <i class="fas fa-inbox d-block"></i>
+                    <p class="mb-0">ไม่พบข้อมูล</p>
+                </td>
+            </tr>
+        `;
         return;
     }
-    var html = '';
-    for (var i = 0; i < items.length; i++) {
-        html += rowRenderer(items[i]);
-    }
-    tbody.innerHTML = html;
+
+    const maxCost = Math.max(...items.map(i => i.costUSD || 0));
+
+    let html = '';
+    items.forEach((item, index) => {
+        const avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
+        const avgCostTHB = avgCostUSD * THB_RATE;
+        const costPercent = maxCost > 0 ? ((item.costUSD || 0) / maxCost * 100) : 0;
+
+        html += `
+            <tr class="expandable" data-bot-id="${item.botId || ''}" data-index="${index}">
+                <td>
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="${getPlatformIcon(item.platform)} text-muted"></i>
+                        <span class="fw-medium">${escapeHtml(item.name || item.botId || '-')}</span>
+                    </div>
+                </td>
+                <td>
+                    <span class="platform-badge ${item.platform || ''}">${capitalize(item.platform || '-')}</span>
+                </td>
+                <td class="text-end">${formatNumber(item.calls)}</td>
+                <td class="text-end">${formatNumber(item.tokens)}</td>
+                <td class="text-end">
+                    <div class="cost-display">$${formatCost(item.costUSD)}</div>
+                    <div class="cost-bar"><div class="cost-bar-fill primary" style="width: ${costPercent}%"></div></div>
+                </td>
+                <td class="text-end">
+                    <span class="text-info fw-semibold">$${avgCostUSD.toFixed(4)}</span>
+                    <span class="cost-sub">(฿${avgCostTHB.toFixed(2)})</span>
+                </td>
+                <td class="text-center">
+                    <i class="fas fa-chevron-right expand-icon"></i>
+                </td>
+            </tr>
+        `;
+    });
+
+    tableBody.innerHTML = html;
+
+    // Add click handlers for expandable rows
+    tableBody.querySelectorAll('.expandable').forEach(row => {
+        row.addEventListener('click', () => toggleRowExpand(row));
+    });
 }
 
+function renderDetailedTable(tableHeader, tableBody) {
+    // Headers for detailed view
+    tableHeader.innerHTML = `
+        <tr>
+            <th class="sortable" data-sort="timestamp">เวลา</th>
+            <th class="sortable" data-sort="model">Model</th>
+            <th class="sortable" data-sort="bot">Bot</th>
+            <th class="sortable" data-sort="platform">Platform</th>
+            <th class="sortable text-end" data-sort="input">Input</th>
+            <th class="sortable text-end" data-sort="output">Output</th>
+            <th class="sortable text-end" data-sort="total">Total</th>
+            <th class="sortable text-end" data-sort="cost">Cost</th>
+        </tr>
+    `;
+
+    // Add sort handlers
+    tableHeader.querySelectorAll('.sortable').forEach(th => {
+        th.addEventListener('click', () => handleSort(th.dataset.sort));
+    });
+
+    // Load detailed logs
+    loadDetailedLogs();
+}
+
+async function loadDetailedLogs() {
+    const tableBody = document.getElementById('tableBody');
+    tableBody.innerHTML = `
+        <tr>
+            <td colspan="8" class="text-center py-4">
+                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                <span class="ms-2 text-muted">กำลังโหลดบันทึก...</span>
+            </td>
+        </tr>
+    `;
+
+    try {
+        const params = getDateParams();
+        params.append('limit', 100);
+
+        if (State.filters.platform) params.append('platform', State.filters.platform);
+        if (State.filters.bot) params.append('botId', State.filters.bot);
+
+        const response = await fetch('/api/openai-usage?' + params);
+        const data = await response.json();
+
+        const logs = data.logs || [];
+
+        // Build bot name map
+        const botNameMap = {};
+        if (State.data && State.data.byBot) {
+            State.data.byBot.forEach(b => {
+                if (b.botId) botNameMap[b.botId] = b.name || b.botId;
+            });
+        }
+
+        // Apply additional filters
+        let filtered = logs.filter(log => {
+            if (State.filters.model && log.model !== State.filters.model) return false;
+            if (State.filters.search) {
+                const botName = (botNameMap[log.botId] || log.botId || '').toLowerCase();
+                const model = (log.model || '').toLowerCase();
+                if (!botName.includes(State.filters.search) && !model.includes(State.filters.search)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+
+        document.getElementById('resultCount').textContent = formatNumber(filtered.length);
+
+        if (filtered.length === 0) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="empty-state">
+                        <i class="fas fa-inbox d-block"></i>
+                        <p class="mb-0">ไม่พบบันทึก</p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        let html = '';
+        filtered.forEach(log => {
+            const botName = botNameMap[log.botId] || log.botId || '-';
+            const costTHB = (log.estimatedCostUSD || 0) * THB_RATE;
+
+            html += `
+                <tr>
+                    <td>${formatDateTime(log.timestamp)}</td>
+                    <td><span class="model-badge ${getModelClass(log.model)}">${escapeHtml(log.model || '-')}</span></td>
+                    <td>${escapeHtml(botName)}</td>
+                    <td><span class="platform-badge ${log.platform || ''}">${capitalize(log.platform || '-')}</span></td>
+                    <td class="text-end">${formatNumber(log.promptTokens || 0)}</td>
+                    <td class="text-end">${formatNumber(log.completionTokens || 0)}</td>
+                    <td class="text-end fw-medium">${formatNumber(log.totalTokens || 0)}</td>
+                    <td class="text-end">
+                        <span class="cost-display">$${formatCost(log.estimatedCostUSD || 0)}</span>
+                        <span class="cost-sub">(฿${costTHB.toFixed(2)})</span>
+                    </td>
+                </tr>
+            `;
+        });
+
+        tableBody.innerHTML = html;
+
+    } catch (err) {
+        console.error('Error loading detailed logs:', err);
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-danger py-4">
+                    <i class="fas fa-exclamation-circle me-2"></i>เกิดข้อผิดพลาด
+                </td>
+            </tr>
+        `;
+    }
+}
+
+// ==================== Row Expansion ====================
+async function toggleRowExpand(row) {
+    const botId = row.dataset.botId;
+    const isExpanded = row.classList.contains('expanded');
+
+    // Remove any existing expanded detail rows
+    document.querySelectorAll('.expanded-detail-row').forEach(r => r.remove());
+    document.querySelectorAll('.expanded').forEach(r => r.classList.remove('expanded'));
+
+    if (isExpanded) {
+        return; // Just close
+    }
+
+    row.classList.add('expanded');
+
+    // Create detail row
+    const detailRow = document.createElement('tr');
+    detailRow.className = 'expanded-detail-row';
+    detailRow.innerHTML = `
+        <td colspan="7">
+            <div class="expanded-row-content">
+                <div class="text-center py-3">
+                    <div class="spinner-border spinner-border-sm text-primary"></div>
+                    <span class="ms-2 text-muted">กำลังโหลดรายละเอียด...</span>
+                </div>
+            </div>
+        </td>
+    `;
+
+    row.after(detailRow);
+
+    // Load detail data
+    try {
+        const params = getDateParams();
+        const response = await fetch(`/api/openai-usage/by-bot/${encodeURIComponent(botId)}?${params}`);
+        const data = await response.json();
+
+        const totals = data.totals || {};
+        const avgCostPerCall = totals.totalCalls > 0 ? (totals.totalCost / totals.totalCalls) : 0;
+
+        let html = `
+            <div class="expanded-row-content">
+                <div class="detail-grid">
+                    <div class="detail-card">
+                        <div class="detail-card-title">
+                            <i class="fas fa-microchip text-primary"></i>
+                            โมเดลที่ใช้
+                        </div>
+                        <ul class="detail-list">
+        `;
+
+        (data.byModel || []).forEach(m => {
+            const avgCost = m.count > 0 ? (m.estimatedCost / m.count) : 0;
+            html += `
+                <li>
+                    <span><span class="model-badge ${getModelClass(m.model)}">${escapeHtml(m.model)}</span></span>
+                    <span>
+                        <strong>${formatNumber(m.count)}</strong> calls • 
+                        <span class="text-info">$${avgCost.toFixed(4)}</span>/call
+                    </span>
+                </li>
+            `;
+        });
+
+        html += `
+                        </ul>
+                    </div>
+                    <div class="detail-card">
+                        <div class="detail-card-title">
+                            <i class="fas fa-key text-warning"></i>
+                            API Keys
+                        </div>
+                        <ul class="detail-list">
+        `;
+
+        (data.byKey || []).forEach(k => {
+            html += `
+                <li>
+                    <span><i class="fas fa-key text-muted me-1"></i>${escapeHtml(k.keyName)}</span>
+                    <span><strong>${formatNumber(k.count)}</strong> calls • $${formatCost(k.estimatedCost)}</span>
+                </li>
+            `;
+        });
+
+        html += `
+                        </ul>
+                    </div>
+                    <div class="detail-card">
+                        <div class="detail-card-title">
+                            <i class="fas fa-clock text-success"></i>
+                            บันทึกล่าสุด
+                        </div>
+                        <ul class="detail-list">
+        `;
+
+        (data.recentLogs || []).slice(0, 5).forEach(l => {
+            html += `
+                <li>
+                    <span>${formatDateTime(l.timestamp)}</span>
+                    <span>${formatNumber(l.totalTokens)} tokens • $${formatCost(l.estimatedCost)}</span>
+                </li>
+            `;
+        });
+
+        html += `
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        detailRow.querySelector('td').innerHTML = html;
+
+    } catch (err) {
+        console.error('Error loading bot details:', err);
+        detailRow.querySelector('td').innerHTML = `
+            <div class="expanded-row-content">
+                <div class="text-center text-danger py-3">
+                    <i class="fas fa-exclamation-circle me-2"></i>ไม่สามารถโหลดข้อมูลได้
+                </div>
+            </div>
+        `;
+    }
+}
+
+// ==================== Sorting ====================
+function handleSort(column) {
+    if (State.sortColumn === column) {
+        State.sortDirection = State.sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        State.sortColumn = column;
+        State.sortDirection = 'desc';
+    }
+
+    // Update header classes
+    document.querySelectorAll('.sortable').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.dataset.sort === column) {
+            th.classList.add(State.sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+    });
+
+    renderTable();
+}
+
+function sortData(items) {
+    const col = State.sortColumn;
+    const dir = State.sortDirection === 'asc' ? 1 : -1;
+
+    return items.sort((a, b) => {
+        let valA, valB;
+
+        switch (col) {
+            case 'name':
+                valA = (a.name || a.botId || '').toLowerCase();
+                valB = (b.name || b.botId || '').toLowerCase();
+                return valA.localeCompare(valB) * dir;
+            case 'platform':
+                valA = a.platform || '';
+                valB = b.platform || '';
+                return valA.localeCompare(valB) * dir;
+            case 'calls':
+                return ((a.calls || 0) - (b.calls || 0)) * dir;
+            case 'tokens':
+                return ((a.tokens || 0) - (b.tokens || 0)) * dir;
+            case 'cost':
+                return ((a.costUSD || 0) - (b.costUSD || 0)) * dir;
+            case 'avgCost':
+                valA = a.calls > 0 ? a.costUSD / a.calls : 0;
+                valB = b.calls > 0 ? b.costUSD / b.calls : 0;
+                return (valA - valB) * dir;
+            default:
+                return 0;
+        }
+    });
+}
+
+// ==================== Export ====================
+function exportToCSV() {
+    if (!State.data) return;
+
+    let csv = 'Date,Calls,Tokens,Input Tokens,Output Tokens,Cost USD,Cost THB\n';
+
+    const daily = State.data.daily || [];
+    daily.forEach(d => {
+        const costTHB = (d.cost || 0) * THB_RATE;
+        csv += `${d._id || d.date},${d.calls || 0},${d.tokens || 0},${d.inputTokens || 0},${d.outputTokens || 0},${(d.cost || 0).toFixed(4)},${costTHB.toFixed(2)}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `api-usage-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// ==================== UI Helpers ====================
+function showLoadingState() {
+    document.getElementById('tableBody').innerHTML = `
+        <tr>
+            <td colspan="8" class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">กำลังโหลด...</span>
+                </div>
+                <p class="text-muted mt-2 mb-0">กำลังโหลดข้อมูล...</p>
+            </td>
+        </tr>
+    `;
+}
+
+function showErrorState() {
+    document.getElementById('tableBody').innerHTML = `
+        <tr>
+            <td colspan="8" class="text-center text-danger py-5">
+                <i class="fas fa-exclamation-triangle fa-2x mb-2 d-block"></i>
+                <p class="mb-0">เกิดข้อผิดพลาดในการโหลดข้อมูล</p>
+            </td>
+        </tr>
+    `;
+}
+
+function closeExpandedPanel() {
+    document.getElementById('expandedPanel').style.display = 'none';
+}
+
+// ==================== Utilities ====================
 function formatNumber(num) {
     return new Intl.NumberFormat('th-TH').format(num || 0);
 }
@@ -466,34 +890,44 @@ function formatCost(cost) {
     return (cost || 0).toFixed(4);
 }
 
-function formatAvgCost(cost, calls) {
-    if (!calls || calls === 0) return '-';
-    return '$' + (cost / calls).toFixed(6);
-}
-
-function formatDate(dateStr) {
-    var date = new Date(dateStr);
-    return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+function formatShortDate(dateStr) {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
 }
 
 function formatDateTime(dateStr) {
-    var date = new Date(dateStr);
-    return date.toLocaleString('th-TH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const date = new Date(dateStr);
+    return date.toLocaleString('th-TH', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
 }
 
 function escapeHtml(str) {
     if (!str) return '';
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
-// Helper: Get platform icon class
 function getPlatformIcon(platform) {
     if (platform === 'line') return 'fab fa-line';
     if (platform === 'facebook') return 'fab fa-facebook-messenger';
     return 'fas fa-robot';
 }
 
-// Helper: Capitalize first letter
+function getModelClass(model) {
+    if (!model) return '';
+    if (model.includes('gpt-4')) return 'gpt-4';
+    if (model.includes('gpt-3')) return 'gpt-3';
+    return '';
+}
+
 function capitalize(str) {
     if (!str || str === '-') return str;
     return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
