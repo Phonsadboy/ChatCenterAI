@@ -5497,7 +5497,7 @@ async function processFlushedMessages(
         contentSequence,
         aiModelOverride,
         queueContext.botId,
-        "line"
+        platform
       );
     } else {
       const preview = combinedText.substring(0, 100);
@@ -5510,7 +5510,7 @@ async function processFlushedMessages(
         combinedText,
         aiModelOverride,
         queueContext.botId,
-        "line"
+        platform
       );
     }
 
