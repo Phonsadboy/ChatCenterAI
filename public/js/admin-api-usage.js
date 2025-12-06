@@ -339,22 +339,34 @@ async function loadDetailedLogs() {
         var logs = data.logs || [];
 
         if (!logs.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">ไม่มีบันทึก</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">ไม่มีบันทึก</td></tr>';
             return;
+        }
+
+        // Build bot name map from usageData cache
+        var botNameMap = {};
+        if (usageData && usageData.byBot) {
+            usageData.byBot.forEach(function (b) {
+                if (b.botId) botNameMap[b.botId] = b.name || b.botId;
+            });
         }
 
         var html = '';
         for (var i = 0; i < logs.length; i++) {
             var l = logs[i];
+            var botName = botNameMap[l.botId] || l.botId || '-';
+            var platformIcon = l.platform === 'line' ? 'fab fa-line' : (l.platform === 'facebook' ? 'fab fa-facebook' : 'fas fa-robot');
+            var costTHB = (l.estimatedCostUSD || 0) * 33;
             html += '<tr>' +
                 '<td>' + formatDateTime(l.timestamp) + '</td>' +
                 '<td><span class="model-badge">' + escapeHtml(l.model || '-') + '</span></td>' +
-                '<td>' + escapeHtml(l.botId || '-') + '</td>' +
-                '<td><span class="platform-badge ' + (l.platform || '') + '">' + (l.platform || '-') + '</span></td>' +
+                '<td>' + escapeHtml(botName) + '</td>' +
+                '<td><i class="' + platformIcon + ' me-1"></i>' + (l.platform || '-') + '</td>' +
                 '<td class="text-end">' + formatNumber(l.promptTokens || 0) + '</td>' +
                 '<td class="text-end">' + formatNumber(l.completionTokens || 0) + '</td>' +
                 '<td class="text-end">' + formatNumber(l.totalTokens || 0) + '</td>' +
-                '<td class="text-end">$' + formatCost(l.estimatedCostUSD || 0) + '</td></tr>';
+                '<td class="text-end">$' + formatCost(l.estimatedCostUSD || 0) + '</td>' +
+                '<td class="text-end">฿' + formatCost(costTHB) + '</td></tr>';
         }
         tbody.innerHTML = html;
 

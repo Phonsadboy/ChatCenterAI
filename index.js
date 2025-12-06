@@ -19091,7 +19091,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
         totalCompletionTokens: summary.totalCompletionTokens,
         totalTokens: summary.totalTokens,
         totalCostUSD: summary.totalCost,
-        totalCostTHB: summary.totalCost * 35, // Approximate USD to THB
+        totalCostTHB: summary.totalCost * 33, // Approximate USD to THB (33 THB/USD)
       },
       byModel: byModel.map(m => ({
         model: m._id || "unknown",
