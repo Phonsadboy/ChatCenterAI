@@ -67,33 +67,34 @@ async function loadOverviewTab() {
         var data = await response.json();
         usageData = data;
 
-        // Summary cards
-        document.getElementById('totalCalls').textContent = formatNumber(data.totalCalls || 0);
-        document.getElementById('totalTokens').textContent = formatNumber(data.totalTokens || 0);
-        document.getElementById('totalCostUSD').textContent = '$' + formatCost(data.totalCostUSD || 0);
-        document.getElementById('totalCostTHB').textContent = '฿' + formatCost(data.totalCostTHB || 0);
+        // Summary cards - use data.summary object
+        var summary = data.summary || {};
+        document.getElementById('totalCalls').textContent = formatNumber(summary.totalCalls || 0);
+        document.getElementById('totalTokens').textContent = formatNumber(summary.totalTokens || 0);
+        document.getElementById('totalCostUSD').textContent = '$' + formatCost(summary.totalCostUSD || 0);
+        document.getElementById('totalCostTHB').textContent = '฿' + formatCost(summary.totalCostTHB || 0);
 
-        // Top bots
+        // Top bots - use name, calls, costUSD
         renderSimpleTable('overviewBotTable', (data.byBot || []).slice(0, 5), function (item) {
-            return '<tr><td>' + escapeHtml(item.botName || item.botId || '-') + '</td>' +
-                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+            return '<tr><td>' + escapeHtml(item.name || item.botId || '-') + '</td>' +
+                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
         });
 
-        // Top models
+        // Top models - use calls, costUSD
         renderSimpleTable('overviewModelTable', (data.byModel || []).slice(0, 5), function (item) {
             return '<tr><td><span class="model-badge">' + escapeHtml(item.model) + '</span></td>' +
-                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
         });
 
-        // Daily usage
-        var byDay = (data.byDay || []).sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
-        renderSimpleTable('overviewDayTable', byDay.slice(0, 14), function (item) {
-            return '<tr><td>' + formatDate(item.date) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.totalTokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+        // Daily usage - use data.daily, and _id as date, calls, tokens, cost
+        var daily = (data.daily || []).sort(function (a, b) { return new Date(b._id) - new Date(a._id); });
+        renderSimpleTable('overviewDayTable', daily.slice(0, 14), function (item) {
+            return '<tr><td>' + formatDate(item._id) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.cost) + '</td></tr>';
         });
 
     } catch (err) {
@@ -118,12 +119,12 @@ async function loadBotsTab() {
         var html = '';
         for (var i = 0; i < items.length; i++) {
             var item = items[i];
-            html += '<tr class="cursor-pointer" onclick="showBotDrilldown(\'' + (item.botId || '') + '\', \'' + escapeHtml(item.botName || item.botId || '-') + '\')">' +
-                '<td><i class="fab fa-' + (item.platform || 'robot') + ' me-2"></i>' + escapeHtml(item.botName || item.botId || '-') + '</td>' +
+            html += '<tr class="cursor-pointer" onclick="showBotDrilldown(\'' + (item.botId || '') + '\', \'' + escapeHtml(item.name || item.botId || '-') + '\')">' +
+                '<td><i class="fab fa-' + (item.platform || 'robot') + ' me-2"></i>' + escapeHtml(item.name || item.botId || '-') + '</td>' +
                 '<td><span class="platform-badge ' + (item.platform || '') + '">' + (item.platform || '-') + '</span></td>' +
-                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.totalTokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
         }
         tbody.innerHTML = html;
 
@@ -198,9 +199,9 @@ async function loadModelsTab() {
             var item = items[i];
             html += '<tr class="cursor-pointer" onclick="showModelDrilldown(\'' + escapeHtml(item.model) + '\')">' +
                 '<td><span class="model-badge">' + escapeHtml(item.model) + '</span></td>' +
-                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.totalTokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
         }
         tbody.innerHTML = html;
 
@@ -256,11 +257,11 @@ async function loadKeysTab() {
         for (var i = 0; i < items.length; i++) {
             var item = items[i];
             var keyId = item.keyId || 'env';
-            html += '<tr class="cursor-pointer" onclick="showKeyDrilldown(\'' + keyId + '\', \'' + escapeHtml(item.keyName || 'Env Variable') + '\')">' +
-                '<td><i class="fas fa-key text-muted me-2"></i>' + escapeHtml(item.keyName || 'Environment Variable') + '</td>' +
-                '<td class="text-end">' + formatNumber(item.count) + '</td>' +
-                '<td class="text-end">' + formatNumber(item.totalTokens) + '</td>' +
-                '<td class="text-end">$' + formatCost(item.estimatedCost) + '</td></tr>';
+            html += '<tr class="cursor-pointer" onclick="showKeyDrilldown(\'' + keyId + '\', \'' + escapeHtml(item.name || 'Env Variable') + '\')">' +
+                '<td><i class="fas fa-key text-muted me-2"></i>' + escapeHtml(item.name || 'Environment Variable') + '</td>' +
+                '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
+                '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
+                '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
         }
         tbody.innerHTML = html;
 
@@ -391,8 +392,8 @@ function exportToCSV() {
     if (!usageData) return;
 
     var csv = 'Date,Calls,Tokens,Cost USD\n';
-    (usageData.byDay || []).forEach(function (d) {
-        csv += d.date + ',' + d.count + ',' + d.totalTokens + ',' + (d.estimatedCost || 0).toFixed(4) + '\n';
+    (usageData.daily || []).forEach(function (d) {
+        csv += (d._id || d.date) + ',' + (d.calls || 0) + ',' + (d.tokens || 0) + ',' + (d.cost || 0).toFixed(4) + '\n';
     });
 
     var blob = new Blob([csv], { type: 'text/csv' });
