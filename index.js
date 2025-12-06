@@ -19053,13 +19053,13 @@ app.get("/api/openai-usage/summary", async (req, res) => {
 
     // Enrich bot data with names
     const botIds = byBot.map(b => b._id.botId).filter(Boolean);
-    const lineBotIds = botIds.filter(id => ObjectId.isValid(id));
+    const validBotIds = botIds.filter(id => ObjectId.isValid(id));
     const [lineBots, facebookBots] = await Promise.all([
-      lineBotIds.length > 0
-        ? db.collection("line_bots").find({ _id: { $in: lineBotIds.map(id => new ObjectId(id)) } }).toArray()
+      validBotIds.length > 0
+        ? db.collection("line_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
         : [],
-      lineBotIds.length > 0
-        ? db.collection("facebook_bots").find({ _id: { $in: lineBotIds.map(id => new ObjectId(id)) } }).toArray()
+      validBotIds.length > 0
+        ? db.collection("facebook_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
         : [],
     ]);
 

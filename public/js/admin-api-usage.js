@@ -119,9 +119,10 @@ async function loadBotsTab() {
         var html = '';
         for (var i = 0; i < items.length; i++) {
             var item = items[i];
+            var platformIcon = getPlatformIcon(item.platform);
             html += '<tr class="cursor-pointer" onclick="showBotDrilldown(\'' + (item.botId || '') + '\', \'' + escapeHtml(item.name || item.botId || '-') + '\')">' +
-                '<td><i class="fab fa-' + (item.platform || 'robot') + ' me-2"></i>' + escapeHtml(item.name || item.botId || '-') + '</td>' +
-                '<td><span class="platform-badge ' + (item.platform || '') + '">' + (item.platform || '-') + '</span></td>' +
+                '<td><i class="' + platformIcon + ' me-2"></i>' + escapeHtml(item.name || item.botId || '-') + '</td>' +
+                '<td><span class="platform-badge ' + (item.platform || '') + '">' + capitalize(item.platform || '-') + '</span></td>' +
                 '<td class="text-end">' + formatNumber(item.calls) + '</td>' +
                 '<td class="text-end">' + formatNumber(item.tokens) + '</td>' +
                 '<td class="text-end">$' + formatCost(item.costUSD) + '</td></tr>';
@@ -300,7 +301,8 @@ async function showKeyDrilldown(keyId, keyName) {
         // Bots using this key
         html += '<div class="col-md-6"><div class="card"><div class="card-header"><strong>Bot/Page ที่ใช้ Key นี้</strong></div><div class="card-body p-0"><table class="table table-sm mb-0"><thead><tr><th>Bot</th><th class="text-end">Calls</th><th class="text-end">Cost</th></tr></thead><tbody>';
         (data.byBot || []).forEach(function (b) {
-            html += '<tr><td><i class="fab fa-' + (b.platform || 'robot') + ' me-2"></i>' + escapeHtml(b.botName) + '</td><td class="text-end">' + formatNumber(b.count) + '</td><td class="text-end">$' + formatCost(b.estimatedCost) + '</td></tr>';
+            var platformIcon = getPlatformIcon(b.platform);
+            html += '<tr><td><i class="' + platformIcon + ' me-2"></i>' + escapeHtml(b.botName) + '</td><td class="text-end">' + formatNumber(b.count) + '</td><td class="text-end">$' + formatCost(b.estimatedCost) + '</td></tr>';
         });
         html += '</tbody></table></div></div></div>';
 
@@ -355,13 +357,13 @@ async function loadDetailedLogs() {
         for (var i = 0; i < logs.length; i++) {
             var l = logs[i];
             var botName = botNameMap[l.botId] || l.botId || '-';
-            var platformIcon = l.platform === 'line' ? 'fab fa-line' : (l.platform === 'facebook' ? 'fab fa-facebook' : 'fas fa-robot');
+            var platformIcon = getPlatformIcon(l.platform);
             var costTHB = (l.estimatedCostUSD || 0) * 33;
             html += '<tr>' +
                 '<td>' + formatDateTime(l.timestamp) + '</td>' +
                 '<td><span class="model-badge">' + escapeHtml(l.model || '-') + '</span></td>' +
                 '<td>' + escapeHtml(botName) + '</td>' +
-                '<td><i class="' + platformIcon + ' me-1"></i>' + (l.platform || '-') + '</td>' +
+                '<td><i class="' + platformIcon + ' me-1"></i>' + capitalize(l.platform || '-') + '</td>' +
                 '<td class="text-end">' + formatNumber(l.promptTokens || 0) + '</td>' +
                 '<td class="text-end">' + formatNumber(l.completionTokens || 0) + '</td>' +
                 '<td class="text-end">' + formatNumber(l.totalTokens || 0) + '</td>' +
@@ -397,7 +399,7 @@ async function populateFilterDropdowns() {
     (usageData.byBot || []).forEach(function (b) {
         var opt = document.createElement('option');
         opt.value = b.botId || '';
-        opt.textContent = b.botName || b.botId || '-';
+        opt.textContent = b.name || b.botId || '-';
         botSelect.appendChild(opt);
     });
 
@@ -467,4 +469,17 @@ function formatDateTime(dateStr) {
 function escapeHtml(str) {
     if (!str) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+// Helper: Get platform icon class
+function getPlatformIcon(platform) {
+    if (platform === 'line') return 'fab fa-line';
+    if (platform === 'facebook') return 'fab fa-facebook-messenger';
+    return 'fas fa-robot';
+}
+
+// Helper: Capitalize first letter
+function capitalize(str) {
+    if (!str || str === '-') return str;
+    return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
 }
