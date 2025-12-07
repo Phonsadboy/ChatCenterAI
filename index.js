@@ -16428,10 +16428,17 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     if (filterBotId) followUpQuery.botId = normalizeFollowUpBotId(filterBotId);
 
     const followUpTasks = await db.collection("follow_up_tasks").find(followUpQuery).toArray();
-    const followUpActive = followUpTasks.filter(t => t.status === "active").length;
-    const followUpCompleted = followUpTasks.filter(t => t.status === "completed").length;
-    const followUpCanceled = followUpTasks.filter(t => t.status === "canceled").length;
-    const followUpFailed = followUpTasks.filter(t => t.status === "failed").length;
+    const followUpActive = followUpTasks.filter(
+      (t) => t.canceled !== true && t.completed !== true && t.status !== "failed",
+    ).length;
+    const followUpCompleted = followUpTasks.filter((t) => t.completed === true).length;
+    const followUpCanceled = followUpTasks.filter((t) => t.canceled === true).length;
+    const followUpFailed = followUpTasks.filter((t) => {
+      if (t.status === "failed") return true;
+      if (t.cancelReason === "send_failed") return true;
+      const rounds = Array.isArray(t.rounds) ? t.rounds : [];
+      return rounds.some((r) => r?.status === "failed");
+    }).length;
 
     // Calculate payment methods
     let codCount = 0;
