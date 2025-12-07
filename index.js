@@ -11867,6 +11867,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
         req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
       ),
       openaiApiKeyId: req.body.openaiApiKeyId !== undefined ? (req.body.openaiApiKeyId || null) : existing.openaiApiKeyId,
+      datasetId: req.body.datasetId !== undefined ? (req.body.datasetId || null) : existing.datasetId,
       updatedAt: new Date(),
     };
 
@@ -20096,6 +20097,166 @@ app.get("/admin/orders/export", async (req, res) => {
   }
 });
 
+// ============================ Facebook Conversions API ============================
+
+/**
+ * Send a conversion event to Facebook Conversions API for Business Messaging
+ * @param {Object} options
+ * @param {string} options.datasetId - Facebook Dataset ID (from Events Manager)
+ * @param {string} options.accessToken - Page Access Token with page_events permission
+ * @param {string} options.pageId - Facebook Page ID
+ * @param {string} options.psid - Page-Scoped User ID (senderId)
+ * @param {string} options.eventName - Event name (e.g., 'Purchase', 'InitiateCheckout')
+ * @param {number} options.value - Order value
+ * @param {string} options.currency - Currency code (default: 'THB')
+ * @returns {Promise<Object>} - API response
+ */
+async function sendFacebookConversionEvent(options) {
+  const {
+    datasetId,
+    accessToken,
+    pageId,
+    psid,
+    eventName = "Purchase",
+    value = 0,
+    currency = "THB",
+  } = options;
+
+  if (!datasetId || !accessToken || !pageId || !psid) {
+    console.log("[FB Conversions API] Missing required parameters:", {
+      hasDatasetId: !!datasetId,
+      hasAccessToken: !!accessToken,
+      hasPageId: !!pageId,
+      hasPsid: !!psid,
+    });
+    return { success: false, error: "Missing required parameters" };
+  }
+
+  const eventTime = Math.floor(Date.now() / 1000);
+
+  const payload = {
+    data: [
+      {
+        event_name: eventName,
+        event_time: eventTime,
+        action_source: "business_messaging",
+        messaging_channel: "messenger",
+        user_data: {
+          page_id: pageId,
+          page_scoped_user_id: psid,
+        },
+        custom_data: {
+          currency: currency,
+          value: value,
+        },
+      },
+    ],
+    partner_agent: "ChatCenterAI",
+  };
+
+  try {
+    const url = `https://graph.facebook.com/v18.0/${datasetId}/events`;
+    const response = await axios.post(url, payload, {
+      params: { access_token: accessToken },
+      headers: { "Content-Type": "application/json" },
+    });
+
+    console.log(`[FB Conversions API] ส่ง ${eventName} event สำเร็จ:`, {
+      datasetId,
+      pageId,
+      psid,
+      value,
+      currency,
+      response: response.data,
+    });
+
+    return { success: true, data: response.data };
+  } catch (error) {
+    const errorMessage = error.response?.data?.error?.message || error.message;
+    const errorCode = error.response?.data?.error?.code;
+    console.error(`[FB Conversions API] ส่ง ${eventName} event ไม่สำเร็จ:`, {
+      datasetId,
+      pageId,
+      psid,
+      errorCode,
+      errorMessage,
+    });
+    return { success: false, error: errorMessage, code: errorCode };
+  }
+}
+
+/**
+ * Process Facebook Conversion for an order when status changes to confirmed
+ * @param {Object} order - The order document from MongoDB
+ * @returns {Promise<Object>} - Result of the conversion event
+ */
+async function processFacebookConversion(order) {
+  if (!order || order.platform !== "facebook" || !order.botId) {
+    return { success: false, reason: "Not a Facebook order or missing botId" };
+  }
+
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const fbBot = await db.collection("facebook_bots").findOne({
+      _id: ObjectId.isValid(order.botId) ? new ObjectId(order.botId) : null,
+    });
+
+    if (!fbBot) {
+      return { success: false, reason: "Facebook Bot not found" };
+    }
+
+    if (!fbBot.datasetId) {
+      console.log("[FB Conversions API] Bot ไม่มี datasetId:", fbBot.name);
+      return { success: false, reason: "Dataset ID not configured for this bot" };
+    }
+
+    // Calculate order value
+    let orderValue = 0;
+    const orderData = order.orderData || {};
+
+    if (orderData.totalAmount) {
+      orderValue = parseFloat(orderData.totalAmount) || 0;
+    } else if (Array.isArray(orderData.items)) {
+      orderData.items.forEach((item) => {
+        orderValue += (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1);
+      });
+    }
+
+    // Add shipping cost if exists
+    if (orderData.shippingCost) {
+      orderValue += parseFloat(orderData.shippingCost) || 0;
+    }
+
+    const result = await sendFacebookConversionEvent({
+      datasetId: fbBot.datasetId,
+      accessToken: fbBot.accessToken,
+      pageId: fbBot.pageId,
+      psid: order.userId,
+      eventName: "Purchase",
+      value: orderValue,
+      currency: "THB",
+    });
+
+    // Store conversion result in order
+    await db.collection("orders").updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          fbConversionSent: result.success,
+          fbConversionResult: result,
+          fbConversionSentAt: new Date(),
+        },
+      }
+    );
+
+    return result;
+  } catch (error) {
+    console.error("[FB Conversions API] processFacebookConversion error:", error);
+    return { success: false, error: error.message };
+  }
+}
+
 // ============================ Orders V2 APIs ============================
 
 // API: เปลี่ยนสถานะหลายออเดอร์พร้อมกัน (Bulk)
@@ -20169,6 +20330,14 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("orders");
 
+    // ดึงข้อมูลออเดอร์เดิมก่อนอัปเดต
+    const existingOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+    if (!existingOrder) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    const previousStatus = existingOrder.status;
+
     const result = await coll.updateOne(
       { _id: new ObjectId(orderId) },
       { $set: { status, updatedAt: new Date() } }
@@ -20179,7 +20348,32 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
     }
 
     console.log(`[Orders] อัปเดตสถานะออเดอร์ ${orderId} เป็น ${status}`);
-    res.json({ success: true, orderId, status });
+
+    // ส่ง Facebook Conversions API เมื่อสถานะเปลี่ยนเป็น "confirmed"
+    let fbConversionResult = null;
+    if (status === "confirmed" && previousStatus !== "confirmed") {
+      // ดึงข้อมูลออเดอร์ที่อัปเดตแล้ว
+      const updatedOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+
+      if (updatedOrder && updatedOrder.platform === "facebook" && !updatedOrder.fbConversionSent) {
+        console.log(`[FB Conversions API] กำลังส่ง Purchase event สำหรับออเดอร์ ${orderId}...`);
+        fbConversionResult = await processFacebookConversion(updatedOrder);
+
+        if (fbConversionResult.success) {
+          console.log(`[FB Conversions API] ส่ง Purchase event สำเร็จสำหรับออเดอร์ ${orderId}`);
+        } else {
+          console.log(`[FB Conversions API] ส่ง Purchase event ไม่สำเร็จ:`, fbConversionResult.reason || fbConversionResult.error);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      orderId,
+      status,
+      fbConversionSent: fbConversionResult?.success || false,
+      fbConversionError: fbConversionResult?.error || fbConversionResult?.reason || null,
+    });
   } catch (error) {
     console.error("[Orders] ไม่สามารถอัปเดตสถานะได้:", error);
     res.status(500).json({ success: false, error: error.message });

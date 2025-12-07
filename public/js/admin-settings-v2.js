@@ -451,6 +451,10 @@ window.openEditFacebookBotModal = async function (id) {
         const apiKeySelect = document.getElementById('facebookBotApiKeyId');
         if (apiKeySelect) apiKeySelect.value = bot.openaiApiKeyId || '';
 
+        // Set Dataset ID for Conversions API
+        const datasetIdInput = document.getElementById('facebookDatasetId');
+        if (datasetIdInput) datasetIdInput.value = bot.datasetId || '';
+
         const title = document.getElementById('addFacebookBotModalLabel');
         if (title) title.innerHTML = '<i class="fab fa-facebook me-2"></i>แก้ไข Facebook Bot';
 
@@ -480,7 +484,8 @@ async function saveFacebookBot() {
         aiModel: document.getElementById('facebookBotAiModel').value,
         isDefault: document.getElementById('facebookBotDefault').checked,
         aiConfig: readAiConfigFromUI('facebook'),
-        openaiApiKeyId: document.getElementById('facebookBotApiKeyId')?.value || ''
+        openaiApiKeyId: document.getElementById('facebookBotApiKeyId')?.value || '',
+        datasetId: document.getElementById('facebookDatasetId')?.value.trim() || ''
     };
 
     const url = botId ? `/api/facebook-bots/${botId}` : '/api/facebook-bots';
