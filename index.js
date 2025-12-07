@@ -3650,6 +3650,48 @@ function buildOrderQuery(params = {}) {
   return { query, dateRange: { start: startMoment, end: endMoment } };
 }
 
+/**
+ * ดึงรายการชื่อสินค้าที่เคยสกัดไว้ในระบบ (unique, เรียงตามความถี่)
+ * ใช้สำหรับ AI Prompt Enhancement - ให้ AI match ชื่อสินค้ากับที่มีอยู่แล้ว
+ */
+async function getExistingProductNames(options = {}) {
+  const { platform = null, botId = null, limit = 50 } = options || {};
+
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    // Build query based on platform/botId
+    const matchQuery = {};
+    if (platform) matchQuery.platform = platform;
+    if (botId) matchQuery.botId = botId;
+
+    // Aggregate to get unique product names with count
+    const pipeline = [
+      { $match: matchQuery },
+      { $unwind: { path: "$orderData.items", preserveNullAndEmptyArrays: false } },
+      {
+        $group: {
+          _id: "$orderData.items.product",
+          count: { $sum: 1 },
+          lastUsed: { $max: "$extractedAt" }
+        }
+      },
+      { $match: { _id: { $ne: null, $ne: "", $type: "string" } } },
+      { $sort: { count: -1, lastUsed: -1 } },
+      { $limit: limit }
+    ];
+
+    const results = await db.collection("orders").aggregate(pipeline).toArray();
+
+    // Return array of product names
+    return results.map(r => r._id).filter(Boolean);
+  } catch (error) {
+    console.warn("[Order] ไม่สามารถดึงรายการสินค้าที่มีอยู่:", error.message);
+    return [];
+  }
+}
+
 async function analyzeOrderFromChat(userId, messages, options = {}) {
   if (!OPENAI_API_KEY) {
     console.warn("[Order] ไม่มี OPENAI_API_KEY ข้ามการวิเคราะห์ออเดอร์");
@@ -3697,6 +3739,9 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
   }
   const systemPrompt = `${promptBody}\n\n${ORDER_PROMPT_JSON_SUFFIX}`;
 
+  // ดึงรายการสินค้าที่เคยสกัดไว้ในระบบ เพื่อให้ AI ใช้ชื่อเดียวกัน
+  const existingProducts = await getExistingProductNames({ platform, botId, limit: 30 });
+
   // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่
   const formattedConversation = messages
     .map((entry, index) => {
@@ -3717,7 +3762,18 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
     ? `ข้อมูลจากออเดอร์ก่อนหน้า:\n${previousContextLines.join("\n")}\nหากลูกค้าไม่ได้ระบุชื่อหรือที่อยู่ใหม่ให้ใช้ข้อมูลก่อนหน้าเป็นค่าเริ่มต้น\n\n`
     : "";
 
-  const userPrompt = `${previousContextText}บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์และสกัดข้อมูลออเดอร์:`;
+  // สร้างส่วน Product Matching Hint สำหรับ AI
+  let productMatchingHint = "";
+  if (existingProducts.length > 0) {
+    productMatchingHint = `📦 รายการสินค้าที่มีในระบบ (ให้ใช้ชื่อเหล่านี้ถ้าสินค้าตรงกัน):
+${existingProducts.map((p, i) => `${i + 1}. "${p}"`).join("\n")}
+
+⚠️ สำคัญ: หากสินค้าที่ลูกค้าสั่งตรงกับรายการด้านบน ให้ใช้ชื่อจากรายการด้านบนแทน
+   ตัวอย่าง: ลูกค้าพิมพ์ "เสื้อทีเชิร์ตสีดำ" แต่ในรายการมี "เสื้อยืด - ดำ" → ให้ใช้ "เสื้อยืด - ดำ"
+   หากเป็นสินค้าใหม่ที่ไม่มีในรายการ ให้ตั้งชื่อสินค้าใหม่ตามที่เหมาะสม\n\n`;
+  }
+
+  const userPrompt = `${productMatchingHint}${previousContextText}บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์และสกัดข้อมูลออเดอร์:`;
 
   try {
     const response = await openai.chat.completions.create({
