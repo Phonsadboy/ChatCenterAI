@@ -107,21 +107,29 @@ async function loadDashboardData() {
 function getDateParams() {
     const range = document.getElementById('dateRangeSelect').value;
     const now = new Date();
+    const endDate = new Date(now);
+    endDate.setHours(23, 59, 59, 999);
     let startDate = null;
 
     if (range === 'today') {
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        startDate = new Date(now);
     } else if (range === '7days') {
         startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 7);
+        startDate.setDate(startDate.getDate() - 6); // รวมวันนี้ + ย้อน 6 วัน = 7 วัน
     } else if (range === '30days') {
         startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 30);
+        startDate.setDate(startDate.getDate() - 29);
+    } else if (range === 'all') {
+        startDate = new Date(0);
+    }
+
+    if (startDate) {
+        startDate.setHours(0, 0, 0, 0);
     }
 
     const params = new URLSearchParams();
     if (startDate) params.append('startDate', startDate.toISOString());
-    params.append('endDate', now.toISOString());
+    params.append('endDate', endDate.toISOString());
     return params;
 }
 

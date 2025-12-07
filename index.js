@@ -19006,6 +19006,40 @@ app.post("/api/openai-keys/:id/test", async (req, res) => {
 });
 
 // GET: Usage statistics summary
+function parseApiUsageDateRange(startDateStr, endDateStr) {
+  const now = getBangkokMoment();
+  let startMoment = startDateStr
+    ? moment(startDateStr).tz(BANGKOK_TZ)
+    : null;
+  let endMoment = endDateStr ? moment(endDateStr).tz(BANGKOK_TZ) : null;
+
+  if (!startMoment || !startMoment.isValid()) {
+    startMoment = null;
+  }
+  if (!endMoment || !endMoment.isValid()) {
+    endMoment = null;
+  }
+
+  if (!startMoment && endMoment) {
+    startMoment = endMoment.clone();
+  } else if (!endMoment && startMoment) {
+    endMoment = startMoment.clone();
+  }
+
+  if (!startMoment && !endMoment) {
+    startMoment = now.clone().subtract(7, "days");
+    endMoment = now.clone();
+  }
+
+  startMoment = startMoment.startOf("day");
+  endMoment = endMoment.endOf("day");
+  if (endMoment.isBefore(startMoment)) {
+    endMoment = startMoment.clone().endOf("day");
+  }
+
+  return { startMoment, endMoment };
+}
+
 app.get("/api/openai-usage/summary", async (req, res) => {
   try {
     const { startDate, endDate, keyId, botId, platform } = req.query;
@@ -19013,13 +19047,14 @@ app.get("/api/openai-usage/summary", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const match = {};
+    const { startMoment, endMoment } = parseApiUsageDateRange(
+      startDate,
+      endDate,
+    );
+    const match = {
+      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
+    };
 
-    if (startDate || endDate) {
-      match.timestamp = {};
-      if (startDate) match.timestamp.$gte = new Date(startDate);
-      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
-    }
     if (keyId && ObjectId.isValid(keyId)) {
       match.apiKeyId = new ObjectId(keyId);
     }
@@ -19059,7 +19094,12 @@ app.get("/api/openai-usage/summary", async (req, res) => {
 
       // By bot
       db.collection("openai_usage_logs").aggregate([
-        { $match: { ...match, botId: { $ne: null } } },
+        {
+          $match: {
+            ...match,
+            ...(match.botId ? {} : { botId: { $ne: null } }),
+          },
+        },
         {
           $group: {
             _id: { botId: "$botId", platform: "$platform" },
@@ -19074,7 +19114,12 @@ app.get("/api/openai-usage/summary", async (req, res) => {
 
       // By key
       db.collection("openai_usage_logs").aggregate([
-        { $match: { ...match, apiKeyId: { $ne: null } } },
+        {
+          $match: {
+            ...match,
+            ...(match.apiKeyId ? {} : { apiKeyId: { $ne: null } }),
+          },
+        },
         {
           $group: {
             _id: "$apiKeyId",
@@ -19088,15 +19133,16 @@ app.get("/api/openai-usage/summary", async (req, res) => {
 
       // Daily usage (last 30 days)
       db.collection("openai_usage_logs").aggregate([
-        {
-          $match: {
-            ...match,
-            timestamp: { $gte: moment().subtract(30, "days").toDate() }
-          }
-        },
+        { $match: match },
         {
           $group: {
-            _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+            _id: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: "$timestamp",
+                timezone: BANGKOK_TZ,
+              },
+            },
             calls: { $sum: 1 },
             tokens: { $sum: "$totalTokens" },
             cost: { $sum: "$estimatedCost" },
@@ -19185,13 +19231,13 @@ app.get("/api/openai-usage", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const match = {};
-
-    if (startDate || endDate) {
-      match.timestamp = {};
-      if (startDate) match.timestamp.$gte = new Date(startDate);
-      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
-    }
+    const { startMoment, endMoment } = parseApiUsageDateRange(
+      startDate,
+      endDate,
+    );
+    const match = {
+      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
+    };
     if (keyId && ObjectId.isValid(keyId)) {
       match.apiKeyId = new ObjectId(keyId);
     }
@@ -19247,12 +19293,14 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const match = { botId };
-    if (startDate || endDate) {
-      match.timestamp = {};
-      if (startDate) match.timestamp.$gte = new Date(startDate);
-      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
-    }
+    const { startMoment, endMoment } = parseApiUsageDateRange(
+      startDate,
+      endDate,
+    );
+    const match = {
+      botId,
+      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
+    };
 
     // Get usage breakdown by model
     const byModel = await db.collection("openai_usage_logs").aggregate([
@@ -19289,7 +19337,13 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
       { $match: match },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+          _id: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$timestamp",
+              timezone: BANGKOK_TZ,
+            },
+          },
           count: { $sum: 1 },
           totalTokens: { $sum: "$totalTokens" },
           estimatedCost: { $sum: "$estimatedCost" }
@@ -19357,12 +19411,14 @@ app.get("/api/openai-usage/by-model/:model", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const match = { model };
-    if (startDate || endDate) {
-      match.timestamp = {};
-      if (startDate) match.timestamp.$gte = new Date(startDate);
-      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
-    }
+    const { startMoment, endMoment } = parseApiUsageDateRange(
+      startDate,
+      endDate,
+    );
+    const match = {
+      model,
+      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
+    };
 
     // Get usage breakdown by bot
     const byBot = await db.collection("openai_usage_logs").aggregate([
@@ -19383,7 +19439,13 @@ app.get("/api/openai-usage/by-model/:model", async (req, res) => {
       { $match: match },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+          _id: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$timestamp",
+              timezone: BANGKOK_TZ,
+            },
+          },
           count: { $sum: 1 },
           totalTokens: { $sum: "$totalTokens" },
           estimatedCost: { $sum: "$estimatedCost" }
@@ -19441,17 +19503,17 @@ app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const match = {};
-    if (keyId === 'env') {
+    const { startMoment, endMoment } = parseApiUsageDateRange(
+      startDate,
+      endDate,
+    );
+    const match = {
+      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
+    };
+    if (keyId === "env") {
       match.apiKeyId = null;
     } else if (ObjectId.isValid(keyId)) {
       match.apiKeyId = new ObjectId(keyId);
-    }
-
-    if (startDate || endDate) {
-      match.timestamp = {};
-      if (startDate) match.timestamp.$gte = new Date(startDate);
-      if (endDate) match.timestamp.$lte = moment(endDate).endOf("day").toDate();
     }
 
     // Get usage breakdown by bot
@@ -19487,7 +19549,13 @@ app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
       { $match: match },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+          _id: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$timestamp",
+              timezone: BANGKOK_TZ,
+            },
+          },
           count: { $sum: 1 },
           totalTokens: { $sum: "$totalTokens" },
           estimatedCost: { $sum: "$estimatedCost" }
