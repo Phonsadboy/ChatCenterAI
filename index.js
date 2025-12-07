@@ -16234,6 +16234,32 @@ app.get("/admin/orders", async (req, res) => {
 
 // ============================ Customer Statistics Routes ============================
 
+function parseCustomerStatsDateRange(startDateStr, endDateStr) {
+  const today = getBangkokMoment();
+  let startMoment = startDateStr
+    ? moment.tz(startDateStr, "YYYY-MM-DD", BANGKOK_TZ)
+    : today.clone();
+  let endMoment = endDateStr
+    ? moment.tz(endDateStr, "YYYY-MM-DD", BANGKOK_TZ)
+    : today.clone();
+
+  if (!startMoment.isValid()) {
+    startMoment = today.clone();
+  }
+  if (!endMoment.isValid()) {
+    endMoment = startMoment.clone();
+  }
+
+  startMoment = startMoment.startOf("day");
+  endMoment = endMoment.endOf("day");
+
+  if (endMoment.isBefore(startMoment)) {
+    endMoment = startMoment.clone().endOf("day");
+  }
+
+  return { startMoment, endMoment };
+}
+
 app.get("/admin/customer-stats", async (req, res) => {
   try {
     res.render("admin-customer-stats");
@@ -16249,11 +16275,15 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    // Parse date filters
-    let dateStart = startDate ? new Date(startDate + "T00:00:00+07:00") : new Date();
-    let dateEnd = endDate ? new Date(endDate + "T23:59:59+07:00") : new Date();
-    dateStart.setHours(0, 0, 0, 0);
-    dateEnd.setHours(23, 59, 59, 999);
+    // Parse date filters (normalize to Bangkok time)
+    const { startMoment, endMoment } = parseCustomerStatsDateRange(
+      startDate,
+      endDate,
+    );
+    const dateStart = startMoment.toDate();
+    const dateEnd = endMoment.toDate();
+    const startDateKey = startMoment.format("YYYY-MM-DD");
+    const endDateKey = endMoment.format("YYYY-MM-DD");
 
     // Parse pageKey to get platform and botId
     let filterPlatform = null;
@@ -16289,16 +16319,20 @@ app.get("/admin/customer-stats/data", async (req, res) => {
       .toArray();
 
     // Calculate overview stats
-    const uniqueUsers = new Set(chatMessages.map(m => m.senderId));
+    const uniqueUsers = new Set(
+      chatMessages.map((m) => m.senderId || m.userId).filter(Boolean),
+    );
     const totalActiveUsers = uniqueUsers.size;
     const totalMessages = chatMessages.length;
 
     // Find new users (first message in the period)
     const userFirstMessages = {};
     chatMessages.forEach(m => {
-      const ts = new Date(m.timestamp).getTime();
-      if (!userFirstMessages[m.senderId] || ts < userFirstMessages[m.senderId]) {
-        userFirstMessages[m.senderId] = ts;
+      const senderId = m.senderId || m.userId;
+      if (!senderId) return;
+      const ts = getBangkokMoment(m.timestamp).valueOf();
+      if (!userFirstMessages[senderId] || ts < userFirstMessages[senderId]) {
+        userFirstMessages[senderId] = ts;
       }
     });
 
@@ -16306,14 +16340,18 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     const allUserIds = [...uniqueUsers];
     let newUsers = 0;
     if (allUserIds.length > 0) {
+      const existingMatch = {
+        senderId: { $in: allUserIds },
+        timestamp: { $lt: dateStart },
+        role: "user",
+      };
+      if (filterPlatform) existingMatch.platform = filterPlatform;
+      if (filterBotId) existingMatch.botId = filterBotId;
+
       const existingUsers = await db.collection("chat_history")
         .aggregate([
           {
-            $match: {
-              senderId: { $in: allUserIds },
-              timestamp: { $lt: dateStart },
-              role: "user"
-            }
+            $match: existingMatch
           },
           { $group: { _id: "$senderId" } }
         ])
@@ -16323,7 +16361,9 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     }
 
     // Calculate sales stats
-    const uniqueBuyers = new Set(orders.map(o => o.userId)).size;
+    const uniqueBuyers = new Set(
+      orders.map((o) => o.userId).filter(Boolean),
+    ).size;
     const totalOrders = orders.length;
     const pendingOrders = orders.filter(o => o.status === "pending").length;
     const confirmedOrders = orders.filter(o => o.status === "confirmed").length;
@@ -16350,19 +16390,27 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     const avgCustomerValue = uniqueBuyers > 0 ? Math.round(totalSales / uniqueBuyers) : 0;
 
     // Calculate hourly message distribution (3 modes: all, buyers, non-buyers)
-    const buyerUserIds = new Set(orders.map(o => o.userId).filter(Boolean));
+    const buyerUserIds = new Set(
+      orders.map((o) => o.userId).filter(Boolean),
+    );
 
-    const hourlyAll = Array(24).fill().map(() => new Set());
-    const hourlyBuyers = Array(24).fill().map(() => new Set());
-    const hourlyNonBuyers = Array(24).fill().map(() => new Set());
+    const hourlyAll = Array.from({ length: 24 }, () => new Set());
+    const hourlyBuyers = Array.from({ length: 24 }, () => new Set());
+    const hourlyNonBuyers = Array.from({ length: 24 }, () => new Set());
 
-    chatMessages.forEach(m => {
-      const hour = new Date(m.timestamp).getHours();
-      hourlyAll[hour].add(m.senderId);
-      if (buyerUserIds.has(m.senderId)) {
-        hourlyBuyers[hour].add(m.senderId);
+    chatMessages.forEach((m) => {
+      const senderId = m.senderId || m.userId;
+      if (!senderId) return;
+      const ts = getBangkokMoment(m.timestamp);
+      const hour = ts.hour();
+      const dateKey = ts.format("YYYY-MM-DD");
+      const userDayKey = `${dateKey}:${senderId}`;
+
+      hourlyAll[hour].add(userDayKey);
+      if (buyerUserIds.has(senderId)) {
+        hourlyBuyers[hour].add(userDayKey);
       } else {
-        hourlyNonBuyers[hour].add(m.senderId);
+        hourlyNonBuyers[hour].add(userDayKey);
       }
     });
 
@@ -16374,7 +16422,7 @@ app.get("/admin/customer-stats/data", async (req, res) => {
 
     // Get follow-up stats
     const followUpQuery = {
-      dateKey: getDateKey()
+      dateKey: { $gte: startDateKey, $lte: endDateKey }
     };
     if (filterPlatform) followUpQuery.platform = filterPlatform;
     if (filterBotId) followUpQuery.botId = normalizeFollowUpBotId(filterBotId);
