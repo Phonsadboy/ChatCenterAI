@@ -11,6 +11,41 @@ function generateInstructionId() {
     return `inst_${crypto.randomBytes(6).toString('hex')}`;
 }
 
+/**
+ * Convert array of objects (from Excel import) to { columns, rows } format
+ * that edit-data-item-v3.ejs expects
+ * @param {Array} data - Array of objects like [{ "ชื่อ": "A", "ราคา": 100 }, ...]
+ * @returns {Object} - { columns: ["ชื่อ", "ราคา"], rows: [["A", 100], ...] }
+ */
+function convertToColumnsRowsFormat(data) {
+    if (!Array.isArray(data) || data.length === 0) {
+        return { columns: ["คอลัมน์ 1"], rows: [[""]] };
+    }
+
+    // Get all unique column names from all objects
+    const columnSet = new Set();
+    data.forEach(row => {
+        if (typeof row === 'object' && row !== null) {
+            Object.keys(row).forEach(key => columnSet.add(key));
+        }
+    });
+    const columns = Array.from(columnSet);
+
+    // Convert each object row to array row
+    const rows = data.map(row => {
+        if (typeof row !== 'object' || row === null) {
+            return columns.map(() => '');
+        }
+        return columns.map(col => {
+            const val = row[col];
+            return val !== undefined && val !== null ? val : '';
+        });
+    });
+
+    return { columns, rows };
+}
+
+
 class InstructionDataService {
     constructor(db) {
         this.db = db;
@@ -33,15 +68,40 @@ class InstructionDataService {
 
         const candidate = tryParse(item.data ?? item.content);
 
+        // Case 1: Already an array of objects (from import)
+        // e.g., [{ "ชื่อ": "A", "ราคา": 100 }, ...]
         if (Array.isArray(candidate)) {
+            // If first element is an object (not array), it's already in the right format
+            if (candidate.length > 0 && typeof candidate[0] === 'object' && !Array.isArray(candidate[0])) {
+                return candidate;
+            }
+            // Otherwise it's an array of arrays (raw data without headers)
             return candidate;
         }
 
+        // Case 2: { columns: [...], rows: [[...], [...]] } format from edit page
         if (candidate && typeof candidate === "object") {
+            // Handle { columns, rows } format - convert to array of objects
+            if (Array.isArray(candidate.columns) && Array.isArray(candidate.rows)) {
+                const columns = candidate.columns;
+                const rows = candidate.rows;
+
+                // Convert each row array to an object with column names as keys
+                return rows.map(row => {
+                    const obj = {};
+                    columns.forEach((colName, index) => {
+                        const key = colName || `Column ${index + 1}`;
+                        obj[key] = row[index] !== undefined && row[index] !== null ? row[index] : '';
+                    });
+                    return obj;
+                });
+            }
+
             // Handle common shapes like { rows: [...] }
             if (Array.isArray(candidate.rows)) {
                 return candidate.rows;
             }
+
             return [candidate];
         }
 
@@ -62,7 +122,7 @@ class InstructionDataService {
             const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
             if (!rows || rows.length === 0) {
-                 previews.push({
+                previews.push({
                     sheetName: sheetName,
                     totalRows: 0,
                     headers: [],
@@ -124,6 +184,9 @@ class InstructionDataService {
                 // Convert to JSON using headers
                 const rawData = XLSX.utils.sheet_to_json(sheet);
 
+                // Convert to { columns, rows } format for edit-data-item-v3 compatibility
+                const formattedData = convertToColumnsRowsFormat(rawData);
+
                 if (action === 'create') {
                     const now = new Date();
                     const dataItem = {
@@ -132,7 +195,7 @@ class InstructionDataService {
                         type: "table",
                         order: 0,
                         content: "",
-                        data: rawData, // The sheet data
+                        data: formattedData, // { columns, rows } format
                         createdAt: now,
                         updatedAt: now
                     };
@@ -147,7 +210,7 @@ class InstructionDataService {
                         updatedAt: now,
                         createdAt: now
                     };
-                    
+
                     await this.collection.insertOne(newInstruction);
                     results.push({ sheetName, success: true, action: 'created', targetName: newInstruction.name });
 
@@ -165,16 +228,16 @@ class InstructionDataService {
 
                     let newItems = instruction.dataItems ? [...instruction.dataItems] : [];
                     let targetItem = newItems.find(item => item.type === 'table');
-                    
+
                     if (!targetItem) {
-                         // Create new table item if none exists
-                         targetItem = {
+                        // Create new table item if none exists
+                        targetItem = {
                             itemId: generateDataItemId(),
                             title: sheetName,
                             type: "table",
                             order: newItems.length,
                             content: "",
-                            data: rawData,
+                            data: formattedData, // { columns, rows } format
                             createdAt: new Date(),
                             updatedAt: new Date()
                         };
@@ -182,10 +245,32 @@ class InstructionDataService {
                     } else {
                         // Update existing table item
                         if (mode === 'replace') {
-                            targetItem.data = rawData;
+                            targetItem.data = formattedData;
                         } else { // append
-                            const existingData = Array.isArray(targetItem.data) ? targetItem.data : [];
-                            targetItem.data = [...existingData, ...rawData];
+                            // Append rows to existing { columns, rows } format
+                            const existingData = targetItem.data || { columns: [], rows: [] };
+
+                            // If existing data is { columns, rows } format
+                            if (existingData.columns && existingData.rows) {
+                                // Merge columns if new data has new columns
+                                const newColumns = formattedData.columns.filter(c => !existingData.columns.includes(c));
+                                existingData.columns = [...existingData.columns, ...newColumns];
+
+                                // Map new rows to match expanded column order
+                                const mappedNewRows = formattedData.rows.map(row => {
+                                    return existingData.columns.map((col, idx) => {
+                                        const origIdx = formattedData.columns.indexOf(col);
+                                        return origIdx !== -1 ? row[origIdx] : '';
+                                    });
+                                });
+
+                                // Append new rows
+                                existingData.rows = [...existingData.rows, ...mappedNewRows];
+                                targetItem.data = existingData;
+                            } else {
+                                // If existing data is not in { columns, rows } format, replace
+                                targetItem.data = formattedData;
+                            }
                         }
                         targetItem.updatedAt = new Date();
                         // Replace in array
@@ -204,26 +289,26 @@ class InstructionDataService {
                 results.push({ sheetName: map.sheetName, success: false, error: err.message });
             }
         }
-        
+
         return results;
     }
-    
+
     /**
      * Export selected instructions to a multi-sheet Excel file
      * @param {Array} instructionIds - Array of instruction IDs (strings)
      * @returns {Buffer} Excel file buffer
      */
-     async exportInstructions(instructionIds) {
+    async exportInstructions(instructionIds) {
         const workbook = XLSX.utils.book_new();
-        
+
         const ids = instructionIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id));
-        
-        if(ids.length === 0) {
-             throw new Error("No valid instruction IDs provided.");
+
+        if (ids.length === 0) {
+            throw new Error("No valid instruction IDs provided.");
         }
 
         const instructions = await this.collection.find({ _id: { $in: ids } }).toArray();
-        
+
         if (instructions.length === 0) {
             throw new Error("No instructions found to export.");
         }
@@ -231,11 +316,11 @@ class InstructionDataService {
         for (const inst of instructions) {
             // Sanitize sheet name
             let sheetName = (inst.name || "Untitled").replace(/[\\/?*[\]]/g, "_").substring(0, 31);
-            
+
             // Ensure unique sheet name
             let counter = 1;
             let originalSheetName = sheetName;
-            while(workbook.SheetNames.includes(sheetName)) {
+            while (workbook.SheetNames.includes(sheetName)) {
                 sheetName = `${originalSheetName.substring(0, 28)}_${counter}`;
                 counter++;
             }
@@ -266,9 +351,9 @@ class InstructionDataService {
 
             XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
         }
-        
+
         return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
-     }
+    }
 }
 
 module.exports = InstructionDataService;
