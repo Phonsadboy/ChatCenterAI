@@ -40,16 +40,37 @@
     const { icon, className } = typeMap[type] || typeMap.info;
     const toast = document.createElement('div');
     toast.className = `app-toast ${className}`;
-    toast.innerHTML = `
-      <div class="app-toast__icon"><i class="fas ${icon}"></i></div>
-      <div class="app-toast__body"><div class="app-toast__title">${message}</div></div>
-      <button class="app-toast__close">&times;</button>
-    `;
-    toast.querySelector('.app-toast__close').addEventListener('click', () => {
-      toast.remove();
-    });
+
+    const iconEl = document.createElement('div');
+    iconEl.className = 'app-toast__icon';
+    iconEl.innerHTML = `<i class="fas ${icon}"></i>`;
+
+    const body = document.createElement('div');
+    body.className = 'app-toast__body';
+
+    const title = document.createElement('div');
+    title.className = 'app-toast__title';
+    title.textContent = message || '';
+
+    body.appendChild(title);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'app-toast__close';
+    closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
+    closeBtn.innerHTML = '&times;';
+
+    const removeToast = () => {
+      toast.classList.add('hide');
+      setTimeout(() => toast.remove(), 200);
+    };
+
+    closeBtn.addEventListener('click', removeToast);
+
+    toast.appendChild(iconEl);
+    toast.appendChild(body);
+    toast.appendChild(closeBtn);
     container.appendChild(toast);
-    setTimeout(() => toast.remove(), 3500);
+    setTimeout(removeToast, 3500);
   };
 
   // --- Audience Preview ---
@@ -121,45 +142,68 @@
     messageItems.forEach((item, index) => {
       const div = document.createElement('div');
       div.className = 'card mb-2 message-item';
-      div.innerHTML = `
-            <div class="card-body p-2 d-flex align-items-center gap-2">
-                <div class="badge bg-secondary">${index + 1}</div>
-                <div class="flex-grow-1">
-                    ${item.type === 'text'
-          ? `<textarea class="form-control" rows="2" placeholder="พิมพ์ข้อความ...">${item.content || ''}</textarea>`
-          : `<div class="input-group">
-                             <input type="file" class="form-control" accept="image/*">
-                             ${item.file ? `<span class="input-group-text bg-success text-white"><i class="fas fa-check"></i></span>` : ''}
-                           </div>`
-        }
-                </div>
-                <button type="button" class="btn btn-outline-danger btn-sm remove-msg"><i class="fas fa-trash"></i></button>
-            </div>
-        `;
 
-      // Bind events
-      const removeBtn = div.querySelector('.remove-msg');
+      const body = document.createElement('div');
+      body.className = 'card-body p-2 d-flex align-items-center gap-2';
+
+      const indexBadge = document.createElement('div');
+      indexBadge.className = 'badge bg-secondary';
+      indexBadge.textContent = String(index + 1);
+
+      const contentWrap = document.createElement('div');
+      contentWrap.className = 'flex-grow-1';
+
+      if (item.type === 'text') {
+        const textarea = document.createElement('textarea');
+        textarea.className = 'form-control';
+        textarea.rows = 2;
+        textarea.placeholder = 'พิมพ์ข้อความ...';
+        textarea.value = item.content || '';
+        textarea.addEventListener('input', (e) => {
+          item.content = e.target.value;
+        });
+        contentWrap.appendChild(textarea);
+      } else {
+        const group = document.createElement('div');
+        group.className = 'input-group';
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.className = 'form-control';
+        fileInput.accept = 'image/*';
+        fileInput.addEventListener('change', (e) => {
+          if (e.target.files && e.target.files[0]) {
+            item.file = e.target.files[0];
+            renderMessageList();
+          }
+        });
+
+        group.appendChild(fileInput);
+
+        if (item.file) {
+          const ok = document.createElement('span');
+          ok.className = 'input-group-text bg-success text-white';
+          ok.innerHTML = '<i class="fas fa-check"></i>';
+          group.appendChild(ok);
+        }
+
+        contentWrap.appendChild(group);
+      }
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn btn-outline-danger btn-sm remove-msg';
+      removeBtn.setAttribute('aria-label', 'ลบข้อความ');
+      removeBtn.innerHTML = '<i class="fas fa-trash"></i>';
       removeBtn.addEventListener('click', () => {
         messageItems.splice(index, 1);
         renderMessageList();
       });
 
-      if (item.type === 'text') {
-        const textarea = div.querySelector('textarea');
-        textarea.addEventListener('input', (e) => {
-          item.content = e.target.value;
-        });
-      } else {
-        const fileInput = div.querySelector('input[type="file"]');
-        fileInput.addEventListener('change', (e) => {
-          if (e.target.files[0]) {
-            item.file = e.target.files[0];
-            renderMessageList(); // re-render to show checkmark
-          }
-        });
-        // Restore file object if existing (not possible with file input value, but we keep reference in item.file)
-        // Visual feedback is handled by checkmark above
-      }
+      body.appendChild(indexBadge);
+      body.appendChild(contentWrap);
+      body.appendChild(removeBtn);
+      div.appendChild(body);
 
       messageList.appendChild(div);
     });
@@ -267,12 +311,12 @@
         const res = await fetch(`/admin/broadcast/status/${jobId}`);
         const data = await res.json();
 
-        if (!data.success) {
-          clearInterval(pollInterval);
-          alert('ไม่สามารถตรวจสอบสถานะได้: ' + data.error);
-          resetForm();
-          return;
-        }
+	        if (!data.success) {
+	          clearInterval(pollInterval);
+	          showToast(`ไม่สามารถตรวจสอบสถานะได้: ${data.error || 'unknown'}`, 'error');
+	          resetForm();
+	          return;
+	        }
 
         const { stats } = data;
         updateProgressUI(stats);

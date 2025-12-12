@@ -510,6 +510,42 @@
             font-size: var(--font-size-base) !important;
         }
 
+        /* ===== Cell Editor - ป้องกันหลุดจอและ scroll ได้ ===== */
+        .jexcel_editor,
+        .jexcel .editor {
+            max-width: calc(100vw - 40px) !important;
+            max-height: calc(100vh - 100px) !important;
+            min-width: 200px !important;
+            min-height: 80px !important;
+            overflow: auto !important;
+        }
+
+        .jexcel_editor textarea,
+        .jexcel .editor textarea {
+            max-width: 100% !important;
+            max-height: calc(100vh - 120px) !important;
+            min-height: 80px !important;
+            resize: vertical !important;
+            overflow-y: auto !important;
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
+            font-family: var(--font-family-base) !important;
+            font-size: 14px !important;
+            line-height: 1.5 !important;
+            padding: 8px !important;
+        }
+
+        /* Cell content wrapper */
+        .jexcel>tbody>tr>td {
+            max-height: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .jexcel>tbody>tr>td.edition {
+            overflow: visible !important;
+        }
+
         .jexcel>thead>tr>td {
             background: linear-gradient(180deg, var(--light-bg) 0%, #e8eaef 100%) !important;
             font-weight: 600 !important;
@@ -819,7 +855,7 @@
         <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@5.0.4/dist/index.js"></script>
 
         <!-- Server Data -->
-        <script id="serverDataScript" type="application/json"><%- JSON.stringify(instruction.data || null) %></script>
+	        <script id="serverDataScript" type="application/json"><%- JSON.stringify(instruction.data || null).replace(/</g, '\\u003c') %></script>
 
         <script>
             document.addEventListener('DOMContentLoaded', function () {
@@ -830,12 +866,9 @@
                     if (dataEl && dataEl.textContent) {
                         serverData = JSON.parse(dataEl.textContent);
                     }
-                } catch (e) {
-                    console.error('Parse error:', e);
-                }
-
-                console.log('=== V3 Spreadsheet Editor ===');
-                console.log('Server data:', serverData);
+	                } catch (e) {
+	                    console.error('Parse error:', e);
+	                }
 
                 // ===== CONVERT DATA =====
                 function toJsData(data) {
@@ -859,22 +892,21 @@
                     return { columns: cols, data: rows };
                 }
 
-                function fromJsData(sheet) {
-                    var headers = sheet.getHeaders().split(',');
-                    var data = sheet.getData();
-                    return { columns: headers, rows: data };
-                }
+	                function fromJsData(sheet) {
+	                    var headers = getCorrectHeaders();
+	                    var data = sheet.getData();
+	                    return { columns: headers, rows: data };
+	                }
 
-                // ===== INIT SPREADSHEET =====
-                var converted = toJsData(serverData);
-                console.log('Converted:', converted);
+	                // ===== INIT SPREADSHEET =====
+	                var converted = toJsData(serverData);
 
-                if (typeof jspreadsheet === 'undefined') {
-                    console.error('jspreadsheet library failed to load');
-                    var container = document.getElementById('spreadsheet');
-                    container.innerHTML = '<div class="p-3 text-danger">ไม่สามารถโหลดตัวแก้ไขตารางได้ กรุณารีเฟรชหรือเชื่อมต่ออินเทอร์เน็ต</div>';
-                    return;
-                }
+	                if (typeof jspreadsheet === 'undefined') {
+	                    console.error('jspreadsheet library failed to load');
+	                    var container = document.getElementById('spreadsheet');
+	                    container.innerHTML = '<div class="p-3 text-danger">ไม่สามารถโหลดตัวแก้ไขตารางได้ กรุณารีเฟรชหรือเชื่อมต่ออินเทอร์เน็ต<div class="mt-2"><button type="button" class="btn btn-sm btn-outline-primary" onclick="location.reload()">ลองใหม่</button></div></div>';
+	                    return;
+	                }
 
                 var sheetConfig = {
                     data: converted.data,
@@ -995,6 +1027,71 @@
                 applyTableHeight();
                 window.addEventListener('resize', applyTableHeight);
 
+                // ===== CONSTRAIN EDITOR TO VIEWPORT =====
+                // ป้องกัน cell editor หลุดออกนอกหน้าจอ
+                function constrainEditorToViewport() {
+                    var editors = document.querySelectorAll('.jexcel_editor, .jexcel .editor');
+                    editors.forEach(function (editor) {
+                        if (!editor || editor.style.display === 'none') return;
+
+                        var rect = editor.getBoundingClientRect();
+                        var viewportWidth = window.innerWidth;
+                        var viewportHeight = window.innerHeight;
+                        var padding = 12;
+
+                        // ตรวจสอบและปรับตำแหน่งด้านขวา
+                        if (rect.right > viewportWidth - padding) {
+                            var newLeft = Math.max(padding, viewportWidth - rect.width - padding);
+                            editor.style.left = newLeft + 'px';
+                        }
+
+                        // ตรวจสอบและปรับตำแหน่งด้านล่าง
+                        if (rect.bottom > viewportHeight - padding) {
+                            var newTop = Math.max(padding, viewportHeight - rect.height - padding);
+                            editor.style.top = newTop + 'px';
+                        }
+
+                        // จำกัดความสูงสูงสุด
+                        var maxHeight = viewportHeight - padding * 2;
+                        if (rect.height > maxHeight) {
+                            editor.style.maxHeight = maxHeight + 'px';
+                            editor.style.overflowY = 'auto';
+                        }
+
+                        // ตรวจสอบว่าหลุดด้านซ้าย
+                        if (rect.left < padding) {
+                            editor.style.left = padding + 'px';
+                        }
+
+                        // ตรวจสอบว่าหลุดด้านบน
+                        if (rect.top < padding) {
+                            editor.style.top = padding + 'px';
+                        }
+                    });
+                }
+
+                // สังเกตการณ์เมื่อ editor ถูกสร้างขึ้น
+                var editorObserver = new MutationObserver(function (mutations) {
+                    mutations.forEach(function (mutation) {
+                        if (mutation.addedNodes.length > 0) {
+                            setTimeout(constrainEditorToViewport, 10);
+                        }
+                    });
+                });
+
+                var spreadsheetEl = document.getElementById('spreadsheet');
+                if (spreadsheetEl) {
+                    editorObserver.observe(spreadsheetEl, {
+                        childList: true,
+                        subtree: true,
+                        attributes: true,
+                        attributeFilter: ['style', 'class']
+                    });
+                }
+
+                // ตรวจสอบเมื่อ scroll
+                window.addEventListener('scroll', constrainEditorToViewport, true);
+
                 // ===== STATE =====
                 var dirty = false;
 
@@ -1027,13 +1124,13 @@
                     }
                 }
 
-                function updateDimensions() {
-                    if (!sheet) return;
-                    var data = sheet.getData();
-                    var headers = sheet.getHeaders().split(',');
-                    document.getElementById('rowCount').textContent = data.length;
-                    document.getElementById('colCount').textContent = headers.length;
-                }
+	                function updateDimensions() {
+	                    if (!sheet) return;
+	                    var data = sheet.getData();
+	                    var headers = getCorrectHeaders();
+	                    document.getElementById('rowCount').textContent = data.length;
+	                    document.getElementById('colCount').textContent = headers.length;
+	                }
 
                 function showToast(msg, type) {
                     var old = document.querySelector('.toast-msg');
@@ -1087,16 +1184,16 @@
                 var exportModal = new bootstrap.Modal(document.getElementById('exportModal'));
 
                 // Open export modal
-                document.getElementById('exportBtn').onclick = function () {
-                    // Update preview stats
-                    if (sheet) {
-                        var data = sheet.getData();
-                        var headers = sheet.getHeaders().split(',');
-                        document.getElementById('previewCols').textContent = headers.length;
-                        document.getElementById('previewRows').textContent = data.length;
-                    }
-                    exportModal.show();
-                };
+	                document.getElementById('exportBtn').onclick = function () {
+	                    // Update preview stats
+	                    if (sheet) {
+	                        var data = sheet.getData();
+	                        var headers = getCorrectHeaders();
+	                        document.getElementById('previewCols').textContent = headers.length;
+	                        document.getElementById('previewRows').textContent = data.length;
+	                    }
+	                    exportModal.show();
+	                };
 
                 // Format selection
                 document.querySelectorAll('.export-format-option').forEach(function (option) {
@@ -1112,11 +1209,18 @@
                 });
 
                 // Export confirmation
-                document.getElementById('confirmExportBtn').onclick = function () {
-                    if (!sheet) return;
+	                document.getElementById('confirmExportBtn').onclick = async function () {
+	                    if (!sheet) return;
 
-                    var format = document.querySelector('input[name="exportFormat"]:checked').value;
-                    var baseFilename = document.getElementById('exportFilename').value.trim() || 'data-export';
+	                    var confirmBtn = document.getElementById('confirmExportBtn');
+	                    var originalBtnHtml = confirmBtn ? confirmBtn.innerHTML : '';
+	                    if (confirmBtn) {
+	                        confirmBtn.disabled = true;
+	                        confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>กำลังดาวน์โหลด...';
+	                    }
+
+	                    var format = document.querySelector('input[name="exportFormat"]:checked').value;
+	                    var baseFilename = document.getElementById('exportFilename').value.trim() || 'data-export';
 
                     // Add date suffix
                     var now = new Date();
@@ -1128,25 +1232,35 @@
 
                     var filename = baseFilename.replace(/[^a-zA-Z0-9ก-๙\s\-_]/g, '') + '_' + dateSuffix;
 
-                    // Get correct headers from column configuration
-                    var headers = getCorrectHeaders();
-                    var data = sheet.getData();
+	                    // Get correct headers from column configuration
+	                    var headers = getCorrectHeaders();
+	                    var data = sheet.getData();
 
-                    if (format === 'xlsx') {
-                        // Export as Excel using custom method for correct columns
-                        exportAsExcel(filename, headers, data);
-                    } else {
-                        // Export as CSV
-                        exportAsCSV(filename, headers, data);
-                    }
+	                    try {
+	                        if (format === 'xlsx') {
+	                            // Export as Excel (.xlsx) via backend for true XLSX file
+	                            await exportAsExcel(filename, headers, data);
+	                        } else {
+	                            // Export as CSV
+	                            exportAsCSV(filename, headers, data);
+	                        }
 
-                    exportModal.hide();
-                    showToast('ส่งออกข้อมูลสำเร็จ!', 'success');
-                };
+	                        exportModal.hide();
+	                        showToast('ส่งออกข้อมูลสำเร็จ!', 'success');
+	                    } catch (err) {
+	                        console.error('Export failed:', err);
+	                        showToast((err && err.message) ? err.message : 'ส่งออกไม่สำเร็จ', 'error');
+	                    } finally {
+	                        if (confirmBtn) {
+	                            confirmBtn.disabled = false;
+	                            confirmBtn.innerHTML = originalBtnHtml;
+	                        }
+	                    }
+	                };
 
                 // Get correct column headers from the spreadsheet
-                function getCorrectHeaders() {
-                    var headers = [];
+	                function getCorrectHeaders() {
+	                    var headers = [];
 
                     // Try to get headers from the column header row in DOM
                     var headerCells = document.querySelectorAll('.jexcel > thead > tr > td');
@@ -1156,13 +1270,23 @@
                             var text = headerCells[i].textContent || headerCells[i].innerText || '';
                             headers.push(text.trim());
                         }
-                    }
+	                    }
 
-                    // Fallback: use getHeaders if DOM method fails
-                    if (headers.length === 0 && sheet.getHeaders) {
-                        var rawHeaders = sheet.getHeaders();
-                        if (typeof rawHeaders === 'string') {
-                            headers = rawHeaders.split(',').map(function (h) { return h.trim(); });
+	                    // Fallback: use sheet options
+	                    if (headers.length === 0 && sheet && sheet.options && Array.isArray(sheet.options.columns)) {
+	                        headers = sheet.options.columns.map(function (col, index) {
+	                            if (col && col.title !== undefined && col.title !== null && String(col.title).trim() !== '') {
+	                                return String(col.title).trim();
+	                            }
+	                            return 'คอลัมน์ ' + (index + 1);
+	                        });
+	                    }
+
+	                    // Fallback: use getHeaders if DOM method fails
+	                    if (headers.length === 0 && sheet.getHeaders) {
+	                        var rawHeaders = sheet.getHeaders();
+	                        if (typeof rawHeaders === 'string') {
+	                            headers = rawHeaders.split(',').map(function (h) { return h.trim(); });
                         }
                     }
 
@@ -1207,57 +1331,54 @@
                     URL.revokeObjectURL(link.href);
                 }
 
-                // Excel Export function (custom for correct columns)
-                function exportAsExcel(filename, headers, data) {
-                    // Build CSV-like content for Excel (jspreadsheet's download may have issues)
-                    var csvContent = '\uFEFF'; // UTF-8 BOM for Excel Thai support
+	                // Excel Export function (custom for correct columns)
+	                async function exportAsExcel(filename, headers, data) {
+	                    var res = await fetch('/admin/instructions-v3/export-xlsx', {
+	                        method: 'POST',
+	                        headers: { 'Content-Type': 'application/json' },
+	                        body: JSON.stringify({
+	                            filename: filename,
+	                            headers: headers,
+	                            rows: data
+	                        })
+	                    });
 
-                    // Add headers
-                    csvContent += headers.map(function (h) {
-                        return '"' + String(h).replace(/"/g, '""') + '"';
-                    }).join('\t') + '\n';
+	                    if (!res.ok) {
+	                        var errData = await res.json().catch(function () { return {}; });
+	                        throw new Error(errData.error || 'ส่งออกไม่สำเร็จ');
+	                    }
 
-                    // Add data rows
-                    data.forEach(function (row) {
-                        var rowData = [];
-                        for (var i = 0; i < headers.length; i++) {
-                            var value = (row && row[i] !== null && row[i] !== undefined) ? String(row[i]) : '';
-                            rowData.push('"' + value.replace(/"/g, '""') + '"');
-                        }
-                        csvContent += rowData.join('\t') + '\n';
-                    });
-
-                    // Download as .xlsx (Excel can open TSV)
-                    // For true xlsx, we'd need a library like SheetJS
-                    var blob = new Blob([csvContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-                    var link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.download = filename + '.xlsx';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(link.href);
-                }
+	                    var blob = await res.blob();
+	                    var url = window.URL.createObjectURL(blob);
+	                    var link = document.createElement('a');
+	                    link.href = url;
+	                    link.download = filename + '.xlsx';
+	                    document.body.appendChild(link);
+	                    link.click();
+	                    link.remove();
+	                    window.URL.revokeObjectURL(url);
+	                }
 
                 document.getElementById('undoBtn').onclick = function () { sheet.undo(); };
                 document.getElementById('redoBtn').onclick = function () { sheet.redo(); };
                 document.getElementById('addRowBtn').onclick = function () { sheet.insertRow(); };
                 document.getElementById('addColBtn').onclick = function () { sheet.insertColumn(); };
 
-                document.getElementById('docTitle').oninput = function () { setDirty(true); };
+	                document.getElementById('docTitle').oninput = function () { setDirty(true); };
 
-                // Keyboard shortcuts
-                document.onkeydown = function (e) {
-                    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                        e.preventDefault();
-                        save();
-                    }
-                };
+	                // Keyboard shortcuts
+	                document.addEventListener('keydown', function (e) {
+	                    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+	                        e.preventDefault();
+	                        save();
+	                    }
+	                });
 
                 // Warn before leave
                 window.onbeforeunload = function (e) {
                     if (dirty) {
                         e.preventDefault();
+                        e.returnValue = '';
                         return '';
                     }
                 };

@@ -170,17 +170,17 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const initialInstruction = {
-            id: '<%= instruction._id.toString() %>',
-            instructionId: <%- JSON.stringify(instruction.instructionId || '') %>,
-            type: '<%= instruction.type %>',
-            title: <%- JSON.stringify(instruction.title || '') %>,
-            content: <%- JSON.stringify(instruction.content || '') %>,
-            data: <%- JSON.stringify(instruction.data || null) %>,
-            version: <%- JSON.stringify(Number.isInteger(instruction.version) ? instruction.version : null) %>,
-            createdAt: '<%= instruction.createdAt ? new Date(instruction.createdAt).toISOString() : '' %>',
-            updatedAt: '<%= instruction.updatedAt ? new Date(instruction.updatedAt).toISOString() : '' %>'
-        };
+	        const initialInstruction = {
+	            id: '<%= instruction._id.toString() %>',
+	            instructionId: <%- JSON.stringify(instruction.instructionId || '').replace(/</g, '\\u003c') %>,
+	            type: '<%= instruction.type %>',
+	            title: <%- JSON.stringify(instruction.title || '').replace(/</g, '\\u003c') %>,
+	            content: <%- JSON.stringify(instruction.content || '').replace(/</g, '\\u003c') %>,
+	            data: <%- JSON.stringify(instruction.data || null).replace(/</g, '\\u003c') %>,
+	            version: <%- JSON.stringify(Number.isInteger(instruction.version) ? instruction.version : null).replace(/</g, '\\u003c') %>,
+	            createdAt: '<%= instruction.createdAt ? new Date(instruction.createdAt).toISOString() : '' %>',
+	            updatedAt: '<%= instruction.updatedAt ? new Date(instruction.updatedAt).toISOString() : '' %>'
+	        };
 
         const instructionTableBuilder = (() => {
             let isInitialized = false;
@@ -569,31 +569,52 @@
             };
         })();
 
-        function showAlert(message, type = 'info') {
-            const existingToast = document.querySelector('.notification-toast');
-            if (existingToast) existingToast.remove();
+	        function showAlert(message, type = 'info') {
+	            const existingToast = document.querySelector('.notification-toast');
+	            if (existingToast) existingToast.remove();
 
             const toast = document.createElement('div');
             toast.className = `notification-toast alert alert-${type === 'error' ? 'danger' : type === 'warning' ? 'warning' : type === 'success' ? 'success' : 'info'} alert-dismissible fade show`;
-            toast.style.cssText = `
-                position: fixed;
-                bottom: 20px;
-                right: 20px;
-                z-index: 1055;
-                max-width: 360px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            `;
-            toast.innerHTML = `
-                <div class="d-flex align-items-center">
-                    <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'warning' ? 'fa-exclamation-triangle' : type === 'error' ? 'fa-times-circle' : 'fa-info-circle'} me-2"></i>
-                    <span>${message}</span>
-                    <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-            `;
-            document.body.appendChild(toast);
-            setTimeout(() => {
-                toast.classList.remove('show');
-                toast.classList.add('hide');
+	            toast.style.cssText = `
+	                position: fixed;
+	                bottom: 20px;
+	                right: 20px;
+	                z-index: 1055;
+	                max-width: 360px;
+	                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+	            `;
+
+	            const row = document.createElement('div');
+	            row.className = 'd-flex align-items-center';
+
+	            const icon = document.createElement('i');
+	            const iconClass =
+	                type === 'success'
+	                    ? 'fa-check-circle'
+	                    : type === 'warning'
+	                        ? 'fa-exclamation-triangle'
+	                        : type === 'error'
+	                            ? 'fa-times-circle'
+	                            : 'fa-info-circle';
+	            icon.className = `fas ${iconClass} me-2`;
+
+	            const text = document.createElement('span');
+	            text.textContent = message || '';
+
+	            const close = document.createElement('button');
+	            close.type = 'button';
+	            close.className = 'btn-close ms-auto';
+	            close.setAttribute('data-bs-dismiss', 'alert');
+	            close.setAttribute('aria-label', 'Close');
+
+	            row.appendChild(icon);
+	            row.appendChild(text);
+	            row.appendChild(close);
+	            toast.appendChild(row);
+	            document.body.appendChild(toast);
+	            setTimeout(() => {
+	                toast.classList.remove('show');
+	                toast.classList.add('hide');
                 setTimeout(() => toast.remove(), 200);
             }, 4000);
         }

@@ -477,10 +477,10 @@
 
         // Pass follow-up config from server
         <% if (typeof chatCenterFollowUpConfig !== 'undefined') { %>
-                chatManager.followUpConfig = <% - JSON.stringify(chatCenterFollowUpConfig) %>;
-        <% } else { %>
-                chatManager.followUpConfig = { };
-        <% } %>
+	                chatManager.followUpConfig = <%- JSON.stringify(chatCenterFollowUpConfig).replace(/</g, '\\u003c') %>;
+	        <% } else { %>
+	                chatManager.followUpConfig = { };
+	        <% } %>
         </script>
 </body>
 

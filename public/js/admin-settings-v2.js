@@ -66,7 +66,6 @@ async function loadAllSettings() {
             loadSecuritySettings(),
             window.imageCollectionsManager?.refreshAll?.()
         ]);
-        console.log('All settings loaded');
     } catch (error) {
         console.error('Error loading settings:', error);
         showToast('เกิดข้อผิดพลาดในการโหลดการตั้งค่า', 'danger');
@@ -834,7 +833,7 @@ function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `alert alert-${type} position-fixed top-0 end-0 m-3 shadow-sm`;
     toast.style.zIndex = '9999';
-    toast.innerHTML = message;
+    toast.textContent = message || '';
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
 }
@@ -1611,7 +1610,7 @@ function renderApiKeys() {
                                 onclick="toggleApiKeyStatus('${key.id}', ${!key.isActive})">
                             <i class="fas fa-${key.isActive ? 'pause' : 'play'}"></i>
                         </button>
-                        <button class="btn btn-outline-danger" title="ลบ" onclick="deleteApiKey('${key.id}', '${escapeHtml(key.name)}')">
+                        <button class="btn btn-outline-danger" title="ลบ" onclick="deleteApiKey('${key.id}')">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
@@ -1709,7 +1708,9 @@ async function saveApiKey() {
     }
 }
 
-async function deleteApiKey(id, name) {
+async function deleteApiKey(id) {
+    const key = apiKeysCache.find(k => k.id === id);
+    const name = key?.name || id || '';
     if (!confirm(`ยืนยันการลบ API Key "${name}"?\n\nหมายเหตุ: Bot ที่ใช้ key นี้จะสลับไปใช้ key หลักหรือ Environment Variable แทน`)) {
         return;
     }

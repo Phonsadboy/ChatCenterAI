@@ -150,13 +150,31 @@
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
-        <script>
-            let categories = [];
-            let currentBot = null;
+	        <script>
+	            let categories = [];
+	            let currentBot = null;
+	
+	            const escapeHtml = (value) => {
+	                if (value === null || value === undefined) return '';
+	                return String(value)
+	                    .replace(/&/g, '&amp;')
+	                    .replace(/</g, '&lt;')
+	                    .replace(/>/g, '&gt;')
+	                    .replace(/"/g, '&quot;')
+	                    .replace(/'/g, '&#39;');
+	            };
+	
+	            const escapeJsString = (value) => {
+	                if (value === null || value === undefined) return '';
+	                return String(value)
+	                    .replace(/\\/g, '\\\\')
+	                    .replace(/'/g, '\\\'')
+	                    .replace(/\r?\n/g, '\\n');
+	            };
 
-            document.addEventListener('DOMContentLoaded', async () => {
-                await loadBots();
-            });
+	            document.addEventListener('DOMContentLoaded', async () => {
+	                await loadBots();
+	            });
 
             async function loadBots() {
                 try {
@@ -210,10 +228,10 @@
                 }
             }
 
-            function renderCategories() {
-                const container = document.getElementById('categoriesList');
+	            function renderCategories() {
+	                const container = document.getElementById('categoriesList');
 
-                if (categories.length === 0) {
+	                if (categories.length === 0) {
                     container.innerHTML = `
                     <div class="col-12 text-center py-5 text-muted">
                         <i class="fas fa-folder-open fa-3x mb-3 text-secondary opacity-50"></i>
@@ -221,46 +239,46 @@
                     </div>
                 `;
                     return;
-                }
+	                }
 
-                container.innerHTML = categories.map(cat => `
-                <div class="col-md-6 col-lg-4">
-                    <div class="card category-card h-100 shadow-sm">
-                        <div class="card-body">
+	                container.innerHTML = categories.map(cat => `
+	                <div class="col-md-6 col-lg-4">
+	                    <div class="card category-card h-100 shadow-sm">
+	                        <div class="card-body">
                             <div class="d-flex justify-content-between align-items-start mb-3">
                                 <div class="category-icon">
                                     <i class="fas fa-table"></i>
                                 </div>
-                                <div class="dropdown">
-                                    <button class="btn btn-link text-muted p-0" data-bs-toggle="dropdown">
-                                        <i class="fas fa-ellipsis-v"></i>
-                                    </button>
-                                    <ul class="dropdown-menu dropdown-menu-end">
-                                        <li><a class="dropdown-item" href="#" onclick="editCategory('${cat.categoryId}')"><i class="fas fa-edit me-2"></i>แก้ไขโครงสร้าง</a></li>
-                                        <li><hr class="dropdown-divider"></li>
-                                        <li><a class="dropdown-item text-danger" href="#" onclick="deleteCategory('${cat.categoryId}')"><i class="fas fa-trash-alt me-2"></i>ลบหมวดหมู่</a></li>
-                                    </ul>
-                                </div>
-                            </div>
-                            
-                            <h5 class="card-title mb-1">${cat.name}</h5>
-                            <p class="card-text text-muted small mb-3">${cat.description || '-'}</p>
-                            
-                            <div class="mb-4">
-                                ${cat.columns.slice(0, 3).map(col =>
-                    `<span class="column-badge">${col.name}</span>`
-                ).join('')}
-                                ${cat.columns.length > 3 ? `<span class="column-badge">+${cat.columns.length - 3}</span>` : ''}
-                            </div>
+	                                <div class="dropdown">
+	                                    <button class="btn btn-link text-muted p-0" data-bs-toggle="dropdown">
+	                                        <i class="fas fa-ellipsis-v"></i>
+	                                    </button>
+	                                    <ul class="dropdown-menu dropdown-menu-end">
+	                                        <li><a class="dropdown-item" href="#" onclick="editCategory('${escapeJsString(cat.categoryId)}'); return false;"><i class="fas fa-edit me-2"></i>แก้ไขโครงสร้าง</a></li>
+	                                        <li><hr class="dropdown-divider"></li>
+	                                        <li><a class="dropdown-item text-danger" href="#" onclick="deleteCategory('${escapeJsString(cat.categoryId)}'); return false;"><i class="fas fa-trash-alt me-2"></i>ลบหมวดหมู่</a></li>
+	                                    </ul>
+	                                </div>
+	                            </div>
+	                            
+	                            <h5 class="card-title mb-1">${escapeHtml(cat.name)}</h5>
+	                            <p class="card-text text-muted small mb-3">${escapeHtml(cat.description || '-')}</p>
+	                            
+	                            <div class="mb-4">
+	                                ${cat.columns.slice(0, 3).map(col =>
+	                    `<span class="column-badge">${escapeHtml(col.name)}</span>`
+	                ).join('')}
+	                                ${cat.columns.length > 3 ? `<span class="column-badge">+${cat.columns.length - 3}</span>` : ''}
+	                            </div>
 
-                            <a href="/admin/categories/${cat.categoryId}/data" class="btn btn-outline-primary w-100">
-                                <i class="fas fa-list me-2"></i>จัดการข้อมูล (${cat.columns.length} cols)
-                            </a>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-            }
+	                            <a href="/admin/categories/${encodeURIComponent(cat.categoryId)}/data" class="btn btn-outline-primary w-100">
+	                                <i class="fas fa-list me-2"></i>จัดการข้อมูล (${cat.columns.length} cols)
+	                            </a>
+	                        </div>
+	                    </div>
+	                </div>
+	            `).join('');
+	            }
 
             function resetForm() {
                 document.getElementById('categoryForm').reset();
@@ -273,21 +291,21 @@
                 addColumn('Description');
             }
 
-            function addColumn(name = '', isFixed = false) {
-                const container = document.getElementById('columnsContainer');
-                const id = Date.now() + Math.random().toString(36).substr(2, 9);
+	            function addColumn(name = '', isFixed = false) {
+	                const container = document.getElementById('columnsContainer');
+	                const id = Date.now() + Math.random().toString(36).substr(2, 9);
 
-                const div = document.createElement('div');
-                div.className = 'input-group mb-2 column-item';
-                div.innerHTML = `
-                <span class="input-group-text bg-light">
-                    <i class="fas fa-columns text-secondary"></i>
-                </span>
-                <input type="text" class="form-control" name="colName" value="${name}" placeholder="ชื่อ Column" ${isFixed ? 'required' : ''}>
-                <select class="form-select" name="colType" style="max-width: 120px;">
-                    <option value="text">Text</option>
-                    <option value="number">Number</option>
-                </select>
+	                const div = document.createElement('div');
+	                div.className = 'input-group mb-2 column-item';
+	                div.innerHTML = `
+	                <span class="input-group-text bg-light">
+	                    <i class="fas fa-columns text-secondary"></i>
+	                </span>
+	                <input type="text" class="form-control" name="colName" value="${escapeHtml(name)}" placeholder="ชื่อ Column" ${isFixed ? 'required' : ''}>
+	                <select class="form-select" name="colType" style="max-width: 120px;">
+	                    <option value="text">Text</option>
+	                    <option value="number">Number</option>
+	                </select>
                 ${!isFixed ? `
                 <button type="button" class="btn btn-outline-danger" onclick="this.closest('.column-item').remove()">
                     <i class="fas fa-times"></i>
@@ -310,27 +328,27 @@
                 const container = document.getElementById('columnsContainer');
                 container.innerHTML = '';
 
-                cat.columns.forEach((col, index) => {
-                    const div = document.createElement('div');
-                    div.className = 'input-group mb-2 column-item';
-                    div.innerHTML = `
-                    <span class="input-group-text bg-light">
-                        <i class="fas fa-columns text-secondary"></i>
-                    </span>
-                    <input type="text" class="form-control" name="colName" value="${col.name}" placeholder="ชื่อ Column">
-                    <select class="form-select" name="colType" style="max-width: 120px;">
-                        <option value="text" ${col.type === 'text' ? 'selected' : ''}>Text</option>
-                        <option value="number" ${col.type === 'number' ? 'selected' : ''}>Number</option>
-                    </select>
+	                cat.columns.forEach((col, index) => {
+	                    const div = document.createElement('div');
+	                    div.className = 'input-group mb-2 column-item';
+	                    div.innerHTML = `
+	                    <span class="input-group-text bg-light">
+	                        <i class="fas fa-columns text-secondary"></i>
+	                    </span>
+	                    <input type="text" class="form-control" name="colName" value="${escapeHtml(col.name)}" placeholder="ชื่อ Column">
+	                    <select class="form-select" name="colType" style="max-width: 120px;">
+	                        <option value="text" ${col.type === 'text' ? 'selected' : ''}>Text</option>
+	                        <option value="number" ${col.type === 'number' ? 'selected' : ''}>Number</option>
+	                    </select>
                     ${index > 0 ? `
                     <button type="button" class="btn btn-outline-danger" onclick="this.closest('.column-item').remove()">
                         <i class="fas fa-times"></i>
                     </button>
                     ` : ''}
-                    <input type="hidden" name="colId" value="${col.id}">
-                `;
-                    container.appendChild(div);
-                });
+	                    <input type="hidden" name="colId" value="${escapeHtml(col.id)}">
+	                `;
+	                    container.appendChild(div);
+	                });
 
                 const modal = new bootstrap.Modal(document.getElementById('categoryModal'));
                 modal.show();

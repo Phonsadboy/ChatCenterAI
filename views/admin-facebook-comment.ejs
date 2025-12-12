@@ -422,42 +422,57 @@
       const modal = new bootstrap.Modal(document.getElementById('postConfigModal'));
       let toastContainer = document.getElementById('facebookToastContainer');
 
-      function ensureToastContainer() {
-        if (!toastContainer) {
-          toastContainer = document.createElement('div');
-          toastContainer.className = 'app-toast-container';
-          document.body.appendChild(toastContainer);
-        }
-        return toastContainer;
-      }
+	      function ensureToastContainer() {
+	        if (!toastContainer || !document.body.contains(toastContainer)) {
+	          toastContainer = document.createElement('div');
+	          toastContainer.className = 'app-toast-container';
+	          document.body.appendChild(toastContainer);
+	        }
+	        return toastContainer;
+	      }
 
-      function showToast(message, type = 'info') {
-        const container = ensureToastContainer();
-        const typeMap = {
-          success: { icon: 'fa-check-circle', className: 'app-toast--success' },
-          error: { icon: 'fa-times-circle', className: 'app-toast--danger' },
-          warning: { icon: 'fa-exclamation-triangle', className: 'app-toast--warning' },
-          info: { icon: 'fa-info-circle', className: 'app-toast--info' },
-        };
-        const toastType = typeMap[type] ? type : 'info';
-        const { icon, className } = typeMap[toastType];
-        const toast = document.createElement('div');
-        toast.className = `app-toast ${className}`;
-        toast.innerHTML = `
-        <div class="app-toast__icon"><i class="fas ${icon}"></i></div>
-        <div class="app-toast__body">
-          <div class="app-toast__title">${message || ''}</div>
-        </div>
-        <button class="app-toast__close" aria-label="ปิดการแจ้งเตือน">&times;</button>
-      `;
-        const removeToast = () => {
-          toast.classList.add('hide');
-          setTimeout(() => toast.remove(), 200);
-        };
-        toast.querySelector('.app-toast__close')?.addEventListener('click', removeToast);
-        container.appendChild(toast);
-        setTimeout(removeToast, 3200);
-      }
+	      function showToast(message, type = 'info') {
+	        const container = ensureToastContainer();
+	        const typeMap = {
+	          success: { icon: 'fa-check-circle', className: 'app-toast--success' },
+	          error: { icon: 'fa-times-circle', className: 'app-toast--danger' },
+	          warning: { icon: 'fa-exclamation-triangle', className: 'app-toast--warning' },
+	          info: { icon: 'fa-info-circle', className: 'app-toast--info' },
+	        };
+	        const toastType = typeMap[type] ? type : 'info';
+	        const { icon, className } = typeMap[toastType];
+	        const toast = document.createElement('div');
+	        toast.className = `app-toast ${className}`;
+	
+	        const iconWrap = document.createElement('div');
+	        iconWrap.className = 'app-toast__icon';
+	        iconWrap.innerHTML = `<i class="fas ${icon}"></i>`;
+	
+	        const body = document.createElement('div');
+	        body.className = 'app-toast__body';
+	
+	        const title = document.createElement('div');
+	        title.className = 'app-toast__title';
+	        title.textContent = message || '';
+	        body.appendChild(title);
+	
+	        const closeBtn = document.createElement('button');
+	        closeBtn.className = 'app-toast__close';
+	        closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
+	        closeBtn.innerHTML = '&times;';
+	
+	        toast.appendChild(iconWrap);
+	        toast.appendChild(body);
+	        toast.appendChild(closeBtn);
+
+	        const removeToast = () => {
+	          toast.classList.add('hide');
+	          setTimeout(() => toast.remove(), 200);
+	        };
+	        closeBtn.addEventListener('click', removeToast);
+	        container.appendChild(toast);
+	        setTimeout(removeToast, 3200);
+	      }
 
       function selectReplyType(type, event) {
         const customRadio = document.getElementById('replyTypeCustom');

@@ -208,14 +208,14 @@
 
     <div id="alertToastContainer" class="alert-toast-container"></div>
 
-    <script>
-      window.followUpDashboardConfig = {
-        analysisEnabled: <%= (followUpConfig && followUpConfig.analysisEnabled) ? 'true' : 'false' %>,
-        showDashboard: <%= (followUpConfig && followUpConfig.showDashboard) ? 'true' : 'false' %>,
-          defaultOrderPromptInstructions: <% - JSON.stringify((orderPromptDefaults && orderPromptDefaults.instructions) || "") %>,
-            orderPromptJsonSuffix: <% - JSON.stringify((orderPromptDefaults && orderPromptDefaults.jsonSuffix) || "") %>
-    };
-    </script>
+	    <script>
+	      window.followUpDashboardConfig = {
+	        analysisEnabled: <%= (followUpConfig && followUpConfig.analysisEnabled) ? 'true' : 'false' %>,
+	        showDashboard: <%= (followUpConfig && followUpConfig.showDashboard) ? 'true' : 'false' %>,
+	        defaultOrderPromptInstructions: <%- JSON.stringify((orderPromptDefaults && orderPromptDefaults.instructions) || '').replace(/</g, '\\u003c') %>,
+	        orderPromptJsonSuffix: <%- JSON.stringify((orderPromptDefaults && orderPromptDefaults.jsonSuffix) || '').replace(/</g, '\\u003c') %>
+	    };
+	    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="/js/followup-dashboard.js"></script>

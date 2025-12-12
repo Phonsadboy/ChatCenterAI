@@ -6700,10 +6700,34 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction ต้นฉบับ" });
     }
 
+    const escapeRegex = (value) =>
+      String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const requestedName = typeof name === "string" ? name.trim() : "";
+    const baseName = (original.name || "").trim() || "ไม่มีชื่อ";
+    const finalName = (requestedName || `${baseName} (สำเนา)`).trim();
+
+    if (!finalName) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณาระบุชื่อ Instruction ใหม่",
+      });
+    }
+
+    const existingByName = await coll.findOne({
+      name: { $regex: new RegExp(`^${escapeRegex(finalName)}$`, "i") },
+    });
+    if (existingByName) {
+      return res.status(409).json({
+        success: false,
+        error: "ชื่อ Instruction นี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น",
+      });
+    }
+
     const now = new Date();
     const duplicate = {
       instructionId: generateInstructionId(),
-      name: name || `${original.name} (สำเนา)`,
+      name: finalName,
       description: original.description || "",
       dataItems: (original.dataItems || []).map(item => ({
         ...item,
@@ -12956,7 +12980,7 @@ app.get("/admin/api-usage", async (req, res) => {
   res.render("admin-api-usage");
 });
 
-// Create Data Item (V2) - Full Page Editor
+// Create Data Item (V2) - Full Page Editor for Text
 app.get(
   "/admin/instructions-v2/:instructionId/data-items/new",
   async (req, res) => {
@@ -13430,6 +13454,67 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
   } catch (err) {
     console.error("V3: Error saving data item:", err);
     res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
+  }
+});
+
+// Export Data Item (V3) - True XLSX (from current sheet data)
+app.post("/admin/instructions-v3/export-xlsx", async (req, res) => {
+  try {
+    const { filename, headers, rows } = req.body || {};
+
+    if (!Array.isArray(headers) || headers.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, error: "ไม่พบหัวตารางสำหรับส่งออก" });
+    }
+    if (!Array.isArray(rows)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "ข้อมูลตารางไม่ถูกต้อง" });
+    }
+
+    const safeHeaders = headers.map((h) => (h === null || h === undefined ? "" : String(h)));
+    const safeRows = rows.map((row) => {
+      const rowArr = Array.isArray(row) ? row : [];
+      const normalized = [];
+      for (let i = 0; i < safeHeaders.length; i += 1) {
+        const value = rowArr[i];
+        normalized.push(value === null || value === undefined ? "" : String(value));
+      }
+      return normalized;
+    });
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.aoa_to_sheet([safeHeaders, ...safeRows]);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Data");
+
+    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+    const sanitizeFilename = (input) =>
+      String(input || "")
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, "-")
+        .replace(/\s+/g, " ")
+        .slice(0, 120);
+
+    const baseName =
+      sanitizeFilename(filename) ||
+      `data-export_${moment().tz("Asia/Bangkok").format("YYYYMMDD_HHmm")}`;
+    const finalName = `${baseName}.xlsx`;
+    const fallbackName = finalName.replace(/[^\x20-\x7E]+/g, "_");
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodeURIComponent(finalName)}`,
+    );
+    res.send(buffer);
+  } catch (err) {
+    console.error("Error exporting V3 data item:", err);
+    res.status(500).json({ success: false, error: err.message || "Error" });
   }
 });
 

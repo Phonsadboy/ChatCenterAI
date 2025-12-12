@@ -27,7 +27,7 @@ class ErrorHandler {
     }
     
     createToastContainer() {
-        if (this.toastContainer) return;
+        if (this.toastContainer && document.body.contains(this.toastContainer)) return;
         
         this.toastContainer = document.createElement('div');
         this.toastContainer.className = 'toast-container';
@@ -68,15 +68,31 @@ class ErrorHandler {
         
         const icon = icons[type] || icons.info;
         
-        toast.innerHTML = `
-            <div class="toast-icon">
-                <i class="fas ${icon}"></i>
-            </div>
-            <div class="toast-message">${message}</div>
-            <button class="toast-close" onclick="this.closest('.toast-notification').remove()">
-                <i class="fas fa-times"></i>
-            </button>
-        `;
+        const iconWrap = document.createElement('div');
+        iconWrap.className = 'toast-icon';
+
+        const iconEl = document.createElement('i');
+        iconEl.className = `fas ${icon}`;
+        iconWrap.appendChild(iconEl);
+
+        const messageEl = document.createElement('div');
+        messageEl.className = 'toast-message';
+        messageEl.textContent = message ?? '';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'toast-close';
+        closeBtn.type = 'button';
+        closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
+
+        const closeIcon = document.createElement('i');
+        closeIcon.className = 'fas fa-times';
+        closeBtn.appendChild(closeIcon);
+
+        closeBtn.addEventListener('click', () => toast.remove());
+
+        toast.appendChild(iconWrap);
+        toast.appendChild(messageEl);
+        toast.appendChild(closeBtn);
         
         return toast;
     }
@@ -196,17 +212,43 @@ class ErrorHandler {
             // สร้าง modal
             const modal = document.createElement('div');
             modal.className = 'confirm-modal';
-            modal.innerHTML = `
-                <div class="confirm-modal-overlay"></div>
-                <div class="confirm-modal-content">
-                    <h5>${title}</h5>
-                    <p>${message}</p>
-                    <div class="confirm-modal-actions">
-                        <button class="btn btn-secondary" data-action="cancel">ยกเลิก</button>
-                        <button class="btn btn-primary" data-action="confirm">ยืนยัน</button>
-                    </div>
-                </div>
-            `;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'confirm-modal-overlay';
+
+            const content = document.createElement('div');
+            content.className = 'confirm-modal-content';
+
+            const titleEl = document.createElement('h5');
+            titleEl.textContent = title ?? '';
+
+            const bodyEl = document.createElement('p');
+            bodyEl.textContent = message ?? '';
+
+            const actions = document.createElement('div');
+            actions.className = 'confirm-modal-actions';
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'btn btn-secondary';
+            cancelBtn.type = 'button';
+            cancelBtn.dataset.action = 'cancel';
+            cancelBtn.textContent = 'ยกเลิก';
+
+            const confirmBtn = document.createElement('button');
+            confirmBtn.className = 'btn btn-primary';
+            confirmBtn.type = 'button';
+            confirmBtn.dataset.action = 'confirm';
+            confirmBtn.textContent = 'ยืนยัน';
+
+            actions.appendChild(cancelBtn);
+            actions.appendChild(confirmBtn);
+
+            content.appendChild(titleEl);
+            content.appendChild(bodyEl);
+            content.appendChild(actions);
+
+            modal.appendChild(overlay);
+            modal.appendChild(content);
             
             document.body.appendChild(modal);
             
@@ -253,6 +295,3 @@ window.showInfo = (message) => {
 window.confirmAction = (message, title) => {
     return window.errorHandler.confirm(message, title);
 };
-
-console.log('✅ Error handler loaded');
-

@@ -97,19 +97,22 @@
                             <div class="card instruction-editor-card mb-3 shadow-sm">
                                 <div class="card-body">
                                     <div class="row g-2 align-items-end">
-                                        <div class="col-md-5 col-lg-4">
-                                            <label for="instructionSelect" class="form-label">เลือก Instruction
-                                                ที่ต้องการแก้ไข</label>
-                                            <select id="instructionSelect" class="form-select">
-                                                <option value="">— เลือก Instruction —</option>
-                                                <% instructions.forEach(instruction=> { %>
-                                                    <% const updatedAt=instruction.updatedAt || instruction.createdAt;
-                                                        %>
-                                                        <option value="<%= instruction._id %>"
-                                                            data-updated="<%= updatedAt ? new Date(updatedAt).toISOString() : '' %>">
-                                                            <%= instruction.instructionId ? '[' +
-                                                                instruction.instructionId + '] ' : '' %>
-                                                                <%= instruction.name || 'ไม่มีชื่อ' %>
+	                                        <div class="col-md-5 col-lg-4">
+	                                            <label for="instructionSelect" class="form-label">เลือก Instruction
+	                                                ที่ต้องการแก้ไข</label>
+	                                            <input id="searchInstructions" type="text" class="form-control mb-2"
+	                                                placeholder="ค้นหา Instruction..." autocomplete="off">
+	                                            <select id="instructionSelect" class="form-select">
+	                                                <option value="">— เลือก Instruction —</option>
+	                                                <% instructions.forEach(instruction=> { %>
+	                                                    <% const updatedAt=instruction.updatedAt || instruction.createdAt;
+	                                                        %>
+	                                                        <option value="<%= instruction._id %>"
+	                                                            data-instruction-code="<%= instruction.instructionId || '' %>"
+	                                                            data-updated="<%= updatedAt ? new Date(updatedAt).toISOString() : '' %>">
+	                                                            <%= instruction.instructionId ? '[' +
+	                                                                instruction.instructionId + '] ' : '' %>
+	                                                                <%= instruction.name || 'ไม่มีชื่อ' %>
                                                                     <% if (updatedAt) { %>
                                                                         — <%= new
                                                                             Date(updatedAt).toLocaleString('th-TH', {
@@ -210,27 +213,31 @@
                                                             </p>
                                                             <% } %>
                                                     </div>
-                                                    <div class="instruction-actions">
-                                                        <button class="btn btn-sm btn-outline-primary edit-instruction"
-                                                            data-id="<%= instruction._id %>">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
-                                                        <button
-                                                            class="btn btn-sm btn-outline-secondary preview-instruction"
-                                                            data-id="<%= instruction._id %>">
-                                                            <i class="fas fa-eye"></i>
-                                                        </button>
-                                                        <button
-                                                            class="btn btn-sm btn-outline-info duplicate-instruction"
-                                                            data-id="<%= instruction._id %>">
-                                                            <i class="fas fa-copy"></i>
-                                                        </button>
-                                                        <button class="btn btn-sm btn-outline-danger delete-instruction"
-                                                            data-id="<%= instruction._id %>">
-                                                            <i class="fas fa-trash"></i>
-                                                        </button>
-                                                    </div>
-                                                </div>
+	                                                    <div class="instruction-actions">
+	                                                        <button class="btn btn-sm btn-outline-primary edit-instruction"
+	                                                            data-id="<%= instruction._id %>"
+	                                                            aria-label="แก้ไข Instruction">
+	                                                            <i class="fas fa-edit"></i>
+	                                                        </button>
+	                                                        <button
+	                                                            class="btn btn-sm btn-outline-secondary preview-instruction"
+	                                                            data-id="<%= instruction._id %>"
+	                                                            aria-label="ดู Preview">
+	                                                            <i class="fas fa-eye"></i>
+	                                                        </button>
+	                                                        <button
+	                                                            class="btn btn-sm btn-outline-info duplicate-instruction"
+	                                                            data-id="<%= instruction._id %>"
+	                                                            aria-label="คัดลอก Instruction">
+	                                                            <i class="fas fa-copy"></i>
+	                                                        </button>
+	                                                        <button class="btn btn-sm btn-outline-danger delete-instruction"
+	                                                            data-id="<%= instruction._id %>"
+	                                                            aria-label="ลบ Instruction">
+	                                                            <i class="fas fa-trash"></i>
+	                                                        </button>
+	                                                    </div>
+	                                                </div>
 
                                                 <div class="data-items-container"
                                                     data-instruction-id="<%= instruction._id %>">
@@ -270,41 +277,46 @@
                                                                     </div>
                                                                 </div>
                                                                 <div class="data-item-actions">
-                                                                    <button
-                                                                        class="btn btn-sm btn-outline-secondary btn-move move-data-item"
-                                                                        data-direction="up"
-                                                                        data-instruction-id="<%= instruction._id %>"
-                                                                        data-item-id="<%= item.itemId %>">
-                                                                        <i class="fas fa-arrow-up"></i>
-                                                                    </button>
-                                                                    <button
-                                                                        class="btn btn-sm btn-outline-secondary btn-move move-data-item"
-                                                                        data-direction="down"
-                                                                        data-instruction-id="<%= instruction._id %>"
-                                                                        data-item-id="<%= item.itemId %>">
-                                                                        <i class="fas fa-arrow-down"></i>
-                                                                    </button>
-                                                                    <button
-                                                                        class="btn btn-sm btn-outline-primary edit-data-item"
-                                                                        data-instruction-id="<%= instruction._id %>"
-                                                                        data-item-id="<%= item.itemId %>"
-                                                                        data-item-type="<%= item.type || 'table' %>">
-                                                                        <i class="fas fa-edit"></i>
-                                                                    </button>
-                                                                    <button
-                                                                        class="btn btn-sm btn-outline-secondary duplicate-data-item"
-                                                                        data-instruction-id="<%= instruction._id %>"
-                                                                        data-item-id="<%= item.itemId %>">
-                                                                        <i class="fas fa-copy"></i>
-                                                                    </button>
-                                                                    <button
-                                                                        class="btn btn-sm btn-outline-danger delete-data-item"
-                                                                        data-instruction-id="<%= instruction._id %>"
-                                                                        data-item-id="<%= item.itemId %>">
-                                                                        <i class="fas fa-times"></i>
-                                                                    </button>
-                                                                </div>
-                                                            </div>
+	                                                                    <button
+	                                                                        class="btn btn-sm btn-outline-secondary btn-move move-data-item"
+	                                                                        data-direction="up"
+	                                                                        data-instruction-id="<%= instruction._id %>"
+	                                                                        data-item-id="<%= item.itemId %>"
+	                                                                        aria-label="เลื่อนขึ้น">
+	                                                                        <i class="fas fa-arrow-up"></i>
+	                                                                    </button>
+	                                                                    <button
+	                                                                        class="btn btn-sm btn-outline-secondary btn-move move-data-item"
+	                                                                        data-direction="down"
+	                                                                        data-instruction-id="<%= instruction._id %>"
+	                                                                        data-item-id="<%= item.itemId %>"
+	                                                                        aria-label="เลื่อนลง">
+	                                                                        <i class="fas fa-arrow-down"></i>
+	                                                                    </button>
+	                                                                    <button
+	                                                                        class="btn btn-sm btn-outline-primary edit-data-item"
+	                                                                        data-instruction-id="<%= instruction._id %>"
+	                                                                        data-item-id="<%= item.itemId %>"
+	                                                                        data-item-type="<%= item.type || 'table' %>"
+	                                                                        aria-label="แก้ไขชุดข้อมูล">
+	                                                                        <i class="fas fa-edit"></i>
+	                                                                    </button>
+	                                                                    <button
+	                                                                        class="btn btn-sm btn-outline-secondary duplicate-data-item"
+	                                                                        data-instruction-id="<%= instruction._id %>"
+	                                                                        data-item-id="<%= item.itemId %>"
+	                                                                        aria-label="คัดลอกชุดข้อมูล">
+	                                                                        <i class="fas fa-copy"></i>
+	                                                                    </button>
+	                                                                    <button
+	                                                                        class="btn btn-sm btn-outline-danger delete-data-item"
+	                                                                        data-instruction-id="<%= instruction._id %>"
+	                                                                        data-item-id="<%= item.itemId %>"
+	                                                                        aria-label="ลบชุดข้อมูล">
+	                                                                        <i class="fas fa-times"></i>
+	                                                                    </button>
+	                                                                </div>
+	                                                            </div>
                                                             <% }) %>
                                                                 <% } else { %>
                                                                     <div class="text-center text-muted py-2 small">

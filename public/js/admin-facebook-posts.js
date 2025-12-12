@@ -54,18 +54,35 @@
 
     const toast = document.createElement("div");
     toast.className = `app-toast ${className}`;
-    toast.innerHTML = `
-      <div class="app-toast__icon"><i class="fas ${icon}"></i></div>
-      <div class="app-toast__body">
-        <div class="app-toast__title">${message || ""}</div>
-      </div>
-      <button class="app-toast__close" aria-label="ปิดการแจ้งเตือน">&times;</button>
-    `;
+
+    const iconEl = document.createElement("div");
+    iconEl.className = "app-toast__icon";
+    iconEl.innerHTML = `<i class="fas ${icon}"></i>`;
+
+    const body = document.createElement("div");
+    body.className = "app-toast__body";
+
+    const title = document.createElement("div");
+    title.className = "app-toast__title";
+    title.textContent = message || "";
+
+    body.appendChild(title);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "app-toast__close";
+    closeBtn.setAttribute("aria-label", "ปิดการแจ้งเตือน");
+    closeBtn.innerHTML = "&times;";
+
     const removeToast = () => {
       toast.classList.add("hide");
       setTimeout(() => toast.remove(), 200);
     };
-    toast.querySelector(".app-toast__close")?.addEventListener("click", removeToast);
+
+    closeBtn.addEventListener("click", removeToast);
+
+    toast.appendChild(iconEl);
+    toast.appendChild(body);
+    toast.appendChild(closeBtn);
     container.appendChild(toast);
     setTimeout(removeToast, 3200);
   }

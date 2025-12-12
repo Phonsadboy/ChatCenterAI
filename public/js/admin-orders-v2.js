@@ -290,12 +290,12 @@
                    onchange="window.OrdersV2.toggleSelect('${order.id}')">
           </td>
           <td>${date}</td>
-          <td>
-            <div class="orders-customer-info">
-              <div class="orders-customer-name">${escapeHtml(order.recipientName || order.customerName || order.displayName || '-')}</div>
-              <div class="orders-customer-phone">${order.phone || '-'}</div>
-            </div>
-          </td>
+	          <td>
+	            <div class="orders-customer-info">
+	              <div class="orders-customer-name">${escapeHtml(order.recipientName || order.customerName || order.displayName || '-')}</div>
+	              <div class="orders-customer-phone">${escapeHtml(order.phone || '-')}</div>
+	            </div>
+	          </td>
           <td>
             <div class="orders-items-preview">
               <div class="orders-items-text">${escapeHtml(itemsPreview)}${itemsMore}</div>
@@ -907,7 +907,9 @@
     printLabel,
     goToChat,
     goToPage,
-    saveNotes
+    saveNotes,
+    showToast,
+    showError
   };
 
   // Auto init

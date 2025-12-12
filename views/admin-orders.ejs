@@ -402,9 +402,20 @@
         document.getElementById('aiSettingsPrompt').value = page.orderPromptInstructions || '';
       }
 
-      async function savePageAISettings() {
-        const page = aiSettingsPages.find(p => p.pageKey === selectedPageKey);
-        if (!page) return;
+	      async function savePageAISettings() {
+	        const page = aiSettingsPages.find(p => p.pageKey === selectedPageKey);
+	        if (!page) return;
+	
+	        const showInlineError = (message) => {
+	          const msg = message || 'เกิดข้อผิดพลาด';
+	          if (window.OrdersV2 && typeof window.OrdersV2.showToast === 'function') {
+	            window.OrdersV2.showToast(msg, 'error');
+	          } else if (typeof window.showToast === 'function') {
+	            window.showToast(msg, 'error');
+	          } else {
+	            alert(msg);
+	          }
+	        };
 
         const enabled = document.getElementById('aiSettingsEnabled').checked;
         const orderModel = document.getElementById('aiSettingsModel').value;
@@ -429,8 +440,8 @@
           });
           const data = await res.json();
 
-          if (data.success) {
-            btn.innerHTML = '<i class="fas fa-check me-1"></i> บันทึกแล้ว';
+	          if (data.success) {
+	            btn.innerHTML = '<i class="fas fa-check me-1"></i> บันทึกแล้ว';
             // Update local data
             page.orderExtractionEnabled = enabled;
             page.orderModel = orderModel;
@@ -438,16 +449,16 @@
             setTimeout(() => {
               btn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการตั้งค่า';
             }, 2000);
-          } else {
-            alert(data.error || 'เกิดข้อผิดพลาด');
-            btn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการตั้งค่า';
-          }
-        } catch (e) {
-          alert('เกิดข้อผิดพลาดในการบันทึก');
-          btn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการตั้งค่า';
-        }
-        btn.disabled = false;
-      }
+	          } else {
+	            showInlineError(data.error || 'เกิดข้อผิดพลาด');
+	            btn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการตั้งค่า';
+	          }
+	        } catch (e) {
+	          showInlineError('เกิดข้อผิดพลาดในการบันทึก');
+	          btn.innerHTML = '<i class="fas fa-save me-1"></i> บันทึกการตั้งค่า';
+	        }
+	        btn.disabled = false;
+	      }
 
       // Page select change event
       document.getElementById('aiSettingsPageSelect')?.addEventListener('change', function () {

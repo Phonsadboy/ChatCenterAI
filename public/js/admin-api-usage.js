@@ -158,7 +158,8 @@ function updateSummaryCards(summary) {
 
 function animateValue(elementId, start, end, duration, formatter) {
     const element = document.getElementById(elementId);
-    if (!element || end === 0) {
+    if (!element) return;
+    if (end === 0) {
         element.textContent = formatter(end);
         return;
     }
@@ -510,7 +511,7 @@ function renderGroupedTable(tableHeader, tableBody) {
         const costPercent = maxCost > 0 ? ((item.costUSD || 0) / maxCost * 100) : 0;
 
         html += `
-            <tr class="expandable" data-bot-id="${item.botId || ''}" data-index="${index}">
+            <tr class="expandable" data-bot-id="${escapeHtml(item.botId || '')}" data-index="${index}">
                 <td>
                     <div class="d-flex align-items-center gap-2">
                         <i class="${getPlatformIcon(item.platform)} text-muted"></i>

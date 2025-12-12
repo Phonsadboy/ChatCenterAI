@@ -1,9 +1,66 @@
 // public/js/import-export-manager.js
 
 let importFileToken = null;
+let importFileTokenIssuedAt = 0;
 let existingInstructions = [];
 let sheetPreviews = [];
 let allInstructionsForExport = [];
+let toastContainer = null;
+
+function ensureToastContainer() {
+    if (toastContainer && document.body.contains(toastContainer)) return toastContainer;
+    toastContainer = document.createElement('div');
+    toastContainer.className = 'app-toast-container';
+    document.body.appendChild(toastContainer);
+    return toastContainer;
+}
+
+function showToast(message, type = 'info') {
+    const container = ensureToastContainer();
+    const typeMap = {
+        success: { icon: 'fa-check-circle', className: 'app-toast--success' },
+        error: { icon: 'fa-times-circle', className: 'app-toast--danger' },
+        warning: { icon: 'fa-exclamation-triangle', className: 'app-toast--warning' },
+        info: { icon: 'fa-info-circle', className: 'app-toast--info' },
+    };
+    const toastType = typeMap[type] ? type : 'info';
+    const { icon, className } = typeMap[toastType];
+
+    const toast = document.createElement('div');
+    toast.className = `app-toast ${className}`;
+
+    const iconEl = document.createElement('div');
+    iconEl.className = 'app-toast__icon';
+    iconEl.innerHTML = `<i class="fas ${icon}"></i>`;
+
+    const body = document.createElement('div');
+    body.className = 'app-toast__body';
+
+    const title = document.createElement('div');
+    title.className = 'app-toast__title';
+    title.textContent = message || '';
+
+    body.appendChild(title);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'app-toast__close';
+    closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
+    closeBtn.innerHTML = '&times;';
+
+    const removeToast = () => {
+        toast.classList.add('hide');
+        setTimeout(() => toast.remove(), 200);
+    };
+
+    closeBtn.addEventListener('click', removeToast);
+
+    toast.appendChild(iconEl);
+    toast.appendChild(body);
+    toast.appendChild(closeBtn);
+
+    container.appendChild(toast);
+    setTimeout(removeToast, 3200);
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize Modal Events
@@ -104,10 +161,11 @@ async function handleFileSelect(e) {
             method: 'POST',
             body: formData
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
 
-        if (data.success) {
+        if (res.ok && data && data.success) {
             importFileToken = data.fileToken;
+            importFileTokenIssuedAt = Date.now();
             existingInstructions = data.existingInstructions || [];
             sheetPreviews = data.previews;
             renderMappingTable();
@@ -116,12 +174,12 @@ async function handleFileSelect(e) {
             document.getElementById('importStep2').classList.remove('d-none');
             document.getElementById('btnConfirmImport').classList.remove('d-none');
         } else {
-            alert('Error: ' + data.error);
+            showToast((data && data.error) ? data.error : 'อัปโหลดไฟล์ไม่สำเร็จ', 'error');
             resetImport();
         }
     } catch (err) {
         console.error(err);
-        alert('Error uploading file');
+        showToast('เกิดข้อผิดพลาดในการอัปโหลดไฟล์', 'error');
         resetImport();
     }
 }
@@ -133,6 +191,8 @@ function resetImport() {
     document.getElementById('importLoading').classList.add('d-none');
     document.getElementById('btnConfirmImport').classList.add('d-none');
     importFileToken = null;
+    importFileTokenIssuedAt = 0;
+    sheetPreviews = [];
     document.getElementById('sheetMappingTable').innerHTML = '';
 }
 
@@ -140,14 +200,66 @@ function renderMappingTable() {
     const tbody = document.getElementById('sheetMappingTable');
     tbody.innerHTML = '';
 
+    const createTargetControl = (action, sheetName) => {
+        if (action === 'create') {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'form-control form-control-sm target-input';
+            input.value = sheetName || '';
+            input.placeholder = 'ชื่อ Instruction';
+            return input;
+        }
+
+        if (action === 'update') {
+            const select = document.createElement('select');
+            select.className = 'form-select form-select-sm target-select';
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '-- เลือก Instruction --';
+            select.appendChild(placeholder);
+
+            // Sort alphabetically
+            const sorted = [...existingInstructions].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            // Try to match by name (case insensitive)
+            sorted.forEach(inst => {
+                const opt = document.createElement('option');
+                opt.value = inst._id || '';
+                opt.textContent = inst.name || '(No Name)';
+                const isMatch = (inst.name || '').toLowerCase() === (sheetName || '').toLowerCase();
+                if (isMatch) opt.selected = true;
+                select.appendChild(opt);
+            });
+
+            return select;
+        }
+
+        const muted = document.createElement('span');
+        muted.className = 'text-muted';
+        muted.textContent = '-';
+        return muted;
+    };
+
     sheetPreviews.forEach((sheet, index) => {
         const tr = document.createElement('tr');
-        
+
         // Sheet Name
-        tr.innerHTML = `<td>
-            <div class="fw-bold text-truncate" style="max-width: 150px;" title="${sheet.sheetName}">${sheet.sheetName}</div>
-            <small class="text-muted">${sheet.totalRows} rows</small>
-        </td>`;
+        const sheetTd = document.createElement('td');
+        const sheetName = sheet.sheetName || '';
+        const sheetNameDiv = document.createElement('div');
+        sheetNameDiv.className = 'fw-bold text-truncate';
+        sheetNameDiv.style.maxWidth = '150px';
+        sheetNameDiv.title = sheetName;
+        sheetNameDiv.textContent = sheetName;
+
+        const sheetMeta = document.createElement('small');
+        sheetMeta.className = 'text-muted';
+        sheetMeta.textContent = `${sheet.totalRows} rows`;
+
+        sheetTd.appendChild(sheetNameDiv);
+        sheetTd.appendChild(sheetMeta);
+        tr.appendChild(sheetTd);
 
         // Action
         const actionTd = document.createElement('td');
@@ -164,15 +276,19 @@ function renderMappingTable() {
 
         // Target
         const targetTd = document.createElement('td');
-        targetTd.innerHTML = renderTargetInput(index, 'create', sheet.sheetName);
+        targetTd.appendChild(createTargetControl('create', sheetName));
         tr.appendChild(targetTd);
 
         // Mode
         const modeTd = document.createElement('td');
-        modeTd.innerHTML = `<select class="form-select form-select-sm mode-select" disabled>
+        const modeSelect = document.createElement('select');
+        modeSelect.className = 'form-select form-select-sm mode-select';
+        modeSelect.disabled = true;
+        modeSelect.innerHTML = `
             <option value="append">Append</option>
             <option value="replace">Replace</option>
-        </select>`;
+        `;
+        modeTd.appendChild(modeSelect);
         tr.appendChild(modeTd);
 
         tbody.appendChild(tr);
@@ -180,40 +296,21 @@ function renderMappingTable() {
         // Event Listener for Action Change
         actionSelect.addEventListener('change', (e) => {
             const action = e.target.value;
-            const idx = e.target.dataset.index;
-            const row = e.target.closest('tr');
-            
             // Update Target Cell
-            row.cells[2].innerHTML = renderTargetInput(idx, action, sheet.sheetName);
-            
+            targetTd.innerHTML = '';
+            targetTd.appendChild(createTargetControl(action, sheetName));
+
             // Update Mode Cell
-            const modeSelect = row.cells[3].querySelector('select');
             modeSelect.disabled = (action !== 'update');
         });
     });
 }
 
-function renderTargetInput(index, action, sheetName) {
-    if (action === 'create') {
-        return `<input type="text" class="form-control form-control-sm target-input" value="${sheetName}" placeholder="Instruction Name">`;
-    } else if (action === 'update') {
-        let options = '<option value="">-- Select Instruction --</option>';
-        // Sort alphabetically
-        const sorted = [...existingInstructions].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        
-        // Try to match by name (case insensitive)
-        sorted.forEach(inst => {
-            const isMatch = (inst.name || '').toLowerCase() === (sheetName || '').toLowerCase();
-            const selected = isMatch ? 'selected' : '';
-            options += `<option value="${inst._id}" ${selected}>${inst.name || '(No Name)'}</option>`;
-        });
-        return `<select class="form-select form-select-sm target-select">${options}</select>`;
-    } else {
-        return '<span class="text-muted">-</span>';
-    }
-}
-
 async function executeImport() {
+    if (!importFileToken) {
+        showToast('กรุณาอัปโหลดไฟล์ก่อนเริ่มนำเข้า', 'warning');
+        return;
+    }
     const rows = document.querySelectorAll('#sheetMappingTable tr');
     const mappings = [];
 
@@ -227,14 +324,14 @@ async function executeImport() {
         if (action === 'create') {
             const targetName = row.querySelector('.target-input').value;
             if (!targetName) {
-                alert(`Please enter a name for sheet "${sheetName}"`);
+                showToast(`กรุณาระบุชื่อ Instruction สำหรับชีต "${sheetName}"`, 'warning');
                 return;
             }
             mapping.targetName = targetName;
         } else if (action === 'update') {
             const targetId = row.querySelector('.target-select').value;
             if (!targetId) {
-                alert(`Please select a target instruction for sheet "${sheetName}"`);
+                showToast(`กรุณาเลือก Instruction เป้าหมายสำหรับชีต "${sheetName}"`, 'warning');
                 return;
             }
             mapping.targetId = targetId;
@@ -255,23 +352,23 @@ async function executeImport() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mappings, fileToken: importFileToken })
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
 
-        if (data.success) {
-            let msg = 'Import Results:\n';
-            data.results.forEach(r => {
-                msg += `- ${r.sheetName}: ${r.success ? 'Success' : 'Failed (' + r.error + ')'}\n`;
-            });
-            alert(msg);
-            location.reload();
+        if (res.ok && data && data.success) {
+            showToast('นำเข้าข้อมูลสำเร็จ กำลังรีโหลด...', 'success');
+            setTimeout(() => location.reload(), 600);
         } else {
-            alert('Error: ' + data.error);
+            const errorMessage = (data && data.error) ? data.error : 'ไม่สามารถนำเข้าข้อมูลได้';
+            showToast(errorMessage, 'error');
+            if (errorMessage.includes('ไฟล์หมดอายุ') || errorMessage.includes('อัพโหลดใหม่')) {
+                resetImport();
+            }
             btn.disabled = false;
             btn.innerHTML = 'ยืนยันการนำเข้า';
         }
     } catch (err) {
         console.error(err);
-        alert('Error executing import');
+        showToast('เกิดข้อผิดพลาดในการนำเข้า', 'error');
         btn.disabled = false;
         btn.innerHTML = 'ยืนยันการนำเข้า';
     }
@@ -316,20 +413,36 @@ function renderExportList() {
         return;
     }
 
+    const frag = document.createDocumentFragment();
     allInstructionsForExport.forEach(inst => {
         const div = document.createElement('div');
         div.className = 'list-group-item';
-        div.innerHTML = `
-            <div class="form-check">
-                <input class="form-check-input export-checkbox" type="checkbox" value="${inst._id}" id="export_${inst._id}">
-                <label class="form-check-label w-100" for="export_${inst._id}">
-                    ${inst.name} 
-                    <span class="text-muted small ms-2">(${inst.instructionId || 'No ID'})</span>
-                </label>
-            </div>
-        `;
-        container.appendChild(div);
+
+        const checkWrap = document.createElement('div');
+        checkWrap.className = 'form-check';
+
+        const input = document.createElement('input');
+        input.className = 'form-check-input export-checkbox';
+        input.type = 'checkbox';
+        input.value = inst._id || '';
+        input.id = `export_${inst._id || Math.random().toString(36).slice(2)}`;
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label w-100';
+        label.htmlFor = input.id;
+        label.appendChild(document.createTextNode(inst.name || '(No Name) '));
+
+        const meta = document.createElement('span');
+        meta.className = 'text-muted small ms-2';
+        meta.textContent = `(${inst.instructionId || 'No ID'})`;
+        label.appendChild(meta);
+
+        checkWrap.appendChild(input);
+        checkWrap.appendChild(label);
+        div.appendChild(checkWrap);
+        frag.appendChild(div);
     });
+    container.appendChild(frag);
 }
 
 function toggleSelectAllExport() {
@@ -349,7 +462,7 @@ async function executeExport() {
     const ids = Array.from(checkboxes).map(c => c.value);
     
     if (ids.length === 0) {
-        alert('กรุณาเลือก Instruction อย่างน้อย 1 รายการ');
+        showToast('กรุณาเลือก Instruction อย่างน้อย 1 รายการ', 'warning');
         return;
     }
     
@@ -388,11 +501,11 @@ async function executeExport() {
             window.URL.revokeObjectURL(url);
         } else {
             const json = await res.json();
-            alert('Export Failed: ' + (json.error || 'Unknown error'));
+            showToast(json.error || 'ส่งออกไม่สำเร็จ', 'error');
         }
     } catch (err) {
         console.error(err);
-        alert('Export Failed');
+        showToast('ส่งออกไม่สำเร็จ', 'error');
     } finally {
         btn.disabled = false;
         btn.innerHTML = originalText;

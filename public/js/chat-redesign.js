@@ -391,19 +391,125 @@ class ChatManager {
         const addTagBtn = document.getElementById('addTagBtn');
         const newTagInput = document.getElementById('newTagInput');
 
-        if (addTagBtn && newTagInput) {
-            addTagBtn.addEventListener('click', () => {
-                this.addTag(newTagInput.value.trim());
-            });
+		        if (addTagBtn && newTagInput) {
+		            addTagBtn.addEventListener('click', () => {
+		                this.addTag(newTagInput.value.trim());
+		            });
 
             newTagInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     this.addTag(newTagInput.value.trim());
                 }
-            });
-        }
-    }
+	            });
+		        }
+
+	        // User list selection (delegation)
+	        const userList = document.getElementById('userList');
+	        if (userList) {
+	            userList.addEventListener('click', (e) => {
+	                const item = e.target.closest('.user-item[data-user-id]');
+	                if (!item || !userList.contains(item)) return;
+	                const userId = item.dataset.userId;
+	                if (!userId) return;
+	                this.selectUser(userId);
+	            });
+
+	            userList.addEventListener('keydown', (e) => {
+	                if (e.key !== 'Enter' && e.key !== ' ') return;
+	                const item = e.target.closest('.user-item[data-user-id]');
+	                if (!item || !userList.contains(item)) return;
+	                e.preventDefault();
+	                const userId = item.dataset.userId;
+	                if (!userId) return;
+	                this.selectUser(userId);
+	            });
+	        }
+
+	        // Tag filter buttons (delegation)
+	        const tagFilters = document.getElementById('tagFilters');
+	        if (tagFilters) {
+	            tagFilters.addEventListener('click', (e) => {
+	                const btn = e.target.closest('.tag-filter-btn[data-tag]');
+	                if (!btn || !tagFilters.contains(btn)) return;
+	                const tag = btn.dataset.tag;
+	                if (!tag) return;
+	                this.toggleTagFilter(tag);
+	            });
+	        }
+
+	        // Tag modal actions (delegation)
+	        const currentTags = document.getElementById('currentTags');
+	        if (currentTags) {
+	            currentTags.addEventListener('click', (e) => {
+	                const btn = e.target.closest('button[data-action="remove-tag"][data-tag]');
+	                if (!btn || !currentTags.contains(btn)) return;
+	                const tag = btn.dataset.tag;
+	                if (!tag) return;
+	                this.removeTag(tag);
+	            });
+	        }
+
+	        const popularTags = document.getElementById('popularTags');
+	        if (popularTags) {
+	            popularTags.addEventListener('click', (e) => {
+	                const tagEl = e.target.closest('[data-action="add-tag"][data-tag]');
+	                if (!tagEl || !popularTags.contains(tagEl)) return;
+	                const tag = tagEl.dataset.tag;
+	                if (!tag) return;
+	                this.addTag(tag);
+	            });
+
+	            popularTags.addEventListener('keydown', (e) => {
+	                if (e.key !== 'Enter' && e.key !== ' ') return;
+	                const tagEl = e.target.closest('[data-action="add-tag"][data-tag]');
+	                if (!tagEl || !popularTags.contains(tagEl)) return;
+	                e.preventDefault();
+	                const tag = tagEl.dataset.tag;
+	                if (!tag) return;
+	                this.addTag(tag);
+	            });
+	        }
+
+		        // Message image click (delegation)
+		        const messagesContainer = document.getElementById('messagesContainer');
+		        if (messagesContainer) {
+		            messagesContainer.addEventListener('click', (e) => {
+	                const imageWrap = e.target.closest('.message-image');
+	                if (!imageWrap || !messagesContainer.contains(imageWrap)) return;
+	                const src = imageWrap.dataset.imageSrc || '';
+	                if (!src) return;
+	                this.showImageModal(src);
+	            });
+
+	            messagesContainer.addEventListener('keydown', (e) => {
+	                if (e.key !== 'Enter' && e.key !== ' ') return;
+	                const imageWrap = e.target.closest('.message-image');
+	                if (!imageWrap || !messagesContainer.contains(imageWrap)) return;
+	                e.preventDefault();
+	                const src = imageWrap.dataset.imageSrc || '';
+	                if (!src) return;
+	                this.showImageModal(src);
+	            });
+	        }
+
+	        // Order actions (delegation)
+	        const orderContent = document.getElementById('orderContent');
+	        if (orderContent) {
+	            orderContent.addEventListener('click', (e) => {
+	                const btn = e.target.closest('button[data-action]');
+	                if (!btn || !orderContent.contains(btn)) return;
+	                const action = btn.dataset.action;
+	                const orderId = btn.dataset.orderId;
+	                if (!orderId) return;
+	                if (action === 'edit-order') {
+	                    this.editOrder(orderId);
+	                } else if (action === 'delete-order') {
+	                    this.deleteOrder(orderId);
+	                }
+	            });
+	        }
+	    }
 
     // ========================================
     // User Management
@@ -570,14 +676,14 @@ class ChatManager {
             ).join('')
             : '';
 
-        return `
-            <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" 
-                 onclick="chatManager.selectUser('${user.userId}')">
-                <div class="user-avatar">
-                    ${avatarContent}
-                    <div class="user-status-indicators">
-                        ${statusDots.slice(0, 2).join('')}
-                    </div>
+		        return `
+		            <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" role="button" tabindex="0"
+		                 data-user-id="${this.escapeHtml(user.userId || '')}">
+		                <div class="user-avatar">
+		                    ${avatarContent}
+		                    <div class="user-status-indicators">
+		                        ${statusDots.slice(0, 2).join('')}
+		                    </div>
                 </div>
                 <div class="user-item-content">
                     <div class="user-item-header">
@@ -786,18 +892,18 @@ class ChatManager {
 
         const roleLabel = roleLabels[role] || role;
 
-        let imagesHtml = '';
-        if (message.images && message.images.length > 0) {
-            imagesHtml = `
-                <div class="message-images">
-                    ${message.images.map(img => `
-                        <div class="message-image" onclick="chatManager.showImageModal('${img}')">
-                            <img src="${img}" alt="รูปภาพ" loading="lazy">
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        }
+		        let imagesHtml = '';
+		        if (message.images && message.images.length > 0) {
+		            imagesHtml = `
+		                <div class="message-images">
+		                    ${message.images.map(img => `
+		                        <div class="message-image" role="button" tabindex="0" aria-label="ดูรูปภาพ" data-image-src="${this.escapeHtml(img)}">
+		                            <img src="${this.escapeHtml(img)}" alt="รูปภาพ" loading="lazy">
+		                        </div>
+		                    `).join('')}
+		                </div>
+		            `;
+		        }
 
 
         return `
@@ -1259,12 +1365,12 @@ class ChatManager {
             return;
         }
 
-        tagFilters.innerHTML = this.availableTags.slice(0, 10).map(tag => `
-            <button class="tag-filter-btn" onclick="chatManager.toggleTagFilter('${this.escapeHtml(tag)}')">
-                ${this.escapeHtml(tag)}
-            </button>
-        `).join('');
-    }
+	        tagFilters.innerHTML = this.availableTags.slice(0, 10).map(tag => `
+	            <button type="button" class="tag-filter-btn ${this.currentFilters.tags.includes(tag) ? 'active' : ''}" data-tag="${this.escapeHtml(tag)}">
+	                ${this.escapeHtml(tag)}
+	            </button>
+	        `).join('');
+	    }
 
     toggleTagFilter(tag) {
         const index = this.currentFilters.tags.indexOf(tag);
@@ -1274,16 +1380,9 @@ class ChatManager {
             this.currentFilters.tags.push(tag);
         }
 
-        this.applyFilters();
-        this.renderTagFilters();
-
-        // Update active state
-        document.querySelectorAll('.tag-filter-btn').forEach(btn => {
-            if (btn.textContent.trim() === tag) {
-                btn.classList.toggle('active', this.currentFilters.tags.includes(tag));
-            }
-        });
-    }
+	        this.applyFilters();
+	        this.renderTagFilters();
+	    }
 
     openTagModal() {
         if (!this.currentUserId) return;
@@ -1301,32 +1400,32 @@ class ChatManager {
             tagModalUserName.textContent = user.displayName || user.userId;
         }
 
-        if (currentTags) {
-            if (user.tags && user.tags.length > 0) {
-                currentTags.innerHTML = user.tags.map(tag => `
-                    <span class="tag-item">
-                        ${this.escapeHtml(tag)}
-                        <button class="btn-remove-tag" onclick="chatManager.removeTag('${this.escapeHtml(tag)}')">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </span>
-                `).join('');
-            } else {
-                currentTags.innerHTML = '<span class="text-muted">ไม่มีแท็ก</span>';
-            }
-        }
+		        if (currentTags) {
+		            if (user.tags && user.tags.length > 0) {
+		                currentTags.innerHTML = user.tags.map(tag => `
+		                    <span class="tag-item">
+		                        ${this.escapeHtml(tag)}
+		                        <button type="button" class="btn-remove-tag" data-action="remove-tag" data-tag="${this.escapeHtml(tag)}">
+		                            <i class="fas fa-times"></i>
+		                        </button>
+		                    </span>
+		                `).join('');
+		            } else {
+		                currentTags.innerHTML = '<span class="text-muted">ไม่มีแท็ก</span>';
+	            }
+	        }
 
-        if (popularTags) {
-            if (this.availableTags.length > 0) {
-                popularTags.innerHTML = this.availableTags.slice(0, 10).map(tag => `
-                    <span class="tag-item" style="cursor: pointer;" onclick="chatManager.addTag('${this.escapeHtml(tag)}')">
-                        ${this.escapeHtml(tag)}
-                    </span>
-                `).join('');
-            } else {
-                popularTags.innerHTML = '<span class="text-muted">ไม่มีแท็ก</span>';
-            }
-        }
+		        if (popularTags) {
+		            if (this.availableTags.length > 0) {
+		                popularTags.innerHTML = this.availableTags.slice(0, 10).map(tag => `
+		                    <span class="tag-item tag-item--selectable" style="cursor: pointer;" role="button" tabindex="0" data-action="add-tag" data-tag="${this.escapeHtml(tag)}">
+		                        ${this.escapeHtml(tag)}
+		                    </span>
+		                `).join('');
+		            } else {
+		                popularTags.innerHTML = '<span class="text-muted">ไม่มีแท็ก</span>';
+	            }
+	        }
 
         if (newTagInput) {
             newTagInput.value = '';
@@ -1656,9 +1755,13 @@ class ChatManager {
     // ========================================
 
     escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        if (text === null || text === undefined) return '';
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     extractDisplayText(message) {
@@ -1971,12 +2074,12 @@ class ChatManager {
             metaHtml += '</div>';
         }
 
-        return `
-            <div class="order-card" data-order-id="${order._id}">
-                <div class="order-card-header">
-                    <span class="order-status-badge ${order.status}">${statusLabel}</span>
-                    <span class="order-date">${extractedDate}</span>
-                </div>
+	        return `
+	            <div class="order-card" data-order-id="${this.escapeHtml(order._id)}">
+	                <div class="order-card-header">
+	                    <span class="order-status-badge ${order.status}">${statusLabel}</span>
+	                    <span class="order-date">${extractedDate}</span>
+	                </div>
                 
                 <div class="order-items">
                     ${itemsHtml}
@@ -1992,18 +2095,18 @@ class ChatManager {
                     <span class="order-total-amount">฿${this.formatNumber(totalAmount)}</span>
                 </div>
                 
-                ${metaHtml}
-                
-                <div class="order-actions">
-                    <button class="btn-order-action" onclick="chatManager.editOrder('${order._id}')">
-                        <i class="fas fa-edit"></i> แก้ไข
-                    </button>
-                    <button class="btn-order-action btn-delete" onclick="chatManager.deleteOrder('${order._id}')">
-                        <i class="fas fa-trash"></i> ลบ
-                    </button>
-                </div>
-            </div>
-        `;
+		                ${metaHtml}
+		                
+		                <div class="order-actions">
+		                    <button type="button" class="btn-order-action" data-action="edit-order" data-order-id="${this.escapeHtml(order._id)}">
+		                        <i class="fas fa-edit"></i> แก้ไข
+		                    </button>
+		                    <button type="button" class="btn-order-action btn-delete" data-action="delete-order" data-order-id="${this.escapeHtml(order._id)}">
+		                        <i class="fas fa-trash"></i> ลบ
+		                    </button>
+		                </div>
+		            </div>
+		        `;
     }
 
     async extractOrder() {

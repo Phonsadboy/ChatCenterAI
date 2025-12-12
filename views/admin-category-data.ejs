@@ -52,6 +52,21 @@
             background-color: #f8fafc;
         }
 
+        .cell-input.is-saving {
+            background-color: rgba(223, 169, 75, 0.12);
+            border-color: rgba(223, 169, 75, 0.55);
+        }
+
+        .cell-input.is-saved {
+            background-color: rgba(45, 143, 111, 0.12);
+            border-color: rgba(45, 143, 111, 0.55);
+        }
+
+        .cell-input.is-error {
+            background-color: rgba(210, 85, 90, 0.12);
+            border-color: rgba(210, 85, 90, 0.65);
+        }
+
         .action-column {
             width: 50px;
             text-align: center;
@@ -127,23 +142,30 @@
                 await loadData();
             }
 
-            async function loadCategoryInfo() {
-                try {
-                    // Reuse the list API and find local, or create a specific GET one. 
-                    // For efficiency, let's just fetch all and find (since we didn't make a specific GET /api/categories/:id)
-                    // Wait, we didn't make GET /api/categories/:id. We can use the list.
-                    const res = await fetch('/admin/api/categories');
-                    const resData = await res.json();
-                    if (resData.success) {
-                        category = resData.categories.find(c => c.categoryId === categoryId);
-                        if (category) {
-                            document.getElementById('categoryNameBreadcrumb').innerText = category.name;
-                            document.getElementById('pageTitle').innerHTML = `<i class="fas fa-table me-2 text-primary"></i>${category.name}`;
-                            renderHeaders();
-                        }
-                    }
-                } catch (err) {
-                    console.error(err);
+	            async function loadCategoryInfo() {
+	                try {
+	                    // Reuse the list API and find local, or create a specific GET one. 
+	                    // For efficiency, let's just fetch all and find (since we didn't make a specific GET /api/categories/:id)
+	                    // Wait, we didn't make GET /api/categories/:id. We can use the list.
+	                    const res = await fetch('/admin/api/categories');
+	                    const resData = await res.json();
+	                    if (resData.success) {
+	                        category = resData.categories.find(c => c.categoryId === categoryId);
+	                        if (category) {
+	                            document.getElementById('categoryNameBreadcrumb').innerText = category.name;
+	                            const pageTitle = document.getElementById('pageTitle');
+	                            if (pageTitle) {
+	                                pageTitle.innerHTML = '';
+	                                const icon = document.createElement('i');
+	                                icon.className = 'fas fa-table me-2 text-primary';
+	                                pageTitle.appendChild(icon);
+	                                pageTitle.appendChild(document.createTextNode(category.name || ''));
+	                            }
+	                            renderHeaders();
+	                        }
+	                    }
+	                } catch (err) {
+	                    console.error(err);
                 }
             }
 
@@ -162,55 +184,80 @@
                 }
             }
 
-            function renderHeaders() {
-                const tr = document.getElementById('tableHeaders');
-                let html = '<th class="action-column">#</th>';
+	            function renderHeaders() {
+	                const tr = document.getElementById('tableHeaders');
+	                if (!tr) return;
+	                tr.innerHTML = '';
 
-                category.columns.forEach(col => {
-                    html += `<th>${col.name}</th>`;
-                });
+	                const indexTh = document.createElement('th');
+	                indexTh.className = 'action-column';
+	                indexTh.textContent = '#';
+	                tr.appendChild(indexTh);
 
-                html += '<th class="action-column"></th>';
-                tr.innerHTML = html;
-            }
+	                (category.columns || []).forEach(col => {
+	                    const th = document.createElement('th');
+	                    th.textContent = col.name || '';
+	                    tr.appendChild(th);
+	                });
 
-            function renderTable() {
-                const tbody = document.getElementById('tableBody');
-                const emptyState = document.getElementById('emptyState');
+	                const actionsTh = document.createElement('th');
+	                actionsTh.className = 'action-column';
+	                tr.appendChild(actionsTh);
+	            }
 
-                if (data.length === 0) {
-                    tbody.innerHTML = '';
-                    emptyState.classList.remove('d-none');
-                    return;
-                }
+	            function renderTable() {
+	                const tbody = document.getElementById('tableBody');
+	                const emptyState = document.getElementById('emptyState');
+	                if (!tbody || !emptyState) return;
 
-                emptyState.classList.add('d-none');
+	                if (data.length === 0) {
+	                    tbody.innerHTML = '';
+	                    emptyState.classList.remove('d-none');
+	                    return;
+	                }
 
-                tbody.innerHTML = data.map((row, index) => {
-                    let cells = `<td class="text-muted small text-center">${index + 1}</td>`;
+	                emptyState.classList.add('d-none');
+	                tbody.innerHTML = '';
 
-                    category.columns.forEach(col => {
-                        const val = row.values[col.id] || '';
-                        cells += `
-                        <td>
-                            <input type="text" class="cell-input" 
-                                value="${val.replace(/"/g, '&quot;')}" 
-                                onchange="updateCell('${row.rowId}', '${col.id}', this.value)">
-                        </td>
-                    `;
-                    });
+	                const frag = document.createDocumentFragment();
+	                data.forEach((row, index) => {
+	                    const tr = document.createElement('tr');
 
-                    cells += `
-                    <td class="text-center">
-                        <button class="btn btn-link text-danger p-0" onclick="deleteRow('${row.rowId}')">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </td>
-                `;
+	                    const indexTd = document.createElement('td');
+	                    indexTd.className = 'text-muted small text-center';
+	                    indexTd.textContent = String(index + 1);
+	                    tr.appendChild(indexTd);
 
-                    return `<tr>${cells}</tr>`;
-                }).join('');
-            }
+	                    (category.columns || []).forEach(col => {
+	                        const td = document.createElement('td');
+	                        const input = document.createElement('input');
+	                        input.type = 'text';
+	                        input.className = 'cell-input';
+	                        const val = row && row.values ? (row.values[col.id] ?? '') : '';
+	                        input.value = val;
+	                        input.addEventListener('change', () => updateCell(row.rowId, col.id, input.value, input));
+	                        td.appendChild(input);
+	                        tr.appendChild(td);
+	                    });
+
+	                    const actionTd = document.createElement('td');
+	                    actionTd.className = 'text-center';
+
+	                    const deleteBtn = document.createElement('button');
+	                    deleteBtn.type = 'button';
+	                    deleteBtn.className = 'btn btn-link text-danger p-0';
+	                    deleteBtn.setAttribute('aria-label', 'ลบแถว');
+	                    deleteBtn.innerHTML = '<i class="fas fa-times"></i>';
+	                    deleteBtn.addEventListener('click', () => deleteRow(row.rowId));
+
+	                    actionTd.appendChild(deleteBtn);
+	                    tr.appendChild(actionTd);
+
+	                    frag.appendChild(tr);
+	                });
+
+	                tbody.appendChild(frag);
+	            }
 
             async function addNewRow() {
                 try {
@@ -231,32 +278,62 @@
                 }
             }
 
-            async function updateCell(rowId, colId, value) {
-                const row = data.find(r => r.rowId === rowId);
-                if (!row) return;
+	            async function updateCell(rowId, colId, value, inputEl) {
+	                const row = data.find(r => r.rowId === rowId);
+	                if (!row) return;
 
-                row.values[colId] = value;
+	                const previous = row.values[colId] || '';
+	                row.values[colId] = value;
 
-                try {
-                    await fetch(`/admin/api/categories/${categoryId}/data/${rowId}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ values: row.values })
-                    });
-                    // Silent update
-                } catch (err) {
-                    console.error(err);
-                    // Revert on error?
-                }
-            }
+	                try {
+	                    if (inputEl) {
+	                        inputEl.classList.remove('is-error', 'is-saved');
+	                        inputEl.classList.add('is-saving');
+	                    }
 
-            async function deleteRow(rowId) {
-                if (!confirm('ต้องการลบแถวนี้ใช่หรือไม่?')) return;
+	                    const res = await fetch(`/admin/api/categories/${categoryId}/data/${rowId}`, {
+	                        method: 'PUT',
+	                        headers: { 'Content-Type': 'application/json' },
+	                        body: JSON.stringify({ values: row.values })
+	                    });
+	                    const resData = await res.json().catch(() => ({}));
+	                    if (!res.ok || resData.success === false) {
+	                        throw new Error(resData.error || 'บันทึกไม่สำเร็จ');
+	                    }
+	                    if (inputEl) {
+	                        inputEl.classList.remove('is-saving');
+	                        inputEl.classList.add('is-saved');
+	                        setTimeout(() => inputEl.classList.remove('is-saved'), 900);
+	                    }
+	                } catch (err) {
+	                    console.error(err);
+	                    row.values[colId] = previous;
+	                    if (inputEl) {
+	                        inputEl.classList.remove('is-saving');
+	                        inputEl.classList.add('is-error');
+	                        inputEl.value = previous;
+	                        setTimeout(() => inputEl.classList.remove('is-error'), 2000);
+	                    }
+	                    Swal.fire('Error', err.message || 'บันทึกไม่สำเร็จ', 'error');
+	                }
+	            }
 
-                try {
-                    const res = await fetch(`/admin/api/categories/${categoryId}/data/${rowId}`, {
-                        method: 'DELETE'
-                    });
+	            async function deleteRow(rowId) {
+	                const confirmResult = await Swal.fire({
+	                    title: 'ลบแถวนี้ใช่หรือไม่?',
+	                    text: 'การลบจะไม่สามารถกู้คืนได้',
+	                    icon: 'warning',
+	                    showCancelButton: true,
+	                    confirmButtonText: 'ลบ',
+	                    cancelButtonText: 'ยกเลิก',
+	                    confirmButtonColor: '#d33'
+	                });
+	                if (!confirmResult.isConfirmed) return;
+
+	                try {
+	                    const res = await fetch(`/admin/api/categories/${categoryId}/data/${rowId}`, {
+	                        method: 'DELETE'
+	                    });
                     const resData = await res.json();
 
                     if (resData.success) {

@@ -43,12 +43,12 @@
                     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
                 }
 
-                .table-builder-wrapper table {
-                    min-width: 780px;
-                    border-collapse: collapse;
-                    border-spacing: 0;
-                    width: 100%;
-                    table-layout: fixed;
+	                .table-builder-wrapper table {
+	                    min-width: 100%;
+	                    border-collapse: collapse;
+	                    border-spacing: 0;
+	                    width: 100%;
+	                    table-layout: fixed;
                     font-size: 14px;
                     line-height: 1.35;
                     margin: 0;
@@ -236,18 +236,18 @@
                     height: 100%;
                 }
 
-                .row-resizer {
-                    position: absolute;
-                    left: 6px;
-                    right: 6px;
-                    bottom: -3px;
-                    height: 8px;
-                    cursor: row-resize;
-                    background: transparent;
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                }
+	                .row-resizer {
+	                    position: absolute;
+	                    left: 6px;
+	                    right: 6px;
+	                    bottom: -7px;
+	                    height: 14px;
+	                    cursor: row-resize;
+	                    background: transparent;
+	                    display: inline-flex;
+	                    align-items: center;
+	                    justify-content: center;
+	                }
 
                 .row-resizer::after {
                     content: '';
@@ -276,16 +276,16 @@
                     background: #e7efff !important;
                 }
 
-                .column-resizer {
-                    position: absolute;
-                    top: 4px;
-                    right: -6px;
-                    width: 12px;
-                    cursor: col-resize;
-                    border-radius: 6px;
-                    height: calc(100% - 8px);
-                    display: inline-flex;
-                    align-items: center;
+	                .column-resizer {
+	                    position: absolute;
+	                    top: 4px;
+	                    right: -9px;
+	                    width: 18px;
+	                    cursor: col-resize;
+	                    border-radius: 6px;
+	                    height: calc(100% - 8px);
+	                    display: inline-flex;
+	                    align-items: center;
                     justify-content: center;
                     background: transparent;
                     transition: background-color 0.15s ease;
@@ -310,25 +310,28 @@
                 }
 
                 .cell-flyout {
-                    position: absolute;
+                    position: fixed;
                     z-index: 1200;
                     background: #fff;
                     border: 2px solid #4c8dff;
                     border-radius: 10px;
                     box-shadow: 0 12px 30px rgba(16, 29, 57, 0.2);
                     padding: 8px;
-                    min-width: 0;
-                    max-width: min(520px, 90vw);
-                    min-height: 0;
-                    max-height: none;
-                    overflow: visible;
+                    min-width: 200px;
+                    max-width: min(520px, calc(100vw - 24px));
+                    min-height: 60px;
+                    max-height: calc(100vh - 24px);
+                    overflow: hidden;
+                    display: flex;
+                    flex-direction: column;
                 }
 
                 .cell-flyout textarea {
                     width: 100%;
-                    min-height: 40px;
-                    max-height: 60vh;
-                    resize: vertical;
+                    flex: 1;
+                    min-height: 60px;
+                    max-height: none;
+                    resize: none;
                     border: none;
                     outline: none;
                     background: transparent;
@@ -336,7 +339,34 @@
                     font-size: 14px;
                     line-height: 1.45;
                     color: #1f2a44;
-                    overflow: auto;
+                    overflow-y: auto;
+                    overflow-x: hidden;
+                }
+
+                .cell-flyout-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding-bottom: 6px;
+                    margin-bottom: 6px;
+                    border-bottom: 1px solid #e5e9f2;
+                    font-size: 12px;
+                    color: #6c7685;
+                }
+
+                .cell-flyout-close {
+                    background: none;
+                    border: none;
+                    color: #6c7685;
+                    cursor: pointer;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    transition: all 0.15s ease;
+                }
+
+                .cell-flyout-close:hover {
+                    background: #f0f2f5;
+                    color: #dc3545;
                 }
 
                 .table-toolbar-subtext {
@@ -811,16 +841,16 @@
         </div> <!-- /app-content -->
 
         <script>
-            const initialInstruction = {
-                id: '<%= instruction._id.toString() %>',
-                instructionId: <% - JSON.stringify(instruction.instructionId || '') %>,
-                type: '<%= instruction.type %>',
-                title: <% - JSON.stringify(instruction.title || '') %>,
-                content: <% - JSON.stringify(instruction.content || '') %>,
-                data: <% - JSON.stringify(instruction.data || null) %>,
-                createdAt: '<%= instruction.createdAt ? new Date(instruction.createdAt).toISOString() : '' %>',
-                updatedAt: '<%= instruction.updatedAt ? new Date(instruction.updatedAt).toISOString() : '' %>'
-        };
+	            const initialInstruction = {
+	                id: '<%= instruction._id.toString() %>',
+	                instructionId: <%- JSON.stringify(instruction.instructionId || '').replace(/</g, '\\u003c') %>,
+	                type: '<%= instruction.type %>',
+	                title: <%- JSON.stringify(instruction.title || '').replace(/</g, '\\u003c') %>,
+	                content: <%- JSON.stringify(instruction.content || '').replace(/</g, '\\u003c') %>,
+	                data: <%- JSON.stringify(instruction.data || null).replace(/</g, '\\u003c') %>,
+	                createdAt: '<%= instruction.createdAt ? new Date(instruction.createdAt).toISOString() : '' %>',
+	                updatedAt: '<%= instruction.updatedAt ? new Date(instruction.updatedAt).toISOString() : '' %>'
+	        };
 
             // Undo/Redo System
             const undoRedoManager = (() => {
@@ -1689,13 +1719,46 @@
                             return;
                         }
 
-                        if (!isInitialized) {
-                            document.addEventListener('mousemove', onMouseMove);
-                            document.addEventListener('mouseup', stopResizing);
+	                        if (!isInitialized) {
+	                            document.addEventListener('mousemove', onMouseMove);
+	                            document.addEventListener('mouseup', stopResizing);
+	                            document.addEventListener('keydown', (event) => {
+	                                const target = event.target;
+	                                const isEditable = target && (
+	                                    target.tagName === 'INPUT' ||
+	                                    target.tagName === 'TEXTAREA' ||
+	                                    target.isContentEditable
+	                                );
+	                                if (isEditable) return;
+	                                if (activeCell.row === null || activeCell.col === null) return;
+	                                const tableSection = document.getElementById('tableEditorSection');
+	                                if (tableSection && tableSection.style.display === 'none') return;
 
-                            if (refs.addColumnBtn) {
-                                refs.addColumnBtn.addEventListener('click', addColumn);
-                            }
+	                                const key = (event.key || '').toLowerCase();
+	                                const isUndo = (event.ctrlKey || event.metaKey) && key === 'z' && !event.shiftKey;
+	                                const isRedo = (event.ctrlKey || event.metaKey) && (key === 'y' || (key === 'z' && event.shiftKey));
+	                                if (!isUndo && !isRedo) return;
+
+	                                event.preventDefault();
+
+	                                if (isUndo) {
+	                                    const state = undoRedoManager.undo(makeSnapshot());
+	                                    if (state) {
+	                                        applySnapshot(state);
+	                                        showAlert('ยกเลิกการเปลี่ยนแปลง', 'info');
+	                                    }
+	                                } else {
+	                                    const state = undoRedoManager.redo(makeSnapshot());
+	                                    if (state) {
+	                                        applySnapshot(state);
+	                                        showAlert('ทำซ้ำการเปลี่ยนแปลง', 'info');
+	                                    }
+	                                }
+	                            });
+
+	                            if (refs.addColumnBtn) {
+	                                refs.addColumnBtn.addEventListener('click', addColumn);
+	                            }
                             if (refs.addRowBtn) {
                                 refs.addRowBtn.addEventListener('click', addRow);
                             }
@@ -1735,34 +1798,52 @@
                 };
             })();
 
-            function showAlert(message, type = 'info') {
-                const existingToast = document.querySelector('.notification-toast');
-                if (existingToast) existingToast.remove();
+	            function showAlert(message, type = 'info') {
+	                const existingToast = document.querySelector('.notification-toast');
+	                if (existingToast) existingToast.remove();
 
-                const toast = document.createElement('div');
-                toast.className = `notification-toast alert alert-${type === 'error' ? 'danger' : type === 'warning' ? 'warning' : type === 'success' ? 'success' : 'info'} alert-dismissible fade show`;
-                toast.style.cssText = `
-                position: fixed;
-                bottom: 20px;
-                right: 20px;
-                z-index: 1055;
-                max-width: 360px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            `;
-                toast.innerHTML = `
-                <div class="d-flex align-items-center">
-                    <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'warning' ? 'fa-exclamation-triangle' : type === 'error' ? 'fa-times-circle' : 'fa-info-circle'} me-2"></i>
-                    <span>${message}</span>
-                    <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-            `;
-                document.body.appendChild(toast);
-                setTimeout(() => {
-                    toast.classList.remove('show');
-                    toast.classList.add('hide');
-                    setTimeout(() => toast.remove(), 200);
-                }, 4000);
-            }
+	                const toast = document.createElement('div');
+	                toast.className = `notification-toast alert alert-${type === 'error' ? 'danger' : type === 'warning' ? 'warning' : type === 'success' ? 'success' : 'info'} alert-dismissible fade show`;
+	                toast.style.cssText = `
+	                position: fixed;
+	                bottom: 20px;
+	                right: 20px;
+	                z-index: 1055;
+	                max-width: 360px;
+	                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+	            `;
+	                const wrapper = document.createElement('div');
+	                wrapper.className = 'd-flex align-items-center';
+
+	                const icon = document.createElement('i');
+	                icon.className = `fas ${type === 'success'
+	                    ? 'fa-check-circle'
+	                    : type === 'warning'
+	                        ? 'fa-exclamation-triangle'
+	                        : type === 'error'
+	                            ? 'fa-times-circle'
+	                            : 'fa-info-circle'} me-2`;
+
+	                const text = document.createElement('span');
+	                text.textContent = message || '';
+
+	                const closeBtn = document.createElement('button');
+	                closeBtn.type = 'button';
+	                closeBtn.className = 'btn-close ms-auto';
+	                closeBtn.setAttribute('data-bs-dismiss', 'alert');
+	                closeBtn.setAttribute('aria-label', 'ปิด');
+
+	                wrapper.appendChild(icon);
+	                wrapper.appendChild(text);
+	                wrapper.appendChild(closeBtn);
+	                toast.appendChild(wrapper);
+	                document.body.appendChild(toast);
+	                setTimeout(() => {
+	                    toast.classList.remove('show');
+	                    toast.classList.add('hide');
+	                    setTimeout(() => toast.remove(), 200);
+	                }, 4000);
+	            }
 
             let cellFlyout = null;
             let flyoutTarget = null;
@@ -1809,40 +1890,68 @@
                 flyoutTarget = null;
             }
 
-            function showCellFlyout(textarea, options = {}) {
-                if (!textarea) return;
-                const flyout = ensureCellFlyout();
-                const wasOpenForTarget = flyoutTarget === textarea && flyout.wrapper.style.display === 'block';
-                flyoutTarget = textarea;
-                const rect = textarea.getBoundingClientRect();
-                const scrollTop = window.scrollY || document.documentElement.scrollTop;
-                const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
-                const viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
-                const viewportHeight = document.documentElement.clientHeight || window.innerHeight || 0;
-                const padding = 12;
-                const rawWidth = rect.width || textarea.offsetWidth || 0;
-                const minFlyoutWidth = 40;
-                const maxAvailableWidth = Math.max(minFlyoutWidth, (viewportWidth || minFlyoutWidth) - padding);
-                const targetWidth = Math.min(Math.max(rawWidth || minFlyoutWidth, minFlyoutWidth), maxAvailableWidth);
-                const rawHeight = rect.height || textarea.offsetHeight || 0;
-                const targetHeight = Math.max(rawHeight, 40);
-                const maxFlyoutHeight = Math.max(targetHeight, Math.min(viewportHeight - padding * 2, 420));
+	            function showCellFlyout(textarea, options = {}) {
+	                if (!textarea) return;
+	                const flyout = ensureCellFlyout();
+	                const wasOpenForTarget = flyoutTarget === textarea && flyout.wrapper.style.display === 'block';
+	                flyoutTarget = textarea;
+	                const rect = textarea.getBoundingClientRect();
+	                const viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+	                const viewportHeight = document.documentElement.clientHeight || window.innerHeight || 0;
+	                const padding = 12;
+	                const rawWidth = rect.width || textarea.offsetWidth || 0;
+	                const minFlyoutWidth = 40;
+	                const maxAvailableWidth = Math.max(minFlyoutWidth, (viewportWidth || minFlyoutWidth) - padding * 2);
+	                const targetWidth = Math.min(Math.max(rawWidth || minFlyoutWidth, minFlyoutWidth), maxAvailableWidth);
+	                const rawHeight = rect.height || textarea.offsetHeight || 0;
+	                const targetHeight = Math.max(rawHeight, 40);
+	                const maxFlyoutHeight = Math.max(targetHeight, Math.min(viewportHeight - padding * 2, 420));
 
-                const maxLeft = scrollLeft + Math.max(0, viewportWidth - targetWidth - padding);
-                flyout.wrapper.style.width = `${targetWidth}px`;
-                flyout.wrapper.style.left = `${Math.min(rect.left + scrollLeft, maxLeft)}px`;
-                flyout.wrapper.style.top = `${rect.top + scrollTop}px`;
-                flyout.wrapper.style.display = 'block';
+	                flyout.wrapper.style.width = `${targetWidth}px`;
+	                flyout.wrapper.style.display = 'block';
 
-                flyout.input.value = textarea.value || '';
-                flyout.input.style.height = `${targetHeight}px`;
-                flyout.input.style.minHeight = `${targetHeight}px`;
-                flyout.input.style.maxHeight = `${maxFlyoutHeight}px`;
+	                flyout.input.value = textarea.value || '';
+	                flyout.input.style.height = `${targetHeight}px`;
+	                flyout.input.style.minHeight = `${targetHeight}px`;
+	                flyout.input.style.maxHeight = `${maxFlyoutHeight}px`;
 
-                if (!wasOpenForTarget) {
-                    const selectionStart = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : flyout.input.value.length;
-                    const selectionEnd = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : selectionStart;
-                    flyout.input.focus({ preventScroll: true });
+	                const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+	                const initialLeft = clamp(
+	                    rect.left,
+	                    padding,
+	                    Math.max(padding, viewportWidth - targetWidth - padding)
+	                );
+	                const initialTop = clamp(
+	                    rect.top,
+	                    padding,
+	                    Math.max(padding, viewportHeight - targetHeight - padding)
+	                );
+	                flyout.wrapper.style.left = `${initialLeft}px`;
+	                flyout.wrapper.style.top = `${initialTop}px`;
+
+	                requestAnimationFrame(() => {
+	                    if (flyout.wrapper.style.display !== 'block') return;
+	                    const flyoutRect = flyout.wrapper.getBoundingClientRect();
+	                    let nextLeft = initialLeft;
+	                    let nextTop = initialTop;
+	                    if (flyoutRect.right > viewportWidth - padding) {
+	                        nextLeft = Math.max(padding, viewportWidth - flyoutRect.width - padding);
+	                    } else if (flyoutRect.left < padding) {
+	                        nextLeft = padding;
+	                    }
+	                    if (flyoutRect.bottom > viewportHeight - padding) {
+	                        nextTop = Math.max(padding, viewportHeight - flyoutRect.height - padding);
+	                    } else if (flyoutRect.top < padding) {
+	                        nextTop = padding;
+	                    }
+	                    flyout.wrapper.style.left = `${nextLeft}px`;
+	                    flyout.wrapper.style.top = `${nextTop}px`;
+	                });
+
+	                if (!wasOpenForTarget) {
+	                    const selectionStart = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : flyout.input.value.length;
+	                    const selectionEnd = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : selectionStart;
+	                    flyout.input.focus({ preventScroll: true });
                     flyout.input.setSelectionRange(selectionStart, selectionEnd);
                 }
             }

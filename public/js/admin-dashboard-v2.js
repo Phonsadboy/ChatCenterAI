@@ -5,7 +5,7 @@
     let toastContainer = document.getElementById('dashboardToastContainer');
 
     const ensureToastContainer = () => {
-        if (!toastContainer) {
+        if (!toastContainer || !document.body.contains(toastContainer)) {
             toastContainer = document.createElement('div');
             toastContainer.className = 'app-toast-container';
             document.body.appendChild(toastContainer);
@@ -187,6 +187,28 @@
         })}`;
     };
 
+    const formatDateTimeTh = (value) => {
+        if (!value) return '';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toLocaleString('th-TH', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    };
+
+    const buildInstructionSelectOptionLabel = ({ instructionCode, name, updatedAt }) => {
+        const code = (instructionCode || '').trim();
+        const displayName = (name || '').trim() || 'ไม่มีชื่อ';
+        const dateLabel = formatDateTimeTh(updatedAt);
+        const codePrefix = code ? `[${code}] ` : '';
+        const dateSuffix = dateLabel ? ` — ${dateLabel}` : '';
+        return `${codePrefix}${displayName}${dateSuffix}`;
+    };
+
     let editorRequestToken = 0;
 
     clearEditor();
@@ -243,7 +265,9 @@
             showToast('เกิดข้อผิดพลาดในการโหลด Instruction', 'error');
             clearEditor();
         } finally {
-            setEditorLoading(false);
+            if (requestId === editorRequestToken) {
+                setEditorLoading(false);
+            }
         }
     };
 
@@ -287,6 +311,7 @@
                     });
                     const data = await res.json();
                     if (data.success) {
+                        const updatedAt = data.instruction?.updatedAt || new Date();
                         editorState.initialData = { name, description };
                         editorState.isDirty = false;
                         if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
@@ -297,7 +322,7 @@
                                 setEditorStatus('ข้อมูลล่าสุดบันทึกแล้ว', false);
                             }
                         }, 3000);
-                        formatUpdatedAtText(new Date());
+                        formatUpdatedAtText(updatedAt);
                         // Update card title/description
                         const card = document.querySelector(`.instruction-card[data-id="${editorState.currentInstructionId}"]`);
                         if (card) {
@@ -323,7 +348,18 @@
                         // Update select option text
                         const option = instructionSelect.querySelector(`option[value="${editorState.currentInstructionId}"]`);
                         if (option) {
-                            option.textContent = name || 'ไม่มีชื่อ';
+                            const instructionCode = data.instruction?.instructionId || option.dataset.instructionCode || '';
+                            const iso = (() => {
+                                const dt = new Date(updatedAt);
+                                return Number.isNaN(dt.getTime()) ? '' : dt.toISOString();
+                            })();
+                            option.dataset.instructionCode = instructionCode;
+                            if (iso) option.dataset.updated = iso;
+                            option.textContent = buildInstructionSelectOptionLabel({
+                                instructionCode,
+                                name,
+                                updatedAt
+                            });
                         }
                     } else {
                         showToast(data.error || 'ไม่สามารถบันทึก Instruction ได้', 'error');
@@ -449,9 +485,30 @@
     document.querySelectorAll('.duplicate-instruction').forEach(btn => {
         btn.addEventListener('click', async () => {
             const id = btn.dataset.id;
-            const name = prompt('ชื่อ Instruction ใหม่:');
+            if (!id) return;
 
+            const existingNames = new Set(
+                Array.from(document.querySelectorAll('.instruction-card .instruction-title'))
+                    .map(el => (el.textContent || '').trim().toLowerCase())
+                    .filter(Boolean)
+            );
+
+            let name = prompt('ชื่อ Instruction ใหม่:');
+            if (name === null) return;
+            name = (name || '').trim();
             if (!name) return;
+
+            while (existingNames.has(name.toLowerCase())) {
+                showToast('ชื่อ Instruction นี้มีอยู่แล้ว กรุณาใช้ชื่ออื่น', 'warning');
+                name = prompt('ชื่อซ้ำ กรุณาใส่ชื่อใหม่:', name);
+                if (name === null) return;
+                name = (name || '').trim();
+                if (!name) return;
+            }
+
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
 
             try {
                 const res = await fetch(`/api/instructions-v2/${id}/duplicate`, {
@@ -471,6 +528,9 @@
             } catch (err) {
                 console.error('Error duplicating instruction:', err);
                 showToast('เกิดข้อผิดพลาด', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
         });
     });
@@ -500,14 +560,13 @@
         });
     });
 
-    // Edit Data Item - Redirect to appropriate editor based on type
+    // Edit Data Item - Text uses V2, Table uses V3
     document.querySelectorAll('.edit-data-item').forEach(btn => {
         btn.addEventListener('click', () => {
             const instructionId = btn.dataset.instructionId;
             const itemId = btn.dataset.itemId;
-            const itemType = btn.dataset.itemType || 'table'; // default to table if not specified
+            const itemType = btn.dataset.itemType || 'table';
 
-            // Use V2 editor for text type, V3 for table type
             if (itemType === 'text') {
                 window.location.href = `/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit`;
             } else {
@@ -586,12 +645,11 @@
         });
     });
 
-    // Handle Text data item creation
+    // Handle Text data item creation - Use V2 editor
     document.getElementById('createTextDataItem').addEventListener('click', () => {
         const instructionId = newDataItemInstructionIdInput.value;
         if (!instructionId) return;
         selectDataTypeModal.hide();
-        // V2 editor for text type
         window.location.href = `/admin/instructions-v2/${instructionId}/data-items/new`;
     });
 
@@ -604,15 +662,27 @@
         window.location.href = `/admin/instructions-v3/${instructionId}/data-items/new`;
     });
 
-    // Search Instructions
+    // Search Instructions (filter dropdown options)
     const searchInput = document.getElementById('searchInstructions');
-    if (searchInput) {
+    if (searchInput && instructionSelect) {
         searchInput.addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase();
-            document.querySelectorAll('.instruction-card').forEach(card => {
-                const name = card.querySelector('.instruction-title').textContent.toLowerCase();
-                const desc = card.querySelector('.instruction-desc')?.textContent.toLowerCase() || '';
-                card.style.display = (name.includes(query) || desc.includes(query)) ? '' : 'none';
+            const query = (e.target.value || '').trim().toLowerCase();
+            const selectedValue = instructionSelect.value;
+            Array.from(instructionSelect.options).forEach((opt) => {
+                if (!opt.value) {
+                    opt.hidden = false;
+                    opt.disabled = false;
+                    return;
+                }
+                if (opt.value === selectedValue) {
+                    opt.hidden = false;
+                    opt.disabled = false;
+                    return;
+                }
+                const text = (opt.textContent || '').toLowerCase();
+                const matches = !query || text.includes(query);
+                opt.hidden = !matches;
+                opt.disabled = !matches;
             });
         });
     }
@@ -657,7 +727,18 @@
     const setInstructionReorderLoading = (instructionId, isLoading) => {
         document.querySelectorAll(`.move-data-item[data-instruction-id="${instructionId}"]`)
             .forEach(btn => {
-                btn.disabled = isLoading;
+                if (isLoading) {
+                    if (!btn.dataset.originalHtml) {
+                        btn.dataset.originalHtml = btn.innerHTML;
+                    }
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+                    btn.disabled = true;
+                } else {
+                    if (btn.dataset.originalHtml) {
+                        btn.innerHTML = btn.dataset.originalHtml;
+                    }
+                    btn.disabled = false;
+                }
             });
     };
 
