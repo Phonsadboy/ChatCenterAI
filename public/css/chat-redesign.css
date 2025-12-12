@@ -59,8 +59,9 @@
     --app-max-width: 1600px;
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
 }
 
 .page-chat .app-content {
@@ -69,6 +70,7 @@
     display: flex;
     flex-direction: column;
     padding: 0.75rem 0.75rem 1rem;
+    overflow: hidden;
 }
 
 /* ========================================
@@ -81,6 +83,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 .chat-app-wrapper>.container-fluid {
