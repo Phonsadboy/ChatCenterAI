@@ -13,7 +13,7 @@
     <link href="/css/chat-meta.css" rel="stylesheet">
 </head>
 
-<body class="app-shell">
+<body class="app-shell page-chat">
     <!-- Navigation -->
     <%- include('partials/admin-navbar', { activePage: 'chat' }) %>
 
@@ -37,7 +37,7 @@
                                     </h5>
                                     <div class="user-count-badge" id="userCountBadge">0</div>
                                 </div>
-                                <button class="btn-close-sidebar d-lg-none" id="closeSidebar" title="ปิด">
+                                <button class="btn-close-sidebar d-md-none" id="closeSidebar" title="ปิด" aria-label="ปิดรายชื่อผู้ใช้">
                                     <i class="fas fa-times"></i>
                                 </button>
                             </div>
@@ -114,7 +114,7 @@
                             <!-- Chat Header -->
                             <header class="chat-header" id="chatHeader">
                                 <div class="chat-header-left">
-                                    <button class="btn-toggle-sidebar d-lg-none" id="toggleSidebar">
+                                    <button class="btn-toggle-sidebar d-md-none" id="toggleSidebar" aria-label="เปิดรายชื่อผู้ใช้">
                                         <i class="fas fa-bars"></i>
                                     </button>
                                     <div class="chat-user-info">
@@ -133,28 +133,92 @@
                                     </div>
                                 </div>
                                 <div class="chat-header-right" id="chatHeaderActions" style="display: none;">
-                                    <button class="btn-header-action" id="btnTogglePurchase" title="สถานะการซื้อ">
-                                        <i class="fas fa-shopping-cart"></i>
-                                    </button>
-                                    <button class="btn-header-action" id="btnManageTags" title="จัดการแท็ก">
-                                        <i class="fas fa-tags"></i>
-                                    </button>
-                                    <button class="btn-header-action" id="btnUserNotes" title="โน้ตลูกค้า">
-                                        <i class="fas fa-sticky-note"></i>
-                                    </button>
-                                    <button class="btn-header-action" id="btnToggleAI" title="เปิด/ปิด AI">
-                                        <i class="fas fa-robot"></i>
-                                    </button>
-                                    <button class="btn-header-action" id="btnRefreshProfile" title="อัปเดตข้อมูลผู้ใช้">
-                                        <i class="fas fa-sync"></i>
-                                    </button>
-                                    <button class="btn-header-action d-lg-none" id="btnToggleOrders" title="ดูออเดอร์">
-                                        <i class="fas fa-clipboard-list"></i>
-                                    </button>
-                                    <div class="header-divider"></div>
-                                    <button class="btn-header-action btn-danger" id="btnClearChat" title="ล้างแชท">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
+                                    <!-- Desktop actions (>= lg) -->
+                                    <div class="chat-actions chat-actions--desktop d-none d-lg-flex">
+                                        <button class="btn-header-action" id="btnTogglePurchase" title="สถานะการซื้อ"
+                                            aria-label="สลับสถานะการซื้อ">
+                                            <i class="fas fa-shopping-cart"></i>
+                                        </button>
+                                        <button class="btn-header-action" id="btnManageTags" title="จัดการแท็ก"
+                                            aria-label="จัดการแท็ก">
+                                            <i class="fas fa-tags"></i>
+                                        </button>
+                                        <button class="btn-header-action" id="btnUserNotes" title="โน้ตลูกค้า"
+                                            aria-label="โน้ตลูกค้า">
+                                            <i class="fas fa-sticky-note"></i>
+                                        </button>
+                                        <button class="btn-header-action" id="btnToggleAI" title="เปิด/ปิด AI"
+                                            aria-label="เปิดหรือปิด AI">
+                                            <i class="fas fa-robot"></i>
+                                        </button>
+                                        <button class="btn-header-action" id="btnRefreshProfile" title="อัปเดตข้อมูลผู้ใช้"
+                                            aria-label="อัปเดตข้อมูลผู้ใช้">
+                                            <i class="fas fa-sync"></i>
+                                        </button>
+                                        <div class="header-divider" aria-hidden="true"></div>
+                                        <button class="btn-header-action btn-danger" id="btnClearChat" title="ล้างแชท"
+                                            aria-label="ล้างแชท">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+
+                                    <!-- Mobile/Tablet actions (< lg) -->
+                                    <div class="chat-actions chat-actions--mobile d-lg-none">
+                                        <button class="btn-header-action" id="btnToggleOrders" title="ดูออเดอร์"
+                                            aria-label="ดูออเดอร์">
+                                            <i class="fas fa-clipboard-list"></i>
+                                        </button>
+
+                                        <div class="dropdown">
+                                            <button class="btn-header-action" id="btnMoreActions" type="button"
+                                                data-bs-toggle="dropdown" aria-expanded="false" title="เมนูเพิ่มเติม"
+                                                aria-label="เมนูเพิ่มเติม">
+                                                <i class="fas fa-ellipsis-vertical"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end chat-actions-menu"
+                                                id="chatHeaderMoreMenu" aria-label="เมนูแอคชันแชท">
+                                                <li>
+                                                    <button class="dropdown-item" type="button"
+                                                        data-chat-action="togglePurchase">
+                                                        <i class="fas fa-shopping-cart me-2"></i>สถานะการซื้อ
+                                                    </button>
+                                                </li>
+                                                <li>
+                                                    <button class="dropdown-item" type="button"
+                                                        data-chat-action="manageTags">
+                                                        <i class="fas fa-tags me-2"></i>จัดการแท็ก
+                                                    </button>
+                                                </li>
+                                                <li>
+                                                    <button class="dropdown-item" type="button"
+                                                        data-chat-action="userNotes">
+                                                        <i class="fas fa-sticky-note me-2"></i>โน้ตลูกค้า
+                                                    </button>
+                                                </li>
+                                                <li>
+                                                    <button class="dropdown-item" type="button"
+                                                        data-chat-action="toggleAI">
+                                                        <i class="fas fa-robot me-2"></i>เปิด/ปิด AI
+                                                    </button>
+                                                </li>
+                                                <li>
+                                                    <button class="dropdown-item" type="button"
+                                                        data-chat-action="refreshProfile">
+                                                        <i class="fas fa-sync me-2"></i>อัปเดตข้อมูลผู้ใช้
+                                                    </button>
+                                                </li>
+                                                <li>
+                                                    <hr class="dropdown-divider">
+                                                </li>
+                                                <li>
+                                                    <button class="dropdown-item text-danger" type="button"
+                                                        data-chat-action="clearChat">
+                                                        <i class="fas fa-trash me-2"></i>ล้างแชท
+                                                    </button>
+                                                </li>
+                                            </ul>
+                                        </div>
+                                    </div>
                                 </div>
                             </header>
 
@@ -469,18 +533,16 @@
         <script src="/socket.io/socket.io.js"></script>
         <script src="/js/chat-redesign.js"></script>
 
-        </div> <!-- /app-content -->
-
         <script>
             // Initialize chat manager
             const chatManager = new ChatManager();
 
         // Pass follow-up config from server
-        <% if (typeof chatCenterFollowUpConfig !== 'undefined') { %>
-	                chatManager.followUpConfig = <%- JSON.stringify(chatCenterFollowUpConfig).replace(/</g, '\\u003c') %>;
-	        <% } else { %>
-	                chatManager.followUpConfig = { };
-	        <% } %>
+        <% if (typeof followUpConfig !== 'undefined') { %>
+                    chatManager.followUpConfig = <%- JSON.stringify(followUpConfig).replace(/</g, '\\u003c') %>;
+            <% } else { %>
+                    chatManager.followUpConfig = { };
+            <% } %>
         </script>
 </body>
 

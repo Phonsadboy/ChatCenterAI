@@ -263,6 +263,7 @@ class ChatManager {
         const btnClearChat = document.getElementById('btnClearChat');
         const btnToggleOrders = document.getElementById('btnToggleOrders');
         const orderSidebarOverlay = document.getElementById('orderSidebarOverlay');
+        const chatHeaderMoreMenu = document.getElementById('chatHeaderMoreMenu');
 
         if (btnTogglePurchase) {
             btnTogglePurchase.addEventListener('click', () => {
@@ -322,21 +323,54 @@ class ChatManager {
             });
         }
 
+        if (chatHeaderMoreMenu) {
+            chatHeaderMoreMenu.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-chat-action]');
+                if (!btn || !chatHeaderMoreMenu.contains(btn)) return;
+                const action = btn.dataset.chatAction;
+                if (!action) return;
+
+                switch (action) {
+                    case 'togglePurchase':
+                        this.togglePurchaseStatus();
+                        break;
+                    case 'manageTags':
+                        this.openTagModal();
+                        break;
+                    case 'userNotes':
+                        this.openUserNotesModal();
+                        break;
+                    case 'toggleAI':
+                        this.toggleAI();
+                        break;
+                    case 'refreshProfile':
+                        this.refreshCurrentUserProfile();
+                        break;
+                    case 'clearChat':
+                        this.clearChat();
+                        break;
+                    default:
+                        break;
+                }
+            });
+        }
+
         // Order sidebar collapse button
         const btnCollapseOrderSidebar = document.getElementById('btnCollapseOrderSidebar');
         if (btnCollapseOrderSidebar) {
             btnCollapseOrderSidebar.addEventListener('click', () => {
                 this.toggleOrderSidebarCollapse();
             });
-            // Restore collapsed state from localStorage
-            const isCollapsed = localStorage.getItem('orderSidebarCollapsed') === 'true';
-            if (isCollapsed) {
-                const orderSidebar = document.getElementById('orderSidebar');
-                if (orderSidebar) {
-                    orderSidebar.classList.add('collapsed');
-                }
-            }
         }
+
+        this.syncOrderSidebarCollapseForViewport();
+        let resizeTimer = null;
+        window.addEventListener('resize', () => {
+            if (resizeTimer) window.clearTimeout(resizeTimer);
+            resizeTimer = window.setTimeout(() => {
+                this.syncOrderSidebarCollapseForViewport();
+            }, 120);
+        });
 
         // Template button
         const btnTemplate = document.getElementById('btnTemplate');
@@ -370,6 +404,25 @@ class ChatManager {
                 }
             });
         }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (document.querySelector('.modal.show')) return;
+
+            const chatSidebar = document.getElementById('chatSidebar');
+            const sidebarOverlay = document.getElementById('sidebarOverlay');
+            if (chatSidebar?.classList.contains('show')) {
+                chatSidebar.classList.remove('show');
+                sidebarOverlay?.classList.remove('show');
+            }
+
+            const orderSidebar = document.getElementById('orderSidebar');
+            const orderOverlay = document.getElementById('orderSidebarOverlay');
+            if (orderSidebar?.classList.contains('show')) {
+                orderSidebar.classList.remove('show');
+                orderOverlay?.classList.remove('show');
+            }
+        });
 
         // Save order button
         const saveOrderBtn = document.getElementById('saveOrderBtn');
@@ -1029,6 +1082,27 @@ class ChatManager {
         }
     }
 
+    syncOrderSidebarCollapseForViewport() {
+        const orderSidebar = document.getElementById('orderSidebar');
+        if (!orderSidebar) return;
+
+        const isDesktopLayout = window.matchMedia('(min-width: 992px)').matches;
+        if (!isDesktopLayout) {
+            orderSidebar.classList.remove('collapsed');
+            return;
+        }
+
+        const stored = localStorage.getItem('orderSidebarCollapsed');
+        if (stored === null) {
+            const shouldDefaultCollapse =
+                window.matchMedia('(min-width: 992px) and (max-width: 1199.98px)').matches;
+            orderSidebar.classList.toggle('collapsed', shouldDefaultCollapse);
+            return;
+        }
+
+        orderSidebar.classList.toggle('collapsed', stored === 'true');
+    }
+
     toggleOrderSidebarMobile(show = true) {
         const orderSidebar = document.getElementById('orderSidebar');
         const orderSidebarOverlay = document.getElementById('orderSidebarOverlay');
@@ -1051,8 +1125,14 @@ class ChatManager {
         const orderSidebar = document.getElementById('orderSidebar');
         if (!orderSidebar) return;
 
+        const isDesktopLayout = window.matchMedia('(min-width: 992px)').matches;
+        if (!isDesktopLayout) {
+            this.toggleOrderSidebarMobile(false);
+            return;
+        }
+
         const isCollapsed = orderSidebar.classList.toggle('collapsed');
-        localStorage.setItem('orderSidebarCollapsed', isCollapsed);
+        localStorage.setItem('orderSidebarCollapsed', String(isCollapsed));
     }
 
 
