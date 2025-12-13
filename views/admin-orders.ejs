@@ -330,9 +330,10 @@
       async function loadAISettings() {
         try {
           // Load extraction mode
-          const modeRes = await fetch('/api/settings?keys=orderExtractionMode');
+          const modeRes = await fetch('/api/settings');
           const modeData = await modeRes.json();
-          const currentMode = modeData.settings?.orderExtractionMode || 'realtime';
+          const rawMode = modeData && (modeData.orderExtractionMode || (modeData.settings && modeData.settings.orderExtractionMode));
+          const currentMode = rawMode === 'scheduled' || rawMode === 'realtime' ? rawMode : 'scheduled';
           document.getElementById(currentMode === 'scheduled' ? 'modeScheduled' : 'modeRealtime').checked = true;
 
           // Load pages

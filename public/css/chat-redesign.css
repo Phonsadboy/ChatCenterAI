@@ -108,6 +108,9 @@
 
 .chat-sidebar {
     width: var(--chat-sidebar-width);
+    flex: 0 0 var(--chat-sidebar-width);
+    min-width: var(--chat-sidebar-width);
+    max-width: var(--chat-sidebar-width);
     background: var(--chat-bg-sidebar);
     border-right: 1px solid var(--chat-border-color);
     display: flex;
@@ -392,6 +395,7 @@
     overflow-y: auto;
     overflow-x: hidden;
     min-height: 0;
+    scrollbar-gutter: stable;
 }
 
 .user-list::-webkit-scrollbar {
@@ -674,7 +678,7 @@
    ======================================== */
 
 .chat-main {
-    flex: 1;
+    flex: 1 1 0%;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -689,6 +693,8 @@
 
 .order-sidebar {
     width: 320px;
+    flex: 0 0 auto;
+    flex-shrink: 0;
     background: var(--chat-bg-sidebar);
     border-left: 1px solid var(--chat-border-color);
     display: flex;
@@ -795,6 +801,7 @@
     overflow-x: hidden;
     padding: 1rem;
     min-height: 0;
+    scrollbar-gutter: stable;
 }
 
 .order-content::-webkit-scrollbar {
@@ -1306,6 +1313,7 @@
     overflow-x: hidden;
     background: var(--chat-bg-app);
     min-height: 0;
+    scrollbar-gutter: stable;
 }
 
 .messages-wrapper::-webkit-scrollbar {

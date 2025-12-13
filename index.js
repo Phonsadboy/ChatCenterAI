@@ -16919,29 +16919,44 @@ app.post("/admin/orders/pages/ai-settings", async (req, res) => {
       botId: normalizedBotId || null,
     };
 
+    const trimmedPrompt =
+      typeof orderPromptInstructions === "string"
+        ? orderPromptInstructions.trim()
+        : "";
+
     const updateFields = {
       orderExtractionEnabled: orderExtractionEnabled !== false,
       orderModel: orderModel || "gpt-4.1-nano",
-      orderPromptInstructions: typeof orderPromptInstructions === "string" ? orderPromptInstructions.trim() : "",
       updatedAt: new Date(),
     };
 
+    const updateDoc = {
+      $set: updateFields,
+      $setOnInsert: {
+        platform: targetPlatform,
+        botId: normalizedBotId || null,
+        createdAt: new Date(),
+      },
+    };
+
+    if (trimmedPrompt) {
+      updateFields.orderPromptInstructions = trimmedPrompt;
+    } else {
+      updateDoc.$unset = { orderPromptInstructions: "" };
+    }
+
     await coll.updateOne(
       filter,
-      {
-        $set: updateFields,
-        $setOnInsert: {
-          platform: targetPlatform,
-          botId: normalizedBotId || null,
-          createdAt: new Date(),
-        },
-      },
+      updateDoc,
       { upsert: true },
     );
 
     res.json({
       success: true,
-      settings: updateFields,
+      settings: {
+        ...updateFields,
+        orderPromptInstructions: trimmedPrompt,
+      },
     });
   } catch (error) {
     console.error("[Orders] ไม่สามารถบันทึกการตั้งค่า AI ได้:", error);
