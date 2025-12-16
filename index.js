@@ -10387,28 +10387,26 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     platform: "facebook",
                     botId: facebookBot?._id?.toString?.() || null,
                   };
-                  const baseInsertResult = await coll.insertOne(baseDoc);
-                  if (baseInsertResult?.insertedId) {
-                    baseDoc._id = baseInsertResult.insertedId;
-                  }
-                  await appendOrderExtractionMessage(baseDoc);
-                  if (disableAiReply) {
-                    maybeAnalyzeOrder(
-                      targetUserId,
-                      "facebook",
-                      facebookBot?._id?.toString?.() || null,
-                      { force: true },
-                    ).catch((error) => {
-                      console.error(
-                        `[Order] วิเคราะห์หลังแอดมินตอบไม่สำเร็จ (${targetUserId}):`,
-                        error.message || error,
-                      );
-                    });
-                  }
-                  // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
-                  try {
-                    await resetUserUnreadCount(targetUserId);
-                  } catch (_) { }
+	                  const baseInsertResult = await coll.insertOne(baseDoc);
+	                  if (baseInsertResult?.insertedId) {
+	                    baseDoc._id = baseInsertResult.insertedId;
+	                  }
+	                  await appendOrderExtractionMessage(baseDoc);
+	                  maybeAnalyzeOrder(
+	                    targetUserId,
+	                    "facebook",
+	                    facebookBot?._id?.toString?.() || null,
+	                    { force: disableAiReply },
+	                  ).catch((error) => {
+	                    console.error(
+	                      `[Order] วิเคราะห์หลังแอดมินตอบไม่สำเร็จ (${targetUserId}):`,
+	                      error.message || error,
+	                    );
+	                  });
+	                  // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
+	                  try {
+	                    await resetUserUnreadCount(targetUserId);
+	                  } catch (_) { }
                   try {
                     io.emit("newMessage", {
                       userId: targetUserId,
