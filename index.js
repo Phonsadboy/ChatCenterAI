@@ -2090,15 +2090,17 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       typeof preview === "string" ? preview : buildFollowUpPreview(preview);
 
     if (existingTask) {
-      if (!existingTask.completed && !existingTask.canceled) {
-        const roundsFromDb = Array.isArray(existingTask.rounds)
-          ? existingTask.rounds
-          : [];
-        const sentRoundsCount = roundsFromDb.reduce(
-          (count, round) => (round?.status === "sent" ? count + 1 : count),
-          0,
-        );
-        const completedRounds = Math.min(
+      const shouldResetProgress = !!(existingTask.completed || existingTask.canceled);
+      const roundsFromDb = Array.isArray(existingTask.rounds)
+        ? existingTask.rounds
+        : [];
+      const sentRoundsCount = roundsFromDb.reduce(
+        (count, round) => (round?.status === "sent" ? count + 1 : count),
+        0,
+      );
+      const completedRounds = shouldResetProgress
+        ? 0
+        : Math.min(
           roundsConfig.length,
           Math.max(
             typeof existingTask.nextRoundIndex === "number"
@@ -2111,68 +2113,71 @@ async function scheduleFollowUpForUser(userId, options = {}) {
           ),
         );
 
-        const baseMoment = getBangkokMoment(messageTimestamp);
-        const rebuiltRounds = roundsConfig.map((round, index) => {
-          const scheduledMoment = baseMoment
-            .clone()
-            .add(round.delayMinutes, "minutes");
-          const sanitizedImages = sanitizeFollowUpImages(round.images);
-          const wasSent = index < completedRounds;
-          const existing = roundsFromDb[index] || {};
+      const baseMoment = getBangkokMoment(messageTimestamp);
+      const rebuiltRounds = roundsConfig.map((round, index) => {
+        const scheduledMoment = baseMoment.clone().add(round.delayMinutes, "minutes");
+        const sanitizedImages = sanitizeFollowUpImages(round.images);
+        const wasSent = !shouldResetProgress && index < completedRounds;
+        const existing = roundsFromDb[index] || {};
 
-          return {
-            index,
-            delayMinutes: round.delayMinutes,
-            message: typeof round.message === "string" ? round.message : "",
-            images: sanitizedImages,
-            scheduledAt: scheduledMoment.toDate(),
-            sentAt: wasSent
-              ? existing.sentAt || existing.sent_at || null
-              : null,
-            status: wasSent ? "sent" : "pending",
-          };
-        });
+        return {
+          index,
+          delayMinutes: round.delayMinutes,
+          message: typeof round.message === "string" ? round.message : "",
+          images: sanitizedImages,
+          scheduledAt: scheduledMoment.toDate(),
+          sentAt: wasSent ? existing.sentAt || existing.sent_at || null : null,
+          status: wasSent ? "sent" : "pending",
+        };
+      });
 
-        const nextRoundIndex = Math.min(completedRounds, rebuiltRounds.length);
-        const nextScheduledAt =
-          rebuiltRounds[nextRoundIndex]?.scheduledAt || null;
+      const nextRoundIndex = shouldResetProgress
+        ? 0
+        : Math.min(completedRounds, rebuiltRounds.length);
+      const nextScheduledAt = rebuiltRounds[nextRoundIndex]?.scheduledAt || null;
 
-        await coll.updateOne(
-          { _id: existingTask._id },
-          {
-            $set: {
-              rounds: rebuiltRounds,
-              nextRoundIndex,
-              nextScheduledAt,
-              lastUserMessageAt: messageTimestamp,
-              lastUserMessagePreview:
-                previewText || existingTask.lastUserMessagePreview || "",
-              updatedAt: now,
-              contextKey,
-              canceled: false,
-              completed: false,
-              configSnapshot: {
-                rounds: roundsConfig.map((item) => ({
-                  delayMinutes: item.delayMinutes,
-                  message:
-                    typeof item.message === "string" ? item.message : "",
-                  images: sanitizeFollowUpImages(item.images),
-                })),
-                autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
-              },
+      await coll.updateOne(
+        { _id: existingTask._id },
+        {
+          $set: {
+            rounds: rebuiltRounds,
+            nextRoundIndex,
+            nextScheduledAt,
+            lastUserMessageAt: messageTimestamp,
+            lastUserMessagePreview:
+              previewText || existingTask.lastUserMessagePreview || "",
+            updatedAt: now,
+            contextKey,
+            canceled: false,
+            completed: false,
+            cancelReason: null,
+            canceledAt: null,
+            ...(shouldResetProgress
+              ? {
+                sentRounds: [],
+                lastSentAt: null,
+              }
+              : {}),
+            configSnapshot: {
+              rounds: roundsConfig.map((item) => ({
+                delayMinutes: item.delayMinutes,
+                message: typeof item.message === "string" ? item.message : "",
+                images: sanitizeFollowUpImages(item.images),
+              })),
+              autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
             },
           },
-        );
+        },
+      );
 
-        emitFollowUpScheduleUpdate({
-          userId,
-          platform: normalizedPlatform,
-          botId: normalizedBotId,
-          contextKey,
-          status: "scheduled",
-          nextScheduledAt,
-        });
-      }
+      emitFollowUpScheduleUpdate({
+        userId,
+        platform: normalizedPlatform,
+        botId: normalizedBotId,
+        contextKey,
+        status: "scheduled",
+        nextScheduledAt,
+      });
       return null;
     }
 
@@ -2743,6 +2748,9 @@ function startFollowUpTaskWorker() {
     }
   };
   followUpTaskTimer = setInterval(runner, FOLLOW_UP_TASK_INTERVAL_MS);
+  console.log(
+    `[FollowUp] Worker เริ่มทำงาน (interval ${FOLLOW_UP_TASK_INTERVAL_MS / 1000}s)`,
+  );
   runner();
 }
 
@@ -7556,47 +7564,105 @@ app.use((err, req, res, next) => {
 
 server.listen(PORT, async () => {
   console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
+  let dbReady = false;
   try {
     console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
     await connectDB();
+    dbReady = true;
     console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
+  } catch (err) {
+    console.error(`[ERROR] ไม่สามารถเชื่อมต่อฐานข้อมูล MongoDB ได้:`, err);
+  }
 
-    // รัน migration อัตโนมัติ
+  if (!dbReady) {
+    console.error(
+      `[ERROR] ข้ามการเริ่มระบบพื้นหลัง เนื่องจากเชื่อมต่อฐานข้อมูลไม่สำเร็จ`,
+    );
+    return;
+  }
+
+  // รัน migration อัตโนมัติ (ไม่ให้บล็อกระบบพื้นหลังหากล้มเหลว)
+  try {
     console.log(`[LOG] กำลังตรวจสอบและ migrate ข้อมูล...`);
     await migrateInstructionAssetsAddSlug();
     await migrateAssetsToCollections();
     await migrateToInstructionsV2(); // Auto-migrate to new instruction system
     console.log(`[LOG] Migration เสร็จสิ้น`);
+  } catch (migrationError) {
+    console.error(`[ERROR] Migration ล้มเหลว:`, migrationError);
+  }
 
+  // โหลด instructions จาก Google Doc (ไม่บล็อกการเริ่มระบบ)
+  try {
     console.log(`[LOG] กำลังดึงข้อมูล instructions จาก Google Doc...`);
     await fetchGoogleDocInstructions();
     console.log(
       `[LOG] ดึงข้อมูล instructions สำเร็จ (${googleDocInstructions.length} อักขระ)`,
     );
+  } catch (docError) {
+    console.error(`[ERROR] ดึงข้อมูล instructions จาก Google Doc ไม่สำเร็จ:`, docError);
+  }
 
-    // ใช้ฟังก์ชันใหม่ดึงข้อมูลทุกแท็บจาก Google Sheets
+  // ดึงข้อมูลทุกแท็บจาก Google Sheets (ไม่บล็อกระบบติดตาม/งานพื้นหลัง)
+  try {
     console.log(`[LOG] เริ่มดึงข้อมูลทุกแท็บจาก Google Sheets...`);
     sheetJSON = await fetchAllSheetsDataNew(SPREADSHEET_ID);
     console.log(
       `[LOG] ดึงข้อมูลจาก Google Sheets เสร็จสิ้น ได้ข้อมูลจาก ${Object.keys(sheetJSON).length} แท็บ`,
     );
+  } catch (sheetError) {
+    console.error(`[ERROR] ดึงข้อมูลจาก Google Sheets ไม่สำเร็จ:`, sheetError);
+  }
 
-    // ใช้ฟังก์ชันใหม่สำหรับรีเฟรชข้อมูลทุก 1 วัน
+  // ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติ (ไม่บล็อกระบบหลัก)
+  try {
     console.log(`[LOG] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติ...`);
     scheduleDailyRefresh();
-
-    // ทำให้แน่ใจว่ามีการตั้งค่าเริ่มต้นใน collection settings
-    await ensureInstructionIdentifiers();
-    await ensureSettings();
-    await ensureFollowUpIndexes();
-    await ensureOrderBufferIndexes();
-    startFollowUpTaskWorker();
-    await startOrderCutoffScheduler();
-
-    console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
-  } catch (err) {
-    console.error(`[ERROR] เกิดข้อผิดพลาดขณะเริ่มต้นเซิร์ฟเวอร์:`, err);
+  } catch (refreshError) {
+    console.error(`[ERROR] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติไม่สำเร็จ:`, refreshError);
   }
+
+  // ทำให้แน่ใจว่ามีการตั้งค่าเริ่มต้นใน collection settings
+  try {
+    await ensureInstructionIdentifiers();
+  } catch (settingsError) {
+    console.error(`[ERROR] ensureInstructionIdentifiers ล้มเหลว:`, settingsError);
+  }
+
+  try {
+    await ensureSettings();
+  } catch (settingsError) {
+    console.error(`[ERROR] ensureSettings ล้มเหลว:`, settingsError);
+  }
+
+  try {
+    await ensureFollowUpIndexes();
+  } catch (followUpIndexError) {
+    console.error(`[ERROR] ensureFollowUpIndexes ล้มเหลว:`, followUpIndexError);
+  }
+
+  try {
+    await ensureOrderBufferIndexes();
+  } catch (orderIndexError) {
+    console.error(`[ERROR] ensureOrderBufferIndexes ล้มเหลว:`, orderIndexError);
+  }
+
+  try {
+    startFollowUpTaskWorker();
+  } catch (followUpWorkerError) {
+    console.error(`[ERROR] startFollowUpTaskWorker ล้มเหลว:`, followUpWorkerError);
+  }
+
+  try {
+    await startOrderCutoffScheduler();
+  } catch (orderSchedulerError) {
+    console.error(
+      `[ERROR] startOrderCutoffScheduler ล้มเหลว:`,
+      orderSchedulerError,
+    );
+  }
+
+  console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
 });
 
 // เพิ่มฟังก์ชันเพื่อเก็บและดึงประวัติการวิเคราะห์ Flow ของผู้ใช้
@@ -21955,6 +22021,57 @@ async function getNormalizedChatUsers(options = {}) {
       ordersMap[order.userId].push(order);
     });
 
+    // ดึงงานติดตาม (follow-up tasks) ที่ยัง active
+    const followUpTaskColl = db.collection("follow_up_tasks");
+    const followUpTasks =
+      userIds.length > 0
+        ? await followUpTaskColl
+            .find({
+              userId: { $in: userIds },
+              canceled: { $ne: true },
+              completed: { $ne: true },
+              nextScheduledAt: { $ne: null },
+            })
+            .project({
+              userId: 1,
+              platform: 1,
+              botId: 1,
+              nextScheduledAt: 1,
+              nextRoundIndex: 1,
+              createdAt: 1,
+              updatedAt: 1,
+            })
+            .toArray()
+        : [];
+
+    const followUpTaskMap = new Map();
+    const followUpTaskByUserId = new Map();
+    followUpTasks.forEach((task) => {
+      const taskPlatform = task.platform || "line";
+      const taskBotId = normalizeFollowUpBotId(task.botId);
+      const key = `${task.userId}:${taskPlatform}:${taskBotId || "default"}`;
+      const prev = followUpTaskMap.get(key);
+      const taskUpdatedAt = task.updatedAt || task.createdAt || null;
+      const prevUpdatedAt = prev ? prev.updatedAt || prev.createdAt || null : null;
+      const taskTime = taskUpdatedAt ? new Date(taskUpdatedAt).getTime() : 0;
+      const prevTime = prevUpdatedAt ? new Date(prevUpdatedAt).getTime() : 0;
+      if (!prev || taskTime > prevTime) {
+        followUpTaskMap.set(key, task);
+      }
+
+      const prevByUser = followUpTaskByUserId.get(task.userId);
+      const taskNext = task.nextScheduledAt
+        ? new Date(task.nextScheduledAt).getTime()
+        : Infinity;
+      const prevNext =
+        prevByUser && prevByUser.nextScheduledAt
+          ? new Date(prevByUser.nextScheduledAt).getTime()
+          : Infinity;
+      if (!prevByUser || taskNext < prevNext) {
+        followUpTaskByUserId.set(task.userId, task);
+      }
+    });
+
     const contextCache = new Map();
 
     let filterConfig = null;
@@ -22034,6 +22151,12 @@ async function getNormalizedChatUsers(options = {}) {
 
         const followStatus = followMap[user._id];
         const showFollowUp = config.showInChat !== false;
+        const followUpTaskKey = `${user._id}:${platform}:${botId || "default"}`;
+        const activeFollowUpTask =
+          followUpTaskMap.get(followUpTaskKey) ||
+          followUpTaskByUserId.get(user._id) ||
+          null;
+        const hasActiveFollowUpTask = !!activeFollowUpTask;
         const hasFollowUp =
           showFollowUp && followStatus ? !!followStatus.hasFollowUp : false;
         const followUpReason = hasFollowUp
@@ -22094,6 +22217,10 @@ async function getNormalizedChatUsers(options = {}) {
             analysisEnabled: config.analysisEnabled !== false,
             showInChat: showFollowUp,
             showInDashboard: config.showInDashboard !== false,
+            isFollowUp: showFollowUp && hasActiveFollowUpTask,
+            nextScheduledAt: hasActiveFollowUpTask
+              ? activeFollowUpTask.nextScheduledAt || null
+              : null,
           },
         };
       }),

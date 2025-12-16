@@ -1760,7 +1760,15 @@ class ChatManager {
     handleFollowUpTagged(data) {
         const user = this.allUsers.find(u => u.userId === data.userId);
         if (user) {
-            user.followUp = data.followUp;
+            user.hasFollowUp = !!data.hasFollowUp;
+            user.followUpReason = data.followUpReason || '';
+            user.followUpUpdatedAt = data.followUpUpdatedAt || null;
+            if (data.hasFollowUp) {
+                user.hasPurchased = true;
+            }
+            if (!user.followUp || typeof user.followUp !== 'object') {
+                user.followUp = {};
+            }
             this.applyFilters();
         }
     }
