@@ -8533,14 +8533,27 @@ async function ensureSettings() {
   }
 }
 
+function parseOptionalBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return undefined;
+}
+
 // Get setting value with default fallback
 async function getSettingValue(key, defaultValue) {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("settings");
-    const doc = await coll.findOne({ key: key });
-    return doc ? doc.value : defaultValue;
+    const doc = await coll.findOne({ key });
+    if (!doc || typeof doc.value === "undefined") {
+      return defaultValue;
+    }
+    return doc.value;
   } catch (error) {
     console.error(`Error getting setting ${key}:`, error);
     return defaultValue;
@@ -18521,6 +18534,8 @@ app.get("/api/settings", async (req, res) => {
     const settingsObj = {};
 
     settings.forEach((setting) => {
+      if (!setting || typeof setting.key !== "string") return;
+      if (typeof setting.value === "undefined") return;
       settingsObj[setting.key] = setting.value;
     });
 
@@ -18639,24 +18654,32 @@ app.post("/api/settings/chat", async (req, res) => {
       { upsert: true },
     );
 
-    await coll.updateOne(
-      { key: "enableFollowUpAnalysis" },
-      { $set: { value: !!enableFollowUpAnalysis } },
-      { upsert: true },
-    );
+    const followUpUpdates = [
+      {
+        key: "enableFollowUpAnalysis",
+        value: parseOptionalBoolean(enableFollowUpAnalysis),
+      },
+      { key: "followUpShowInChat", value: parseOptionalBoolean(followUpShowInChat) },
+      {
+        key: "followUpShowInDashboard",
+        value: parseOptionalBoolean(followUpShowInDashboard),
+      },
+    ];
 
-    await coll.updateOne(
-      { key: "followUpShowInChat" },
-      { $set: { value: !!followUpShowInChat } },
-      { upsert: true },
-    );
+    let followUpConfigTouched = false;
+    for (const update of followUpUpdates) {
+      if (typeof update.value !== "boolean") continue;
+      followUpConfigTouched = true;
+      await coll.updateOne(
+        { key: update.key },
+        { $set: { value: update.value } },
+        { upsert: true },
+      );
+    }
 
-    await coll.updateOne(
-      { key: "followUpShowInDashboard" },
-      { $set: { value: !!followUpShowInDashboard } },
-      { upsert: true },
-    );
-    resetFollowUpConfigCache();
+    if (followUpConfigTouched) {
+      resetFollowUpConfigCache();
+    }
 
     res.json({ success: true, message: "บันทึกการตั้งค่าแชทเรียบร้อยแล้ว" });
   } catch (err) {
@@ -18777,29 +18800,49 @@ app.post("/api/settings/system", async (req, res) => {
     }
 
     // Save settings
+    const aiEnabledValue = parseOptionalBoolean(aiEnabled);
+    const enableChatHistoryValue = parseOptionalBoolean(enableChatHistory);
+    const enableAdminNotificationsValue = parseOptionalBoolean(
+      enableAdminNotifications,
+    );
+    const showDebugInfoValue = parseOptionalBoolean(showDebugInfo);
+
+    if (
+      typeof aiEnabledValue !== "boolean" ||
+      typeof enableChatHistoryValue !== "boolean" ||
+      typeof enableAdminNotificationsValue !== "boolean"
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "ค่าการตั้งค่าระบบบางรายการไม่ถูกต้อง",
+      });
+    }
+
     await coll.updateOne(
       { key: "aiEnabled" },
-      { $set: { value: aiEnabled } },
+      { $set: { value: aiEnabledValue } },
       { upsert: true },
     );
 
     await coll.updateOne(
       { key: "enableChatHistory" },
-      { $set: { value: enableChatHistory } },
+      { $set: { value: enableChatHistoryValue } },
       { upsert: true },
     );
 
     await coll.updateOne(
       { key: "enableAdminNotifications" },
-      { $set: { value: enableAdminNotifications } },
+      { $set: { value: enableAdminNotificationsValue } },
       { upsert: true },
     );
 
-    await coll.updateOne(
-      { key: "showDebugInfo" },
-      { $set: { value: showDebugInfo } },
-      { upsert: true },
-    );
+    if (typeof showDebugInfoValue === "boolean") {
+      await coll.updateOne(
+        { key: "showDebugInfo" },
+        { $set: { value: showDebugInfoValue } },
+        { upsert: true },
+      );
+    }
 
     await coll.updateOne(
       { key: "systemMode" },
