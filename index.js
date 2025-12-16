@@ -1256,34 +1256,38 @@ async function saveChatHistory(
     console.error("[FollowUp] ตั้งเวลาติดตามไม่สำเร็จ:", scheduleError.message);
   }
 
-  // Insert assistant message
-  const assistantTimestamp = new Date();
-  const assistantMessageDoc = {
-    senderId: userId,
-    role: "assistant",
-    content: assistantMsg,
-    timestamp: assistantTimestamp,
-    platform,
-    botId,
-    source: "ai",
-  };
-  const assistantInsertResult = await coll.insertOne(assistantMessageDoc);
-  if (assistantInsertResult?.insertedId) {
-    assistantMessageDoc._id = assistantInsertResult.insertedId;
-  }
-  await appendOrderExtractionMessage(assistantMessageDoc);
-
-  try {
-    if (typeof io !== "undefined" && io) {
-      io.emit("newMessage", {
-        userId,
-        message: assistantMessageDoc,
-        sender: "assistant",
-        timestamp: assistantTimestamp,
-      });
+  // Insert assistant message (only when we actually have content)
+  const assistantText =
+    typeof assistantMsg === "string" ? assistantMsg.trim() : "";
+  if (assistantText) {
+    const assistantTimestamp = new Date();
+    const assistantMessageDoc = {
+      senderId: userId,
+      role: "assistant",
+      content: assistantMsg,
+      timestamp: assistantTimestamp,
+      platform,
+      botId,
+      source: "ai",
+    };
+    const assistantInsertResult = await coll.insertOne(assistantMessageDoc);
+    if (assistantInsertResult?.insertedId) {
+      assistantMessageDoc._id = assistantInsertResult.insertedId;
     }
-  } catch (_) {
-    // ไม่ต้องหยุดการทำงานหากไม่สามารถแจ้งเตือนผ่าน socket ได้
+    await appendOrderExtractionMessage(assistantMessageDoc);
+
+    try {
+      if (typeof io !== "undefined" && io) {
+        io.emit("newMessage", {
+          userId,
+          message: assistantMessageDoc,
+          sender: "assistant",
+          timestamp: assistantTimestamp,
+        });
+      }
+    } catch (_) {
+      // ไม่ต้องหยุดการทำงานหากไม่สามารถแจ้งเตือนผ่าน socket ได้
+    }
   }
 
   // วิเคราะห์การติดตามลูกค้าหลังจากบันทึกข้อความของผู้ใช้
@@ -5372,6 +5376,7 @@ async function processFlushedMessages(
   const platform = queueContext.platform || queueContext.botType || "line";
   const botIdForHistory = queueContext.botId || null;
   const aiModelOverride = queueContext.aiModel || null;
+  const disableAiReply = !!queueContext.disableAiReply;
   const replyToken =
     mergedContent.length > 0
       ? mergedContent[mergedContent.length - 1].replyToken
@@ -5437,6 +5442,15 @@ async function processFlushedMessages(
         "ขออภัยค่ะ ระบบกำลังอยู่ในโหมดบำรุงรักษา กรุณาลองใหม่อีกครั้ง",
       );
     }
+    return;
+  }
+
+  // กรณีปิด bot/หยุดตอบอัตโนมัติ (ยังคงบันทึกประวัติ + งานติดตาม/ออเดอร์)
+  if (disableAiReply) {
+    console.log(
+      `[LOG] Bot ปิดการตอบอัตโนมัติ - บันทึกข้อความโดยไม่ตอบกลับสำหรับผู้ใช้: ${userId}`,
+    );
+    await saveChatHistory(userId, mergedContent, "", platform, botIdForHistory);
     return;
   }
 
@@ -10159,11 +10173,12 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
       ? await coll.findOne({ _id: new ObjectId(botId) })
       : null;
 
-    if (!facebookBot || facebookBot.status !== "active") {
-      return res
-        .status(404)
-        .json({ error: "Facebook Bot ไม่พบหรือไม่เปิดใช้งาน" });
+    if (!facebookBot) {
+      return res.status(404).json({ error: "Facebook Bot ไม่พบ" });
     }
+
+    const botIsActive = facebookBot.status === "active";
+    const disableAiReply = !botIsActive;
 
     const pageId = facebookBot.pageId || facebookBot._id.toString();
     const accessToken = facebookBot.accessToken;
@@ -10176,6 +10191,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
       aiModel: facebookBot.aiModel || null,
       selectedInstructions: facebookBot.selectedInstructions || [],
       selectedImageCollections: facebookBot.selectedImageCollections || null,
+      disableAiReply,
     };
 
     // Respond immediately to avoid Facebook retries
@@ -10206,6 +10222,9 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
             // Handle new comments
             if (value.item === "comment" && value.verb === "add") {
+              if (disableAiReply) {
+                continue;
+              }
               const commentData = {
                 id: value.comment_id,
                 message: value.message,
@@ -10437,17 +10456,19 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                   const replyText =
                     audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
                   const filteredReply = await filterMessage(replyText);
-                  await sendFacebookMessage(
-                    senderId,
-                    filteredReply,
-                    facebookBot.accessToken,
-                    { metadata: "ai_generated" },
-                  );
+                  if (!disableAiReply) {
+                    await sendFacebookMessage(
+                      senderId,
+                      filteredReply,
+                      facebookBot.accessToken,
+                      { metadata: "ai_generated" },
+                    );
+                  }
                   try {
                     await saveChatHistory(
                       senderId,
                       { type: "audio", attachments: audioAttachments },
-                      filteredReply,
+                      disableAiReply ? "" : filteredReply,
                       "facebook",
                       facebookBot._id ? facebookBot._id.toString() : null,
                     );
@@ -10467,12 +10488,32 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
               if (itemsToQueue.length === 0) {
                 if (audioAttachments.length === 0) {
-                  await sendFacebookMessage(
-                    senderId,
-                    "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้",
-                    facebookBot.accessToken,
-                    { metadata: "ai_generated" },
-                  );
+                  const fallbackText = "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้";
+                  if (!disableAiReply) {
+                    await sendFacebookMessage(
+                      senderId,
+                      fallbackText,
+                      facebookBot.accessToken,
+                      { metadata: "ai_generated" },
+                    );
+                  }
+                  try {
+                    await saveChatHistory(
+                      senderId,
+                      {
+                        type: "unsupported",
+                        attachments: messagingEvent.message.attachments || [],
+                      },
+                      disableAiReply ? "" : fallbackText,
+                      "facebook",
+                      facebookBot._id ? facebookBot._id.toString() : null,
+                    );
+                  } catch (historyErr) {
+                    console.error(
+                      `[Facebook Bot: ${facebookBot.name}] ไม่สามารถบันทึกประวัติไฟล์แนบที่ไม่รองรับได้:`,
+                      historyErr.message || historyErr,
+                    );
+                  }
                 }
                 continue;
               }
