@@ -4078,10 +4078,16 @@ async function getUserOrders(userId) {
   }
 }
 
-async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
+async function maybeAnalyzeOrder(
+  userId,
+  platform = "line",
+  botId = null,
+  options = {},
+) {
   try {
+    const { force = false } = options || {};
     const extractionMode = await getOrderExtractionModeSetting();
-    if (extractionMode === ORDER_EXTRACTION_MODES.SCHEDULED) {
+    if (!force && extractionMode === ORDER_EXTRACTION_MODES.SCHEDULED) {
       return;
     }
 
@@ -4094,6 +4100,7 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
       return;
     }
 
+    const pageKey = buildOrderPageKey(platform, botId);
     const messages = await getNormalizedChatHistory(userId, {
       applyFilter: true,
     });
@@ -4146,6 +4153,14 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
         reasonOverride: analysis.reason,
         forceUpdate: true,
       });
+      try {
+        await clearOrderBufferForUser(pageKey, userId);
+      } catch (bufferErr) {
+        console.warn(
+          `[OrderBuffer] ไม่สามารถล้างบัฟเฟอร์สำหรับ ${pageKey}/${userId}:`,
+          bufferErr.message || bufferErr,
+        );
+      }
       return;
     }
 
@@ -4196,6 +4211,15 @@ async function maybeAnalyzeOrder(userId, platform = "line", botId = null) {
     console.log(
       `[Order] สกัดออเดอร์อัตโนมัติสำเร็จสำหรับผู้ใช้ ${userId}: ${orderId}`,
     );
+
+    try {
+      await clearOrderBufferForUser(pageKey, userId);
+    } catch (bufferErr) {
+      console.warn(
+        `[OrderBuffer] ไม่สามารถล้างบัฟเฟอร์สำหรับ ${pageKey}/${userId}:`,
+        bufferErr.message || bufferErr,
+      );
+    }
   } catch (error) {
     console.error("[Order] วิเคราะห์ออเดอร์อัตโนมัติไม่สำเร็จ:", error.message);
   }
@@ -10368,6 +10392,19 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     baseDoc._id = baseInsertResult.insertedId;
                   }
                   await appendOrderExtractionMessage(baseDoc);
+                  if (disableAiReply) {
+                    maybeAnalyzeOrder(
+                      targetUserId,
+                      "facebook",
+                      facebookBot?._id?.toString?.() || null,
+                      { force: true },
+                    ).catch((error) => {
+                      console.error(
+                        `[Order] วิเคราะห์หลังแอดมินตอบไม่สำเร็จ (${targetUserId}):`,
+                        error.message || error,
+                      );
+                    });
+                  }
                   // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
                   try {
                     await resetUserUnreadCount(targetUserId);
