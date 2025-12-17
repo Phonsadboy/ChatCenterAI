@@ -10276,7 +10276,11 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
               try {
                 const targetUserId = messagingEvent.recipient?.id; // ผู้ใช้ปลายทางของข้อความจากเพจ
                 const text = messagingEvent.message?.text?.trim();
-                const metadata = messagingEvent.message?.metadata || "";
+                const metadata =
+                  typeof messagingEvent.message?.metadata === "string"
+                    ? messagingEvent.message.metadata.trim()
+                    : "";
+                const isBroadcastMessage = metadata === "broadcast_auto";
 
                 // ข้ามข้อความที่ระบบส่งอัตโนมัติ (เช่น AI / follow-up) เพื่อหลีกเลี่ยงการบันทึกซ้ำ
                 const automatedMetadata = ["ai_generated", "follow_up_auto"];
@@ -10383,30 +10387,36 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     role: "assistant",
                     content: text || "ไฟล์แนบ",
                     timestamp: new Date(),
-                    source: "admin_chat", // ใช้ค่าเดียวกับแอดมินหน้าเว็บ เพื่อให้ UI แสดงเป็น "แอดมิน"
+                    source:
+                      metadata === "admin_manual" || isBroadcastMessage
+                        ? "admin_chat" // มาจากแอดมินหน้าเว็บ (ส่งผ่านระบบ)
+                        : "admin_page", // มาจากแอดมินตอบในเพจโดยตรง (Facebook inbox)
+                    metadata: metadata || null,
                     platform: "facebook",
                     botId: facebookBot?._id?.toString?.() || null,
                   };
-	                  const baseInsertResult = await coll.insertOne(baseDoc);
-	                  if (baseInsertResult?.insertedId) {
-	                    baseDoc._id = baseInsertResult.insertedId;
-	                  }
-	                  await appendOrderExtractionMessage(baseDoc);
-	                  maybeAnalyzeOrder(
-	                    targetUserId,
-	                    "facebook",
-	                    facebookBot?._id?.toString?.() || null,
-	                    { force: disableAiReply },
-	                  ).catch((error) => {
-	                    console.error(
-	                      `[Order] วิเคราะห์หลังแอดมินตอบไม่สำเร็จ (${targetUserId}):`,
-	                      error.message || error,
-	                    );
-	                  });
-	                  // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
-	                  try {
-	                    await resetUserUnreadCount(targetUserId);
-	                  } catch (_) { }
+                  const baseInsertResult = await coll.insertOne(baseDoc);
+                  if (baseInsertResult?.insertedId) {
+                    baseDoc._id = baseInsertResult.insertedId;
+                  }
+                  if (!isBroadcastMessage) {
+                    await appendOrderExtractionMessage(baseDoc);
+                    maybeAnalyzeOrder(
+                      targetUserId,
+                      "facebook",
+                      facebookBot?._id?.toString?.() || null,
+                      { force: disableAiReply },
+                    ).catch((error) => {
+                      console.error(
+                        `[Order] วิเคราะห์หลังแอดมินตอบไม่สำเร็จ (${targetUserId}):`,
+                        error.message || error,
+                      );
+                    });
+                  }
+                  // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
+                  try {
+                    await resetUserUnreadCount(targetUserId);
+                  } catch (_) { }
                   try {
                     io.emit("newMessage", {
                       userId: targetUserId,

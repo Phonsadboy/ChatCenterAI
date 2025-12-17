@@ -23,6 +23,7 @@
     --chat-bg-message-user: #EEF2F7;
     --chat-bg-message-admin: var(--color-primary, #4A6FA5);
     --chat-bg-message-assistant: var(--bg-card, #FFFFFF);
+    --chat-bg-message-followup: rgba(223, 169, 75, 0.14);
     --chat-bg-hover: #F1F3F8;
     --chat-bg-active: rgba(74, 111, 165, 0.08);
 
@@ -1396,7 +1397,8 @@
 }
 
 .message.admin,
-.message.assistant {
+.message.assistant,
+.message.followup {
     justify-content: flex-end;
 }
 
@@ -1427,6 +1429,13 @@
     border: 1px solid var(--chat-border-color);
 }
 
+.message.followup .message-bubble {
+    background: var(--chat-bg-message-followup);
+    color: var(--chat-text-primary);
+    border-bottom-right-radius: 4px;
+    border: 1px solid rgba(223, 169, 75, 0.35);
+}
+
 .message-header {
     font-size: 0.75rem;
     font-weight: 600;
@@ -1441,7 +1450,8 @@
 }
 
 .message.admin .message-header,
-.message.assistant .message-header {
+.message.assistant .message-header,
+.message.followup .message-header {
     color: var(--chat-text-tertiary);
 }
 
@@ -1463,7 +1473,8 @@
 }
 
 .message.admin .message-time,
-.message.assistant .message-time {
+.message.assistant .message-time,
+.message.followup .message-time {
     color: var(--chat-text-secondary);
 }
 

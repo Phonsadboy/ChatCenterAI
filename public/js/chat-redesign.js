@@ -928,6 +928,42 @@ class ChatManager {
 
     renderMessage(message) {
         const role = message.role || 'user';
+        const rawSource = typeof message.source === 'string' ? message.source.trim() : '';
+        const normalizedSource = rawSource ? rawSource.toLowerCase() : '';
+        const sourceClass = normalizedSource
+            ? `source-${normalizedSource.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
+            : '';
+        const platformLabel = (() => {
+            const platform = typeof message.platform === 'string' ? message.platform.trim().toLowerCase() : '';
+            if (platform === 'facebook') return 'Facebook';
+            if (platform === 'line') return 'LINE';
+            return '';
+        })();
+
+        let visualRole = role === 'user' ? 'user' : 'assistant';
+        let headerIcon = role === 'user' ? 'user' : 'robot';
+        let headerLabel = role === 'user' ? 'ลูกค้า' : 'AI';
+
+        if (role !== 'user') {
+            if (normalizedSource === 'follow_up') {
+                visualRole = 'followup';
+                headerIcon = 'user-clock';
+                headerLabel = 'ระบบติดตาม';
+            } else if (normalizedSource === 'admin_page') {
+                visualRole = 'admin';
+                headerIcon = 'facebook-f';
+                headerLabel = 'แอดมิน (เพจ)';
+            } else if (normalizedSource === 'admin_chat') {
+                visualRole = 'admin';
+                headerIcon = 'desktop';
+                headerLabel = 'แอดมิน (เว็บ)';
+            } else if (normalizedSource === 'ai') {
+                visualRole = 'assistant';
+                headerIcon = 'robot';
+                headerLabel = 'AI';
+            }
+        }
+
         const displayText = this.extractDisplayText(message);
         const hasImages = Array.isArray(message.images) && message.images.length > 0;
         const textForRender = displayText || (hasImages ? '[ไฟล์แนบ]' : '');
@@ -937,13 +973,7 @@ class ChatManager {
         const isSending = message.sending;
         const deliveryStatus = message.deliveryStatus || '';
 
-        const roleLabels = {
-            user: 'ผู้ใช้',
-            admin: 'แอดมิน',
-            assistant: 'AI'
-        };
-
-        const roleLabel = roleLabels[role] || role;
+        const headerMeta = platformLabel ? ` · ${platformLabel}` : '';
 
 		        let imagesHtml = '';
 		        if (message.images && message.images.length > 0) {
@@ -960,11 +990,11 @@ class ChatManager {
 
 
         return `
-            <div class="message ${role}">
+            <div class="message ${visualRole} ${sourceClass}">
                 <div class="message-bubble">
                     <div class="message-header">
-                        <i class="fas fa-${role === 'user' ? 'user' : role === 'admin' ? 'user-shield' : 'robot'}"></i>
-                        ${roleLabel}
+                        <i class="fas fa-${headerIcon}"></i>
+                        ${headerLabel}${headerMeta}
                     </div>
                     <div class="message-content">${content}</div>
                     ${imagesHtml}
