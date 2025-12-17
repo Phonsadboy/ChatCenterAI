@@ -77,6 +77,12 @@
     els.includeOrderLink = document.getElementById(
       "notificationSettingIncludeOrderLink",
     );
+    els.slipOkEnabled = document.getElementById(
+      "notificationSettingSlipOkEnabled",
+    );
+    els.slipOkConfigBox = document.getElementById("notificationSlipOkConfigBox");
+    els.slipOkApiUrl = document.getElementById("notificationSettingSlipOkApiUrl");
+    els.slipOkApiKey = document.getElementById("notificationSettingSlipOkApiKey");
     els.isActive = document.getElementById("notificationChannelIsActive");
     els.saveBtn = document.getElementById("notificationChannelSaveBtn");
   }
@@ -136,6 +142,8 @@
       .forEach((el) => {
         el.addEventListener("change", () => syncReceiveModeUI());
       });
+
+    els.slipOkEnabled?.addEventListener("change", () => syncSlipOkUI());
 
     els.saveBtn?.addEventListener("click", () => saveChannel());
   }
@@ -347,6 +355,9 @@
         includePaymentMethod: true,
         includeTotalAmount: true,
         includeOrderLink: false,
+        slipOkEnabled: false,
+        slipOkApiUrl: "",
+        slipOkApiKey: "",
       },
       isActive: true,
     });
@@ -361,6 +372,13 @@
     els.modalLabel.innerHTML = isEdit
       ? '<i class="fas fa-bell me-2"></i>แก้ไขช่องทางแจ้งเตือนออเดอร์'
       : '<i class="fas fa-bell me-2"></i>สร้างช่องทางแจ้งเตือนออเดอร์';
+  }
+
+  function syncSlipOkUI() {
+    const enabled = els.slipOkEnabled?.checked === true;
+    if (els.slipOkConfigBox) {
+      els.slipOkConfigBox.classList.toggle("d-none", !enabled);
+    }
   }
 
   async function openModalWithData(channel) {
@@ -392,6 +410,15 @@
     els.includeTotalAmount.checked =
       channel?.settings?.includeTotalAmount !== false;
     els.includeOrderLink.checked = channel?.settings?.includeOrderLink === true;
+    if (els.slipOkEnabled) {
+      els.slipOkEnabled.checked = channel?.settings?.slipOkEnabled === true;
+    }
+    if (els.slipOkApiUrl) {
+      els.slipOkApiUrl.value = channel?.settings?.slipOkApiUrl || "";
+    }
+    if (els.slipOkApiKey) {
+      els.slipOkApiKey.value = channel?.settings?.slipOkApiKey || "";
+    }
 
     await ensureLineBots();
     renderSenderBotSelect(channel?.senderBotId || "");
@@ -412,6 +439,7 @@
     }
 
     syncReceiveModeUI();
+    syncSlipOkUI();
 
     state.modalInstance.show();
   }
@@ -525,6 +553,15 @@
       return;
     }
 
+    const slipOkEnabled = els.slipOkEnabled?.checked === true;
+    const slipOkApiUrl = els.slipOkApiUrl?.value?.trim?.() || "";
+    const slipOkApiKey = els.slipOkApiKey?.value?.trim?.() || "";
+
+    if (slipOkEnabled && (!slipOkApiUrl || !slipOkApiKey)) {
+      toast("กรุณากรอก SlipOK API URL และ API Key ให้ครบถ้วน", "danger");
+      return;
+    }
+
     const payload = {
       name,
       senderBotId,
@@ -540,6 +577,9 @@
         includePaymentMethod: els.includePaymentMethod?.checked === true,
         includeTotalAmount: els.includeTotalAmount?.checked === true,
         includeOrderLink: els.includeOrderLink?.checked === true,
+        slipOkEnabled,
+        slipOkApiUrl,
+        slipOkApiKey,
       },
       isActive: els.isActive?.checked === true,
     };

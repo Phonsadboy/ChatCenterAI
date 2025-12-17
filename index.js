@@ -17,6 +17,7 @@ const http = require("http");
 const socketIo = require("socket.io");
 const InstructionDataService = require("./services/instructionDataService");
 const createNotificationService = require("./services/notificationService");
+const slipOkService = require("./services/slipOkService");
 // Middleware & misc packages for UI
 const helmet = require("helmet");
 const cors = require("cors");
@@ -5915,6 +5916,229 @@ async function captureLineGroupEvent(event, queueOptions = {}) {
   return { botId: botId.toString(), sourceType, groupId };
 }
 
+function formatSlipOkCurrency(amount) {
+  const value =
+    typeof amount === "number"
+      ? amount
+      : typeof amount === "string"
+        ? Number(amount)
+        : NaN;
+  if (!Number.isFinite(value)) return "";
+  return `฿${value.toLocaleString("th-TH", { maximumFractionDigits: 2 })}`;
+}
+
+function pickSlipOkPersonName(person) {
+  if (!person || typeof person !== "object") return "";
+  const displayName =
+    typeof person.displayName === "string" ? person.displayName.trim() : "";
+  const name = typeof person.name === "string" ? person.name.trim() : "";
+  return displayName || name || "";
+}
+
+function formatSlipOkDateTime(slip) {
+  const transDate =
+    typeof slip?.transDate === "string" ? slip.transDate.trim() : "";
+  const transTime =
+    typeof slip?.transTime === "string" ? slip.transTime.trim() : "";
+
+  if (transDate && transTime) {
+    const parsedWithSeconds = moment.tz(
+      `${transDate} ${transTime}`,
+      "YYYYMMDD HH:mm:ss",
+      "Asia/Bangkok",
+    );
+    if (parsedWithSeconds.isValid()) {
+      return parsedWithSeconds.format("DD/MM/YYYY HH:mm:ss");
+    }
+
+    const parsedNoSeconds = moment.tz(
+      `${transDate} ${transTime}`,
+      "YYYYMMDD HH:mm",
+      "Asia/Bangkok",
+    );
+    if (parsedNoSeconds.isValid()) {
+      return parsedNoSeconds.format("DD/MM/YYYY HH:mm:ss");
+    }
+  }
+
+  const transTimestamp =
+    typeof slip?.transTimestamp === "string" ? slip.transTimestamp.trim() : "";
+  if (transTimestamp) {
+    const parsed = moment(transTimestamp);
+    if (parsed.isValid()) {
+      return parsed.tz("Asia/Bangkok").format("DD/MM/YYYY HH:mm:ss");
+    }
+  }
+
+  return "";
+}
+
+function buildSlipOkReplyText(result = {}) {
+  const lines = [];
+
+  const ok = result?.ok === true;
+  const code = result?.code ?? null;
+  const message =
+    typeof result?.message === "string" ? result.message.trim() : "";
+  const slip = result?.slip && typeof result.slip === "object" ? result.slip : null;
+
+  const slipIsValid = slip?.success === true;
+
+  if (ok && slipIsValid) {
+    lines.push("✅ สลิปถูกต้อง");
+  } else {
+    const codeText = code !== null && code !== undefined ? ` (${code})` : "";
+    lines.push(`❌ ตรวจสลิปไม่ผ่าน${codeText}`);
+    if (message) {
+      lines.push(message);
+    }
+  }
+
+  if (slip) {
+    const amountText = formatSlipOkCurrency(slip.amount);
+    if (amountText) {
+      lines.push(`💰 จำนวนเงิน: ${amountText}`);
+    }
+
+    const senderName = pickSlipOkPersonName(slip.sender);
+    if (senderName) {
+      lines.push(`👤 ผู้โอน: ${senderName}`);
+    }
+
+    const receiverName = pickSlipOkPersonName(slip.receiver);
+    if (receiverName) {
+      lines.push(`🏦 ผู้รับ: ${receiverName}`);
+    }
+
+    const timeText = formatSlipOkDateTime(slip);
+    if (timeText) {
+      lines.push(`🕒 เวลา: ${timeText}`);
+    }
+
+    const sendingBank =
+      typeof slip.sendingBank === "string" ? slip.sendingBank.trim() : "";
+    if (sendingBank) {
+      lines.push(`🏛️ ธนาคารผู้โอน: ${sendingBank}`);
+    }
+
+    const receivingBank =
+      typeof slip.receivingBank === "string" ? slip.receivingBank.trim() : "";
+    if (receivingBank) {
+      lines.push(`🏛️ ธนาคารผู้รับ: ${receivingBank}`);
+    }
+  }
+
+  const text = lines.filter(Boolean).join("\n").trim();
+  const MAX_LENGTH = 4000;
+  return text.length > MAX_LENGTH ? `${text.slice(0, MAX_LENGTH - 1)}…` : text;
+}
+
+async function handleLineGroupSlipOkImage(event, queueOptions = {}) {
+  const sourceType = event?.source?.type || "";
+  if (sourceType !== "group" && sourceType !== "room") return;
+  if (event?.type !== "message") return;
+
+  const message = event?.message || {};
+  if (message.type !== "image") return;
+  if (!message.id) return;
+
+  const botIdRaw = queueOptions.botId || queueOptions.lineBotId || null;
+  const botId = typeof botIdRaw === "string" ? botIdRaw.trim() : botIdRaw ? String(botIdRaw) : "";
+  if (!botId) return;
+
+  const groupId =
+    sourceType === "group" ? event?.source?.groupId : event?.source?.roomId;
+  if (!groupId) return;
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const channel = await db.collection("notification_channels").findOne({
+    isActive: true,
+    type: "line_group",
+    senderBotId: botId,
+    groupId,
+    "settings.slipOkEnabled": true,
+  });
+
+  if (!channel) return;
+
+  const settings = normalizeNotificationChannelSettings(channel.settings || {});
+  if (settings.slipOkEnabled !== true) return;
+
+  const apiUrl = typeof settings.slipOkApiUrl === "string" ? settings.slipOkApiUrl.trim() : "";
+  const apiKey = typeof settings.slipOkApiKey === "string" ? settings.slipOkApiKey.trim() : "";
+
+  const lineClientFromContext =
+    queueOptions.lineClient || (await getLineClientForContext(botId));
+  if (!lineClientFromContext) return;
+
+  if (!apiUrl || !apiKey) {
+    const text = "⚠️ ยังไม่ได้ตั้งค่า SlipOK API URL/API Key สำหรับกลุ่มนี้";
+    if (event.replyToken) {
+      await lineClientFromContext.replyMessage(event.replyToken, {
+        type: "text",
+        text,
+      });
+    } else {
+      await lineClientFromContext.pushMessage(groupId, { type: "text", text });
+    }
+    return;
+  }
+
+  let imageBuffer = null;
+  let contentType = "image/jpeg";
+
+  try {
+    const stream = await lineClientFromContext.getMessageContent(message.id);
+    if (stream?.headers?.["content-type"]) {
+      contentType = stream.headers["content-type"];
+    }
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+    imageBuffer = Buffer.concat(chunks);
+  } catch (err) {
+    console.warn(
+      "[SlipOK] ไม่สามารถดึงรูปจาก LINE เพื่อใช้ตรวจสลิปได้:",
+      err?.message || err,
+    );
+    const text = "❌ ไม่สามารถดึงรูปจาก LINE เพื่อใช้ตรวจสลิปได้";
+    try {
+      if (event.replyToken) {
+        await lineClientFromContext.replyMessage(event.replyToken, {
+          type: "text",
+          text,
+        });
+      } else {
+        await lineClientFromContext.pushMessage(groupId, { type: "text", text });
+      }
+    } catch (_) { }
+    return;
+  }
+
+  const result = await slipOkService.checkSlipByImageBuffer({
+    apiUrl,
+    apiKey,
+    buffer: imageBuffer,
+    filename: `line-slip-${message.id}.jpg`,
+    contentType,
+  });
+
+  const replyText = buildSlipOkReplyText(result);
+  if (!replyText) return;
+
+  await (event.replyToken
+    ? lineClientFromContext.replyMessage(event.replyToken, {
+      type: "text",
+      text: replyText,
+    })
+    : lineClientFromContext.pushMessage(groupId, {
+      type: "text",
+      text: replyText,
+    }));
+}
+
 async function handleLineEvent(event, queueOptions = {}) {
   const botIdentifier =
     queueOptions.botId || queueOptions.lineBotId || "default";
@@ -5964,6 +6188,17 @@ async function handleLineEvent(event, queueOptions = {}) {
         "[LINE Group] Capture error:",
         err?.message || err,
       );
+    }
+
+    if (event?.type === "message" && event?.message?.type === "image") {
+      setImmediate(() => {
+        handleLineGroupSlipOkImage(event, queueOptions).catch((err) => {
+          console.error(
+            "[SlipOK] Error processing group image:",
+            err?.message || err,
+          );
+        });
+      });
     }
     return;
   }
@@ -18320,6 +18555,12 @@ function normalizeNotificationChannelSettings(settings) {
   const includePaymentMethod = parseOptionalBoolean(raw.includePaymentMethod);
   const includeTotalAmount = parseOptionalBoolean(raw.includeTotalAmount);
   const includeOrderLink = parseOptionalBoolean(raw.includeOrderLink);
+  const slipOkEnabled = parseOptionalBoolean(raw.slipOkEnabled);
+
+  const slipOkApiUrl =
+    typeof raw.slipOkApiUrl === "string" ? raw.slipOkApiUrl.trim() : "";
+  const slipOkApiKey =
+    typeof raw.slipOkApiKey === "string" ? raw.slipOkApiKey.trim() : "";
 
   return {
     template: "simple",
@@ -18331,6 +18572,9 @@ function normalizeNotificationChannelSettings(settings) {
     includePaymentMethod: includePaymentMethod !== false,
     includeTotalAmount: includeTotalAmount !== false,
     includeOrderLink: includeOrderLink === true,
+    slipOkEnabled: slipOkEnabled === true,
+    slipOkApiUrl,
+    slipOkApiKey,
   };
 }
 
