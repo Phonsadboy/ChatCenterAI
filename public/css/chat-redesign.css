@@ -91,12 +91,15 @@
     flex: 1;
     min-height: 0;
     display: flex;
+    min-width: 0;
 }
 
 .chat-app {
     display: flex;
     flex: 1;
     min-height: 0;
+    min-width: 0;
+    width: 100%;
     background: var(--chat-bg-app);
     border-radius: var(--chat-border-radius);
     overflow: hidden;
@@ -705,19 +708,22 @@
     width: 320px;
     flex: 0 0 auto;
     flex-shrink: 0;
+    min-width: 320px;
+    max-width: 320px;
     background: var(--chat-bg-sidebar);
     border-left: 1px solid var(--chat-border-color);
     display: flex;
     flex-direction: column;
     height: 100%;
     overflow: hidden;
-    transition: width 0.3s ease, min-width 0.3s ease;
+    transition: width 0.3s ease, min-width 0.3s ease, max-width 0.3s ease;
     min-height: 0;
 }
 
 .order-sidebar.collapsed {
     width: 48px;
     min-width: 48px;
+    max-width: 48px;
 }
 
 .order-sidebar.collapsed .order-sidebar-title,
@@ -1326,6 +1332,12 @@
     scrollbar-gutter: stable;
 }
 
+@supports not (scrollbar-gutter: stable) {
+    .messages-wrapper {
+        overflow-y: scroll;
+    }
+}
+
 .messages-wrapper::-webkit-scrollbar {
     width: 8px;
 }
@@ -1845,6 +1857,7 @@
         transition: right 0.3s ease;
         box-shadow: var(--chat-shadow-lg);
         width: 92%;
+        min-width: 0;
         max-width: 360px;
     }
 
