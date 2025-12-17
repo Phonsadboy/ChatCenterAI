@@ -600,6 +600,15 @@
     white-space: nowrap;
 }
 
+.user-channel {
+    font-size: 0.75rem;
+    color: var(--chat-text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 0.125rem;
+}
+
 .user-last-message {
     font-size: 0.8125rem;
     color: var(--chat-text-secondary);

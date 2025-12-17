@@ -678,7 +678,20 @@ class ChatManager {
 
         const avatarLetter = user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U';
         const lastMessage = user.lastMessage ? this.truncateText(user.lastMessage, 50) : 'ไม่มีข้อความ';
-        const time = user.lastMessageTime ? this.formatRelativeTime(user.lastMessageTime) : '';
+        const lastTimestamp = user.lastTimestamp || user.lastMessageTime || user.lastMessageAt || null;
+        const time = lastTimestamp ? this.formatRelativeTime(lastTimestamp) : '';
+        const channelLabel = (() => {
+            const explicit = typeof user.channelLabel === 'string' ? user.channelLabel.trim() : '';
+            if (explicit) return explicit;
+            const platform = typeof user.platform === 'string' ? user.platform.trim().toLowerCase() : '';
+            const platformLabel = platform === 'facebook' ? 'Facebook' : platform === 'line' ? 'LINE' : '';
+            const botName = typeof user.botName === 'string' ? user.botName.trim() : '';
+            if (platformLabel && botName) return `${platformLabel} · ${botName}`;
+            return platformLabel || '';
+        })();
+        const channelHtml = channelLabel
+            ? `<div class="user-channel">${this.escapeHtml(channelLabel)}</div>`
+            : '';
 
         // Build status indicators
         const statusDots = [];
@@ -743,6 +756,7 @@ class ChatManager {
                         <div class="user-name">${this.escapeHtml(user.displayName || user.userId)}</div>
                         <div class="user-time">${time}</div>
                     </div>
+                    ${channelHtml}
                     <div class="user-last-message">${this.escapeHtml(lastMessage)}</div>
                     ${tags ? `<div class="user-tags">${tags}</div>` : ''}
                 </div>

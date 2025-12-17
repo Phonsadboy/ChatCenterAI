@@ -22094,6 +22094,94 @@ async function getNormalizedChatUsers(options = {}) {
     ];
 
     const users = await chatColl.aggregate(pipeline).toArray();
+
+    // Map botId -> bot display name for showing channel in chat user list
+    const botIdsByPlatform = { line: new Set(), facebook: new Set() };
+    users.forEach((user) => {
+      const platform =
+        typeof user.platform === "string" ? user.platform.toLowerCase() : "line";
+      const botId = normalizeFollowUpBotId(user.botId);
+      if (!botId) return;
+      if (platform === "facebook") {
+        botIdsByPlatform.facebook.add(botId);
+      } else if (platform === "line") {
+        botIdsByPlatform.line.add(botId);
+      }
+    });
+
+    const lineBotObjectIds = [...botIdsByPlatform.line]
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+    const facebookBotObjectIds = [...botIdsByPlatform.facebook]
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+
+    const [lineBotDocs, facebookBotDocs] = await Promise.all([
+      lineBotObjectIds.length > 0
+        ? db
+            .collection("line_bots")
+            .find({ _id: { $in: lineBotObjectIds } })
+            .project({ _id: 1, name: 1, displayName: 1, botName: 1 })
+            .toArray()
+        : [],
+      facebookBotObjectIds.length > 0
+        ? db
+            .collection("facebook_bots")
+            .find({ _id: { $in: facebookBotObjectIds } })
+            .project({ _id: 1, name: 1, pageName: 1, pageId: 1 })
+            .toArray()
+        : [],
+    ]);
+
+    const botNameMap = {
+      line: new Map(),
+      facebook: new Map(),
+    };
+    lineBotDocs.forEach((bot) => {
+      const id = bot?._id?.toString?.() || "";
+      if (!id) return;
+      botNameMap.line.set(
+        id,
+        bot.name ||
+          bot.displayName ||
+          bot.botName ||
+          `LINE Bot (${id.slice(-4)})`,
+      );
+    });
+    facebookBotDocs.forEach((bot) => {
+      const id = bot?._id?.toString?.() || "";
+      if (!id) return;
+      botNameMap.facebook.set(
+        id,
+        bot.pageName || bot.name || `Facebook Page (${id.slice(-4)})`,
+      );
+    });
+
+    const buildChannelInfo = (platform, botId) => {
+      const normalizedPlatform =
+        typeof platform === "string" ? platform.toLowerCase() : "line";
+      const normalizedBotId = normalizeFollowUpBotId(botId);
+      const platformLabel =
+        normalizedPlatform === "facebook"
+          ? "Facebook"
+          : normalizedPlatform === "line"
+            ? "LINE"
+            : String(platform || "");
+      const resolvedName =
+        normalizedPlatform === "facebook"
+          ? botNameMap.facebook.get(normalizedBotId)
+          : normalizedPlatform === "line"
+            ? botNameMap.line.get(normalizedBotId)
+            : null;
+      return {
+        platformLabel,
+        botName: resolvedName || null,
+        channelLabel: resolvedName
+          ? `${platformLabel} · ${resolvedName}`
+          : platformLabel,
+      };
+    };
+
     const userIds = users.map((user) => user._id);
     const followStatuses =
       userIds.length > 0
@@ -22227,10 +22315,11 @@ async function getNormalizedChatUsers(options = {}) {
     // แปลงข้อมูลผู้ใช้แต่ละคน
     const normalizedUsers = await Promise.all(
       users.map(async (user) => {
-        const unreadCount = await getUserUnreadCount(user._id);
-        const platform = user.platform || "line";
-        const botId = normalizeFollowUpBotId(user.botId);
-        const contextKey = `${platform}:${botId || "default"}`;
+	        const unreadCount = await getUserUnreadCount(user._id);
+	        const platform = user.platform || "line";
+	        const botId = normalizeFollowUpBotId(user.botId);
+	        const channelInfo = buildChannelInfo(platform, botId);
+	        const contextKey = `${platform}:${botId || "default"}`;
 
         let config = contextCache.get(contextKey);
         if (!config) {
@@ -22328,25 +22417,28 @@ async function getNormalizedChatUsers(options = {}) {
             ? userProfile.displayName.trim()
             : "";
 
-        return {
-          userId: user._id,
-          displayName: profileDisplayName || user._id.substring(0, 8) + "...",
-          pictureUrl: userProfile ? userProfile.pictureUrl || null : null,
+	        return {
+	          userId: user._id,
+	          displayName: profileDisplayName || user._id.substring(0, 8) + "...",
+	          pictureUrl: userProfile ? userProfile.pictureUrl || null : null,
           statusMessage:
             platform === "line" && userProfile
               ? userProfile.statusMessage || null
               : null,
           lastMessage: normalizedLastMessage.displayContent,
           lastMessageRaw: user.lastMessage,
-          lastTimestamp: user.lastTimestamp,
-          messageCount: user.messageCount,
-          unreadCount,
-          platform,
-          botId,
-          aiEnabled,
-          hasFollowUp,
-          followUpReason,
-          followUpUpdatedAt,
+	          lastTimestamp: user.lastTimestamp,
+	          messageCount: user.messageCount,
+	          unreadCount,
+	          platform,
+	          botId,
+	          platformLabel: channelInfo.platformLabel,
+	          botName: channelInfo.botName,
+	          channelLabel: channelInfo.channelLabel,
+	          aiEnabled,
+	          hasFollowUp,
+	          followUpReason,
+	          followUpUpdatedAt,
           tags,
           hasPurchased,
           hasOrders,
