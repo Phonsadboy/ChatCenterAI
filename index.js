@@ -5780,9 +5780,6 @@ async function captureLineGroupEvent(event, queueOptions = {}) {
       createdAt: now,
     },
     $set: {
-      botId: botId.toString(),
-      groupId,
-      sourceType,
       lastEventAt: now,
       updatedAt: now,
     },
