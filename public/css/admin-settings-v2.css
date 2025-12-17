@@ -275,6 +275,10 @@ input:checked+.toggle-slider:before {
     background: linear-gradient(135deg, #1877f2, #0f5ecc);
 }
 
+.bot-channel.notification {
+    background: linear-gradient(135deg, #f2994a, #eb5757);
+}
+
 .bot-main {
     flex: 1;
     min-width: 0;

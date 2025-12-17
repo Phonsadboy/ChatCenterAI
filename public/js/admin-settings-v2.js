@@ -27,8 +27,13 @@ function initNavigation() {
 
     navItems.forEach(item => {
         item.addEventListener('click', (e) => {
+            const href = item.getAttribute('href') || '';
+            if (!href.startsWith('#')) {
+                return;
+            }
+
             e.preventDefault();
-            const targetId = item.getAttribute('href').substring(1);
+            const targetId = href.substring(1);
 
             // Update Nav
             navItems.forEach(nav => nav.classList.remove('active'));
@@ -50,6 +55,8 @@ function initNavigation() {
                 if (window.imageCollectionsManager?.refreshAll) {
                     window.imageCollectionsManager.refreshAll();
                 }
+            } else if (targetId === 'order-notifications') {
+                window.notificationChannels?.refresh?.();
             }
         });
     });

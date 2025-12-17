@@ -16,6 +16,7 @@ const os = require("os");
 const http = require("http");
 const socketIo = require("socket.io");
 const InstructionDataService = require("./services/instructionDataService");
+const createNotificationService = require("./services/notificationService");
 // Middleware & misc packages for UI
 const helmet = require("helmet");
 const cors = require("cors");
@@ -659,6 +660,33 @@ async function ensureCategoryIndexes(db) {
   }
 }
 
+async function ensureNotificationIndexes(db) {
+  try {
+    await db.collection("line_bot_groups").createIndexes([
+      { key: { botId: 1, groupId: 1 }, unique: true },
+      { key: { botId: 1, status: 1, lastEventAt: -1 } },
+    ]);
+
+    await db.collection("notification_channels").createIndexes([
+      { key: { isActive: 1, type: 1 } },
+      { key: { senderBotId: 1, groupId: 1 } },
+      { key: { "sources.platform": 1, "sources.botId": 1 } },
+    ]);
+
+    await db.collection("notification_logs").createIndexes([
+      { key: { channelId: 1, createdAt: -1 } },
+      { key: { createdAt: -1 } },
+    ]);
+
+    console.log("[DB] Notification indexes ensured");
+  } catch (err) {
+    console.warn(
+      "[DB] ไม่สามารถตั้งค่า index สำหรับ Notifications ได้:",
+      err?.message || err,
+    );
+  }
+}
+
 let mongoClient = null;
 async function connectDB() {
   if (!mongoClient) {
@@ -669,6 +697,7 @@ async function connectDB() {
       await ensurePasscodeIndexes(db);
       await ensureFacebookCommentIndexes(db);
       await ensureCategoryIndexes(db);
+      await ensureNotificationIndexes(db);
     } catch (err) {
       console.warn(
         "[DB] ไม่สามารถตั้งค่า index ได้:",
@@ -678,6 +707,11 @@ async function connectDB() {
   }
   return mongoClient;
 }
+
+const notificationService = createNotificationService({
+  connectDB,
+  publicBaseUrl: PUBLIC_BASE_URL,
+});
 
 /**
  * แก้ไขให้ content เป็น string เสมอ
@@ -4053,6 +4087,24 @@ async function saveOrderToDatabase(
     const result = await coll.insertOne(orderDoc);
     console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
 
+    try {
+      setImmediate(() => {
+        notificationService
+          .sendNewOrder(result.insertedId)
+          .catch((err) => {
+            console.warn(
+              "[Notifications] ส่งแจ้งเตือนออเดอร์ไม่สำเร็จ:",
+              err?.message || err,
+            );
+          });
+      });
+    } catch (notifyErr) {
+      console.warn(
+        "[Notifications] ไม่สามารถ trigger การแจ้งเตือนได้:",
+        notifyErr?.message || notifyErr,
+      );
+    }
+
     return result.insertedId;
   } catch (error) {
     console.error("[Order] บันทึกออเดอร์ไม่สำเร็จ:", error.message);
@@ -5703,11 +5755,127 @@ async function processFlushedMessages(
 // Webhook handler จะถูกจัดการผ่าน dynamic webhook routes ที่สร้างขึ้นใหม่
 // app.post('/webhook', ...) ถูกลบออกแล้ว
 
+async function captureLineGroupEvent(event, queueOptions = {}) {
+  const botId = queueOptions.botId || queueOptions.lineBotId || null;
+  const sourceType = event?.source?.type || null;
+
+  if (!botId) return null;
+  if (sourceType !== "group" && sourceType !== "room") return null;
+
+  const groupId =
+    sourceType === "group" ? event?.source?.groupId : event?.source?.roomId;
+  if (!groupId) return null;
+
+  const now = new Date();
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("line_bot_groups");
+
+  const filter = { botId: botId.toString(), groupId };
+  const update = {
+    $setOnInsert: {
+      botId: botId.toString(),
+      groupId,
+      sourceType,
+      createdAt: now,
+    },
+    $set: {
+      botId: botId.toString(),
+      groupId,
+      sourceType,
+      lastEventAt: now,
+      updatedAt: now,
+    },
+  };
+
+  if (event?.type === "leave") {
+    update.$set.status = "left";
+    update.$set.leftAt = now;
+  } else {
+    update.$set.status = "active";
+    if (event?.type === "join") {
+      update.$set.joinedAt = now;
+    }
+  }
+
+  const result = await coll.updateOne(filter, update, { upsert: true });
+
+  const shouldEnrich =
+    result?.upsertedCount > 0 ||
+    (event?.type === "join" && queueOptions?.lineClient);
+
+  if (shouldEnrich && queueOptions?.lineClient) {
+    try {
+      const lineClient = queueOptions.lineClient;
+
+      let summary = null;
+      if (sourceType === "room" && typeof lineClient.getRoomSummary === "function") {
+        summary = await lineClient.getRoomSummary(groupId);
+      } else if (
+        sourceType === "group" &&
+        typeof lineClient.getGroupSummary === "function"
+      ) {
+        summary = await lineClient.getGroupSummary(groupId);
+      }
+
+      let memberCount = null;
+      if (
+        sourceType === "room" &&
+        typeof lineClient.getRoomMembersCount === "function"
+      ) {
+        const count = await lineClient.getRoomMembersCount(groupId);
+        memberCount = typeof count === "number" ? count : count?.count || null;
+      } else if (
+        sourceType === "group" &&
+        typeof lineClient.getGroupMembersCount === "function"
+      ) {
+        const count = await lineClient.getGroupMembersCount(groupId);
+        memberCount = typeof count === "number" ? count : count?.count || null;
+      }
+
+      const groupName =
+        summary?.groupName || summary?.roomName || summary?.name || null;
+      const pictureUrl = summary?.pictureUrl || summary?.picture || null;
+
+      const enrich = {};
+      if (groupName) enrich.groupName = groupName;
+      if (pictureUrl) enrich.pictureUrl = pictureUrl;
+      if (memberCount !== null) enrich.memberCount = memberCount;
+
+      if (Object.keys(enrich).length) {
+        await coll.updateOne(filter, { $set: { ...enrich, updatedAt: new Date() } });
+      }
+    } catch (err) {
+      console.warn(
+        "[LINE Group] ไม่สามารถดึงข้อมูลกลุ่ม/ห้องได้:",
+        err?.message || err,
+      );
+    }
+  }
+
+  return { botId: botId.toString(), sourceType, groupId };
+}
+
 async function handleLineEvent(event, queueOptions = {}) {
   const botIdentifier =
     queueOptions.botId || queueOptions.lineBotId || "default";
-  let uniqueId = `${botIdentifier}:${event.eventId || ""}`;
-  if (event.message && event.message.id) {
+  const webhookEventId =
+    event?.webhookEventId || event?.eventId || event?.replyToken || "";
+  const source = event?.source || {};
+  const sourceType = source?.type || "";
+  const sourceId =
+    sourceType === "group"
+      ? source?.groupId
+      : sourceType === "room"
+        ? source?.roomId
+        : source?.userId || "";
+
+  let uniqueId = `${botIdentifier}:${webhookEventId}`;
+  if (!webhookEventId) {
+    uniqueId = `${botIdentifier}:${event?.type || ""}:${event?.timestamp || ""}:${sourceType}:${sourceId}`;
+  }
+
+  if (event?.message?.id) {
     uniqueId += "_" + event.message.id;
   }
 
@@ -5722,6 +5890,24 @@ async function handleLineEvent(event, queueOptions = {}) {
     return;
   }
   processedIds.add(uniqueId);
+
+  const eventSourceType = event?.source?.type || null;
+  if (eventSourceType === "group" || eventSourceType === "room") {
+    try {
+      const captured = await captureLineGroupEvent(event, queueOptions);
+      if (captured?.groupId) {
+        console.log(
+          `[LINE Group] Captured ${captured.sourceType} ${captured.groupId} (bot ${captured.botId})`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        "[LINE Group] Capture error:",
+        err?.message || err,
+      );
+    }
+    return;
+  }
 
   const userId = event.source.userId || "unknownUser";
   console.log(`[LOG] รับคำขอจากผู้ใช้: ${userId}`);
@@ -18059,6 +18245,474 @@ app.get("/admin/api/all-bots", requireAdmin, async (req, res) => {
     res.json({ success: true, bots });
   } catch (err) {
     console.error("Error fetching all bots:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================ Notification Channels APIs ============================
+
+function normalizeNotificationChannelSettings(settings) {
+  const raw = settings && typeof settings === "object" ? settings : {};
+  const includeCustomer = parseOptionalBoolean(raw.includeCustomer);
+  const includeItemsCount = parseOptionalBoolean(raw.includeItemsCount);
+  const includeTotalAmount = parseOptionalBoolean(raw.includeTotalAmount);
+  const includeOrderLink = parseOptionalBoolean(raw.includeOrderLink);
+
+  return {
+    template: "simple",
+    includeCustomer: includeCustomer !== false,
+    includeItemsCount: includeItemsCount !== false,
+    includeTotalAmount: includeTotalAmount !== false,
+    includeOrderLink: includeOrderLink === true,
+  };
+}
+
+function normalizeNotificationSourcesInput(sources) {
+  if (!Array.isArray(sources)) return [];
+  const seen = new Set();
+  const out = [];
+
+  sources.forEach((source) => {
+    const platform = normalizeOrderPlatform(source?.platform);
+    const botId = normalizeOrderBotId(source?.botId);
+    if (!botId) return;
+    const key = `${platform}:${botId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ platform, botId });
+  });
+
+  return out;
+}
+
+function mapNotificationChannelDoc(doc, ctx = {}) {
+  const channelId = doc?._id?.toString?.() || "";
+  const senderBotId =
+    (doc.senderBotId && doc.senderBotId.toString) ? doc.senderBotId.toString() : (doc.senderBotId || doc.botId || "");
+  const groupId = doc.groupId || doc.lineGroupId || null;
+  const groupKey = senderBotId && groupId ? `${senderBotId}:${groupId}` : null;
+  const group = groupKey ? ctx.groupMap?.get(groupKey) : null;
+
+  return {
+    id: channelId,
+    name: doc.name || "",
+    type: doc.type || "line_group",
+    senderBotId: senderBotId || null,
+    senderBotName: senderBotId ? ctx.botMap?.get(senderBotId) || null : null,
+    groupId,
+    groupName: group?.groupName || null,
+    groupStatus: group?.status || null,
+    sourceType: group?.sourceType || null,
+    receiveFromAllBots: doc.receiveFromAllBots === true,
+    sources: normalizeNotificationSourcesInput(doc.sources || []),
+    eventTypes: Array.isArray(doc.eventTypes) ? doc.eventTypes : ["new_order"],
+    settings: normalizeNotificationChannelSettings(doc.settings || {}),
+    isActive: doc.isActive === true,
+    createdAt: doc.createdAt || null,
+    updatedAt: doc.updatedAt || null,
+  };
+}
+
+app.get("/admin/api/notification-channels", requireAdmin, async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const channels = await db
+      .collection("notification_channels")
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    const senderBotIds = Array.from(
+      new Set(
+        channels
+          .map((ch) => ch.senderBotId || ch.botId || null)
+          .filter(Boolean)
+          .map((id) => String(id)),
+      ),
+    ).filter((id) => ObjectId.isValid(id));
+
+    const botDocs = senderBotIds.length
+      ? await db
+        .collection("line_bots")
+        .find({ _id: { $in: senderBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, displayName: 1, botName: 1 })
+        .toArray()
+      : [];
+
+    const botMap = new Map();
+    botDocs.forEach((bot) => {
+      const label =
+        bot.displayName ||
+        bot.name ||
+        bot.botName ||
+        `LINE Bot (${bot._id.toString().slice(-4)})`;
+      botMap.set(bot._id.toString(), label);
+    });
+
+    const groupDocs = senderBotIds.length
+      ? await db
+        .collection("line_bot_groups")
+        .find({ botId: { $in: senderBotIds } })
+        .project({ botId: 1, groupId: 1, groupName: 1, status: 1, sourceType: 1 })
+        .toArray()
+      : [];
+
+    const groupMap = new Map();
+    groupDocs.forEach((group) => {
+      if (!group?.botId || !group?.groupId) return;
+      groupMap.set(`${group.botId}:${group.groupId}`, group);
+    });
+
+    res.json({
+      success: true,
+      channels: channels.map((doc) => mapNotificationChannelDoc(doc, { botMap, groupMap })),
+    });
+  } catch (err) {
+    console.error("[Notifications] Error listing channels:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
+  try {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const senderBotId =
+      typeof req.body?.senderBotId === "string" ? req.body.senderBotId.trim() : "";
+    const groupId =
+      typeof req.body?.groupId === "string" ? req.body.groupId.trim() : "";
+
+    if (!name || !ObjectId.isValid(senderBotId) || !groupId) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณากรอก name, senderBotId และ groupId ให้ถูกต้อง",
+      });
+    }
+
+    const receiveFromAllBots = parseOptionalBoolean(req.body?.receiveFromAllBots);
+    const sources = normalizeNotificationSourcesInput(req.body?.sources || []);
+    const settings = normalizeNotificationChannelSettings(req.body?.settings || {});
+    const isActive = parseOptionalBoolean(req.body?.isActive);
+    const receiveAll = receiveFromAllBots !== false;
+
+    if (!receiveAll && sources.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณาเลือกบอทต้นทางอย่างน้อย 1 รายการ หรือเลือก 'รับจากทุกบอท'",
+      });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const senderBot = await db
+      .collection("line_bots")
+      .findOne({ _id: new ObjectId(senderBotId) }, { projection: { _id: 1 } });
+    if (!senderBot) {
+      return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
+    }
+
+    const group = await db.collection("line_bot_groups").findOne({
+      botId: senderBotId,
+      groupId,
+      status: { $ne: "left" },
+    });
+    if (!group) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+      });
+    }
+
+    const now = new Date();
+    const doc = {
+      name,
+      type: "line_group",
+      senderBotId,
+      groupId,
+      receiveFromAllBots: receiveAll,
+      sources: receiveAll ? [] : sources,
+      eventTypes: ["new_order"],
+      settings,
+      isActive: isActive !== false,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const result = await db.collection("notification_channels").insertOne(doc);
+    doc._id = result.insertedId;
+
+    res.status(201).json({ success: true, channel: mapNotificationChannelDoc(doc) });
+  } catch (err) {
+    console.error("[Notifications] Error creating channel:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) => {
+  try {
+    const channelId = req.params.id;
+    if (!ObjectId.isValid(channelId)) {
+      return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
+    }
+
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const senderBotId =
+      typeof req.body?.senderBotId === "string" ? req.body.senderBotId.trim() : "";
+    const groupId =
+      typeof req.body?.groupId === "string" ? req.body.groupId.trim() : "";
+
+    if (!name || !ObjectId.isValid(senderBotId) || !groupId) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณากรอก name, senderBotId และ groupId ให้ถูกต้อง",
+      });
+    }
+
+    const receiveFromAllBots = parseOptionalBoolean(req.body?.receiveFromAllBots);
+    const sources = normalizeNotificationSourcesInput(req.body?.sources || []);
+    const settings = normalizeNotificationChannelSettings(req.body?.settings || {});
+    const isActive = parseOptionalBoolean(req.body?.isActive);
+    const receiveAll = receiveFromAllBots !== false;
+
+    if (!receiveAll && sources.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณาเลือกบอทต้นทางอย่างน้อย 1 รายการ หรือเลือก 'รับจากทุกบอท'",
+      });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const existing = await db
+      .collection("notification_channels")
+      .findOne({ _id: new ObjectId(channelId) });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
+    }
+
+    const group = await db.collection("line_bot_groups").findOne({
+      botId: senderBotId,
+      groupId,
+      status: { $ne: "left" },
+    });
+    if (!group) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+      });
+    }
+
+    const update = {
+      name,
+      senderBotId,
+      groupId,
+      receiveFromAllBots: receiveAll,
+      sources: receiveAll ? [] : sources,
+      eventTypes: ["new_order"],
+      settings,
+      updatedAt: new Date(),
+    };
+    if (typeof isActive === "boolean") {
+      update.isActive = isActive;
+    }
+
+    await db
+      .collection("notification_channels")
+      .updateOne({ _id: new ObjectId(channelId) }, { $set: update });
+
+    const updated = await db
+      .collection("notification_channels")
+      .findOne({ _id: new ObjectId(channelId) });
+
+    res.json({ success: true, channel: mapNotificationChannelDoc(updated) });
+  } catch (err) {
+    console.error("[Notifications] Error updating channel:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.patch(
+  "/admin/api/notification-channels/:id/toggle",
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const channelId = req.params.id;
+      if (!ObjectId.isValid(channelId)) {
+        return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("notification_channels");
+
+      const existing = await coll.findOne({ _id: new ObjectId(channelId) });
+      if (!existing) {
+        return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
+      }
+
+      const requested = parseOptionalBoolean(req.body?.isActive);
+      const nextValue = typeof requested === "boolean" ? requested : !existing.isActive;
+
+      await coll.updateOne(
+        { _id: new ObjectId(channelId) },
+        { $set: { isActive: nextValue, updatedAt: new Date() } },
+      );
+
+      res.json({ success: true, isActive: nextValue });
+    } catch (err) {
+      console.error("[Notifications] Error toggling channel:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.delete(
+  "/admin/api/notification-channels/:id",
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const channelId = req.params.id;
+      if (!ObjectId.isValid(channelId)) {
+        return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const result = await db
+        .collection("notification_channels")
+        .deleteOne({ _id: new ObjectId(channelId) });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error("[Notifications] Error deleting channel:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.post(
+  "/admin/api/notification-channels/:id/test",
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const channelId = req.params.id;
+      if (!ObjectId.isValid(channelId)) {
+        return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
+      }
+
+      const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+      const result = await notificationService.testChannel(channelId, { text });
+      if (!result.success) {
+        return res.status(400).json({ success: false, error: result.error || "ทดสอบไม่สำเร็จ" });
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error("[Notifications] Error testing channel:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.get(
+  "/admin/api/line-bots/:botId/groups",
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const botId = typeof req.params.botId === "string" ? req.params.botId.trim() : "";
+      if (!botId) {
+        return res.status(400).json({ success: false, error: "botId ไม่ถูกต้อง" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const groups = await db
+        .collection("line_bot_groups")
+        .find({ botId, status: { $ne: "left" } })
+        .sort({ lastEventAt: -1 })
+        .toArray();
+
+      res.json({
+        success: true,
+        groups: groups.map((group) => ({
+          botId: group.botId || null,
+          groupId: group.groupId || null,
+          sourceType: group.sourceType || null,
+          groupName: group.groupName || null,
+          pictureUrl: group.pictureUrl || null,
+          memberCount: group.memberCount || null,
+          status: group.status || null,
+          joinedAt: group.joinedAt || null,
+          lastEventAt: group.lastEventAt || null,
+        })),
+      });
+    } catch (err) {
+      console.error("[LINE Group] Error listing groups:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.get("/admin/api/notification-logs", requireAdmin, async (req, res) => {
+  try {
+    const channelId =
+      typeof req.query.channelId === "string" ? req.query.channelId.trim() : "";
+    const status = typeof req.query.status === "string" ? req.query.status.trim() : "";
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+
+    const query = {};
+    if (channelId) query.channelId = channelId;
+    if (status) query.status = status;
+
+    const from = typeof req.query.from === "string" ? req.query.from.trim() : "";
+    const to = typeof req.query.to === "string" ? req.query.to.trim() : "";
+    if (from || to) {
+      query.createdAt = {};
+      if (from) {
+        const fromDate = new Date(from);
+        if (!Number.isNaN(fromDate.getTime())) query.createdAt.$gte = fromDate;
+      }
+      if (to) {
+        const toDate = new Date(to);
+        if (!Number.isNaN(toDate.getTime())) query.createdAt.$lte = toDate;
+      }
+      if (!Object.keys(query.createdAt).length) {
+        delete query.createdAt;
+      }
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const logs = await db
+      .collection("notification_logs")
+      .find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray();
+
+    res.json({
+      success: true,
+      logs: logs.map((log) => ({
+        id: log._id?.toString?.() || "",
+        channelId: log.channelId || null,
+        orderId: log.orderId || null,
+        eventType: log.eventType || null,
+        status: log.status || null,
+        errorMessage: log.errorMessage || null,
+        createdAt: log.createdAt || null,
+      })),
+    });
+  } catch (err) {
+    console.error("[Notifications] Error listing logs:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
