@@ -5932,7 +5932,16 @@ function pickSlipOkPersonName(person) {
   const displayName =
     typeof person.displayName === "string" ? person.displayName.trim() : "";
   const name = typeof person.name === "string" ? person.name.trim() : "";
-  return displayName || name || "";
+  if (!displayName && !name) return "";
+  if (!displayName) return name;
+  if (!name) return displayName;
+
+  if (displayName === name) return displayName;
+
+  const displayLen = displayName.replace(/\s+/g, "").length;
+  const nameLen = name.replace(/\s+/g, "").length;
+  if (nameLen > displayLen) return name;
+  return displayName;
 }
 
 function formatSlipOkDateTime(slip) {
