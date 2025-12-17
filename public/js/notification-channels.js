@@ -56,8 +56,20 @@
     els.includeCustomer = document.getElementById(
       "notificationSettingIncludeCustomer",
     );
+    els.includePhone = document.getElementById(
+      "notificationSettingIncludePhone",
+    );
     els.includeItemsCount = document.getElementById(
       "notificationSettingIncludeItemsCount",
+    );
+    els.includeItemsDetail = document.getElementById(
+      "notificationSettingIncludeItemsDetail",
+    );
+    els.includeAddress = document.getElementById(
+      "notificationSettingIncludeAddress",
+    );
+    els.includePaymentMethod = document.getElementById(
+      "notificationSettingIncludePaymentMethod",
     );
     els.includeTotalAmount = document.getElementById(
       "notificationSettingIncludeTotalAmount",
@@ -328,7 +340,11 @@
       sources: [],
       settings: {
         includeCustomer: true,
+        includePhone: true,
         includeItemsCount: true,
+        includeItemsDetail: true,
+        includeAddress: true,
+        includePaymentMethod: true,
         includeTotalAmount: true,
         includeOrderLink: false,
       },
@@ -357,8 +373,22 @@
     els.isActive.checked = channel?.isActive !== false;
 
     els.includeCustomer.checked = channel?.settings?.includeCustomer !== false;
+    if (els.includePhone) {
+      els.includePhone.checked = channel?.settings?.includePhone !== false;
+    }
     els.includeItemsCount.checked =
       channel?.settings?.includeItemsCount !== false;
+    if (els.includeItemsDetail) {
+      els.includeItemsDetail.checked =
+        channel?.settings?.includeItemsDetail !== false;
+    }
+    if (els.includeAddress) {
+      els.includeAddress.checked = channel?.settings?.includeAddress !== false;
+    }
+    if (els.includePaymentMethod) {
+      els.includePaymentMethod.checked =
+        channel?.settings?.includePaymentMethod !== false;
+    }
     els.includeTotalAmount.checked =
       channel?.settings?.includeTotalAmount !== false;
     els.includeOrderLink.checked = channel?.settings?.includeOrderLink === true;
@@ -503,7 +533,11 @@
       sources,
       settings: {
         includeCustomer: els.includeCustomer?.checked === true,
+        includePhone: els.includePhone?.checked === true,
         includeItemsCount: els.includeItemsCount?.checked === true,
+        includeItemsDetail: els.includeItemsDetail?.checked === true,
+        includeAddress: els.includeAddress?.checked === true,
+        includePaymentMethod: els.includePaymentMethod?.checked === true,
         includeTotalAmount: els.includeTotalAmount?.checked === true,
         includeOrderLink: els.includeOrderLink?.checked === true,
       },
@@ -609,4 +643,3 @@
 
   document.addEventListener("DOMContentLoaded", init);
 })();
-

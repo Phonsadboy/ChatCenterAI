@@ -29,7 +29,7 @@
   - `senderBotId` (LINE bot ผู้ส่ง)
   - `groupId` (ปลายทาง)
   - เงื่อนไข source (`receiveFromAllBots` หรือ `sources[]`)
-  - settings รูปแบบข้อความ (simple text)
+  - settings รูปแบบข้อความ (simple text): รายการสินค้า, ที่อยู่, เบอร์โทร, วิธีชำระเงิน, ยอดรวม (เปิด/ปิดได้)
 
 ### 3) ส่งแจ้งเตือนเมื่อมีออเดอร์ใหม่
 - หลังบันทึกออเดอร์สำเร็จ (`saveOrderToDatabase`) ระบบจะ trigger ส่งแจ้งเตือนแบบ async (ไม่บล็อกเส้นทางหลัก)
@@ -100,4 +100,3 @@
 - Backend: `index.js`, `services/notificationService.js`
 - UI: `views/admin-settings-v2.ejs`, `views/partials/modals/notification-channel-modal.ejs`
 - Frontend: `public/js/notification-channels.js`, `public/css/admin-settings-v2.css`
-

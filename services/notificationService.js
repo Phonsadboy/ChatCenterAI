@@ -50,11 +50,88 @@ function shouldNotifyChannelForOrder(channel, order) {
   );
 }
 
+function shortenText(value, maxLength) {
+  if (!value) return "";
+  const text = String(value).trim();
+  if (!text) return "";
+  if (!maxLength || maxLength <= 0) return text;
+  return text.length > maxLength ? `${text.slice(0, Math.max(maxLength - 1, 0))}…` : text;
+}
+
+function formatCurrency(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return `฿${value.toLocaleString()}`;
+}
+
+function buildOrderAddress(orderData) {
+  const raw = orderData && typeof orderData === "object" ? orderData : {};
+  const parts = [
+    normalizeIdString(raw.shippingAddress),
+    normalizeIdString(raw.addressSubDistrict),
+    normalizeIdString(raw.addressDistrict),
+    normalizeIdString(raw.addressProvince),
+    normalizeIdString(raw.addressPostalCode),
+  ].filter(Boolean);
+  return parts.join(" ").trim();
+}
+
+function extractOrderPhone(orderData) {
+  const raw = orderData && typeof orderData === "object" ? orderData : {};
+  return (
+    normalizeIdString(raw.phone) ||
+    normalizeIdString(raw.customerPhone) ||
+    normalizeIdString(raw.shippingPhone) ||
+    ""
+  );
+}
+
+function extractPaymentMethod(orderData) {
+  const raw = orderData && typeof orderData === "object" ? orderData : {};
+  return (
+    normalizeIdString(raw.paymentMethod) ||
+    normalizeIdString(raw.paymentType) ||
+    ""
+  );
+}
+
+function normalizeOrderItem(item) {
+  if (!item) return null;
+  if (typeof item === "string") {
+    const name = shortenText(item, 120);
+    return name ? { name, quantity: 1, price: null } : null;
+  }
+
+  if (typeof item !== "object") return null;
+
+  const nameRaw =
+    item.product || item.shippingName || item.name || item.title || "สินค้า";
+  const colorRaw = item.color || item.variant || "";
+  const quantityRaw = item.quantity ?? item.qty ?? item.count ?? 1;
+  const priceRaw = item.price ?? item.amount ?? item.unitPrice ?? null;
+
+  const name = shortenText(nameRaw, 120);
+  const color = shortenText(colorRaw, 60);
+  const quantity =
+    typeof quantityRaw === "number" && Number.isFinite(quantityRaw) && quantityRaw > 0
+      ? Math.floor(quantityRaw)
+      : 1;
+  const price =
+    typeof priceRaw === "number" && Number.isFinite(priceRaw) && priceRaw >= 0
+      ? priceRaw
+      : null;
+
+  return { name, color, quantity, price };
+}
+
 function formatNewOrderMessage(order, settings, publicBaseUrl) {
   const cfg = settings || {};
   const includeCustomer = cfg.includeCustomer !== false;
   const includeItemsCount = cfg.includeItemsCount !== false;
+  const includeItemsDetail = cfg.includeItemsDetail !== false;
   const includeTotalAmount = cfg.includeTotalAmount !== false;
+  const includeAddress = cfg.includeAddress !== false;
+  const includePhone = cfg.includePhone !== false;
+  const includePaymentMethod = cfg.includePaymentMethod !== false;
   const includeOrderLink = cfg.includeOrderLink === true;
 
   const orderId = normalizeIdString(order?._id);
@@ -82,8 +159,41 @@ function formatNewOrderMessage(order, settings, publicBaseUrl) {
     lines.push(`📝 สินค้า: ${items.length.toLocaleString()} รายการ`);
   }
 
+  if (includeItemsDetail && items.length) {
+    const normalizedItems = items
+      .map(normalizeOrderItem)
+      .filter(Boolean);
+    if (normalizedItems.length) {
+      lines.push("🧾 รายการสินค้า:");
+      const maxItems = 10;
+      normalizedItems.slice(0, maxItems).forEach((item) => {
+        const colorPart = item.color ? ` (${item.color})` : "";
+        const pricePart = item.price !== null ? ` • ${formatCurrency(item.price)}` : "";
+        lines.push(`- ${item.name}${colorPart} x${item.quantity}${pricePart}`);
+      });
+      if (normalizedItems.length > maxItems) {
+        lines.push(`… และอีก ${(normalizedItems.length - maxItems).toLocaleString()} รายการ`);
+      }
+    }
+  }
+
+  const phone = extractOrderPhone(orderData);
+  if (includePhone && phone) {
+    lines.push(`📞 เบอร์โทร: ${shortenText(phone, 60)}`);
+  }
+
+  const address = buildOrderAddress(orderData);
+  if (includeAddress && address) {
+    lines.push(`📍 ที่อยู่: ${shortenText(address, 300)}`);
+  }
+
+  const paymentMethod = extractPaymentMethod(orderData);
+  if (includePaymentMethod && paymentMethod) {
+    lines.push(`💳 ชำระเงิน: ${shortenText(paymentMethod, 80)}`);
+  }
+
   if (includeTotalAmount && totalAmount !== null) {
-    lines.push(`💰 ยอดรวม: ฿${totalAmount.toLocaleString()}`);
+    lines.push(`💰 ยอดรวม: ${formatCurrency(totalAmount)}`);
   }
 
   if (includeOrderLink) {
@@ -94,7 +204,9 @@ function formatNewOrderMessage(order, settings, publicBaseUrl) {
     }
   }
 
-  return { type: "text", text: lines.join("\n") };
+  const text = lines.join("\n");
+  const MAX_TEXT_LENGTH = 3900;
+  return { type: "text", text: text.length > MAX_TEXT_LENGTH ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…` : text };
 }
 
 async function insertNotificationLog(db, payload) {
@@ -266,4 +378,3 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
 }
 
 module.exports = createNotificationService;
-

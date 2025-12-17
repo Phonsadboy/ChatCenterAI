@@ -117,6 +117,58 @@ function createLineClient(channelAccessToken, channelSecret) {
 
   return new line.Client(lineConfig);
 }
+
+const LINE_BOT_CREDENTIAL_CACHE_TTL_MS = 5 * 60 * 1000;
+const lineBotCredentialCache = new Map();
+
+async function getLineBotCredentials(botId) {
+  const id = typeof botId === "string" ? botId.trim() : botId ? String(botId) : "";
+  if (!ObjectId.isValid(id)) return null;
+
+  const cached = lineBotCredentialCache.get(id);
+  if (cached && Date.now() - cached.fetchedAt < LINE_BOT_CREDENTIAL_CACHE_TTL_MS) {
+    return cached.credentials;
+  }
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const bot = await db.collection("line_bots").findOne(
+    { _id: new ObjectId(id) },
+    { projection: { channelAccessToken: 1, channelSecret: 1 } },
+  );
+
+  const credentials =
+    bot && bot.channelAccessToken && bot.channelSecret
+      ? {
+        channelAccessToken: bot.channelAccessToken,
+        channelSecret: bot.channelSecret,
+      }
+      : null;
+
+  lineBotCredentialCache.set(id, { fetchedAt: Date.now(), credentials });
+  return credentials;
+}
+
+async function getLineClientForContext(botId = null) {
+  const credentials = await getLineBotCredentials(botId);
+  if (credentials) {
+    return createLineClient(
+      credentials.channelAccessToken,
+      credentials.channelSecret,
+    );
+  }
+
+  if (lineClient) {
+    return lineClient;
+  }
+
+  if (LINE_CHANNEL_ACCESS_TOKEN && LINE_CHANNEL_SECRET) {
+    lineClient = createLineClient(LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET);
+    return lineClient;
+  }
+
+  return null;
+}
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
@@ -1031,9 +1083,19 @@ async function getAIHistory(userId) {
 }
 
 // ฟังก์ชันสำหรับดึงข้อมูลโปรไฟล์จาก LINE API
-async function getLineUserProfile(userId) {
+async function getLineUserProfile(userId, botId = null) {
+  const client = await getLineClientForContext(botId);
+  if (!client) {
+    return {
+      userId: userId,
+      displayName: userId.substring(0, 8) + "...",
+      pictureUrl: null,
+      statusMessage: null,
+    };
+  }
+
   try {
-    const profile = await lineClient.getProfile(userId);
+    const profile = await client.getProfile(userId);
     return {
       userId: profile.userId,
       displayName: profile.displayName,
@@ -1053,7 +1115,7 @@ async function getLineUserProfile(userId) {
       );
       await new Promise((resolve) => setTimeout(resolve, 5000));
       try {
-        const retryProfile = await lineClient.getProfile(userId);
+        const retryProfile = await client.getProfile(userId);
         return {
           userId: retryProfile.userId,
           displayName: retryProfile.displayName,
@@ -1078,9 +1140,9 @@ async function getLineUserProfile(userId) {
 }
 
 // ฟังก์ชันสำหรับบันทึกหรืออัปเดตข้อมูลผู้ใช้
-async function saveOrUpdateUserProfile(userId) {
+async function saveOrUpdateUserProfile(userId, botId = null) {
   try {
-    const profile = await getLineUserProfile(userId);
+    const profile = await getLineUserProfile(userId, botId);
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("user_profiles");
@@ -1211,7 +1273,7 @@ async function saveChatHistory(
 
   // บันทึกหรืออัปเดตข้อมูลผู้ใช้ก่อน (เฉพาะ LINE)
   if (platform === "line") {
-    await saveOrUpdateUserProfile(userId);
+    await saveOrUpdateUserProfile(userId, botId);
   }
 
   const client = await connectDB();
@@ -18252,6 +18314,10 @@ function normalizeNotificationChannelSettings(settings) {
   const raw = settings && typeof settings === "object" ? settings : {};
   const includeCustomer = parseOptionalBoolean(raw.includeCustomer);
   const includeItemsCount = parseOptionalBoolean(raw.includeItemsCount);
+  const includeItemsDetail = parseOptionalBoolean(raw.includeItemsDetail);
+  const includeAddress = parseOptionalBoolean(raw.includeAddress);
+  const includePhone = parseOptionalBoolean(raw.includePhone);
+  const includePaymentMethod = parseOptionalBoolean(raw.includePaymentMethod);
   const includeTotalAmount = parseOptionalBoolean(raw.includeTotalAmount);
   const includeOrderLink = parseOptionalBoolean(raw.includeOrderLink);
 
@@ -18259,6 +18325,10 @@ function normalizeNotificationChannelSettings(settings) {
     template: "simple",
     includeCustomer: includeCustomer !== false,
     includeItemsCount: includeItemsCount !== false,
+    includeItemsDetail: includeItemsDetail !== false,
+    includeAddress: includeAddress !== false,
+    includePhone: includePhone !== false,
+    includePaymentMethod: includePaymentMethod !== false,
     includeTotalAmount: includeTotalAmount !== false,
     includeOrderLink: includeOrderLink === true,
   };
@@ -22983,7 +23053,7 @@ async function getNormalizedChatUsers(options = {}) {
         let userProfile = profileMap.get(profileKey) || null;
 
         if (platform === "line" && !userProfile) {
-          const freshProfile = await saveOrUpdateUserProfile(user._id);
+          const freshProfile = await saveOrUpdateUserProfile(user._id, botId);
           if (freshProfile) {
             userProfile = {
               ...freshProfile,
