@@ -21374,21 +21374,30 @@ function normalizeMessageForFrontend(message) {
       richDisplayContent = displayContent;
     }
 
-    return {
-      content: content,
-      role: message.role || "user",
-      timestamp: timestamp,
-      source: message.source || "ai",
-      displayContent: displayContent,
-      richDisplayContent,
-      contentType: contentType,
-      platform: message.platform || "line",
-      botId: message.botId || null,
-      rawContent: originalContent,
-      messageId,
-      orderExtractionRoundId,
-    };
-  } catch (error) {
+	    return {
+	      content,
+	      role: message.role || "user",
+	      timestamp,
+	      source:
+	        typeof message.source === "string" && message.source.trim()
+	          ? message.source.trim()
+	          : null,
+	      metadata:
+	        typeof message.metadata === "string" && message.metadata.trim()
+	          ? message.metadata.trim()
+	          : typeof message.metadata === "undefined"
+	            ? null
+	            : message.metadata,
+	      displayContent,
+	      richDisplayContent,
+	      contentType,
+	      platform: message.platform || "line",
+	      botId: message.botId || null,
+	      rawContent: originalContent,
+	      messageId,
+	      orderExtractionRoundId,
+	    };
+	  } catch (error) {
     console.error("[Normalize] ข้อผิดพลาดในการแปลงข้อความ:", error);
     return {
       content: "ข้อความไม่ถูกต้อง",

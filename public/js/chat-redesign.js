@@ -941,8 +941,8 @@ class ChatManager {
         })();
 
         let visualRole = role === 'user' ? 'user' : 'assistant';
-        let headerIcon = role === 'user' ? 'user' : 'robot';
-        let headerLabel = role === 'user' ? 'ลูกค้า' : 'AI';
+        let headerIcon = role === 'user' ? 'user' : 'paper-plane';
+        let headerLabel = role === 'user' ? 'ลูกค้า' : 'ระบบ';
 
         if (role !== 'user') {
             if (normalizedSource === 'follow_up') {
@@ -951,7 +951,7 @@ class ChatManager {
                 headerLabel = 'ระบบติดตาม';
             } else if (normalizedSource === 'admin_page') {
                 visualRole = 'admin';
-                headerIcon = 'facebook-f';
+                headerIcon = 'inbox';
                 headerLabel = 'แอดมิน (เพจ)';
             } else if (normalizedSource === 'admin_chat') {
                 visualRole = 'admin';
@@ -961,6 +961,10 @@ class ChatManager {
                 visualRole = 'assistant';
                 headerIcon = 'robot';
                 headerLabel = 'AI';
+            } else if (normalizedSource === 'comment_pull') {
+                visualRole = 'assistant';
+                headerIcon = 'comment-dots';
+                headerLabel = 'ระบบ (ดึงคอมเมนต์)';
             }
         }
 
@@ -975,18 +979,18 @@ class ChatManager {
 
         const headerMeta = platformLabel ? ` · ${platformLabel}` : '';
 
-		        let imagesHtml = '';
-		        if (message.images && message.images.length > 0) {
-		            imagesHtml = `
-		                <div class="message-images">
-		                    ${message.images.map(img => `
-		                        <div class="message-image" role="button" tabindex="0" aria-label="ดูรูปภาพ" data-image-src="${this.escapeHtml(img)}">
-		                            <img src="${this.escapeHtml(img)}" alt="รูปภาพ" loading="lazy">
-		                        </div>
-		                    `).join('')}
-		                </div>
-		            `;
-		        }
+        let imagesHtml = '';
+        if (message.images && message.images.length > 0) {
+            imagesHtml = `
+                <div class="message-images">
+                    ${message.images.map(img => `
+                        <div class="message-image" role="button" tabindex="0" aria-label="ดูรูปภาพ" data-image-src="${this.escapeHtml(img)}">
+                            <img src="${this.escapeHtml(img)}" alt="รูปภาพ" loading="lazy">
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
 
 
         return `
