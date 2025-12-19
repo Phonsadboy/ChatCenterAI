@@ -1626,7 +1626,7 @@ const DEFAULT_ORDER_PROMPT_BODY = `วิเคราะห์บทสนทน
 
 เกณฑ์การพิจารณา:
 ✅ ถือว่ามีออเดอร์ = ลูกค้าสั่งซื้อสินค้าชัดเจน พร้อมระบุรายละเอียด
-❌ ไม่ถือว่ามีออเดอร์ = ถามราคา, ต่อรอง, ลังเล, พิจารณาอยู่
+❌ ไม่ถือว่ามีออเดอร์ = ถามราคา, ต่อรอง, ลังเล, พิจารณาอยู่, ถามสถานะการจัดส่ง/เลขพัสดุ/ของถึงหรือยัง (เป็นการติดตามออเดอร์เดิม)
 
 ข้อมูลที่ต้องสกัด:
 - items: รายการสินค้า [{product: "ชื่อสินค้า", quantity: จำนวน, price: ราคาต่อชิ้น}]
@@ -3580,34 +3580,131 @@ async function listOrderBufferUsersWithActivity(pageKey, since) {
   }));
 }
 
-function findDuplicateOrder(existingOrders, newOrderData) {
+function normalizeOrderComparisonText(value) {
+  if (typeof value !== "string") return "";
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function normalizeOrderItemsForComparison(items) {
+  if (!Array.isArray(items)) return [];
+  const normalized = [];
+
+  for (const item of items) {
+    const productKey = normalizeOrderComparisonText(item?.product);
+    const quantity = Number(item?.quantity);
+    const price = Number(item?.price);
+
+    if (!productKey) continue;
+    if (!Number.isFinite(quantity) || quantity <= 0) continue;
+    if (!Number.isFinite(price) || price < 0) continue;
+
+    normalized.push({ productKey, quantity, price });
+  }
+
+  normalized.sort((a, b) => {
+    if (a.productKey < b.productKey) return -1;
+    if (a.productKey > b.productKey) return 1;
+    if (a.quantity !== b.quantity) return a.quantity - b.quantity;
+    return a.price - b.price;
+  });
+
+  return normalized;
+}
+
+function areOrderItemsEquivalent(existingItems, newItems) {
+  if (existingItems.length !== newItems.length) return false;
+  for (let index = 0; index < existingItems.length; index += 1) {
+    const existingItem = existingItems[index];
+    const newItem = newItems[index];
+    if (!newItem) return false;
+
+    if (existingItem.productKey !== newItem.productKey) return false;
+    if (Number(existingItem.quantity) !== Number(newItem.quantity)) return false;
+    if (Number(existingItem.price) !== Number(newItem.price)) return false;
+  }
+  return true;
+}
+
+function findDuplicateOrder(existingOrders, newOrderData, options = {}) {
   if (!Array.isArray(existingOrders) || !newOrderData) {
     return null;
   }
 
-  const newItems = Array.isArray(newOrderData.items) ? newOrderData.items : [];
-  if (!newItems.length) {
+  const {
+    lookbackMs = 24 * 60 * 60 * 1000,
+    matchShippingAddress = true,
+    excludeCancelled = true,
+    now = new Date(),
+  } = options || {};
+
+  const normalizedNewItems = normalizeOrderItemsForComparison(newOrderData.items);
+  if (!normalizedNewItems.length) {
     return null;
   }
 
-  return (
-    existingOrders.find((order) => {
-      const existingItems = Array.isArray(order.orderData?.items)
-        ? order.orderData.items
-        : [];
-      if (existingItems.length !== newItems.length) return false;
+  const newShippingKey = matchShippingAddress
+    ? normalizeOrderComparisonText(newOrderData.shippingAddress)
+    : "";
 
-      return existingItems.every((existingItem, index) => {
-        const newItem = newItems[index];
-        if (!newItem) return false;
-        return (
-          existingItem.product === newItem.product &&
-          Number(existingItem.quantity) === Number(newItem.quantity) &&
-          Number(existingItem.price) === Number(newItem.price)
-        );
-      });
-    }) || null
-  );
+  const cutoffTime =
+    typeof lookbackMs === "number" && Number.isFinite(lookbackMs)
+      ? now.getTime() - Math.max(0, lookbackMs)
+      : null;
+
+  for (const order of existingOrders) {
+    if (!order || typeof order !== "object") continue;
+
+    if (
+      excludeCancelled &&
+      ["cancelled", "canceled"].includes(String(order.status || "").toLowerCase())
+    ) {
+      continue;
+    }
+
+    if (cutoffTime !== null) {
+      const extractedAt =
+        order.extractedAt instanceof Date
+          ? order.extractedAt
+          : order.extractedAt
+            ? new Date(order.extractedAt)
+            : null;
+
+      if (
+        extractedAt &&
+        Number.isFinite(extractedAt.getTime()) &&
+        extractedAt.getTime() < cutoffTime
+      ) {
+        continue;
+      }
+    }
+
+    const existingOrderData =
+      order.orderData && typeof order.orderData === "object" ? order.orderData : {};
+    const normalizedExistingItems = normalizeOrderItemsForComparison(
+      existingOrderData.items,
+    );
+    if (!normalizedExistingItems.length) continue;
+
+    if (!areOrderItemsEquivalent(normalizedExistingItems, normalizedNewItems)) {
+      continue;
+    }
+
+    if (matchShippingAddress) {
+      const existingShippingKey = normalizeOrderComparisonText(
+        existingOrderData.shippingAddress,
+      );
+      if (existingShippingKey !== newShippingKey) {
+        continue;
+      }
+    }
+
+    return order;
+  }
+
+  return null;
 }
 
 async function markMessagesAsOrderExtracted(
@@ -4229,12 +4326,15 @@ async function maybeAnalyzeOrder(
     }
 
     const targetMessages = unprocessedMessages.slice(-20);
-    const messageIds = targetMessages
+    const targetMessageIds = targetMessages
       .map((msg) => msg.messageId)
       .filter(Boolean);
-    if (!messageIds.length) {
+    if (!targetMessageIds.length) {
       return;
     }
+    const unprocessedMessageIds = unprocessedMessages
+      .map((msg) => msg.messageId)
+      .filter(Boolean);
 
     const existingOrders = await getUserOrders(userId);
     const latestOrder = existingOrders?.[0];
@@ -4260,7 +4360,7 @@ async function maybeAnalyzeOrder(
       const extractionRoundId = new ObjectId().toString();
       await markMessagesAsOrderExtracted(
         userId,
-        messageIds,
+        unprocessedMessageIds,
         extractionRoundId,
         duplicateOrder?._id?.toString?.() || null,
       );
@@ -4297,7 +4397,7 @@ async function maybeAnalyzeOrder(
     const extractionRoundId = new ObjectId().toString();
     await markMessagesAsOrderExtracted(
       userId,
-      messageIds,
+      unprocessedMessageIds,
       extractionRoundId,
       orderId?.toString?.() || orderId,
     );
@@ -18260,11 +18360,14 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
     }
 
     const targetMessages = unprocessedMessages.slice(-50);
-    const messageIds = targetMessages
+    const targetMessageIds = targetMessages
+      .map((msg) => msg.messageId)
+      .filter(Boolean);
+    const unprocessedMessageIds = unprocessedMessages
       .map((msg) => msg.messageId)
       .filter(Boolean);
 
-    if (!messageIds.length) {
+    if (!targetMessageIds.length) {
       return res.json({
         success: true,
         hasOrder: false,
@@ -18312,7 +18415,7 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
       const extractionRoundId = new ObjectId().toString();
       await markMessagesAsOrderExtracted(
         userId,
-        messageIds,
+        unprocessedMessageIds,
         extractionRoundId,
         duplicateOrder?._id?.toString?.() || null,
       );
@@ -18341,7 +18444,7 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
     const extractionRoundId = new ObjectId().toString();
     await markMessagesAsOrderExtracted(
       userId,
-      messageIds,
+      unprocessedMessageIds,
       extractionRoundId,
       orderId?.toString?.() || orderId,
     );
