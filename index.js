@@ -7086,11 +7086,12 @@ async function handleFacebookComment(
     reason = err?.response?.data?.error?.message || err?.message || "reply_failed";
   }
 
-  if ((policy.pullToChat || policy.sendPrivateReply) && commenterId) {
+  const shouldSendPrivateReply = policy.pullToChat || policy.sendPrivateReply;
+  if (shouldSendPrivateReply) {
     const privateMessageRaw =
       policy.privateReplyTemplate && policy.privateReplyTemplate.trim()
         ? policy.privateReplyTemplate.trim()
-        : policy.sendPrivateReply && replyMessage
+        : shouldSendPrivateReply && replyMessage
           ? replyMessage
           : "";
     const privateFallback = `สวัสดีคุณ ${commenterName} ขอบคุณที่สนใจ สามารถทักแชทต่อได้เลยนะครับ`;
@@ -7145,6 +7146,10 @@ async function handleFacebookComment(
           pullErr?.message || pullErr,
         );
       }
+    } else if (policy.pullToChat && !commenterId) {
+      console.warn(
+        `[Facebook Comment] Skip pull-to-chat for ${commentId}: missing commenterId`,
+      );
     }
   }
 
