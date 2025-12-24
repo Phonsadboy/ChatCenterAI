@@ -72,6 +72,10 @@ const {
   sanitizeLabelInput,
   mapPasscodeDoc,
 } = require("./utils/auth");
+const {
+  extractBase64ImagesFromContent,
+  detectImageMimeType,
+} = require("./utils/chatImageUtils");
 
 function resolveInstructionAssetUrl(url, fallbackFileName) {
   const base =
@@ -470,6 +474,50 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
       fileName,
     });
     next(err);
+  }
+});
+
+app.get("/assets/chat-images/:messageId/:imageIndex", async (req, res) => {
+  try {
+    const { messageId, imageIndex } = req.params;
+    if (!ObjectId.isValid(messageId)) {
+      return res.sendStatus(404);
+    }
+
+    const index = Number.parseInt(imageIndex, 10);
+    if (!Number.isFinite(index) || index < 0) {
+      return res.sendStatus(404);
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const doc = await db.collection("chat_history").findOne(
+      { _id: new ObjectId(messageId) },
+      { projection: { content: 1 } },
+    );
+
+    if (!doc) {
+      return res.sendStatus(404);
+    }
+
+    const images = extractBase64ImagesFromContent(doc.content);
+    const payload = images[index];
+    if (!payload || !payload.base64) {
+      return res.sendStatus(404);
+    }
+
+    const buffer = Buffer.from(payload.base64, "base64");
+    if (!buffer.length) {
+      return res.sendStatus(404);
+    }
+
+    const contentType = payload.mime || detectImageMimeType(payload.base64);
+    res.set("Content-Type", contentType || "image/jpeg");
+    res.set("Cache-Control", "no-store");
+    return res.end(buffer);
+  } catch (err) {
+    console.error("[Chat Images] ไม่สามารถดึงรูปภาพแชทได้:", err?.message || err);
+    return res.sendStatus(500);
   }
 });
 
@@ -4247,28 +4295,31 @@ async function saveOrderToDatabase(
     const result = await coll.insertOne(orderDoc);
     console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
 
-    try {
-      setImmediate(() => {
-        notificationService
-          .sendNewOrder(result.insertedId)
-          .catch((err) => {
-            console.warn(
-              "[Notifications] ส่งแจ้งเตือนออเดอร์ไม่สำเร็จ:",
-              err?.message || err,
-            );
-          });
-      });
-    } catch (notifyErr) {
-      console.warn(
-        "[Notifications] ไม่สามารถ trigger การแจ้งเตือนได้:",
-        notifyErr?.message || notifyErr,
-      );
-    }
-
     return result.insertedId;
   } catch (error) {
     console.error("[Order] บันทึกออเดอร์ไม่สำเร็จ:", error.message);
     return null;
+  }
+}
+
+function triggerOrderNotification(orderId) {
+  if (!orderId) return;
+  try {
+    setImmediate(() => {
+      notificationService
+        .sendNewOrder(orderId)
+        .catch((err) => {
+          console.warn(
+            "[Notifications] ส่งแจ้งเตือนออเดอร์ไม่สำเร็จ:",
+            err?.message || err,
+          );
+        });
+    });
+  } catch (notifyErr) {
+    console.warn(
+      "[Notifications] ไม่สามารถ trigger การแจ้งเตือนได้:",
+      notifyErr?.message || notifyErr,
+    );
   }
 }
 
@@ -4401,6 +4452,8 @@ async function maybeAnalyzeOrder(
       extractionRoundId,
       orderId?.toString?.() || orderId,
     );
+
+    triggerOrderNotification(orderId);
 
     await maybeAnalyzeFollowUp(userId, platform, botId, {
       reasonOverride: analysis.reason,
@@ -4589,6 +4642,8 @@ async function processOrderCutoffForPage(pageConfig, options = {}) {
         extractionRoundId,
         orderId?.toString?.() || orderId,
       );
+
+      triggerOrderNotification(orderId);
 
       await clearOrderBufferForUser(pageKey, userId);
 
@@ -6421,23 +6476,25 @@ async function handleLineEvent(event, queueOptions = {}) {
       console.log(`[LOG] ได้รับรูปภาพจากผู้ใช้: ${userId}, กำลังประมวลผล...`);
 
       try {
-        // ดึง stream ของภาพจาก LINE (ต้องมี Line Client ที่ถูกต้อง)
-        // เนื่องจากไม่มี Line Client เริ่มต้น ให้ข้ามการประมวลผลรูปภาพ
-        console.log(
-          `[LOG] ไม่สามารถประมวลผลรูปภาพได้ - ต้องตั้งค่า Line Bot ก่อน`,
-        );
-        itemToQueue.data = {
-          type: "text",
-          text: "ขออภัย ระบบยังไม่พร้อมประมวลผลรูปภาพ กรุณาตั้งค่า Line Bot ก่อน",
-        };
-        await addToQueue(userId, itemToQueue, {
-          ...queueOptions,
-          platform: "line",
-        });
-        return;
+        const lineClientFromContext =
+          queueOptions.lineClient ||
+          (await getLineClientForContext(botIdForHistory));
+        if (!lineClientFromContext) {
+          console.log(
+            `[LOG] ไม่สามารถประมวลผลรูปภาพได้ - ต้องตั้งค่า Line Bot ก่อน`,
+          );
+          itemToQueue.data = {
+            type: "text",
+            text: "ขออภัย ระบบยังไม่พร้อมประมวลผลรูปภาพ กรุณาตั้งค่า Line Bot ก่อน",
+          };
+          await addToQueue(userId, itemToQueue, {
+            ...queueOptions,
+            platform: "line",
+          });
+          return;
+        }
 
-        // โค้ดเดิม (ถูก comment ออก):
-        // const stream = await lineClient.getMessageContent(message.id);
+        const stream = await lineClientFromContext.getMessageContent(message.id);
         const buffers = [];
         for await (const chunk of stream) {
           buffers.push(chunk);
@@ -18453,6 +18510,8 @@ app.post("/admin/chat/orders/extract", async (req, res) => {
       extractionRoundId,
       orderId?.toString?.() || orderId,
     );
+
+    triggerOrderNotification(orderId);
 
     await maybeAnalyzeFollowUp(userId, platform, botId, {
       reasonOverride: analysis.reason,

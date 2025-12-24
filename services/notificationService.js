@@ -1,5 +1,6 @@
 const line = require("@line/bot-sdk");
 const { ObjectId } = require("mongodb");
+const { extractBase64ImagesFromContent } = require("../utils/chatImageUtils");
 
 function normalizePlatform(value) {
   const platform = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -15,6 +16,99 @@ function normalizeIdString(value) {
   } catch {
     return String(value);
   }
+}
+
+function normalizePublicBaseUrl(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\/$/, "");
+}
+
+function isHttpUrl(value) {
+  if (typeof value !== "string") return false;
+  return /^https?:\/\//i.test(value);
+}
+
+function buildChatImageUrl(baseUrl, messageId, imageIndex) {
+  if (!baseUrl || !messageId) return "";
+  return `${baseUrl}/assets/chat-images/${messageId}/${imageIndex}`;
+}
+
+function chunkLineMessages(messages, chunkSize = 5) {
+  const chunks = [];
+  if (!Array.isArray(messages) || messages.length === 0) return chunks;
+  for (let index = 0; index < messages.length; index += chunkSize) {
+    chunks.push(messages.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function appendLineToTextMessage(message, line) {
+  if (!message || message.type !== "text") return message;
+  if (!line) return message;
+  const text = typeof message.text === "string" ? message.text : "";
+  const updated = text ? `${text}\n${line}` : line;
+  const MAX_TEXT_LENGTH = 3900;
+  message.text = updated.length > MAX_TEXT_LENGTH ? text : updated;
+  return message;
+}
+
+async function fetchOrderImageRefs(db, order) {
+  const orderId = normalizeIdString(order?._id);
+  if (!ObjectId.isValid(orderId)) return [];
+
+  const query = {
+    orderId: new ObjectId(orderId),
+    role: "user",
+  };
+
+  const senderId = normalizeIdString(order?.userId);
+  if (senderId) {
+    query.senderId = senderId;
+  }
+
+  const messages = await db
+    .collection("chat_history")
+    .find(query)
+    .sort({ timestamp: 1 })
+    .project({ content: 1 })
+    .toArray();
+
+  const imageRefs = [];
+  messages.forEach((msg) => {
+    const images = extractBase64ImagesFromContent(msg.content);
+    if (!images.length) return;
+    const messageId = normalizeIdString(msg?._id);
+    if (!messageId) return;
+    images.forEach((_, imageIndex) => {
+      imageRefs.push({ messageId, imageIndex });
+    });
+  });
+
+  return imageRefs;
+}
+
+function buildLineImageMessages(baseUrl, imageRefs) {
+  if (!Array.isArray(imageRefs) || imageRefs.length === 0) return [];
+  const normalizedBase = normalizePublicBaseUrl(baseUrl);
+  if (!isHttpUrl(normalizedBase)) return [];
+
+  return imageRefs
+    .map((ref) => {
+      const url = buildChatImageUrl(
+        normalizedBase,
+        ref.messageId,
+        ref.imageIndex,
+      );
+      if (!url) return null;
+      return {
+        type: "image",
+        originalContentUrl: url,
+        previewImageUrl: url,
+      };
+    })
+    .filter(Boolean);
 }
 
 function uniqueSources(sources) {
@@ -257,6 +351,22 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     return lineClient.pushMessage(targetId, message);
   };
 
+  const sendLineMessagesInChunks = async (senderBotId, targetId, messages) => {
+    const normalized = Array.isArray(messages)
+      ? messages.filter(Boolean)
+      : messages
+        ? [messages]
+        : [];
+    if (!normalized.length) return [];
+    const chunks = chunkLineMessages(normalized, 5);
+    const responses = [];
+    for (const chunk of chunks) {
+      const response = await sendToLineTarget(senderBotId, targetId, chunk);
+      responses.push(response || null);
+    }
+    return responses;
+  };
+
   const sendNewOrder = async (orderId) => {
     const orderIdString = normalizeIdString(orderId);
     if (!ObjectId.isValid(orderIdString)) {
@@ -282,6 +392,15 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       })
       .toArray();
 
+    const normalizedBaseUrl = normalizePublicBaseUrl(baseUrl);
+    const canAttachImages = isHttpUrl(normalizedBaseUrl);
+    const orderImageRefs = canAttachImages
+      ? await fetchOrderImageRefs(db, order)
+      : [];
+    const orderImageMessages = canAttachImages
+      ? buildLineImageMessages(normalizedBaseUrl, orderImageRefs)
+      : [];
+
     let sentCount = 0;
     for (const channel of channels) {
       if (!shouldNotifyChannelForOrder(channel, order)) continue;
@@ -293,9 +412,24 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       if (!senderBotId || !targetId) continue;
 
       const message = formatNewOrderMessage(order, channel.settings, baseUrl);
+      if (orderImageMessages.length > 0) {
+        appendLineToTextMessage(
+          message,
+          `📷 รูปภาพจากลูกค้า: ${orderImageMessages.length.toLocaleString()} รูป`,
+        );
+      }
+
+      const payloads =
+        orderImageMessages.length > 0
+          ? [message, ...orderImageMessages]
+          : [message];
 
       try {
-        const response = await sendToLineTarget(senderBotId, targetId, message);
+        const response = await sendLineMessagesInChunks(
+          senderBotId,
+          targetId,
+          payloads,
+        );
         sentCount += 1;
         await insertNotificationLog(db, {
           channelId,
