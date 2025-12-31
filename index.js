@@ -76,6 +76,9 @@ const {
   extractBase64ImagesFromContent,
   detectImageMimeType,
 } = require("./utils/chatImageUtils");
+const {
+  migrateChatHistorySenderId,
+} = require("./utils/chatHistoryMigration");
 
 function resolveInstructionAssetUrl(url, fallbackFileName) {
   const base =
@@ -969,6 +972,21 @@ function requireAdmin(req, res, next) {
   return next();
 }
 
+function buildChatHistoryUserMatch(userId) {
+  if (!userId) {
+    return { senderId: null };
+  }
+  return { $or: [{ senderId: userId }, { userId: userId }] };
+}
+
+function buildChatHistoryUserQuery(userId, extra = {}) {
+  const baseMatch = buildChatHistoryUserMatch(userId);
+  if (!extra || Object.keys(extra).length === 0) {
+    return baseMatch;
+  }
+  return { $and: [extra, baseMatch] };
+}
+
 async function getChatHistory(userId) {
   // ตรวจสอบการตั้งค่าการบันทึกประวัติ
   const enableChatHistory = await getSettingValue("enableChatHistory", true);
@@ -982,7 +1000,7 @@ async function getChatHistory(userId) {
   const db = client.db("chatbot");
   const coll = db.collection("chat_history");
   const chats = await coll
-    .find({ senderId: userId })
+    .find(buildChatHistoryUserMatch(userId))
     .sort({ timestamp: 1 })
     .toArray();
   return chats.map((ch) => {
@@ -1019,7 +1037,7 @@ async function getAIHistory(userId) {
 
   // ดึงเฉพาะข้อความล่าสุดตามจำนวนที่กำหนด แล้วกลับลำดับเป็นเก่าสุด -> ใหม่สุด
   const raw = await coll
-    .find({ senderId: userId })
+    .find(buildChatHistoryUserMatch(userId))
     .sort({ timestamp: -1 })
     .limit(historyLimit)
     .toArray();
@@ -1658,7 +1676,7 @@ async function clearUserChatHistory(userId) {
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection("chat_history");
-  await coll.deleteMany({ senderId: userId });
+  await coll.deleteMany(buildChatHistoryUserMatch(userId));
 }
 
 const BANGKOK_TZ = "Asia/Bangkok";
@@ -3799,13 +3817,10 @@ async function markMessagesAsOrderExtracted(
       }
     }
 
-    await coll.updateMany(
-      {
-        _id: { $in: objectIds },
-        senderId: userId,
-      },
-      { $set: updateDoc },
-    );
+    const match = buildChatHistoryUserQuery(userId, {
+      _id: { $in: objectIds },
+    });
+    await coll.updateMany(match, { $set: updateDoc });
   } catch (error) {
     console.error(
       "[Order] ไม่สามารถมาร์กข้อความที่สกัดแล้วได้:",
@@ -7175,11 +7190,12 @@ async function handleFacebookComment(
     if (policy.pullToChat && commenterId) {
       try {
         const chatColl = db.collection("chat_history");
-        const existingChat = await chatColl.findOne({
-          senderId: commenterId,
-          platform: "facebook",
-          botId: botId,
-        });
+        const existingChat = await chatColl.findOne(
+          buildChatHistoryUserQuery(commenterId, {
+            platform: "facebook",
+            botId: botId,
+          }),
+        );
 
         if (!existingChat) {
           const welcomeDoc = {
@@ -8254,9 +8270,10 @@ app.use((err, req, res, next) => {
 server.listen(PORT, async () => {
   console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
   let dbReady = false;
+  let client = null;
   try {
     console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
-    await connectDB();
+    client = await connectDB();
     dbReady = true;
     console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
   } catch (err) {
@@ -8269,10 +8286,12 @@ server.listen(PORT, async () => {
     );
     return;
   }
+  const db = client.db("chatbot");
 
   // รัน migration อัตโนมัติ (ไม่ให้บล็อกระบบพื้นหลังหากล้มเหลว)
   try {
     console.log(`[LOG] กำลังตรวจสอบและ migrate ข้อมูล...`);
+    await migrateChatHistorySenderId(db);
     await migrateInstructionAssetsAddSlug();
     await migrateAssetsToCollections();
     await migrateToInstructionsV2(); // Auto-migrate to new instruction system
@@ -16531,14 +16550,56 @@ async function getBroadcastAudience(channels, audienceType) {
   const followUpColl = db.collection("follow_up_status");
 
   let users = [];
+  const getChatUserIdsForChannel = async (platform, botId) => {
+    const pipeline = [
+      { $match: { platform, botId } },
+      {
+        $addFields: {
+          userKey: {
+            $let: {
+              vars: {
+                raw: {
+                  $cond: [
+                    {
+                      $or: [
+                        { $eq: ["$senderId", null] },
+                        { $eq: ["$senderId", ""] },
+                      ],
+                    },
+                    "$userId",
+                    "$senderId",
+                  ],
+                },
+              },
+              in: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ["$$raw", null] },
+                      { $eq: ["$$raw", ""] },
+                    ],
+                  },
+                  null,
+                  { $toString: "$$raw" },
+                ],
+              },
+            },
+          },
+        },
+      },
+      { $match: { userKey: { $nin: [null, ""] } } },
+      { $group: { _id: "$userKey" } },
+    ];
+
+    const rows = await chatColl.aggregate(pipeline).toArray();
+    return rows.map((row) => row._id).filter(Boolean);
+  };
 
   for (const ch of channels) {
     const [platform, botId] = ch.split(":");
 
     // Base query: all users for this bot
-    let userIds = await chatColl.distinct("senderId", { platform, botId });
-
-    if (typeof userIds[0] === 'number') userIds = userIds.map(String); // ensure string
+    let userIds = await getChatUserIdsForChannel(platform, botId);
 
     if (audienceType === 'all') {
       // No filter
@@ -17825,7 +17886,7 @@ app.post("/admin/chat/user-status", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("chat_history");
     const lastChat = await coll.findOne(
-      { senderId: userId },
+      buildChatHistoryUserMatch(userId),
       { sort: { timestamp: -1 } },
     );
     const platform = lastChat?.platform || "line";
@@ -17888,7 +17949,7 @@ app.post("/admin/chat/users/:userId/refresh-profile", async (req, res) => {
 
     if (!platform || !botId) {
       const lastChat = await chatColl.findOne(
-        { senderId: userId },
+        buildChatHistoryUserMatch(userId),
         { sort: { timestamp: -1 }, projection: { platform: 1, botId: 1 } },
       );
       platform = platform || lastChat?.platform || null;
@@ -18007,7 +18068,7 @@ app.post("/admin/chat/send", async (req, res) => {
 
     // Determine platform and bot from latest chat
     const lastChat = await coll.findOne(
-      { senderId: userId },
+      buildChatHistoryUserMatch(userId),
       { sort: { timestamp: -1 } },
     );
     const platform = lastChat?.platform || "line";
@@ -18319,7 +18380,9 @@ app.post("/admin/chat/feedback", async (req, res) => {
       });
     }
 
-    if (messageDoc.senderId !== trimmedUserId) {
+    const messageSenderId =
+      messageDoc.senderId || messageDoc.userId || "";
+    if (messageSenderId !== trimmedUserId) {
       return res.json({
         success: false,
         error: "ข้อความนี้ไม่ตรงกับผู้ใช้ที่กำหนด",
@@ -18349,7 +18412,7 @@ app.post("/admin/chat/feedback", async (req, res) => {
           messageId: messageObjectId,
           messageIdString: messageObjectId.toString(),
           userId: trimmedUserId,
-          senderId: messageDoc.senderId,
+          senderId: messageSenderId || null,
           senderRole: messageDoc.role || null,
           platform: messageDoc.platform || null,
           botId: messageDoc.botId || null,
@@ -23104,7 +23167,7 @@ async function getNormalizedChatHistory(userId, options = {}) {
     const coll = db.collection("chat_history");
 
     const messages = await coll
-      .find({ senderId: userId })
+      .find(buildChatHistoryUserMatch(userId))
       .sort({ timestamp: 1 })
       .limit(200)
       .toArray();
@@ -23217,8 +23280,43 @@ async function getNormalizedChatUsers(options = {}) {
     // ดึงข้อมูลผู้ใช้ด้วย aggregation
     const pipeline = [
       {
+        $addFields: {
+          senderKey: {
+            $let: {
+              vars: {
+                raw: {
+                  $cond: [
+                    {
+                      $or: [
+                        { $eq: ["$senderId", null] },
+                        { $eq: ["$senderId", ""] },
+                      ],
+                    },
+                    "$userId",
+                    "$senderId",
+                  ],
+                },
+              },
+              in: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ["$$raw", null] },
+                      { $eq: ["$$raw", ""] },
+                    ],
+                  },
+                  null,
+                  { $toString: "$$raw" },
+                ],
+              },
+            },
+          },
+        },
+      },
+      { $match: { senderKey: { $nin: [null, ""] } } },
+      {
         $group: {
-          _id: "$senderId",
+          _id: "$senderKey",
           lastMessage: { $last: "$content" },
           lastTimestamp: { $last: "$timestamp" },
           messageCount: { $sum: 1 },
@@ -23323,7 +23421,7 @@ async function getNormalizedChatUsers(options = {}) {
       };
     };
 
-    const userIds = users.map((user) => user._id);
+    const userIds = users.map((user) => user._id).filter(Boolean);
     const followStatuses =
       userIds.length > 0
         ? await followColl.find({ senderId: { $in: userIds } }).toArray()
@@ -23454,148 +23552,157 @@ async function getNormalizedChatUsers(options = {}) {
     }
 
     // แปลงข้อมูลผู้ใช้แต่ละคน
-    const normalizedUsers = await Promise.all(
-      users.map(async (user) => {
-	        const unreadCount = await getUserUnreadCount(user._id);
-	        const platform = user.platform || "line";
-	        const botId = normalizeFollowUpBotId(user.botId);
-	        const channelInfo = buildChannelInfo(platform, botId);
-	        const contextKey = `${platform}:${botId || "default"}`;
+    const normalizedUsers = (
+      await Promise.all(
+        users.map(async (user) => {
+          const userId =
+            typeof user._id === "string"
+              ? user._id
+              : user._id?.toString?.() || "";
+          if (!userId) return null;
 
-        let config = contextCache.get(contextKey);
-        if (!config) {
-          config = await getFollowUpConfigForContext(platform, botId);
-          contextCache.set(contextKey, config);
-        }
+          const unreadCount = await getUserUnreadCount(userId);
+          const platform = user.platform || "line";
+          const botId = normalizeFollowUpBotId(user.botId);
+          const channelInfo = buildChannelInfo(platform, botId);
+          const contextKey = `${platform}:${botId || "default"}`;
 
-        // ดึงข้อมูลโปรไฟล์
-        const profileKey = `${user._id}:${platform}`;
-        let userProfile = profileMap.get(profileKey) || null;
-
-        if (platform === "line" && !userProfile) {
-          const freshProfile = await saveOrUpdateUserProfile(user._id, botId);
-          if (freshProfile) {
-            userProfile = {
-              ...freshProfile,
-              platform: "line",
-            };
-            profileMap.set(profileKey, userProfile);
+          let config = contextCache.get(contextKey);
+          if (!config) {
+            config = await getFollowUpConfigForContext(platform, botId);
+            contextCache.set(contextKey, config);
           }
-        }
 
-        // แปลงข้อความล่าสุด
-        const normalizedLastMessage = normalizeMessageForFrontend({
-          content: user.lastMessage,
-          role: "user",
-          timestamp: user.lastTimestamp,
-        });
+          // ดึงข้อมูลโปรไฟล์
+          const profileKey = `${userId}:${platform}`;
+          let userProfile = profileMap.get(profileKey) || null;
 
-        if (
-          filterConfig &&
-          normalizedLastMessage &&
-          typeof normalizedLastMessage.content === "string" &&
-          normalizedLastMessage.content.length > 0
-        ) {
-          const filteredLastMessage = await filterMessage(
-            normalizedLastMessage.content,
-            { config: filterConfig },
-          );
-          if (filteredLastMessage !== normalizedLastMessage.content) {
-            normalizedLastMessage.originalContent =
-              normalizedLastMessage.content;
+          if (platform === "line" && !userProfile) {
+            const freshProfile = await saveOrUpdateUserProfile(userId, botId);
+            if (freshProfile) {
+              userProfile = {
+                ...freshProfile,
+                platform: "line",
+              };
+              profileMap.set(profileKey, userProfile);
+            }
           }
-          normalizedLastMessage.content = filteredLastMessage;
-          if (normalizedLastMessage.contentType === "text") {
-            normalizedLastMessage.displayContent = filteredLastMessage;
+
+          // แปลงข้อความล่าสุด
+          const normalizedLastMessage = normalizeMessageForFrontend({
+            content: user.lastMessage,
+            role: "user",
+            timestamp: user.lastTimestamp,
+          });
+
+          if (
+            filterConfig &&
+            normalizedLastMessage &&
+            typeof normalizedLastMessage.content === "string" &&
+            normalizedLastMessage.content.length > 0
+          ) {
+            const filteredLastMessage = await filterMessage(
+              normalizedLastMessage.content,
+              { config: filterConfig },
+            );
+            if (filteredLastMessage !== normalizedLastMessage.content) {
+              normalizedLastMessage.originalContent =
+                normalizedLastMessage.content;
+            }
+            normalizedLastMessage.content = filteredLastMessage;
+            if (normalizedLastMessage.contentType === "text") {
+              normalizedLastMessage.displayContent = filteredLastMessage;
+            }
           }
-        }
 
-        // ดึงสถานะ AI ต่อผู้ใช้
-        let aiEnabled = true;
-        try {
-          const status = await getUserStatus(user._id);
-          aiEnabled = !!status.aiEnabled;
-        } catch (_) { }
+          // ดึงสถานะ AI ต่อผู้ใช้
+          let aiEnabled = true;
+          try {
+            const status = await getUserStatus(userId);
+            aiEnabled = !!status.aiEnabled;
+          } catch (_) { }
 
-        const followStatus = followMap[user._id];
-        const showFollowUp = config.showInChat !== false;
-        const followUpTaskKey = `${user._id}:${platform}:${botId || "default"}`;
-        const activeFollowUpTask =
-          followUpTaskMap.get(followUpTaskKey) ||
-          followUpTaskByUserId.get(user._id) ||
-          null;
-        const hasActiveFollowUpTask = !!activeFollowUpTask;
-        const hasFollowUp =
-          showFollowUp && followStatus ? !!followStatus.hasFollowUp : false;
-        const followUpReason = hasFollowUp
-          ? followStatus.followUpReason || ""
-          : "";
-        const followUpUpdatedAt = hasFollowUp
-          ? followStatus.followUpUpdatedAt ||
-          followStatus.lastAnalyzedAt ||
-          null
-          : null;
-
-        // ดึงแท็กของผู้ใช้
-        const tags = tagsMap[user._id] || [];
-
-        // ดึงสถานะการซื้อ (ถ้ามี manual override ให้ใช้ ถ้าไม่ ให้ใช้จาก follow-up)
-        let hasPurchased = false;
-        if (typeof purchaseMap[user._id] === "boolean") {
-          hasPurchased = purchaseMap[user._id];
-        } else {
-          // ใช้ข้อมูลจาก follow-up status
-          hasPurchased = hasFollowUp;
-        }
-
-        // ดึงข้อมูลออเดอร์
-        const userOrders = ordersMap[user._id] || [];
-        const hasOrders = userOrders.length > 0;
-        const orderCount = userOrders.length;
-
-        const profileDisplayName =
-          userProfile && typeof userProfile.displayName === "string"
-            ? userProfile.displayName.trim()
+          const followStatus = followMap[userId];
+          const showFollowUp = config.showInChat !== false;
+          const followUpTaskKey = `${userId}:${platform}:${botId || "default"}`;
+          const activeFollowUpTask =
+            followUpTaskMap.get(followUpTaskKey) ||
+            followUpTaskByUserId.get(userId) ||
+            null;
+          const hasActiveFollowUpTask = !!activeFollowUpTask;
+          const hasFollowUp =
+            showFollowUp && followStatus ? !!followStatus.hasFollowUp : false;
+          const followUpReason = hasFollowUp
+            ? followStatus.followUpReason || ""
             : "";
+          const followUpUpdatedAt = hasFollowUp
+            ? followStatus.followUpUpdatedAt ||
+              followStatus.lastAnalyzedAt ||
+              null
+            : null;
 
-	        return {
-	          userId: user._id,
-	          displayName: profileDisplayName || user._id.substring(0, 8) + "...",
-	          pictureUrl: userProfile ? userProfile.pictureUrl || null : null,
-          statusMessage:
-            platform === "line" && userProfile
-              ? userProfile.statusMessage || null
-              : null,
-          lastMessage: normalizedLastMessage.displayContent,
-          lastMessageRaw: user.lastMessage,
-	          lastTimestamp: user.lastTimestamp,
-	          messageCount: user.messageCount,
-	          unreadCount,
-	          platform,
-	          botId,
-	          platformLabel: channelInfo.platformLabel,
-	          botName: channelInfo.botName,
-	          channelLabel: channelInfo.channelLabel,
-	          aiEnabled,
-	          hasFollowUp,
-	          followUpReason,
-	          followUpUpdatedAt,
-          tags,
-          hasPurchased,
-          hasOrders,
-          orderCount,
-          followUp: {
-            analysisEnabled: config.analysisEnabled !== false,
-            showInChat: showFollowUp,
-            showInDashboard: config.showInDashboard !== false,
-            isFollowUp: showFollowUp && hasActiveFollowUpTask,
-            nextScheduledAt: hasActiveFollowUpTask
-              ? activeFollowUpTask.nextScheduledAt || null
-              : null,
-          },
-        };
-      }),
-    );
+          // ดึงแท็กของผู้ใช้
+          const tags = tagsMap[userId] || [];
+
+          // ดึงสถานะการซื้อ (ถ้ามี manual override ให้ใช้ ถ้าไม่ ให้ใช้จาก follow-up)
+          let hasPurchased = false;
+          if (typeof purchaseMap[userId] === "boolean") {
+            hasPurchased = purchaseMap[userId];
+          } else {
+            // ใช้ข้อมูลจาก follow-up status
+            hasPurchased = hasFollowUp;
+          }
+
+          // ดึงข้อมูลออเดอร์
+          const userOrders = ordersMap[userId] || [];
+          const hasOrders = userOrders.length > 0;
+          const orderCount = userOrders.length;
+
+          const profileDisplayName =
+            userProfile && typeof userProfile.displayName === "string"
+              ? userProfile.displayName.trim()
+              : "";
+          const fallbackName = userId ? `${userId.substring(0, 8)}...` : "User";
+
+          return {
+            userId,
+            displayName: profileDisplayName || fallbackName,
+            pictureUrl: userProfile ? userProfile.pictureUrl || null : null,
+            statusMessage:
+              platform === "line" && userProfile
+                ? userProfile.statusMessage || null
+                : null,
+            lastMessage: normalizedLastMessage.displayContent,
+            lastMessageRaw: user.lastMessage,
+            lastTimestamp: user.lastTimestamp,
+            messageCount: user.messageCount,
+            unreadCount,
+            platform,
+            botId,
+            platformLabel: channelInfo.platformLabel,
+            botName: channelInfo.botName,
+            channelLabel: channelInfo.channelLabel,
+            aiEnabled,
+            hasFollowUp,
+            followUpReason,
+            followUpUpdatedAt,
+            tags,
+            hasPurchased,
+            hasOrders,
+            orderCount,
+            followUp: {
+              analysisEnabled: config.analysisEnabled !== false,
+              showInChat: showFollowUp,
+              showInDashboard: config.showInDashboard !== false,
+              isFollowUp: showFollowUp && hasActiveFollowUpTask,
+              nextScheduledAt: hasActiveFollowUpTask
+                ? activeFollowUpTask.nextScheduledAt || null
+                : null,
+            },
+          };
+        }),
+      )
+    ).filter(Boolean);
 
     return normalizedUsers;
   } catch (error) {
