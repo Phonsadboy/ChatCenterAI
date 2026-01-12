@@ -70,6 +70,27 @@
 
                     <hr class="my-3">
 
+                    <label class="form-label mb-1">รูปแบบการแจ้งเตือน</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="notificationDeliveryMode"
+                            id="notificationDeliveryRealtime" value="realtime" checked>
+                        <label class="form-check-label" for="notificationDeliveryRealtime">เรียลไทม์ (ส่งทันทีเมื่อมีออเดอร์)</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="notificationDeliveryMode"
+                            id="notificationDeliveryScheduled" value="scheduled">
+                        <label class="form-check-label" for="notificationDeliveryScheduled">สรุปตามเวลา</label>
+                    </div>
+                    <div class="border rounded p-2 mt-2 d-none" id="notificationSummaryBox">
+                        <label for="notificationSummaryTimes" class="form-label mb-1">เวลาสรุปต่อวัน</label>
+                        <input type="text" class="form-control" id="notificationSummaryTimes"
+                            placeholder="เช่น 09:00, 13:00, 18:00">
+                        <div class="form-text">รองรับหลายเวลา คั่นด้วยจุลภาคหรือขึ้นบรรทัดใหม่ (รูปแบบ 24 ชั่วโมง)</div>
+                        <div class="form-text">ระบบตัดรอบตามเวลาที่กำหนด</div>
+                    </div>
+
+                    <hr class="my-3">
+
                     <label class="form-label mb-1">รูปแบบข้อความ</label>
                     <div class="row g-2">
                         <div class="col-md-6">

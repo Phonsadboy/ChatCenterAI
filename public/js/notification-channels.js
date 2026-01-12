@@ -53,6 +53,11 @@
     els.sourcesBox = document.getElementById("notificationChannelSourcesBox");
     els.sourcesList = document.getElementById("notificationChannelSourcesList");
 
+    els.deliveryRealtime = document.getElementById("notificationDeliveryRealtime");
+    els.deliveryScheduled = document.getElementById("notificationDeliveryScheduled");
+    els.summaryBox = document.getElementById("notificationSummaryBox");
+    els.summaryTimesInput = document.getElementById("notificationSummaryTimes");
+
     els.includeCustomer = document.getElementById(
       "notificationSettingIncludeCustomer",
     );
@@ -141,6 +146,12 @@
       .querySelectorAll('input[name="notificationReceiveMode"]')
       .forEach((el) => {
         el.addEventListener("change", () => syncReceiveModeUI());
+      });
+
+    document
+      .querySelectorAll('input[name="notificationDeliveryMode"]')
+      .forEach((el) => {
+        el.addEventListener("change", () => syncDeliveryModeUI());
       });
 
     els.slipOkEnabled?.addEventListener("change", () => syncSlipOkUI());
@@ -287,6 +298,14 @@
       return `เลือกบอทต้นทาง: ${parts.join(", ")}`;
     };
 
+    const summarizeDelivery = (channel) => {
+      const mode = channel.deliveryMode === "scheduled" ? "scheduled" : "realtime";
+      if (mode === "realtime") return "เรียลไทม์";
+      const times = Array.isArray(channel.summaryTimes) ? channel.summaryTimes : [];
+      if (!times.length) return "สรุปตามเวลา: ยังไม่ตั้งเวลา";
+      return `สรุปตามเวลา: ${times.join(", ")}`;
+    };
+
     els.channelsList.innerHTML = state.channels
       .map((channel) => {
         const groupLabel = channel.groupName
@@ -311,6 +330,7 @@
                 ส่งด้วย: ${escapeHtml(senderLabel)} • ปลายทาง: ${escapeHtml(groupLabel)} • ${escapeHtml(
           summarizeSources(channel),
         )}
+                • ${escapeHtml(summarizeDelivery(channel))}
               </div>
             </div>
             <div class="bot-actions-compact">
@@ -359,6 +379,8 @@
         slipOkApiUrl: "",
         slipOkApiKey: "",
       },
+      deliveryMode: "realtime",
+      summaryTimes: [],
       isActive: true,
     });
   }
@@ -379,6 +401,22 @@
     if (els.slipOkConfigBox) {
       els.slipOkConfigBox.classList.toggle("d-none", !enabled);
     }
+  }
+
+  function syncDeliveryModeUI() {
+    const scheduled = els.deliveryScheduled?.checked === true;
+    if (els.summaryBox) {
+      els.summaryBox.classList.toggle("d-none", !scheduled);
+    }
+  }
+
+  function parseSummaryTimesInput(raw) {
+    if (typeof raw !== "string") return [];
+    const parts = raw
+      .split(/[,\s]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    return parts;
   }
 
   async function openModalWithData(channel) {
@@ -420,6 +458,21 @@
       els.slipOkApiKey.value = channel?.settings?.slipOkApiKey || "";
     }
 
+    const deliveryMode =
+      channel?.deliveryMode === "scheduled" ? "scheduled" : "realtime";
+    if (els.deliveryRealtime) {
+      els.deliveryRealtime.checked = deliveryMode === "realtime";
+    }
+    if (els.deliveryScheduled) {
+      els.deliveryScheduled.checked = deliveryMode === "scheduled";
+    }
+    if (els.summaryTimesInput) {
+      const summaryTimes = Array.isArray(channel?.summaryTimes)
+        ? channel.summaryTimes
+        : [];
+      els.summaryTimesInput.value = summaryTimes.join(", ");
+    }
+
     await ensureLineBots();
     renderSenderBotSelect(channel?.senderBotId || "");
 
@@ -440,6 +493,7 @@
 
     syncReceiveModeUI();
     syncSlipOkUI();
+    syncDeliveryModeUI();
 
     state.modalInstance.show();
   }
@@ -557,6 +611,14 @@
     const slipOkApiUrl = els.slipOkApiUrl?.value?.trim?.() || "";
     const slipOkApiKey = els.slipOkApiKey?.value?.trim?.() || "";
 
+    const deliveryMode =
+      els.deliveryScheduled?.checked === true ? "scheduled" : "realtime";
+    const summaryTimes = parseSummaryTimesInput(els.summaryTimesInput?.value || "");
+    if (deliveryMode === "scheduled" && summaryTimes.length === 0) {
+      toast("กรุณาระบุเวลาสรุปอย่างน้อย 1 เวลา", "danger");
+      return;
+    }
+
     if (slipOkEnabled && (!slipOkApiUrl || !slipOkApiKey)) {
       toast("กรุณากรอก SlipOK API URL และ API Key ให้ครบถ้วน", "danger");
       return;
@@ -581,6 +643,8 @@
         slipOkApiUrl,
         slipOkApiKey,
       },
+      deliveryMode,
+      summaryTimes,
       isActive: els.isActive?.checked === true,
     };
 

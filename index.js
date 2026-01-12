@@ -8928,6 +8928,12 @@ server.listen(PORT, async () => {
     console.error(`[ERROR] startFollowUpTaskWorker ล้มเหลว:`, followUpWorkerError);
   }
 
+  try {
+    await startNotificationSummaryScheduler();
+  } catch (summaryError) {
+    console.error(`[ERROR] startNotificationSummaryScheduler ล้มเหลว:`, summaryError);
+  }
+
   console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
 });
 
@@ -19379,6 +19385,237 @@ function normalizeNotificationChannelSettings(settings) {
   };
 }
 
+const NOTIFICATION_DELIVERY_MODES = new Set(["realtime", "scheduled"]);
+const NOTIFICATION_SUMMARY_TIME_REGEX = /^([0-1]?\d|2[0-3])[:.]([0-5]\d)$/;
+
+function normalizeNotificationDeliveryMode(value) {
+  if (typeof value !== "string") return "realtime";
+  const normalized = value.trim().toLowerCase();
+  return NOTIFICATION_DELIVERY_MODES.has(normalized)
+    ? normalized
+    : "realtime";
+}
+
+function normalizeNotificationSummaryTime(value) {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(NOTIFICATION_SUMMARY_TIME_REGEX);
+  if (!match) return null;
+  const hours = match[1].padStart(2, "0");
+  const minutes = match[2];
+  return `${hours}:${minutes}`;
+}
+
+function normalizeNotificationSummaryTimes(values) {
+  const list = [];
+  if (Array.isArray(values)) {
+    list.push(...values);
+  } else if (typeof values === "string") {
+    list.push(...values.split(/[,\s]+/));
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  list.forEach((value) => {
+    const parsed = normalizeNotificationSummaryTime(
+      typeof value === "string" ? value : String(value || ""),
+    );
+    if (!parsed || seen.has(parsed)) return;
+    seen.add(parsed);
+    normalized.push(parsed);
+  });
+
+  normalized.sort((a, b) => {
+    const [ah, am] = a.split(":").map((part) => parseInt(part, 10));
+    const [bh, bm] = b.split(":").map((part) => parseInt(part, 10));
+    return ah * 60 + am - (bh * 60 + bm);
+  });
+
+  return normalized;
+}
+
+const NOTIFICATION_SUMMARY_INTERVAL_MS = 60 * 1000;
+let notificationSummaryTimer = null;
+let notificationSummaryProcessing = false;
+
+function getSummaryTimeMinutes(time) {
+  const [hoursStr, minutesStr] = time.split(":");
+  const hours = parseInt(hoursStr, 10);
+  const minutes = parseInt(minutesStr, 10);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+function getSummaryMomentForTime(time, baseMoment, timezone) {
+  const tz = timezone || BANGKOK_TZ;
+  const [hoursStr, minutesStr] = time.split(":");
+  const hours = parseInt(hoursStr, 10);
+  const minutes = parseInt(minutesStr, 10);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  const momentBase = baseMoment ? baseMoment.clone() : moment.tz(tz);
+  return momentBase
+    .clone()
+    .hours(hours)
+    .minutes(minutes)
+    .seconds(0)
+    .milliseconds(0);
+}
+
+function getLatestDueSummaryMoment(nowMoment, summaryTimes, timezone) {
+  if (!summaryTimes.length) return null;
+  let dueMoment = null;
+  summaryTimes.forEach((time) => {
+    const candidate = getSummaryMomentForTime(time, nowMoment, timezone);
+    if (!candidate) return;
+    if (nowMoment.isSameOrAfter(candidate)) {
+      dueMoment = candidate;
+    }
+  });
+  return dueMoment;
+}
+
+function getPreviousSummaryMoment(baseMoment, summaryTimes, timezone) {
+  if (!baseMoment || !summaryTimes.length) return null;
+  const baseMinutes = baseMoment.hours() * 60 + baseMoment.minutes();
+  let previousTime = null;
+  summaryTimes.forEach((time) => {
+    const minutes = getSummaryTimeMinutes(time);
+    if (minutes === null) return;
+    if (minutes < baseMinutes) previousTime = time;
+  });
+
+  if (previousTime) {
+    return getSummaryMomentForTime(previousTime, baseMoment, timezone);
+  }
+
+  const prevDay = baseMoment.clone().subtract(1, "day");
+  const lastTime = summaryTimes[summaryTimes.length - 1];
+  return getSummaryMomentForTime(lastTime, prevDay, timezone);
+}
+
+function buildSummarySlotKey(momentValue) {
+  if (!momentValue) return "";
+  return momentValue.format("YYYY-MM-DD|HH:mm");
+}
+
+async function evaluateNotificationSummarySchedules() {
+  if (notificationSummaryProcessing) {
+    return;
+  }
+
+  notificationSummaryProcessing = true;
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const channels = await db
+      .collection("notification_channels")
+      .find({ isActive: true, type: "line_group", deliveryMode: "scheduled" })
+      .toArray();
+
+    if (!channels.length) return;
+
+    for (const channel of channels) {
+      try {
+        const summaryTimes = normalizeNotificationSummaryTimes(
+          channel.summaryTimes || [],
+        );
+        if (!summaryTimes.length) continue;
+
+        const timezone = channel.summaryTimezone || BANGKOK_TZ;
+        const nowMoment = moment.tz(timezone);
+        const dueMoment = getLatestDueSummaryMoment(
+          nowMoment,
+          summaryTimes,
+          timezone,
+        );
+        if (!dueMoment) continue;
+
+        const slotKey = buildSummarySlotKey(dueMoment);
+        if (channel.lastSummarySlotKey === slotKey) {
+          continue;
+        }
+
+        let windowStartMoment = null;
+        if (channel.lastSummaryAt) {
+          const lastMoment = moment.tz(channel.lastSummaryAt, timezone);
+          if (lastMoment.isValid()) {
+            windowStartMoment = lastMoment;
+          }
+        }
+
+        if (!windowStartMoment || windowStartMoment.isAfter(dueMoment)) {
+          windowStartMoment = getPreviousSummaryMoment(
+            dueMoment,
+            summaryTimes,
+            timezone,
+          );
+        }
+
+        if (!windowStartMoment || !windowStartMoment.isValid()) {
+          windowStartMoment = dueMoment.clone().startOf("day");
+        }
+
+        const result = await notificationService.sendOrderSummary(channel, {
+          windowStart: windowStartMoment.toDate(),
+          windowEnd: dueMoment.toDate(),
+        });
+
+        if (result?.success) {
+          await db.collection("notification_channels").updateOne(
+            { _id: channel._id },
+            {
+              $set: {
+                lastSummaryAt: dueMoment.toDate(),
+                lastSummarySlotKey: slotKey,
+                updatedAt: new Date(),
+              },
+            },
+          );
+        }
+      } catch (channelError) {
+        console.error(
+          `[Notifications] Summary channel error:`,
+          channelError?.message || channelError,
+        );
+      }
+    }
+  } catch (error) {
+    console.error(
+      "[Notifications] Summary schedule error:",
+      error?.message || error,
+    );
+  } finally {
+    notificationSummaryProcessing = false;
+  }
+}
+
+async function startNotificationSummaryScheduler() {
+  if (notificationSummaryTimer) {
+    clearInterval(notificationSummaryTimer);
+  }
+
+  notificationSummaryTimer = setInterval(() => {
+    evaluateNotificationSummarySchedules().catch((err) => {
+      console.error(
+        "[Notifications] Summary scheduler loop error:",
+        err?.message || err,
+      );
+    });
+  }, NOTIFICATION_SUMMARY_INTERVAL_MS);
+
+  setTimeout(() => {
+    evaluateNotificationSummarySchedules().catch((err) => {
+      console.error(
+        "[Notifications] Summary scheduler initial error:",
+        err?.message || err,
+      );
+    });
+  }, 5000);
+
+  console.log(
+    `[Notifications] Summary scheduler started (interval ${NOTIFICATION_SUMMARY_INTERVAL_MS / 1000}s)`,
+  );
+}
+
 function normalizeNotificationSourcesInput(sources) {
   if (!Array.isArray(sources)) return [];
   const seen = new Set();
@@ -19418,6 +19655,9 @@ function mapNotificationChannelDoc(doc, ctx = {}) {
     receiveFromAllBots: doc.receiveFromAllBots === true,
     sources: normalizeNotificationSourcesInput(doc.sources || []),
     eventTypes: Array.isArray(doc.eventTypes) ? doc.eventTypes : ["new_order"],
+    deliveryMode: normalizeNotificationDeliveryMode(doc.deliveryMode),
+    summaryTimes: normalizeNotificationSummaryTimes(doc.summaryTimes || []),
+    summaryTimezone: doc.summaryTimezone || BANGKOK_TZ,
     settings: normalizeNotificationChannelSettings(doc.settings || {}),
     isActive: doc.isActive === true,
     createdAt: doc.createdAt || null,
@@ -19507,11 +19747,24 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
     const settings = normalizeNotificationChannelSettings(req.body?.settings || {});
     const isActive = parseOptionalBoolean(req.body?.isActive);
     const receiveAll = receiveFromAllBots !== false;
+    const deliveryMode = normalizeNotificationDeliveryMode(
+      req.body?.deliveryMode,
+    );
+    const summaryTimes = normalizeNotificationSummaryTimes(
+      req.body?.summaryTimes,
+    );
 
     if (!receiveAll && sources.length === 0) {
       return res.status(400).json({
         success: false,
         error: "กรุณาเลือกบอทต้นทางอย่างน้อย 1 รายการ หรือเลือก 'รับจากทุกบอท'",
+      });
+    }
+
+    if (deliveryMode === "scheduled" && summaryTimes.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณาระบุเวลาสรุปอย่างน้อย 1 เวลา",
       });
     }
 
@@ -19547,6 +19800,9 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
       receiveFromAllBots: receiveAll,
       sources: receiveAll ? [] : sources,
       eventTypes: ["new_order"],
+      deliveryMode,
+      summaryTimes: deliveryMode === "scheduled" ? summaryTimes : [],
+      summaryTimezone: BANGKOK_TZ,
       settings,
       isActive: isActive !== false,
       createdAt: now,
@@ -19588,11 +19844,24 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
     const settings = normalizeNotificationChannelSettings(req.body?.settings || {});
     const isActive = parseOptionalBoolean(req.body?.isActive);
     const receiveAll = receiveFromAllBots !== false;
+    const deliveryMode = normalizeNotificationDeliveryMode(
+      req.body?.deliveryMode,
+    );
+    const summaryTimes = normalizeNotificationSummaryTimes(
+      req.body?.summaryTimes,
+    );
 
     if (!receiveAll && sources.length === 0) {
       return res.status(400).json({
         success: false,
         error: "กรุณาเลือกบอทต้นทางอย่างน้อย 1 รายการ หรือเลือก 'รับจากทุกบอท'",
+      });
+    }
+
+    if (deliveryMode === "scheduled" && summaryTimes.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณาระบุเวลาสรุปอย่างน้อย 1 เวลา",
       });
     }
 
@@ -19626,6 +19895,9 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       receiveFromAllBots: receiveAll,
       sources: receiveAll ? [] : sources,
       eventTypes: ["new_order"],
+      deliveryMode,
+      summaryTimes: deliveryMode === "scheduled" ? summaryTimes : [],
+      summaryTimezone: BANGKOK_TZ,
       settings,
       updatedAt: new Date(),
     };

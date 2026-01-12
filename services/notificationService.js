@@ -1,4 +1,5 @@
 const line = require("@line/bot-sdk");
+const moment = require("moment-timezone");
 const { ObjectId } = require("mongodb");
 const { extractBase64ImagesFromContent } = require("../utils/chatImageUtils");
 
@@ -129,6 +130,12 @@ function uniqueSources(sources) {
 
 function shouldNotifyChannelForOrder(channel, order) {
   if (!channel || channel.isActive !== true) return false;
+  if (
+    typeof channel.deliveryMode === "string" &&
+    channel.deliveryMode.toLowerCase() === "scheduled"
+  ) {
+    return false;
+  }
   const eventTypes = Array.isArray(channel.eventTypes) ? channel.eventTypes : [];
   if (!eventTypes.includes("new_order")) return false;
 
@@ -186,6 +193,117 @@ function extractPaymentMethod(orderData) {
     normalizeIdString(raw.paymentType) ||
     ""
   );
+}
+
+function formatSummaryRange(startAt, endAt, timezone) {
+  if (!startAt || !endAt) return "";
+  const tz = timezone || "Asia/Bangkok";
+  const start = moment.tz(startAt, tz);
+  const end = moment.tz(endAt, tz);
+  if (!start.isValid() || !end.isValid()) return "";
+  if (start.isSame(end, "day")) {
+    return `${start.format("DD/MM HH:mm")}-${end.format("HH:mm")}`;
+  }
+  return `${start.format("DD/MM HH:mm")}-${end.format("DD/MM HH:mm")}`;
+}
+
+function formatOrderSummaryMessage(orders, options = {}) {
+  const list = Array.isArray(orders) ? orders : [];
+  const cfg = options.settings || {};
+  const includeCustomer = cfg.includeCustomer !== false;
+  const includeItemsCount = cfg.includeItemsCount !== false;
+  const includeTotalAmount = cfg.includeTotalAmount !== false;
+  const timezone = options.timezone || "Asia/Bangkok";
+
+  const rangeLabel = formatSummaryRange(options.startAt, options.endAt, timezone);
+  const title = rangeLabel
+    ? `📊 สรุปออเดอร์ (${rangeLabel})`
+    : "📊 สรุปออเดอร์";
+
+  let totalAmount = 0;
+  let totalShipping = 0;
+  list.forEach((order) => {
+    const orderData = order?.orderData || {};
+    const amount = orderData.totalAmount;
+    const shipping = orderData.shippingCost;
+    if (typeof amount === "number" && Number.isFinite(amount)) {
+      totalAmount += amount;
+    }
+    if (typeof shipping === "number" && Number.isFinite(shipping)) {
+      totalShipping += shipping;
+    }
+  });
+
+  const lines = [title];
+  const totalParts = [`รวม ${list.length} ออเดอร์`];
+  if (includeTotalAmount) {
+    const totalText = formatCurrency(totalAmount);
+    if (totalText) totalParts.push(`ยอดรวม ${totalText}`);
+  }
+  lines.push(totalParts.join(" | "));
+
+  if (includeTotalAmount && totalShipping > 0) {
+    const shippingText = formatCurrency(totalShipping);
+    if (shippingText) {
+      lines.push(`ค่าส่งรวม ${shippingText}`);
+    }
+  }
+
+  if (!list.length) {
+    lines.push("ไม่มีออเดอร์ในรอบนี้");
+    const text = lines.join("\n");
+    const MAX_TEXT_LENGTH = 3900;
+    return {
+      type: "text",
+      text: text.length > MAX_TEXT_LENGTH ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…` : text,
+    };
+  }
+
+  lines.push("รายการออเดอร์:");
+  const maxOrders = 10;
+  list.slice(0, maxOrders).forEach((order) => {
+    const orderId = normalizeIdString(order?._id);
+    const shortId = orderId ? orderId.slice(-6) : "-";
+    const orderData = order?.orderData || {};
+    const parts = [`#${shortId}`];
+
+    if (includeCustomer) {
+      const customerName =
+        normalizeIdString(orderData.recipientName) ||
+        normalizeIdString(orderData.customerName) ||
+        "";
+      if (customerName) {
+        parts.push(shortenText(customerName, 40));
+      }
+    }
+
+    if (includeItemsCount) {
+      const items = Array.isArray(orderData.items) ? orderData.items : [];
+      parts.push(`${items.length} รายการ`);
+    }
+
+    if (includeTotalAmount) {
+      const amount = orderData.totalAmount;
+      const amountText =
+        typeof amount === "number" && Number.isFinite(amount)
+          ? formatCurrency(amount)
+          : null;
+      if (amountText) parts.push(amountText);
+    }
+
+    lines.push(`- ${parts.join(" • ")}`);
+  });
+
+  if (list.length > maxOrders) {
+    lines.push(`… และอีก ${(list.length - maxOrders).toLocaleString()} ออเดอร์`);
+  }
+
+  const text = lines.join("\n");
+  const MAX_TEXT_LENGTH = 3900;
+  return {
+    type: "text",
+    text: text.length > MAX_TEXT_LENGTH ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…` : text,
+  };
 }
 
 function normalizeOrderItem(item) {
@@ -452,6 +570,95 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     return { success: true, sentCount };
   };
 
+  const sendOrderSummary = async (channel, options = {}) => {
+    const channelDoc = channel && typeof channel === "object" ? channel : {};
+    if (channelDoc.isActive !== true) {
+      return { success: false, error: "CHANNEL_INACTIVE" };
+    }
+
+    const senderBotId =
+      normalizeIdString(channelDoc.senderBotId) || normalizeIdString(channelDoc.botId);
+    const targetId = normalizeIdString(channelDoc.groupId || channelDoc.lineGroupId);
+    if (!senderBotId || !targetId) {
+      return { success: false, error: "CHANNEL_MISCONFIGURED" };
+    }
+
+    const windowStart = options.windowStart;
+    const windowEnd = options.windowEnd;
+    if (!(windowStart instanceof Date) || !(windowEnd instanceof Date)) {
+      return { success: false, error: "INVALID_WINDOW" };
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const query = {
+      extractedAt: {
+        $gte: windowStart,
+        $lt: windowEnd,
+      },
+    };
+
+    if (channelDoc.receiveFromAllBots !== true) {
+      const sources = uniqueSources(channelDoc.sources);
+      if (!sources.length) {
+        return { success: false, error: "NO_SOURCES" };
+      }
+
+      query.$or = sources
+        .map((source) => {
+          const platform = normalizePlatform(source?.platform);
+          const botId = normalizeIdString(source?.botId);
+          if (!botId) return null;
+          const botIdQuery = ObjectId.isValid(botId)
+            ? { $in: [botId, new ObjectId(botId)] }
+            : botId;
+          return { platform, botId: botIdQuery };
+        })
+        .filter(Boolean);
+    }
+
+    const orders = await db
+      .collection("orders")
+      .find(query)
+      .sort({ extractedAt: 1 })
+      .toArray();
+
+    const message = formatOrderSummaryMessage(orders, {
+      startAt: windowStart,
+      endAt: windowEnd,
+      timezone: channelDoc.summaryTimezone || "Asia/Bangkok",
+      settings: channelDoc.settings || {},
+    });
+
+    const channelId = normalizeIdString(channelDoc?._id);
+
+    try {
+      const response = await sendLineMessagesInChunks(
+        senderBotId,
+        targetId,
+        [message],
+      );
+      await insertNotificationLog(db, {
+        channelId,
+        orderId: null,
+        eventType: "order_summary",
+        status: "success",
+        response: response || null,
+      });
+      return { success: true, sentCount: 1, orderCount: orders.length };
+    } catch (err) {
+      await insertNotificationLog(db, {
+        channelId,
+        orderId: null,
+        eventType: "order_summary",
+        status: "failed",
+        errorMessage: err?.message || String(err),
+      });
+      return { success: false, error: err?.message || String(err) };
+    }
+  };
+
   const testChannel = async (channelId, options = {}) => {
     const channelIdString = normalizeIdString(channelId);
     if (!ObjectId.isValid(channelIdString)) {
@@ -507,6 +714,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
 
   return {
     sendNewOrder,
+    sendOrderSummary,
     testChannel,
   };
 }
