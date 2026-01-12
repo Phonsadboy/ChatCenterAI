@@ -19554,6 +19554,14 @@ async function evaluateNotificationSummarySchedules() {
           windowStartMoment = dueMoment.clone().startOf("day");
         }
 
+        if (windowStartMoment.isSameOrAfter(dueMoment)) {
+          windowStartMoment = dueMoment.clone().startOf("day");
+        }
+
+        if (windowStartMoment.isSameOrAfter(dueMoment)) {
+          continue;
+        }
+
         const result = await notificationService.sendOrderSummary(channel, {
           windowStart: windowStartMoment.toDate(),
           windowEnd: dueMoment.toDate(),
@@ -19801,7 +19809,7 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
       sources: receiveAll ? [] : sources,
       eventTypes: ["new_order"],
       deliveryMode,
-      summaryTimes: deliveryMode === "scheduled" ? summaryTimes : [],
+      summaryTimes,
       summaryTimezone: BANGKOK_TZ,
       settings,
       isActive: isActive !== false,
@@ -19896,7 +19904,7 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       sources: receiveAll ? [] : sources,
       eventTypes: ["new_order"],
       deliveryMode,
-      summaryTimes: deliveryMode === "scheduled" ? summaryTimes : [],
+      summaryTimes,
       summaryTimezone: BANGKOK_TZ,
       settings,
       updatedAt: new Date(),
