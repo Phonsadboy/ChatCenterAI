@@ -29,7 +29,6 @@ class ChatManager {
 
         // Orders
         this.currentOrders = [];
-        this.isExtractingOrder = false;
 
         // Initialize
         this.init();
@@ -170,14 +169,6 @@ class ChatManager {
                 this.applyFilters();
             });
         });
-
-        // Extract order button
-        const btnExtractOrder = document.getElementById('btnExtractOrder');
-        if (btnExtractOrder) {
-            btnExtractOrder.addEventListener('click', () => {
-                this.extractOrder();
-            });
-        }
 
         // Sidebar toggle (mobile)
         const toggleSidebar = document.getElementById('toggleSidebar');
@@ -2104,7 +2095,7 @@ class ChatManager {
                     </div>
                     <h6 class="order-empty-title">ไม่มีออเดอร์</h6>
                     <p class="order-empty-description">
-                        เลือกผู้ใช้เพื่อดูออเดอร์ หรือใช้ปุ่มสกัดออเดอร์เพื่อวิเคราะห์บทสนทนา
+                        เลือกผู้ใช้เพื่อดูออเดอร์ ระบบจะแสดงออเดอร์ที่ AI บันทึกไว้
                     </p>
                 </div>
             `;
@@ -2243,52 +2234,6 @@ class ChatManager {
 		                </div>
 		            </div>
 		        `;
-    }
-
-    async extractOrder() {
-        if (!this.currentUserId) {
-            this.showToast('กรุณาเลือกผู้ใช้ก่อน', 'warning');
-            return;
-        }
-
-        if (this.isExtractingOrder) {
-            this.showToast('กำลังสกัดออเดอร์อยู่...', 'info');
-            return;
-        }
-
-        this.isExtractingOrder = true;
-        this.showToast('กำลังวิเคราะห์บทสนทนา...', 'info');
-
-        try {
-            const response = await fetch('/admin/chat/orders/extract', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    userId: this.currentUserId
-                })
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                if (data.hasOrder) {
-                    this.showToast('สกัดออเดอร์สำเร็จ!', 'success');
-                    await this.loadOrders();
-                    await this.loadUsers(); // Update badge
-                } else {
-                    this.showToast(data.reason || 'ไม่พบออเดอร์ในบทสนทนา', 'warning');
-                }
-            } else {
-                this.showToast('ไม่สามารถสกัดออเดอร์ได้: ' + (data.error || 'เกิดข้อผิดพลาด'), 'error');
-            }
-        } catch (error) {
-            console.error('Error extracting order:', error);
-            this.showToast('เกิดข้อผิดพลาดในการสกัดออเดอร์', 'error');
-        } finally {
-            this.isExtractingOrder = false;
-        }
     }
 
     editOrder(orderId) {

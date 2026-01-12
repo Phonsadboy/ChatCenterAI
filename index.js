@@ -1364,7 +1364,6 @@ async function saveChatHistory(
   if (userInsertResult?.insertedId) {
     userMessageDoc._id = userInsertResult.insertedId;
   }
-  await appendOrderExtractionMessage(userMessageDoc);
 
   try {
     if (typeof io !== "undefined" && io) {
@@ -1437,7 +1436,6 @@ async function saveChatHistory(
     if (assistantInsertResult?.insertedId) {
       assistantMessageDoc._id = assistantInsertResult.insertedId;
     }
-    await appendOrderExtractionMessage(assistantMessageDoc);
 
     try {
       if (typeof io !== "undefined" && io) {
@@ -1459,13 +1457,6 @@ async function saveChatHistory(
   if (shouldAnalyzeFollowUp) {
     maybeAnalyzeFollowUp(userId, platform, botId).catch((error) => {
       console.error("[FollowUp] Background analyze error:", error.message);
-    });
-  }
-
-  // วิเคราะห์ออเดอร์อัตโนมัติหลังจากบันทึกข้อความของผู้ใช้
-  if (shouldAnalyzeFollowUp) {
-    maybeAnalyzeOrder(userId, platform, botId).catch((error) => {
-      console.error("[Order] Background analyze error:", error.message);
     });
   }
 }
@@ -2791,7 +2782,6 @@ async function sendFollowUpMessage(task, round, db) {
   if (historyInsertResult?.insertedId) {
     messageDoc._id = historyInsertResult.insertedId;
   }
-  await appendOrderExtractionMessage(messageDoc);
 
   try {
     if (io) {
@@ -3241,6 +3231,280 @@ function normalizeOrderAddress(orderData = {}) {
   };
 }
 
+const ORDER_STATUS_VALUES = new Set([
+  "pending",
+  "confirmed",
+  "shipped",
+  "completed",
+  "cancelled",
+]);
+
+function normalizeOrderStatus(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return ORDER_STATUS_VALUES.has(normalized) ? normalized : null;
+}
+
+function sanitizeOrderNotes(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, 1000);
+}
+
+function normalizeOrderItemsInput(rawItems = []) {
+  if (!Array.isArray(rawItems)) return [];
+  const normalized = [];
+
+  rawItems.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const product = sanitizeOptionalString(
+      item.product || item.name || item.title || item.itemName,
+    );
+    const quantity = sanitizeOptionalNumber(
+      item.quantity ?? item.qty,
+    );
+    const price = sanitizeOptionalNumber(
+      item.price ?? item.unitPrice ?? item.amount,
+    );
+
+    if (!product) return;
+    if (!Number.isFinite(quantity) || quantity <= 0) return;
+    if (!Number.isFinite(price) || price < 0) return;
+
+    const normalizedItem = {
+      product,
+      quantity,
+      price,
+    };
+
+    const shippingName = sanitizeOptionalString(
+      item.shippingName || item.shippingProductName || item.productForShipping,
+    );
+    const color = sanitizeOptionalString(item.color);
+    const width = sanitizeOptionalNumber(
+      item.width ?? item.widthCm ?? item.itemWidth,
+    );
+    const length = sanitizeOptionalNumber(
+      item.length ?? item.lengthCm ?? item.itemLength,
+    );
+    const height = sanitizeOptionalNumber(
+      item.height ?? item.heightCm ?? item.itemHeight,
+    );
+    const weight = sanitizeOptionalNumber(item.weight ?? item.weightKg);
+
+    if (shippingName) normalizedItem.shippingName = shippingName;
+    if (color) normalizedItem.color = color;
+    if (width !== null) normalizedItem.width = width;
+    if (length !== null) normalizedItem.length = length;
+    if (height !== null) normalizedItem.height = height;
+    if (weight !== null) normalizedItem.weight = weight;
+
+    normalized.push(normalizedItem);
+  });
+
+  return normalized;
+}
+
+function buildOrderDataForTool(rawData = {}) {
+  if (!rawData || typeof rawData !== "object") {
+    return { ok: false, error: "ข้อมูลออเดอร์ไม่ถูกต้อง" };
+  }
+
+  const items = normalizeOrderItemsInput(rawData.items);
+  if (!items.length) {
+    return { ok: false, error: "ต้องมีรายการสินค้าอย่างน้อย 1 รายการ" };
+  }
+
+  let totalAmount = sanitizeOptionalNumber(rawData.totalAmount);
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    totalAmount = items.reduce(
+      (sum, item) => sum + item.quantity * item.price,
+      0,
+    );
+  }
+
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    return { ok: false, error: "ยอดรวมไม่ถูกต้อง" };
+  }
+
+  const shippingCost = normalizeShippingCostValue(rawData.shippingCost);
+  const customerName = normalizeCustomerName(rawData.customerName);
+  const recipientName =
+    normalizeCustomerName(
+      rawData.recipientName ||
+      rawData.shippingName ||
+      rawData.receiverName ||
+      customerName,
+    ) || customerName;
+  const shippingAddress = sanitizeOptionalString(
+    rawData.shippingAddress ||
+    rawData.address ||
+    rawData.deliveryAddress ||
+    rawData.recipientAddress,
+  );
+  const addressParts = normalizeOrderAddress({
+    ...(rawData || {}),
+    shippingAddress: shippingAddress || rawData.shippingAddress,
+  });
+  const phone = sanitizeOptionalString(rawData.phone || rawData.mobile);
+  const email = sanitizeOptionalString(rawData.email || rawData.customerEmail);
+  const paymentMethod =
+    sanitizeOptionalString(rawData.paymentMethod) || "เก็บเงินปลายทาง";
+  const transferDate = sanitizeOptionalString(
+    rawData.transferDate || rawData.paymentDate,
+  );
+  const transferTime = sanitizeOptionalString(
+    rawData.transferTime || rawData.paymentTime,
+  );
+  const paymentReceiver = sanitizeOptionalString(
+    rawData.paymentReceiver || rawData.receivedBy,
+  );
+  const orderNotes = sanitizeOptionalString(rawData.notes);
+
+  const normalized = {
+    items,
+    totalAmount,
+    shippingCost,
+    paymentMethod,
+  };
+
+  if (shippingAddress) normalized.shippingAddress = shippingAddress;
+  if (customerName) normalized.customerName = customerName;
+  if (recipientName) normalized.recipientName = recipientName;
+  if (phone) normalized.phone = phone;
+  if (email) normalized.email = email;
+  if (addressParts.subDistrict) {
+    normalized.addressSubDistrict = addressParts.subDistrict;
+  }
+  if (addressParts.district) {
+    normalized.addressDistrict = addressParts.district;
+  }
+  if (addressParts.province) {
+    normalized.addressProvince = addressParts.province;
+  }
+  if (addressParts.postalCode) {
+    normalized.addressPostalCode = addressParts.postalCode;
+  }
+  if (transferDate) normalized.transferDate = transferDate;
+  if (transferTime) normalized.transferTime = transferTime;
+  if (paymentReceiver) normalized.paymentReceiver = paymentReceiver;
+  if (orderNotes) normalized.notes = orderNotes;
+
+  return { ok: true, orderData: normalized };
+}
+
+function buildOrderDataPatch(rawData = {}) {
+  if (!rawData || typeof rawData !== "object") {
+    return { ok: false, error: "ข้อมูลออเดอร์ไม่ถูกต้อง" };
+  }
+
+  const patch = {};
+  const hasItems = Object.prototype.hasOwnProperty.call(rawData, "items");
+  const hasTotalAmount = Object.prototype.hasOwnProperty.call(
+    rawData,
+    "totalAmount",
+  );
+
+  if (hasItems) {
+    const items = normalizeOrderItemsInput(rawData.items);
+    if (!items.length) {
+      return { ok: false, error: "รายการสินค้าไม่ถูกต้อง" };
+    }
+    patch.items = items;
+  }
+
+  if (hasTotalAmount) {
+    const totalAmount = sanitizeOptionalNumber(rawData.totalAmount);
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      return { ok: false, error: "ยอดรวมไม่ถูกต้อง" };
+    }
+    patch.totalAmount = totalAmount;
+  } else if (hasItems) {
+    patch.totalAmount = patch.items.reduce(
+      (sum, item) => sum + item.quantity * item.price,
+      0,
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawData, "shippingCost")) {
+    patch.shippingCost = normalizeShippingCostValue(rawData.shippingCost);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "customerName")) {
+    patch.customerName = normalizeCustomerName(rawData.customerName);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "recipientName")) {
+    patch.recipientName = normalizeCustomerName(rawData.recipientName);
+  }
+
+  const hasShippingAddress = Object.prototype.hasOwnProperty.call(
+    rawData,
+    "shippingAddress",
+  );
+  const hasAddress = Object.prototype.hasOwnProperty.call(rawData, "address");
+  const hasDeliveryAddress = Object.prototype.hasOwnProperty.call(
+    rawData,
+    "deliveryAddress",
+  );
+  const hasRecipientAddress = Object.prototype.hasOwnProperty.call(
+    rawData,
+    "recipientAddress",
+  );
+
+  if (hasShippingAddress || hasAddress || hasDeliveryAddress || hasRecipientAddress) {
+    const shippingAddress = sanitizeOptionalString(
+      rawData.shippingAddress ||
+      rawData.address ||
+      rawData.deliveryAddress ||
+      rawData.recipientAddress,
+    );
+    patch.shippingAddress = shippingAddress || null;
+    const addressParts = normalizeOrderAddress({
+      ...(rawData || {}),
+      shippingAddress: shippingAddress || rawData.shippingAddress,
+    });
+    patch.addressSubDistrict = addressParts.subDistrict || null;
+    patch.addressDistrict = addressParts.district || null;
+    patch.addressProvince = addressParts.province || null;
+    patch.addressPostalCode = addressParts.postalCode || null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawData, "addressSubDistrict")) {
+    patch.addressSubDistrict = sanitizeOptionalString(rawData.addressSubDistrict);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "addressDistrict")) {
+    patch.addressDistrict = sanitizeOptionalString(rawData.addressDistrict);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "addressProvince")) {
+    patch.addressProvince = sanitizeOptionalString(rawData.addressProvince);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "addressPostalCode")) {
+    patch.addressPostalCode = sanitizeOptionalString(rawData.addressPostalCode);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "phone")) {
+    patch.phone = sanitizeOptionalString(rawData.phone);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "email")) {
+    patch.email = sanitizeOptionalString(rawData.email);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "paymentMethod")) {
+    const paymentMethod = sanitizeOptionalString(rawData.paymentMethod);
+    patch.paymentMethod = paymentMethod || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "transferDate")) {
+    patch.transferDate = sanitizeOptionalString(rawData.transferDate);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "transferTime")) {
+    patch.transferTime = sanitizeOptionalString(rawData.transferTime);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "paymentReceiver")) {
+    patch.paymentReceiver = sanitizeOptionalString(rawData.paymentReceiver);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawData, "notes")) {
+    patch.notes = sanitizeOptionalString(rawData.notes);
+  }
+
+  return { ok: true, patch, hasChanges: Object.keys(patch).length > 0 };
+}
+
 // ============================ Order Buffer & Cutoff Helpers ============================
 
 const ORDER_BUFFER_COLLECTION = "order_extraction_buffers";
@@ -3362,55 +3626,6 @@ function getCutoffMomentForDay(cutoffTime, baseMoment = null) {
     .minutes(minutes)
     .seconds(0)
     .milliseconds(0);
-}
-
-async function appendOrderExtractionMessage(chatDoc) {
-  try {
-    if (!chatDoc || typeof chatDoc !== "object") return;
-    const senderId = chatDoc.senderId || chatDoc.userId || null;
-    if (!senderId) return;
-    const role = chatDoc.role || "user";
-    if (!["user", "assistant"].includes(role)) {
-      return;
-    }
-
-    const platform = normalizeOrderPlatform(chatDoc.platform);
-    const botId = normalizeOrderBotId(chatDoc.botId);
-    const pageKey = buildOrderPageKey(platform, botId);
-    const timestamp =
-      chatDoc.timestamp instanceof Date
-        ? chatDoc.timestamp
-        : new Date(chatDoc.timestamp || Date.now());
-    const chatMessageId =
-      chatDoc._id && typeof chatDoc._id.toString === "function"
-        ? chatDoc._id.toString()
-        : chatDoc._id || null;
-
-    const bufferDoc = {
-      pageKey,
-      platform,
-      botId,
-      userId: senderId,
-      role,
-      direction: role === "user" ? "inbound" : "outbound",
-      source: chatDoc.source || null,
-      content: chatDoc.content ?? null,
-      timestamp,
-      chatMessageId,
-      lastMessageAt: timestamp,
-      createdAt: new Date(),
-    };
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection(ORDER_BUFFER_COLLECTION);
-    await coll.insertOne(bufferDoc);
-  } catch (error) {
-    console.error(
-      "[OrderBuffer] เพิ่มข้อความลงบัฟเฟอร์ไม่สำเร็จ:",
-      error.message,
-    );
-  }
 }
 
 async function ensureOrderBufferIndexes() {
@@ -4282,11 +4497,21 @@ async function saveOrderToDatabase(
   orderData,
   extractedFrom = null,
   isManualExtraction = false,
+  options = {},
 ) {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("orders");
+
+    const safeOptions =
+      options && typeof options === "object" ? options : {};
+    const status = normalizeOrderStatus(safeOptions.status) || "pending";
+    const notes = sanitizeOrderNotes(safeOptions.notes);
+    const extractedAt =
+      safeOptions.extractedAt instanceof Date
+        ? safeOptions.extractedAt
+        : new Date();
 
     const normalizedOrderData = {
       ...(orderData || {}),
@@ -4299,12 +4524,12 @@ async function saveOrderToDatabase(
       platform: platform || "line",
       botId: botId || null,
       orderData: normalizedOrderData,
-      status: "pending",
-      extractedAt: new Date(),
+      status,
+      extractedAt,
       extractedFrom,
       isManualExtraction,
       updatedAt: new Date(),
-      notes: "",
+      notes,
     };
 
     const result = await coll.insertOne(orderDoc);
@@ -4315,6 +4540,195 @@ async function saveOrderToDatabase(
     console.error("[Order] บันทึกออเดอร์ไม่สำเร็จ:", error.message);
     return null;
   }
+}
+
+async function createOrderFromTool(args = {}, context = {}) {
+  const userId = context.userId;
+  if (!userId) {
+    return { success: false, error: "ไม่พบผู้ใช้สำหรับสร้างออเดอร์" };
+  }
+
+  const orderDataPayload =
+    args && typeof args.orderData === "object" ? args.orderData : null;
+  if (!orderDataPayload) {
+    return { success: false, error: "orderData จำเป็น" };
+  }
+
+  const normalized = buildOrderDataForTool(orderDataPayload);
+  if (!normalized.ok) {
+    return { success: false, error: normalized.error };
+  }
+
+  const platform = normalizeOrderPlatform(context.platform);
+  const botId = normalizeOrderBotId(context.botId);
+  let status = "pending";
+  if (Object.prototype.hasOwnProperty.call(args, "status")) {
+    const normalizedStatus = normalizeOrderStatus(args.status);
+    if (!normalizedStatus) {
+      return { success: false, error: "สถานะไม่ถูกต้อง" };
+    }
+    status = normalizedStatus;
+  }
+  const notes = sanitizeOrderNotes(args.notes);
+
+  const orderId = await saveOrderToDatabase(
+    userId,
+    platform,
+    botId,
+    normalized.orderData,
+    "ai_tool",
+    false,
+    { status, notes },
+  );
+
+  if (!orderId) {
+    return { success: false, error: "ไม่สามารถบันทึกออเดอร์ได้" };
+  }
+
+  const orderIdString =
+    typeof orderId?.toString === "function"
+      ? orderId.toString()
+      : String(orderId || "");
+
+  triggerOrderNotification(orderId);
+
+  await maybeAnalyzeFollowUp(userId, platform, botId, {
+    forceUpdate: true,
+  });
+
+  try {
+    if (io) {
+      io.emit("orderExtracted", {
+        userId,
+        orderId: orderIdString,
+        orderData: normalized.orderData,
+        isManualExtraction: false,
+        extractedAt: new Date(),
+        source: "ai_tool",
+      });
+    }
+  } catch (_) { }
+
+  return {
+    success: true,
+    orderId: orderIdString,
+    orderData: normalized.orderData,
+    status,
+  };
+}
+
+async function updateOrderFromTool(args = {}, context = {}) {
+  const userId = context.userId;
+  if (!userId) {
+    return { success: false, error: "ไม่พบผู้ใช้สำหรับแก้ไขออเดอร์" };
+  }
+
+  const platform = normalizeOrderPlatform(context.platform);
+  const botId = normalizeOrderBotId(context.botId);
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("orders");
+
+  let order = null;
+  let orderIdString = null;
+
+  if (args.orderId) {
+    const orderIdRaw =
+      typeof args.orderId === "string" ? args.orderId.trim() : "";
+    if (!ObjectId.isValid(orderIdRaw)) {
+      return { success: false, error: "orderId ไม่ถูกต้อง" };
+    }
+    orderIdString = orderIdRaw;
+    const query = {
+      _id: new ObjectId(orderIdRaw),
+      userId,
+      platform,
+    };
+    if (botId !== null) {
+      query.botId = botId;
+    }
+    order = await coll.findOne(query);
+  } else {
+    const query = {
+      userId,
+      platform,
+    };
+    if (botId !== null) {
+      query.botId = botId;
+    }
+    order = await coll.findOne(query, { sort: { extractedAt: -1 } });
+    if (order?._id) {
+      orderIdString = order._id.toString();
+    }
+  }
+
+  if (!order) {
+    return { success: false, error: "ไม่พบออเดอร์สำหรับแก้ไข" };
+  }
+
+  let patchResult = { ok: true, patch: {}, hasChanges: false };
+  if (args.orderData && typeof args.orderData === "object") {
+    patchResult = buildOrderDataPatch(args.orderData);
+  }
+  if (!patchResult.ok) {
+    return { success: false, error: patchResult.error };
+  }
+
+  let status = null;
+  if (Object.prototype.hasOwnProperty.call(args, "status")) {
+    status = normalizeOrderStatus(args.status);
+    if (!status) {
+      return { success: false, error: "สถานะไม่ถูกต้อง" };
+    }
+  }
+
+  const notesProvided = Object.prototype.hasOwnProperty.call(args, "notes");
+  const notes = notesProvided ? sanitizeOrderNotes(args.notes) : null;
+
+  const updateDoc = {
+    updatedAt: new Date(),
+  };
+
+  if (patchResult.hasChanges) {
+    updateDoc.orderData = { ...(order.orderData || {}), ...patchResult.patch };
+  }
+  if (status) {
+    updateDoc.status = status;
+  }
+  if (notesProvided) {
+    updateDoc.notes = notes;
+  }
+
+  if (Object.keys(updateDoc).length === 1) {
+    return { success: false, error: "ไม่มีข้อมูลสำหรับอัปเดต" };
+  }
+
+  await coll.updateOne({ _id: order._id }, { $set: updateDoc });
+  const updatedOrder = await coll.findOne({ _id: order._id });
+
+  try {
+    if (io) {
+      io.emit("orderUpdated", {
+        orderId: orderIdString,
+        userId,
+        orderData: updatedOrder?.orderData || null,
+        status: updatedOrder?.status || status || null,
+        notes: updatedOrder?.notes || null,
+        updatedAt: updatedOrder?.updatedAt || updateDoc.updatedAt,
+      });
+    }
+  } catch (_) { }
+
+  await maybeAnalyzeFollowUp(userId, platform, botId, {
+    forceUpdate: true,
+  });
+
+  return {
+    success: true,
+    orderId: orderIdString,
+    order: updatedOrder || null,
+  };
 }
 
 function triggerOrderNotification(orderId) {
@@ -5884,7 +6298,8 @@ async function processFlushedMessages(
         contentSequence,
         aiModelOverride,
         queueContext.botId,
-        platform
+        platform,
+        userId
       );
     } else {
       const preview = combinedText.substring(0, 100);
@@ -5897,7 +6312,8 @@ async function processFlushedMessages(
         combinedText,
         aiModelOverride,
         queueContext.botId,
-        platform
+        platform,
+        userId
       );
     }
 
@@ -7211,7 +7627,6 @@ async function handleFacebookComment(
           if (welcomeInsert?.insertedId) {
             welcomeDoc._id = welcomeInsert.insertedId;
           }
-          await appendOrderExtractionMessage(welcomeDoc);
         }
       } catch (pullErr) {
         console.error(
@@ -8350,24 +8765,9 @@ server.listen(PORT, async () => {
   }
 
   try {
-    await ensureOrderBufferIndexes();
-  } catch (orderIndexError) {
-    console.error(`[ERROR] ensureOrderBufferIndexes ล้มเหลว:`, orderIndexError);
-  }
-
-  try {
     startFollowUpTaskWorker();
   } catch (followUpWorkerError) {
     console.error(`[ERROR] startFollowUpTaskWorker ล้มเหลว:`, followUpWorkerError);
-  }
-
-  try {
-    await startOrderCutoffScheduler();
-  } catch (orderSchedulerError) {
-    console.error(
-      `[ERROR] startOrderCutoffScheduler ล้มเหลว:`,
-      orderSchedulerError,
-    );
   }
 
   console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
@@ -8808,6 +9208,16 @@ function extractThaiReply(aiResponse) {
   return aiResponse;
 }
 
+const ORDER_TOOL_INSTRUCTIONS = `เมื่อผู้ใช้ยืนยันการสั่งซื้อหรือขอแก้ไขออเดอร์ ให้ใช้เครื่องมือที่มีดังนี้เท่านั้น:
+- create_order: สร้างออเดอร์ใหม่ ต้องมี items (product, quantity, price) ให้ครบ
+- update_order: แก้ไขออเดอร์ล่าสุด หรือระบุ orderId หากผู้ใช้ระบุชัดเจน
+- ถ้าข้อมูลยังไม่ครบให้ถามต่อก่อน อย่าคาดเดารายละเอียดออเดอร์เอง`;
+
+function appendOrderToolInstructions(systemInstructions) {
+  if (!systemInstructions) return ORDER_TOOL_INSTRUCTIONS;
+  return `${systemInstructions}\n\n${ORDER_TOOL_INSTRUCTIONS}`.trim();
+}
+
 async function fetchBotAiConfig(botId, platform) {
   try {
     if (!botId) return normalizeAiConfig({});
@@ -8833,7 +9243,8 @@ async function getAssistantResponseTextOnly(
   userText,
   aiModel = null,
   botId = null,
-  platform = null
+  platform = null,
+  userId = null
 ) {
   try {
     // Get per-bot API key or fallback to default
@@ -8844,8 +9255,10 @@ async function getAssistantResponseTextOnly(
       `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (ข้อความอย่างเดียว)...`,
     );
 
+    const toolSystemInstructions =
+      appendOrderToolInstructions(systemInstructions);
     let messages = [
-      { role: "system", content: systemInstructions },
+      { role: "system", content: toolSystemInstructions },
       ...history,
       { role: "user", content: userText },
     ];
@@ -8896,6 +9309,121 @@ async function getAssistantResponseTextOnly(
             required: ["category", "keyword"]
           }
         }
+      },
+      {
+        type: "function",
+        function: {
+          name: "create_order",
+          description: "Create a new order from confirmed customer details.",
+          parameters: {
+            type: "object",
+            properties: {
+              orderData: {
+                type: "object",
+                properties: {
+                  items: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        product: { type: "string" },
+                        quantity: { type: "number" },
+                        price: { type: "number" },
+                        shippingName: { type: "string" },
+                        color: { type: "string" },
+                        width: { type: "number" },
+                        length: { type: "number" },
+                        height: { type: "number" },
+                        weight: { type: "number" }
+                      },
+                      required: ["product", "quantity", "price"]
+                    }
+                  },
+                  totalAmount: { type: "number" },
+                  shippingCost: { type: "number" },
+                  customerName: { type: "string" },
+                  recipientName: { type: "string" },
+                  shippingAddress: { type: "string" },
+                  addressSubDistrict: { type: "string" },
+                  addressDistrict: { type: "string" },
+                  addressProvince: { type: "string" },
+                  addressPostalCode: { type: "string" },
+                  phone: { type: "string" },
+                  email: { type: "string" },
+                  paymentMethod: { type: "string" },
+                  transferDate: { type: "string" },
+                  transferTime: { type: "string" },
+                  paymentReceiver: { type: "string" },
+                  notes: { type: "string" }
+                },
+                required: ["items"]
+              },
+              status: {
+                type: "string",
+                enum: ["pending", "confirmed", "shipped", "completed", "cancelled"]
+              },
+              notes: { type: "string" }
+            },
+            required: ["orderData"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "update_order",
+          description: "Update an existing order (default: latest order for this customer).",
+          parameters: {
+            type: "object",
+            properties: {
+              orderId: { type: "string" },
+              orderData: {
+                type: "object",
+                properties: {
+                  items: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        product: { type: "string" },
+                        quantity: { type: "number" },
+                        price: { type: "number" },
+                        shippingName: { type: "string" },
+                        color: { type: "string" },
+                        width: { type: "number" },
+                        length: { type: "number" },
+                        height: { type: "number" },
+                        weight: { type: "number" }
+                      },
+                      required: ["product", "quantity", "price"]
+                    }
+                  },
+                  totalAmount: { type: "number" },
+                  shippingCost: { type: "number" },
+                  customerName: { type: "string" },
+                  recipientName: { type: "string" },
+                  shippingAddress: { type: "string" },
+                  addressSubDistrict: { type: "string" },
+                  addressDistrict: { type: "string" },
+                  addressProvince: { type: "string" },
+                  addressPostalCode: { type: "string" },
+                  phone: { type: "string" },
+                  email: { type: "string" },
+                  paymentMethod: { type: "string" },
+                  transferDate: { type: "string" },
+                  transferTime: { type: "string" },
+                  paymentReceiver: { type: "string" },
+                  notes: { type: "string" }
+                }
+              },
+              status: {
+                type: "string",
+                enum: ["pending", "confirmed", "shipped", "completed", "cancelled"]
+              },
+              notes: { type: "string" }
+            }
+          }
+        }
       }
     ];
 
@@ -8904,79 +9432,93 @@ async function getAssistantResponseTextOnly(
     let toolLoopCount = 0;
     const MAX_TOOL_LOOPS = 5;
 
-    if (apiMode === "chat") {
+    const buildPayload = () => {
       const payload = {
         model: textModel,
         messages,
+        tools,
+        tool_choice: "auto",
       };
-      if (botAiConfig.temperature !== null) {
-        payload.temperature = botAiConfig.temperature;
-      }
-      if (botAiConfig.topP !== null) {
-        payload.top_p = botAiConfig.topP;
-      }
-      if (botAiConfig.presencePenalty !== null) {
-        payload.presence_penalty = botAiConfig.presencePenalty;
-      }
-      if (botAiConfig.frequencyPenalty !== null) {
-        payload.frequency_penalty = botAiConfig.frequencyPenalty;
-      }
 
-      finalResponse = await openai.chat.completions.create(payload);
-    } else {
-      while (toolLoopCount < MAX_TOOL_LOOPS) {
-        const payload = {
-          model: textModel,
-          messages,
-          tools: tools,
-          tool_choice: "auto",
-        };
-        if (botAiConfig.reasoningEffort) {
-          payload.reasoning_effort = botAiConfig.reasoningEffort;
+      if (apiMode === "chat") {
+        if (botAiConfig.temperature !== null) {
+          payload.temperature = botAiConfig.temperature;
         }
+        if (botAiConfig.topP !== null) {
+          payload.top_p = botAiConfig.topP;
+        }
+        if (botAiConfig.presencePenalty !== null) {
+          payload.presence_penalty = botAiConfig.presencePenalty;
+        }
+        if (botAiConfig.frequencyPenalty !== null) {
+          payload.frequency_penalty = botAiConfig.frequencyPenalty;
+        }
+      } else if (botAiConfig.reasoningEffort) {
+        payload.reasoning_effort = botAiConfig.reasoningEffort;
+      }
 
-        const response = await openai.chat.completions.create(payload);
+      return payload;
+    };
 
-        const responseMessage = response.choices[0].message;
+    const toolContext = { userId, platform, botId };
 
-        // Check if tool calls
-        if (responseMessage.tool_calls) {
-          messages.push(responseMessage); // Add assistant's tool call message
+    while (toolLoopCount < MAX_TOOL_LOOPS) {
+      const response = await openai.chat.completions.create(buildPayload());
+      const responseMessage = response.choices[0].message;
 
-          console.log(`[LOG] AI ต้องการใช้ Tool: ${responseMessage.tool_calls.length} calls`);
+      if (responseMessage.tool_calls) {
+        messages.push(responseMessage);
 
-          const client = await connectDB();
-          const db = client.db("chatbot");
+        console.log(
+          `[LOG] AI ต้องการใช้ Tool: ${responseMessage.tool_calls.length} calls`,
+        );
 
-          for (const toolCall of responseMessage.tool_calls) {
-            const functionName = toolCall.function.name;
-            const functionArgs = JSON.parse(toolCall.function.arguments);
+        const client = await connectDB();
+        const db = client.db("chatbot");
 
-            console.log(`[LOG] Executing Tool: ${functionName}`, functionArgs);
+        for (const toolCall of responseMessage.tool_calls) {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
 
-            let toolResult = { error: "Unknown tool" };
+          console.log(`[LOG] Executing Tool: ${functionName}`, functionArgs);
 
-            if (functionName === "get_categories") {
-              toolResult = await getCategories(db, botId, platform);
-            } else if (functionName === "search_item_by_category") {
-              toolResult = await searchItemByCategory(db, functionArgs.category, functionArgs.keyword, botId, platform);
-            } else if (functionName === "search_item_broad") {
-              toolResult = await searchItemBroad(db, functionArgs.category, functionArgs.keyword, botId, platform);
-            }
+          let toolResult = { error: "Unknown tool" };
 
-            messages.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              name: functionName,
-              content: JSON.stringify(toolResult),
-            });
+          if (functionName === "get_categories") {
+            toolResult = await getCategories(db, botId, platform);
+          } else if (functionName === "search_item_by_category") {
+            toolResult = await searchItemByCategory(
+              db,
+              functionArgs.category,
+              functionArgs.keyword,
+              botId,
+              platform,
+            );
+          } else if (functionName === "search_item_broad") {
+            toolResult = await searchItemBroad(
+              db,
+              functionArgs.category,
+              functionArgs.keyword,
+              botId,
+              platform,
+            );
+          } else if (functionName === "create_order") {
+            toolResult = await createOrderFromTool(functionArgs, toolContext);
+          } else if (functionName === "update_order") {
+            toolResult = await updateOrderFromTool(functionArgs, toolContext);
           }
-          toolLoopCount++;
-        } else {
-          // No tool calls, this is the final response
-          finalResponse = response;
-          break;
+
+          messages.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            name: functionName,
+            content: JSON.stringify(toolResult),
+          });
         }
+        toolLoopCount++;
+      } else {
+        finalResponse = response;
+        break;
       }
     }
 
@@ -9042,7 +9584,8 @@ async function getAssistantResponseMultimodal(
   contentSequence,
   aiModel = null,
   botId = null,
-  platform = null
+  platform = null,
+  userId = null
 ) {
   try {
     // Get per-bot API key or fallback to default
@@ -9120,8 +9663,10 @@ async function getAssistantResponseMultimodal(
       });
     }
 
+    const toolSystemInstructions =
+      appendOrderToolInstructions(systemInstructions);
     const messages = [
-      { role: "system", content: systemInstructions },
+      { role: "system", content: toolSystemInstructions },
       ...history,
       { role: "user", content: finalContent },
     ];
@@ -9134,14 +9679,241 @@ async function getAssistantResponseMultimodal(
     const visionModel =
       aiModel || (await getSettingValue("visionModel", "gpt-5"));
 
-    const response = await openai.chat.completions.create({
-      model: visionModel,
-      messages,
-    });
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "get_categories",
+          description: "Get list of all available product categories. Use this first to know which category to search in.",
+          parameters: { type: "object", properties: {} }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "search_item_by_category",
+          description: "Search for items in a specific category using the first column (Main Key). Use this for specific searches like Model Name or ID.",
+          parameters: {
+            type: "object",
+            properties: {
+              category: { type: "string", description: "Category name (must be exact match from get_categories)" },
+              keyword: { type: "string", description: "Search keyword" }
+            },
+            required: ["category", "keyword"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "search_item_broad",
+          description: "Search for items in a specific category across ALL columns. Use this if specific search fails.",
+          parameters: {
+            type: "object",
+            properties: {
+              category: { type: "string", description: "Category name" },
+              keyword: { type: "string", description: "Search keyword" }
+            },
+            required: ["category", "keyword"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "create_order",
+          description: "Create a new order from confirmed customer details.",
+          parameters: {
+            type: "object",
+            properties: {
+              orderData: {
+                type: "object",
+                properties: {
+                  items: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        product: { type: "string" },
+                        quantity: { type: "number" },
+                        price: { type: "number" },
+                        shippingName: { type: "string" },
+                        color: { type: "string" },
+                        width: { type: "number" },
+                        length: { type: "number" },
+                        height: { type: "number" },
+                        weight: { type: "number" }
+                      },
+                      required: ["product", "quantity", "price"]
+                    }
+                  },
+                  totalAmount: { type: "number" },
+                  shippingCost: { type: "number" },
+                  customerName: { type: "string" },
+                  recipientName: { type: "string" },
+                  shippingAddress: { type: "string" },
+                  addressSubDistrict: { type: "string" },
+                  addressDistrict: { type: "string" },
+                  addressProvince: { type: "string" },
+                  addressPostalCode: { type: "string" },
+                  phone: { type: "string" },
+                  email: { type: "string" },
+                  paymentMethod: { type: "string" },
+                  transferDate: { type: "string" },
+                  transferTime: { type: "string" },
+                  paymentReceiver: { type: "string" },
+                  notes: { type: "string" }
+                },
+                required: ["items"]
+              },
+              status: {
+                type: "string",
+                enum: ["pending", "confirmed", "shipped", "completed", "cancelled"]
+              },
+              notes: { type: "string" }
+            },
+            required: ["orderData"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "update_order",
+          description: "Update an existing order (default: latest order for this customer).",
+          parameters: {
+            type: "object",
+            properties: {
+              orderId: { type: "string" },
+              orderData: {
+                type: "object",
+                properties: {
+                  items: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        product: { type: "string" },
+                        quantity: { type: "number" },
+                        price: { type: "number" },
+                        shippingName: { type: "string" },
+                        color: { type: "string" },
+                        width: { type: "number" },
+                        length: { type: "number" },
+                        height: { type: "number" },
+                        weight: { type: "number" }
+                      },
+                      required: ["product", "quantity", "price"]
+                    }
+                  },
+                  totalAmount: { type: "number" },
+                  shippingCost: { type: "number" },
+                  customerName: { type: "string" },
+                  recipientName: { type: "string" },
+                  shippingAddress: { type: "string" },
+                  addressSubDistrict: { type: "string" },
+                  addressDistrict: { type: "string" },
+                  addressProvince: { type: "string" },
+                  addressPostalCode: { type: "string" },
+                  phone: { type: "string" },
+                  email: { type: "string" },
+                  paymentMethod: { type: "string" },
+                  transferDate: { type: "string" },
+                  transferTime: { type: "string" },
+                  paymentReceiver: { type: "string" },
+                  notes: { type: "string" }
+                }
+              },
+              status: {
+                type: "string",
+                enum: ["pending", "confirmed", "shipped", "completed", "cancelled"]
+              },
+              notes: { type: "string" }
+            }
+          }
+        }
+      }
+    ];
+
+    let finalResponse = null;
+    let toolLoopCount = 0;
+    const MAX_TOOL_LOOPS = 5;
+    const toolContext = { userId, platform, botId };
+
+    while (toolLoopCount < MAX_TOOL_LOOPS) {
+      const response = await openai.chat.completions.create({
+        model: visionModel,
+        messages,
+        tools,
+        tool_choice: "auto",
+      });
+
+      const responseMessage = response.choices[0].message;
+
+      if (responseMessage.tool_calls) {
+        messages.push(responseMessage);
+        console.log(
+          `[LOG] AI ต้องการใช้ Tool (multimodal): ${responseMessage.tool_calls.length} calls`,
+        );
+
+        const client = await connectDB();
+        const db = client.db("chatbot");
+
+        for (const toolCall of responseMessage.tool_calls) {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`[LOG] Executing Tool: ${functionName}`, functionArgs);
+
+          let toolResult = { error: "Unknown tool" };
+
+          if (functionName === "get_categories") {
+            toolResult = await getCategories(db, botId, platform);
+          } else if (functionName === "search_item_by_category") {
+            toolResult = await searchItemByCategory(
+              db,
+              functionArgs.category,
+              functionArgs.keyword,
+              botId,
+              platform,
+            );
+          } else if (functionName === "search_item_broad") {
+            toolResult = await searchItemBroad(
+              db,
+              functionArgs.category,
+              functionArgs.keyword,
+              botId,
+              platform,
+            );
+          } else if (functionName === "create_order") {
+            toolResult = await createOrderFromTool(functionArgs, toolContext);
+          } else if (functionName === "update_order") {
+            toolResult = await updateOrderFromTool(functionArgs, toolContext);
+          }
+
+          messages.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            name: functionName,
+            content: JSON.stringify(toolResult),
+          });
+        }
+
+        toolLoopCount++;
+      } else {
+        finalResponse = response;
+        break;
+      }
+    }
+
+    if (!finalResponse) {
+      console.warn("[LOG] Tool loop limit reached (multimodal)");
+      return "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
+    }
 
     console.log(`[LOG] ได้รับคำตอบจาก OpenAI API (multimodal) เรียบร้อยแล้ว`);
 
-    let assistantReply = response.choices[0].message.content;
+    let assistantReply = finalResponse.choices[0].message.content;
     if (typeof assistantReply !== "string") {
       assistantReply = JSON.stringify(assistantReply);
     }
@@ -9153,8 +9925,8 @@ async function getAssistantResponseMultimodal(
     }
 
     // เพิ่มข้อมูล token usage ต่อท้ายคำตอบ (ถ้าเปิดใช้งาน)
-    if (response.usage) {
-      const usage = response.usage;
+    if (finalResponse.usage) {
+      const usage = finalResponse.usage;
       const showTokenUsage = await getSettingValue("showTokenUsage", false);
 
       if (showTokenUsage) {
@@ -10995,7 +11767,6 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     if (controlInsertResult?.insertedId) {
                       controlDoc._id = controlInsertResult.insertedId;
                     }
-                    await appendOrderExtractionMessage(controlDoc);
 
                     try {
                       await resetUserUnreadCount(targetUserId);
@@ -11035,7 +11806,6 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                   if (controlInsertResult?.insertedId) {
                     controlDoc._id = controlInsertResult.insertedId;
                   }
-                  await appendOrderExtractionMessage(controlDoc);
 
                   try {
                     await resetUserUnreadCount(targetUserId);
@@ -11068,20 +11838,6 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                   const baseInsertResult = await coll.insertOne(baseDoc);
                   if (baseInsertResult?.insertedId) {
                     baseDoc._id = baseInsertResult.insertedId;
-                  }
-                  if (!isBroadcastMessage) {
-                    await appendOrderExtractionMessage(baseDoc);
-                    maybeAnalyzeOrder(
-                      targetUserId,
-                      "facebook",
-                      facebookBot?._id?.toString?.() || null,
-                      { force: disableAiReply },
-                    ).catch((error) => {
-                      console.error(
-                        `[Order] วิเคราะห์หลังแอดมินตอบไม่สำเร็จ (${targetUserId}):`,
-                        error.message || error,
-                      );
-                    });
                   }
                   // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
                   try {
@@ -11969,7 +12725,8 @@ async function processFacebookMessageWithAI(
           sanitizedSequence,
           aiModel,
           facebookBot._id.toString(),
-          "facebook"
+          "facebook",
+          userId
         );
       } else {
         const preview = combinedText.substring(0, 100);
@@ -11982,7 +12739,8 @@ async function processFacebookMessageWithAI(
           combinedText,
           aiModel,
           facebookBot._id.toString(),
-          "facebook"
+          "facebook",
+          userId
         );
       }
 
@@ -17605,242 +18363,6 @@ app.get("/admin/orders/pages", async (req, res) => {
   }
 });
 
-app.post("/admin/orders/pages/cutoff", async (req, res) => {
-  try {
-    const { pageKey, platform, botId, cutoffTime } = req.body || {};
-
-    let targetPlatform = platform ? normalizeOrderPlatform(platform) : null;
-    let targetBotId = typeof botId === "string" ? botId : null;
-
-    if (pageKey && pageKey !== "all") {
-      const parsed = parseOrderPageKey(pageKey);
-      targetPlatform = parsed.platform || targetPlatform;
-      targetBotId = parsed.botId === null ? null : parsed.botId || targetBotId;
-    }
-
-    if (!targetPlatform) {
-      return res.json({
-        success: false,
-        error: "ไม่พบเพจที่ต้องการปรับเวลาตัดรอบ",
-      });
-    }
-
-    const normalizedBotId =
-      targetBotId === "default" ? null : normalizeOrderBotId(targetBotId);
-    const safeCutoff = parseCutoffTime(cutoffTime || ORDER_DEFAULT_CUTOFF_TIME);
-
-    const updated = await updateOrderCutoffSetting(
-      targetPlatform,
-      normalizedBotId,
-      { cutoffTime: safeCutoff },
-    );
-
-    res.json({
-      success: true,
-      setting: {
-        ...(updated || {}),
-        cutoffTime: safeCutoff,
-      },
-    });
-  } catch (error) {
-    console.error("[Orders] ไม่สามารถบันทึกเวลาตัดรอบได้:", error);
-    res.json({ success: false, error: error.message });
-  }
-});
-
-app.post("/admin/orders/settings/scheduling", async (req, res) => {
-  try {
-    const { enabled, mode } = req.body || {};
-    let targetMode = normalizeOrderExtractionMode(mode);
-
-    if (!targetMode && typeof enabled === "boolean") {
-      targetMode = enabled
-        ? ORDER_EXTRACTION_MODES.SCHEDULED
-        : ORDER_EXTRACTION_MODES.REALTIME;
-    }
-
-    if (!targetMode) {
-      return res.json({
-        success: false,
-        error: "กรุณาเลือกโหมดการสกัดออเดอร์ที่ถูกต้อง",
-      });
-    }
-
-    await setSettingValue("orderExtractionMode", targetMode);
-    await setSettingValue(
-      "orderCutoffSchedulingEnabled",
-      targetMode === ORDER_EXTRACTION_MODES.SCHEDULED,
-    );
-    await startOrderCutoffScheduler();
-
-    res.json({
-      success: true,
-      mode: targetMode,
-      enabled: targetMode === ORDER_EXTRACTION_MODES.SCHEDULED,
-    });
-  } catch (error) {
-    console.error("[Orders] ไม่สามารถปรับสถานะ scheduler ได้:", error);
-    res.json({ success: false, error: error.message });
-  }
-});
-
-// Save AI model per page
-app.post("/admin/orders/pages/ai-model", async (req, res) => {
-  try {
-    const { pageKey, platform, botId, orderModel } = req.body || {};
-
-    let targetPlatform = platform ? normalizeOrderPlatform(platform) : null;
-    let targetBotId = typeof botId === "string" ? botId : null;
-
-    if (pageKey && pageKey !== "all") {
-      const parsed = parseOrderPageKey(pageKey);
-      targetPlatform = parsed.platform || targetPlatform;
-      targetBotId = parsed.botId === null ? null : parsed.botId || targetBotId;
-    }
-
-    if (!targetPlatform) {
-      return res.json({
-        success: false,
-        error: "ไม่พบเพจที่ต้องการตั้งค่า",
-      });
-    }
-
-    const normalizedBotId =
-      targetBotId === "default" ? null : normalizeOrderBotId(targetBotId);
-
-    // Save to follow_up_page_settings collection (same as followup)
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_page_settings");
-
-    const filter = {
-      platform: targetPlatform,
-      botId: normalizedBotId || null,
-    };
-
-    await coll.updateOne(
-      filter,
-      {
-        $set: {
-          orderModel: orderModel || "gpt-4.1-nano",
-          updatedAt: new Date(),
-        },
-        $setOnInsert: {
-          platform: targetPlatform,
-          botId: normalizedBotId || null,
-          createdAt: new Date(),
-        },
-      },
-      { upsert: true },
-    );
-
-    res.json({
-      success: true,
-      orderModel: orderModel || "gpt-4.1-nano",
-    });
-  } catch (error) {
-    console.error("[Orders] ไม่สามารถบันทึก AI model ได้:", error);
-    res.json({ success: false, error: error.message });
-  }
-});
-
-// Save global order extraction prompt
-app.post("/admin/orders/settings/prompt", async (req, res) => {
-  try {
-    const { prompt } = req.body || {};
-    const trimmedPrompt = typeof prompt === "string" ? prompt.trim() : "";
-
-    await setSettingValue("orderPromptInstructions", trimmedPrompt);
-
-    res.json({
-      success: true,
-      prompt: trimmedPrompt,
-    });
-  } catch (error) {
-    console.error("[Orders] ไม่สามารถบันทึก prompt ได้:", error);
-    res.json({ success: false, error: error.message });
-  }
-});
-
-// Save all AI settings per page (enabled, model, prompt)
-app.post("/admin/orders/pages/ai-settings", async (req, res) => {
-  try {
-    const { pageKey, platform, botId, orderExtractionEnabled, orderModel, orderPromptInstructions } = req.body || {};
-
-    let targetPlatform = platform ? normalizeOrderPlatform(platform) : null;
-    let targetBotId = typeof botId === "string" ? botId : null;
-
-    if (pageKey && pageKey !== "all") {
-      const parsed = parseOrderPageKey(pageKey);
-      targetPlatform = parsed.platform || targetPlatform;
-      targetBotId = parsed.botId === null ? null : parsed.botId || targetBotId;
-    }
-
-    if (!targetPlatform) {
-      return res.json({
-        success: false,
-        error: "ไม่พบเพจที่ต้องการตั้งค่า",
-      });
-    }
-
-    const normalizedBotId =
-      targetBotId === "default" ? null : normalizeOrderBotId(targetBotId);
-
-    // Save to follow_up_page_settings collection
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_page_settings");
-
-    const filter = {
-      platform: targetPlatform,
-      botId: normalizedBotId || null,
-    };
-
-    const trimmedPrompt =
-      typeof orderPromptInstructions === "string"
-        ? orderPromptInstructions.trim()
-        : "";
-
-    const updateFields = {
-      orderExtractionEnabled: orderExtractionEnabled !== false,
-      orderModel: orderModel || "gpt-4.1-nano",
-      updatedAt: new Date(),
-    };
-
-    const updateDoc = {
-      $set: updateFields,
-      $setOnInsert: {
-        platform: targetPlatform,
-        botId: normalizedBotId || null,
-        createdAt: new Date(),
-      },
-    };
-
-    if (trimmedPrompt) {
-      updateFields.orderPromptInstructions = trimmedPrompt;
-    } else {
-      updateDoc.$unset = { orderPromptInstructions: "" };
-    }
-
-    await coll.updateOne(
-      filter,
-      updateDoc,
-      { upsert: true },
-    );
-
-    res.json({
-      success: true,
-      settings: {
-        ...updateFields,
-        orderPromptInstructions: trimmedPrompt,
-      },
-    });
-  } catch (error) {
-    console.error("[Orders] ไม่สามารถบันทึกการตั้งค่า AI ได้:", error);
-    res.json({ success: false, error: error.message });
-  }
-});
-
 
 // Get users who have chatted
 app.get("/admin/chat/users", async (req, res) => {
@@ -17908,7 +18430,6 @@ app.post("/admin/chat/user-status", async (req, res) => {
     if (controlInsertResult?.insertedId) {
       controlDoc._id = controlInsertResult.insertedId;
     }
-    await appendOrderExtractionMessage(controlDoc);
 
     try {
       await resetUserUnreadCount(userId);
@@ -18113,7 +18634,6 @@ app.post("/admin/chat/send", async (req, res) => {
         if (controlInsertResult?.insertedId) {
           controlDoc._id = controlInsertResult.insertedId;
         }
-        await appendOrderExtractionMessage(controlDoc);
         await resetUserUnreadCount(userId);
 
         // Emit เพื่ออัปเดต UI ของแอดมิน
@@ -18163,7 +18683,6 @@ app.post("/admin/chat/send", async (req, res) => {
       if (legacyControlInsert?.insertedId) {
         controlDoc._id = legacyControlInsert.insertedId;
       }
-      await appendOrderExtractionMessage(controlDoc);
 
       // รีเซ็ต unread count เมื่อแอดมินตอบกลับ
       await resetUserUnreadCount(userId);
@@ -18235,7 +18754,6 @@ app.post("/admin/chat/send", async (req, res) => {
     if (messageInsertResult?.insertedId) {
       messageDoc._id = messageInsertResult.insertedId;
     }
-    await appendOrderExtractionMessage(messageDoc);
     await resetUserUnreadCount(userId);
 
     try {
@@ -18453,157 +18971,6 @@ app.get("/admin/chat/orders/:userId", async (req, res) => {
     });
   } catch (err) {
     console.error("Error getting user orders:", err);
-    res.json({ success: false, error: err.message });
-  }
-});
-
-// Extract order manually from chat history
-app.post("/admin/chat/orders/extract", async (req, res) => {
-  try {
-    const { userId } = req.body;
-
-    if (!userId) {
-      return res.json({ success: false, error: "userId จำเป็น" });
-    }
-
-    const messages = await getNormalizedChatHistory(userId, {
-      applyFilter: true,
-    });
-    if (!messages || messages.length === 0) {
-      return res.json({ success: false, error: "ไม่พบประวัติการสนทนา" });
-    }
-
-    const unprocessedMessages = messages.filter(
-      (msg) => !msg.orderExtractionRoundId,
-    );
-    if (!unprocessedMessages.length) {
-      return res.json({
-        success: true,
-        hasOrder: false,
-        reason: "ไม่มีข้อความใหม่สำหรับการสกัด",
-      });
-    }
-
-    const targetMessages = unprocessedMessages.slice(-50);
-    const targetMessageIds = targetMessages
-      .map((msg) => msg.messageId)
-      .filter(Boolean);
-    const unprocessedMessageIds = unprocessedMessages
-      .map((msg) => msg.messageId)
-      .filter(Boolean);
-
-    if (!targetMessageIds.length) {
-      return res.json({
-        success: true,
-        hasOrder: false,
-        reason: "ไม่พบข้อความใหม่ที่สามารถสกัดได้",
-      });
-    }
-
-    const existingOrders = await getUserOrders(userId);
-    const latestOrder = existingOrders?.[0];
-
-    const lastMessage =
-      targetMessages[targetMessages.length - 1] ||
-      messages[messages.length - 1];
-    const platform = lastMessage?.platform || "line";
-    const botId = lastMessage?.botId || null;
-
-    const analysis = await analyzeOrderFromChat(userId, targetMessages, {
-      previousAddress: latestOrder?.orderData?.shippingAddress || null,
-      previousCustomerName: latestOrder?.orderData?.customerName || null,
-      platform,
-      botId,
-    });
-
-    if (!analysis) {
-      return res.json({
-        success: false,
-        error: "ไม่สามารถวิเคราะห์ออเดอร์ได้",
-      });
-    }
-
-    if (!analysis.hasOrder) {
-      return res.json({
-        success: true,
-        hasOrder: false,
-        reason: analysis.reason,
-        confidence: analysis.confidence,
-      });
-    }
-
-    const duplicateOrder = findDuplicateOrder(
-      existingOrders,
-      analysis.orderData,
-    );
-    if (duplicateOrder) {
-      const extractionRoundId = new ObjectId().toString();
-      await markMessagesAsOrderExtracted(
-        userId,
-        unprocessedMessageIds,
-        extractionRoundId,
-        duplicateOrder?._id?.toString?.() || null,
-      );
-
-      return res.json({
-        success: true,
-        hasOrder: false,
-        reason: "พบออเดอร์เดิม",
-        confidence: analysis.confidence,
-      });
-    }
-
-    const orderId = await saveOrderToDatabase(
-      userId,
-      platform,
-      botId,
-      analysis.orderData,
-      "manual_extraction",
-      true,
-    );
-
-    if (!orderId) {
-      return res.json({ success: false, error: "ไม่สามารถบันทึกออเดอร์ได้" });
-    }
-
-    const extractionRoundId = new ObjectId().toString();
-    await markMessagesAsOrderExtracted(
-      userId,
-      unprocessedMessageIds,
-      extractionRoundId,
-      orderId?.toString?.() || orderId,
-    );
-
-    triggerOrderNotification(orderId);
-
-    await maybeAnalyzeFollowUp(userId, platform, botId, {
-      reasonOverride: analysis.reason,
-      followUpUpdatedAt: new Date(),
-      forceUpdate: true,
-    });
-
-    try {
-      if (io) {
-        io.emit("orderExtracted", {
-          userId,
-          orderId,
-          orderData: analysis.orderData,
-          isManualExtraction: true,
-          extractedAt: new Date(),
-        });
-      }
-    } catch (_) { }
-
-    res.json({
-      success: true,
-      hasOrder: true,
-      orderId,
-      orderData: analysis.orderData,
-      confidence: analysis.confidence,
-      reason: analysis.reason,
-    });
-  } catch (err) {
-    console.error("Error extracting order:", err);
     res.json({ success: false, error: err.message });
   }
 });

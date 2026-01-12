@@ -2607,53 +2607,6 @@ class ChatManager {
         }
     }
 
-    async extractOrderManual() {
-        if (!this.currentUserId) {
-            window.showError('กรุณาเลือกผู้ใช้ก่อน');
-            return;
-        }
-
-        const btn = document.getElementById('btnExtractOrder');
-        if (btn) {
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-        }
-
-        try {
-            const response = await fetch('/admin/chat/orders/extract', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    userId: this.currentUserId
-                })
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                if (data.hasOrder) {
-                    window.showSuccess('สกัดออเดอร์สำเร็จ!');
-                    // Reload orders for current user
-                    await this.renderOrderSidebar();
-                } else {
-                    window.showWarning(`ไม่พบออเดอร์: ${data.reason}`);
-                }
-            } else {
-                window.showError(`ไม่สามารถสกัดออเดอร์ได้: ${data.error}`);
-            }
-        } catch (error) {
-            console.error('Error extracting order:', error);
-            window.showError('เกิดข้อผิดพลาดในการสกัดออเดอร์');
-        } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-shopping-cart"></i>';
-            }
-        }
-    }
-
     async updateOrder(orderId, orderData) {
         try {
             const response = await fetch(`/admin/chat/orders/${orderId}`, {
@@ -3032,14 +2985,6 @@ class ChatManager {
     }
 
     setupOrderListeners() {
-        // Extract order button
-        const extractOrderBtn = document.getElementById('btnExtractOrder');
-        if (extractOrderBtn) {
-            extractOrderBtn.addEventListener('click', () => {
-                this.extractOrderManual();
-            });
-        }
-
         // Setup order modal listeners
         this.setupOrderModalListeners();
     }
@@ -3071,7 +3016,7 @@ class ChatManager {
 
         // Show notification
         if (isManualExtraction) {
-            window.showSuccess('สกัดออเดอร์สำเร็จ!');
+            window.showSuccess('บันทึกออเดอร์สำเร็จ!');
         } else {
             window.showInfo(`พบออเดอร์ใหม่จาก ${user?.displayName || 'ลูกค้า'}`);
         }
