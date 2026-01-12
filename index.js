@@ -3231,6 +3231,129 @@ function normalizeOrderAddress(orderData = {}) {
   };
 }
 
+const ORDER_REQUIRED_FIELDS_DEFAULT = Object.freeze({
+  items: true,
+  customerName: false,
+  phone: false,
+  address: false,
+  paymentMethod: false,
+});
+
+const ORDER_REQUIRED_FIELD_LABELS = Object.freeze({
+  items: "รายการสินค้าอย่างน้อย 1 รายการ",
+  customerName: "ชื่อผู้สั่ง/ผู้รับ",
+  phone: "เบอร์โทรศัพท์",
+  address: "ที่อยู่จัดส่ง",
+  paymentMethod: "วิธีชำระเงิน",
+});
+
+function normalizeOrderRequiredFields(raw = {}) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const toBool = (value) => parseOptionalBoolean(value) === true;
+  return {
+    items: true,
+    customerName: toBool(source.customerName),
+    phone: toBool(source.phone),
+    address: toBool(source.address),
+    paymentMethod: toBool(source.paymentMethod),
+  };
+}
+
+async function getOrderRequiredFieldsSetting() {
+  const raw = await getSettingValue(
+    "orderRequiredFields",
+    ORDER_REQUIRED_FIELDS_DEFAULT,
+  );
+  return normalizeOrderRequiredFields(raw);
+}
+
+function listOrderRequiredFieldLabels(requiredFields) {
+  const normalized = normalizeOrderRequiredFields(requiredFields);
+  return Object.keys(ORDER_REQUIRED_FIELD_LABELS)
+    .filter((key) => normalized[key])
+    .map((key) => ORDER_REQUIRED_FIELD_LABELS[key]);
+}
+
+function formatOrderRequirementText(requiredFields) {
+  const labels = listOrderRequiredFieldLabels(requiredFields);
+  if (!labels.length) {
+    return "เงื่อนไขขั้นต่ำของออเดอร์: รายการสินค้าอย่างน้อย 1 รายการ";
+  }
+  return `เงื่อนไขขั้นต่ำของออเดอร์: ต้องมี ${labels.join(", ")}`;
+}
+
+function formatMissingOrderFields(missingFields = []) {
+  if (!Array.isArray(missingFields) || missingFields.length === 0) {
+    return "";
+  }
+  return missingFields
+    .map((field) => ORDER_REQUIRED_FIELD_LABELS[field] || field)
+    .join(", ");
+}
+
+function orderHasCustomerName(orderData = {}) {
+  const data = orderData && typeof orderData === "object" ? orderData : {};
+  const customerName = normalizeCustomerName(data.customerName);
+  const recipientName = normalizeCustomerName(data.recipientName);
+  return Boolean(customerName || recipientName);
+}
+
+function orderHasPhone(orderData = {}) {
+  const data = orderData && typeof orderData === "object" ? orderData : {};
+  const phone = sanitizeOptionalString(
+    data.phone ||
+    data.mobile ||
+    data.customerPhone ||
+    data.shippingPhone,
+  );
+  return Boolean(phone);
+}
+
+function orderHasAddress(orderData = {}) {
+  const data = orderData && typeof orderData === "object" ? orderData : {};
+  const addressInfo = normalizeOrderAddress(data);
+  return Boolean(
+    addressInfo.fullAddress ||
+    addressInfo.subDistrict ||
+    addressInfo.district ||
+    addressInfo.province ||
+    addressInfo.postalCode,
+  );
+}
+
+function orderHasPaymentMethod(orderData = {}) {
+  const data = orderData && typeof orderData === "object" ? orderData : {};
+  const paymentMethod = sanitizeOptionalString(
+    data.paymentMethod || data.paymentType,
+  );
+  return Boolean(paymentMethod);
+}
+
+function validateOrderRequirements(orderData = {}, requiredFields = null) {
+  const data = orderData && typeof orderData === "object" ? orderData : {};
+  const required = normalizeOrderRequiredFields(requiredFields);
+  const missing = [];
+
+  if (required.items) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) missing.push("items");
+  }
+  if (required.customerName && !orderHasCustomerName(data)) {
+    missing.push("customerName");
+  }
+  if (required.phone && !orderHasPhone(data)) {
+    missing.push("phone");
+  }
+  if (required.address && !orderHasAddress(data)) {
+    missing.push("address");
+  }
+  if (required.paymentMethod && !orderHasPaymentMethod(data)) {
+    missing.push("paymentMethod");
+  }
+
+  return { ok: missing.length === 0, missing };
+}
+
 const ORDER_STATUS_VALUES = new Set([
   "pending",
   "confirmed",
@@ -3304,11 +3427,12 @@ function normalizeOrderItemsInput(rawItems = []) {
   return normalized;
 }
 
-function buildOrderDataForTool(rawData = {}) {
+function buildOrderDataForTool(rawData = {}, requiredFields = null) {
   if (!rawData || typeof rawData !== "object") {
     return { ok: false, error: "ข้อมูลออเดอร์ไม่ถูกต้อง" };
   }
 
+  const normalizedRequiredFields = normalizeOrderRequiredFields(requiredFields);
   const items = normalizeOrderItemsInput(rawData.items);
   if (!items.length) {
     return { ok: false, error: "ต้องมีรายการสินค้าอย่างน้อย 1 รายการ" };
@@ -3348,7 +3472,8 @@ function buildOrderDataForTool(rawData = {}) {
   const phone = sanitizeOptionalString(rawData.phone || rawData.mobile);
   const email = sanitizeOptionalString(rawData.email || rawData.customerEmail);
   const paymentMethod =
-    sanitizeOptionalString(rawData.paymentMethod) || "เก็บเงินปลายทาง";
+    sanitizeOptionalString(rawData.paymentMethod) ||
+    (normalizedRequiredFields.paymentMethod ? null : "เก็บเงินปลายทาง");
   const transferDate = sanitizeOptionalString(
     rawData.transferDate || rawData.paymentDate,
   );
@@ -3364,7 +3489,6 @@ function buildOrderDataForTool(rawData = {}) {
     items,
     totalAmount,
     shippingCost,
-    paymentMethod,
   };
 
   if (shippingAddress) normalized.shippingAddress = shippingAddress;
@@ -3387,6 +3511,7 @@ function buildOrderDataForTool(rawData = {}) {
   if (transferDate) normalized.transferDate = transferDate;
   if (transferTime) normalized.transferTime = transferTime;
   if (paymentReceiver) normalized.paymentReceiver = paymentReceiver;
+  if (paymentMethod) normalized.paymentMethod = paymentMethod;
   if (orderNotes) normalized.notes = orderNotes;
 
   return { ok: true, orderData: normalized };
@@ -4548,15 +4673,30 @@ async function createOrderFromTool(args = {}, context = {}) {
     return { success: false, error: "ไม่พบผู้ใช้สำหรับสร้างออเดอร์" };
   }
 
+  const requiredFields = await getOrderRequiredFieldsSetting();
   const orderDataPayload =
     args && typeof args.orderData === "object" ? args.orderData : null;
   if (!orderDataPayload) {
     return { success: false, error: "orderData จำเป็น" };
   }
 
-  const normalized = buildOrderDataForTool(orderDataPayload);
+  const normalized = buildOrderDataForTool(orderDataPayload, requiredFields);
   if (!normalized.ok) {
     return { success: false, error: normalized.error };
+  }
+
+  const requirementCheck = validateOrderRequirements(
+    normalized.orderData,
+    requiredFields,
+  );
+  if (!requirementCheck.ok) {
+    return {
+      success: false,
+      error: `ข้อมูลออเดอร์ยังไม่ครบ: ${formatMissingOrderFields(
+        requirementCheck.missing,
+      )}`,
+      missingFields: requirementCheck.missing,
+    };
   }
 
   const platform = normalizeOrderPlatform(context.platform);
@@ -4623,6 +4763,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
     return { success: false, error: "ไม่พบผู้ใช้สำหรับแก้ไขออเดอร์" };
   }
 
+  const requiredFields = await getOrderRequiredFieldsSetting();
   const platform = normalizeOrderPlatform(context.platform);
   const botId = normalizeOrderBotId(context.botId);
 
@@ -4691,7 +4832,24 @@ async function updateOrderFromTool(args = {}, context = {}) {
   };
 
   if (patchResult.hasChanges) {
-    updateDoc.orderData = { ...(order.orderData || {}), ...patchResult.patch };
+    const mergedOrderData = {
+      ...(order.orderData || {}),
+      ...patchResult.patch,
+    };
+    const requirementCheck = validateOrderRequirements(
+      mergedOrderData,
+      requiredFields,
+    );
+    if (!requirementCheck.ok) {
+      return {
+        success: false,
+        error: `ข้อมูลออเดอร์ยังไม่ครบ: ${formatMissingOrderFields(
+          requirementCheck.missing,
+        )}`,
+        missingFields: requirementCheck.missing,
+      };
+    }
+    updateDoc.orderData = mergedOrderData;
   }
   if (status) {
     updateDoc.status = status;
@@ -9213,9 +9371,12 @@ const ORDER_TOOL_INSTRUCTIONS = `เมื่อผู้ใช้ยืนย�
 - update_order: แก้ไขออเดอร์ล่าสุด หรือระบุ orderId หากผู้ใช้ระบุชัดเจน
 - ถ้าข้อมูลยังไม่ครบให้ถามต่อก่อน อย่าคาดเดารายละเอียดออเดอร์เอง`;
 
-function appendOrderToolInstructions(systemInstructions) {
-  if (!systemInstructions) return ORDER_TOOL_INSTRUCTIONS;
-  return `${systemInstructions}\n\n${ORDER_TOOL_INSTRUCTIONS}`.trim();
+async function appendOrderToolInstructions(systemInstructions) {
+  const requiredFields = await getOrderRequiredFieldsSetting();
+  const requirementText = formatOrderRequirementText(requiredFields);
+  const toolInstructions = `${ORDER_TOOL_INSTRUCTIONS}\n- ${requirementText}`;
+  if (!systemInstructions) return toolInstructions.trim();
+  return `${systemInstructions}\n\n${toolInstructions}`.trim();
 }
 
 async function fetchBotAiConfig(botId, platform) {
@@ -9256,7 +9417,7 @@ async function getAssistantResponseTextOnly(
     );
 
     const toolSystemInstructions =
-      appendOrderToolInstructions(systemInstructions);
+      await appendOrderToolInstructions(systemInstructions);
     let messages = [
       { role: "system", content: toolSystemInstructions },
       ...history,
@@ -9664,7 +9825,7 @@ async function getAssistantResponseMultimodal(
     }
 
     const toolSystemInstructions =
-      appendOrderToolInstructions(systemInstructions);
+      await appendOrderToolInstructions(systemInstructions);
     const messages = [
       { role: "system", content: toolSystemInstructions },
       ...history,
@@ -9989,6 +10150,10 @@ async function ensureSettings() {
     { key: "orderAnalysisEnabled", value: true },
     { key: "orderCutoffSchedulingEnabled", value: true },
     { key: "orderExtractionMode", value: ORDER_EXTRACTION_MODES.SCHEDULED },
+    {
+      key: "orderRequiredFields",
+      value: { ...ORDER_REQUIRED_FIELDS_DEFAULT },
+    },
     {
       key: "audioAttachmentResponse",
       value: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
@@ -18989,16 +19154,46 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("orders");
 
+    const existingOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+    if (!existingOrder) {
+      return res.json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
     const updateDoc = {
       updatedAt: new Date(),
     };
 
-    if (orderData) {
-      updateDoc.orderData = {
+    const hasOrderData = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "orderData",
+    );
+    if (hasOrderData) {
+      if (!orderData || typeof orderData !== "object") {
+        return res.json({ success: false, error: "ข้อมูลออเดอร์ไม่ถูกต้อง" });
+      }
+      const mergedOrderData = {
+        ...(existingOrder.orderData || {}),
         ...orderData,
-        shippingCost: normalizeShippingCostValue(orderData.shippingCost),
-        customerName: normalizeCustomerName(orderData.customerName),
       };
+      const normalizedOrderData = {
+        ...mergedOrderData,
+        shippingCost: normalizeShippingCostValue(mergedOrderData.shippingCost),
+        customerName: normalizeCustomerName(mergedOrderData.customerName),
+      };
+      const requiredFields = await getOrderRequiredFieldsSetting();
+      const requirementCheck = validateOrderRequirements(
+        normalizedOrderData,
+        requiredFields,
+      );
+      if (!requirementCheck.ok) {
+        return res.json({
+          success: false,
+          error: `ข้อมูลออเดอร์ยังไม่ครบ: ${formatMissingOrderFields(
+            requirementCheck.missing,
+          )}`,
+        });
+      }
+      updateDoc.orderData = normalizedOrderData;
     }
     if (status) {
       updateDoc.status = status;
@@ -20221,10 +20416,14 @@ app.get("/api/settings", async (req, res) => {
       enableFollowUpAnalysis: true,
       followUpShowInChat: true,
       followUpShowInDashboard: true,
+      orderRequiredFields: ORDER_REQUIRED_FIELDS_DEFAULT,
     };
 
     // Merge with existing settings
     const finalSettings = { ...defaultSettings, ...settingsObj };
+    finalSettings.orderRequiredFields = normalizeOrderRequiredFields(
+      finalSettings.orderRequiredFields,
+    );
 
     res.json(finalSettings);
   } catch (err) {
@@ -20426,6 +20625,7 @@ app.post("/api/settings/system", async (req, res) => {
       showDebugInfo,
       systemMode,
       aiHistoryLimit,
+      orderRequiredFields,
     } = req.body;
 
     const client = await connectDB();
@@ -20454,6 +20654,23 @@ app.post("/api/settings/system", async (req, res) => {
         success: false,
         error: "จำนวนประวัติแชทต้องอยู่ระหว่าง 1-100 ข้อความ",
       });
+    }
+
+    const hasOrderRequiredFields = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "orderRequiredFields",
+    );
+    let normalizedOrderRequiredFields = null;
+    if (hasOrderRequiredFields) {
+      if (!orderRequiredFields || typeof orderRequiredFields !== "object") {
+        return res.status(400).json({
+          success: false,
+          error: "เงื่อนไขขั้นต่ำของออเดอร์ไม่ถูกต้อง",
+        });
+      }
+      normalizedOrderRequiredFields = normalizeOrderRequiredFields(
+        orderRequiredFields,
+      );
     }
 
     // Save settings
@@ -20512,6 +20729,14 @@ app.post("/api/settings/system", async (req, res) => {
       { $set: { value: parsedHistoryLimit } },
       { upsert: true },
     );
+
+    if (normalizedOrderRequiredFields) {
+      await coll.updateOne(
+        { key: "orderRequiredFields" },
+        { $set: { value: normalizedOrderRequiredFields } },
+        { upsert: true },
+      );
+    }
 
     res.json({ success: true, message: "บันทึกการตั้งค่าระบบเรียบร้อยแล้ว" });
   } catch (err) {

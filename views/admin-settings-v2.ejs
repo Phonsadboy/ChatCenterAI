@@ -613,6 +613,77 @@
                                                 </select>
                                             </div>
                                         </div>
+                                        <div class="col-12">
+                                            <div class="form-group-v2 border p-3 rounded">
+                                                <div>
+                                                    <label class="form-label-v2 mb-1">เงื่อนไขขั้นต่ำของออเดอร์
+                                                        (Order Tool)</label>
+                                                    <div class="form-text-v2 mt-0">กำหนดข้อมูลขั้นต่ำที่ต้องมีเพื่อให้ระบบยอมรับออเดอร์จาก AI</div>
+                                                </div>
+                                                <div class="row g-3 mt-2">
+                                                    <div class="col-md-6">
+                                                        <div class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded bg-light">
+                                                            <div>
+                                                                <label class="form-label-v2 mb-0" for="orderRequiredItems">รายการสินค้า</label>
+                                                                <div class="form-text-v2 mt-0">บังคับเสมอ</div>
+                                                            </div>
+                                                            <div class="toggle-switch">
+                                                                <input type="checkbox" id="orderRequiredItems" checked disabled>
+                                                                <span class="toggle-slider"></span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                            <div>
+                                                                <label class="form-label-v2 mb-0" for="orderRequiredCustomerName">ชื่อผู้สั่ง/ผู้รับ</label>
+                                                                <div class="form-text-v2 mt-0">บังคับให้มีชื่อก่อนสร้างออเดอร์</div>
+                                                            </div>
+                                                            <div class="toggle-switch">
+                                                                <input type="checkbox" id="orderRequiredCustomerName">
+                                                                <span class="toggle-slider"></span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                            <div>
+                                                                <label class="form-label-v2 mb-0" for="orderRequiredPhone">เบอร์โทรศัพท์</label>
+                                                                <div class="form-text-v2 mt-0">บังคับให้มีเบอร์โทรก่อนสร้างออเดอร์</div>
+                                                            </div>
+                                                            <div class="toggle-switch">
+                                                                <input type="checkbox" id="orderRequiredPhone">
+                                                                <span class="toggle-slider"></span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                            <div>
+                                                                <label class="form-label-v2 mb-0" for="orderRequiredAddress">ที่อยู่จัดส่ง</label>
+                                                                <div class="form-text-v2 mt-0">บังคับให้มีที่อยู่ก่อนสร้างออเดอร์</div>
+                                                            </div>
+                                                            <div class="toggle-switch">
+                                                                <input type="checkbox" id="orderRequiredAddress">
+                                                                <span class="toggle-slider"></span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="form-group-v2 d-flex align-items-center justify-content-between border p-3 rounded">
+                                                            <div>
+                                                                <label class="form-label-v2 mb-0" for="orderRequiredPaymentMethod">วิธีชำระเงิน</label>
+                                                                <div class="form-text-v2 mt-0">บังคับให้ระบุวิธีชำระเงินก่อนสร้างออเดอร์</div>
+                                                            </div>
+                                                            <div class="toggle-switch">
+                                                                <input type="checkbox" id="orderRequiredPaymentMethod">
+                                                                <span class="toggle-slider"></span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                         <div class="col-12 text-end">
                                             <button type="submit" class="btn-v2 btn-v2-primary">
                                                 <i class="fas fa-save"></i> บันทึกการเปลี่ยนแปลง

@@ -638,6 +638,12 @@ async function loadSystemSettings() {
         setCheckboxValue('enableAdminNotifications', settings.enableAdminNotifications ?? true);
         setCheckboxValue('showDebugInfo', settings.showDebugInfo ?? false);
         setInputValue('systemMode', settings.systemMode || 'production');
+        const requiredFields = settings.orderRequiredFields || {};
+        setCheckboxValue('orderRequiredItems', true);
+        setCheckboxValue('orderRequiredCustomerName', requiredFields.customerName ?? false);
+        setCheckboxValue('orderRequiredPhone', requiredFields.phone ?? false);
+        setCheckboxValue('orderRequiredAddress', requiredFields.address ?? false);
+        setCheckboxValue('orderRequiredPaymentMethod', requiredFields.paymentMethod ?? false);
 
     } catch (error) {
         console.error('Error loading system settings:', error);
@@ -655,7 +661,14 @@ async function saveSystemSettings(e) {
         aiHistoryLimit: parseInt(getInputValue('aiHistoryLimit'), 10),
         enableAdminNotifications: getCheckboxValue('enableAdminNotifications'),
         showDebugInfo: getCheckboxValue('showDebugInfo'),
-        systemMode: getInputValue('systemMode')
+        systemMode: getInputValue('systemMode'),
+        orderRequiredFields: {
+            items: true,
+            customerName: getCheckboxValue('orderRequiredCustomerName'),
+            phone: getCheckboxValue('orderRequiredPhone'),
+            address: getCheckboxValue('orderRequiredAddress'),
+            paymentMethod: getCheckboxValue('orderRequiredPaymentMethod')
+        }
     };
 
     if (Number.isNaN(data.aiHistoryLimit) || data.aiHistoryLimit < 1 || data.aiHistoryLimit > 100) {
