@@ -29,6 +29,7 @@ class ChatManager {
 
         // Orders
         this.currentOrders = [];
+        this.debugPanelVisible = false;
 
         // Initialize
         this.init();
@@ -253,6 +254,9 @@ class ChatManager {
         const btnRefreshProfile = document.getElementById('btnRefreshProfile');
         const btnClearChat = document.getElementById('btnClearChat');
         const btnToggleOrders = document.getElementById('btnToggleOrders');
+        const btnToggleDebug = document.getElementById('btnToggleDebug');
+        const debugCloseBtn = document.getElementById('chatDebugCloseBtn');
+        const debugCopyBtn = document.getElementById('chatDebugCopyBtn');
         const orderSidebarOverlay = document.getElementById('orderSidebarOverlay');
         const chatHeaderMoreMenu = document.getElementById('chatHeaderMoreMenu');
 
@@ -302,6 +306,24 @@ class ChatManager {
             });
         }
 
+        if (btnToggleDebug) {
+            btnToggleDebug.addEventListener('click', () => {
+                this.toggleDebugPanel();
+            });
+        }
+
+        if (debugCloseBtn) {
+            debugCloseBtn.addEventListener('click', () => {
+                this.toggleDebugPanel(false);
+            });
+        }
+
+        if (debugCopyBtn) {
+            debugCopyBtn.addEventListener('click', () => {
+                this.copyDebugPanel();
+            });
+        }
+
         if (btnToggleOrders) {
             btnToggleOrders.addEventListener('click', () => {
                 this.toggleOrderSidebarMobile(true);
@@ -336,6 +358,9 @@ class ChatManager {
                         break;
                     case 'refreshProfile':
                         this.refreshCurrentUserProfile();
+                        break;
+                    case 'toggleDebug':
+                        this.toggleDebugPanel();
                         break;
                     case 'clearChat':
                         this.clearChat();
@@ -539,21 +564,151 @@ class ChatManager {
 
 	        // Order actions (delegation)
 	        const orderContent = document.getElementById('orderContent');
-	        if (orderContent) {
-	            orderContent.addEventListener('click', (e) => {
-	                const btn = e.target.closest('button[data-action]');
-	                if (!btn || !orderContent.contains(btn)) return;
-	                const action = btn.dataset.action;
+        if (orderContent) {
+            orderContent.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-action]');
+                if (!btn || !orderContent.contains(btn)) return;
+                const action = btn.dataset.action;
 	                const orderId = btn.dataset.orderId;
 	                if (!orderId) return;
 	                if (action === 'edit-order') {
 	                    this.editOrder(orderId);
 	                } else if (action === 'delete-order') {
 	                    this.deleteOrder(orderId);
-	                }
-	            });
-	        }
-	    }
+                }
+            });
+        }
+    }
+
+    // ========================================
+    // Debug Panel
+    // ========================================
+
+    toggleDebugPanel(forceState = null) {
+        const panel = document.getElementById('chatDebugPanel');
+        if (!panel) return;
+
+        if (typeof forceState === 'boolean') {
+            this.debugPanelVisible = forceState;
+        } else {
+            this.debugPanelVisible = !this.debugPanelVisible;
+        }
+
+        panel.hidden = !this.debugPanelVisible;
+
+        const toggleBtn = document.getElementById('btnToggleDebug');
+        if (toggleBtn) {
+            toggleBtn.classList.toggle('is-active', this.debugPanelVisible);
+            toggleBtn.setAttribute('aria-pressed', this.debugPanelVisible ? 'true' : 'false');
+            toggleBtn.title = this.debugPanelVisible ? 'ซ่อน Debug' : 'Debug';
+        }
+
+        if (this.debugPanelVisible) {
+            this.updateDebugPanel();
+        }
+    }
+
+    updateDebugPanel() {
+        if (!this.debugPanelVisible) return;
+
+        const body = document.getElementById('chatDebugBody');
+        if (!body) return;
+
+        const snapshot = this.buildDebugSnapshot();
+        if (!snapshot) {
+            body.textContent = 'เลือกผู้ใช้เพื่อดูข้อมูล debug';
+            return;
+        }
+
+        body.textContent = JSON.stringify(snapshot, null, 2);
+    }
+
+    buildDebugSnapshot() {
+        if (!this.currentUserId) return null;
+
+        const user =
+            this.allUsers.find(u => u.userId === this.currentUserId) ||
+            this.users.find(u => u.userId === this.currentUserId) ||
+            null;
+        const orders = Array.isArray(this.currentOrders) ? this.currentOrders : [];
+        const latestOrder = orders.length > 0 ? orders[0] : null;
+        const messages = this.chatHistory[this.currentUserId] || [];
+        const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+        const lastMessagePreviewRaw = lastMessage
+            ? this.extractDisplayText(lastMessage) || lastMessage.content || ''
+            : '';
+        const lastMessagePreview = typeof lastMessagePreviewRaw === 'string'
+            ? lastMessagePreviewRaw.slice(0, 160)
+            : '';
+
+        return {
+            generatedAt: new Date().toISOString(),
+            socketConnected: !!this.socket?.connected,
+            currentUserId: this.currentUserId,
+            user: user ? {
+                displayName: user.displayName || null,
+                platform: user.platform || null,
+                botId: user.botId || null,
+                channelLabel: user.channelLabel || null,
+                aiEnabled: !!user.aiEnabled,
+                hasFollowUp: !!user.hasFollowUp,
+                followUpReason: user.followUpReason || null,
+                hasPurchased: !!user.hasPurchased,
+                hasOrders: !!user.hasOrders,
+                orderCount: user.orderCount || 0,
+                unreadCount: user.unreadCount || 0,
+                followUp: user.followUp ? {
+                    analysisEnabled: user.followUp.analysisEnabled !== false,
+                    showInChat: user.followUp.showInChat !== false,
+                    isFollowUp: !!user.followUp.isFollowUp,
+                    nextScheduledAt: user.followUp.nextScheduledAt || null
+                } : null
+            } : null,
+            counts: {
+                allUsers: this.allUsers.length,
+                filteredUsers: this.users.length,
+                messages: messages.length,
+                orders: orders.length
+            },
+            filters: {
+                status: this.currentFilters.status,
+                tags: [...this.currentFilters.tags],
+                search: this.currentFilters.search
+            },
+            latestOrder: latestOrder ? {
+                id: latestOrder._id || null,
+                status: latestOrder.status || null,
+                totalAmount: latestOrder.orderData?.totalAmount || null,
+                extractedAt: latestOrder.extractedAt || null
+            } : null,
+            lastMessagePreview: lastMessagePreview || null
+        };
+    }
+
+    async copyDebugPanel() {
+        const body = document.getElementById('chatDebugBody');
+        if (!body) return;
+        const text = body.textContent || '';
+        if (!text) return;
+
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const range = document.createRange();
+                range.selectNodeContents(body);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                document.execCommand('copy');
+                selection.removeAllRanges();
+            }
+            this.showToast('คัดลอกข้อมูล debug แล้ว', 'success');
+        } catch (error) {
+            console.error('Copy debug failed:', error);
+            this.showToast('คัดลอกข้อมูลไม่สำเร็จ', 'error');
+        }
+    }
 
     // ========================================
     // User Management
@@ -628,6 +783,7 @@ class ChatManager {
         this.users = filtered;
         this.renderUserList();
         this.updateFilterBadge();
+        this.updateDebugPanel();
     }
 
     renderUserList() {
@@ -778,6 +934,7 @@ class ChatManager {
 
         // Load orders
         await this.loadOrders();
+        this.updateDebugPanel();
 
         // Mark as read
         this.markAsRead(userId);
@@ -1794,6 +1951,7 @@ class ChatManager {
 
         // Update user list
         this.loadUsers();
+        this.updateDebugPanel();
     }
 
     handleFollowUpTagged(data) {
@@ -1809,6 +1967,7 @@ class ChatManager {
                 user.followUp = {};
             }
             this.applyFilters();
+            this.updateDebugPanel();
         }
     }
 
@@ -2099,10 +2258,12 @@ class ChatManager {
                     </p>
                 </div>
             `;
+            this.updateDebugPanel();
             return;
         }
 
         orderContent.innerHTML = this.currentOrders.map(order => this.renderOrderCard(order)).join('');
+        this.updateDebugPanel();
     }
 
     renderOrderCard(order) {

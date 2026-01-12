@@ -1310,6 +1310,11 @@
     color: var(--chat-text-primary);
 }
 
+.btn-header-action.is-active {
+    background: rgba(74, 111, 165, 0.12);
+    color: var(--chat-primary);
+}
+
 .btn-header-action.btn-danger:hover {
     background: var(--chat-danger);
     color: white;
@@ -1330,6 +1335,70 @@
     background: var(--chat-bg-app);
     min-height: 0;
     scrollbar-gutter: stable;
+}
+
+/* ========================================
+   Debug Panel (Hidden by default)
+   ======================================== */
+
+.chat-debug-panel {
+    border-top: 1px solid var(--chat-border-color);
+    background: var(--chat-bg-sidebar);
+    padding: 0.6rem 0.85rem 0.75rem;
+    flex-shrink: 0;
+}
+
+.chat-debug-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    color: var(--chat-text-secondary);
+}
+
+.chat-debug-title {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--chat-text-primary);
+}
+
+.chat-debug-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.chat-debug-btn {
+    border: 1px solid var(--chat-border-color);
+    background: var(--chat-bg-app);
+    color: var(--chat-text-secondary);
+    border-radius: 6px;
+    padding: 0.2rem 0.45rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: var(--chat-transition);
+}
+
+.chat-debug-btn:hover {
+    color: var(--chat-primary);
+    border-color: rgba(74, 111, 165, 0.4);
+}
+
+.chat-debug-body {
+    background: var(--chat-bg-app);
+    border: 1px solid var(--chat-border-color);
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    max-height: 180px;
+    overflow: auto;
+    white-space: pre-wrap;
+    color: var(--chat-text-secondary);
+    margin: 0;
 }
 
 @supports not (scrollbar-gutter: stable) {

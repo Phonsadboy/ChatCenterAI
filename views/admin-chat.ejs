@@ -155,6 +155,10 @@
                                             aria-label="อัปเดตข้อมูลผู้ใช้">
                                             <i class="fas fa-sync"></i>
                                         </button>
+                                        <button class="btn-header-action" id="btnToggleDebug" title="Debug"
+                                            aria-label="สลับมุมมอง Debug">
+                                            <i class="fas fa-bug"></i>
+                                        </button>
                                         <div class="header-divider" aria-hidden="true"></div>
                                         <button class="btn-header-action btn-danger" id="btnClearChat" title="ล้างแชท"
                                             aria-label="ล้างแชท">
@@ -208,6 +212,12 @@
                                                     </button>
                                                 </li>
                                                 <li>
+                                                    <button class="dropdown-item" type="button"
+                                                        data-chat-action="toggleDebug">
+                                                        <i class="fas fa-bug me-2"></i>Debug
+                                                    </button>
+                                                </li>
+                                                <li>
                                                     <hr class="dropdown-divider">
                                                 </li>
                                                 <li>
@@ -235,6 +245,27 @@
                                             เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที</div>
                                     </div>
                                 </div>
+                            </div>
+
+                            <!-- Debug Panel (Hidden by default) -->
+                            <div class="chat-debug-panel" id="chatDebugPanel" hidden>
+                                <div class="chat-debug-header">
+                                    <div class="chat-debug-title">
+                                        <i class="fas fa-bug"></i>
+                                        Debug
+                                    </div>
+                                    <div class="chat-debug-actions">
+                                        <button type="button" class="chat-debug-btn" id="chatDebugCopyBtn"
+                                            title="คัดลอก" aria-label="คัดลอกข้อมูล Debug">
+                                            <i class="fas fa-copy"></i>
+                                        </button>
+                                        <button type="button" class="chat-debug-btn" id="chatDebugCloseBtn"
+                                            title="ซ่อน" aria-label="ซ่อน Debug">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <pre class="chat-debug-body" id="chatDebugBody">เลือกผู้ใช้เพื่อดูข้อมูล debug</pre>
                             </div>
 
                             <!-- Message Input Area (Fixed at bottom) -->
