@@ -2236,10 +2236,17 @@ async function scheduleFollowUpForUser(userId, options = {}) {
 
     // ตรวจสอบ orders collection โดยตรง เพื่อป้องกัน race condition
     // กรณีที่ follow_up_status ยังไม่ถูก update แต่มีออเดอร์แล้วจริง
-    const existingOrders = await getUserOrders(userId);
-    if (existingOrders && existingOrders.length > 0) {
+    const latestOrder = await getLatestOrderForUser(userId);
+    if (latestOrder) {
+      const reasonCandidate =
+        typeof latestOrder.notes === "string" ? latestOrder.notes.trim() : "";
+      const followUpReason = reasonCandidate || "ลูกค้ามีออเดอร์แล้ว";
+      const followUpUpdatedAt = latestOrder.extractedAt
+        ? new Date(latestOrder.extractedAt)
+        : new Date();
+
       console.log(
-        `[FollowUp] ข้าม scheduleFollowUp สำหรับ ${userId} - พบออเดอร์ ${existingOrders.length} รายการ`,
+        `[FollowUp] ข้าม scheduleFollowUp สำหรับ ${userId} - พบออเดอร์แล้ว`,
       );
 
       // ยกเลิกงานติดตามที่มีอยู่ทั้งหมดของผู้ใช้นี้
@@ -2253,8 +2260,8 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       // อัปเดต follow_up_status ให้ตรงกับความเป็นจริง
       await updateFollowUpStatus(userId, {
         hasFollowUp: true,
-        followUpReason: "ลูกค้ามีออเดอร์แล้ว",
-        followUpUpdatedAt: new Date(),
+        followUpReason,
+        followUpUpdatedAt,
         platform: normalizedPlatform,
         botId: normalizedBotId,
       });
@@ -2586,36 +2593,7 @@ async function handleFollowUpTask(task, db) {
     return;
   }
 
-  // ตรวจสอบออเดอร์ก่อนส่งข้อความติดตาม
-  // ป้องกันกรณีลูกค้าสร้างออเดอร์หลังจาก task ถูก schedule
-  const existingOrders = await getUserOrders(task.userId);
-  if (existingOrders && existingOrders.length > 0) {
-    console.log(
-      `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - พบออเดอร์ ${existingOrders.length} รายการ`,
-    );
-    await coll.updateOne(
-      { _id: task._id },
-      {
-        $set: {
-          canceled: true,
-          cancelReason: "order_exists",
-          canceledAt: now,
-          updatedAt: now,
-        },
-      },
-    );
-    emitFollowUpScheduleUpdate({
-      userId: task.userId,
-      platform: task.platform,
-      botId: task.botId,
-      contextKey: derivedContextKey,
-      status: "canceled",
-      reason: "order_exists",
-    });
-    return;
-  }
-
-  // ตรวจสอบ follow_up_status ด้วย (กรณีถูก mark ว่าซื้อแล้วจากที่อื่น)
+  // ตรวจสอบ follow_up_status ก่อน (กรณีถูก mark ว่าซื้อแล้วจากที่อื่น)
   const followUpStatus = await getFollowUpStatus(task.userId);
   if (followUpStatus?.hasFollowUp) {
     console.log(
@@ -2639,6 +2617,49 @@ async function handleFollowUpTask(task, db) {
       contextKey: derivedContextKey,
       status: "canceled",
       reason: "already_purchased",
+    });
+    return;
+  }
+
+  // ตรวจสอบออเดอร์ก่อนส่งข้อความติดตาม
+  // ป้องกันกรณีลูกค้าสร้างออเดอร์หลังจาก task ถูก schedule
+  const latestOrder = await getLatestOrderForUser(task.userId);
+  if (latestOrder) {
+    const reasonCandidate =
+      typeof latestOrder.notes === "string" ? latestOrder.notes.trim() : "";
+    const followUpReason = reasonCandidate || "ลูกค้ามีออเดอร์แล้ว";
+    const followUpUpdatedAt = latestOrder.extractedAt
+      ? new Date(latestOrder.extractedAt)
+      : now;
+
+    console.log(
+      `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - พบออเดอร์แล้ว`,
+    );
+    await coll.updateOne(
+      { _id: task._id },
+      {
+        $set: {
+          canceled: true,
+          cancelReason: "order_exists",
+          canceledAt: now,
+          updatedAt: now,
+        },
+      },
+    );
+    await updateFollowUpStatus(task.userId, {
+      hasFollowUp: true,
+      followUpReason,
+      followUpUpdatedAt,
+      platform: task.platform || "line",
+      botId: normalizeFollowUpBotId(task.botId),
+    });
+    emitFollowUpScheduleUpdate({
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+      status: "canceled",
+      reason: "order_exists",
     });
     return;
   }
@@ -4992,6 +5013,18 @@ function triggerOrderNotification(orderId) {
       "[Notifications] ไม่สามารถ trigger การแจ้งเตือนได้:",
       notifyErr?.message || notifyErr,
     );
+  }
+}
+
+async function getLatestOrderForUser(userId) {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+    return await coll.findOne({ userId }, { sort: { extractedAt: -1 } });
+  } catch (error) {
+    console.error("[Order] ดึงออเดอร์ล่าสุดไม่สำเร็จ:", error.message);
+    return null;
   }
 }
 
