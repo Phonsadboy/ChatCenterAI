@@ -2228,9 +2228,37 @@ async function scheduleFollowUpForUser(userId, options = {}) {
     const roundsConfig = normalizeFollowUpRounds(config.rounds || []);
     if (roundsConfig.length === 0) return null;
 
-    // ข้ามหากลูกค้าซื้อแล้ว
+    // ข้ามหากลูกค้าซื้อแล้ว - ตรวจสอบทั้ง follow_up_status และ orders collection
     const status = await getFollowUpStatus(userId);
     if (status?.hasFollowUp) {
+      return null;
+    }
+
+    // ตรวจสอบ orders collection โดยตรง เพื่อป้องกัน race condition
+    // กรณีที่ follow_up_status ยังไม่ถูก update แต่มีออเดอร์แล้วจริง
+    const existingOrders = await getUserOrders(userId);
+    if (existingOrders && existingOrders.length > 0) {
+      console.log(
+        `[FollowUp] ข้าม scheduleFollowUp สำหรับ ${userId} - พบออเดอร์ ${existingOrders.length} รายการ`,
+      );
+
+      // ยกเลิกงานติดตามที่มีอยู่ทั้งหมดของผู้ใช้นี้
+      await cancelFollowUpTasksForUser(
+        userId,
+        normalizedPlatform,
+        normalizedBotId,
+        { reason: "order_exists" },
+      );
+
+      // อัปเดต follow_up_status ให้ตรงกับความเป็นจริง
+      await updateFollowUpStatus(userId, {
+        hasFollowUp: true,
+        followUpReason: "ลูกค้ามีออเดอร์แล้ว",
+        followUpUpdatedAt: new Date(),
+        platform: normalizedPlatform,
+        botId: normalizedBotId,
+      });
+
       return null;
     }
 
@@ -2554,6 +2582,63 @@ async function handleFollowUpTask(task, db) {
       botId: task.botId,
       contextKey: derivedContextKey,
       status: "completed",
+    });
+    return;
+  }
+
+  // ตรวจสอบออเดอร์ก่อนส่งข้อความติดตาม
+  // ป้องกันกรณีลูกค้าสร้างออเดอร์หลังจาก task ถูก schedule
+  const existingOrders = await getUserOrders(task.userId);
+  if (existingOrders && existingOrders.length > 0) {
+    console.log(
+      `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - พบออเดอร์ ${existingOrders.length} รายการ`,
+    );
+    await coll.updateOne(
+      { _id: task._id },
+      {
+        $set: {
+          canceled: true,
+          cancelReason: "order_exists",
+          canceledAt: now,
+          updatedAt: now,
+        },
+      },
+    );
+    emitFollowUpScheduleUpdate({
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+      status: "canceled",
+      reason: "order_exists",
+    });
+    return;
+  }
+
+  // ตรวจสอบ follow_up_status ด้วย (กรณีถูก mark ว่าซื้อแล้วจากที่อื่น)
+  const followUpStatus = await getFollowUpStatus(task.userId);
+  if (followUpStatus?.hasFollowUp) {
+    console.log(
+      `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - ถูก mark ว่าซื้อแล้ว`,
+    );
+    await coll.updateOne(
+      { _id: task._id },
+      {
+        $set: {
+          canceled: true,
+          cancelReason: "already_purchased",
+          canceledAt: now,
+          updatedAt: now,
+        },
+      },
+    );
+    emitFollowUpScheduleUpdate({
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+      status: "canceled",
+      reason: "already_purchased",
     });
     return;
   }
@@ -23450,30 +23535,30 @@ function normalizeMessageForFrontend(message) {
       richDisplayContent = displayContent;
     }
 
-	    return {
-	      content,
-	      role: message.role || "user",
-	      timestamp,
-	      source:
-	        typeof message.source === "string" && message.source.trim()
-	          ? message.source.trim()
-	          : null,
-	      metadata:
-	        typeof message.metadata === "string" && message.metadata.trim()
-	          ? message.metadata.trim()
-	          : typeof message.metadata === "undefined"
-	            ? null
-	            : message.metadata,
-	      displayContent,
-	      richDisplayContent,
-	      contentType,
-	      platform: message.platform || "line",
-	      botId: message.botId || null,
-	      rawContent: originalContent,
-	      messageId,
-	      orderExtractionRoundId,
-	    };
-	  } catch (error) {
+    return {
+      content,
+      role: message.role || "user",
+      timestamp,
+      source:
+        typeof message.source === "string" && message.source.trim()
+          ? message.source.trim()
+          : null,
+      metadata:
+        typeof message.metadata === "string" && message.metadata.trim()
+          ? message.metadata.trim()
+          : typeof message.metadata === "undefined"
+            ? null
+            : message.metadata,
+      displayContent,
+      richDisplayContent,
+      contentType,
+      platform: message.platform || "line",
+      botId: message.botId || null,
+      rawContent: originalContent,
+      messageId,
+      orderExtractionRoundId,
+    };
+  } catch (error) {
     console.error("[Normalize] ข้อผิดพลาดในการแปลงข้อความ:", error);
     return {
       content: "ข้อความไม่ถูกต้อง",
@@ -24230,17 +24315,17 @@ async function getNormalizedChatUsers(options = {}) {
     const [lineBotDocs, facebookBotDocs] = await Promise.all([
       lineBotObjectIds.length > 0
         ? db
-            .collection("line_bots")
-            .find({ _id: { $in: lineBotObjectIds } })
-            .project({ _id: 1, name: 1, displayName: 1, botName: 1 })
-            .toArray()
+          .collection("line_bots")
+          .find({ _id: { $in: lineBotObjectIds } })
+          .project({ _id: 1, name: 1, displayName: 1, botName: 1 })
+          .toArray()
         : [],
       facebookBotObjectIds.length > 0
         ? db
-            .collection("facebook_bots")
-            .find({ _id: { $in: facebookBotObjectIds } })
-            .project({ _id: 1, name: 1, pageName: 1, pageId: 1 })
-            .toArray()
+          .collection("facebook_bots")
+          .find({ _id: { $in: facebookBotObjectIds } })
+          .project({ _id: 1, name: 1, pageName: 1, pageId: 1 })
+          .toArray()
         : [],
     ]);
 
@@ -24254,9 +24339,9 @@ async function getNormalizedChatUsers(options = {}) {
       botNameMap.line.set(
         id,
         bot.name ||
-          bot.displayName ||
-          bot.botName ||
-          `LINE Bot (${id.slice(-4)})`,
+        bot.displayName ||
+        bot.botName ||
+        `LINE Bot (${id.slice(-4)})`,
       );
     });
     facebookBotDocs.forEach((bot) => {
@@ -24363,22 +24448,22 @@ async function getNormalizedChatUsers(options = {}) {
     const followUpTasks =
       userIds.length > 0
         ? await followUpTaskColl
-            .find({
-              userId: { $in: userIds },
-              canceled: { $ne: true },
-              completed: { $ne: true },
-              nextScheduledAt: { $ne: null },
-            })
-            .project({
-              userId: 1,
-              platform: 1,
-              botId: 1,
-              nextScheduledAt: 1,
-              nextRoundIndex: 1,
-              createdAt: 1,
-              updatedAt: 1,
-            })
-            .toArray()
+          .find({
+            userId: { $in: userIds },
+            canceled: { $ne: true },
+            completed: { $ne: true },
+            nextScheduledAt: { $ne: null },
+          })
+          .project({
+            userId: 1,
+            platform: 1,
+            botId: 1,
+            nextScheduledAt: 1,
+            nextRoundIndex: 1,
+            createdAt: 1,
+            updatedAt: 1,
+          })
+          .toArray()
         : [];
 
     const followUpTaskMap = new Map();
@@ -24509,8 +24594,8 @@ async function getNormalizedChatUsers(options = {}) {
             : "";
           const followUpUpdatedAt = hasFollowUp
             ? followStatus.followUpUpdatedAt ||
-              followStatus.lastAnalyzedAt ||
-              null
+            followStatus.lastAnalyzedAt ||
+            null
             : null;
 
           // ดึงแท็กของผู้ใช้
