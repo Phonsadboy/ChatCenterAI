@@ -1138,10 +1138,16 @@ async function getAIHistory(userId) {
     }
   };
 
-  const sanitized = items.map((ch) => ({
-    role: ch.role,
-    content: sanitize(ch.role, ch.content),
-  }));
+  const sanitized = items.map((ch) => {
+    const msg = {
+      role: ch.role,
+      content: sanitize(ch.role, ch.content),
+    };
+    if (ch.tool_calls) msg.tool_calls = ch.tool_calls;
+    if (ch.tool_call_id) msg.tool_call_id = ch.tool_call_id;
+    if (ch.name) msg.name = ch.name;
+    return msg;
+  });
 
   // ลบข้อความว่างที่ไม่มีประโยชน์ต่อบริบท
   return sanitized.filter(
@@ -1461,7 +1467,68 @@ async function saveChatHistory(
   }
 }
 
+/**
+ * บันทึกการโต้ตอบของ Tool (Tool Call + Tool Result) ลงในประวัติแชท
+ * ฟังก์ชันนี้ช่วยให้ AI จำได้ว่าทำอะไรไปแล้ว (Memory Persistence)
+ */
+async function saveToolInteraction(
+  userId,
+  toolCallMsg,
+  toolResultMsg,
+  platform = "line",
+  botId = null,
+) {
+  // ตรวจสอบการตั้งค่าการบันทึกประวัติ
+  const enableChatHistory = await getSettingValue("enableChatHistory", true);
+  if (!enableChatHistory) return;
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("chat_history");
+  const timestamp = new Date();
+
+  // 1. บันทึก Assistant Message ที่มีการเรียก Tool (tool_calls)
+  // เพื่อให้ AI รู้ว่ามันเป็นคนเรียกฟังก์ชันนี้เอง
+  let assistantRes = { insertedId: null };
+  if (toolCallMsg) {
+    const assistantDoc = {
+      senderId: "bot",
+      role: "assistant", // เก็บเป็น assistant เพื่อให้สอดคล้องกับ Role ของ OpenAI
+      content: toolCallMsg.content || "", // ปกติจะเป็น null หรือ empty string สำหรับ tool call
+      tool_calls: toolCallMsg.tool_calls, // เก็บ array ของการเรียก tool (สำคัญมาก)
+      timestamp: new Date(timestamp.getTime() - 100), // ให้เวลาน้อยกว่า result นิดหน่อย เพื่อเรียงลำดับถูก
+      platform,
+      botId,
+      source: "bot",
+      isToolCall: true, // flag ช่วยในการกรองถ้าต้องการ
+    };
+
+    assistantRes = await coll.insertOne(assistantDoc);
+  }
+
+  // 2. บันทึก Tool Message (ผลลัพธ์จาก Tool)
+  // เพื่อให้ AI เห็นผลลัพธ์ว่าทำสำเร็จหรือไม่ ได้ค่าอะไรกลับมา
+  // นี่คือส่วนที่ AI จะเห็น Order ID ที่สร้างไป
+  const toolDoc = {
+    senderId: "system",
+    role: "tool", // Role เป็น tool ตามมาตรฐาน OpenAI
+    content: toolResultMsg.content, // ผลลัพธ์ JSON string
+    tool_call_id: toolResultMsg.tool_call_id, // link กับ call ข้างบน
+    name: toolResultMsg.name,
+    timestamp: timestamp,
+    platform,
+    botId,
+    source: "system",
+    isToolResult: true,
+  };
+
+  const toolRes = await coll.insertOne(toolDoc);
+
+  return { assistantId: assistantRes.insertedId, toolId: toolRes.insertedId };
+}
+
 async function getUserStatus(userId) {
+
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection("active_user_status");
@@ -2283,6 +2350,23 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       typeof preview === "string" ? preview : buildFollowUpPreview(preview);
 
     if (existingTask) {
+      // ⚠️ สำคัญ: ห้าม reactivate task ที่ถูก cancel เพราะลูกค้าซื้อแล้ว
+      // ป้องกันการส่ง follow-up ไปหาลูกค้าที่ซื้อไปแล้ว
+      const orderRelatedCancelReasons = [
+        "order_exists",
+        "order_detected",
+        "already_purchased",
+      ];
+      if (
+        existingTask.canceled &&
+        orderRelatedCancelReasons.includes(existingTask.cancelReason)
+      ) {
+        console.log(
+          `[FollowUp] ข้าม reactivate task สำหรับ ${userId} - task ถูก cancel เพราะ "${existingTask.cancelReason}"`,
+        );
+        return null;
+      }
+
       const shouldResetProgress = !!(existingTask.completed || existingTask.canceled);
       const roundsFromDb = Array.isArray(existingTask.rounds)
         ? existingTask.rounds
@@ -3150,6 +3234,18 @@ async function maybeAnalyzeFollowUp(
     const hasOrders = !!latestOrder;
 
     if (!hasOrders) {
+      // ⚠️ สำคัญ: ถ้า status.hasFollowUp เป็น true อยู่แล้ว (ลูกค้าเคยซื้อ/ถูก mark แล้ว)
+      // จะไม่ reset เป็น false เพื่อป้องกัน:
+      // 1. Race condition ระหว่างการวิเคราะห์หลายข้อความพร้อมกัน
+      // 2. การส่ง follow-up ไปหาลูกค้าที่ซื้อแล้วโดยไม่ตั้งใจ
+      // 3. กรณี order ถูกลบ แต่ยังไม่ต้องการให้ระบบส่ง follow-up อีก
+      if (status?.hasFollowUp === true) {
+        console.log(
+          `[FollowUp] ข้าม reset hasFollowUp สำหรับ ${userId} - เคยถูก mark ว่าซื้อแล้ว`,
+        );
+        return;
+      }
+
       const previousUpdatedAt = status?.followUpUpdatedAt || null;
       await updateFollowUpStatus(userId, {
         hasFollowUp: false,
@@ -3739,18 +3835,7 @@ function buildOrderDataPatch(rawData = {}) {
 // ============================ Order Buffer & Cutoff Helpers ============================
 
 const ORDER_BUFFER_COLLECTION = "order_extraction_buffers";
-const ORDER_CUTOFF_SETTINGS_COLLECTION = "order_cutoff_settings";
-const ORDER_DEFAULT_CUTOFF_TIME = "23:59";
-const ORDER_CUTOFF_TIMEZONE = BANGKOK_TZ || "Asia/Bangkok";
-const ORDER_CUTOFF_INTERVAL_MS = 60 * 1000;
 
-let orderCutoffTimer = null;
-let orderCutoffProcessing = false;
-
-const ORDER_EXTRACTION_MODES = Object.freeze({
-  SCHEDULED: "scheduled",
-  REALTIME: "realtime",
-});
 
 function normalizeAiConfig(raw = {}) {
   const allowedModes = ["responses", "chat"];
@@ -3835,388 +3920,20 @@ function parseOrderPageKey(pageKey) {
   return { platform, botId };
 }
 
-function parseCutoffTime(cutoffTime) {
-  const fallback = ORDER_DEFAULT_CUTOFF_TIME;
-  if (typeof cutoffTime !== "string") return fallback;
-  const match = cutoffTime.trim().match(/^([0-1]?\d|2[0-3]):([0-5]\d)$/);
-  if (!match) return fallback;
-  const hours = match[1].padStart(2, "0");
-  const minutes = match[2].padStart(2, "0");
-  return `${hours}:${minutes}`;
-}
 
-function getCutoffMomentForDay(cutoffTime, baseMoment = null) {
-  const safeCutoff = parseCutoffTime(cutoffTime);
-  const [hoursStr, minutesStr] = safeCutoff.split(":");
-  const hours = parseInt(hoursStr, 10);
-  const minutes = parseInt(minutesStr, 10);
-  const momentBase = baseMoment ? baseMoment.clone() : getBangkokMoment();
-  return momentBase
-    .clone()
-    .hours(hours)
-    .minutes(minutes)
-    .seconds(0)
-    .milliseconds(0);
-}
 
 async function ensureOrderBufferIndexes() {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
     const bufferColl = db.collection(ORDER_BUFFER_COLLECTION);
-    const cutoffColl = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
 
     await bufferColl.createIndex({ pageKey: 1, userId: 1, timestamp: 1 });
     await bufferColl.createIndex({ pageKey: 1, timestamp: 1 });
     await bufferColl.createIndex({ chatMessageId: 1 }, { sparse: true });
-
-    await cutoffColl.createIndex({ pageKey: 1 }, { unique: true });
   } catch (error) {
-    console.error("[OrderCutoff] ไม่สามารถสร้างดัชนีได้:", error.message);
+    console.error("[OrderBuffer] ไม่สามารถสร้างดัชนีได้:", error.message);
   }
-}
-
-async function ensureOrderCutoffSetting(platform, botId = null) {
-  const normalizedPlatform = normalizeOrderPlatform(platform);
-  const normalizedBotId = normalizeOrderBotId(botId);
-  const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
-
-  const existing = await coll.findOne({ pageKey });
-  if (existing) {
-    return existing;
-  }
-
-  const now = new Date();
-  const doc = {
-    pageKey,
-    platform: normalizedPlatform,
-    botId: normalizedBotId,
-    cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
-    timezone: ORDER_CUTOFF_TIMEZONE,
-    lastProcessedAt: null,
-    lastCutoffDateKey: null,
-    lastRunSummary: null,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  await coll.insertOne(doc);
-  return doc;
-}
-
-async function getOrderCutoffSetting(platform, botId = null) {
-  const normalizedPlatform = normalizeOrderPlatform(platform);
-  const normalizedBotId = normalizeOrderBotId(botId);
-  const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
-  const existing = await coll.findOne({ pageKey });
-  if (existing) return existing;
-  return ensureOrderCutoffSetting(normalizedPlatform, normalizedBotId);
-}
-
-async function updateOrderCutoffSetting(platform, botId, updates = {}) {
-  const normalizedPlatform = normalizeOrderPlatform(platform);
-  const normalizedBotId = normalizeOrderBotId(botId);
-  const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
-  const safeUpdates = { ...updates, updatedAt: new Date() };
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION);
-  await coll.updateOne({ pageKey }, { $set: safeUpdates }, { upsert: true });
-  return coll.findOne({ pageKey });
-}
-
-async function listOrderCutoffPages() {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-
-  const [lineBots, facebookBots, settingsDocs, pageSettingsDocs] = await Promise.all([
-    db
-      .collection("line_bots")
-      .find({})
-      .project({ _id: 1, name: 1, displayName: 1, botName: 1 })
-      .toArray(),
-    db
-      .collection("facebook_bots")
-      .find({})
-      .project({ _id: 1, name: 1, pageName: 1 })
-      .toArray(),
-    db.collection(ORDER_CUTOFF_SETTINGS_COLLECTION).find({}).toArray(),
-    db.collection("follow_up_page_settings").find({}).toArray(),
-  ]);
-
-  const settingsMap = new Map();
-  settingsDocs.forEach((doc) => {
-    if (doc && doc.pageKey) {
-      settingsMap.set(doc.pageKey, doc);
-    }
-  });
-
-  // Build map for page settings (orderModel)
-  const pageSettingsMap = new Map();
-  pageSettingsDocs.forEach((doc) => {
-    if (doc && doc.platform) {
-      const key = `${doc.platform}:${doc.botId || "default"}`;
-      pageSettingsMap.set(key, doc);
-    }
-  });
-
-  const pages = [];
-
-  lineBots.forEach((bot) => {
-    const botId =
-      bot?._id && typeof bot._id.toString === "function"
-        ? bot._id.toString()
-        : bot._id || null;
-    const pageKey = buildOrderPageKey("line", botId);
-    const settings = settingsMap.get(pageKey) || {
-      cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
-      lastProcessedAt: null,
-      lastCutoffDateKey: null,
-      lastRunSummary: null,
-    };
-    const pageSettings = pageSettingsMap.get(`line:${botId || "default"}`) || {};
-    pages.push({
-      pageKey,
-      platform: "line",
-      botId,
-      name:
-        bot?.name ||
-        bot?.displayName ||
-        bot?.botName ||
-        `LINE Bot (${botId?.slice(-4) || "N/A"})`,
-      cutoffTime: settings.cutoffTime || ORDER_DEFAULT_CUTOFF_TIME,
-      lastProcessedAt: settings.lastProcessedAt || null,
-      lastCutoffDateKey: settings.lastCutoffDateKey || null,
-      lastRunSummary: settings.lastRunSummary || null,
-      orderModel: pageSettings.orderModel || "gpt-4.1-nano",
-      orderExtractionEnabled: pageSettings.orderExtractionEnabled !== false,
-      orderPromptInstructions: pageSettings.orderPromptInstructions || "",
-    });
-  });
-
-  facebookBots.forEach((bot) => {
-    const botId =
-      bot?._id && typeof bot._id.toString === "function"
-        ? bot._id.toString()
-        : bot._id || null;
-    const pageKey = buildOrderPageKey("facebook", botId);
-    const settings = settingsMap.get(pageKey) || {
-      cutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
-      lastProcessedAt: null,
-      lastCutoffDateKey: null,
-      lastRunSummary: null,
-    };
-    const pageSettings = pageSettingsMap.get(`facebook:${botId || "default"}`) || {};
-    pages.push({
-      pageKey,
-      platform: "facebook",
-      botId,
-      name:
-        bot?.pageName ||
-        bot?.name ||
-        `Facebook Page (${botId?.slice(-4) || "N/A"})`,
-      cutoffTime: settings.cutoffTime || ORDER_DEFAULT_CUTOFF_TIME,
-      lastProcessedAt: settings.lastProcessedAt || null,
-      lastCutoffDateKey: settings.lastCutoffDateKey || null,
-      lastRunSummary: settings.lastRunSummary || null,
-      orderModel: pageSettings.orderModel || "gpt-4.1-nano",
-      orderExtractionEnabled: pageSettings.orderExtractionEnabled !== false,
-      orderPromptInstructions: pageSettings.orderPromptInstructions || "",
-    });
-  });
-
-  // Ensure settings existสำหรับเพจใหม่เท่านั้น
-  const missingSettings = pages.filter(
-    (page) => !settingsMap.has(page.pageKey),
-  );
-  if (missingSettings.length) {
-    await Promise.all(
-      missingSettings.map((page) =>
-        ensureOrderCutoffSetting(page.platform, page.botId),
-      ),
-    );
-  }
-
-  return pages;
-}
-
-async function orderBufferMessagesForUser(pageKey, userId) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection(ORDER_BUFFER_COLLECTION);
-  return coll.find({ pageKey, userId }).sort({ timestamp: 1 }).toArray();
-}
-
-async function clearOrderBufferForUser(pageKey, userId) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection(ORDER_BUFFER_COLLECTION);
-  await coll.deleteMany({ pageKey, userId });
-}
-
-async function listOrderBufferUsersWithActivity(pageKey, since) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection(ORDER_BUFFER_COLLECTION);
-
-  const match = { pageKey };
-  if (since instanceof Date) {
-    match.timestamp = { $gt: since };
-  }
-
-  const results = await coll
-    .aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: "$userId",
-          lastMessageAt: { $max: "$timestamp" },
-        },
-      },
-      { $sort: { lastMessageAt: 1 } },
-    ])
-    .toArray();
-
-  return results.map((entry) => ({
-    userId: entry._id,
-    lastMessageAt: entry.lastMessageAt,
-  }));
-}
-
-function normalizeOrderComparisonText(value) {
-  if (typeof value !== "string") return "";
-  return value
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
-
-function normalizeOrderItemsForComparison(items) {
-  if (!Array.isArray(items)) return [];
-  const normalized = [];
-
-  for (const item of items) {
-    const productKey = normalizeOrderComparisonText(item?.product);
-    const quantity = Number(item?.quantity);
-    const price = Number(item?.price);
-
-    if (!productKey) continue;
-    if (!Number.isFinite(quantity) || quantity <= 0) continue;
-    if (!Number.isFinite(price) || price < 0) continue;
-
-    normalized.push({ productKey, quantity, price });
-  }
-
-  normalized.sort((a, b) => {
-    if (a.productKey < b.productKey) return -1;
-    if (a.productKey > b.productKey) return 1;
-    if (a.quantity !== b.quantity) return a.quantity - b.quantity;
-    return a.price - b.price;
-  });
-
-  return normalized;
-}
-
-function areOrderItemsEquivalent(existingItems, newItems) {
-  if (existingItems.length !== newItems.length) return false;
-  for (let index = 0; index < existingItems.length; index += 1) {
-    const existingItem = existingItems[index];
-    const newItem = newItems[index];
-    if (!newItem) return false;
-
-    if (existingItem.productKey !== newItem.productKey) return false;
-    if (Number(existingItem.quantity) !== Number(newItem.quantity)) return false;
-    if (Number(existingItem.price) !== Number(newItem.price)) return false;
-  }
-  return true;
-}
-
-function findDuplicateOrder(existingOrders, newOrderData, options = {}) {
-  if (!Array.isArray(existingOrders) || !newOrderData) {
-    return null;
-  }
-
-  const {
-    lookbackMs = 24 * 60 * 60 * 1000,
-    matchShippingAddress = true,
-    excludeCancelled = true,
-    now = new Date(),
-  } = options || {};
-
-  const normalizedNewItems = normalizeOrderItemsForComparison(newOrderData.items);
-  if (!normalizedNewItems.length) {
-    return null;
-  }
-
-  const newShippingKey = matchShippingAddress
-    ? normalizeOrderComparisonText(newOrderData.shippingAddress)
-    : "";
-
-  const cutoffTime =
-    typeof lookbackMs === "number" && Number.isFinite(lookbackMs)
-      ? now.getTime() - Math.max(0, lookbackMs)
-      : null;
-
-  for (const order of existingOrders) {
-    if (!order || typeof order !== "object") continue;
-
-    if (
-      excludeCancelled &&
-      ["cancelled", "canceled"].includes(String(order.status || "").toLowerCase())
-    ) {
-      continue;
-    }
-
-    if (cutoffTime !== null) {
-      const extractedAt =
-        order.extractedAt instanceof Date
-          ? order.extractedAt
-          : order.extractedAt
-            ? new Date(order.extractedAt)
-            : null;
-
-      if (
-        extractedAt &&
-        Number.isFinite(extractedAt.getTime()) &&
-        extractedAt.getTime() < cutoffTime
-      ) {
-        continue;
-      }
-    }
-
-    const existingOrderData =
-      order.orderData && typeof order.orderData === "object" ? order.orderData : {};
-    const normalizedExistingItems = normalizeOrderItemsForComparison(
-      existingOrderData.items,
-    );
-    if (!normalizedExistingItems.length) continue;
-
-    if (!areOrderItemsEquivalent(normalizedExistingItems, normalizedNewItems)) {
-      continue;
-    }
-
-    if (matchShippingAddress) {
-      const existingShippingKey = normalizeOrderComparisonText(
-        existingOrderData.shippingAddress,
-      );
-      if (existingShippingKey !== newShippingKey) {
-        continue;
-      }
-    }
-
-    return order;
-  }
-
-  return null;
 }
 
 async function markMessagesAsOrderExtracted(
@@ -4761,6 +4478,7 @@ async function saveOrderToDatabase(
       isManualExtraction,
       updatedAt: new Date(),
       notes,
+      notificationStatus: safeOptions.notificationStatus || "pending",
     };
 
     const result = await coll.insertOne(orderDoc);
@@ -4773,10 +4491,115 @@ async function saveOrderToDatabase(
   }
 }
 
+/**
+ * ฟังก์ชันให้ AI ดู orders ที่มีอยู่แล้วของลูกค้า
+ * เพื่อป้องกันการสร้าง order ซ้ำ
+ */
+async function getOrdersForTool(args = {}, context = {}) {
+  const userId = context.userId;
+  if (!userId) {
+    return { success: false, error: "ไม่พบผู้ใช้", orders: [] };
+  }
+
+  try {
+    const orders = await getUserOrders(userId);
+    const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 10) : 5;
+    const recentOrders = orders.slice(0, limit);
+
+    // Format orders สำหรับ AI ให้อ่านง่าย
+    const formattedOrders = recentOrders.map((order) => {
+      const orderData = order.orderData || {};
+      const items = Array.isArray(orderData.items) ? orderData.items : [];
+      const itemsSummary = items.map((item) =>
+        `${item.product || "สินค้า"} x${item.quantity || 1} (฿${item.price || 0})`
+      ).join(", ");
+
+      return {
+        orderId: order._id?.toString() || null,
+        status: order.status || "pending",
+        createdAt: order.extractedAt || order.createdAt || null,
+        totalAmount: orderData.totalAmount || null,
+        shippingCost: orderData.shippingCost || 0,
+        customerName: orderData.customerName || null,
+        recipientName: orderData.recipientName || null,
+        shippingAddress: orderData.shippingAddress || null,
+        addressSubDistrict: orderData.addressSubDistrict || null,
+        addressDistrict: orderData.addressDistrict || null,
+        addressProvince: orderData.addressProvince || null,
+        addressPostalCode: orderData.addressPostalCode || null,
+        phone: orderData.phone || null,
+        paymentMethod: orderData.paymentMethod || null,
+        items: items,
+        itemsSummary,
+        notes: order.notes || null,
+      };
+    });
+
+    return {
+      success: true,
+      totalOrders: orders.length,
+      orders: formattedOrders,
+      message: orders.length > 0
+        ? `พบ ${orders.length} ออเดอร์ (แสดง ${formattedOrders.length} รายการล่าสุด)`
+        : "ยังไม่มีออเดอร์ของลูกค้ารายนี้",
+    };
+  } catch (error) {
+    console.error("[Order] ดึง orders สำหรับ AI tool ไม่สำเร็จ:", error.message);
+    return { success: false, error: error.message, orders: [] };
+  }
+}
+
 async function createOrderFromTool(args = {}, context = {}) {
   const userId = context.userId;
   if (!userId) {
     return { success: false, error: "ไม่พบผู้ใช้สำหรับสร้างออเดอร์" };
+  }
+
+  // ตรวจสอบ duplicate order: ดูว่ามี order ล่าสุดที่ใกล้เคียงหรือไม่
+  try {
+    const existingOrders = await getUserOrders(userId);
+    if (existingOrders && existingOrders.length > 0) {
+      const latestOrder = existingOrders[0];
+      const latestOrderData = latestOrder.orderData || {};
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const orderCreatedAt = latestOrder.extractedAt || latestOrder.createdAt;
+
+      // ตรวจสอบว่า order ล่าสุดถูกสร้างภายใน 1 ชั่วโมง
+      if (orderCreatedAt && new Date(orderCreatedAt) > oneHourAgo) {
+        const newItems = args.orderData?.items || [];
+        const existingItems = latestOrderData.items || [];
+
+        // เปรียบเทียบ items คร่าวๆ
+        const newItemsSummary = newItems
+          .map((i) => `${i.product}:${i.quantity}`)
+          .sort()
+          .join("|");
+        const existingItemsSummary = existingItems
+          .map((i) => `${i.product}:${i.quantity}`)
+          .sort()
+          .join("|");
+
+        if (newItemsSummary === existingItemsSummary && newItemsSummary.length > 0) {
+          return {
+            success: false,
+            error: `พบออเดอร์ที่มีรายการสินค้าเหมือนกันอยู่แล้ว (ID: ${latestOrder._id?.toString()}) สร้างเมื่อ ${new Date(orderCreatedAt).toLocaleString("th-TH")}. กรุณาใช้ update_order แทน หากต้องการแก้ไข`,
+            existingOrderId: latestOrder._id?.toString(),
+            existingOrder: {
+              status: latestOrder.status,
+              items: existingItems,
+              totalAmount: latestOrderData.totalAmount,
+              customerName: latestOrderData.customerName,
+              shippingAddress: latestOrderData.shippingAddress,
+            },
+          };
+        }
+      }
+    }
+  } catch (dupCheckErr) {
+    console.warn(
+      "[Order] ตรวจสอบ duplicate order ไม่สำเร็จ (ดำเนินการต่อ):",
+      dupCheckErr.message,
+    );
   }
 
   const requiredFields = await getOrderRequiredFieldsSetting();
@@ -4995,24 +4818,34 @@ async function updateOrderFromTool(args = {}, context = {}) {
   };
 }
 
-function triggerOrderNotification(orderId) {
+
+async function triggerOrderNotification(orderId) {
   if (!orderId) return;
   try {
-    setImmediate(() => {
-      notificationService
-        .sendNewOrder(orderId)
-        .catch((err) => {
-          console.warn(
-            "[Notifications] ส่งแจ้งเตือนออเดอร์ไม่สำเร็จ:",
-            err?.message || err,
-          );
-        });
-    });
-  } catch (notifyErr) {
-    console.warn(
-      "[Notifications] ไม่สามารถ trigger การแจ้งเตือนได้:",
-      notifyErr?.message || notifyErr,
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const orders = db.collection("orders");
+    const order = await orders.findOne({ _id: new ObjectId(orderId) });
+
+    if (!order) return;
+    // Check if already sent
+    if (order.notificationStatus === "sent") {
+      console.log(`[Notification] Order ${orderId} already notified.`);
+      return;
+    }
+
+    const result = await notificationService.sendNewOrder(orderId);
+
+    // Update status based on result
+    const status = result.success ? "sent" : "failed";
+    await orders.updateOne(
+      { _id: new ObjectId(orderId) },
+      { $set: { notificationStatus: status, notificationSentAt: new Date() } }
     );
+    console.log(`[Notification] Order ${orderId} notification: ${status}`);
+
+  } catch (err) {
+    console.warn(`[Notification] Error triggering for ${orderId}:`, err.message);
   }
 }
 
@@ -5052,429 +4885,13 @@ async function maybeAnalyzeOrder(
   botId = null,
   options = {},
 ) {
-  try {
-    const { force = false } = options || {};
-    const extractionMode = await getOrderExtractionModeSetting();
-    if (!force && extractionMode === ORDER_EXTRACTION_MODES.SCHEDULED) {
-      return;
-    }
-
-    // ตรวจสอบว่ามีการตั้งค่าให้วิเคราะห์ออเดอร์อัตโนมัติหรือไม่
-    const orderAnalysisEnabled = await getSettingValue(
-      "orderAnalysisEnabled",
-      true,
-    );
-    if (!orderAnalysisEnabled) {
-      return;
-    }
-
-    const pageKey = buildOrderPageKey(platform, botId);
-    const messages = await getNormalizedChatHistory(userId, {
-      applyFilter: true,
-    });
-    if (!messages || messages.length === 0) return;
-
-    const unprocessedMessages = messages.filter(
-      (msg) => !msg.orderExtractionRoundId,
-    );
-    if (!unprocessedMessages.length) {
-      return;
-    }
-
-    const targetMessages = unprocessedMessages.slice(-20);
-    const targetMessageIds = targetMessages
-      .map((msg) => msg.messageId)
-      .filter(Boolean);
-    if (!targetMessageIds.length) {
-      return;
-    }
-    const unprocessedMessageIds = unprocessedMessages
-      .map((msg) => msg.messageId)
-      .filter(Boolean);
-
-    const existingOrders = await getUserOrders(userId);
-    const latestOrder = existingOrders?.[0];
-
-    const analysis = await analyzeOrderFromChat(userId, targetMessages, {
-      previousAddress: latestOrder?.orderData?.shippingAddress || null,
-      previousCustomerName: latestOrder?.orderData?.customerName || null,
-      platform,
-      botId,
-    });
-
-    if (!analysis || !analysis.hasOrder) {
-      return;
-    }
-
-    const duplicateOrder = findDuplicateOrder(
-      existingOrders,
-      analysis.orderData,
-    );
-
-    if (duplicateOrder) {
-      console.log(`[Order] พบออเดอร์ซ้ำสำหรับผู้ใช้ ${userId}`);
-      const extractionRoundId = new ObjectId().toString();
-      await markMessagesAsOrderExtracted(
-        userId,
-        unprocessedMessageIds,
-        extractionRoundId,
-        duplicateOrder?._id?.toString?.() || null,
-      );
-      await maybeAnalyzeFollowUp(userId, platform, botId, {
-        reasonOverride: analysis.reason,
-        forceUpdate: true,
-      });
-      try {
-        await clearOrderBufferForUser(pageKey, userId);
-      } catch (bufferErr) {
-        console.warn(
-          `[OrderBuffer] ไม่สามารถล้างบัฟเฟอร์สำหรับ ${pageKey}/${userId}:`,
-          bufferErr.message || bufferErr,
-        );
-      }
-      return;
-    }
-
-    // บันทึกออเดอร์ใหม่
-    const orderId = await saveOrderToDatabase(
-      userId,
-      platform,
-      botId,
-      analysis.orderData,
-      "auto_extraction",
-      false,
-    );
-
-    if (!orderId) {
-      console.error(`[Order] ไม่สามารถบันทึกออเดอร์สำหรับผู้ใช้ ${userId}`);
-      return;
-    }
-
-    const extractionRoundId = new ObjectId().toString();
-    await markMessagesAsOrderExtracted(
-      userId,
-      unprocessedMessageIds,
-      extractionRoundId,
-      orderId?.toString?.() || orderId,
-    );
-
-    triggerOrderNotification(orderId);
-
-    await maybeAnalyzeFollowUp(userId, platform, botId, {
-      reasonOverride: analysis.reason,
-      followUpUpdatedAt: new Date(),
-      forceUpdate: true,
-    });
-
-    // Emit socket event
-    try {
-      if (io) {
-        io.emit("orderExtracted", {
-          userId,
-          orderId,
-          orderData: analysis.orderData,
-          isManualExtraction: false,
-          extractedAt: new Date(),
-          confidence: analysis.confidence,
-          reason: analysis.reason,
-        });
-      }
-    } catch (_) { }
-
-    console.log(
-      `[Order] สกัดออเดอร์อัตโนมัติสำเร็จสำหรับผู้ใช้ ${userId}: ${orderId}`,
-    );
-
-    try {
-      await clearOrderBufferForUser(pageKey, userId);
-    } catch (bufferErr) {
-      console.warn(
-        `[OrderBuffer] ไม่สามารถล้างบัฟเฟอร์สำหรับ ${pageKey}/${userId}:`,
-        bufferErr.message || bufferErr,
-      );
-    }
-  } catch (error) {
-    console.error("[Order] วิเคราะห์ออเดอร์อัตโนมัติไม่สำเร็จ:", error.message);
-  }
-}
-
-async function processOrderCutoffForPage(pageConfig, options = {}) {
-  const nowMoment = options.nowMoment || getBangkokMoment();
-  const pageKey = pageConfig.pageKey;
-  const platform = pageConfig.platform;
-  const botId = pageConfig.botId || null;
-
-  const setting = await getOrderCutoffSetting(platform, botId);
-  const lastProcessedAt =
-    setting.lastProcessedAt instanceof Date
-      ? setting.lastProcessedAt
-      : setting.lastProcessedAt
-        ? new Date(setting.lastProcessedAt)
-        : null;
-
-  const users = await listOrderBufferUsersWithActivity(
-    pageKey,
-    lastProcessedAt || null,
-  );
-
-  if (!users.length) {
-    await updateOrderCutoffSetting(platform, botId, {
-      lastProcessedAt: nowMoment.toDate(),
-      lastCutoffDateKey: nowMoment.format("YYYY-MM-DD"),
-      lastRunSummary: {
-        processedUsers: 0,
-        createdOrders: 0,
-        duplicates: 0,
-        noOrder: 0,
-        timestamp: nowMoment.toDate(),
-      },
-    });
-    return;
-  }
-
-  let createdOrders = 0;
-  let duplicateCount = 0;
-  let noOrderCount = 0;
-
-  for (const entry of users) {
-    const userId = entry.userId;
-    if (!userId) continue;
-
-    try {
-      const messageDocs = await orderBufferMessagesForUser(pageKey, userId);
-      if (!messageDocs.length) {
-        continue;
-      }
-
-      const messageIds = messageDocs
-        .map((doc) => doc.chatMessageId)
-        .filter(Boolean);
-      const normalizedMessages = messageDocs
-        .map((doc) => {
-          return normalizeMessageForFrontend({
-            _id: doc.chatMessageId || null,
-            role: doc.role || "user",
-            content: doc.content ?? "",
-            timestamp: doc.timestamp || new Date(),
-            source: doc.source || "user",
-            platform: doc.platform || platform || "line",
-            botId: doc.botId || botId || null,
-          });
-        })
-        .filter((msg) => !!msg && !!msg.content);
-
-      if (!normalizedMessages.length) {
-        noOrderCount += 1;
-        continue;
-      }
-
-      const targetMessages = normalizedMessages.slice(-50).map((msg) => ({
-        role: msg.role,
-        content:
-          typeof msg.content === "string" ? msg.content : msg.displayContent,
-        messageId: msg.messageId || null,
-      }));
-
-      const existingOrders = await getUserOrders(userId);
-      const latestOrder = existingOrders?.[0];
-
-      const analysis = await analyzeOrderFromChat(userId, targetMessages, {
-        previousAddress: latestOrder?.orderData?.shippingAddress || null,
-        previousCustomerName: latestOrder?.orderData?.customerName || null,
-        platform,
-        botId,
-      });
-
-      if (!analysis || !analysis.hasOrder) {
-        noOrderCount += 1;
-        continue;
-      }
-
-      const duplicateOrder = findDuplicateOrder(
-        existingOrders,
-        analysis.orderData,
-      );
-
-      const extractionRoundId = new ObjectId().toString();
-
-      if (duplicateOrder) {
-        duplicateCount += 1;
-        await markMessagesAsOrderExtracted(
-          userId,
-          messageIds,
-          extractionRoundId,
-          duplicateOrder?._id?.toString?.() || null,
-        );
-        await clearOrderBufferForUser(pageKey, userId);
-        try {
-          if (io) {
-            io.emit("orderExtracted", {
-              userId,
-              orderId: duplicateOrder?._id?.toString?.() || null,
-              orderData: duplicateOrder?.orderData || null,
-              isManualExtraction: false,
-              extractedAt: new Date(),
-              duplicate: true,
-              source: "scheduled_cutoff",
-              reason: analysis.reason,
-            });
-          }
-        } catch (_) { }
-        continue;
-      }
-
-      const orderId = await saveOrderToDatabase(
-        userId,
-        platform,
-        botId,
-        analysis.orderData,
-        "scheduled_cutoff",
-        false,
-      );
-
-      if (!orderId) {
-        console.error(
-          `[OrderCutoff] ไม่สามารถบันทึกออเดอร์ของผู้ใช้ ${userId} ได้`,
-        );
-        continue;
-      }
-
-      createdOrders += 1;
-
-      await markMessagesAsOrderExtracted(
-        userId,
-        messageIds,
-        extractionRoundId,
-        orderId?.toString?.() || orderId,
-      );
-
-      triggerOrderNotification(orderId);
-
-      await clearOrderBufferForUser(pageKey, userId);
-
-      await maybeAnalyzeFollowUp(userId, platform, botId, {
-        reasonOverride: analysis.reason,
-        followUpUpdatedAt: new Date(),
-        forceUpdate: true,
-      });
-
-      try {
-        if (io) {
-          io.emit("orderExtracted", {
-            userId,
-            orderId,
-            orderData: analysis.orderData,
-            isManualExtraction: false,
-            extractedAt: new Date(),
-            confidence: analysis.confidence,
-            reason: analysis.reason,
-            source: "scheduled_cutoff",
-          });
-        }
-      } catch (_) { }
-    } catch (error) {
-      console.error(
-        `[OrderCutoff] ประมวลผลผู้ใช้ ${userId} ไม่สำเร็จ:`,
-        error.message,
-      );
-    }
-  }
-
-  await updateOrderCutoffSetting(platform, botId, {
-    lastProcessedAt: nowMoment.toDate(),
-    lastCutoffDateKey: nowMoment.format("YYYY-MM-DD"),
-    lastRunSummary: {
-      processedUsers: users.length,
-      createdOrders,
-      duplicates: duplicateCount,
-      noOrder: noOrderCount,
-      timestamp: nowMoment.toDate(),
-    },
-  });
-}
-
-async function evaluateOrderCutoffSchedules() {
-  if (orderCutoffProcessing) {
-    return;
-  }
-
-  orderCutoffProcessing = true;
-  try {
-    const extractionMode = await getOrderExtractionModeSetting();
-    if (extractionMode !== ORDER_EXTRACTION_MODES.SCHEDULED) {
-      return;
-    }
-
-    const pages = await listOrderCutoffPages();
-    if (!pages.length) return;
-
-    const nowMoment = getBangkokMoment();
-    const dateKey = nowMoment.format("YYYY-MM-DD");
-
-    for (const page of pages) {
-      try {
-        const cutoffMoment = getCutoffMomentForDay(page.cutoffTime, nowMoment);
-        if (!cutoffMoment || nowMoment.isBefore(cutoffMoment)) {
-          continue;
-        }
-
-        const setting = await getOrderCutoffSetting(page.platform, page.botId);
-        if (setting.lastCutoffDateKey === dateKey) {
-          continue;
-        }
-
-        await processOrderCutoffForPage(page, { nowMoment });
-      } catch (pageError) {
-        console.error(
-          `[OrderCutoff] ประมวลผลเพจ ${page.pageKey} ไม่สำเร็จ:`,
-          pageError.message,
-        );
-      }
-    }
-  } catch (error) {
-    console.error(
-      "[OrderCutoff] evaluateOrderCutoffSchedules error:",
-      error.message,
-    );
-  } finally {
-    orderCutoffProcessing = false;
-  }
+  // ฟังก์ชันนี้ถูกปิดการใช้งานถาวรตามนโยบาย AI Tool Only
+  return;
 }
 
 async function startOrderCutoffScheduler() {
-  const extractionMode = await getOrderExtractionModeSetting();
-  const schedulingEnabled = extractionMode === ORDER_EXTRACTION_MODES.SCHEDULED;
-
-  if (!schedulingEnabled) {
-    if (orderCutoffTimer) {
-      clearInterval(orderCutoffTimer);
-      orderCutoffTimer = null;
-    }
-    console.log("[OrderCutoff] Scheduler ถูกปิดใช้งาน (โหมดเรียลไทม์)");
-    return;
-  }
-
-  if (orderCutoffTimer) {
-    clearInterval(orderCutoffTimer);
-  }
-
-  orderCutoffTimer = setInterval(() => {
-    evaluateOrderCutoffSchedules().catch((err) => {
-      console.error("[OrderCutoff] Scheduler loop error:", err.message);
-    });
-  }, ORDER_CUTOFF_INTERVAL_MS);
-
-  // Trigger first run shortly after startup
-  setTimeout(() => {
-    evaluateOrderCutoffSchedules().catch((err) => {
-      console.error("[OrderCutoff] Initial scheduler run error:", err.message);
-    });
-  }, 5000);
-
-  console.log(
-    `[OrderCutoff] Scheduler เริ่มทำงาน (interval ${ORDER_CUTOFF_INTERVAL_MS / 1000
-    }s)`,
-  );
+  // ถูกปิดการใช้งานถาวร - ไม่ต้องทำอะไร
+  return;
 }
 
 async function getFollowUpUsers(filter = {}) {
@@ -9491,9 +8908,11 @@ function extractThaiReply(aiResponse) {
 }
 
 const ORDER_TOOL_INSTRUCTIONS = `เมื่อผู้ใช้ยืนยันการสั่งซื้อหรือขอแก้ไขออเดอร์ ให้ใช้เครื่องมือที่มีดังนี้เท่านั้น:
-- create_order: สร้างออเดอร์ใหม่ ต้องมี items (product, quantity, price) ให้ครบ
-- update_order: แก้ไขออเดอร์ล่าสุด หรือระบุ orderId หากผู้ใช้ระบุชัดเจน
-- ถ้าข้อมูลยังไม่ครบให้ถามต่อก่อน อย่าคาดเดารายละเอียดออเดอร์เอง`;
+- get_orders: ⚠️ ต้องเรียกก่อนเสมอ! ดู orders ที่มีอยู่แล้วของลูกค้าเพื่อป้องกันการสร้างซ้ำ
+- create_order: สร้างออเดอร์ใหม่ ต้องมี items (product, quantity, price) ให้ครบ (เรียก get_orders ก่อนเสมอ!)
+- update_order: แก้ไขออเดอร์ที่มีอยู่ ต้องระบุ orderId เสมอ! ส่งเฉพาะฟิลด์ที่ต้องการแก้ไขเท่านั้น (Partial Update). หากแก้ไขรายการสินค้า (items) ให้ส่งมาใหม่ทั้งชุด
+- ถ้าข้อมูลยังไม่ครบให้ถามต่อก่อน อย่าคาดเดารายละเอียดออเดอร์เอง
+- ⚠️ ห้ามสร้างออเดอร์ซ้ำ! ถ้า get_orders แสดงว่ามีออเดอร์ที่คล้ายกันอยู่แล้ว ให้ใช้ update_order แทน`;
 
 async function appendOrderToolInstructions(systemInstructions) {
   const requiredFields = await getOrderRequiredFieldsSetting();
@@ -9598,8 +9017,24 @@ async function getAssistantResponseTextOnly(
       {
         type: "function",
         function: {
+          name: "get_orders",
+          description: "Get existing orders for the current customer. ALWAYS call this before creating a new order to check for duplicates or if customer wants to modify existing order.",
+          parameters: {
+            type: "object",
+            properties: {
+              limit: {
+                type: "number",
+                description: "Number of recent orders to retrieve (default: 5, max: 10)"
+              }
+            }
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
           name: "create_order",
-          description: "Create a new order from confirmed customer details.",
+          description: "Create a new order from confirmed customer details. WARNING: Always call get_orders first to check for existing orders.",
           parameters: {
             type: "object",
             properties: {
@@ -9657,7 +9092,7 @@ async function getAssistantResponseTextOnly(
         type: "function",
         function: {
           name: "update_order",
-          description: "Update an existing order (default: latest order for this customer).",
+          description: "Update an existing order. ALWAYS provide the orderId. Send ONLY fields that need to change (partial update).",
           parameters: {
             type: "object",
             properties: {
@@ -9761,6 +9196,8 @@ async function getAssistantResponseTextOnly(
         const client = await connectDB();
         const db = client.db("chatbot");
 
+        let isFirstToolCall = true;
+
         for (const toolCall of responseMessage.tool_calls) {
           const functionName = toolCall.function.name;
           const functionArgs = JSON.parse(toolCall.function.arguments);
@@ -9787,18 +9224,33 @@ async function getAssistantResponseTextOnly(
               botId,
               platform,
             );
+          } else if (functionName === "get_orders") {
+            toolResult = await getOrdersForTool(functionArgs, toolContext);
           } else if (functionName === "create_order") {
             toolResult = await createOrderFromTool(functionArgs, toolContext);
           } else if (functionName === "update_order") {
             toolResult = await updateOrderFromTool(functionArgs, toolContext);
           }
 
-          messages.push({
+          const toolResultMsg = {
             tool_call_id: toolCall.id,
             role: "tool",
             name: functionName,
             content: JSON.stringify(toolResult),
-          });
+          };
+
+          messages.push(toolResultMsg);
+
+          // Save tool interaction to DB
+          await saveToolInteraction(
+            userId,
+            isFirstToolCall ? responseMessage : null,
+            toolResultMsg,
+            platform,
+            botId
+          );
+          isFirstToolCall = false;
+
         }
         toolLoopCount++;
       } else {
@@ -10006,8 +9458,24 @@ async function getAssistantResponseMultimodal(
       {
         type: "function",
         function: {
+          name: "get_orders",
+          description: "Get existing orders for the current customer. ALWAYS call this before creating a new order to check for duplicates or if customer wants to modify existing order.",
+          parameters: {
+            type: "object",
+            properties: {
+              limit: {
+                type: "number",
+                description: "Number of recent orders to retrieve (default: 5, max: 10)"
+              }
+            }
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
           name: "create_order",
-          description: "Create a new order from confirmed customer details.",
+          description: "Create a new order from confirmed customer details. WARNING: Always call get_orders first to check for existing orders.",
           parameters: {
             type: "object",
             properties: {
@@ -10170,6 +9638,8 @@ async function getAssistantResponseMultimodal(
               botId,
               platform,
             );
+          } else if (functionName === "get_orders") {
+            toolResult = await getOrdersForTool(functionArgs, toolContext);
           } else if (functionName === "create_order") {
             toolResult = await createOrderFromTool(functionArgs, toolContext);
           } else if (functionName === "update_order") {
@@ -10342,28 +9812,8 @@ async function setSettingValue(key, value) {
   }
 }
 
-function normalizeOrderExtractionMode(value) {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase();
-  if (Object.values(ORDER_EXTRACTION_MODES).includes(normalized)) {
-    return normalized;
-  }
-  return null;
-}
-
 async function getOrderExtractionModeSetting() {
-  const rawMode = await getSettingValue("orderExtractionMode", null);
-  const normalized = normalizeOrderExtractionMode(rawMode);
-  if (normalized) {
-    return normalized;
-  }
-  const legacyEnabled = await getSettingValue(
-    "orderCutoffSchedulingEnabled",
-    true,
-  );
-  return legacyEnabled
-    ? ORDER_EXTRACTION_MODES.SCHEDULED
-    : ORDER_EXTRACTION_MODES.REALTIME;
+  return "realtime";
 }
 
 async function getAiEnabled() {
@@ -18629,27 +18079,16 @@ app.get("/admin/customer-stats/data", async (req, res) => {
 });
 
 app.get("/admin/orders/pages", async (req, res) => {
-  try {
-    const [pages, extractionMode] = await Promise.all([
-      listOrderCutoffPages(),
-      getOrderExtractionModeSetting(),
-    ]);
-    const schedulingEnabled =
-      extractionMode === ORDER_EXTRACTION_MODES.SCHEDULED;
+  res.json({
+    success: true,
+    pages: [],
+    settings: {
+      schedulingEnabled: false,
+      defaultCutoffTime: "00:00",
+      extractionMode: "realtime",
+    },
+  });
 
-    res.json({
-      success: true,
-      pages,
-      settings: {
-        schedulingEnabled: !!schedulingEnabled,
-        defaultCutoffTime: ORDER_DEFAULT_CUTOFF_TIME,
-        extractionMode,
-      },
-    });
-  } catch (error) {
-    console.error("[Orders] ไม่สามารถโหลดการตั้งค่าเพจ:", error);
-    res.json({ success: false, error: error.message });
-  }
 });
 
 

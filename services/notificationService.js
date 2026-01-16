@@ -339,6 +339,7 @@ function formatNewOrderMessage(order, settings, publicBaseUrl) {
   const cfg = settings || {};
   const includeCustomer = cfg.includeCustomer !== false;
   const includeItemsCount = cfg.includeItemsCount !== false;
+  // Default to TRUE for details to ensure richness
   const includeItemsDetail = cfg.includeItemsDetail !== false;
   const includeTotalAmount = cfg.includeTotalAmount !== false;
   const includeAddress = cfg.includeAddress !== false;
@@ -377,11 +378,13 @@ function formatNewOrderMessage(order, settings, publicBaseUrl) {
       .filter(Boolean);
     if (normalizedItems.length) {
       lines.push("🧾 รายการสินค้า:");
-      const maxItems = 10;
+      const maxItems = 20; // Increased limit
       normalizedItems.slice(0, maxItems).forEach((item) => {
         const colorPart = item.color ? ` (${item.color})` : "";
+        // Always show price if available
         const pricePart = item.price !== null ? ` • ${formatCurrency(item.price)}` : "";
-        lines.push(`- ${item.name}${colorPart} x${item.quantity}${pricePart}`);
+        // Add emoji for each item
+        lines.push(`🔸 ${item.name}${colorPart} x${item.quantity}${pricePart}`);
       });
       if (normalizedItems.length > maxItems) {
         lines.push(`… และอีก ${(normalizedItems.length - maxItems).toLocaleString()} รายการ`);
