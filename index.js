@@ -8963,7 +8963,7 @@ async function getAssistantResponseTextOnly(
         type: "function",
         function: {
           name: "create_order",
-          description: "Create a new order from confirmed customer details. WARNING: Always call get_orders first to check for existing orders.",
+          description: "Create a new order from confirmed customer details.",
           parameters: {
             type: "object",
             properties: {
@@ -9424,7 +9424,7 @@ async function getAssistantResponseMultimodal(
         type: "function",
         function: {
           name: "create_order",
-          description: "Create a new order from confirmed customer details. WARNING: Always call get_orders first to check for existing orders.",
+          description: "Create a new order from confirmed customer details.",
           parameters: {
             type: "object",
             properties: {
