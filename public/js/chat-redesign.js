@@ -10,6 +10,10 @@ class ChatManager {
         this.allUsers = [];
         this.chatHistory = {};
         this.messageInputBaseHeight = 0;
+        this.quickReplies = [];
+        this.templateStorageKey = 'chatTemplates';
+        this.currentEditingTemplateId = null;
+        this.emojiPicker = null;
 
         // Filter state
         this.currentFilters = {
@@ -396,6 +400,67 @@ class ChatManager {
             });
         }
 
+        const templateSearch = document.getElementById('templateSearch');
+        if (templateSearch) {
+            templateSearch.addEventListener('input', (e) => {
+                this.filterTemplates(e.target.value);
+            });
+        }
+
+        const templateList = document.getElementById('templateList');
+        if (templateList) {
+            templateList.addEventListener('click', (e) => {
+                const actionBtn = e.target.closest('button[data-template-action]');
+                const item = e.target.closest('.template-item');
+                if (!item || !templateList.contains(item)) return;
+                const templateId = item.dataset.id;
+                if (!templateId) return;
+                const action = actionBtn?.dataset?.templateAction || 'use';
+                if (action === 'use') {
+                    this.applyTemplateById(templateId);
+                } else if (action === 'edit') {
+                    this.openTemplateEditorModal(templateId);
+                } else if (action === 'delete') {
+                    this.deleteTemplate(templateId);
+                }
+            });
+        }
+
+        const createTemplateBtn = document.getElementById('createTemplateBtn');
+        if (createTemplateBtn) {
+            createTemplateBtn.addEventListener('click', () => {
+                this.openTemplateEditorModal();
+            });
+        }
+
+        const templateEditorSaveBtn = document.getElementById('templateEditorSaveBtn');
+        if (templateEditorSaveBtn) {
+            templateEditorSaveBtn.addEventListener('click', () => {
+                this.saveTemplateFromEditor();
+            });
+        }
+
+        const templateEditorModal = document.getElementById('templateEditorModal');
+        if (templateEditorModal) {
+            templateEditorModal.addEventListener('hidden.bs.modal', () => {
+                this.resetTemplateEditor();
+            });
+        }
+
+        const btnEmoji = document.getElementById('btnEmoji');
+        if (btnEmoji) {
+            btnEmoji.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.toggleEmojiPicker(btnEmoji);
+            });
+        }
+        document.addEventListener('click', (event) => {
+            if (!this.emojiPicker) return;
+            if (this.emojiPicker.contains(event.target)) return;
+            if (btnEmoji && event.target === btnEmoji) return;
+            this.hideEmojiPicker();
+        });
+
         // Toggle filter panel accessibility
         const filterToggleBtn = document.getElementById('filterToggle');
         const filterPanel = document.getElementById('filterPanel');
@@ -438,6 +503,8 @@ class ChatManager {
                 orderSidebar.classList.remove('show');
                 orderOverlay?.classList.remove('show');
             }
+
+            this.hideEmojiPicker();
         });
 
         // Save order button
@@ -1887,9 +1954,258 @@ class ChatManager {
     // Template Modal
     // ========================================
 
+    ensureTemplatesLoaded() {
+        if (this.quickReplies.length > 0) return;
+        const stored = this.loadTemplatesFromStorage();
+        if (stored.length > 0) {
+            this.quickReplies = stored;
+            return;
+        }
+        this.quickReplies = this.getDefaultTemplates();
+        this.saveTemplatesToStorage();
+    }
+
+    loadTemplatesFromStorage() {
+        try {
+            const raw = localStorage.getItem(this.templateStorageKey);
+            const parsed = JSON.parse(raw || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+            console.warn('Unable to load templates from storage', error);
+            return [];
+        }
+    }
+
+    saveTemplatesToStorage() {
+        try {
+            localStorage.setItem(this.templateStorageKey, JSON.stringify(this.quickReplies));
+        } catch (error) {
+            console.warn('Unable to save templates to storage', error);
+        }
+    }
+
+    getDefaultTemplates() {
+        return [
+            { id: 'welcome', title: 'ทักทาย', message: 'สวัสดีครับ! ยินดีให้บริการครับ' },
+            { id: 'thanks', title: 'ขอบคุณ', message: 'ขอบคุณมากครับที่ติดต่อเรา' },
+            { id: 'wait', title: 'รอสักครู่', message: 'กรุณารอสักครู่นะครับ กำลังตรวจสอบข้อมูลให้' },
+            { id: 'confirm', title: 'รับทราบ', message: 'รับทราบข้อมูลแล้วครับ จะดำเนินการให้เร็วที่สุด' }
+        ];
+    }
+
     openTemplateModal() {
-        // TODO: Implement template modal
-        this.showToast('ฟีเจอร์ Template กำลังพัฒนา', 'info');
+        this.ensureTemplatesLoaded();
+        this.renderTemplateList();
+        const searchInput = document.getElementById('templateSearch');
+        if (searchInput) searchInput.value = '';
+        const modalEl = document.getElementById('templateModal');
+        if (!modalEl) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+    }
+
+    renderTemplateList() {
+        const list = document.getElementById('templateList');
+        if (!list) return;
+        if (!this.quickReplies.length) {
+            list.innerHTML = '<div class="text-muted text-center py-3">ไม่มี template</div>';
+            return;
+        }
+        list.innerHTML = this.quickReplies.map(template => `
+            <div class="template-item" data-id="${this.escapeHtml(template.id)}">
+                <div class="template-title">${this.escapeHtml(template.title)}</div>
+                <div class="template-content">${this.escapeHtml(template.message)}</div>
+                <div class="template-actions">
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-template-action="use">ใช้</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-template-action="edit">แก้ไข</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" data-template-action="delete">ลบ</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    filterTemplates(searchTerm = '') {
+        const term = (searchTerm || '').toLowerCase();
+        document.querySelectorAll('.template-item').forEach(item => {
+            const title = item.querySelector('.template-title')?.textContent.toLowerCase() || '';
+            const content = item.querySelector('.template-content')?.textContent.toLowerCase() || '';
+            const visible = !term || title.includes(term) || content.includes(term);
+            item.style.display = visible ? '' : 'none';
+        });
+    }
+
+    applyTemplateById(templateId) {
+        const template = this.quickReplies.find(entry => entry.id === templateId);
+        if (!template) return;
+        if (template.message) {
+            this.insertMessageAtCursor(template.message);
+        }
+        const modalEl = document.getElementById('templateModal');
+        const modal = modalEl ? bootstrap.Modal.getInstance(modalEl) : null;
+        if (modal) modal.hide();
+    }
+
+    openTemplateEditorModal(templateId = null) {
+        this.ensureTemplatesLoaded();
+        const label = document.getElementById('templateEditorModalLabel');
+        const titleInput = document.getElementById('templateTitleInput');
+        const messageInput = document.getElementById('templateMessageInput');
+        if (!titleInput || !messageInput) return;
+
+        const template = templateId
+            ? this.quickReplies.find(entry => entry.id === templateId)
+            : null;
+
+        this.currentEditingTemplateId = template ? template.id : null;
+        titleInput.value = template ? template.title : '';
+        messageInput.value = template ? template.message : '';
+        if (label) {
+            label.textContent = template ? 'แก้ไข Template' : 'สร้าง Template ใหม่';
+        }
+
+        const templateModalEl = document.getElementById('templateModal');
+        const templateModal = templateModalEl ? bootstrap.Modal.getInstance(templateModalEl) : null;
+        if (templateModal) templateModal.hide();
+
+        const editorEl = document.getElementById('templateEditorModal');
+        if (!editorEl) return;
+        const editorModal = bootstrap.Modal.getOrCreateInstance(editorEl);
+        editorModal.show();
+    }
+
+    resetTemplateEditor() {
+        this.currentEditingTemplateId = null;
+        const titleInput = document.getElementById('templateTitleInput');
+        const messageInput = document.getElementById('templateMessageInput');
+        if (titleInput) titleInput.value = '';
+        if (messageInput) messageInput.value = '';
+    }
+
+    saveTemplateFromEditor() {
+        const titleInput = document.getElementById('templateTitleInput');
+        const messageInput = document.getElementById('templateMessageInput');
+        if (!titleInput || !messageInput) return;
+        const title = titleInput.value.trim();
+        const message = messageInput.value.trim();
+        if (!title || !message) {
+            this.showToast('กรุณากรอกข้อมูลให้ครบถ้วน', 'warning');
+            return;
+        }
+
+        if (this.currentEditingTemplateId) {
+            const idx = this.quickReplies.findIndex(entry => entry.id === this.currentEditingTemplateId);
+            if (idx !== -1) {
+                this.quickReplies[idx] = { id: this.currentEditingTemplateId, title, message };
+            }
+        } else {
+            this.quickReplies.push({ id: `template_${Date.now()}`, title, message });
+        }
+
+        this.saveTemplatesToStorage();
+        this.renderTemplateList();
+        this.filterTemplates(document.getElementById('templateSearch')?.value || '');
+
+        const editorEl = document.getElementById('templateEditorModal');
+        const editorModal = editorEl ? bootstrap.Modal.getInstance(editorEl) : null;
+        if (editorModal) editorModal.hide();
+
+        const templateModalEl = document.getElementById('templateModal');
+        if (templateModalEl) {
+            const templateModal = bootstrap.Modal.getOrCreateInstance(templateModalEl);
+            templateModal.show();
+        }
+
+        this.showToast(this.currentEditingTemplateId ? 'แก้ไข Template แล้ว' : 'สร้าง Template แล้ว', 'success');
+    }
+
+    deleteTemplate(templateId) {
+        if (!confirm('ต้องการลบ Template นี้หรือไม่?')) return;
+        this.quickReplies = this.quickReplies.filter(entry => entry.id !== templateId);
+        this.saveTemplatesToStorage();
+        this.renderTemplateList();
+        this.filterTemplates(document.getElementById('templateSearch')?.value || '');
+        this.showToast('ลบ Template แล้ว', 'success');
+    }
+
+    insertMessageAtCursor(text) {
+        const messageInput = document.getElementById('messageInput');
+        if (!messageInput) return;
+        const value = messageInput.value || '';
+        const start = Number.isInteger(messageInput.selectionStart) ? messageInput.selectionStart : value.length;
+        const end = Number.isInteger(messageInput.selectionEnd) ? messageInput.selectionEnd : value.length;
+        const nextValue = value.slice(0, start) + text + value.slice(end);
+        messageInput.value = nextValue;
+        const cursorPos = start + text.length;
+        messageInput.setSelectionRange(cursorPos, cursorPos);
+        messageInput.focus();
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // ========================================
+    // Emoji Picker
+    // ========================================
+
+    toggleEmojiPicker(anchorEl) {
+        if (!anchorEl) return;
+        if (!this.emojiPicker) {
+            this.emojiPicker = this.createEmojiPicker();
+            document.body.appendChild(this.emojiPicker);
+        }
+        const isVisible = this.emojiPicker.style.display === 'grid';
+        if (isVisible) {
+            this.hideEmojiPicker();
+            return;
+        }
+        this.emojiPicker.style.display = 'grid';
+        this.emojiPicker.style.visibility = 'hidden';
+        this.positionEmojiPicker(anchorEl);
+        this.emojiPicker.style.visibility = 'visible';
+    }
+
+    createEmojiPicker() {
+        const picker = document.createElement('div');
+        picker.className = 'emoji-picker';
+        picker.style.display = 'none';
+        const emojis = ['😊', '🙏', '👍', '✅', '❌', '⏳', '📦', '📍', '💬', '🎉', '👀', '🙌'];
+        emojis.forEach(emoji => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = emoji;
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                this.insertMessageAtCursor(emoji);
+                this.hideEmojiPicker();
+            });
+            picker.appendChild(button);
+        });
+        return picker;
+    }
+
+    positionEmojiPicker(anchorEl) {
+        if (!this.emojiPicker) return;
+        const rect = anchorEl.getBoundingClientRect();
+        const pickerRect = this.emojiPicker.getBoundingClientRect();
+        const padding = 12;
+        let top = rect.top + window.scrollY - pickerRect.height - 8;
+        let left = rect.left + window.scrollX;
+        if (top < window.scrollY + padding) {
+            top = rect.bottom + window.scrollY + 8;
+        }
+        const maxLeft = window.scrollX + window.innerWidth - pickerRect.width - padding;
+        if (left > maxLeft) {
+            left = maxLeft;
+        }
+        if (left < window.scrollX + padding) {
+            left = window.scrollX + padding;
+        }
+        this.emojiPicker.style.top = `${Math.round(top)}px`;
+        this.emojiPicker.style.left = `${Math.round(left)}px`;
+    }
+
+    hideEmojiPicker() {
+        if (!this.emojiPicker) return;
+        this.emojiPicker.style.display = 'none';
+        this.emojiPicker.style.visibility = 'hidden';
     }
 
     // ========================================

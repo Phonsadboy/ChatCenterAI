@@ -20911,6 +20911,36 @@ app.delete("/api/openai-keys/:id", async (req, res) => {
 });
 
 // POST: Test API key
+app.post("/api/openai-keys/test", async (req, res) => {
+  try {
+    const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
+    if (!apiKey) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุ API Key" });
+    }
+    if (!apiKey.startsWith("sk-")) {
+      return res.status(400).json({ success: false, error: "API Key ต้องขึ้นต้นด้วย 'sk-'" });
+    }
+
+    try {
+      const testOpenai = new OpenAI({ apiKey });
+      const response = await testOpenai.models.list();
+      res.json({
+        success: true,
+        message: `API Key ใช้งานได้! พบ ${response.data?.length || 0} โมเดล`,
+        modelsCount: response.data?.length || 0,
+      });
+    } catch (apiError) {
+      res.status(400).json({
+        success: false,
+        error: `API Key ไม่ถูกต้องหรือหมดอายุ: ${apiError.message}`,
+      });
+    }
+  } catch (err) {
+    console.error("[OpenAI Keys] Error testing raw key:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post("/api/openai-keys/:id/test", async (req, res) => {
   try {
     const { id } = req.params;
@@ -21562,6 +21592,18 @@ app.get("/admin/orders/data", async (req, res) => {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
     const skip = (page - 1) * limit;
+    const sortKey = typeof req.query.sortBy === "string" ? req.query.sortBy : "";
+    const sortDirection = req.query.sortDir === "asc" ? 1 : -1;
+    const sortFields = {
+      extractedAt: "extractedAt",
+      totalAmount: "orderData.totalAmount",
+      status: "status",
+    };
+    const sortField = sortFields[sortKey] || "extractedAt";
+    const sortConfig = { [sortField]: sortDirection };
+    if (sortField !== "extractedAt") {
+      sortConfig.extractedAt = -1;
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -21569,7 +21611,7 @@ app.get("/admin/orders/data", async (req, res) => {
 
     const ordersCursor = coll
       .find(query)
-      .sort({ extractedAt: -1 })
+      .sort(sortConfig)
       .skip(skip)
       .limit(limit);
 

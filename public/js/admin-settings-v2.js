@@ -1853,10 +1853,38 @@ async function testApiKeyFromModal() {
         return;
     }
 
-    // New key - test directly (not implemented yet, just show message)
-    resultDiv.classList.remove('d-none', 'alert-success', 'alert-danger');
+    const originalLabel = testBtn ? testBtn.innerHTML : '';
+    if (testBtn) {
+        testBtn.disabled = true;
+        testBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>กำลังทดสอบ';
+    }
+    resultDiv.classList.remove('d-none', 'alert-success', 'alert-danger', 'alert-warning');
     resultDiv.classList.add('alert-info');
-    resultDiv.textContent = 'กรุณาบันทึก API Key ก่อน แล้วทดสอบจากตาราง';
+    resultDiv.textContent = 'กำลังทดสอบ API Key...';
+
+    try {
+        const response = await fetch('/api/openai-keys/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'ทดสอบ API Key ไม่สำเร็จ');
+        }
+        resultDiv.classList.remove('alert-info', 'alert-danger');
+        resultDiv.classList.add('alert-success');
+        resultDiv.textContent = result.message || 'API Key ใช้งานได้';
+    } catch (error) {
+        resultDiv.classList.remove('alert-info', 'alert-success');
+        resultDiv.classList.add('alert-danger');
+        resultDiv.textContent = error.message || 'ทดสอบไม่สำเร็จ';
+    } finally {
+        if (testBtn) {
+            testBtn.disabled = false;
+            testBtn.innerHTML = originalLabel;
+        }
+    }
 }
 
 async function toggleApiKeyStatus(id, isActive) {

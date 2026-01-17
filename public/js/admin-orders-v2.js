@@ -65,9 +65,15 @@
     els.detailOverlay = document.getElementById('ordersDetailOverlay');
     els.detailPanel = document.getElementById('ordersDetailPanel');
     els.exportBtn = document.getElementById('ordersExportBtn');
+    els.detailPrint = document.getElementById('ordersDetailPrint');
   }
 
   function bindEvents() {
+    // Sort headers
+    document.querySelectorAll('.orders-table th.sortable').forEach(th => {
+      th.addEventListener('click', () => handleSortClick(th.dataset.sort));
+    });
+
     // Search
     if (els.searchInput) {
       els.searchInput.addEventListener('input', debounce(handleSearch, 300));
@@ -105,6 +111,10 @@
     // Export
     if (els.exportBtn) {
       els.exportBtn.addEventListener('click', handleExport);
+    }
+
+    if (els.detailPrint) {
+      els.detailPrint.addEventListener('click', handleDetailPrint);
     }
 
     // Keyboard
@@ -163,6 +173,10 @@
     const params = new URLSearchParams();
     params.set('page', state.pagination.page);
     params.set('limit', state.pagination.limit);
+    if (state.sort?.column) {
+      params.set('sortBy', state.sort.column);
+      params.set('sortDir', state.sort.direction);
+    }
 
     if (state.filters.status && state.filters.status !== 'all') {
       params.set('status', state.filters.status);
@@ -271,6 +285,7 @@
           </td>
         </tr>
       `;
+      updateSortIndicators();
       return;
     }
 
@@ -326,6 +341,7 @@
     }).join('');
 
     updateSelectAllState();
+    updateSortIndicators();
   }
 
   function renderPagination() {
@@ -493,6 +509,47 @@
     }
   }
 
+  function handleSortClick(column) {
+    if (!column) return;
+    if (state.sort.column === column) {
+      state.sort.direction = state.sort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sort.column = column;
+      state.sort.direction = 'asc';
+    }
+    state.pagination.page = 1;
+    updateSortIndicators();
+    loadOrders();
+  }
+
+  function updateSortIndicators() {
+    document.querySelectorAll('.orders-table th.sortable').forEach(th => {
+      const column = th.dataset.sort;
+      const icon = th.querySelector('.sort-icon');
+      if (column === state.sort.column) {
+        th.classList.add('sorted');
+        if (icon) {
+          icon.classList.remove('fa-sort', 'fa-sort-up', 'fa-sort-down');
+          icon.classList.add(state.sort.direction === 'asc' ? 'fa-sort-up' : 'fa-sort-down');
+        }
+      } else {
+        th.classList.remove('sorted');
+        if (icon) {
+          icon.classList.remove('fa-sort-up', 'fa-sort-down');
+          icon.classList.add('fa-sort');
+        }
+      }
+    });
+  }
+
+  function handleDetailPrint() {
+    if (!state.detailOrderId) {
+      showToast('กรุณาเลือกออเดอร์ก่อนพิมพ์', 'warning');
+      return;
+    }
+    printLabel(state.detailOrderId);
+  }
+
   // ============ Selection ============
   function toggleSelect(orderId) {
     if (state.selectedIds.has(orderId)) {
@@ -623,11 +680,11 @@
         </div>
         <div class="orders-detail-row">
           <div class="orders-detail-label">โทรศัพท์</div>
-          <div class="orders-detail-value">${order.phone || '-'}</div>
+          <div class="orders-detail-value">${escapeHtml(order.phone || '-')}</div>
         </div>
         <div class="orders-detail-row">
           <div class="orders-detail-label">อีเมล</div>
-          <div class="orders-detail-value">${order.email || '-'}</div>
+          <div class="orders-detail-value">${escapeHtml(order.email || '-')}</div>
         </div>
       </div>
 
@@ -651,7 +708,7 @@
         </div>
         <div class="orders-detail-row">
           <div class="orders-detail-label">รหัสไปรษณีย์</div>
-          <div class="orders-detail-value">${order.addressPostalCode || '-'}</div>
+          <div class="orders-detail-value">${escapeHtml(order.addressPostalCode || '-')}</div>
         </div>
       </div>
 
@@ -661,7 +718,7 @@
           <div class="orders-detail-row">
             <div class="orders-detail-value" style="flex:1">
               ${escapeHtml(item.product || item.shippingName || 'สินค้า')}
-              ${item.color ? `<span style="color:var(--text-light);"> (${item.color})</span>` : ''}
+              ${item.color ? `<span style="color:var(--text-light);"> (${escapeHtml(item.color)})</span>` : ''}
             </div>
             <div style="text-align:right;">x${item.quantity || 1}</div>
             <div style="text-align:right;min-width:80px;">฿${(item.price || 0).toLocaleString()}</div>
@@ -681,7 +738,7 @@
         </div>
         <div class="orders-detail-row">
           <div class="orders-detail-label">วิธีชำระ</div>
-          <div class="orders-detail-value">${order.paymentMethod || '-'}</div>
+          <div class="orders-detail-value">${escapeHtml(order.paymentMethod || '-')}</div>
         </div>
       </div>
 
@@ -699,7 +756,7 @@
         </div>
         <div class="orders-detail-row">
           <div class="orders-detail-label">เพจ</div>
-          <div class="orders-detail-value">${order.pageName || '-'}</div>
+          <div class="orders-detail-value">${escapeHtml(order.pageName || '-')}</div>
         </div>
       </div>
 

@@ -18,6 +18,13 @@
   const broadcastForm = document.getElementById('broadcastForm');
   const submitBtn = document.getElementById('submitBroadcastBtn');
   const cancelBtn = document.getElementById('cancelBroadcastBtn');
+  const previewMessage = document.getElementById('previewMessage');
+  const previewStatus = document.getElementById('previewStatus');
+  const previewAudienceLabel = document.getElementById('previewAudienceLabel');
+  const previewChannelsLabel = document.getElementById('previewChannelsLabel');
+  const previewBtn = document.getElementById('previewBtn');
+  const previewBtnInline = document.getElementById('previewBtnInline');
+  const previewCard = document.getElementById('broadcastPreview');
 
   // Progress Elements
   const progressBar = document.querySelector('#progressModal .progress-bar');
@@ -73,6 +80,62 @@
     setTimeout(removeToast, 3500);
   };
 
+  const getSelectedAudienceLabel = () => {
+    const selectedCard = document.querySelector('.audience-card.active');
+    const title = selectedCard?.querySelector('.audience-title');
+    return (title?.textContent || '').trim() || 'ไม่ระบุ';
+  };
+
+  const getSelectedChannelsLabel = () => {
+    const selected = Array.from(document.querySelectorAll('input[name="channels"]:checked'));
+    if (!selected.length) return 'ยังไม่เลือก';
+    const labels = selected.map(input => {
+      const labelEl = document.querySelector(`label[for="${input.id}"]`);
+      const raw = labelEl ? labelEl.textContent : input.value;
+      return (raw || '').replace(/\s+/g, ' ').trim();
+    }).filter(Boolean);
+    return labels.length ? labels.join(', ') : 'ยังไม่เลือก';
+  };
+
+  const formatPreviewItem = (item, index, total) => {
+    const prefix = total > 1 ? `${index + 1}. ` : '';
+    if (item.type === 'image') {
+      const filename = item.file?.name ? ` (${item.file.name})` : '';
+      return `${prefix}รูปภาพ${filename}`;
+    }
+    const text = (item.content || '').trim();
+    return `${prefix}${text || '(ข้อความว่าง)'}`;
+  };
+
+  const updatePreview = () => {
+    if (previewAudienceLabel) {
+      previewAudienceLabel.textContent = getSelectedAudienceLabel();
+    }
+    if (previewChannelsLabel) {
+      previewChannelsLabel.textContent = getSelectedChannelsLabel();
+    }
+    if (!previewMessage) return;
+    if (!messageItems.length) {
+      previewMessage.textContent = 'พิมพ์ข้อความเพื่อดูตัวอย่าง...';
+      if (previewStatus) previewStatus.textContent = 'ยังไม่มีข้อความ';
+      return;
+    }
+    const lines = messageItems.map((item, index) =>
+      formatPreviewItem(item, index, messageItems.length)
+    );
+    previewMessage.textContent = lines.join('\n\n');
+    if (previewStatus) {
+      previewStatus.textContent = `มีข้อความ ${messageItems.length} รายการ`;
+    }
+  };
+
+  const handlePreviewClick = () => {
+    updatePreview();
+    if (previewCard && previewCard.scrollIntoView) {
+      previewCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
   // --- Audience Preview ---
   const updateAudiencePreview = async () => {
     const channels = Array.from(document.querySelectorAll('input[name="channels"]:checked')).map(c => c.value);
@@ -80,6 +143,7 @@
 
     if (channels.length === 0) {
       audienceStats.style.display = 'none';
+      updatePreview();
       return;
     }
 
@@ -104,6 +168,8 @@
     } catch (e) {
       console.error("Preview error", e);
       audienceTotal.textContent = '?';
+    } finally {
+      updatePreview();
     }
   };
 
@@ -136,6 +202,7 @@
 
     if (messageItems.length === 0) {
       messageList.innerHTML = `<div class="message-item empty-state text-center p-3 border rounded border-dashed bg-light text-muted">ยังไม่มีข้อความ กดปุ่มด้านล่างเพื่อเพิ่ม</div>`;
+      updatePreview();
       return;
     }
 
@@ -161,6 +228,7 @@
         textarea.value = item.content || '';
         textarea.addEventListener('input', (e) => {
           item.content = e.target.value;
+          updatePreview();
         });
         contentWrap.appendChild(textarea);
       } else {
@@ -175,6 +243,7 @@
           if (e.target.files && e.target.files[0]) {
             item.file = e.target.files[0];
             renderMessageList();
+            updatePreview();
           }
         });
 
@@ -198,6 +267,7 @@
       removeBtn.addEventListener('click', () => {
         messageItems.splice(index, 1);
         renderMessageList();
+        updatePreview();
       });
 
       body.appendChild(indexBadge);
@@ -207,18 +277,21 @@
 
       messageList.appendChild(div);
     });
+    updatePreview();
   };
 
   addTextBtn.addEventListener('click', () => {
     if (messageItems.length >= 5) return showToast('ส่งได้สูงสุด 5 ข้อความ', 'warning');
     messageItems.push({ type: 'text', content: '' });
     renderMessageList();
+    updatePreview();
   });
 
   addImageBtn.addEventListener('click', () => {
     if (messageItems.length >= 5) return showToast('ส่งได้สูงสุด 5 ข้อความ', 'warning');
     messageItems.push({ type: 'image', file: null });
     renderMessageList();
+    updatePreview();
   });
 
 
@@ -351,9 +424,18 @@
     // Optional: Clear form
     // messageItems = [];
     // renderMessageList();
+    updatePreview();
   };
 
   // Init
+  if (previewBtn) {
+    previewBtn.addEventListener('click', handlePreviewClick);
+  }
+  if (previewBtnInline) {
+    previewBtnInline.addEventListener('click', handlePreviewClick);
+  }
+
   updateAudiencePreview();
+  updatePreview();
 
 })();

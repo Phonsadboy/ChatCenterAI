@@ -1430,10 +1430,6 @@ input:checked+.toggle-slider:before {
     color: var(--text-secondary);
 }
 
-.d-none {
-    display: none !important;
-}
-
 /* Loading Overlay */
 .loading-overlay {
     position: absolute;

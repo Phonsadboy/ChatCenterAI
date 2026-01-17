@@ -1948,13 +1948,29 @@
 	                    flyout.wrapper.style.top = `${nextTop}px`;
 	                });
 
-	                if (!wasOpenForTarget) {
-	                    const selectionStart = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : flyout.input.value.length;
-	                    const selectionEnd = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : selectionStart;
-	                    flyout.input.focus({ preventScroll: true });
+                if (!wasOpenForTarget) {
+                    const selectionStart = typeof textarea.selectionStart === 'number' ? textarea.selectionStart : flyout.input.value.length;
+                    const selectionEnd = typeof textarea.selectionEnd === 'number' ? textarea.selectionEnd : selectionStart;
+                    flyout.input.focus({ preventScroll: true });
                     flyout.input.setSelectionRange(selectionStart, selectionEnd);
                 }
             }
+
+            let dirtySnapshot = '';
+            let hasDirtySnapshot = false;
+            let isDirty = false;
+            let buildSnapshot = () => '';
+
+            const setInitialSnapshot = () => {
+                dirtySnapshot = buildSnapshot();
+                hasDirtySnapshot = true;
+                isDirty = false;
+            };
+
+            const refreshDirtyState = () => {
+                if (!hasDirtySnapshot) return;
+                isDirty = buildSnapshot() !== dirtySnapshot;
+            };
 
             function updatePreview() {
                 const setChipText = (element, text) => {
@@ -1985,6 +2001,8 @@
                 } else {
                     setChipText(selectionChip, 'คลิกเซลล์เพื่อแก้ไข');
                 }
+
+                refreshDirtyState();
             }
 
             function copyTableAsTSV() {
@@ -2051,6 +2069,19 @@
                 const contentInput = document.getElementById('instructionContent');
                 const titleInput = document.getElementById('instructionTitle');
 
+                buildSnapshot = () => {
+                    const type = typeSelect ? typeSelect.value : 'text';
+                    const title = titleInput ? titleInput.value : '';
+                    const content = contentInput ? contentInput.value : '';
+                    const tablePayload = instructionTableBuilder.getPayload ? instructionTableBuilder.getPayload() : null;
+                    return JSON.stringify({
+                        type,
+                        title,
+                        content,
+                        table: tablePayload
+                    });
+                };
+
                 const toggleEditorSection = () => {
                     const type = typeSelect ? typeSelect.value : 'text';
                     if (type === 'table') {
@@ -2088,10 +2119,23 @@
                 toggleEditorSection();
                 updateCharCount();
                 updatePreview();
+                setInitialSnapshot();
+
+                window.addEventListener('beforeunload', (event) => {
+                    if (!isDirty) return;
+                    event.preventDefault();
+                    event.returnValue = '';
+                });
 
                 if (typeSelect && typeSelect.tagName === 'SELECT') {
                     typeSelect.addEventListener('change', () => {
                         toggleEditorSection();
+                        updatePreview();
+                    });
+                }
+
+                if (titleInput) {
+                    titleInput.addEventListener('input', () => {
                         updatePreview();
                     });
                 }
@@ -2205,6 +2249,7 @@
                             hidden.value = '';
                         }
                     }
+                    isDirty = false;
                     return true;
                 });
             });

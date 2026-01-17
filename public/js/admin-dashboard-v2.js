@@ -847,31 +847,49 @@
                         if (uploadExcelBtn) uploadExcelBtn.disabled = false;
 
                         if (excelPreviewContent) {
-                            excelPreviewContent.innerHTML = `
-                                <div class="table-responsive">
-                                    <table class="table table-sm table-bordered mb-0">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th>Instruction Name</th>
-                                                <th>Items</th>
-                                                <th>Description</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            ${data.previews.map(p => `
-                                                <tr>
-                                                    <td>${p.name}</td>
-                                                    <td class="text-center">${p.itemsCount}</td>
-                                                    <td class="small text-muted">${p.description || '-'}</td>
-                                                </tr>
-                                            `).join('')}
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div class="mt-2 text-success small">
-                                    <i class="fas fa-check-circle me-1"></i> พร้อมนำเข้า ${data.previews.length} Instructions
-                                </div>
-                            `;
+                            excelPreviewContent.innerHTML = '';
+                            const previews = Array.isArray(data.previews) ? data.previews : [];
+                            const wrapper = document.createElement('div');
+                            wrapper.className = 'table-responsive';
+
+                            const table = document.createElement('table');
+                            table.className = 'table table-sm table-bordered mb-0';
+
+                            const thead = document.createElement('thead');
+                            thead.className = 'table-light';
+                            const headRow = document.createElement('tr');
+                            ['Instruction Name', 'Items', 'Description'].forEach((text) => {
+                                const th = document.createElement('th');
+                                th.textContent = text;
+                                headRow.appendChild(th);
+                            });
+                            thead.appendChild(headRow);
+                            table.appendChild(thead);
+
+                            const tbody = document.createElement('tbody');
+                            previews.forEach((preview) => {
+                                const row = document.createElement('tr');
+                                const nameCell = document.createElement('td');
+                                nameCell.textContent = preview.name || '';
+                                const countCell = document.createElement('td');
+                                countCell.className = 'text-center';
+                                countCell.textContent = String(preview.itemsCount ?? '');
+                                const descCell = document.createElement('td');
+                                descCell.className = 'small text-muted';
+                                descCell.textContent = preview.description || '-';
+                                row.appendChild(nameCell);
+                                row.appendChild(countCell);
+                                row.appendChild(descCell);
+                                tbody.appendChild(row);
+                            });
+                            table.appendChild(tbody);
+                            wrapper.appendChild(table);
+                            excelPreviewContent.appendChild(wrapper);
+
+                            const summary = document.createElement('div');
+                            summary.className = 'mt-2 text-success small';
+                            summary.innerHTML = `<i class="fas fa-check-circle me-1"></i> พร้อมนำเข้า ${previews.length} Instructions`;
+                            excelPreviewContent.appendChild(summary);
                         }
                     } else {
                         showToast(data.error || 'ไม่สามารถดูตัวอย่างไฟล์ได้', 'error');
