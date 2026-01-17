@@ -3336,6 +3336,11 @@ function normalizeOrderAddress(orderData = {}) {
   };
 }
 
+const ORDER_EXTRACTION_MODES = Object.freeze({
+  REALTIME: "realtime",
+  SCHEDULED: "scheduled",
+});
+
 const ORDER_REQUIRED_FIELDS_DEFAULT = Object.freeze({
   items: true,
   customerName: false,
