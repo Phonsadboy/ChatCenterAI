@@ -1510,12 +1510,39 @@ class ChatManager {
     }
 
     createImageMessageHTML(imageData, index = 0) {
-        const base64Size = Math.ceil((imageData.base64.length * 3) / 4);
+        let base64Data = imageData.base64;
+        let mimeType = "image/jpeg";
+        let imageSrc = "";
+
+        // ตรวจสอบว่า base64 มี Data URL prefix อยู่แล้วหรือไม่
+        const dataUrlMatch = base64Data.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
+        if (dataUrlMatch) {
+            // มี prefix อยู่แล้ว ใช้ตรงๆ
+            mimeType = dataUrlMatch[1];
+            base64Data = dataUrlMatch[2];
+            imageSrc = imageData.base64;
+        } else {
+            // ไม่มี prefix ต้องตรวจจับ MIME type จาก signature
+            const trimmed = base64Data.trim();
+            if (trimmed.startsWith("/9j/")) {
+                mimeType = "image/jpeg";
+            } else if (trimmed.startsWith("iVBORw0KGgo")) {
+                mimeType = "image/png";
+            } else if (trimmed.startsWith("R0lGOD")) {
+                mimeType = "image/gif";
+            } else if (trimmed.startsWith("UklGR")) {
+                mimeType = "image/webp";
+            }
+            imageSrc = `data:${mimeType};base64,${base64Data}`;
+        }
+
+        const base64Size = Math.ceil((base64Data.length * 3) / 4);
         const sizeKB = (base64Size / 1024).toFixed(1);
+        const formatName = mimeType.split("/")[1].toUpperCase();
 
         return `
             <div class="message-image">
-                <img src="data:image/jpeg;base64,${imageData.base64}" 
+                <img src="${imageSrc}" 
                      alt="รูปภาพจากผู้ใช้ ${index + 1}" 
                      onclick="chatManager.openImageModal(this.src)"
                      onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
@@ -1526,7 +1553,7 @@ class ChatManager {
                 <div class="image-info">
                     <small class="text-muted">
                         <i class="fas fa-image me-1"></i>
-                        รูปภาพ JPEG (${sizeKB} KB)
+                        รูปภาพ ${formatName} (${sizeKB} KB)
                     </small>
                 </div>
             </div>
@@ -1551,8 +1578,9 @@ class ChatManager {
             } else {
                 contentHtml += '<div class="image-grid">';
                 processed.imageParts.forEach((imageData, index) => {
+                    const imageSrc = this.getImageSrc(imageData.base64);
                     contentHtml += `
-                        <img src="data:image/jpeg;base64,${imageData.base64}" 
+                        <img src="${imageSrc}" 
                              alt="รูปภาพ ${index + 1}" 
                              onclick="chatManager.openImageModal(this.src)"
                              onerror="this.style.display='none';">
@@ -1569,6 +1597,31 @@ class ChatManager {
         }
 
         return contentHtml;
+    }
+
+    // Helper function สำหรับสร้าง image src ที่รองรับ Data URL และตรวจจับ MIME type
+    getImageSrc(base64Data) {
+        if (!base64Data) return '';
+
+        // ตรวจสอบว่า base64 มี Data URL prefix อยู่แล้วหรือไม่
+        const dataUrlMatch = base64Data.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
+        if (dataUrlMatch) {
+            return base64Data; // มี prefix อยู่แล้ว ใช้ตรงๆ
+        }
+
+        // ไม่มี prefix ต้องตรวจจับ MIME type จาก signature
+        let mimeType = "image/jpeg";
+        const trimmed = base64Data.trim();
+        if (trimmed.startsWith("/9j/")) {
+            mimeType = "image/jpeg";
+        } else if (trimmed.startsWith("iVBORw0KGgo")) {
+            mimeType = "image/png";
+        } else if (trimmed.startsWith("R0lGOD")) {
+            mimeType = "image/gif";
+        } else if (trimmed.startsWith("UklGR")) {
+            mimeType = "image/webp";
+        }
+        return `data:${mimeType};base64,${base64Data}`;
     }
 
     showToast(message, type = 'info') {

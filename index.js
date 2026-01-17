@@ -1909,26 +1909,8 @@ function sanitizeFollowUpImage(image) {
 }
 
 function sanitizeFollowUpImages(images) {
-  if (!Array.isArray(images)) {
-    console.log(
-      "[FollowUp Debug] sanitizeFollowUpImages: not an array",
-      typeof images,
-    );
-    return [];
-  }
-  const result = images.map(sanitizeFollowUpImage).filter(Boolean);
-  console.log("[FollowUp Debug] sanitizeFollowUpImages:", {
-    inputCount: images.length,
-    outputCount: result.length,
-    sample: result[0],
-    allUrls: result.map((img) => ({
-      url: img.url,
-      isAbsolute: img.url.startsWith("http"),
-      previewUrl: img.previewUrl,
-      previewIsAbsolute: img.previewUrl?.startsWith("http"),
-    })),
-  });
-  return result;
+  if (!Array.isArray(images)) return [];
+  return images.map(sanitizeFollowUpImage).filter(Boolean);
 }
 
 function summarizeFollowUpRound(round) {
@@ -1954,15 +1936,6 @@ function normalizeFollowUpRounds(rounds) {
     const delay = Number(item.delayMinutes);
     const message = typeof item.message === "string" ? item.message.trim() : "";
     const images = sanitizeFollowUpImages(item.images || item.media);
-
-    // Debug log
-    console.log(`[FollowUp Debug] Normalizing round ${idx}:`, {
-      hasItem: !!item,
-      delay,
-      messageLength: message.length,
-      rawImages: item.images || item.media,
-      imagesCount: images.length,
-    });
 
     if (!Number.isFinite(delay) || delay < 1) return;
     if (!message && images.length === 0) return;
@@ -2465,14 +2438,6 @@ async function scheduleFollowUpForUser(userId, options = {}) {
         .add(round.delayMinutes, "minutes");
       const sanitizedImages = sanitizeFollowUpImages(round.images);
 
-      // Debug log
-      console.log(`[FollowUp Debug] Creating round ${index}:`, {
-        hasImages: !!round.images,
-        imageCount: Array.isArray(round.images) ? round.images.length : 0,
-        sanitizedCount: sanitizedImages.length,
-        sampleImage: sanitizedImages[0],
-      });
-
       return {
         index,
         delayMinutes: round.delayMinutes,
@@ -2646,15 +2611,6 @@ async function handleFollowUpTask(task, db) {
     task.contextKey ||
     `${task.platform || "line"}:${normalizeFollowUpBotId(task.botId) || "default"}`;
 
-  // Debug log
-  console.log("[FollowUp Debug] Task rounds:", {
-    taskId: task._id,
-    totalRounds: rounds.length,
-    currentIndex,
-    hasRound: !!round,
-    roundHasImages: !!round?.images,
-    roundImagesCount: Array.isArray(round?.images) ? round.images.length : 0,
-  });
 
   if (!round) {
     await coll.updateOne(
@@ -2837,27 +2793,13 @@ async function sendFollowUpMessage(task, round, db) {
     });
   }
 
-  // Debug log
-  console.log("[FollowUp Debug] Round data:", {
-    hasRound: !!round,
-    roundImages: round?.images,
-    sanitizedImages: images,
-    imageCount: images.length,
-    hasPublicBaseUrl: !!PUBLIC_BASE_URL,
-    sampleUrl: images[0]?.url,
-  });
 
   if (!message && images.length === 0) {
     throw new Error("ไม่มีเนื้อหาสำหรับการติดตาม");
   }
 
   if (task.platform === "facebook") {
-    console.log("[FollowUp Debug] Sending Facebook follow-up:", {
-      userId: task.userId,
-      hasMessage: !!message,
-      imageCount: images.length,
-      botId: task.botId,
-    });
+    console.log(`[FollowUp] FB: ${task.userId}, msg:${!!message}, imgs:${images.length}`);
 
     if (!task.botId) {
       throw new Error("ไม่พบ Facebook Bot สำหรับการส่งข้อความ");
@@ -2899,11 +2841,6 @@ async function sendFollowUpMessage(task, round, db) {
       });
     }
 
-    console.log("[FollowUp Debug] Combined message:", {
-      hasText: !!message,
-      imageCount: images.length,
-      messageLength: combinedMessage.length,
-    });
 
     // สร้าง assetsMap จากรูปภาพที่มี
     const assetsMap = buildAssetsLookup(
@@ -2914,10 +2851,6 @@ async function sendFollowUpMessage(task, round, db) {
       })),
     );
 
-    console.log("[FollowUp Debug] Assets map:", {
-      labels: followUpLabels,
-      urls: followUpAssets.map((asset) => asset.url),
-    });
 
     // ใช้ sendFacebookMessage ที่มี upload/url mode และ fallback
     await sendFacebookMessage(
@@ -2931,7 +2864,6 @@ async function sendFollowUpMessage(task, round, db) {
       assetsMap,
     );
 
-    console.log("[FollowUp Debug] Facebook follow-up sent successfully");
   } else {
     await sendLineFollowUpMessage(task.userId, message, task.botId, db, images);
   }
@@ -2993,12 +2925,7 @@ async function sendLineFollowUpMessage(
   images = [],
 ) {
   try {
-    console.log("[FollowUp Debug] sendLineFollowUpMessage called:", {
-      userId,
-      hasMessage: !!message,
-      imageCount: Array.isArray(images) ? images.length : 0,
-      botId,
-    });
+    console.log(`[FollowUp] LINE: ${userId}, msg:${!!message}, imgs:${Array.isArray(images) ? images.length : 0}`);
 
     const payloads = [];
     const trimmed = typeof message === "string" ? message.trim() : "";
@@ -3006,14 +2933,6 @@ async function sendLineFollowUpMessage(
       payloads.push({ type: "text", text: trimmed });
     }
     const media = sanitizeFollowUpImages(images);
-    console.log("[FollowUp Debug] Sanitized images:", {
-      inputCount: Array.isArray(images) ? images.length : 0,
-      outputCount: media.length,
-      urls: media.map((img) => ({
-        url: img.url,
-        previewUrl: img.previewUrl,
-      })),
-    });
 
     media.forEach((image) => {
       payloads.push({
@@ -3027,10 +2946,6 @@ async function sendLineFollowUpMessage(
       throw new Error("ไม่มีเนื้อหาสำหรับการติดตาม");
     }
 
-    console.log("[FollowUp Debug] Payloads to send:", {
-      count: payloads.length,
-      types: payloads.map((p) => p.type),
-    });
 
     const chunks = [];
     for (let i = 0; i < payloads.length; i += 5) {
@@ -3040,15 +2955,7 @@ async function sendLineFollowUpMessage(
     const sendChunks = async (client) => {
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
-        console.log(
-          `[FollowUp Debug] Sending chunk ${i + 1}/${chunks.length}:`,
-          {
-            itemCount: chunk.length,
-            types: chunk.map((item) => item.type),
-          },
-        );
         await client.pushMessage(userId, chunk.length === 1 ? chunk[0] : chunk);
-        console.log(`[FollowUp Debug] Chunk ${i + 1} sent successfully`);
       }
     };
 
@@ -3060,21 +2967,17 @@ async function sendLineFollowUpMessage(
       if (!botDoc || !botDoc.channelAccessToken || !botDoc.channelSecret) {
         throw new Error("ไม่พบข้อมูล Line Bot สำหรับการส่งข้อความ");
       }
-      console.log("[FollowUp Debug] Using bot-specific LINE client");
       const client = createLineClient(
         botDoc.channelAccessToken,
         botDoc.channelSecret,
       );
       await sendChunks(client);
-      console.log("[FollowUp Debug] All chunks sent successfully");
       return;
     }
     if (!lineClient) {
       throw new Error("Line Client ยังไม่ถูกตั้งค่า");
     }
-    console.log("[FollowUp Debug] Using default LINE client");
     await sendChunks(lineClient);
-    console.log("[FollowUp Debug] All chunks sent successfully");
   } catch (error) {
     console.error("[FollowUp Error] Failed to send LINE message:", {
       error: error.message,
@@ -9363,10 +9266,28 @@ async function getAssistantResponseMultimodal(
         const imageSize = item.content.length;
         const useHighDetail = imageSize > 100000; // ใช้ high detail เฉพาะรูปที่มีรายละเอียดมาก
 
+        // ตรวจจับ MIME type จาก content
+        let imageUrl = item.content;
+        if (!imageUrl.startsWith("data:image/")) {
+          // ตรวจจับ MIME type จาก signature
+          let mimeType = "image/jpeg";
+          const trimmed = imageUrl.trim();
+          if (trimmed.startsWith("/9j/")) {
+            mimeType = "image/jpeg";
+          } else if (trimmed.startsWith("iVBORw0KGgo")) {
+            mimeType = "image/png";
+          } else if (trimmed.startsWith("R0lGOD")) {
+            mimeType = "image/gif";
+          } else if (trimmed.startsWith("UklGR")) {
+            mimeType = "image/webp";
+          }
+          imageUrl = `data:${mimeType};base64,${item.content}`;
+        }
+
         finalContent.push({
           type: "image_url",
           image_url: {
-            url: `data:image/jpeg;base64,${item.content}`,
+            url: imageUrl,
             detail: useHighDetail ? "high" : "low", // ปรับ detail ตามขนาดรูป
           },
         });
@@ -11967,12 +11888,6 @@ async function sendFacebookImageMessage(
     throw new Error("ไม่มี URL สำหรับรูปภาพ");
   }
 
-  console.log("[FollowUp Debug] Sending Facebook image:", {
-    recipientId,
-    imageUrl: image.url,
-    previewUrl: image.previewUrl || image.thumbUrl,
-    hasMetadata: !!metadata,
-  });
 
   try {
     const messagePayload = {
@@ -12005,10 +11920,7 @@ async function sendFacebookImageMessage(
         headers: { "Content-Type": "application/json" },
       },
     );
-    console.log(
-      "[FollowUp Debug] Facebook image sent successfully:",
-      response.data?.message_id || "ok",
-    );
+
   } catch (error) {
     const status = error.response?.status;
     const fbMessage = error.response?.data?.error?.message || error.message;
@@ -23281,11 +23193,21 @@ function processQueueMessageForDisplayV2(content) {
         // รองรับรูปแบบใหม่: item มี type และ content โดยตรง
         if (item && item.type === "text" && item.content) {
           textParts.push(item.content);
+        } else if (item && item.type === "text" && item.text) {
+          // รองรับรูปแบบ follow-up { type: "text", text: "..." }
+          textParts.push(item.text);
         } else if (item && item.type === "image" && item.content) {
-          // รูปภาพในรูปแบบใหม่
+          // รูปภาพในรูปแบบใหม่ (base64 ใน content)
           imageParts.push({
             base64: item.content,
             description: item.description || "ผู้ใช้ส่งรูปภาพมา",
+          });
+        } else if (item && item.type === "image" && item.url) {
+          // รูปภาพในรูปแบบ URL (เช่น follow-up images)
+          imageParts.push({
+            url: item.url,
+            previewUrl: item.previewUrl || item.url,
+            caption: item.caption || item.alt || "",
           });
         } else if (item && item.type === "audio") {
           audioParts.push(item);
@@ -23297,6 +23219,13 @@ function processQueueMessageForDisplayV2(content) {
             textParts.push(data.text);
           } else if (data.type === "image" && data.base64) {
             imageParts.push(data);
+          } else if (data.type === "image" && data.url) {
+            // รูปภาพ URL ในรูปแบบเก่า
+            imageParts.push({
+              url: data.url,
+              previewUrl: data.previewUrl || data.url,
+              caption: data.caption || data.alt || "",
+            });
           } else if (data.type === "audio") {
             audioParts.push(data);
           }
@@ -23572,16 +23501,56 @@ function buildAudioAttachmentDisplay(audioData = {}, index = 0) {
 
 function createImageHTML(imageData, index = 0) {
   try {
-    if (!imageData || !imageData.base64) {
+    if (!imageData) {
       return '<div class="message-text text-muted">รูปภาพไม่ถูกต้อง</div>';
     }
 
-    const base64Size = Math.ceil((imageData.base64.length * 3) / 4);
-    const sizeKB = (base64Size / 1024).toFixed(1);
+    let imageSrc = "";
+    let sizeInfo = "";
+
+    // ตรวจสอบว่าเป็น URL หรือ base64
+    if (imageData.url) {
+      // รูปภาพเป็น URL (เช่น follow-up images)
+      imageSrc = imageData.previewUrl || imageData.url;
+      sizeInfo = imageData.caption ? `${imageData.caption}` : "รูปภาพ";
+    } else if (imageData.base64) {
+      // รูปภาพเป็น base64
+      let base64Data = imageData.base64;
+      let mimeType = "image/jpeg";
+
+      // ตรวจสอบว่า base64 มี Data URL prefix อยู่แล้วหรือไม่
+      const dataUrlMatch = base64Data.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
+      if (dataUrlMatch) {
+        // มี prefix อยู่แล้ว ใช้ตรงๆ
+        mimeType = dataUrlMatch[1];
+        base64Data = dataUrlMatch[2];
+        imageSrc = imageData.base64;
+      } else {
+        // ไม่มี prefix ต้องตรวจจับ MIME type จาก signature
+        const trimmed = base64Data.trim();
+        if (trimmed.startsWith("/9j/")) {
+          mimeType = "image/jpeg";
+        } else if (trimmed.startsWith("iVBORw0KGgo")) {
+          mimeType = "image/png";
+        } else if (trimmed.startsWith("R0lGOD")) {
+          mimeType = "image/gif";
+        } else if (trimmed.startsWith("UklGR")) {
+          mimeType = "image/webp";
+        }
+        imageSrc = `data:${mimeType};base64,${base64Data}`;
+      }
+
+      const base64Size = Math.ceil((base64Data.length * 3) / 4);
+      const sizeKB = (base64Size / 1024).toFixed(1);
+      const formatName = mimeType.split("/")[1].toUpperCase();
+      sizeInfo = `รูปภาพ ${formatName} (${sizeKB} KB)`;
+    } else {
+      return '<div class="message-text text-muted">รูปภาพไม่ถูกต้อง</div>';
+    }
 
     return `
       <div class="message-image">
-        <img src="data:image/jpeg;base64,${imageData.base64}"
+        <img src="${imageSrc}"
              alt="รูปภาพจากผู้ใช้ ${index + 1}"
              class="img-fluid rounded"
              style="max-width: 200px; max-height: 200px; cursor: pointer;"
@@ -23594,7 +23563,7 @@ function createImageHTML(imageData, index = 0) {
         <div class="image-info">
           <small class="text-muted">
             <i class="fas fa-image me-1"></i>
-            รูปภาพ JPEG (${sizeKB} KB)
+            ${sizeInfo}
           </small>
         </div>
       </div>
