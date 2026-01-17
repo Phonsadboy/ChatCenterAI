@@ -7,6 +7,7 @@ const INSTRUCTION_SOURCE = { V2: 'v2', LEGACY: 'legacy' };
 let instructionLibraries = [];
 
 document.addEventListener('DOMContentLoaded', function () {
+    initMobileMenu();
     initNavigation();
     loadAllSettings();
     setupEventListeners();
@@ -19,6 +20,63 @@ function showAlert(message, type = 'info') {
     showToast(message, type);
 }
 window.showAlert = showAlert;
+
+// --- Mobile Menu ---
+function initMobileMenu() {
+    const menuToggle = document.getElementById('mobileMenuToggle');
+    const sidebar = document.querySelector('.settings-sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    const navItems = document.querySelectorAll('.nav-item-v2');
+
+    if (!menuToggle || !sidebar || !overlay) return;
+
+    // Toggle menu
+    function toggleMenu(show) {
+        if (show) {
+            sidebar.classList.add('active');
+            overlay.classList.add('active');
+            menuToggle.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        } else {
+            sidebar.classList.remove('active');
+            overlay.classList.remove('active');
+            menuToggle.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+    }
+
+    // Toggle button click
+    menuToggle.addEventListener('click', () => {
+        const isActive = sidebar.classList.contains('active');
+        toggleMenu(!isActive);
+    });
+
+    // Overlay click to close
+    overlay.addEventListener('click', () => {
+        toggleMenu(false);
+    });
+
+    // Close menu when nav item is clicked
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            // Close menu on mobile after clicking nav item
+            if (window.innerWidth <= 991) {
+                toggleMenu(false);
+            }
+        });
+    });
+
+    // Close menu on window resize if switching to desktop
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+            if (window.innerWidth > 991) {
+                toggleMenu(false);
+            }
+        }, 250);
+    });
+}
 
 // --- Navigation ---
 function initNavigation() {

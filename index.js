@@ -9612,6 +9612,8 @@ async function getAssistantResponseMultimodal(
         const client = await connectDB();
         const db = client.db("chatbot");
 
+        let isFirstToolCall = true;
+
         for (const toolCall of responseMessage.tool_calls) {
           const functionName = toolCall.function.name;
           const functionArgs = JSON.parse(toolCall.function.arguments);
@@ -9646,12 +9648,25 @@ async function getAssistantResponseMultimodal(
             toolResult = await updateOrderFromTool(functionArgs, toolContext);
           }
 
-          messages.push({
+          const toolResultMsg = {
             tool_call_id: toolCall.id,
             role: "tool",
             name: functionName,
             content: JSON.stringify(toolResult),
-          });
+          };
+
+          messages.push(toolResultMsg);
+
+          // Save tool interaction to DB
+          await saveToolInteraction(
+            userId,
+            isFirstToolCall ? responseMessage : null,
+            toolResultMsg,
+            platform,
+            botId
+          );
+          isFirstToolCall = false;
+
         }
 
         toolLoopCount++;

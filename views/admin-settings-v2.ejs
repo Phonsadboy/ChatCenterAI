@@ -20,6 +20,14 @@
     <%- include('partials/admin-navbar', { activePage: 'settings2' }) %>
 
         <div class="app-content">
+            <!-- Mobile Menu Toggle Button -->
+            <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle Menu">
+                <i class="fas fa-bars"></i>
+            </button>
+            
+            <!-- Sidebar Overlay for Mobile -->
+            <div class="sidebar-overlay" id="sidebarOverlay"></div>
+            
             <div class="settings-layout">
                 <!-- Sidebar -->
                 <aside class="settings-sidebar">
