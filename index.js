@@ -3549,14 +3549,28 @@ function buildOrderDataForTool(rawData = {}, requiredFields = null) {
   }
 
   let totalAmount = sanitizeOptionalNumber(rawData.totalAmount);
+  const calculatedFromItems = items.reduce(
+    (sum, item) => sum + item.quantity * item.price,
+    0,
+  );
+
+  // === DEBUG LOG: การคำนวณยอดรวม ===
+  console.log(`[ORDER DEBUG] totalAmount validation:`);
+  console.log(`[ORDER DEBUG]   - AI sent: ${rawData.totalAmount} -> sanitized: ${totalAmount}`);
+  console.log(`[ORDER DEBUG]   - Calculated from items: ${calculatedFromItems}`);
+
   if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
-    totalAmount = items.reduce(
-      (sum, item) => sum + item.quantity * item.price,
-      0,
-    );
+    totalAmount = calculatedFromItems;
+    console.log(`[ORDER DEBUG]   - Using calculated amount: ${totalAmount}`);
+  } else {
+    // เตือนถ้ายอดที่ AI ส่งมาไม่ตรงกับการคำนวณ
+    if (Math.abs(totalAmount - calculatedFromItems) > 1) {
+      console.warn(`[ORDER DEBUG] ⚠️ WARNING: AI totalAmount (${totalAmount}) ≠ calculated (${calculatedFromItems}) - diff: ${Math.abs(totalAmount - calculatedFromItems)}`);
+    }
   }
 
   if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    console.error(`[ORDER DEBUG] ❌ totalAmount invalid: ${totalAmount}`);
     return { ok: false, error: "ยอดรวมไม่ถูกต้อง" };
   }
 
@@ -4459,6 +4473,24 @@ async function getOrdersForTool(args = {}, context = {}) {
 
 async function createOrderFromTool(args = {}, context = {}) {
   const userId = context.userId;
+
+  // === DEBUG LOG: ข้อมูลดิบที่ AI ส่งมา ===
+  console.log(`\n[ORDER DEBUG] ========== CREATE ORDER ==========`);
+  console.log(`[ORDER DEBUG] userId: ${userId}`);
+  console.log(`[ORDER DEBUG] platform: ${context.platform}, botId: ${context.botId}`);
+  console.log(`[ORDER DEBUG] Raw args from AI:`, JSON.stringify(args, null, 2));
+
+  if (args.orderData) {
+    const items = args.orderData.items || [];
+    console.log(`[ORDER DEBUG] Items count: ${items.length}`);
+    items.forEach((item, idx) => {
+      console.log(`[ORDER DEBUG]   Item ${idx + 1}: ${item.product} x${item.quantity} @ ฿${item.price} = ฿${(item.quantity || 0) * (item.price || 0)}`);
+    });
+    console.log(`[ORDER DEBUG] AI sent totalAmount: ${args.orderData.totalAmount || 'ไม่ได้ส่ง'}`);
+    console.log(`[ORDER DEBUG] AI sent shippingCost: ${args.orderData.shippingCost || 0}`);
+  }
+  console.log(`[ORDER DEBUG] =================================\n`);
+
   if (!userId) {
     return { success: false, error: "ไม่พบผู้ใช้สำหรับสร้างออเดอร์" };
   }
@@ -9156,7 +9188,12 @@ async function getAssistantResponseTextOnly(
           } else if (functionName === "get_orders") {
             toolResult = await getOrdersForTool(functionArgs, toolContext);
           } else if (functionName === "create_order") {
+            console.log(`[ORDER DEBUG] >>> AI called create_order for userId: ${toolContext.userId}`);
             toolResult = await createOrderFromTool(functionArgs, toolContext);
+            console.log(`[ORDER DEBUG] <<< create_order result:`, toolResult.success ? `✅ orderId: ${toolResult.orderId}` : `❌ ${toolResult.error}`);
+            if (toolResult.success && toolResult.orderData) {
+              console.log(`[ORDER DEBUG] Final saved totalAmount: ฿${toolResult.orderData.totalAmount}`);
+            }
           } else if (functionName === "update_order") {
             toolResult = await updateOrderFromTool(functionArgs, toolContext);
           }
@@ -9592,7 +9629,12 @@ async function getAssistantResponseMultimodal(
           } else if (functionName === "get_orders") {
             toolResult = await getOrdersForTool(functionArgs, toolContext);
           } else if (functionName === "create_order") {
+            console.log(`[ORDER DEBUG] >>> AI called create_order (multimodal) for userId: ${toolContext.userId}`);
             toolResult = await createOrderFromTool(functionArgs, toolContext);
+            console.log(`[ORDER DEBUG] <<< create_order result:`, toolResult.success ? `✅ orderId: ${toolResult.orderId}` : `❌ ${toolResult.error}`);
+            if (toolResult.success && toolResult.orderData) {
+              console.log(`[ORDER DEBUG] Final saved totalAmount: ฿${toolResult.orderData.totalAmount}`);
+            }
           } else if (functionName === "update_order") {
             toolResult = await updateOrderFromTool(functionArgs, toolContext);
           }
