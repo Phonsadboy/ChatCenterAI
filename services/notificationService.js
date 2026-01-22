@@ -57,16 +57,45 @@ function appendLineToTextMessage(message, line) {
 
 async function fetchOrderImageRefs(db, order) {
   const orderId = normalizeIdString(order?._id);
-  if (!ObjectId.isValid(orderId)) return [];
+  const senderId = normalizeIdString(order?.userId);
+  const orderCreatedAt = order?.extractedAt || order?.createdAt;
 
+  // ถ้าไม่มี senderId ไม่สามารถดึงรูปได้
+  if (!senderId) return [];
+
+  // สร้าง query สำหรับดึงรูปภาพ
   const query = {
-    orderId: new ObjectId(orderId),
+    senderId,
     role: "user",
   };
 
-  const senderId = normalizeIdString(order?.userId);
-  if (senderId) {
-    query.senderId = senderId;
+  // กรณีที่ 1: มี orderId ที่ valid - ดึงรูปที่ผูกกับ orderId
+  // กรณีที่ 2: ไม่มี orderId แต่มีวันที่สร้าง - ดึงรูปจากวันเดียวกัน
+  if (ObjectId.isValid(orderId)) {
+    // ดึงทั้งรูปที่มี orderId และรูปในวันเดียวกัน
+    const dayStart = new Date(orderCreatedAt || new Date());
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    query.$or = [
+      { orderId: new ObjectId(orderId) },
+      {
+        timestamp: { $gte: dayStart, $lt: dayEnd },
+        orderId: { $exists: false } // รูปที่ยังไม่ผูกกับ order
+      }
+    ];
+  } else if (orderCreatedAt) {
+    // ดึงรูปจากวันที่สร้างออเดอร์
+    const dayStart = new Date(orderCreatedAt);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    query.timestamp = { $gte: dayStart, $lt: dayEnd };
+  } else {
+    // ไม่มี orderId และไม่มีวันที่ - ไม่สามารถดึงรูปได้
+    return [];
   }
 
   const messages = await db
@@ -74,15 +103,22 @@ async function fetchOrderImageRefs(db, order) {
     .find(query)
     .sort({ timestamp: 1 })
     .project({ content: 1 })
+    .limit(50) // จำกัดจำนวน messages เพื่อป้องกัน memory issue
     .toArray();
 
   const imageRefs = [];
+  const maxImages = 10; // จำกัดรูปภาพสูงสุด
+
   messages.forEach((msg) => {
+    if (imageRefs.length >= maxImages) return;
+
     const images = extractBase64ImagesFromContent(msg.content);
     if (!images.length) return;
     const messageId = normalizeIdString(msg?._id);
     if (!messageId) return;
+
     images.forEach((_, imageIndex) => {
+      if (imageRefs.length >= maxImages) return;
       imageRefs.push({ messageId, imageIndex });
     });
   });
@@ -212,8 +248,15 @@ function formatOrderSummaryMessage(orders, options = {}) {
   const cfg = options.settings || {};
   const includeCustomer = cfg.includeCustomer !== false;
   const includeItemsCount = cfg.includeItemsCount !== false;
+  const includeItemsDetail = cfg.includeItemsDetail !== false;
   const includeTotalAmount = cfg.includeTotalAmount !== false;
+  const includeAddress = cfg.includeAddress !== false;
+  const includePhone = cfg.includePhone !== false;
+  const includePaymentMethod = cfg.includePaymentMethod !== false;
+  const includeChatLink = cfg.includeChatLink !== false;
+  const includeFacebookName = cfg.includeFacebookName !== false;
   const timezone = options.timezone || "Asia/Bangkok";
+  const publicBaseUrl = options.publicBaseUrl || "";
 
   const rangeLabel = formatSummaryRange(options.startAt, options.endAt, timezone);
   const title = rangeLabel
@@ -259,39 +302,94 @@ function formatOrderSummaryMessage(orders, options = {}) {
     };
   }
 
-  lines.push("รายการออเดอร์:");
-  const maxOrders = 10;
-  list.slice(0, maxOrders).forEach((order) => {
+  lines.push("");
+  lines.push("═══════════════════════════");
+
+  const maxOrders = 5; // ลดจำนวนเพราะแต่ละออร์เดอร์มีรายละเอียดมาก
+  const base = typeof publicBaseUrl === "string" ? publicBaseUrl.replace(/\/$/, "") : "";
+
+  list.slice(0, maxOrders).forEach((order, index) => {
     const orderId = normalizeIdString(order?._id);
     const shortId = orderId ? orderId.slice(-6) : "-";
     const orderData = order?.orderData || {};
-    const parts = [`#${shortId}`];
+    const userId = normalizeIdString(order?.userId);
+    const platform = normalizeIdString(order?.platform) || "line";
 
+    lines.push(`🛒 ออเดอร์ #${index + 1} (ID: ${shortId})`);
+
+    // 1. ชื่อ Facebook (ถ้ามี)
+    const facebookName = normalizeIdString(order?.facebookName || orderData.facebookName || order?.senderName || "");
+    if (includeFacebookName && facebookName && platform === "facebook") {
+      lines.push(`📘 Facebook: ${shortenText(facebookName, 60)}`);
+    }
+
+    // ชื่อลูกค้า
     if (includeCustomer) {
       const customerName =
         normalizeIdString(orderData.recipientName) ||
         normalizeIdString(orderData.customerName) ||
         "";
       if (customerName) {
-        parts.push(shortenText(customerName, 40));
+        lines.push(`👤 ผู้รับ: ${shortenText(customerName, 60)}`);
       }
     }
 
-    if (includeItemsCount) {
-      const items = Array.isArray(orderData.items) ? orderData.items : [];
-      parts.push(`${items.length} รายการ`);
+    // 2. รายละเอียดสินค้า
+    const items = Array.isArray(orderData.items) ? orderData.items : [];
+    if (includeItemsDetail && items.length) {
+      const normalizedItems = items.map(normalizeOrderItem).filter(Boolean);
+      if (normalizedItems.length) {
+        const maxItems = 5; // จำกัดสินค้าต่อออเดอร์ในโหมดสรุป
+        normalizedItems.slice(0, maxItems).forEach((item) => {
+          const colorPart = item.color ? ` (${item.color})` : "";
+          const pricePart = item.price !== null ? ` @${formatCurrency(item.price)}` : "";
+          lines.push(`  🔸 ${item.name}${colorPart} x${item.quantity}${pricePart}`);
+        });
+        if (normalizedItems.length > maxItems) {
+          lines.push(`  … +${normalizedItems.length - maxItems} รายการ`);
+        }
+      }
+    } else if (includeItemsCount) {
+      lines.push(`📝 สินค้า: ${items.length} รายการ`);
     }
 
+    // เบอร์โทร
+    const phone = extractOrderPhone(orderData);
+    if (includePhone && phone) {
+      lines.push(`📞 ${shortenText(phone, 40)}`);
+    }
+
+    // 3. ที่อยู่จัดส่ง
+    const address = buildOrderAddress(orderData);
+    if (includeAddress && address) {
+      lines.push(`📍 ${shortenText(address, 200)}`);
+    }
+
+    // 4. วิธีการชำระเงิน
+    const paymentMethod = extractPaymentMethod(orderData);
+    if (includePaymentMethod && paymentMethod) {
+      lines.push(`💳 ${shortenText(paymentMethod, 60)}`);
+    }
+
+    // ยอดรวม
     if (includeTotalAmount) {
       const amount = orderData.totalAmount;
-      const amountText =
-        typeof amount === "number" && Number.isFinite(amount)
-          ? formatCurrency(amount)
-          : null;
-      if (amountText) parts.push(amountText);
+      const shipping = orderData.shippingCost || 0;
+      if (typeof amount === "number" && Number.isFinite(amount)) {
+        let amountText = `💰 ${formatCurrency(amount)}`;
+        if (shipping > 0) {
+          amountText += ` (ค่าส่ง ${formatCurrency(shipping)})`;
+        }
+        lines.push(amountText);
+      }
     }
 
-    lines.push(`- ${parts.join(" • ")}`);
+    // 5. ลิงก์ไปหน้าแชท
+    if (includeChatLink && base && userId) {
+      lines.push(`💬 ${base}/admin/chat?userId=${encodeURIComponent(userId)}`);
+    }
+
+    lines.push("───────────────────────────");
   });
 
   if (list.length > maxOrders) {
@@ -337,54 +435,76 @@ function normalizeOrderItem(item) {
 
 function formatNewOrderMessage(order, settings, publicBaseUrl) {
   const cfg = settings || {};
+  // เปิดการแสดงข้อมูลทั้งหมดเป็นค่าเริ่มต้น
   const includeCustomer = cfg.includeCustomer !== false;
   const includeItemsCount = cfg.includeItemsCount !== false;
-  // Default to TRUE for details to ensure richness
   const includeItemsDetail = cfg.includeItemsDetail !== false;
   const includeTotalAmount = cfg.includeTotalAmount !== false;
   const includeAddress = cfg.includeAddress !== false;
   const includePhone = cfg.includePhone !== false;
   const includePaymentMethod = cfg.includePaymentMethod !== false;
-  const includeOrderLink = cfg.includeOrderLink === true;
+  // เปิด chat link และ order link เป็นค่าเริ่มต้น
+  const includeOrderLink = cfg.includeOrderLink !== false;
+  const includeChatLink = cfg.includeChatLink !== false;
+  const includeFacebookName = cfg.includeFacebookName !== false;
 
   const orderId = normalizeIdString(order?._id);
   const orderData = order?.orderData || {};
+  const userId = normalizeIdString(order?.userId);
+  const platform = normalizeIdString(order?.platform) || "line";
 
-  const customerName =
-    normalizeIdString(orderData.recipientName) ||
-    normalizeIdString(orderData.customerName) ||
-    "";
+  // ชื่อลูกค้า
+  const recipientName = normalizeIdString(orderData.recipientName);
+  const customerName = normalizeIdString(orderData.customerName);
+  const displayName = recipientName || customerName || "";
+
+  // ชื่อ Facebook (ถ้ามี)
+  const facebookName = normalizeIdString(order?.facebookName || orderData.facebookName || order?.senderName || "");
 
   const items = Array.isArray(orderData.items) ? orderData.items : [];
   const totalAmountRaw = orderData.totalAmount;
+  const shippingCostRaw = orderData.shippingCost;
   const totalAmount =
     typeof totalAmountRaw === "number" && Number.isFinite(totalAmountRaw)
       ? totalAmountRaw
       : null;
+  const shippingCost =
+    typeof shippingCostRaw === "number" && Number.isFinite(shippingCostRaw)
+      ? shippingCostRaw
+      : 0;
 
   const lines = ["🛒 ออเดอร์ใหม่!", `📦 ID: ${orderId || "-"}`];
 
-  if (includeCustomer && customerName) {
-    lines.push(`👤 ลูกค้า: ${customerName}`);
+  // 1. ชื่อ Facebook (ถ้ามี)
+  if (includeFacebookName && facebookName && platform === "facebook") {
+    lines.push(`📘 Facebook: ${shortenText(facebookName, 80)}`);
   }
 
+  // ชื่อลูกค้า/ผู้รับ
+  if (includeCustomer && displayName) {
+    lines.push(`👤 ชื่อผู้รับ: ${displayName}`);
+  }
+
+  // แสดงจำนวนสินค้า
   if (includeItemsCount) {
     lines.push(`📝 สินค้า: ${items.length.toLocaleString()} รายการ`);
   }
 
+  // 2. รายละเอียดสินค้าทั้งหมด
   if (includeItemsDetail && items.length) {
     const normalizedItems = items
       .map(normalizeOrderItem)
       .filter(Boolean);
     if (normalizedItems.length) {
       lines.push("🧾 รายการสินค้า:");
-      const maxItems = 20; // Increased limit
+      const maxItems = 30; // เพิ่มจาก 20
       normalizedItems.slice(0, maxItems).forEach((item) => {
         const colorPart = item.color ? ` (${item.color})` : "";
-        // Always show price if available
         const pricePart = item.price !== null ? ` • ${formatCurrency(item.price)}` : "";
-        // Add emoji for each item
-        lines.push(`🔸 ${item.name}${colorPart} x${item.quantity}${pricePart}`);
+        const subtotal = item.price !== null && item.quantity
+          ? ` = ${formatCurrency(item.price * item.quantity)}`
+          : "";
+        lines.push(`🔸 ${item.name}${colorPart} x${item.quantity}${pricePart}${subtotal}`);
       });
       if (normalizedItems.length > maxItems) {
         lines.push(`… และอีก ${(normalizedItems.length - maxItems).toLocaleString()} รายการ`);
@@ -392,30 +512,42 @@ function formatNewOrderMessage(order, settings, publicBaseUrl) {
     }
   }
 
+  // เบอร์โทร
   const phone = extractOrderPhone(orderData);
   if (includePhone && phone) {
     lines.push(`📞 เบอร์โทร: ${shortenText(phone, 60)}`);
   }
 
+  // 3. ชื่อและที่อยู่จัดส่ง
   const address = buildOrderAddress(orderData);
   if (includeAddress && address) {
-    lines.push(`📍 ที่อยู่: ${shortenText(address, 300)}`);
+    lines.push(`📍 ที่อยู่จัดส่ง: ${shortenText(address, 400)}`);
   }
 
+  // 4. วิธีการชำระเงิน
   const paymentMethod = extractPaymentMethod(orderData);
   if (includePaymentMethod && paymentMethod) {
     lines.push(`💳 ชำระเงิน: ${shortenText(paymentMethod, 80)}`);
   }
 
+  // ยอดรวม + ค่าส่ง
   if (includeTotalAmount && totalAmount !== null) {
-    lines.push(`💰 ยอดรวม: ${formatCurrency(totalAmount)}`);
+    let amountText = `💰 ยอดรวม: ${formatCurrency(totalAmount)}`;
+    if (shippingCost > 0) {
+      amountText += ` (รวมค่าส่ง ${formatCurrency(shippingCost)})`;
+    }
+    lines.push(amountText);
   }
 
-  if (includeOrderLink) {
-    const base =
-      typeof publicBaseUrl === "string" ? publicBaseUrl.replace(/\/$/, "") : "";
-    if (base) {
-      lines.push(`🔗 ดูรายการออเดอร์: ${base}/admin/orders`);
+  // 5. ลิงก์ไปหน้า chat ของแอดมิน
+  const base =
+    typeof publicBaseUrl === "string" ? publicBaseUrl.replace(/\/$/, "") : "";
+  if (base) {
+    if (includeChatLink && userId) {
+      lines.push(`💬 ดูแชท: ${base}/admin/chat?userId=${encodeURIComponent(userId)}`);
+    }
+    if (includeOrderLink) {
+      lines.push(`🔗 ดูออเดอร์: ${base}/admin/orders`);
     }
   }
 
@@ -632,6 +764,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       endAt: windowEnd,
       timezone: channelDoc.summaryTimezone || "Asia/Bangkok",
       settings: channelDoc.settings || {},
+      publicBaseUrl: baseUrl,
     });
 
     const channelId = normalizeIdString(channelDoc?._id);
