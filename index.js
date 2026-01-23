@@ -77,6 +77,11 @@ const {
   detectImageMimeType,
 } = require("./utils/chatImageUtils");
 const {
+  SHORT_LINK_COLLECTION,
+  isValidShortCode,
+  resolveShortLink,
+} = require("./utils/shortLinks");
+const {
   migrateChatHistorySenderId,
 } = require("./utils/chatHistoryMigration");
 
@@ -791,6 +796,21 @@ async function ensureNotificationIndexes(db) {
   }
 }
 
+async function ensureShortLinkIndexes(db) {
+  try {
+    const coll = db.collection(SHORT_LINK_COLLECTION);
+    await coll.createIndex({ code: 1 }, { unique: true });
+    await coll.createIndex({ targetUrl: 1 }, { unique: true });
+    await coll.createIndex({ createdAt: -1 });
+    console.log("[DB] Short link indexes ensured");
+  } catch (err) {
+    console.warn(
+      "[DB] ไม่สามารถตั้งค่า index สำหรับ Short Links ได้:",
+      err?.message || err,
+    );
+  }
+}
+
 let mongoClient = null;
 async function connectDB() {
   if (!mongoClient) {
@@ -802,6 +822,7 @@ async function connectDB() {
       await ensureFacebookCommentIndexes(db);
       await ensureCategoryIndexes(db);
       await ensureNotificationIndexes(db);
+      await ensureShortLinkIndexes(db);
     } catch (err) {
       console.warn(
         "[DB] ไม่สามารถตั้งค่า index ได้:",
@@ -11271,6 +11292,36 @@ app.delete("/api/admin-passcodes/:id", requireSuperadmin, async (req, res) => {
 // Redirect root admin to dashboard (ตรวจสอบการล็อกอินผ่าน middleware แล้ว)
 app.get("/admin", (req, res) => {
   res.redirect("/admin/dashboard");
+});
+
+// Short link redirect (used in notifications)
+app.get("/s/:code", async (req, res) => {
+  try {
+    const code = typeof req.params.code === "string" ? req.params.code.trim() : "";
+    if (!isValidShortCode(code)) {
+      return res.status(404).send("Not Found");
+    }
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const doc = await resolveShortLink(db, code);
+    if (!doc?.targetUrl) {
+      return res.status(404).send("Not Found");
+    }
+
+    db.collection(SHORT_LINK_COLLECTION)
+      .updateOne(
+        { _id: doc._id },
+        { $inc: { hitCount: 1 }, $set: { lastAccessedAt: new Date() } },
+      )
+      .catch((err) => {
+        console.warn("[ShortLink] Update hit count failed:", err?.message || err);
+      });
+
+    return res.redirect(doc.targetUrl);
+  } catch (err) {
+    console.error("[ShortLink] Redirect error:", err?.message || err);
+    return res.status(500).send("Error");
+  }
 });
 
 // ============================ Line Bot Management API ============================

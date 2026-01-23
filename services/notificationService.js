@@ -2,6 +2,7 @@ const line = require("@line/bot-sdk");
 const moment = require("moment-timezone");
 const { ObjectId } = require("mongodb");
 const { extractBase64ImagesFromContent } = require("../utils/chatImageUtils");
+const { buildShortLinkUrl, createShortLink } = require("../utils/shortLinks");
 
 function normalizePlatform(value) {
   const platform = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -257,6 +258,10 @@ function formatOrderSummaryMessage(orders, options = {}) {
   const includeFacebookName = cfg.includeFacebookName !== false;
   const timezone = options.timezone || "Asia/Bangkok";
   const publicBaseUrl = options.publicBaseUrl || "";
+  const shortChatLinks =
+    options.shortChatLinks && typeof options.shortChatLinks === "object"
+      ? options.shortChatLinks
+      : null;
 
   const rangeLabel = formatSummaryRange(options.startAt, options.endAt, timezone);
   const title = rangeLabel
@@ -385,8 +390,13 @@ function formatOrderSummaryMessage(orders, options = {}) {
     }
 
     // 5. ลิงก์ไปหน้าแชท
-    if (includeChatLink && base && userId) {
-      lines.push(`💬 ${base}/admin/chat?userId=${encodeURIComponent(userId)}`);
+    if (includeChatLink) {
+      const shortChatLink = shortChatLinks && userId ? shortChatLinks[userId] : "";
+      if (shortChatLink) {
+        lines.push(`💬 ${shortChatLink}`);
+      } else if (base && userId) {
+        lines.push(`💬 ${base}/admin/chat?userId=${encodeURIComponent(userId)}`);
+      }
     }
 
     lines.push("───────────────────────────");
@@ -433,7 +443,7 @@ function normalizeOrderItem(item) {
   return { name, color, quantity, price };
 }
 
-function formatNewOrderMessage(order, settings, publicBaseUrl) {
+function formatNewOrderMessage(order, settings, publicBaseUrl, options = {}) {
   const cfg = settings || {};
   // เปิดการแสดงข้อมูลทั้งหมดเป็นค่าเริ่มต้น
   const includeCustomer = cfg.includeCustomer !== false;
@@ -447,6 +457,8 @@ function formatNewOrderMessage(order, settings, publicBaseUrl) {
   const includeOrderLink = cfg.includeOrderLink !== false;
   const includeChatLink = cfg.includeChatLink !== false;
   const includeFacebookName = cfg.includeFacebookName !== false;
+  const chatLinkOverride =
+    typeof options.chatLink === "string" ? options.chatLink.trim() : "";
 
   const orderId = normalizeIdString(order?._id);
   const orderData = order?.orderData || {};
@@ -544,7 +556,11 @@ function formatNewOrderMessage(order, settings, publicBaseUrl) {
     typeof publicBaseUrl === "string" ? publicBaseUrl.replace(/\/$/, "") : "";
   if (base) {
     if (includeChatLink && userId) {
-      lines.push(`💬 ดูแชท: ${base}/admin/chat?userId=${encodeURIComponent(userId)}`);
+      if (chatLinkOverride) {
+        lines.push(`💬 ดูแชท: ${chatLinkOverride}`);
+      } else {
+        lines.push(`💬 ดูแชท: ${base}/admin/chat?userId=${encodeURIComponent(userId)}`);
+      }
     }
     if (includeOrderLink) {
       lines.push(`🔗 ดูออเดอร์: ${base}/admin/orders`);
@@ -657,12 +673,29 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
 
     const normalizedBaseUrl = normalizePublicBaseUrl(baseUrl);
     const canAttachImages = isHttpUrl(normalizedBaseUrl);
+    const canBuildLinks = isHttpUrl(normalizedBaseUrl);
     const orderImageRefs = canAttachImages
       ? await fetchOrderImageRefs(db, order)
       : [];
     const orderImageMessages = canAttachImages
       ? buildLineImageMessages(normalizedBaseUrl, orderImageRefs)
       : [];
+    const orderUserId = normalizeIdString(order?.userId);
+    let shortChatLink = "";
+    if (canBuildLinks && orderUserId) {
+      const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(orderUserId)}`;
+      try {
+        const code = await createShortLink(db, chatUrl);
+        if (code) {
+          shortChatLink = buildShortLinkUrl(normalizedBaseUrl, code);
+        }
+      } catch (err) {
+        console.warn(
+          "[Notifications] สร้าง short link สำหรับแชทไม่สำเร็จ:",
+          err?.message || err,
+        );
+      }
+    }
 
     let sentCount = 0;
     for (const channel of channels) {
@@ -674,7 +707,9 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       const targetId = normalizeIdString(channel.groupId || channel.lineGroupId);
       if (!senderBotId || !targetId) continue;
 
-      const message = formatNewOrderMessage(order, channel.settings, baseUrl);
+      const message = formatNewOrderMessage(order, channel.settings, baseUrl, {
+        chatLink: shortChatLink,
+      });
       if (orderImageMessages.length > 0) {
         appendLineToTextMessage(
           message,
@@ -769,12 +804,37 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       .sort({ extractedAt: 1 })
       .toArray();
 
+    const normalizedBaseUrl = normalizePublicBaseUrl(baseUrl);
+    const canBuildLinks = isHttpUrl(normalizedBaseUrl);
+    const shortChatLinks = {};
+    if (canBuildLinks && orders.length) {
+      const maxOrdersForLinks = 5;
+      const candidates = orders.slice(0, maxOrdersForLinks);
+      for (const order of candidates) {
+        const userId = normalizeIdString(order?.userId);
+        if (!userId || shortChatLinks[userId]) continue;
+        const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(userId)}`;
+        try {
+          const code = await createShortLink(db, chatUrl);
+          if (code) {
+            shortChatLinks[userId] = buildShortLinkUrl(normalizedBaseUrl, code);
+          }
+        } catch (err) {
+          console.warn(
+            "[Notifications] สร้าง short link สำหรับสรุปออเดอร์ไม่สำเร็จ:",
+            err?.message || err,
+          );
+        }
+      }
+    }
+
     const message = formatOrderSummaryMessage(orders, {
       startAt: windowStart,
       endAt: windowEnd,
       timezone: channelDoc.summaryTimezone || "Asia/Bangkok",
       settings: channelDoc.settings || {},
       publicBaseUrl: baseUrl,
+      shortChatLinks,
     });
 
     const channelId = normalizeIdString(channelDoc?._id);
