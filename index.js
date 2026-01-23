@@ -18967,6 +18967,12 @@ function normalizeNotificationDeliveryMode(value) {
     : "realtime";
 }
 
+function normalizeNotificationChannelType(value) {
+  if (typeof value !== "string") return "line_group";
+  const normalized = value.trim().toLowerCase();
+  return normalized || "line_group";
+}
+
 function normalizeNotificationSummaryTime(value) {
   if (typeof value !== "string") return null;
   const match = value.trim().match(NOTIFICATION_SUMMARY_TIME_REGEX);
@@ -19079,13 +19085,20 @@ async function evaluateNotificationSummarySchedules() {
     const db = client.db("chatbot");
     const channels = await db
       .collection("notification_channels")
-      .find({ isActive: true, type: "line_group", deliveryMode: "scheduled" })
+      .find({ isActive: true })
       .toArray();
 
     if (!channels.length) return;
 
     for (const channel of channels) {
       try {
+        const channelType = normalizeNotificationChannelType(channel.type);
+        if (channelType !== "line_group") continue;
+        const deliveryMode = normalizeNotificationDeliveryMode(
+          channel.deliveryMode,
+        );
+        if (deliveryMode !== "scheduled") continue;
+
         const summaryTimes = normalizeNotificationSummaryTimes(
           channel.summaryTimes || [],
         );
@@ -19480,6 +19493,9 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       settings,
       updatedAt: new Date(),
     };
+    if (!existing.type) {
+      update.type = "line_group";
+    }
     if (typeof isActive === "boolean") {
       update.isActive = isActive;
     }
