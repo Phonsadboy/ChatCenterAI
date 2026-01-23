@@ -186,6 +186,7 @@
       id: bot?._id?.toString?.() || String(bot?._id || ""),
       name: bot?.name || bot?.displayName || bot?.botName || "LINE Bot",
       status: bot?.status || null,
+      notificationEnabled: bot?.notificationEnabled !== false,
     }));
     return state.lineBots;
   }
@@ -502,12 +503,14 @@
     if (!els.senderBotSelect) return;
     const escapeHtml = getEscapeHtml();
     const bots = Array.isArray(state.lineBots) ? state.lineBots : [];
-    const options = bots
-      .filter((bot) => bot.status !== "inactive")
-      .map(
-        (bot) =>
-          `<option value="${escapeHtml(bot.id)}">${escapeHtml(bot.name)}</option>`,
-      );
+    const options = bots.map((bot) => {
+      const isSelected = selectedId && bot.id === selectedId;
+      const notifyDisabled = bot.notificationEnabled === false;
+      const statusHint = bot.status === "inactive" ? " (ปิดแชท)" : "";
+      const notifyHint = notifyDisabled ? " (ปิดแจ้งเตือน)" : "";
+      const disabledAttr = notifyDisabled && !isSelected ? " disabled" : "";
+      return `<option value="${escapeHtml(bot.id)}"${disabledAttr}>${escapeHtml(bot.name)}${statusHint}${notifyHint}</option>`;
+    });
 
     els.senderBotSelect.innerHTML = [
       '<option value="">เลือก LINE Bot</option>',
@@ -597,6 +600,11 @@
 
     if (!name || !senderBotId || !groupId) {
       toast("กรุณากรอกข้อมูลให้ครบถ้วน", "danger");
+      return;
+    }
+    const selectedBot = (state.lineBots || []).find((bot) => bot.id === senderBotId);
+    if (selectedBot && selectedBot.notificationEnabled === false) {
+      toast("บอทที่เลือกปิดการแจ้งเตือนอยู่ กรุณาเปิดแจ้งเตือนก่อน", "danger");
       return;
     }
 

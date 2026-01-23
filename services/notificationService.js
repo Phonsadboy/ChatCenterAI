@@ -592,10 +592,20 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     const db = client.db("chatbot");
     const bot = await db.collection("line_bots").findOne(
       { _id: new ObjectId(senderBotId) },
-      { projection: { channelAccessToken: 1, channelSecret: 1, name: 1 } },
+      {
+        projection: {
+          channelAccessToken: 1,
+          channelSecret: 1,
+          name: 1,
+          notificationEnabled: 1,
+        },
+      },
     );
     if (!bot?.channelAccessToken || !bot?.channelSecret) {
       throw new Error("Sender bot credentials missing");
+    }
+    if (bot.notificationEnabled === false) {
+      throw new Error("Sender bot notifications disabled");
     }
     const lineClient = new line.Client({
       channelAccessToken: bot.channelAccessToken,

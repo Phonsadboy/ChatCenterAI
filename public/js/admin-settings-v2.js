@@ -176,7 +176,9 @@ function renderLineBots(bots) {
         return;
     }
 
-    container.innerHTML = bots.map(bot => `
+    container.innerHTML = bots.map(bot => {
+        const notificationEnabled = bot.notificationEnabled !== false;
+        return `
         <div class="bot-item-compact">
             <div class="bot-channel line"><i class="fab fa-line"></i></div>
             <div class="bot-main">
@@ -194,16 +196,29 @@ function renderLineBots(bots) {
                 ${buildBotInlineControls(bot, 'line')}
             </div>
             <div class="bot-actions-compact">
-                <label class="toggle-switch mb-0">
-                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('line', '${bot._id}', this.checked)">
-                    <span class="toggle-slider"></span>
-                </label>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="text-center">
+                        <div class="text-muted small">แชท</div>
+                        <label class="toggle-switch mb-0" title="เปิด/ปิดการตอบแชท">
+                            <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('line', '${bot._id}', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-muted small">แจ้งเตือน</div>
+                        <label class="toggle-switch mb-0" title="เปิด/ปิดการแจ้งเตือน">
+                            <input type="checkbox" ${notificationEnabled ? 'checked' : ''} onchange="toggleBotNotification('line', '${bot._id}', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
                 <div class="actions-stack">
                     <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditLineBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function renderFacebookBots(bots) {
@@ -274,6 +289,30 @@ async function toggleBotStatus(type, id, isActive) {
     }
 }
 
+async function toggleBotNotification(type, id, isEnabled) {
+    if (type !== 'line') return;
+    try {
+        const response = await fetch(`/api/line-bots/${id}/toggle-notifications`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: isEnabled })
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            showToast(result.message || `แจ้งเตือน Line Bot ${isEnabled ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว'}`, 'success');
+            loadBotSettings();
+        } else {
+            const error = await response.json();
+            throw new Error(error?.error || 'Update failed');
+        }
+    } catch (error) {
+        console.error('Error toggling bot notifications:', error);
+        showToast('ไม่สามารถอัปเดตสถานะการแจ้งเตือนได้', 'danger');
+        loadBotSettings();
+    }
+}
+
 // --- Modal Logic for Bots ---
 
 // Helper to populate API key dropdowns in bot modals
@@ -315,6 +354,8 @@ window.openAddLineBotModal = async function () {
     if (form) form.reset();
     const idInput = document.getElementById('lineBotId');
     if (idInput) idInput.value = '';
+    const notifyToggle = document.getElementById('lineBotNotificationEnabled');
+    if (notifyToggle) notifyToggle.checked = true;
     setAiConfigUI('line', defaultAiConfig);
     const collapseEl = document.getElementById('lineBotAiParams');
     if (collapseEl && collapseEl.classList.contains('show')) {
@@ -357,6 +398,8 @@ window.openEditLineBotModal = async function (id) {
         // Handle checkboxes/selects if they exist in the partial
         const statusSelect = document.getElementById('lineBotStatus');
         if (statusSelect) statusSelect.value = bot.status;
+        const notifyToggle = document.getElementById('lineBotNotificationEnabled');
+        if (notifyToggle) notifyToggle.checked = bot.notificationEnabled !== false;
 
         const aiModelSelect = document.getElementById('lineBotAiModel'); // Corrected ID (case sensitive check)
         if (aiModelSelect) aiModelSelect.value = bot.aiModel;
@@ -401,6 +444,7 @@ async function saveLineBot() {
         channelSecret: document.getElementById('lineChannelSecret').value,
         webhookUrl: document.getElementById('lineWebhookUrl').value,
         status: document.getElementById('lineBotStatus').value,
+        notificationEnabled: document.getElementById('lineBotNotificationEnabled')?.checked === true,
         aiModel: document.getElementById('lineBotAiModel').value,
         isDefault: document.getElementById('lineBotDefault').checked,
         aiConfig: readAiConfigFromUI('line'),

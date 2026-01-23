@@ -93,8 +93,11 @@ function displayLineBotList(lineBots) {
 
     const rowsHtml = lineBots.map(bot => {
         const isActive = bot.status === 'active';
+        const notificationEnabled = bot.notificationEnabled !== false;
         const statusClass = isActive ? 'success' : 'secondary';
         const statusText = isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
+        const notifyBadgeClass = notificationEnabled ? 'info' : 'secondary';
+        const notifyText = notificationEnabled ? 'แจ้งเตือน' : 'ปิดแจ้งเตือน';
         const defaultBadge = bot.isDefault ? '<span class="badge bg-primary-soft text-primary ms-2">หลัก</span>' : '';
         const instructionsCount = Array.isArray(bot.selectedInstructions) ? bot.selectedInstructions.length : 0;
         const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
@@ -127,6 +130,15 @@ function displayLineBotList(lineBots) {
                                    onchange="toggleLineBotStatus('${bot._id}')"
                                    title="${isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}">
                         </div>
+                        <div class="form-check form-switch mb-0 bot-toggle-mobile mt-1">
+                            <input class="form-check-input bot-notify-toggle" 
+                                   type="checkbox" 
+                                   role="switch" 
+                                   id="lineBot_notify_${bot._id}" 
+                                   ${notificationEnabled ? 'checked' : ''}
+                                   onchange="toggleLineBotNotifications('${bot._id}')"
+                                   title="${notificationEnabled ? 'คลิกเพื่อปิดแจ้งเตือน' : 'คลิกเพื่อเปิดแจ้งเตือน'}">
+                        </div>
                     </div>
                 </td>
                 <td class="bot-overview-ai" data-label="AI & Instructions">
@@ -148,6 +160,20 @@ function displayLineBotList(lineBots) {
                                    title="${isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}">
                             <label class="form-check-label" for="lineBot_desktop_${bot._id}">
                                 <span class="badge bg-${statusClass}">${statusText}</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 mt-1">
+                        <div class="form-check form-switch mb-0 bot-toggle-desktop">
+                            <input class="form-check-input bot-notify-toggle" 
+                                   type="checkbox" 
+                                   role="switch" 
+                                   id="lineBot_notify_desktop_${bot._id}" 
+                                   ${notificationEnabled ? 'checked' : ''}
+                                   onchange="toggleLineBotNotifications('${bot._id}')"
+                                   title="${notificationEnabled ? 'คลิกเพื่อปิดแจ้งเตือน' : 'คลิกเพื่อเปิดแจ้งเตือน'}">
+                            <label class="form-check-label" for="lineBot_notify_desktop_${bot._id}">
+                                <span class="badge bg-${notifyBadgeClass}">${notifyText}</span>
                             </label>
                         </div>
                     </div>
@@ -303,6 +329,9 @@ function addNewLineBot() {
     if (lineWebhookUrl) {
         lineWebhookUrl.value = '';
     }
+
+    const lineBotNotificationEnabled = document.getElementById('lineBotNotificationEnabled');
+    if (lineBotNotificationEnabled) lineBotNotificationEnabled.checked = true;
 }
 
 // Edit Line Bot
@@ -319,6 +348,7 @@ async function editLineBot(botId) {
             const lineChannelSecret = document.getElementById('lineChannelSecret');
             const lineWebhookUrl = document.getElementById('lineWebhookUrl');
             const lineBotStatus = document.getElementById('lineBotStatus');
+            const lineBotNotificationEnabled = document.getElementById('lineBotNotificationEnabled');
             const lineBotAiModel = document.getElementById('lineBotAiModel');
             const lineBotDefault = document.getElementById('lineBotDefault');
             
@@ -329,6 +359,7 @@ async function editLineBot(botId) {
             if (lineChannelSecret) lineChannelSecret.value = bot.channelSecret;
             if (lineWebhookUrl) lineWebhookUrl.value = bot.webhookUrl || '';
             if (lineBotStatus) lineBotStatus.value = bot.status;
+            if (lineBotNotificationEnabled) lineBotNotificationEnabled.checked = bot.notificationEnabled !== false;
             if (lineBotAiModel) lineBotAiModel.value = bot.aiModel || 'gpt-5';
             if (lineBotDefault) lineBotDefault.checked = bot.isDefault;
             
@@ -412,6 +443,7 @@ async function saveLineBot() {
         channelSecret: formData.get('channelSecret'),
         webhookUrl: formData.get('webhookUrl'),
         status: formData.get('status'),
+        notificationEnabled: formData.get('notificationEnabled') === 'on',
         aiModel: formData.get('aiModel'),
         isDefault: formData.get('isDefault') === 'on'
     };
@@ -860,6 +892,47 @@ async function toggleLineBotStatus(botId) {
         if (toggleDesktop) toggleDesktop.checked = originalState;
     } finally {
         // Re-enable toggles (will be replaced by reload anyway)
+        if (toggleMobile) toggleMobile.disabled = false;
+        if (toggleDesktop) toggleDesktop.disabled = false;
+    }
+}
+
+// Toggle Line Bot Notifications (Quick Enable/Disable)
+async function toggleLineBotNotifications(botId) {
+    const toggleMobile = document.getElementById(`lineBot_notify_${botId}`);
+    const toggleDesktop = document.getElementById(`lineBot_notify_desktop_${botId}`);
+    const toggle = toggleMobile || toggleDesktop;
+
+    if (!toggle) return;
+
+    const originalState = toggle.checked;
+
+    try {
+        if (toggleMobile) toggleMobile.disabled = true;
+        if (toggleDesktop) toggleDesktop.disabled = true;
+
+        const response = await fetch(`/api/line-bots/${botId}/toggle-notifications`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: toggle.checked })
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            showAlert(result.message, 'success');
+            await loadLineBotSettings();
+        } else {
+            const error = await response.json();
+            showAlert(error.error || 'ไม่สามารถเปลี่ยนสถานะการแจ้งเตือน Line Bot ได้', 'danger');
+            if (toggleMobile) toggleMobile.checked = originalState;
+            if (toggleDesktop) toggleDesktop.checked = originalState;
+        }
+    } catch (error) {
+        console.error('Error toggling line bot notifications:', error);
+        showAlert('เกิดข้อผิดพลาดในการเปลี่ยนสถานะการแจ้งเตือน Line Bot', 'danger');
+        if (toggleMobile) toggleMobile.checked = originalState;
+        if (toggleDesktop) toggleDesktop.checked = originalState;
+    } finally {
         if (toggleMobile) toggleMobile.disabled = false;
         if (toggleDesktop) toggleDesktop.disabled = false;
     }

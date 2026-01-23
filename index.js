@@ -12682,6 +12682,9 @@ app.post("/api/line-bots", async (req, res) => {
       selectedImageCollections,
       openaiApiKeyId,
     } = req.body;
+    const notificationEnabled = parseOptionalBoolean(
+      req.body?.notificationEnabled,
+    );
 
     if (!name || !channelAccessToken || !channelSecret) {
       return res
@@ -12723,6 +12726,7 @@ app.post("/api/line-bots", async (req, res) => {
       webhookUrl: finalWebhookUrl,
       status: status || "active",
       isDefault: isDefault || false,
+      notificationEnabled: notificationEnabled !== false,
       aiModel: aiModel || "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
       aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
       selectedInstructions: normalizedSelections,
@@ -12761,6 +12765,9 @@ app.put("/api/line-bots/:id", async (req, res) => {
       isDefault,
       selectedImageCollections,
     } = req.body;
+    const notificationEnabled = parseOptionalBoolean(
+      req.body?.notificationEnabled,
+    );
 
     if (!name || !channelAccessToken || !channelSecret) {
       return res
@@ -12800,6 +12807,9 @@ app.put("/api/line-bots/:id", async (req, res) => {
       openaiApiKeyId: req.body.openaiApiKeyId !== undefined ? (req.body.openaiApiKeyId || null) : existing.openaiApiKeyId,
       updatedAt: new Date(),
     };
+    if (typeof notificationEnabled === "boolean") {
+      updateData.notificationEnabled = notificationEnabled;
+    }
 
     if (Array.isArray(selectedImageCollections)) {
       updateData.selectedImageCollections = normalizeImageCollectionSelections(
@@ -12879,6 +12889,46 @@ app.patch("/api/line-bots/:id/toggle-status", async (req, res) => {
   } catch (err) {
     console.error("Error toggling line bot status:", err);
     res.status(500).json({ error: "ไม่สามารถเปลี่ยนสถานะ Line Bot ได้" });
+  }
+});
+
+// Toggle Line Bot Notification Enabled
+app.patch("/api/line-bots/:id/toggle-notifications", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("line_bots");
+
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
+    }
+
+    const requested = parseOptionalBoolean(req.body?.enabled);
+    const nextValue =
+      typeof requested === "boolean"
+        ? requested
+        : bot.notificationEnabled !== false
+          ? false
+          : true;
+
+    await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { notificationEnabled: nextValue, updatedAt: new Date() } },
+    );
+
+    res.json({
+      message: `เปลี่ยนสถานะการแจ้งเตือน Line Bot เป็น ${
+        nextValue ? "เปิดใช้งาน" : "ปิดใช้งาน"
+      } เรียบร้อยแล้ว`,
+      notificationEnabled: nextValue,
+    });
+  } catch (err) {
+    console.error("Error toggling line bot notifications:", err);
+    res
+      .status(500)
+      .json({ error: "ไม่สามารถเปลี่ยนสถานะการแจ้งเตือน Line Bot ได้" });
   }
 });
 

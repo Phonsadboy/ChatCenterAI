@@ -57,7 +57,7 @@
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                <label for="lineBotStatus" class="form-label">สถานะ</label>
+                                <label for="lineBotStatus" class="form-label">สถานะการตอบแชท</label>
                                 <select class="form-select" id="lineBotStatus" name="status">
                                     <option value="active">เปิดใช้งาน</option>
                                     <option value="inactive">ปิดใช้งาน</option>
@@ -65,6 +65,16 @@
                                 </select>
                             </div>
                         </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="lineBotNotificationEnabled"
+                                name="notificationEnabled" checked>
+                            <label class="form-check-label" for="lineBotNotificationEnabled">
+                                เปิดใช้งานสำหรับแจ้งเตือน (เช่น สรุปออเดอร์)
+                            </label>
+                        </div>
+                        <div class="form-text">ปิดได้เมื่อไม่ต้องการให้บอทส่งแจ้งเตือน แต่ยังให้ตอบแชทได้</div>
                     </div>
 
                     <!-- API Key Selection -->
