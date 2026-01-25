@@ -35,6 +35,10 @@ class ChatManager {
         this.currentOrders = [];
         this.debugPanelVisible = false;
 
+        // URL focus param
+        this.pendingFocusUserId = this.getFocusUserIdFromQuery();
+        this.focusHandled = false;
+
         // Initialize
         this.init();
     }
@@ -47,6 +51,30 @@ class ChatManager {
         this.loadAvailableTags();
         this.setupAutoRefresh();
         this.hideTypingIndicator();
+    }
+
+    getFocusUserIdFromQuery() {
+        try {
+            const params = new URLSearchParams(window.location.search || '');
+            const candidate =
+                params.get('userId') ||
+                params.get('user') ||
+                params.get('focus') ||
+                '';
+            return candidate.trim();
+        } catch (_) {
+            return '';
+        }
+    }
+
+    async tryAutoFocusUser() {
+        if (this.focusHandled || !this.pendingFocusUserId) return;
+        const targetId = this.pendingFocusUserId;
+        const exists = this.allUsers.find(u => u.userId === targetId);
+        if (!exists) return;
+        this.focusHandled = true;
+        this.pendingFocusUserId = null;
+        await this.selectUser(targetId);
     }
 
     // ========================================
@@ -799,6 +827,7 @@ class ChatManager {
                     return normalizedUser;
                 });
                 this.applyFilters();
+                await this.tryAutoFocusUser();
             } else {
                 this.showToast('ไม่สามารถโหลดรายชื่อผู้ใช้ได้', 'error');
             }
