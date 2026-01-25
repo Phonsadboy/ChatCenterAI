@@ -244,8 +244,58 @@ function formatSummaryRange(startAt, endAt, timezone) {
   return `${start.format("DD/MM HH:mm")}-${end.format("DD/MM HH:mm")}`;
 }
 
-function formatOrderSummaryMessage(orders, options = {}) {
-  const list = Array.isArray(orders) ? orders : [];
+function estimateLinesLength(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return 0;
+  let length = 0;
+  lines.forEach((line, index) => {
+    length += String(line).length;
+    if (index > 0) length += 1;
+  });
+  return length;
+}
+
+function buildOrderSummaryTitle(rangeLabel, isContinued) {
+  if (rangeLabel) {
+    return isContinued
+      ? `📊 สรุปออเดอร์ (${rangeLabel}) (ต่อ)`
+      : `📊 สรุปออเดอร์ (${rangeLabel})`;
+  }
+  return isContinued ? "📊 สรุปออเดอร์ (ต่อ)" : "📊 สรุปออเดอร์";
+}
+
+function buildOrderSummaryHeaderLines({
+  rangeLabel,
+  includeTotals,
+  includeTotalAmount,
+  totalAmount,
+  totalShipping,
+  totalOrders,
+  isContinued,
+}) {
+  const lines = [buildOrderSummaryTitle(rangeLabel, isContinued)];
+
+  if (includeTotals) {
+    const totalParts = [`รวม ${totalOrders} ออเดอร์`];
+    if (includeTotalAmount) {
+      const totalText = formatCurrency(totalAmount);
+      if (totalText) totalParts.push(`ยอดรวม ${totalText}`);
+    }
+    lines.push(totalParts.join(" | "));
+
+    if (includeTotalAmount && totalShipping > 0) {
+      const shippingText = formatCurrency(totalShipping);
+      if (shippingText) {
+        lines.push(`ค่าส่งรวม ${shippingText}`);
+      }
+    }
+  }
+
+  lines.push("");
+  lines.push("═══════════════════════════");
+  return lines;
+}
+
+function buildOrderSummaryOrderLines(order, index, options = {}) {
   const cfg = options.settings || {};
   const includeCustomer = cfg.includeCustomer !== false;
   const includeItemsCount = cfg.includeItemsCount !== false;
@@ -256,17 +306,111 @@ function formatOrderSummaryMessage(orders, options = {}) {
   const includePaymentMethod = cfg.includePaymentMethod !== false;
   const includeChatLink = cfg.includeChatLink !== false;
   const includeFacebookName = cfg.includeFacebookName !== false;
-  const timezone = options.timezone || "Asia/Bangkok";
-  const publicBaseUrl = options.publicBaseUrl || "";
   const shortChatLinks =
     options.shortChatLinks && typeof options.shortChatLinks === "object"
       ? options.shortChatLinks
       : null;
+  const publicBaseUrl = options.publicBaseUrl || "";
+  const base =
+    typeof publicBaseUrl === "string" ? publicBaseUrl.replace(/\/$/, "") : "";
 
+  const orderId = normalizeIdString(order?._id);
+  const shortId = orderId ? orderId.slice(-6) : "-";
+  const orderData = order?.orderData || {};
+  const userId = normalizeIdString(order?.userId);
+  const platform = normalizeIdString(order?.platform) || "line";
+
+  const lines = [`🛒 ออเดอร์ #${index + 1} (ID: ${shortId})`];
+
+  // 1. ชื่อ Facebook (ถ้ามี)
+  const facebookName = normalizeIdString(
+    order?.facebookName || orderData.facebookName || order?.senderName || "",
+  );
+  if (includeFacebookName && facebookName && platform === "facebook") {
+    lines.push(`📘 Facebook: ${shortenText(facebookName, 60)}`);
+  }
+
+  // ชื่อลูกค้า
+  if (includeCustomer) {
+    const customerName =
+      normalizeIdString(orderData.recipientName) ||
+      normalizeIdString(orderData.customerName) ||
+      "";
+    if (customerName) {
+      lines.push(`👤 ผู้รับ: ${shortenText(customerName, 60)}`);
+    }
+  }
+
+  // 2. รายละเอียดสินค้า
+  const items = Array.isArray(orderData.items) ? orderData.items : [];
+  if (includeItemsDetail && items.length) {
+    const normalizedItems = items.map(normalizeOrderItem).filter(Boolean);
+    if (normalizedItems.length) {
+      const maxItems = 5; // จำกัดสินค้าต่อออเดอร์ในโหมดสรุป
+      normalizedItems.slice(0, maxItems).forEach((item) => {
+        const colorPart = item.color ? ` (${item.color})` : "";
+        const pricePart = item.price !== null ? ` @${formatCurrency(item.price)}` : "";
+        lines.push(`  🔸 ${item.name}${colorPart} x${item.quantity}${pricePart}`);
+      });
+      if (normalizedItems.length > maxItems) {
+        lines.push(`  … +${normalizedItems.length - maxItems} รายการ`);
+      }
+    }
+  } else if (includeItemsCount) {
+    lines.push(`📝 สินค้า: ${items.length} รายการ`);
+  }
+
+  // เบอร์โทร
+  const phone = extractOrderPhone(orderData);
+  if (includePhone && phone) {
+    lines.push(`📞 ${shortenText(phone, 40)}`);
+  }
+
+  // 3. ที่อยู่จัดส่ง
+  const address = buildOrderAddress(orderData);
+  if (includeAddress && address) {
+    lines.push(`📍 ${shortenText(address, 200)}`);
+  }
+
+  // 4. วิธีการชำระเงิน
+  const paymentMethod = extractPaymentMethod(orderData);
+  if (includePaymentMethod && paymentMethod) {
+    lines.push(`💳 ${shortenText(paymentMethod, 60)}`);
+  }
+
+  // ยอดรวม
+  if (includeTotalAmount) {
+    const amount = orderData.totalAmount;
+    const shipping = orderData.shippingCost || 0;
+    if (typeof amount === "number" && Number.isFinite(amount)) {
+      let amountText = `💰 ${formatCurrency(amount)}`;
+      if (shipping > 0) {
+        amountText += ` (ค่าส่ง ${formatCurrency(shipping)})`;
+      }
+      lines.push(amountText);
+    }
+  }
+
+  // 5. ลิงก์ไปหน้าแชท
+  if (includeChatLink && userId) {
+    const shortChatLink = shortChatLinks && userId ? shortChatLinks[userId] : "";
+    if (shortChatLink) {
+      lines.push(`💬 ${shortChatLink}`);
+    } else if (base) {
+      lines.push(`💬 ${base}/admin/chat?userId=${encodeURIComponent(userId)}`);
+    }
+  }
+
+  lines.push("───────────────────────────");
+  return lines;
+}
+
+function formatOrderSummaryMessages(orders, options = {}) {
+  const list = Array.isArray(orders) ? orders : [];
+  const cfg = options.settings || {};
+  const includeTotalAmount = cfg.includeTotalAmount !== false;
+  const timezone = options.timezone || "Asia/Bangkok";
   const rangeLabel = formatSummaryRange(options.startAt, options.endAt, timezone);
-  const title = rangeLabel
-    ? `📊 สรุปออเดอร์ (${rangeLabel})`
-    : "📊 สรุปออเดอร์";
 
   let totalAmount = 0;
   let totalShipping = 0;
@@ -282,136 +426,111 @@ function formatOrderSummaryMessage(orders, options = {}) {
     }
   });
 
-  const lines = [title];
-  const totalParts = [`รวม ${list.length} ออเดอร์`];
-  if (includeTotalAmount) {
-    const totalText = formatCurrency(totalAmount);
-    if (totalText) totalParts.push(`ยอดรวม ${totalText}`);
-  }
-  lines.push(totalParts.join(" | "));
-
-  if (includeTotalAmount && totalShipping > 0) {
-    const shippingText = formatCurrency(totalShipping);
-    if (shippingText) {
-      lines.push(`ค่าส่งรวม ${shippingText}`);
-    }
-  }
+  const MAX_TEXT_LENGTH = 3900;
+  const MAX_ORDERS_PER_MESSAGE = 5;
 
   if (!list.length) {
+    const lines = [
+      buildOrderSummaryTitle(rangeLabel, false),
+    ];
+    const totalParts = [`รวม ${list.length} ออเดอร์`];
+    if (includeTotalAmount) {
+      const totalText = formatCurrency(totalAmount);
+      if (totalText) totalParts.push(`ยอดรวม ${totalText}`);
+    }
+    lines.push(totalParts.join(" | "));
+    if (includeTotalAmount && totalShipping > 0) {
+      const shippingText = formatCurrency(totalShipping);
+      if (shippingText) {
+        lines.push(`ค่าส่งรวม ${shippingText}`);
+      }
+    }
     lines.push("ไม่มีออเดอร์ในรอบนี้");
     const text = lines.join("\n");
-    const MAX_TEXT_LENGTH = 3900;
-    return {
-      type: "text",
-      text: text.length > MAX_TEXT_LENGTH ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…` : text,
-    };
+    return [
+      {
+        type: "text",
+        text:
+          text.length > MAX_TEXT_LENGTH
+            ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…`
+            : text,
+      },
+    ];
   }
 
-  lines.push("");
-  lines.push("═══════════════════════════");
-
-  const maxOrders = 5; // ลดจำนวนเพราะแต่ละออร์เดอร์มีรายละเอียดมาก
-  const base = typeof publicBaseUrl === "string" ? publicBaseUrl.replace(/\/$/, "") : "";
-
-  list.slice(0, maxOrders).forEach((order, index) => {
-    const orderId = normalizeIdString(order?._id);
-    const shortId = orderId ? orderId.slice(-6) : "-";
-    const orderData = order?.orderData || {};
-    const userId = normalizeIdString(order?.userId);
-    const platform = normalizeIdString(order?.platform) || "line";
-
-    lines.push(`🛒 ออเดอร์ #${index + 1} (ID: ${shortId})`);
-
-    // 1. ชื่อ Facebook (ถ้ามี)
-    const facebookName = normalizeIdString(order?.facebookName || orderData.facebookName || order?.senderName || "");
-    if (includeFacebookName && facebookName && platform === "facebook") {
-      lines.push(`📘 Facebook: ${shortenText(facebookName, 60)}`);
-    }
-
-    // ชื่อลูกค้า
-    if (includeCustomer) {
-      const customerName =
-        normalizeIdString(orderData.recipientName) ||
-        normalizeIdString(orderData.customerName) ||
-        "";
-      if (customerName) {
-        lines.push(`👤 ผู้รับ: ${shortenText(customerName, 60)}`);
-      }
-    }
-
-    // 2. รายละเอียดสินค้า
-    const items = Array.isArray(orderData.items) ? orderData.items : [];
-    if (includeItemsDetail && items.length) {
-      const normalizedItems = items.map(normalizeOrderItem).filter(Boolean);
-      if (normalizedItems.length) {
-        const maxItems = 5; // จำกัดสินค้าต่อออเดอร์ในโหมดสรุป
-        normalizedItems.slice(0, maxItems).forEach((item) => {
-          const colorPart = item.color ? ` (${item.color})` : "";
-          const pricePart = item.price !== null ? ` @${formatCurrency(item.price)}` : "";
-          lines.push(`  🔸 ${item.name}${colorPart} x${item.quantity}${pricePart}`);
-        });
-        if (normalizedItems.length > maxItems) {
-          lines.push(`  … +${normalizedItems.length - maxItems} รายการ`);
-        }
-      }
-    } else if (includeItemsCount) {
-      lines.push(`📝 สินค้า: ${items.length} รายการ`);
-    }
-
-    // เบอร์โทร
-    const phone = extractOrderPhone(orderData);
-    if (includePhone && phone) {
-      lines.push(`📞 ${shortenText(phone, 40)}`);
-    }
-
-    // 3. ที่อยู่จัดส่ง
-    const address = buildOrderAddress(orderData);
-    if (includeAddress && address) {
-      lines.push(`📍 ${shortenText(address, 200)}`);
-    }
-
-    // 4. วิธีการชำระเงิน
-    const paymentMethod = extractPaymentMethod(orderData);
-    if (includePaymentMethod && paymentMethod) {
-      lines.push(`💳 ${shortenText(paymentMethod, 60)}`);
-    }
-
-    // ยอดรวม
-    if (includeTotalAmount) {
-      const amount = orderData.totalAmount;
-      const shipping = orderData.shippingCost || 0;
-      if (typeof amount === "number" && Number.isFinite(amount)) {
-        let amountText = `💰 ${formatCurrency(amount)}`;
-        if (shipping > 0) {
-          amountText += ` (ค่าส่ง ${formatCurrency(shipping)})`;
-        }
-        lines.push(amountText);
-      }
-    }
-
-    // 5. ลิงก์ไปหน้าแชท
-    if (includeChatLink) {
-      const shortChatLink = shortChatLinks && userId ? shortChatLinks[userId] : "";
-      if (shortChatLink) {
-        lines.push(`💬 ${shortChatLink}`);
-      } else if (base && userId) {
-        lines.push(`💬 ${base}/admin/chat?userId=${encodeURIComponent(userId)}`);
-      }
-    }
-
-    lines.push("───────────────────────────");
+  const orderBlocks = list.map((order, index) => {
+    const lines = buildOrderSummaryOrderLines(order, index, options);
+    return { lines, length: estimateLinesLength(lines) };
   });
 
-  if (list.length > maxOrders) {
-    lines.push(`… และอีก ${(list.length - maxOrders).toLocaleString()} ออเดอร์`);
+  const messages = [];
+  let currentLines = [];
+  let currentLength = 0;
+  let currentCount = 0;
+
+  let headerLines = buildOrderSummaryHeaderLines({
+    rangeLabel,
+    includeTotals: true,
+    includeTotalAmount,
+    totalAmount,
+    totalShipping,
+    totalOrders: list.length,
+    isContinued: false,
+  });
+  let headerLength = estimateLinesLength(headerLines);
+
+  const flushCurrent = () => {
+    if (!currentCount) return;
+    const combined = headerLines.concat(currentLines);
+    const text = combined.join("\n");
+    messages.push({
+      type: "text",
+      text:
+        text.length > MAX_TEXT_LENGTH
+          ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…`
+          : text,
+    });
+    currentLines = [];
+    currentLength = 0;
+    currentCount = 0;
+  };
+
+  for (const block of orderBlocks) {
+    const nextLength = currentLength
+      ? currentLength + 1 + block.length
+      : block.length;
+    const candidateLength = headerLength + 1 + nextLength;
+    const shouldStartNew =
+      currentCount >= MAX_ORDERS_PER_MESSAGE ||
+      (candidateLength > MAX_TEXT_LENGTH && currentCount > 0);
+
+    if (shouldStartNew) {
+      flushCurrent();
+      headerLines = buildOrderSummaryHeaderLines({
+        rangeLabel,
+        includeTotals: false,
+        includeTotalAmount,
+        totalAmount,
+        totalShipping,
+        totalOrders: list.length,
+        isContinued: true,
+      });
+      headerLength = estimateLinesLength(headerLines);
+    }
+
+    if (currentLength) {
+      currentLines.push(...block.lines);
+      currentLength += 1 + block.length;
+    } else {
+      currentLines = block.lines.slice();
+      currentLength = block.length;
+    }
+    currentCount += 1;
   }
 
-  const text = lines.join("\n");
-  const MAX_TEXT_LENGTH = 3900;
-  return {
-    type: "text",
-    text: text.length > MAX_TEXT_LENGTH ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…` : text,
-  };
+  flushCurrent();
+
+  return messages;
 }
 
 function normalizeOrderItem(item) {
@@ -808,9 +927,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     const canBuildLinks = isHttpUrl(normalizedBaseUrl);
     const shortChatLinks = {};
     if (canBuildLinks && orders.length) {
-      const maxOrdersForLinks = 5;
-      const candidates = orders.slice(0, maxOrdersForLinks);
-      for (const order of candidates) {
+      for (const order of orders) {
         const userId = normalizeIdString(order?.userId);
         if (!userId || shortChatLinks[userId]) continue;
         const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(userId)}`;
@@ -828,7 +945,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       }
     }
 
-    const message = formatOrderSummaryMessage(orders, {
+    const messages = formatOrderSummaryMessages(orders, {
       startAt: windowStart,
       endAt: windowEnd,
       timezone: channelDoc.summaryTimezone || "Asia/Bangkok",
@@ -843,7 +960,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       const response = await sendLineMessagesInChunks(
         senderBotId,
         targetId,
-        [message],
+        messages,
       );
       await insertNotificationLog(db, {
         channelId,
@@ -852,7 +969,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
         status: "success",
         response: response || null,
       });
-      return { success: true, sentCount: 1, orderCount: orders.length };
+      return { success: true, sentCount: messages.length, orderCount: orders.length };
     } catch (err) {
       await insertNotificationLog(db, {
         channelId,
