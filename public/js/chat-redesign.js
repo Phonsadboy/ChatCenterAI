@@ -811,7 +811,10 @@ class ChatManager {
 
     async loadUsers() {
         try {
-            const response = await fetch('/admin/chat/users');
+            const focusQuery = this.pendingFocusUserId
+                ? `?focus=${encodeURIComponent(this.pendingFocusUserId)}`
+                : '';
+            const response = await fetch(`/admin/chat/users${focusQuery}`);
             const data = await response.json();
 
             if (data.success) {

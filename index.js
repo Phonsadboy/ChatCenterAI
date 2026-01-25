@@ -18210,8 +18210,17 @@ app.get("/admin/orders/pages", async (req, res) => {
 // Get users who have chatted
 app.get("/admin/chat/users", async (req, res) => {
   try {
+    const rawFocus =
+      (req.query && (req.query.focus || req.query.userId || req.query.user)) ||
+      "";
+    const focusUserId = Array.isArray(rawFocus)
+      ? String(rawFocus[0] || "").trim()
+      : String(rawFocus || "").trim();
     // ใช้ฟังก์ชันตัวกรองข้อมูลใหม่
-    const users = await getNormalizedChatUsers({ applyFilter: true });
+    const users = await getNormalizedChatUsers({
+      applyFilter: true,
+      focusUserId,
+    });
 
     res.json({ success: true, users: users });
   } catch (err) {
@@ -23929,7 +23938,7 @@ async function getNormalizedChatHistory(userId, options = {}) {
  */
 async function getNormalizedChatUsers(options = {}) {
   try {
-    const { applyFilter = false } = options || {};
+    const { applyFilter = false, focusUserId = "" } = options || {};
     const client = await connectDB();
     const db = client.db("chatbot");
     const chatColl = db.collection("chat_history");
@@ -23992,6 +24001,72 @@ async function getNormalizedChatUsers(options = {}) {
     ];
 
     const users = await chatColl.aggregate(pipeline).toArray();
+
+    const normalizedFocusUserId =
+      typeof focusUserId === "string" ? focusUserId.trim() : "";
+    if (normalizedFocusUserId) {
+      const exists = users.some(
+        (user) =>
+          (typeof user._id === "string"
+            ? user._id
+            : user._id?.toString?.() || "") === normalizedFocusUserId,
+      );
+      if (!exists) {
+        const focusPipeline = [
+          {
+            $addFields: {
+              senderKey: {
+                $let: {
+                  vars: {
+                    raw: {
+                      $cond: [
+                        {
+                          $or: [
+                            { $eq: ["$senderId", null] },
+                            { $eq: ["$senderId", ""] },
+                          ],
+                        },
+                        "$userId",
+                        "$senderId",
+                      ],
+                    },
+                  },
+                  in: {
+                    $cond: [
+                      {
+                        $or: [
+                          { $eq: ["$$raw", null] },
+                          { $eq: ["$$raw", ""] },
+                        ],
+                      },
+                      null,
+                      { $toString: "$$raw" },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          { $match: { senderKey: normalizedFocusUserId } },
+          {
+            $group: {
+              _id: "$senderKey",
+              lastMessage: { $last: "$content" },
+              lastTimestamp: { $last: "$timestamp" },
+              messageCount: { $sum: 1 },
+              platform: { $last: "$platform" },
+              botId: { $last: "$botId" },
+            },
+          },
+          { $sort: { lastTimestamp: -1 } },
+          { $limit: 1 },
+        ];
+        const focusUsers = await chatColl.aggregate(focusPipeline).toArray();
+        if (focusUsers.length > 0) {
+          users.unshift(focusUsers[0]);
+        }
+      }
+    }
 
     // Map botId -> bot display name for showing channel in chat user list
     const botIdsByPlatform = { line: new Set(), facebook: new Set() };
