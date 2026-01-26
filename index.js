@@ -2949,7 +2949,9 @@ async function sendLineFollowUpMessage(
     console.log(`[FollowUp] LINE: ${userId}, msg:${!!message}, imgs:${Array.isArray(images) ? images.length : 0}`);
 
     const payloads = [];
-    const trimmed = typeof message === "string" ? message.trim() : "";
+    const normalizedMessage = normalizeOutgoingText(message);
+    const trimmed =
+      typeof normalizedMessage === "string" ? normalizedMessage.trim() : "";
     if (trimmed) {
       payloads.push({ type: "text", text: trimmed });
     }
@@ -5751,14 +5753,15 @@ async function processFlushedMessages(
       );
       return false;
     }
-    if (!messageText) {
+    const normalizedMessage = normalizeOutgoingText(messageText);
+    if (!normalizedMessage) {
       return false;
     }
     try {
       if (channelAccessToken && channelSecret) {
         await sendMessage(
           replyToken,
-          messageText,
+          normalizedMessage,
           userId,
           true,
           channelAccessToken,
@@ -5769,7 +5772,7 @@ async function processFlushedMessages(
       if (lineClientFromContext) {
         await lineClientFromContext.replyMessage(replyToken, {
           type: "text",
-          text: messageText,
+          text: normalizedMessage,
         });
         return true;
       }
@@ -6879,9 +6882,10 @@ async function upsertFacebookPost(db, bot, postId, source = "webhook") {
 async function sendCommentReply(commentId, message, accessToken) {
   try {
     const url = `https://graph.facebook.com/v22.0/${commentId}/comments`;
+    const normalizedMessage = normalizeOutgoingText(message);
     const response = await axios.post(
       url,
-      { message },
+      { message: normalizedMessage },
       { params: { access_token: accessToken } },
     );
     return response.data;
@@ -6897,9 +6901,10 @@ async function sendCommentReply(commentId, message, accessToken) {
 async function sendPrivateMessageFromComment(commentId, message, accessToken) {
   try {
     const url = `https://graph.facebook.com/v22.0/${commentId}/private_replies`;
+    const normalizedMessage = normalizeOutgoingText(message);
     const response = await axios.post(
       url,
-      { message },
+      { message: normalizedMessage },
       { params: { access_token: accessToken } },
     );
     return response.data;
@@ -8440,7 +8445,8 @@ async function sendMessage(
   channelSecret = null,
 ) {
   try {
-    if (!message || message.trim() === "") {
+    const normalizedMessage = normalizeOutgoingText(message);
+    if (!normalizedMessage || normalizedMessage.trim() === "") {
       console.log("[DEBUG] Empty message, no reply needed");
       return;
     }
@@ -8458,12 +8464,15 @@ async function sendMessage(
     // Line มีขีดจำกัด 5,000 อักขระต่อข้อความ แต่เราจะตั้งที่ 4,000 เพื่อความปลอดภัย
     const MAX_LENGTH = 4000;
 
-    if (splitLongMessage && message.length > MAX_LENGTH) {
+    if (splitLongMessage && normalizedMessage.length > MAX_LENGTH) {
       // แบ่งข้อความที่ยาวออกเป็นส่วนๆ
       const parts = [];
-      for (let i = 0; i < message.length; i += MAX_LENGTH) {
+      for (let i = 0; i < normalizedMessage.length; i += MAX_LENGTH) {
         parts.push(
-          message.substring(i, Math.min(message.length, i + MAX_LENGTH)),
+          normalizedMessage.substring(
+            i,
+            Math.min(normalizedMessage.length, i + MAX_LENGTH),
+          ),
         );
       }
 
@@ -8479,7 +8488,7 @@ async function sendMessage(
       // ส่งข้อความปกติ
       await client.replyMessage(replyToken, {
         type: "text",
-        text: message.substring(0, MAX_LENGTH), // ตัดข้อความให้ไม่เกินขีดจำกัด
+        text: normalizedMessage.substring(0, MAX_LENGTH), // ตัดข้อความให้ไม่เกินขีดจำกัด
       });
     }
   } catch (err) {
@@ -11843,8 +11852,9 @@ async function sendFacebookMessage(
     tag = null,
     selectedImageCollections = null,
   } = options || {};
+  const normalizedMessage = normalizeOutgoingText(message);
   // แยกข้อความตามตัวแบ่ง [cut] → จากนั้น parse #[IMAGE:<label>] เป็น segments
-  const parts = String(message)
+  const parts = String(normalizedMessage || "")
     .split("[cut]")
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
@@ -17096,7 +17106,9 @@ class BroadcastQueue {
       } else if (platform === "line") {
         const client = createLineClient(bot.channelAccessToken, bot.channelSecret);
         const lineMessages = messages.map(msg => {
-          if (msg.type === 'text') return { type: 'text', text: msg.content };
+          if (msg.type === 'text') {
+            return { type: 'text', text: normalizeOutgoingText(msg.content) };
+          }
           if (msg.type === 'image') return { type: 'image', originalContentUrl: msg.url, previewImageUrl: msg.url };
           return null;
         }).filter(Boolean);
@@ -18609,7 +18621,11 @@ app.post("/admin/chat/send", async (req, res) => {
     await resetUserUnreadCount(userId);
 
     try {
-      await lineClient.pushMessage(userId, { type: "text", text: message });
+      const normalizedMessage = normalizeOutgoingText(message);
+      await lineClient.pushMessage(userId, {
+        type: "text",
+        text: normalizedMessage,
+      });
       console.log(
         `[Admin Chat] ส่งข้อความไปยัง LINE user ${userId}: ${message.substring(0, 50)}...`,
       );
@@ -22989,6 +23005,33 @@ async function filterMessage(message, options = {}) {
     console.error("[Filter] ข้อผิดพลาดในการกรองข้อความ:", error);
     return message; // ส่งคืนข้อความต้นฉบับในกรณีที่เกิดข้อผิดพลาด
   }
+}
+
+function normalizeOutgoingText(message) {
+  if (typeof message !== "string") return message;
+  let normalized = message;
+  normalized = normalized
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n");
+
+  const urlMatches = [];
+  normalized = normalized.replace(/https?:\/\/[^\s]+/gi, (match) => {
+    const index = urlMatches.length;
+    urlMatches.push(match);
+    return `__URL_PLACEHOLDER_${index}__`;
+  });
+
+  normalized = normalized.replace(/(^|[\s])\/n(?=[\s]|$)/gi, "$1\n");
+  normalized = normalized.replace(/\/n(?=[^\x00-\x7F])/g, "\n");
+  normalized = normalized.replace(/([^\x00-\x7F])\/n$/g, "$1\n");
+
+  normalized = normalized.replace(
+    /__URL_PLACEHOLDER_(\d+)__/g,
+    (_, idx) => urlMatches[Number(idx)] || "",
+  );
+
+  return normalized;
 }
 
 // ฟังก์ชันสำหรับทดสอบการกรองข้อความ

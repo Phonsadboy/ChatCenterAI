@@ -1128,15 +1128,7 @@ class ChatManager {
             if (data.success) {
                 this.chatHistory[userId] = (data.messages || []).map(msg => {
                     const normalized = { ...msg };
-                    const sanitizedText = this.extractDisplayText(normalized);
-                    if (sanitizedText) {
-                        normalized.content = sanitizedText;
-                        if (!normalized.displayContent || typeof normalized.displayContent !== 'string') {
-                            normalized.displayContent = sanitizedText;
-                        }
-                    }
-                    this.resolveMessageId(normalized);
-                    return normalized;
+                    return this.prepareMessageForDisplay(normalized);
                 });
                 this.renderMessages();
             } else {
@@ -2271,17 +2263,9 @@ class ChatManager {
 
     handleNewMessage(data) {
         const { userId, message } = data;
-        const normalizedMessage = {
+        const normalizedMessage = this.prepareMessageForDisplay({
             ...message,
-        };
-        const sanitizedText = this.extractDisplayText(normalizedMessage);
-        if (sanitizedText) {
-            normalizedMessage.content = sanitizedText;
-            if (!normalizedMessage.displayContent || typeof normalizedMessage.displayContent !== 'string') {
-                normalizedMessage.displayContent = sanitizedText;
-            }
-        }
-        this.resolveMessageId(normalizedMessage);
+        });
         if (!Object.prototype.hasOwnProperty.call(normalizedMessage, 'feedback')) {
             normalizedMessage.feedback = null;
         }
@@ -2398,17 +2382,214 @@ class ChatManager {
             .replace(/'/g, '&#39;');
     }
 
+    parseJsonIfPossible(value) {
+        if (typeof value !== 'string') return value;
+        const trimmed = value.trim();
+        if (!trimmed) return value;
+        if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+            return value;
+        }
+        try {
+            return JSON.parse(trimmed);
+        } catch (_) {
+            return value;
+        }
+    }
+
+    detectImageMimeType(base64, fallback = 'image/jpeg') {
+        if (typeof base64 !== 'string') return fallback;
+        const trimmed = base64.trim();
+        if (trimmed.startsWith('/9j/')) return 'image/jpeg';
+        if (trimmed.startsWith('iVBORw0KGgo')) return 'image/png';
+        if (trimmed.startsWith('R0lGOD')) return 'image/gif';
+        if (trimmed.startsWith('UklGR')) return 'image/webp';
+        return fallback;
+    }
+
+    buildBase64DataUrl(base64) {
+        if (typeof base64 !== 'string') return '';
+        const trimmed = base64.trim();
+        if (!trimmed) return '';
+        if (trimmed.startsWith('data:image/')) return trimmed;
+        const mime = this.detectImageMimeType(trimmed);
+        return `data:${mime};base64,${trimmed}`;
+    }
+
+    normalizeImageSrc(value) {
+        if (typeof value !== 'string') return '';
+        const trimmed = value.trim();
+        return trimmed ? trimmed : '';
+    }
+
+    normalizeImageList(images) {
+        if (!Array.isArray(images)) return [];
+        const normalized = [];
+        images.forEach((img) => {
+            if (typeof img === 'string') {
+                const src = this.normalizeImageSrc(img);
+                if (src) normalized.push(src);
+                return;
+            }
+            if (img && typeof img === 'object') {
+                const src = this.normalizeImageSrc(
+                    img.previewUrl || img.thumbUrl || img.url || img.src || ''
+                );
+                if (src) normalized.push(src);
+            }
+        });
+        return normalized;
+    }
+
+    extractImagesFromContent(content, messageId = '') {
+        const parsed = this.parseJsonIfPossible(content);
+        const images = [];
+        let base64Index = 0;
+
+        const addUrlImage = (url) => {
+            const src = this.normalizeImageSrc(url);
+            if (src) images.push(src);
+        };
+
+        const addBase64Image = (base64) => {
+            if (typeof base64 !== 'string' || !base64.trim()) return;
+            if (messageId) {
+                images.push(`/assets/chat-images/${encodeURIComponent(messageId)}/${base64Index}`);
+            } else {
+                const src = this.buildBase64DataUrl(base64);
+                if (src) images.push(src);
+            }
+            base64Index += 1;
+        };
+
+        const getImageUrlFromNode = (node) =>
+            this.normalizeImageSrc(node?.previewUrl || node?.thumbUrl || node?.url || node?.src || '');
+
+        const visit = (node) => {
+            if (!node) return;
+            if (Array.isArray(node)) {
+                node.forEach(visit);
+                return;
+            }
+            if (typeof node !== 'object') return;
+
+            if (node.type === 'image') {
+                const url = getImageUrlFromNode(node);
+                if (url) {
+                    addUrlImage(url);
+                    return;
+                }
+                const base64 = node.base64 || node.content;
+                if (base64) {
+                    addBase64Image(base64);
+                    return;
+                }
+            }
+
+            const dataNode = node.data;
+            if (dataNode && typeof dataNode === 'object') {
+                if (dataNode.type === 'image') {
+                    const url = getImageUrlFromNode(dataNode);
+                    if (url) {
+                        addUrlImage(url);
+                        return;
+                    }
+                    const base64 = dataNode.base64 || dataNode.content;
+                    if (base64) {
+                        addBase64Image(base64);
+                        return;
+                    }
+                }
+                if (Array.isArray(dataNode)) {
+                    dataNode.forEach(visit);
+                }
+            }
+
+            if (Array.isArray(node.content)) {
+                node.content.forEach(visit);
+            }
+            if (Array.isArray(node.images)) {
+                node.images.forEach(visit);
+            }
+            if (Array.isArray(node.media)) {
+                node.media.forEach(visit);
+            }
+        };
+
+        visit(parsed);
+
+        if (images.length <= 1) return images;
+        const seen = new Set();
+        return images.filter((src) => {
+            if (seen.has(src)) return false;
+            seen.add(src);
+            return true;
+        });
+    }
+
+    prepareMessageForDisplay(message) {
+        if (!message || typeof message !== 'object') return message;
+        const normalized = { ...message };
+        const messageId = this.resolveMessageId(normalized);
+        const rawContent =
+            typeof normalized.rawContent !== 'undefined' ? normalized.rawContent : normalized.content;
+        const structured = this.parseJsonIfPossible(rawContent);
+
+        const existingImages = this.normalizeImageList(normalized.images);
+        const extractedImages = this.extractImagesFromContent(structured, messageId);
+        const mergedImages = [];
+        const seen = new Set();
+        existingImages.forEach((src) => {
+            if (!seen.has(src)) {
+                seen.add(src);
+                mergedImages.push(src);
+            }
+        });
+        extractedImages.forEach((src) => {
+            if (!seen.has(src)) {
+                seen.add(src);
+                mergedImages.push(src);
+            }
+        });
+
+        if (mergedImages.length > 0) {
+            normalized.images = mergedImages;
+        } else if (Array.isArray(normalized.images)) {
+            normalized.images = [];
+        }
+
+        let plainText = this.extractPlainTextFromStructured(structured);
+        if (!plainText && mergedImages.length === 0) {
+            if (typeof normalized.displayContent === 'string' && normalized.displayContent.trim()) {
+                const textFromHtml = this.stripHtmlToText(normalized.displayContent);
+                if (textFromHtml) {
+                    plainText = textFromHtml;
+                }
+            } else if (typeof normalized.content === 'string') {
+                plainText = normalized.content;
+            }
+        }
+
+        normalized._plainText = typeof plainText === 'string' ? plainText : '';
+        return normalized;
+    }
+
     extractDisplayText(message) {
         if (!message) return '';
 
-        if (typeof message.displayContent === 'string' && message.displayContent.trim()) {
+        if (Object.prototype.hasOwnProperty.call(message, '_plainText')) {
+            return typeof message._plainText === 'string' ? message._plainText : '';
+        }
+
+        const hasImages = Array.isArray(message.images) && message.images.length > 0;
+        if (!hasImages && typeof message.displayContent === 'string' && message.displayContent.trim()) {
             const textFromHtml = this.stripHtmlToText(message.displayContent);
             if (textFromHtml) {
                 return textFromHtml;
             }
         }
 
-        const rawContent = message?.content;
+        const rawContent =
+            typeof message?.rawContent !== 'undefined' ? message.rawContent : message?.content;
         if (typeof rawContent === 'string') {
             const trimmed = rawContent.trim();
             if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
