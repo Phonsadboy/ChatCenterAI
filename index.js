@@ -13319,6 +13319,23 @@ app.post("/api/facebook-bots", async (req, res) => {
       selectedImageCollections || [],
     );
 
+    let datasetId =
+      typeof req.body.datasetId === "string" ? req.body.datasetId.trim() : "";
+    if (!datasetId) {
+      const datasetResult = await fetchFacebookDatasetId({
+        pageId,
+        accessToken,
+      });
+      if (datasetResult?.success) {
+        datasetId = datasetResult.datasetId;
+      } else {
+        console.warn(
+          "[FB Dataset] Auto-create dataset failed:",
+          datasetResult?.error || datasetResult?.reason || "unknown",
+        );
+      }
+    }
+
     const facebookBot = {
       name,
       description: description || "",
@@ -13333,6 +13350,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
+      datasetId: datasetId || null,
       keywordSettings: {
         enableAI: { keyword: "", response: "" },
         disableAI: { keyword: "", response: "" },
@@ -13390,6 +13408,27 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       await coll.updateMany({}, { $set: { isDefault: false } });
     }
 
+    let datasetId =
+      typeof req.body.datasetId === "string" ? req.body.datasetId.trim() : "";
+    if (!datasetId) {
+      datasetId =
+        typeof existing.datasetId === "string" ? existing.datasetId.trim() : "";
+    }
+    if (!datasetId) {
+      const datasetResult = await fetchFacebookDatasetId({
+        pageId,
+        accessToken,
+      });
+      if (datasetResult?.success) {
+        datasetId = datasetResult.datasetId;
+      } else {
+        console.warn(
+          "[FB Dataset] Auto-create dataset failed:",
+          datasetResult?.error || datasetResult?.reason || "unknown",
+        );
+      }
+    }
+
     const updateData = {
       name,
       description: description || "",
@@ -13404,7 +13443,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
         req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
       ),
       openaiApiKeyId: req.body.openaiApiKeyId !== undefined ? (req.body.openaiApiKeyId || null) : existing.openaiApiKeyId,
-      datasetId: req.body.datasetId !== undefined ? (req.body.datasetId || null) : existing.datasetId,
+      datasetId: datasetId || null,
       updatedAt: new Date(),
     };
 
@@ -22365,6 +22404,40 @@ async function sendFacebookConversionEvent(options) {
       errorMessage,
     });
     return { success: false, error: errorMessage, code: errorCode };
+  }
+}
+
+async function fetchFacebookDatasetId({ pageId, accessToken } = {}) {
+  if (!pageId || !accessToken) {
+    return { success: false, reason: "Missing pageId or accessToken" };
+  }
+
+  try {
+    const url = `https://graph.facebook.com/v18.0/${pageId}/dataset`;
+    const response = await axios.post(url, null, {
+      params: { access_token: accessToken },
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const datasetId =
+      response?.data?.id ||
+      response?.data?.dataset_id ||
+      response?.data?.datasetId ||
+      null;
+
+    if (!datasetId) {
+      return {
+        success: false,
+        error: "Dataset ID not returned",
+      };
+    }
+
+    return { success: true, datasetId };
+  } catch (error) {
+    const errorMessage = error.response?.data?.error?.message || error.message;
+    const errorCode = error.response?.data?.error?.code || null;
+    const status = error.response?.status || null;
+    return { success: false, error: errorMessage, code: errorCode, status };
   }
 }
 
