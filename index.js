@@ -13471,6 +13471,63 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
   }
 });
 
+// Auto fetch/create Dataset ID for Facebook Bot
+app.post("/api/facebook-bots/:id/dataset", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Facebook Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("facebook_bots");
+
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
+    }
+
+    const pageId =
+      typeof req.body?.pageId === "string" && req.body.pageId.trim()
+        ? req.body.pageId.trim()
+        : bot.pageId;
+    const accessToken =
+      typeof req.body?.accessToken === "string" && req.body.accessToken.trim()
+        ? req.body.accessToken.trim()
+        : bot.accessToken;
+
+    if (!pageId || !accessToken) {
+      return res.status(400).json({
+        error: "ต้องระบุ Page ID และ Access Token ให้ถูกต้องก่อน",
+      });
+    }
+
+    const datasetResult = await fetchFacebookDatasetId({
+      pageId,
+      accessToken,
+    });
+
+    if (!datasetResult?.success) {
+      return res.status(502).json({
+        error: datasetResult?.error || datasetResult?.reason || "ไม่สามารถสร้าง Dataset ได้",
+        code: datasetResult?.code || null,
+        status: datasetResult?.status || null,
+      });
+    }
+
+    await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { datasetId: datasetResult.datasetId, updatedAt: new Date() } },
+    );
+
+    res.json({ success: true, datasetId: datasetResult.datasetId });
+  } catch (err) {
+    console.error("Error creating facebook dataset:", err);
+    res.status(500).json({ error: "ไม่สามารถสร้าง Dataset ได้" });
+  }
+});
+
 // Delete Facebook Bot
 app.delete("/api/facebook-bots/:id", async (req, res) => {
   try {

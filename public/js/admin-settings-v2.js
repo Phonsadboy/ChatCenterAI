@@ -625,6 +625,45 @@ async function saveFacebookBot() {
     }
 }
 
+async function autoFetchFacebookDataset() {
+    const botId = document.getElementById('facebookBotId')?.value || '';
+    const pageId = document.getElementById('facebookPageId')?.value.trim() || '';
+    const accessToken = document.getElementById('facebookAccessToken')?.value.trim() || '';
+    const datasetInput = document.getElementById('facebookDatasetId');
+    const btn = document.getElementById('facebookDatasetAutoBtn');
+
+    if (!botId) {
+        showToast('กรุณาบันทึกบอทก่อนเพื่อสร้าง Dataset', 'warning');
+        return;
+    }
+    if (!pageId || !accessToken) {
+        showToast('กรุณากรอก Page ID และ Access Token ก่อน', 'warning');
+        return;
+    }
+
+    try {
+        if (btn) setLoading(btn, true);
+        const res = await fetch(`/api/facebook-bots/${botId}/dataset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pageId, accessToken })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(data?.error || 'ไม่สามารถสร้าง Dataset ได้');
+        }
+        if (datasetInput && data.datasetId) {
+            datasetInput.value = data.datasetId;
+        }
+        showToast('สร้าง Dataset ID สำเร็จ', 'success');
+    } catch (error) {
+        console.error('Auto dataset error:', error);
+        showToast(error.message || 'สร้าง Dataset ไม่สำเร็จ', 'danger');
+    } finally {
+        if (btn) setLoading(btn, false);
+    }
+}
+
 // Delete Line Bot
 async function deleteLineBot(botId) {
     if (!confirm('ต้องการลบ Line Bot นี้หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้')) {
@@ -892,6 +931,9 @@ function setupEventListeners() {
 
     const saveFbBtn = document.getElementById('saveFacebookBotBtn');
     if (saveFbBtn) saveFbBtn.addEventListener('click', saveFacebookBot);
+
+    const autoDatasetBtn = document.getElementById('facebookDatasetAutoBtn');
+    if (autoDatasetBtn) autoDatasetBtn.addEventListener('click', autoFetchFacebookDataset);
 
     // Modal Delete Buttons
     const deleteLineBtn = document.getElementById('deleteLineBotBtn');
