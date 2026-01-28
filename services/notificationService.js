@@ -562,6 +562,90 @@ function normalizeOrderItem(item) {
   return { name, color, quantity, price };
 }
 
+function parseNumberValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const normalized = value.replace(/,/g, "").trim();
+    if (!normalized) return null;
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function getOrderTimestamp(order) {
+  const raw = order?.extractedAt || order?.createdAt || order?.updatedAt || null;
+  if (!raw) return 0;
+  const time = new Date(raw).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function getOrderTotalAmountForDedup(order) {
+  const orderData = order?.orderData || {};
+  const totalDirect = parseNumberValue(orderData.totalAmount);
+  if (Number.isFinite(totalDirect)) return totalDirect;
+
+  let total = 0;
+  let hasNumeric = false;
+  const items = Array.isArray(orderData.items) ? orderData.items : [];
+  items.forEach((item) => {
+    const price = parseNumberValue(
+      item?.price ?? item?.amount ?? item?.unitPrice ?? null,
+    );
+    if (!Number.isFinite(price)) return;
+    const qtyRaw = item?.quantity ?? item?.qty ?? item?.count ?? 1;
+    const qty = parseNumberValue(qtyRaw);
+    const quantity =
+      Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 1;
+    total += price * quantity;
+    hasNumeric = true;
+  });
+
+  const shipping = parseNumberValue(orderData.shippingCost);
+  if (Number.isFinite(shipping)) {
+    total += shipping;
+    hasNumeric = true;
+  }
+
+  return hasNumeric ? total : null;
+}
+
+function buildOrderDedupKey(order) {
+  const userId = normalizeIdString(order?.userId);
+  if (!userId) return null;
+  const total = getOrderTotalAmountForDedup(order);
+  if (!Number.isFinite(total)) return null;
+  const platform = normalizePlatform(order?.platform);
+  const normalizedTotal = Math.round(total * 100) / 100;
+  return `${platform}:${userId}|${normalizedTotal.toFixed(2)}`;
+}
+
+function dedupeOrdersByUserAndTotal(orders) {
+  const list = Array.isArray(orders) ? orders : [];
+  const bestByKey = new Map();
+
+  list.forEach((order, index) => {
+    const key = buildOrderDedupKey(order);
+    if (!key) return;
+    const timestamp = getOrderTimestamp(order);
+    const existing = bestByKey.get(key);
+    if (
+      !existing ||
+      timestamp > existing.timestamp ||
+      (timestamp === existing.timestamp && index > existing.index)
+    ) {
+      bestByKey.set(key, { index, timestamp });
+    }
+  });
+
+  return list.filter((order, index) => {
+    const key = buildOrderDedupKey(order);
+    if (!key) return true;
+    const best = bestByKey.get(key);
+    return best && best.index === index;
+  });
+}
+
 function formatNewOrderMessage(order, settings, publicBaseUrl, options = {}) {
   const cfg = settings || {};
   // เปิดการแสดงข้อมูลทั้งหมดเป็นค่าเริ่มต้น
@@ -923,11 +1007,13 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       .sort({ extractedAt: 1 })
       .toArray();
 
+    const dedupedOrders = dedupeOrdersByUserAndTotal(orders);
+
     const normalizedBaseUrl = normalizePublicBaseUrl(baseUrl);
     const canBuildLinks = isHttpUrl(normalizedBaseUrl);
     const shortChatLinks = {};
-    if (canBuildLinks && orders.length) {
-      for (const order of orders) {
+    if (canBuildLinks && dedupedOrders.length) {
+      for (const order of dedupedOrders) {
         const userId = normalizeIdString(order?.userId);
         if (!userId || shortChatLinks[userId]) continue;
         const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(userId)}`;
@@ -945,7 +1031,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       }
     }
 
-    const messages = formatOrderSummaryMessages(orders, {
+    const messages = formatOrderSummaryMessages(dedupedOrders, {
       startAt: windowStart,
       endAt: windowEnd,
       timezone: channelDoc.summaryTimezone || "Asia/Bangkok",
