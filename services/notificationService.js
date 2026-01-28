@@ -99,30 +99,28 @@ async function fetchOrderImageRefs(db, order) {
     return [];
   }
 
-  const messages = await db
+  const cursor = db
     .collection("chat_history")
     .find(query)
     .sort({ timestamp: 1 })
-    .project({ content: 1 })
-    .limit(50) // จำกัดจำนวน messages เพื่อป้องกัน memory issue
-    .toArray();
+    .project({ content: 1 });
 
   const imageRefs = [];
-  const maxImages = 10; // จำกัดรูปภาพสูงสุด
+  const seen = new Set();
 
-  messages.forEach((msg) => {
-    if (imageRefs.length >= maxImages) return;
-
+  for await (const msg of cursor) {
     const images = extractBase64ImagesFromContent(msg.content);
-    if (!images.length) return;
+    if (!images.length) continue;
     const messageId = normalizeIdString(msg?._id);
-    if (!messageId) return;
+    if (!messageId) continue;
 
     images.forEach((_, imageIndex) => {
-      if (imageRefs.length >= maxImages) return;
+      const key = `${messageId}:${imageIndex}`;
+      if (seen.has(key)) return;
+      seen.add(key);
       imageRefs.push({ messageId, imageIndex });
     });
-  });
+  }
 
   return imageRefs;
 }
@@ -147,6 +145,50 @@ function buildLineImageMessages(baseUrl, imageRefs) {
       };
     })
     .filter(Boolean);
+}
+
+async function buildOrderImageMessagesForSummary(
+  db,
+  orders,
+  baseUrl,
+  timezone,
+) {
+  const normalizedBase = normalizePublicBaseUrl(baseUrl);
+  if (!isHttpUrl(normalizedBase)) return [];
+  const list = Array.isArray(orders) ? orders : [];
+  if (!list.length) return [];
+
+  const tz = timezone || "Asia/Bangkok";
+  const sentKeys = new Set();
+  const payloads = [];
+
+  for (const order of list) {
+    const userId = normalizeIdString(order?.userId);
+    if (!userId) continue;
+
+    const platform = normalizePlatform(order?.platform);
+    const dayStamp = (() => {
+      const raw = order?.extractedAt || order?.createdAt || order?.updatedAt || null;
+      const timeMoment = raw ? moment.tz(raw, tz) : moment.tz(tz);
+      return timeMoment.isValid() ? timeMoment.format("YYYY-MM-DD") : "";
+    })();
+    const key = `${platform}:${userId}:${dayStamp}`;
+    if (sentKeys.has(key)) continue;
+    sentKeys.add(key);
+
+    const imageRefs = await fetchOrderImageRefs(db, order);
+    if (!imageRefs.length) continue;
+
+    const orderId = normalizeIdString(order?._id);
+    const shortId = orderId ? orderId.slice(-6) : "-";
+    payloads.push({
+      type: "text",
+      text: `📷 รูปภาพจากลูกค้า (ออเดอร์ ${shortId}) จำนวน ${imageRefs.length.toLocaleString()} รูป`,
+    });
+    payloads.push(...buildLineImageMessages(normalizedBase, imageRefs));
+  }
+
+  return payloads;
 }
 
 function uniqueSources(sources) {
@@ -1043,10 +1085,18 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     const channelId = normalizeIdString(channelDoc?._id);
 
     try {
+      const imageMessages = await buildOrderImageMessagesForSummary(
+        db,
+        dedupedOrders,
+        baseUrl,
+        channelDoc.summaryTimezone || "Asia/Bangkok",
+      );
+      const payloads =
+        imageMessages.length > 0 ? [...messages, ...imageMessages] : messages;
       const response = await sendLineMessagesInChunks(
         senderBotId,
         targetId,
-        messages,
+        payloads,
       );
       await insertNotificationLog(db, {
         channelId,
