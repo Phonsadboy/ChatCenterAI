@@ -827,18 +827,29 @@ input:checked+.toggle-slider:before {
     flex-direction: column;
     gap: 0.3rem;
     min-width: 0;
+    overflow: hidden;
 }
 
 .image-asset-title {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 0.35rem;
     font-size: 0.9rem;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.image-asset-title strong {
+    word-break: break-word;
+    overflow-wrap: break-word;
+    min-width: 0;
 }
 
 .image-asset-description {
     font-size: 0.75rem;
     color: #6b7280;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .image-asset-meta {
@@ -848,21 +859,33 @@ input:checked+.toggle-slider:before {
     gap: 0.35rem;
     font-size: 0.7rem;
     color: #94a3b8;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .image-asset-meta .dot {
     color: #cbd5f5;
 }
 
+.image-asset-meta .token {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+}
+
 .image-asset-actions {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 0.35rem;
+    flex-shrink: 0;
+    align-items: flex-start;
 }
 
 .image-asset-actions .btn {
     font-size: 0.75rem;
     padding: 0.3rem 0.5rem;
+    white-space: nowrap;
 }
 
 .image-asset-edit-form {
@@ -905,6 +928,7 @@ input:checked+.toggle-slider:before {
     padding: 0.6rem;
     background: #ffffff;
     align-items: flex-start;
+    overflow: hidden;
 }
 
 .upload-queue-item.status-uploading {
@@ -937,15 +961,18 @@ input:checked+.toggle-slider:before {
 
 .queue-main {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
+    overflow: hidden;
 }
 
 .queue-header {
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .queue-header .form-control {
@@ -971,10 +998,21 @@ input:checked+.toggle-slider:before {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    flex-wrap: wrap;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.queue-meta>span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
 }
 
 .queue-meta .dot {
     color: #cbd5f5;
+    flex-shrink: 0;
 }
 
 .queue-status {
@@ -1282,7 +1320,7 @@ input:checked+.toggle-slider:before {
 .legacy-settings-toast {
     position: fixed;
     right: 20px;
-    bottom: 20px;
+    top: 80px;
     width: 320px;
     max-width: calc(100% - 24px);
     background: linear-gradient(160deg, #0f172a, #0b1a2f 65%, #0f172a);
@@ -1291,18 +1329,17 @@ input:checked+.toggle-slider:before {
     padding: 14px 16px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.04);
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(-12px);
     pointer-events: none;
     transition: all 0.25s ease;
     z-index: 1100;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-left: 4px solid #fbbf24;
-    position: fixed;
 }
 
 .legacy-settings-toast.show {
     opacity: 1;
-    transform: translateY(0) scale(1.01);
+    transform: translateY(0) scale(1);
     pointer-events: auto;
     animation: legacy-pop 0.35s ease;
 }
@@ -1415,12 +1452,12 @@ input:checked+.toggle-slider:before {
 
 @keyframes legacy-pop {
     0% {
-        transform: translateY(12px) scale(0.97);
+        transform: translateY(-12px) scale(0.97);
         opacity: 0;
     }
 
     100% {
-        transform: translateY(0) scale(1.01);
+        transform: translateY(0) scale(1);
         opacity: 1;
     }
 }
@@ -1760,11 +1797,13 @@ input:checked+.toggle-slider:before {
         flex-direction: row;
         width: 100%;
         gap: 0.5rem;
+        flex-wrap: wrap;
     }
 
     .image-asset-actions .btn {
         flex: 1;
         min-height: 40px;
+        min-width: 0;
     }
 
     .image-assets-list,
@@ -1777,7 +1816,7 @@ input:checked+.toggle-slider:before {
     .legacy-settings-toast {
         left: 1rem;
         right: 1rem;
-        bottom: 1rem;
+        top: 4.5rem;
         width: auto;
     }
 }
@@ -2020,8 +2059,9 @@ input:checked+.toggle-slider:before {
 /* Enhanced Image Asset Items */
 .image-asset-item {
     display: flex;
-    align-items: center;
-    gap: 0.875rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     border: 1px solid var(--border-color);
     border-radius: 12px;
     padding: 0.75rem;
@@ -2444,6 +2484,7 @@ input:checked+.toggle-slider:before {
    EXTRA SMALL DEVICES - PHONE PORTRAIT
    ============================================ */
 @media (max-width: 575px) {
+
     /* Typography */
     .section-title {
         font-size: 1.375rem;
@@ -2554,6 +2595,7 @@ input:checked+.toggle-slider:before {
    MODAL FULLSCREEN ON MOBILE
    ============================================ */
 @media (max-width: 767px) {
+
     /* Force fullscreen modals */
     .modal-dialog {
         margin: 0;
