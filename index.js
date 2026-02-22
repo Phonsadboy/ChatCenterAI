@@ -16,6 +16,7 @@ const os = require("os");
 const http = require("http");
 const socketIo = require("socket.io");
 const InstructionDataService = require("./services/instructionDataService");
+const InstructionChatService = require("./services/instructionChatService");
 const createNotificationService = require("./services/notificationService");
 const slipOkService = require("./services/slipOkService");
 // Middleware & misc packages for UI
@@ -12980,9 +12981,8 @@ app.patch("/api/line-bots/:id/toggle-notifications", async (req, res) => {
     );
 
     res.json({
-      message: `เปลี่ยนสถานะการแจ้งเตือน Line Bot เป็น ${
-        nextValue ? "เปิดใช้งาน" : "ปิดใช้งาน"
-      } เรียบร้อยแล้ว`,
+      message: `เปลี่ยนสถานะการแจ้งเตือน Line Bot เป็น ${nextValue ? "เปิดใช้งาน" : "ปิดใช้งาน"
+        } เรียบร้อยแล้ว`,
       notificationEnabled: nextValue,
     });
   } catch (err) {
@@ -17972,6 +17972,479 @@ app.get("/admin/orders", async (req, res) => {
 });
 
 // ============================ Customer Statistics Routes ============================
+
+// ============================ Instruction Chat Editor Routes ============================
+
+// Instruction Chat Page
+app.get("/admin/instruction-chat", requireAdmin, async (req, res) => {
+  try {
+    res.render("admin-instruction-chat");
+  } catch (error) {
+    console.error("[InstructionChat] Error loading page:", error);
+    res.status(500).send("Error loading instruction chat");
+  }
+});
+
+// Instruction Chat API — Main chat endpoint with tool loop
+app.post("/api/instruction-chat", requireAdmin, async (req, res) => {
+  try {
+    const { instructionId, message, model = "gpt-5.2", thinking = "off", history = [] } = req.body;
+
+    if (!instructionId) return res.json({ error: "ต้องเลือก Instruction ก่อน" });
+    if (!message || !message.trim()) return res.json({ error: "ต้องพิมพ์ข้อความ" });
+
+    const db = client.db("chatbot");
+    const chatService = new InstructionChatService(db, openai);
+
+    // Get instruction for system prompt
+    const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
+    if (!instruction) return res.json({ error: "ไม่พบ Instruction" });
+
+    const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
+    const sessionId = `ses_${Date.now().toString(36)}`;
+
+    // Build system prompt
+    const systemPrompt = `คุณเป็น AI ผู้ช่วยจัดการ Instruction สำหรับระบบ ChatCenter AI
+คุณมี tools สำหรับอ่านและแก้ไขข้อมูลใน instruction ที่ผู้ใช้เลือก
+
+## หลักการทำงาน
+1. **อ่านก่อนแก้**: เรียก get_instruction_overview ก่อนเสมอถ้ายังไม่เคยดู
+2. **ค้นหาก่อนดึง**: ใช้ search_in_table หรือ search_content เพื่อหาตำแหน่งก่อน
+3. **แก้ทีละส่วน**: ใช้ update_cell หรือ update_rows_bulk — ห้ามแก้ทั้ง item
+4. **ยืนยันก่อนแก้**: แจ้งผู้ใช้ว่าจะแก้อะไร ก่อนเรียก write tool (ยกเว้นผู้ใช้สั่งตรง)
+5. **ตอบกลับชัดเจน**: หลังแก้ไข แจ้ง before → after เสมอ
+
+## ข้อห้าม
+- ห้ามดึงข้อมูลทั้งหมดทีเดียว (ใช้ pagination)
+- ห้ามคาดเดาข้อมูล ให้ค้นหาเสมอ
+- ห้ามลบข้อมูลโดยไม่ยืนยันกับผู้ใช้
+
+## Instruction ที่เลือก
+ID: ${instructionId}
+ชื่อ: ${instruction.name || "ไม่มีชื่อ"}
+คำอธิบาย: ${instruction.description || "ไม่มี"}
+
+## ชุดข้อมูลที่มี (Data Items Summary)
+${dataItemsSummary}
+
+ใช้ข้อมูลข้างต้นเพื่อตัดสินใจว่าควรค้นหาหรือดึงข้อมูลจาก data item ไหน
+ไม่ต้องเรียก get_instruction_overview ซ้ำ ถ้าข้อมูลข้างต้นเพียงพอแล้ว`;
+
+    // Build messages array
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...history.slice(-20),
+      { role: "user", content: message },
+    ];
+
+    // Model-specific reasoning config
+    const REASONING_SUPPORT = {
+      "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+      "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+      "gpt-5.1": { efforts: ["none", "low", "medium", "high"], default: "none" },
+      "gpt-5": { efforts: ["low", "medium", "high"], default: "medium" },
+    };
+
+    const THINKING_MAP = { off: "none", low: "low", medium: "medium", high: "high", max: "xhigh" };
+    const modelConfig = REASONING_SUPPORT[model] || REASONING_SUPPORT["gpt-5.2"];
+    let effort = THINKING_MAP[thinking] || modelConfig.default;
+    if (!modelConfig.efforts.includes(effort)) {
+      effort = modelConfig.efforts[modelConfig.efforts.length - 1];
+    }
+
+    // Build OpenAI payload
+    const tools = chatService.getToolDefinitions();
+    const payload = { model, messages, tools, tool_choice: "auto" };
+    if (effort !== "none") {
+      payload.reasoning = { effort };
+    }
+
+    // Tool loop (max 8 iterations)
+    const toolsUsed = [];
+    const changes = [];
+    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
+    let finalContent = "";
+    let reasoningContent = "";
+    let thinkingTime = null;
+
+    const startTime = Date.now();
+
+    for (let i = 0; i < 8; i++) {
+      const response = await openai.chat.completions.create(payload);
+      const choice = response.choices[0];
+      const msg = choice.message;
+
+      // Track usage
+      if (response.usage) {
+        totalUsage.prompt_tokens += response.usage.prompt_tokens || 0;
+        totalUsage.completion_tokens += response.usage.completion_tokens || 0;
+        totalUsage.reasoning_tokens += response.usage.reasoning_tokens || 0;
+        totalUsage.total_tokens += response.usage.total_tokens || 0;
+      }
+
+      // Capture reasoning content
+      if (msg.reasoning_content) {
+        reasoningContent = msg.reasoning_content;
+        thinkingTime = ((Date.now() - startTime) / 1000).toFixed(1);
+      }
+
+      // No tool calls — we have the final response
+      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+        finalContent = msg.content || "";
+        break;
+      }
+
+      // Process tool calls
+      messages.push(msg);
+
+      for (const toolCall of msg.tool_calls) {
+        const toolName = toolCall.function.name;
+        let args = {};
+        try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch (e) { }
+
+        const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
+
+        toolsUsed.push({
+          tool: toolName,
+          args,
+          resultCount: result.results?.length || result.totalMatches || undefined,
+          summary: result.error || (result.success ? `✅ สำเร็จ` : undefined),
+        });
+
+        // Track changes
+        if (result.changeId) {
+          changes.push({ changeId: result.changeId, tool: toolName });
+        }
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        });
+      }
+
+      // Continue loop — let AI process tool results
+    }
+
+    res.json({
+      content: finalContent,
+      toolsUsed,
+      changes,
+      reasoning_content: reasoningContent || undefined,
+      thinking_time: thinkingTime || undefined,
+      usage: totalUsage,
+      model,
+      thinking,
+    });
+
+  } catch (error) {
+    console.error("[InstructionChat] API Error:", error);
+    res.json({ error: "เกิดข้อผิดพลาดในการประมวลผล: " + error.message });
+  }
+});
+
+// Changelog API
+app.get("/api/instruction-chat/changelog/:sessionId", requireAdmin, async (req, res) => {
+  try {
+    const db = client.db("chatbot");
+    const logs = await db.collection("instruction_chat_changelog")
+      .find({ sessionId: req.params.sessionId })
+      .sort({ timestamp: -1 })
+      .toArray();
+    res.json({ success: true, changelog: logs });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// Undo API
+app.post("/api/instruction-chat/undo/:changeId", requireAdmin, async (req, res) => {
+  try {
+    const db = client.db("chatbot");
+    const changeLog = await db.collection("instruction_chat_changelog").findOne({ changeId: req.params.changeId, undone: false });
+    if (!changeLog) return res.json({ error: "ไม่พบหรือยกเลิกแล้ว" });
+
+    const chatService = new InstructionChatService(db, openai);
+
+    // Reverse the operation
+    if (changeLog.tool === "update_cell" && changeLog.before) {
+      await chatService.update_cell(changeLog.instructionId, {
+        itemId: changeLog.params.itemId,
+        rowIndex: changeLog.params.rowIndex,
+        column: changeLog.params.column,
+        newValue: changeLog.before.value,
+      }, "undo");
+    } else if (changeLog.tool === "add_row" && changeLog.after) {
+      await chatService.delete_row(changeLog.instructionId, {
+        itemId: changeLog.params.itemId,
+        rowIndex: changeLog.after.rowIndex,
+      }, "undo");
+    } else if (changeLog.tool === "delete_row" && changeLog.before) {
+      await chatService.add_row(changeLog.instructionId, {
+        itemId: changeLog.params.itemId,
+        rowData: changeLog.before.rowData,
+        position: "after",
+        afterRowIndex: Math.max(0, changeLog.params.rowIndex - 1),
+      }, "undo");
+    } else if (changeLog.tool === "update_text_content" && changeLog.before) {
+      const inst = await db.collection("instructions_v2").findOne({ _id: new ObjectId(changeLog.instructionId) });
+      if (inst) {
+        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === changeLog.params.itemId);
+        if (itemIndex !== -1) {
+          await db.collection("instructions_v2").updateOne(
+            { _id: new ObjectId(changeLog.instructionId) },
+            { $set: { [`dataItems.${itemIndex}.content`]: changeLog.before.content } }
+          );
+        }
+      }
+    }
+
+    await db.collection("instruction_chat_changelog").updateOne(
+      { changeId: req.params.changeId },
+      { $set: { undone: true, undoneAt: new Date() } }
+    );
+
+    res.json({ success: true, message: "ยกเลิกการแก้ไขเรียบร้อย" });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// ─── SSE Streaming Chat Endpoint ───
+app.post("/api/instruction-chat/stream", requireAdmin, async (req, res) => {
+  try {
+    const { instructionId, message, model = "gpt-5.2", thinking = "off", history = [], sessionId: clientSessionId } = req.body;
+
+    if (!instructionId) return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
+    if (!message || !message.trim()) return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
+
+    // SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const sendEvent = (event, data) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const db = client.db("chatbot");
+    const chatService = new InstructionChatService(db, openai);
+    const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
+    if (!instruction) { sendEvent("error", { error: "ไม่พบ Instruction" }); res.end(); return; }
+
+    const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
+    const sessionId = clientSessionId || `ses_${Date.now().toString(36)}`;
+    const username = req.session?.user?.username || "admin";
+
+    const systemPrompt = `คุณเป็น AI ผู้ช่วยจัดการ Instruction สำหรับระบบ ChatCenter AI
+คุณมี tools สำหรับอ่านและแก้ไขข้อมูลใน instruction ที่ผู้ใช้เลือก
+
+## หลักการทำงาน
+1. **อ่านก่อนแก้**: เรียก get_instruction_overview ก่อนเสมอถ้ายังไม่เคยดู
+2. **ค้นหาก่อนดึง**: ใช้ search_in_table หรือ search_content เพื่อหาตำแหน่งก่อน
+3. **แก้ทีละส่วน**: ใช้ update_cell หรือ update_rows_bulk — ห้ามแก้ทั้ง item
+4. **ยืนยันก่อนแก้**: แจ้งผู้ใช้ว่าจะแก้อะไร ก่อนเรียก write tool (ยกเว้นผู้ใช้สั่งตรง)
+5. **ตอบกลับชัดเจน**: หลังแก้ไข แจ้ง before → after เสมอ
+6. **ลบหลายแถว**: ใช้ delete_rows_bulk ต้องเรียก delete_rows_bulk_confirm ก่อนเสมอ เพื่อเอา confirmToken มายืนยัน
+
+## ข้อห้าม
+- ห้ามดึงข้อมูลทั้งหมดทีเดียว (ใช้ pagination)
+- ห้ามคาดเดาข้อมูล ให้ค้นหาเสมอ
+- ห้ามลบข้อมูลโดยไม่ยืนยันกับผู้ใช้
+
+## Instruction ที่เลือก
+ID: ${instructionId}
+ชื่อ: ${instruction.name || "ไม่มีชื่อ"}
+
+## ชุดข้อมูลที่มี (Data Items Summary)
+${dataItemsSummary}`;
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...history.slice(-20),
+      { role: "user", content: message },
+    ];
+
+    // Reasoning config
+    const REASONING_SUPPORT = {
+      "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+      "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+      "gpt-5.1": { efforts: ["none", "low", "medium", "high"], default: "none" },
+      "gpt-5": { efforts: ["low", "medium", "high"], default: "medium" },
+    };
+    const THINKING_MAP = { off: "none", low: "low", medium: "medium", high: "high", max: "xhigh" };
+    const modelConfig = REASONING_SUPPORT[model] || REASONING_SUPPORT["gpt-5.2"];
+    let effort = THINKING_MAP[thinking] || modelConfig.default;
+    if (!modelConfig.efforts.includes(effort)) effort = modelConfig.efforts[modelConfig.efforts.length - 1];
+
+    const tools = chatService.getToolDefinitions();
+    const toolsUsed = [];
+    const changes = [];
+    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
+
+    sendEvent("session", { sessionId });
+
+    // Tool loop (max 8 iterations) — then stream final response
+    for (let i = 0; i < 8; i++) {
+      const payload = { model, messages, tools, tool_choice: "auto" };
+      if (effort !== "none") payload.reasoning = { effort };
+
+      const response = await openai.chat.completions.create(payload);
+      const choice = response.choices[0];
+      const msg = choice.message;
+
+      if (response.usage) {
+        totalUsage.prompt_tokens += response.usage.prompt_tokens || 0;
+        totalUsage.completion_tokens += response.usage.completion_tokens || 0;
+        totalUsage.reasoning_tokens += response.usage.reasoning_tokens || 0;
+        totalUsage.total_tokens += response.usage.total_tokens || 0;
+      }
+
+      if (msg.reasoning_content) {
+        sendEvent("thinking", { content: msg.reasoning_content });
+      }
+
+      // No tool calls — stream the final content
+      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+        // Stream content char-by-char (simulated for non-streaming API)
+        const content = msg.content || "";
+        const CHUNK_SIZE = 20;
+        for (let c = 0; c < content.length; c += CHUNK_SIZE) {
+          sendEvent("content", { text: content.substring(c, c + CHUNK_SIZE) });
+        }
+
+        // Save audit log
+        await db.collection("instruction_chat_audit").insertOne({
+          sessionId, instructionId, username,
+          timestamp: new Date(),
+          message, model, thinking, effort,
+          toolsUsed: toolsUsed.map(t => t.tool),
+          changes: changes.map(c => c.changeId),
+          usage: totalUsage,
+          responseLength: content.length,
+        });
+
+        sendEvent("done", { toolsUsed, changes, usage: totalUsage });
+        break;
+      }
+
+      // Process tool calls
+      messages.push(msg);
+      for (const toolCall of msg.tool_calls) {
+        const toolName = toolCall.function.name;
+        let args = {};
+        try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch (e) { }
+
+        sendEvent("tool_start", { tool: toolName, args });
+        const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
+
+        toolsUsed.push({ tool: toolName, args, summary: result.error || (result.success ? "✅" : undefined) });
+        if (result.changeId) changes.push({ changeId: result.changeId, tool: toolName });
+
+        sendEvent("tool_end", { tool: toolName, result: result.error || (result.success ? "✅ สำเร็จ" : "ผลลัพธ์") });
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(result) });
+      }
+    }
+
+    res.end();
+  } catch (error) {
+    console.error("[InstructionChat SSE] Error:", error);
+    try { res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`); } catch (e) { }
+    res.end();
+  }
+});
+
+// ─── Session Persistence APIs ───
+
+// Save session
+app.post("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
+  try {
+    const { sessionId, instructionId, instructionName, history, model, thinking, totalTokens, totalChanges } = req.body;
+    if (!sessionId || !instructionId) return res.json({ error: "Missing sessionId or instructionId" });
+
+    const db = client.db("chatbot");
+    const username = req.session?.user?.username || "admin";
+
+    await db.collection("instruction_chat_sessions").updateOne(
+      { sessionId },
+      {
+        $set: {
+          sessionId, instructionId, instructionName: instructionName || "",
+          history: (history || []).slice(-50), // Keep last 50 messages
+          model, thinking, totalTokens: totalTokens || 0, totalChanges: totalChanges || 0,
+          username, updatedAt: new Date(),
+        }, $setOnInsert: { createdAt: new Date() }
+      },
+      { upsert: true }
+    );
+
+    res.json({ success: true, sessionId });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// List sessions for an instruction
+app.get("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
+  try {
+    const { instructionId } = req.query;
+    const db = client.db("chatbot");
+    const filter = instructionId ? { instructionId } : {};
+    const sessions = await db.collection("instruction_chat_sessions")
+      .find(filter)
+      .project({ sessionId: 1, instructionId: 1, instructionName: 1, model: 1, totalTokens: 1, totalChanges: 1, updatedAt: 1, username: 1, _id: 0 })
+      .sort({ updatedAt: -1 })
+      .limit(50)
+      .toArray();
+    res.json({ success: true, sessions });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// Load session
+app.get("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, res) => {
+  try {
+    const db = client.db("chatbot");
+    const session = await db.collection("instruction_chat_sessions").findOne({ sessionId: req.params.sessionId });
+    if (!session) return res.json({ error: "ไม่พบ session" });
+    res.json({ success: true, session });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// Delete session
+app.delete("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, res) => {
+  try {
+    const db = client.db("chatbot");
+    await db.collection("instruction_chat_sessions").deleteOne({ sessionId: req.params.sessionId });
+    res.json({ success: true });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// ─── Audit Log API ───
+app.get("/api/instruction-chat/audit", requireAdmin, async (req, res) => {
+  try {
+    const { instructionId, limit = 50 } = req.query;
+    const db = client.db("chatbot");
+    const filter = instructionId ? { instructionId } : {};
+    const logs = await db.collection("instruction_chat_audit")
+      .find(filter)
+      .sort({ timestamp: -1 })
+      .limit(Math.min(parseInt(limit) || 50, 200))
+      .toArray();
+    res.json({ success: true, logs });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// ============================ End Instruction Chat Editor Routes ============================
 
 function parseCustomerStatsDateRange(startDateStr, endDateStr) {
   const today = getBangkokMoment();

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instruction Editor Chat | ChatCenter AI</title>
+    <meta name="description" content="แก้ไข Instruction ผ่านการแชทกับ AI Agent">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/css/instruction-chat.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="ic-app" id="icApp">
+
+        <!-- Sidebar Overlay (Mobile) -->
+        <div class="ic-sidebar-overlay" id="icSidebarOverlay"></div>
+
+        <!-- Sidebar — Instruction List -->
+        <aside class="ic-sidebar" id="icSidebar">
+            <div class="ic-sidebar-header">
+                <h2><i class="fas fa-book-open"></i> Instructions</h2>
+                <div class="ic-search">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="icInstructionSearch" placeholder="ค้นหา instruction...">
+                </div>
+            </div>
+            <div class="ic-sidebar-list" id="icInstructionList">
+                <!-- Items loaded by JS -->
+                <div style="text-align:center; padding:24px; color: var(--ic-text-muted);">
+                    <i class="fas fa-spinner fa-spin"></i> กำลังโหลด...
+                </div>
+            </div>
+        </aside>
+
+        <!-- Chat Area -->
+        <div class="ic-chat" id="icChat">
+
+            <!-- Chat Header -->
+            <div class="ic-chat-header">
+                <div class="ic-chat-header-left">
+                    <button class="ic-btn-toggle-sidebar" id="icToggleSidebar" title="เมนู">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <span class="ic-inst-active-name" id="icActiveName">เลือก Instruction เพื่อเริ่ม</span>
+                </div>
+                <div class="ic-chat-header-right">
+                    <!-- Model Selector -->
+                    <div class="ic-model-selector" id="icModelSelector">
+                        <button class="ic-model-btn" id="icModelBtn" title="เลือกโมเดล">
+                            <i class="fas fa-brain"></i>
+                            <span id="icModelLabel">GPT-5.2</span>
+                            <i class="fas fa-chevron-down" style="font-size:9px;"></i>
+                        </button>
+                        <div class="ic-model-dropdown" id="icModelDropdown">
+                            <div class="ic-model-option active" data-model="gpt-5.2">
+                                <div class="ic-model-option-name">
+                                    <i class="fas fa-star" style="color: var(--ic-warning);"></i> GPT-5.2
+                                    <span class="ic-model-recommended">แนะนำ</span>
+                                </div>
+                                <div class="ic-model-option-desc">ดีที่สุด — สมดุลระหว่างความเร็วและความแม่นยำ</div>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.2-codex">
+                                <div class="ic-model-option-name">
+                                    <i class="fas fa-wrench" style="color: var(--ic-info);"></i> GPT-5.2 Codex
+                                </div>
+                                <div class="ic-model-option-desc">เหมาะกับ structured data และการแก้ไขข้อมูลซ้อน</div>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.1">
+                                <div class="ic-model-option-name">
+                                    <i class="fas fa-bolt" style="color: var(--ic-success);"></i> GPT-5.1
+                                </div>
+                                <div class="ic-model-option-desc">เร็วกว่า ประหยัดกว่า (ไม่มี xhigh)</div>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5">
+                                <div class="ic-model-option-name">
+                                    <i class="fas fa-random" style="color: var(--ic-warning);"></i> GPT-5 (Router)
+                                </div>
+                                <div class="ic-model-option-desc">เลือก sub-model อัตโนมัติ (ไม่มี none)</div>
+                            </div>
+
+                            <!-- Thinking Level -->
+                            <div class="ic-thinking-section">
+                                <div class="ic-thinking-label"><i class="fas fa-lightbulb"></i> Thinking Level</div>
+                                <div class="ic-thinking-levels" id="icThinkingLevels">
+                                    <button class="ic-thinking-btn active" data-level="off">Off</button>
+                                    <button class="ic-thinking-btn" data-level="low">Low</button>
+                                    <button class="ic-thinking-btn" data-level="medium">Med</button>
+                                    <button class="ic-thinking-btn" data-level="high">High</button>
+                                    <button class="ic-thinking-btn" data-level="max">Max</button>
+                                </div>
+                                <div class="ic-thinking-note" id="icThinkingNote"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- New Chat -->
+                    <button class="ic-model-btn" id="icNewChat" title="เริ่มแชทใหม่">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Messages -->
+            <div class="ic-messages" id="icMessages">
+                <!-- Empty state -->
+                <div class="ic-empty" id="icEmpty">
+                    <div class="ic-empty-icon"><i class="fas fa-wand-magic-sparkles"></i></div>
+                    <h3>Instruction Editor Chat</h3>
+                    <p>เลือก Instruction จากรายการด้านซ้าย แล้วแชทกับ AI เพื่อตรวจสอบ สอบถาม หรือแก้ไขข้อมูล</p>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="ic-input-area" id="icInputArea" style="display:none;">
+                <div class="ic-input-wrapper">
+                    <textarea id="icInput" placeholder="พิมพ์คำสั่ง... เช่น 'ดูราคาสินค้า A'" rows="1"></textarea>
+                    <button class="ic-btn-send" id="icSend" disabled title="ส่ง">
+                        <i class="fas fa-arrow-up"></i>
+                    </button>
+                </div>
+                <div class="ic-quick-actions" id="icQuickActions">
+                    <button class="ic-chip" data-prompt="ดูภาพรวมชุดข้อมูลทั้งหมด">📋 ดูภาพรวม</button>
+                    <button class="ic-chip" data-prompt="ค้นหาข้อมูลที่เกี่ยวกับ ">🔍 ค้นหา</button>
+                    <button class="ic-chip" data-prompt="แสดงข้อมูลตาราง 10 แถวแรก">📊 ดูตาราง</button>
+                    <button class="ic-chip" data-prompt="เพิ่มแถวใหม่ โดย ">➕ เพิ่มแถว</button>
+                </div>
+            </div>
+
+            <!-- Status Bar -->
+            <div class="ic-status-bar" id="icStatusBar" style="display:none;">
+                <div class="ic-status-item">
+                    <i class="fas fa-brain"></i>
+                    <span id="icStatusModel">GPT-5.2</span>
+                </div>
+                <div class="ic-status-item">
+                    <i class="fas fa-lightbulb"></i>
+                    Thinking: <span id="icStatusThinking">Off</span>
+                </div>
+                <div class="ic-status-item">
+                    <i class="fas fa-chart-bar"></i>
+                    <span id="icStatusTokens">0</span> tokens
+                </div>
+                <div class="ic-status-item">
+                    <i class="fas fa-edit"></i>
+                    <span id="icStatusChanges">0</span> edits
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/instruction-chat.js"></script>
+</body>
+
+</html>
