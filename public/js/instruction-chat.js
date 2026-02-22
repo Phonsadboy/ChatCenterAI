@@ -699,13 +699,11 @@
         const handleNewChat = async () => {
             if (!state.selectedId) return;
 
-            // Delete old session from DB
-            if (state.sessionId) {
-                try {
-                    await fetch(`/api/instruction-chat/sessions/${state.sessionId}`, { method: "DELETE" });
-                } catch (err) {
-                    console.warn("Failed to delete session:", err);
-                }
+            // Delete ALL sessions for this instruction from DB
+            try {
+                await fetch(`/api/instruction-chat/sessions/${state.sessionId}?instructionId=${state.selectedId}`, { method: "DELETE" });
+            } catch (err) {
+                console.warn("Failed to delete sessions:", err);
             }
 
             // Clear everything

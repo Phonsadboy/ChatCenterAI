@@ -18514,13 +18514,22 @@ app.get("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, r
   }
 });
 
-// Delete session
+// Delete session(s)
 app.delete("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    await db.collection("instruction_chat_sessions").deleteOne({ sessionId: req.params.sessionId });
-    res.json({ success: true });
+    const { instructionId } = req.query;
+
+    if (instructionId) {
+      // Delete ALL sessions for this instruction
+      const result = await db.collection("instruction_chat_sessions").deleteMany({ instructionId });
+      res.json({ success: true, deletedCount: result.deletedCount });
+    } else {
+      // Delete single session
+      await db.collection("instruction_chat_sessions").deleteOne({ sessionId: req.params.sessionId });
+      res.json({ success: true });
+    }
   } catch (error) {
     res.json({ error: error.message });
   }
