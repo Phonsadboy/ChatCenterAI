@@ -565,11 +565,11 @@
                 // Skip tool_calls and tool result messages (visual only)
             }
 
-            appendMessage("ai", `💬 เซสชันก่อนหน้า (${state.history.length} messages) — แชทต่อได้เลย หรือกด ✏️ เพื่อเริ่มใหม่`);
+            appendMessage("ai", `💬 เซสชันก่อนหน้า (${state.history.length} messages) — แชทต่อได้เลย หรือกด ✏️ ที่มุมขวาบนของหน้าจอเพื่อเริ่มใหม่`);
             // Hide quick suggest if has history
             if (dom.quickSuggestWrap) dom.quickSuggestWrap.style.display = "none";
         } else {
-            appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว พิมพ์คำถามหรือคำสั่งได้เลยครับ`);
+            appendMessage("ai", `สวัสดีครับ 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว พิมพ์คำถามหรือคำสั่งได้เลยครับ`);
             // Show quick suggest for new chats
             if (dom.quickSuggestWrap) dom.quickSuggestWrap.style.display = "flex";
         }
@@ -826,29 +826,127 @@
     }
 
     function formatContent(text) {
+        // ── 1. Extract markdown tables BEFORE escaping ──
+        const tablePlaceholders = [];
+        text = text.replace(
+            /(?:^|\n)((?:\|[^\n]+\|\s*\n){2,})/g,
+            (match, tableBlock, offset) => {
+                const lines = tableBlock.trim().split('\n').map(l => l.trim()).filter(Boolean);
+                if (lines.length < 2) return match;
+
+                // Check for separator row (|---|---|)
+                const sepIdx = lines.findIndex(l => /^\|[\s:]*-{2,}[\s:]*(\|[\s:]*-{2,}[\s:]*)*\|$/.test(l));
+                if (sepIdx < 1) return match;
+
+                // Parse alignment from separator
+                const sepCells = lines[sepIdx].split('|').filter(c => c.trim() !== '');
+                const aligns = sepCells.map(c => {
+                    const t = c.trim();
+                    if (t.startsWith(':') && t.endsWith(':')) return 'center';
+                    if (t.endsWith(':')) return 'right';
+                    return 'left';
+                });
+
+                // Parse header
+                const headerCells = lines.slice(0, sepIdx)
+                    .flatMap(l => [l.split('|').filter(c => c !== '').map(c => c.trim())]);
+
+                // Parse body rows
+                const bodyRows = lines.slice(sepIdx + 1).map(l =>
+                    l.split('|').filter(c => c !== '').map(c => c.trim())
+                );
+
+                const colCount = Math.max(
+                    aligns.length,
+                    ...headerCells.map(r => r.length),
+                    ...bodyRows.map(r => r.length)
+                );
+
+                // Determine table size class
+                const isLarge = bodyRows.length > 8 || colCount > 4;
+                const sizeClass = isLarge ? 'ic-table-large' : 'ic-table-compact';
+
+                // Build HTML
+                let html = `<div class="ic-table-wrap ${sizeClass}">`;
+                html += `<div class="ic-table-scroll"><table class="ic-table">`;
+
+                // Header
+                html += '<thead><tr>';
+                for (let i = 0; i < colCount; i++) {
+                    const val = headerCells[0]?.[i] || '';
+                    const align = aligns[i] || 'left';
+                    html += `<th style="text-align:${align}">${escapeHtml(val)}</th>`;
+                }
+                html += '</tr></thead>';
+
+                // Body
+                html += '<tbody>';
+                for (const row of bodyRows) {
+                    // Skip completely empty rows
+                    const hasContent = row.some(c => c.trim() !== '');
+                    html += '<tr>';
+                    for (let i = 0; i < colCount; i++) {
+                        const val = row[i] || '';
+                        const align = aligns[i] || 'left';
+                        // Replace <br> tags in cell content
+                        const cellHtml = escapeHtml(val)
+                            .replace(/&lt;br&gt;/gi, '<br>')
+                            .replace(/&lt;br\s*\/&gt;/gi, '<br>');
+                        const emptyClass = !val.trim() ? ' class="ic-cell-empty"' : '';
+                        html += `<td style="text-align:${align}"${emptyClass}>${cellHtml || '<span class="ic-cell-dash">—</span>'}</td>`;
+                    }
+                    html += '</tr>';
+                }
+                html += '</tbody></table></div>';
+
+                // Row count badge
+                html += `<div class="ic-table-meta">${bodyRows.length} rows · ${colCount} columns</div>`;
+                html += '</div>';
+
+                const idx = tablePlaceholders.length;
+                tablePlaceholders.push(html);
+                return `\n__TABLE_PLACEHOLDER_${idx}__\n`;
+            }
+        );
+
+        // ── 2. Escape HTML for all non-table content ──
         let html = escapeHtml(text);
 
-        // Bold
+        // ── 3. Headings (### / ## / #) ──
+        html = html.replace(/^###\s+(.+)$/gm, '<h4 class="ic-heading">$1</h4>');
+        html = html.replace(/^##\s+(.+)$/gm, '<h3 class="ic-heading">$1</h3>');
+        html = html.replace(/^#\s+(.+)$/gm, '<h2 class="ic-heading">$1</h2>');
+
+        // ── 4. Bold ──
         html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
 
-        // Inline code
+        // ── 5. Inline code ──
         html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
 
-        // Bullet lists (• or -)
+        // ── 6. Bullet lists ──
         html = html.replace(/^[•\-]\s+(.+)$/gm, "<li>$1</li>");
         html = html.replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>");
-        // Fix nested ul
         html = html.replace(/<\/ul>\s*<ul>/g, "");
 
-        // Numbered lists
+        // ── 7. Numbered lists ──
         html = html.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
 
-        // Line breaks
+        // ── 8. Line breaks ──
         html = html.replace(/\n/g, "<br>");
-
-        // Clean up double <br> before lists
         html = html.replace(/<br><ul>/g, "<ul>");
         html = html.replace(/<\/ul><br>/g, "</ul>");
+        html = html.replace(/<br><h/g, "<h");
+        html = html.replace(/<\/h([234])><br>/g, "</h$1>");
+
+        // ── 9. Restore table placeholders ──
+        for (let i = 0; i < tablePlaceholders.length; i++) {
+            html = html.replace(`__TABLE_PLACEHOLDER_${i}__`, tablePlaceholders[i]);
+            // Clean surrounding <br> around tables
+            html = html.replace(/<br>__TABLE_PLACEHOLDER_/g, '__TABLE_PLACEHOLDER_');
+        }
+        // Final cleanup of <br> around table wraps
+        html = html.replace(/<br>\s*(<div class="ic-table-wrap)/g, '$1');
+        html = html.replace(/(<\/div>)\s*<br>/g, '$1');
 
         return html;
     }

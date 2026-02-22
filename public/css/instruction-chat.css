@@ -903,6 +903,192 @@ body {
     margin-bottom: 2px;
 }
 
+/* ─── Headings in messages ───────────────────────────────────────────── */
+
+.ic-msg-content .ic-heading {
+    font-family: var(--ic-font-mono);
+    color: #e2e8f0;
+    margin: 16px 0 8px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.ic-msg-content h2.ic-heading {
+    font-size: 17px;
+}
+
+.ic-msg-content h3.ic-heading {
+    font-size: 15px;
+}
+
+.ic-msg-content h4.ic-heading {
+    font-size: 14px;
+    color: #94a3b8;
+}
+
+/* ─── Table Display — Responsive Data Window ─────────────────────────── */
+
+.ic-table-wrap {
+    margin: 12px 0;
+    border-radius: var(--ic-radius-sm);
+    border: 1px solid rgba(0, 255, 170, 0.15);
+    background: #0d0f12;
+    overflow: hidden;
+    font-family: var(--ic-font-mono);
+    font-size: 12.5px;
+    position: relative;
+}
+
+.ic-table-wrap::before {
+    content: '⊞ DATA TABLE';
+    display: block;
+    padding: 6px 12px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #5eead4;
+    background: rgba(0, 255, 170, 0.05);
+    border-bottom: 1px solid rgba(0, 255, 170, 0.1);
+}
+
+.ic-table-scroll {
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Compact: auto-size, limited height */
+.ic-table-compact .ic-table-scroll {
+    max-height: 400px;
+}
+
+/* Large: bigger window with scroll */
+.ic-table-large .ic-table-scroll {
+    max-height: 500px;
+}
+
+.ic-table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+    min-width: max-content;
+}
+
+/* Header */
+.ic-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #141820;
+    color: #5eead4;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 8px 12px;
+    border-bottom: 2px solid rgba(0, 255, 170, 0.2);
+    white-space: nowrap;
+}
+
+/* Body cells */
+.ic-table tbody td {
+    padding: 7px 12px;
+    color: #d1d5db;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    max-width: 360px;
+    white-space: normal;
+    word-break: break-word;
+    vertical-align: top;
+    line-height: 1.5;
+}
+
+/* First column (index) — narrower, mono */
+.ic-table tbody td:first-child {
+    color: #64748b;
+    font-weight: 500;
+    white-space: nowrap;
+    max-width: unset;
+}
+
+/* Zebra striping */
+.ic-table tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* Row hover */
+.ic-table tbody tr:hover {
+    background: rgba(0, 255, 170, 0.04);
+}
+
+/* Empty cells */
+.ic-cell-empty {
+    opacity: 0.3;
+}
+
+.ic-cell-dash {
+    color: #475569;
+    font-style: italic;
+}
+
+/* Metadata footer */
+.ic-table-meta {
+    padding: 5px 12px;
+    font-size: 10px;
+    color: #64748b;
+    background: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ic-table-meta::before {
+    content: '›';
+    color: #5eead4;
+    font-weight: bold;
+}
+
+/* Scrollbar styling for table */
+.ic-table-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.ic-table-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.ic-table-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.ic-table-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Mobile: full-width tables */
+@media (max-width: 768px) {
+    .ic-table-wrap {
+        margin: 8px -12px;
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+    }
+
+    .ic-table tbody td {
+        font-size: 11px;
+        padding: 6px 8px;
+        max-width: 200px;
+    }
+
+    .ic-table thead th {
+        font-size: 10px;
+        padding: 6px 8px;
+    }
+}
+
 /* User message styling — right-aligned bubble */
 .ic-msg.ic-msg--user .ic-msg-row {
     justify-content: flex-end;
