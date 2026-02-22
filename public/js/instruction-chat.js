@@ -173,19 +173,19 @@
                         scrollToBottom();
                     } else if (data.content && !data.text) {
                         // Thinking
-                        const thinkEl = aiMsg.querySelector(".ic-msg-body");
-                        if (thinkEl) {
-                            const existing = thinkEl.querySelector(".ic-thinking-block");
+                        const body = aiMsg.querySelector(".ic-msg-body");
+                        if (body) {
+                            const existing = body.querySelector(".ic-thinking-block");
                             if (!existing) {
                                 const thinkBlock = createThinkingBlock(data.content);
-                                thinkEl.insertBefore(thinkBlock, contentEl.parentElement || contentEl);
+                                body.insertBefore(thinkBlock, contentEl);
                             }
                         }
                     } else if (data.tool) {
                         if (data.args) {
                             const toolCard = createToolCard({ tool: data.tool, summary: "⏳ กำลังประมวลผล..." });
                             const body = aiMsg.querySelector(".ic-msg-body");
-                            if (body) body.insertBefore(toolCard, contentEl.parentElement || contentEl);
+                            if (body) body.insertBefore(toolCard, contentEl);
                         } else if (data.result) {
                             const cards = aiMsg.querySelectorAll(".ic-tool-card");
                             const lastCard = cards[cards.length - 1];
