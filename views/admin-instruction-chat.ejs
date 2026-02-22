@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Instruction Editor Chat | ChatCenter AI</title>
+    <title>InstructionAI | ChatCenter AI</title>
     <meta name="description" content="แก้ไข Instruction ผ่านการแชทกับ AI Agent — ChatGPT-style interface">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="/css/instruction-chat.css" rel="stylesheet">
@@ -21,7 +21,7 @@
             <div class="ic-sidebar-top">
                 <div class="ic-sidebar-brand">
                     <div class="ic-brand-icon"><i class="fas fa-terminal"></i></div>
-                    <span class="ic-brand-text">InstructionOS</span>
+                    <span class="ic-brand-text">InstructionAI</span>
                 </div>
                 <button class="ic-sidebar-close" id="icSidebarClose" title="ปิดเมนู">
                     <i class="fas fa-xmark"></i>
@@ -72,7 +72,7 @@
                         <i class="fas fa-bars"></i>
                     </button>
                     <div class="ic-topbar-title" id="icTopbarTitle">
-                        <span class="ic-topbar-title-text" id="icActiveName">Instruction Chat</span>
+                        <span class="ic-topbar-title-text" id="icActiveName">InstructionAI</span>
                     </div>
                 </div>
                 <div class="ic-topbar-right">
@@ -155,47 +155,18 @@
                                 stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                     </div>
-                    <h2 class="ic-welcome-title">Instruction Editor Chat</h2>
+                    <h2 class="ic-welcome-title">InstructionAI</h2>
                     <p class="ic-welcome-desc">เลือก Instruction จากเมนูด้านซ้าย แล้วเริ่มแชทกับ AI เพื่อตรวจสอบ, สอบถาม
                         หรือแก้ไขข้อมูล</p>
-
-                    <!-- Quick Suggest Button (shown per instruction when no history) -->
-                    <button class="ic-quick-suggest-btn" id="icQuickSuggest" style="display:none;">
-                        <i class="fas fa-wand-magic-sparkles"></i>
-                        <span>ช่วยแนะนำการปรับปรุง instruction นี้หน่อย</span>
-                    </button>
-
-                    <div class="ic-welcome-cards" id="icWelcomeCards" style="display:none;">
-                        <button class="ic-welcome-card" data-prompt="ดูภาพรวมชุดข้อมูลทั้งหมด">
-                            <div class="ic-welcome-card-icon"><i class="fas fa-eye"></i></div>
-                            <div class="ic-welcome-card-text">
-                                <strong>ดูภาพรวม</strong>
-                                <span>สรุปข้อมูลทุก data item</span>
-                            </div>
-                        </button>
-                        <button class="ic-welcome-card" data-prompt="ค้นหาข้อมูลที่เกี่ยวกับ ">
-                            <div class="ic-welcome-card-icon"><i class="fas fa-magnifying-glass"></i></div>
-                            <div class="ic-welcome-card-text">
-                                <strong>ค้นหาข้อมูล</strong>
-                                <span>ค้นด้วย keyword หรือ semantic</span>
-                            </div>
-                        </button>
-                        <button class="ic-welcome-card" data-prompt="แสดงข้อมูลตาราง 10 แถวแรก">
-                            <div class="ic-welcome-card-icon"><i class="fas fa-table"></i></div>
-                            <div class="ic-welcome-card-text">
-                                <strong>ดูตาราง</strong>
-                                <span>แสดงข้อมูลแบบตาราง</span>
-                            </div>
-                        </button>
-                        <button class="ic-welcome-card" data-prompt="เพิ่มแถวใหม่ โดย ">
-                            <div class="ic-welcome-card-icon"><i class="fas fa-plus"></i></div>
-                            <div class="ic-welcome-card-text">
-                                <strong>เพิ่มข้อมูล</strong>
-                                <span>เพิ่มแถวใหม่ในตาราง</span>
-                            </div>
-                        </button>
-                    </div>
                 </div>
+            </div>
+
+            <!-- Quick Suggest Button (shown per instruction when no history) -->
+            <div class="ic-quick-suggest-wrap" id="icQuickSuggestWrap" style="display:none;">
+                <button class="ic-quick-suggest-btn" id="icQuickSuggest">
+                    <i class="fas fa-wand-magic-sparkles"></i>
+                    <span>ช่วยแนะนำการปรับปรุง instruction นี้หน่อย</span>
+                </button>
             </div>
 
             <!-- Input Area (always visible at bottom) -->

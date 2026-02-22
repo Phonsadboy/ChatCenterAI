@@ -52,6 +52,7 @@
         empty: $("#icEmpty"),
         welcomeCards: $("#icWelcomeCards"),
         quickSuggest: $("#icQuickSuggest"),
+        quickSuggestWrap: $("#icQuickSuggestWrap"),
         inputArea: $("#icInputArea"),
         inputWrapper: $("#icInputWrapper"),
         input: $("#icInput"),
@@ -125,7 +126,7 @@
         state.abortController = new AbortController();
 
         try {
-            const response = await fetch("/api/instruction-chat/stream", {
+            const response = await fetch("/api/instruction-ai/stream", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -464,7 +465,7 @@
     async function saveSession() {
         if (!state.sessionId || !state.selectedId) return;
         try {
-            await fetch("/api/instruction-chat/sessions", {
+            await fetch("/api/instruction-ai/sessions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -485,7 +486,7 @@
 
     async function loadLatestSession(instructionId) {
         try {
-            const res = await fetch(`/api/instruction-chat/sessions?instructionId=${instructionId}`);
+            const res = await fetch("/api/instruction-ai/sessions?instructionId=" + encodeURIComponent(instructionId));
             const data = await res.json();
             if (data.success && data.sessions && data.sessions.length > 0) {
                 return data.sessions[0];
@@ -566,11 +567,11 @@
 
             appendMessage("ai", `💬 เซสชันก่อนหน้า (${state.history.length} messages) — แชทต่อได้เลย หรือกด ✏️ เพื่อเริ่มใหม่`);
             // Hide quick suggest if has history
-            if (dom.quickSuggest) dom.quickSuggest.style.display = "none";
+            if (dom.quickSuggestWrap) dom.quickSuggestWrap.style.display = "none";
         } else {
-            appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว\n\nสามารถถามหรือสั่งงานได้เลย เช่น:\n• "ดูภาพรวมข้อมูล"\n• "ค้นหาสินค้า X"\n• "เปลี่ยนราคา Y เป็น Z"\n• "เพิ่มแถวใหม่"`);
+            appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว พิมพ์คำถามหรือคำสั่งได้เลยครับ`);
             // Show quick suggest for new chats
-            if (dom.quickSuggest) dom.quickSuggest.style.display = "inline-flex";
+            if (dom.quickSuggestWrap) dom.quickSuggestWrap.style.display = "flex";
         }
 
         // Show welcome cards as quick actions
@@ -777,7 +778,7 @@
 
             // Delete ALL sessions for this instruction from DB
             try {
-                await fetch(`/api/instruction-chat/sessions/${state.sessionId}?instructionId=${state.selectedId}`, { method: "DELETE" });
+                await fetch(`/api/instruction-ai/sessions/${state.sessionId}?instructionId=${state.selectedId}`, { method: "DELETE" });
             } catch (err) {
                 console.warn("Failed to delete sessions:", err);
             }
@@ -799,7 +800,7 @@
         if (dom.quickSuggest) {
             dom.quickSuggest.addEventListener("click", () => {
                 if (!state.selectedId || state.sending) return;
-                dom.quickSuggest.style.display = "none";
+                if (dom.quickSuggestWrap) dom.quickSuggestWrap.style.display = "none";
                 sendMessage("ช่วยแนะนำการปรับปรุง instruction นี้หน่อย");
             });
         }

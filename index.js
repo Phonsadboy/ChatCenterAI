@@ -18241,15 +18241,17 @@ ${dataItemsSummary}
 }
 
 
-// Instruction Chat Page
-app.get("/admin/instruction-chat", requireAdmin, async (req, res) => {
+// InstructionAI Page
+app.get("/admin/instruction-ai", requireAdmin, async (req, res) => {
   try {
     res.render("admin-instruction-chat");
   } catch (error) {
-    console.error("[InstructionChat] Error loading page:", error);
-    res.status(500).send("Error loading instruction chat");
+    console.error("[InstructionAI] Error loading page:", error);
+    res.status(500).send("Error loading InstructionAI");
   }
 });
+// Backward compat redirect
+app.get("/admin/instruction-chat", requireAdmin, (req, res) => res.redirect("/admin/instruction-ai"));
 
 // Instruction Chat API — Main chat endpoint with tool loop
 app.post("/api/instruction-chat", requireAdmin, async (req, res) => {
@@ -18786,7 +18788,17 @@ app.get("/api/instruction-chat/audit", requireAdmin, async (req, res) => {
   }
 });
 
-// ============================ End Instruction Chat Editor Routes ============================
+// ─── instruction-ai route aliases (frontend uses these new URLs) ───
+app.post("/api/instruction-ai/stream", (req, res, next) => { req.url = "/api/instruction-chat/stream"; next(); });
+app.post("/api/instruction-ai/sessions", (req, res, next) => { req.url = "/api/instruction-chat/sessions"; next(); });
+app.get("/api/instruction-ai/sessions", (req, res, next) => { req.url = "/api/instruction-chat/sessions"; next(); });
+app.get("/api/instruction-ai/sessions/:sessionId", (req, res, next) => { req.url = `/api/instruction-chat/sessions/${req.params.sessionId}`; next(); });
+app.delete("/api/instruction-ai/sessions/:sessionId", (req, res, next) => { req.url = `/api/instruction-chat/sessions/${req.params.sessionId}`; next(); });
+app.get("/api/instruction-ai/audit", (req, res, next) => { req.url = "/api/instruction-chat/audit"; next(); });
+app.get("/api/instruction-ai/changelog/:sessionId", (req, res, next) => { req.url = `/api/instruction-chat/changelog/${req.params.sessionId}`; next(); });
+app.post("/api/instruction-ai/undo/:changeId", (req, res, next) => { req.url = `/api/instruction-chat/undo/${req.params.changeId}`; next(); });
+
+// ============================ End InstructionAI Routes ============================
 
 function parseCustomerStatsDateRange(startDateStr, endDateStr) {
   const today = getBangkokMoment();

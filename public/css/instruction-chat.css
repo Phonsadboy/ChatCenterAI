@@ -869,7 +869,7 @@ body {
 
 .ic-msg-content strong {
     font-weight: 600;
-    color: var(--ic-accent);
+    color: #f0f0f0;
 }
 
 .ic-msg-content code {
@@ -878,7 +878,7 @@ body {
     border-radius: 4px;
     font-size: 13px;
     font-family: var(--ic-font-mono);
-    color: var(--ic-accent);
+    color: #7dd3fc;
     border: 1px solid var(--ic-border);
 }
 
@@ -1072,7 +1072,7 @@ body {
 
 .ic-pipeline-label code {
     background: rgba(0, 255, 170, 0.08);
-    color: var(--ic-accent);
+    color: #5eead4;
     padding: 1px 6px;
     border-radius: 3px;
     font-size: 11px;
@@ -1081,7 +1081,7 @@ body {
 }
 
 .ic-pipeline-done-text {
-    color: var(--ic-success);
+    color: #86efac;
     font-weight: 700;
 }
 
@@ -1093,12 +1093,12 @@ body {
 }
 
 .ic-pipeline-count {
-    color: var(--ic-text-dim);
+    color: #a1a1aa;
     font-size: 10px;
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.06);
     padding: 2px 8px;
     border-radius: 3px;
-    border: 1px solid var(--ic-border);
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .ic-pipeline-chevron {
@@ -1469,6 +1469,18 @@ body {
     font-size: 11px;
     color: var(--ic-text-muted);
     line-height: 1.4;
+}
+
+/* ─── Quick Suggest Wrapper (positioned above input) ─────────────────── */
+
+.ic-quick-suggest-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 0 16px 12px;
+    flex-shrink: 0;
+    max-width: var(--ic-max-msg-w);
+    margin: 0 auto;
+    width: 100%;
 }
 
 /* ─── Input Area ─────────────────────────────────────────────────────── */
