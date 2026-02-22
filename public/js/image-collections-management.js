@@ -1080,7 +1080,10 @@
                     `;
                 }
 
-                const normalDescription = description || '<span class="text-muted">ไม่มีคำอธิบาย</span>';
+                const descriptionText = (asset.description || asset.alt || '').trim();
+                const normalDescription = (descriptionText && descriptionText !== label)
+                    ? escapeHtml(descriptionText)
+                    : '';
                 const actionsHtml = `
                     <button type="button" class="btn btn-sm btn-outline-secondary" data-action="copy" data-label="${labelAttr}" title="คัดลอกโทเคน">
                         <i class="fas fa-copy"></i><span class="btn-label">โทเคน</span>
@@ -1104,7 +1107,7 @@
                                 <strong>${escapedLabel}</strong>
                                 ${usedBadge}
                             </div>
-                            <div class="image-asset-description">${normalDescription}</div>
+                            ${normalDescription ? `<div class="image-asset-description">${normalDescription}</div>` : ''}
                             <div class="image-asset-meta">
                                 <span class="token">token: <code>${escapeHtml(token)}</code></span>
                                 <span class="dot">•</span>

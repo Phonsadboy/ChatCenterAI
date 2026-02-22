@@ -823,13 +823,6 @@ input:checked+.toggle-slider:before {
     height: 16px;
     margin: 0;
     cursor: pointer;
-    opacity: 0.7;
-    transition: opacity 0.2s ease;
-}
-
-.image-asset-item:hover .image-asset-thumb .asset-select-checkbox,
-.image-asset-thumb .asset-select-checkbox:checked {
-    opacity: 1;
 }
 
 .image-asset-info {
