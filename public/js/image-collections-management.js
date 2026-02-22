@@ -1052,10 +1052,8 @@
 
                     return `
                         <div class="image-asset-item${itemClasses}" data-label="${labelAttr}">
-                            <div class="asset-select form-check">
-                                <input class="form-check-input asset-select-checkbox" type="checkbox" data-label="${labelAttr}" ${isSelected ? 'checked' : ''} ${saving ? 'disabled' : ''}>
-                            </div>
                             <div class="image-asset-thumb">
+                                <input class="form-check-input asset-select-checkbox" type="checkbox" data-label="${labelAttr}" ${isSelected ? 'checked' : ''} ${saving ? 'disabled' : ''}>
                                 ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
                             </div>
                             <div class="image-asset-info">
@@ -1097,10 +1095,8 @@
 
                 return `
                     <div class="image-asset-item${itemClasses}" data-label="${labelAttr}">
-                        <div class="asset-select form-check">
-                            <input class="form-check-input asset-select-checkbox" type="checkbox" data-label="${labelAttr}" ${isSelected ? 'checked' : ''}>
-                        </div>
                         <div class="image-asset-thumb">
+                            <input class="form-check-input asset-select-checkbox" type="checkbox" data-label="${labelAttr}" ${isSelected ? 'checked' : ''}>
                             ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
                         </div>
                         <div class="image-asset-info">
