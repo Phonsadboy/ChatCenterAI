@@ -828,7 +828,9 @@
     function formatContent(text) {
         // ── 1. Extract markdown tables BEFORE escaping ──
         const tablePlaceholders = [];
-        text = text.replace(
+        // Ensure trailing newline so last table row is captured
+        const textNorm = text.endsWith('\n') ? text : text + '\n';
+        text = textNorm.replace(
             /(?:^|\n)((?:\|[^\n]+\|\s*\n){2,})/g,
             (match, tableBlock, offset) => {
                 const lines = tableBlock.trim().split('\n').map(l => l.trim()).filter(Boolean);
@@ -849,11 +851,11 @@
 
                 // Parse header
                 const headerCells = lines.slice(0, sepIdx)
-                    .flatMap(l => [l.split('|').filter(c => c !== '').map(c => c.trim())]);
+                    .flatMap(l => [l.split('|').filter(c => c.trim() !== '').map(c => c.trim())]);
 
                 // Parse body rows
                 const bodyRows = lines.slice(sepIdx + 1).map(l =>
-                    l.split('|').filter(c => c !== '').map(c => c.trim())
+                    l.split('|').filter(c => c.trim() !== '').map(c => c.trim())
                 );
 
                 const colCount = Math.max(
