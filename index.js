@@ -18035,7 +18035,7 @@ ${dataItemsSummary}
     // Build messages array
     const messages = [
       { role: "system", content: systemPrompt },
-      ...history.slice(-20),
+      ...history,
       { role: "user", content: message },
     ];
 
@@ -18324,7 +18324,7 @@ ${dataItemsSummary}`;
 
     const messages = [
       { role: "system", content: systemPrompt },
-      ...history.slice(-20),
+      ...history,
       { role: "user", content: message },
     ];
 
@@ -18468,7 +18468,7 @@ app.post("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
       {
         $set: {
           sessionId, instructionId, instructionName: instructionName || "",
-          history: (history || []).slice(-50), // Keep last 50 messages
+          history: (history || []),
           model, thinking, totalTokens: totalTokens || 0, totalChanges: totalChanges || 0,
           username, updatedAt: new Date(),
         }, $setOnInsert: { createdAt: new Date() }
@@ -18491,7 +18491,7 @@ app.get("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
     const filter = instructionId ? { instructionId } : {};
     const sessions = await db.collection("instruction_chat_sessions")
       .find(filter)
-      .project({ sessionId: 1, instructionId: 1, instructionName: 1, model: 1, totalTokens: 1, totalChanges: 1, updatedAt: 1, username: 1, _id: 0 })
+      .project({ sessionId: 1, instructionId: 1, instructionName: 1, model: 1, thinking: 1, totalTokens: 1, totalChanges: 1, history: 1, updatedAt: 1, username: 1, _id: 0 })
       .sort({ updatedAt: -1 })
       .limit(50)
       .toArray();

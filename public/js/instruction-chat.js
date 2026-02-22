@@ -133,7 +133,7 @@
                     message: text,
                     model: state.model,
                     thinking: state.thinking,
-                    history: state.history.slice(-20),
+                    history: state.history,
                     sessionId: state.sessionId,
                 }),
                 signal: state.abortController.signal,
@@ -473,10 +473,26 @@
         dom.statusInfo.style.display = "inline-flex";
         dom.messages.innerHTML = "";
 
-        // Try to load latest session
+        // Try to load latest session and restore chat
         const lastSession = await loadLatestSession(id);
-        if (lastSession && lastSession.sessionId) {
-            appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว\n\nพบ session ก่อนหน้า — สามารถแชทต่อได้เลย หรือกด ✏️ เพื่อเริ่มใหม่`);
+        if (lastSession && lastSession.sessionId && lastSession.history && lastSession.history.length > 0) {
+            // Restore session state
+            state.sessionId = lastSession.sessionId;
+            state.history = lastSession.history;
+            state.totalTokens = lastSession.totalTokens || 0;
+            state.totalChanges = lastSession.totalChanges || 0;
+
+            // Render old messages from history
+            for (const msg of state.history) {
+                if (msg.role === "user") {
+                    appendMessage("user", msg.content);
+                } else if (msg.role === "assistant" && msg.content && !msg.tool_calls) {
+                    appendMessage("ai", msg.content);
+                }
+                // Skip tool_calls and tool result messages (visual only)
+            }
+
+            appendMessage("ai", `💬 เซสชันก่อนหน้า (${state.history.length} messages) — แชทต่อได้เลย หรือกด ✏️ เพื่อเริ่มใหม่`);
         } else {
             appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว\n\nสามารถถามหรือสั่งงานได้เลย เช่น:\n• "ดูภาพรวมข้อมูล"\n• "ค้นหาสินค้า X"\n• "เปลี่ยนราคา Y เป็น Z"\n• "เพิ่มแถวใหม่"`);
         }
@@ -680,8 +696,19 @@
         }
 
         // New chat buttons
-        const handleNewChat = () => {
+        const handleNewChat = async () => {
             if (!state.selectedId) return;
+
+            // Delete old session from DB
+            if (state.sessionId) {
+                try {
+                    await fetch(`/api/instruction-chat/sessions/${state.sessionId}`, { method: "DELETE" });
+                } catch (err) {
+                    console.warn("Failed to delete session:", err);
+                }
+            }
+
+            // Clear everything
             state.sessionId = generateSessionId();
             state.history = [];
             state.totalTokens = 0;
