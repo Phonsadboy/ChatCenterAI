@@ -1174,6 +1174,11 @@ function showLegacySettingsNotice() {
     setTimeout(() => {
         toast.classList.add('show');
     }, 300);
+
+    // Auto-dismiss after 10 seconds
+    setTimeout(() => {
+        hideLegacySettingsNotice();
+    }, 10000);
 }
 
 function hideLegacySettingsNotice() {
