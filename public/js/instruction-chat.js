@@ -186,14 +186,15 @@
                             const toolCard = createToolCard({ tool: data.tool, summary: "⏳ กำลังประมวลผล..." });
                             const body = aiMsg.querySelector(".ic-msg-body");
                             if (body) body.insertBefore(toolCard, contentEl);
-                        } else if (data.result) {
+                            scrollToBottom();
+                        } else if (data.result || data.summary) {
                             const cards = aiMsg.querySelectorAll(".ic-tool-card");
                             const lastCard = cards[cards.length - 1];
                             if (lastCard) {
                                 const cardBody = lastCard.querySelector(".ic-tool-card-body");
                                 if (cardBody) {
-                                    const resultText = typeof data.result === "string" ? data.result : JSON.stringify(data.result, null, 2);
-                                    cardBody.innerHTML = `<pre>${escapeHtml(resultText.substring(0, 500))}</pre>`;
+                                    const summaryText = data.summary || data.result || "✅";
+                                    cardBody.textContent = summaryText;
                                 }
                             }
                         }

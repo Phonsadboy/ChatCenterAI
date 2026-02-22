@@ -18214,6 +18214,61 @@ app.post("/api/instruction-chat/undo/:changeId", requireAdmin, async (req, res) 
   }
 });
 
+// ─── Helper: Build meaningful tool result summary ───
+function buildToolSummary(toolName, result) {
+  if (result.error) return `❌ ${result.error}`;
+
+  switch (toolName) {
+    case 'get_instruction_overview':
+      return `📋 ${result.name || 'Instruction'} — ${result.dataItems?.length || 0} data items`;
+
+    case 'search_in_table':
+    case 'search_content':
+      return `🔍 พบ ${result.totalMatches || result.results?.length || 0} ผลลัพธ์`;
+
+    case 'get_table_rows': {
+      const rows = result.rows?.length || 0;
+      const total = result.totalRows || rows;
+      return `📊 แสดง ${rows} แถว (จาก ${total} ทั้งหมด)`;
+    }
+
+    case 'get_text_content':
+      return `📝 ข้อความ ${result.content ? `${result.content.length} ตัวอักษร` : 'ว่าง'}`;
+
+    case 'get_data_item_detail': {
+      const type = result.type || 'unknown';
+      if (type === 'table') {
+        return `📊 ตาราง: ${result.columns?.length || 0} คอลัมน์, ${result.totalRows || 0} แถว`;
+      }
+      return `📝 ${type}: ${result.content ? `${result.content.length} ตัวอักษร` : 'loaded'}`;
+    }
+
+    case 'update_cell':
+      return `✏️ แก้ไขเซลล์สำเร็จ`;
+
+    case 'update_rows_bulk':
+      return `✏️ แก้ไข ${result.updatedCount || 0} แถว`;
+
+    case 'add_row':
+      return `➕ เพิ่มแถวสำเร็จ`;
+
+    case 'delete_row':
+      return `🗑️ ลบแถวสำเร็จ`;
+
+    case 'delete_rows_bulk':
+      return `🗑️ ลบ ${result.deletedCount || 0} แถว`;
+
+    case 'delete_rows_bulk_confirm':
+      return `⚠️ ยืนยันลบ ${result.count || 0} แถว — ต้องใช้ confirmToken`;
+
+    case 'update_text_content':
+      return `✏️ อัปเดตข้อความสำเร็จ`;
+
+    default:
+      return result.success ? '✅ สำเร็จ' : '📦 เสร็จสิ้น';
+  }
+}
+
 // ─── SSE Streaming Chat Endpoint ───
 app.post("/api/instruction-chat/stream", requireAdmin, async (req, res) => {
   try {
@@ -18346,10 +18401,12 @@ ${dataItemsSummary}`;
         sendEvent("tool_start", { tool: toolName, args });
         const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
 
-        toolsUsed.push({ tool: toolName, args, summary: result.error || (result.success ? "✅" : undefined) });
+        // Build meaningful summary for the tool card
+        const toolSummary = buildToolSummary(toolName, result);
+        toolsUsed.push({ tool: toolName, args, summary: toolSummary });
         if (result.changeId) changes.push({ changeId: result.changeId, tool: toolName });
 
-        sendEvent("tool_end", { tool: toolName, result: result.error || (result.success ? "✅ สำเร็จ" : "ผลลัพธ์") });
+        sendEvent("tool_end", { tool: toolName, summary: toolSummary, result: toolSummary });
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(result) });
       }
     }
