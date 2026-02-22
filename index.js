@@ -18254,7 +18254,7 @@ app.get("/admin/instruction-ai", requireAdmin, async (req, res) => {
 app.get("/admin/instruction-chat", requireAdmin, (req, res) => res.redirect("/admin/instruction-ai"));
 
 // Instruction Chat API — Main chat endpoint with tool loop
-app.post("/api/instruction-chat", requireAdmin, async (req, res) => {
+app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
   try {
     const { instructionId, message, model = "gpt-5.2", thinking = "off", history = [] } = req.body;
 
@@ -18390,7 +18390,7 @@ app.post("/api/instruction-chat", requireAdmin, async (req, res) => {
 });
 
 // Changelog API
-app.get("/api/instruction-chat/changelog/:sessionId", requireAdmin, async (req, res) => {
+app.get("/api/instruction-ai/changelog/:sessionId", requireAdmin, async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -18405,7 +18405,7 @@ app.get("/api/instruction-chat/changelog/:sessionId", requireAdmin, async (req, 
 });
 
 // Undo API
-app.post("/api/instruction-chat/undo/:changeId", requireAdmin, async (req, res) => {
+app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -18514,7 +18514,7 @@ function buildToolSummary(toolName, result) {
 }
 
 // ─── SSE Streaming Chat Endpoint ───
-app.post("/api/instruction-chat/stream", requireAdmin, async (req, res) => {
+app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
   try {
     const { instructionId, message, model = "gpt-5.2", thinking = "off", history = [], sessionId: clientSessionId } = req.body;
 
@@ -18689,7 +18689,7 @@ app.post("/api/instruction-chat/stream", requireAdmin, async (req, res) => {
 // ─── Session Persistence APIs ───
 
 // Save session
-app.post("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
+app.post("/api/instruction-ai/sessions", requireAdmin, async (req, res) => {
   try {
     const { sessionId, instructionId, instructionName, history, model, thinking, totalTokens, totalChanges } = req.body;
     if (!sessionId || !instructionId) return res.json({ error: "Missing sessionId or instructionId" });
@@ -18718,7 +18718,7 @@ app.post("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
 });
 
 // List sessions for an instruction
-app.get("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
+app.get("/api/instruction-ai/sessions", requireAdmin, async (req, res) => {
   try {
     const { instructionId } = req.query;
     const client = await connectDB();
@@ -18737,7 +18737,7 @@ app.get("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
 });
 
 // Load session
-app.get("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, res) => {
+app.get("/api/instruction-ai/sessions/:sessionId", requireAdmin, async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -18750,7 +18750,7 @@ app.get("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, r
 });
 
 // Delete session(s)
-app.delete("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, res) => {
+app.delete("/api/instruction-ai/sessions/:sessionId", requireAdmin, async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -18771,7 +18771,7 @@ app.delete("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req
 });
 
 // ─── Audit Log API ───
-app.get("/api/instruction-chat/audit", requireAdmin, async (req, res) => {
+app.get("/api/instruction-ai/audit", requireAdmin, async (req, res) => {
   try {
     const { instructionId, limit = 50 } = req.query;
     const client = await connectDB();
@@ -18788,15 +18788,6 @@ app.get("/api/instruction-chat/audit", requireAdmin, async (req, res) => {
   }
 });
 
-// ─── instruction-ai route aliases (frontend uses these new URLs) ───
-app.post("/api/instruction-ai/stream", (req, res, next) => { req.url = "/api/instruction-chat/stream"; next(); });
-app.post("/api/instruction-ai/sessions", (req, res, next) => { req.url = "/api/instruction-chat/sessions"; next(); });
-app.get("/api/instruction-ai/sessions", (req, res, next) => { req.url = "/api/instruction-chat/sessions"; next(); });
-app.get("/api/instruction-ai/sessions/:sessionId", (req, res, next) => { req.url = `/api/instruction-chat/sessions/${req.params.sessionId}`; next(); });
-app.delete("/api/instruction-ai/sessions/:sessionId", (req, res, next) => { req.url = `/api/instruction-chat/sessions/${req.params.sessionId}`; next(); });
-app.get("/api/instruction-ai/audit", (req, res, next) => { req.url = "/api/instruction-chat/audit"; next(); });
-app.get("/api/instruction-ai/changelog/:sessionId", (req, res, next) => { req.url = `/api/instruction-chat/changelog/${req.params.sessionId}`; next(); });
-app.post("/api/instruction-ai/undo/:changeId", (req, res, next) => { req.url = `/api/instruction-chat/undo/${req.params.changeId}`; next(); });
 
 // ============================ End InstructionAI Routes ============================
 
