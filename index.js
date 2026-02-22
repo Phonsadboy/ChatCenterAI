@@ -17995,6 +17995,7 @@ app.post("/api/instruction-chat", requireAdmin, async (req, res) => {
 
     const client = await connectDB();
     const db = client.db("chatbot");
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     const chatService = new InstructionChatService(db, openai);
 
     // Get instruction for system prompt
@@ -18234,6 +18235,7 @@ app.post("/api/instruction-chat/stream", requireAdmin, async (req, res) => {
 
     const client = await connectDB();
     const db = client.db("chatbot");
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     const chatService = new InstructionChatService(db, openai);
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) { sendEvent("error", { error: "ไม่พบ Instruction" }); res.end(); return; }
