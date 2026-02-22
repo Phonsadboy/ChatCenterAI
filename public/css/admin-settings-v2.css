@@ -904,6 +904,10 @@ input:checked+.toggle-slider:before {
     display: none;
 }
 
+.image-assets-list .image-asset-actions {
+    flex-direction: column;
+}
+
 .image-assets-list .image-asset-actions .btn {
     padding: 0.3rem;
     font-size: 0.8rem;
