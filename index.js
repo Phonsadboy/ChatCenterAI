@@ -17993,6 +17993,7 @@ app.post("/api/instruction-chat", requireAdmin, async (req, res) => {
     if (!instructionId) return res.json({ error: "ต้องเลือก Instruction ก่อน" });
     if (!message || !message.trim()) return res.json({ error: "ต้องพิมพ์ข้อความ" });
 
+    const client = await connectDB();
     const db = client.db("chatbot");
     const chatService = new InstructionChatService(db, openai);
 
@@ -18146,6 +18147,7 @@ ${dataItemsSummary}
 // Changelog API
 app.get("/api/instruction-chat/changelog/:sessionId", requireAdmin, async (req, res) => {
   try {
+    const client = await connectDB();
     const db = client.db("chatbot");
     const logs = await db.collection("instruction_chat_changelog")
       .find({ sessionId: req.params.sessionId })
@@ -18160,6 +18162,7 @@ app.get("/api/instruction-chat/changelog/:sessionId", requireAdmin, async (req, 
 // Undo API
 app.post("/api/instruction-chat/undo/:changeId", requireAdmin, async (req, res) => {
   try {
+    const client = await connectDB();
     const db = client.db("chatbot");
     const changeLog = await db.collection("instruction_chat_changelog").findOne({ changeId: req.params.changeId, undone: false });
     if (!changeLog) return res.json({ error: "ไม่พบหรือยกเลิกแล้ว" });
@@ -18229,6 +18232,7 @@ app.post("/api/instruction-chat/stream", requireAdmin, async (req, res) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    const client = await connectDB();
     const db = client.db("chatbot");
     const chatService = new InstructionChatService(db, openai);
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
@@ -18364,6 +18368,7 @@ app.post("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
     const { sessionId, instructionId, instructionName, history, model, thinking, totalTokens, totalChanges } = req.body;
     if (!sessionId || !instructionId) return res.json({ error: "Missing sessionId or instructionId" });
 
+    const client = await connectDB();
     const db = client.db("chatbot");
     const username = req.session?.user?.username || "admin";
 
@@ -18390,6 +18395,7 @@ app.post("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
 app.get("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
   try {
     const { instructionId } = req.query;
+    const client = await connectDB();
     const db = client.db("chatbot");
     const filter = instructionId ? { instructionId } : {};
     const sessions = await db.collection("instruction_chat_sessions")
@@ -18407,6 +18413,7 @@ app.get("/api/instruction-chat/sessions", requireAdmin, async (req, res) => {
 // Load session
 app.get("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, res) => {
   try {
+    const client = await connectDB();
     const db = client.db("chatbot");
     const session = await db.collection("instruction_chat_sessions").findOne({ sessionId: req.params.sessionId });
     if (!session) return res.json({ error: "ไม่พบ session" });
@@ -18419,6 +18426,7 @@ app.get("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, r
 // Delete session
 app.delete("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req, res) => {
   try {
+    const client = await connectDB();
     const db = client.db("chatbot");
     await db.collection("instruction_chat_sessions").deleteOne({ sessionId: req.params.sessionId });
     res.json({ success: true });
@@ -18431,6 +18439,7 @@ app.delete("/api/instruction-chat/sessions/:sessionId", requireAdmin, async (req
 app.get("/api/instruction-chat/audit", requireAdmin, async (req, res) => {
   try {
     const { instructionId, limit = 50 } = req.query;
+    const client = await connectDB();
     const db = client.db("chatbot");
     const filter = instructionId ? { instructionId } : {};
     const logs = await db.collection("instruction_chat_audit")

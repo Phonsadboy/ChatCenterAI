@@ -9,10 +9,10 @@
     // ─── Config ─────────────────────────────────────────────────────────
 
     const MODELS = {
-        "gpt-5.2": { label: "GPT-5.2", efforts: ["off", "low", "medium", "high", "max"], default: "off" },
-        "gpt-5.2-codex": { label: "GPT-5.2 Codex", efforts: ["off", "low", "medium", "high", "max"], default: "off" },
-        "gpt-5.1": { label: "GPT-5.1", efforts: ["off", "low", "medium", "high"], default: "off" },
-        "gpt-5": { label: "GPT-5", efforts: ["low", "medium", "high"], default: "medium" },
+        "gpt-5.2": { label: "GPT-5.2", efforts: ["off", "low", "medium", "high", "max"], default: "max" },
+        "gpt-5.2-codex": { label: "GPT-5.2 Codex", efforts: ["off", "low", "medium", "high", "max"], default: "max" },
+        "gpt-5.1": { label: "GPT-5.1", efforts: ["off", "low", "medium", "high"], default: "high" },
+        "gpt-5": { label: "GPT-5", efforts: ["low", "medium", "high"], default: "high" },
     };
 
     // ─── State ──────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@
         selectedName: "",
         sessionId: null,
         model: "gpt-5.2",
-        thinking: "off",
+        thinking: "max",
         history: [],
         totalTokens: 0,
         totalChanges: 0,
