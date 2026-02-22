@@ -19,10 +19,10 @@
         <!-- Sidebar -->
         <aside class="ic-sidebar" id="icSidebar">
             <div class="ic-sidebar-top">
-                <button class="ic-sidebar-new-chat" id="icNewChatSidebar">
-                    <i class="fas fa-plus"></i>
-                    <span>New Chat</span>
-                </button>
+                <div class="ic-sidebar-brand">
+                    <div class="ic-brand-icon"><i class="fas fa-terminal"></i></div>
+                    <span class="ic-brand-text">InstructionOS</span>
+                </div>
                 <button class="ic-sidebar-close" id="icSidebarClose" title="ปิดเมนู">
                     <i class="fas fa-xmark"></i>
                 </button>
@@ -135,8 +135,9 @@
                             <div class="ic-thinking-note" id="icThinkingNote"></div>
                         </div>
                     </div>
-                    <button class="ic-topbar-btn" id="icNewChat" title="เริ่มแชทใหม่">
+                    <button class="ic-new-chat-btn" id="icNewChat" title="เริ่มแชทใหม่">
                         <i class="fas fa-pen-to-square"></i>
+                        <span>New Chat</span>
                     </button>
                 </div>
             </div>
@@ -157,6 +158,12 @@
                     <h2 class="ic-welcome-title">Instruction Editor Chat</h2>
                     <p class="ic-welcome-desc">เลือก Instruction จากเมนูด้านซ้าย แล้วเริ่มแชทกับ AI เพื่อตรวจสอบ, สอบถาม
                         หรือแก้ไขข้อมูล</p>
+
+                    <!-- Quick Suggest Button (shown per instruction when no history) -->
+                    <button class="ic-quick-suggest-btn" id="icQuickSuggest" style="display:none;">
+                        <i class="fas fa-wand-magic-sparkles"></i>
+                        <span>ช่วยแนะนำการปรับปรุง instruction นี้หน่อย</span>
+                    </button>
 
                     <div class="ic-welcome-cards" id="icWelcomeCards" style="display:none;">
                         <button class="ic-welcome-card" data-prompt="ดูภาพรวมชุดข้อมูลทั้งหมด">

@@ -42,7 +42,6 @@
         sidebarOverlay: $("#icSidebarOverlay"),
         sidebarClose: $("#icSidebarClose"),
         toggleSidebar: $("#icToggleSidebar"),
-        newChatSidebar: $("#icNewChatSidebar"),
         instructionList: $("#icInstructionList"),
         instructionSearch: $("#icInstructionSearch"),
         sessionSection: $("#icSessionSection"),
@@ -52,6 +51,7 @@
         messages: $("#icMessages"),
         empty: $("#icEmpty"),
         welcomeCards: $("#icWelcomeCards"),
+        quickSuggest: $("#icQuickSuggest"),
         inputArea: $("#icInputArea"),
         inputWrapper: $("#icInputWrapper"),
         input: $("#icInput"),
@@ -194,23 +194,16 @@
                             break;
 
                         case "tool_start":
-                            if (data.tool && data.args && body) {
-                                const toolCard = createToolCard({ tool: data.tool, summary: "⏳ กำลังประมวลผล..." });
-                                body.insertBefore(toolCard, contentEl);
+                            if (data.tool && body) {
+                                ensureToolPipeline(body, contentEl);
+                                addToolToPipeline(body, data.tool, data.args);
                                 scrollToBottom();
                             }
                             break;
 
                         case "tool_end":
                             if (data.tool) {
-                                const cards = aiMsg.querySelectorAll(".ic-tool-card");
-                                const lastCard = cards[cards.length - 1];
-                                if (lastCard) {
-                                    const cardBody = lastCard.querySelector(".ic-tool-card-body");
-                                    if (cardBody) {
-                                        cardBody.textContent = data.summary || data.result || "✅";
-                                    }
-                                }
+                                updateToolInPipeline(aiMsg, data.tool, data.summary || data.result || "✅");
                             }
                             break;
 
@@ -353,34 +346,113 @@
         return block;
     }
 
-    function createToolCard(tool) {
-        const type = getToolCardType(tool.tool);
-        const icons = {
-            search: "fa-magnifying-glass",
-            edit: "fa-pen",
-            add: "fa-plus",
-            delete: "fa-trash"
-        };
-        const icon = icons[type] || "fa-wrench";
+    // ─── Tool Pipeline (collapsed real-time summary) ──────────────────
 
-        const card = document.createElement("div");
-        card.className = `ic-tool-card ${type}`;
-        card.innerHTML = `
-        <div class="ic-tool-card-header">
-            <div class="ic-tool-icon"><i class="fas ${icon}"></i></div>
-            <span class="ic-tool-name">${tool.tool}</span>
-        </div>
-        <div class="ic-tool-card-body">${tool.summary || ""}</div>`;
-        return card;
-    }
-
-    function getToolCardType(toolName) {
+    function getToolType(toolName) {
         if (!toolName) return "search";
         if (toolName.includes("search") || toolName.includes("get")) return "search";
         if (toolName.includes("update") || toolName.includes("rename")) return "edit";
         if (toolName.includes("add")) return "add";
         if (toolName.includes("delete")) return "delete";
         return "search";
+    }
+
+    function getToolIcon(type) {
+        return { search: "fa-magnifying-glass", edit: "fa-pen", add: "fa-plus", delete: "fa-trash" }[type] || "fa-terminal";
+    }
+
+    function getToolColor(type) {
+        return { search: "#38bdf8", edit: "#fbbf24", add: "#34d399", delete: "#f87171" }[type] || "#a78bfa";
+    }
+
+    function ensureToolPipeline(body, contentEl) {
+        if (body.querySelector(".ic-tool-pipeline")) return;
+        const pipeline = document.createElement("div");
+        pipeline.className = "ic-tool-pipeline collapsed";
+        pipeline.innerHTML = `
+        <div class="ic-pipeline-header" onclick="this.parentElement.classList.toggle('collapsed')">
+            <div class="ic-pipeline-status">
+                <div class="ic-pipeline-spinner"></div>
+                <span class="ic-pipeline-label">Executing tools...</span>
+            </div>
+            <div class="ic-pipeline-meta">
+                <span class="ic-pipeline-count">0 calls</span>
+                <i class="fas fa-chevron-down ic-pipeline-chevron"></i>
+            </div>
+        </div>
+        <div class="ic-pipeline-body"></div>`;
+        body.insertBefore(pipeline, contentEl);
+    }
+
+    function addToolToPipeline(body, toolName, args) {
+        const pipeline = body.querySelector(".ic-tool-pipeline");
+        if (!pipeline) return;
+
+        const pipelineBody = pipeline.querySelector(".ic-pipeline-body");
+        const type = getToolType(toolName);
+        const icon = getToolIcon(type);
+        const color = getToolColor(type);
+
+        // Add tool entry
+        const entry = document.createElement("div");
+        entry.className = "ic-pipeline-entry running";
+        entry.dataset.tool = toolName;
+        entry.dataset.type = type;
+        entry.innerHTML = `
+            <div class="ic-pipeline-entry-left">
+                <i class="fas ${icon} ic-pipeline-entry-icon" style="color:${color}"></i>
+                <span class="ic-pipeline-entry-name" style="color:${color}">${toolName}</span>
+            </div>
+            <div class="ic-pipeline-entry-right">
+                <span class="ic-pipeline-entry-status">running</span>
+                <div class="ic-pipeline-entry-spinner"></div>
+            </div>`;
+        pipelineBody.appendChild(entry);
+
+        // Update header
+        const entries = pipelineBody.querySelectorAll(".ic-pipeline-entry");
+        const runningCount = pipelineBody.querySelectorAll(".ic-pipeline-entry.running").length;
+        pipeline.querySelector(".ic-pipeline-count").textContent = `${entries.length} call${entries.length > 1 ? "s" : ""}`;
+        pipeline.querySelector(".ic-pipeline-label").innerHTML = `<code>${toolName}</code>`;
+        pipeline.classList.add("active");
+    }
+
+    function updateToolInPipeline(aiMsg, toolName, summary) {
+        const pipeline = aiMsg.querySelector(".ic-tool-pipeline");
+        if (!pipeline) return;
+
+        const pipelineBody = pipeline.querySelector(".ic-pipeline-body");
+        // Find the last running entry with this tool name
+        const entries = pipelineBody.querySelectorAll(`.ic-pipeline-entry.running[data-tool="${toolName}"]`);
+        const entry = entries[entries.length - 1];
+        if (entry) {
+            entry.classList.remove("running");
+            entry.classList.add("done");
+            const statusEl = entry.querySelector(".ic-pipeline-entry-status");
+            const spinnerEl = entry.querySelector(".ic-pipeline-entry-spinner");
+            if (statusEl) statusEl.textContent = summary;
+            if (spinnerEl) spinnerEl.remove();
+            // Add checkmark
+            const check = document.createElement("i");
+            check.className = "fas fa-check ic-pipeline-entry-check";
+            entry.querySelector(".ic-pipeline-entry-right").appendChild(check);
+        }
+
+        // Update header status
+        const remaining = pipelineBody.querySelectorAll(".ic-pipeline-entry.running").length;
+        const total = pipelineBody.querySelectorAll(".ic-pipeline-entry").length;
+        const doneCount = total - remaining;
+
+        if (remaining === 0) {
+            pipeline.classList.remove("active");
+            pipeline.querySelector(".ic-pipeline-spinner").style.display = "none";
+            pipeline.querySelector(".ic-pipeline-label").innerHTML = `<span class="ic-pipeline-done-text">Done</span> · ${total} tool${total > 1 ? "s" : ""} executed`;
+        } else {
+            const nextRunning = pipelineBody.querySelector(".ic-pipeline-entry.running");
+            if (nextRunning) {
+                pipeline.querySelector(".ic-pipeline-label").innerHTML = `<code>${nextRunning.dataset.tool}</code>`;
+            }
+        }
     }
 
     // ─── Session Persistence ────────────────────────────────────────────
@@ -493,8 +565,12 @@
             }
 
             appendMessage("ai", `💬 เซสชันก่อนหน้า (${state.history.length} messages) — แชทต่อได้เลย หรือกด ✏️ เพื่อเริ่มใหม่`);
+            // Hide quick suggest if has history
+            if (dom.quickSuggest) dom.quickSuggest.style.display = "none";
         } else {
             appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว\n\nสามารถถามหรือสั่งงานได้เลย เช่น:\n• "ดูภาพรวมข้อมูล"\n• "ค้นหาสินค้า X"\n• "เปลี่ยนราคา Y เป็น Z"\n• "เพิ่มแถวใหม่"`);
+            // Show quick suggest for new chats
+            if (dom.quickSuggest) dom.quickSuggest.style.display = "inline-flex";
         }
 
         // Show welcome cards as quick actions
@@ -718,8 +794,14 @@
         };
 
         dom.newChat.addEventListener("click", handleNewChat);
-        if (dom.newChatSidebar) {
-            dom.newChatSidebar.addEventListener("click", handleNewChat);
+
+        // Quick suggest button
+        if (dom.quickSuggest) {
+            dom.quickSuggest.addEventListener("click", () => {
+                if (!state.selectedId || state.sending) return;
+                dom.quickSuggest.style.display = "none";
+                sendMessage("ช่วยแนะนำการปรับปรุง instruction นี้หน่อย");
+            });
         }
 
         // Resize handler
