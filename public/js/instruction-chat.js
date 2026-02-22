@@ -1,6 +1,6 @@
 /**
- * Instruction Chat Editor — Frontend Logic
- * Premium ChatGPT-style UI with model selection, thinking display, tool cards
+ * Instruction Chat Editor — Frontend Logic v2
+ * Premium ChatGPT / Vercel style with SSE streaming, session persistence
  */
 
 (function () {
@@ -28,6 +28,8 @@
         totalTokens: 0,
         totalChanges: 0,
         sending: false,
+        sidebarOpen: window.innerWidth >= 769,
+        abortController: null,
     };
 
     // ─── DOM ────────────────────────────────────────────────────────────
@@ -38,16 +40,23 @@
     const dom = {
         sidebar: $("#icSidebar"),
         sidebarOverlay: $("#icSidebarOverlay"),
+        sidebarClose: $("#icSidebarClose"),
         toggleSidebar: $("#icToggleSidebar"),
+        newChatSidebar: $("#icNewChatSidebar"),
         instructionList: $("#icInstructionList"),
         instructionSearch: $("#icInstructionSearch"),
+        sessionSection: $("#icSessionSection"),
+        sessionList: $("#icSessionList"),
         activeName: $("#icActiveName"),
+        topbarTitle: $("#icTopbarTitle"),
         messages: $("#icMessages"),
         empty: $("#icEmpty"),
+        welcomeCards: $("#icWelcomeCards"),
         inputArea: $("#icInputArea"),
+        inputWrapper: $("#icInputWrapper"),
         input: $("#icInput"),
         send: $("#icSend"),
-        statusBar: $("#icStatusBar"),
+        statusInfo: $("#icStatusInfo"),
         statusModel: $("#icStatusModel"),
         statusThinking: $("#icStatusThinking"),
         statusTokens: $("#icStatusTokens"),
@@ -57,7 +66,6 @@
         modelDropdown: $("#icModelDropdown"),
         thinkingLevels: $("#icThinkingLevels"),
         thinkingNote: $("#icThinkingNote"),
-        quickActions: $("#icQuickActions"),
         newChat: $("#icNewChat"),
     };
 
@@ -67,6 +75,11 @@
         await loadInstructions();
         setupEventListeners();
         updateThinkingUI();
+
+        // Desktop: sidebar visible by default
+        if (window.innerWidth >= 769) {
+            state.sidebarOpen = true;
+        }
     }
 
     // ─── API ────────────────────────────────────────────────────────────
@@ -81,7 +94,10 @@
             }
         } catch (err) {
             console.error("Failed to load instructions:", err);
-            dom.instructionList.innerHTML = '<div style="text-align:center; padding:24px; color:var(--ic-text-muted);">โหลดไม่สำเร็จ</div>';
+            dom.instructionList.innerHTML = `
+                <div class="ic-sidebar-loading">
+                    <span style="color: var(--ic-danger);">โหลดไม่สำเร็จ</span>
+                </div>`;
         }
     }
 
@@ -89,18 +105,24 @@
         if (!text.trim() || !state.selectedId || state.sending) return;
 
         state.sending = true;
-        dom.send.disabled = true;
+        updateSendButton();
         dom.input.value = "";
         autoResize(dom.input);
+
+        // Hide welcome cards
+        if (dom.empty) dom.empty.style.display = "none";
 
         // Add user message
         appendMessage("user", text);
         state.history.push({ role: "user", content: text });
 
-        // Prepare streaming AI message bubble
-        const aiMsgEl = appendStreamingMessage();
-        const contentEl = aiMsgEl.querySelector(".ic-msg-content");
+        // Create streaming AI response container
+        const aiMsg = appendStreamingMessage();
+        const contentEl = aiMsg.querySelector(".ic-msg-content");
         let fullContent = "";
+
+        // Set up abort controller
+        state.abortController = new AbortController();
 
         try {
             const response = await fetch("/api/instruction-chat/stream", {
@@ -114,6 +136,7 @@
                     history: state.history.slice(-20),
                     sessionId: state.sessionId,
                 }),
+                signal: state.abortController.signal,
             });
 
             if (!response.ok) {
@@ -135,37 +158,46 @@
                 buffer = lines.pop() || "";
 
                 for (const line of lines) {
-                    if (line.startsWith("event: ")) {
-                        const event = line.substring(7);
-                        continue; // event name captured, data follows
-                    }
+                    if (line.startsWith("event: ")) continue;
                     if (!line.startsWith("data: ")) continue;
+
                     const jsonStr = line.substring(6);
                     let data;
                     try { data = JSON.parse(jsonStr); } catch { continue; }
 
-                    // Handle event based on preceding event name
                     if (data.sessionId) {
                         state.sessionId = data.sessionId;
                     } else if (data.text !== undefined) {
-                        // Content chunk
                         fullContent += data.text;
                         contentEl.innerHTML = formatContent(fullContent);
                         scrollToBottom();
                     } else if (data.content && !data.text) {
-                        // Thinking block
-                        appendThinking(data.content);
+                        // Thinking
+                        const thinkEl = aiMsg.querySelector(".ic-msg-body");
+                        if (thinkEl) {
+                            const existing = thinkEl.querySelector(".ic-thinking-block");
+                            if (!existing) {
+                                const thinkBlock = createThinkingBlock(data.content);
+                                thinkEl.insertBefore(thinkBlock, contentEl.parentElement || contentEl);
+                            }
+                        }
                     } else if (data.tool) {
-                        // Tool event
                         if (data.args) {
-                            appendToolCard({ tool: data.tool, summary: "⏳ กำลังประมวลผล..." });
+                            const toolCard = createToolCard({ tool: data.tool, summary: "⏳ กำลังประมวลผล..." });
+                            const body = aiMsg.querySelector(".ic-msg-body");
+                            if (body) body.insertBefore(toolCard, contentEl.parentElement || contentEl);
                         } else if (data.result) {
-                            // Tool completed — update last tool card
-                            const lastCard = dom.messages.querySelector(".ic-tool-card:last-of-type .ic-tool-card-body");
-                            if (lastCard) lastCard.textContent = data.result;
+                            const cards = aiMsg.querySelectorAll(".ic-tool-card");
+                            const lastCard = cards[cards.length - 1];
+                            if (lastCard) {
+                                const cardBody = lastCard.querySelector(".ic-tool-card-body");
+                                if (cardBody) {
+                                    const resultText = typeof data.result === "string" ? data.result : JSON.stringify(data.result, null, 2);
+                                    cardBody.innerHTML = `<pre>${escapeHtml(resultText.substring(0, 500))}</pre>`;
+                                }
+                            }
                         }
                     } else if (data.toolsUsed) {
-                        // Done event
                         if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
                         if (data.changes) state.totalChanges += data.changes.length;
                         updateStatusBar();
@@ -177,34 +209,129 @@
             }
 
             // Save to history
-            state.history.push({ role: "assistant", content: fullContent });
+            if (fullContent) {
+                state.history.push({ role: "assistant", content: fullContent });
+            }
 
             // Auto-save session
             saveSession();
 
         } catch (err) {
-            contentEl.innerHTML = formatContent(`❌ เกิดข้อผิดพลาด: ${err.message}`);
+            if (err.name === "AbortError") {
+                contentEl.innerHTML += formatContent("\n\n⏹️ หยุดการตอบ");
+            } else {
+                contentEl.innerHTML = formatContent(`❌ เกิดข้อผิดพลาด: ${err.message}`);
+            }
         } finally {
             state.sending = false;
-            dom.send.disabled = !dom.input.value.trim();
+            state.abortController = null;
+            updateSendButton();
+            // Remove typing indicator if still present
+            const typingEl = contentEl.querySelector(".ic-typing");
+            if (typingEl) typingEl.remove();
         }
     }
 
+    function stopStreaming() {
+        if (state.abortController) {
+            state.abortController.abort();
+        }
+    }
+
+    // ─── Render Elements ────────────────────────────────────────────────
+
     function appendStreamingMessage() {
         const div = document.createElement("div");
-        div.className = "ic-msg";
+        div.className = "ic-msg ic-msg--ai";
         div.innerHTML = `
-      <div class="ic-msg-user">
-        <div class="ic-msg-avatar ic-msg-avatar-ai"><i class="fas fa-robot"></i></div>
-        <div class="ic-msg-body">
-          <div class="ic-msg-role">AI Assistant</div>
-          <div class="ic-msg-content"><div class="ic-typing"><span></span><span></span><span></span></div></div>
-        </div>
-      </div>
-    `;
+        <div class="ic-msg-row">
+            <div class="ic-msg-avatar ic-msg-avatar-ai">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+                </svg>
+            </div>
+            <div class="ic-msg-body">
+                <div class="ic-msg-role">AI Assistant</div>
+                <div class="ic-msg-content"><div class="ic-typing"><span></span><span></span><span></span></div></div>
+            </div>
+        </div>`;
         dom.messages.appendChild(div);
         scrollToBottom();
         return div;
+    }
+
+    function appendMessage(role, content) {
+        const isUser = role === "user";
+        const div = document.createElement("div");
+        div.className = `ic-msg ${isUser ? "ic-msg--user" : "ic-msg--ai"}`;
+
+        if (isUser) {
+            div.innerHTML = `
+            <div class="ic-msg-row">
+                <div class="ic-msg-body">
+                    <div class="ic-msg-content">${formatContent(content)}</div>
+                </div>
+            </div>`;
+        } else {
+            div.innerHTML = `
+            <div class="ic-msg-row">
+                <div class="ic-msg-avatar ic-msg-avatar-ai">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+                    </svg>
+                </div>
+                <div class="ic-msg-body">
+                    <div class="ic-msg-role">AI Assistant</div>
+                    <div class="ic-msg-content">${formatContent(content)}</div>
+                </div>
+            </div>`;
+        }
+
+        dom.messages.appendChild(div);
+        scrollToBottom();
+        return div;
+    }
+
+    function createThinkingBlock(content) {
+        const block = document.createElement("div");
+        block.className = "ic-thinking-block";
+        block.innerHTML = `
+        <div class="ic-thinking-header" onclick="this.parentElement.classList.toggle('collapsed')">
+            <span class="ic-thinking-icon"><i class="fas fa-lightbulb"></i> Thinking...</span>
+            <i class="fas fa-chevron-down ic-chevron"></i>
+        </div>
+        <div class="ic-thinking-body">${escapeHtml(content)}</div>`;
+        return block;
+    }
+
+    function createToolCard(tool) {
+        const type = getToolCardType(tool.tool);
+        const icons = {
+            search: "fa-magnifying-glass",
+            edit: "fa-pen",
+            add: "fa-plus",
+            delete: "fa-trash"
+        };
+        const icon = icons[type] || "fa-wrench";
+
+        const card = document.createElement("div");
+        card.className = `ic-tool-card ${type}`;
+        card.innerHTML = `
+        <div class="ic-tool-card-header">
+            <div class="ic-tool-icon"><i class="fas ${icon}"></i></div>
+            <span class="ic-tool-name">${tool.tool}</span>
+        </div>
+        <div class="ic-tool-card-body">${tool.summary || ""}</div>`;
+        return card;
+    }
+
+    function getToolCardType(toolName) {
+        if (!toolName) return "search";
+        if (toolName.includes("search") || toolName.includes("get")) return "search";
+        if (toolName.includes("update") || toolName.includes("rename")) return "edit";
+        if (toolName.includes("add")) return "add";
+        if (toolName.includes("delete")) return "delete";
+        return "search";
     }
 
     // ─── Session Persistence ────────────────────────────────────────────
@@ -240,7 +367,7 @@
             const res = await fetch(`/api/instruction-chat/sessions?instructionId=${instructionId}`);
             const data = await res.json();
             if (data.success && data.sessions && data.sessions.length > 0) {
-                return data.sessions[0]; // Most recent
+                return data.sessions[0];
             }
         } catch (err) {
             console.warn("Failed to load sessions:", err);
@@ -248,7 +375,7 @@
         return null;
     }
 
-    // ─── Render ─────────────────────────────────────────────────────────
+    // ─── Render Lists ───────────────────────────────────────────────────
 
     function renderInstructionList(filter = "") {
         const filtered = state.instructions.filter(inst =>
@@ -256,7 +383,10 @@
         );
 
         if (!filtered.length) {
-            dom.instructionList.innerHTML = '<div style="text-align:center; padding:24px; color:var(--ic-text-muted);">ไม่พบ instruction</div>';
+            dom.instructionList.innerHTML = `
+                <div class="ic-sidebar-loading">
+                    <span>ไม่พบ instruction</span>
+                </div>`;
             return;
         }
 
@@ -267,15 +397,14 @@
             const active = inst._id === state.selectedId ? "active" : "";
 
             return `
-        <div class="ic-inst-item ${active}" data-id="${inst._id}" data-name="${escapeHtml(inst.name || '')}">
-          <div class="ic-inst-name">${escapeHtml(inst.name || "ไม่มีชื่อ")}</div>
-          <div class="ic-inst-meta">
-            ${tableCount ? `<span class="ic-inst-badge">📊 ${tableCount} ตาราง</span>` : ""}
-            ${textCount ? `<span class="ic-inst-badge">📝 ${textCount} ข้อความ</span>` : ""}
-            ${!items.length ? '<span class="ic-inst-badge">ว่าง</span>' : ""}
-          </div>
-        </div>
-      `;
+            <div class="ic-inst-item ${active}" data-id="${inst._id}" data-name="${escapeHtml(inst.name || '')}">
+                <div class="ic-inst-name">${escapeHtml(inst.name || "ไม่มีชื่อ")}</div>
+                <div class="ic-inst-meta">
+                    ${tableCount ? `<span class="ic-inst-badge">📊 ${tableCount} ตาราง</span>` : ""}
+                    ${textCount ? `<span class="ic-inst-badge">📝 ${textCount} ข้อความ</span>` : ""}
+                    ${!items.length ? '<span class="ic-inst-badge">ว่าง</span>' : ""}
+                </div>
+            </div>`;
         }).join("");
     }
 
@@ -287,129 +416,69 @@
         state.totalTokens = 0;
         state.totalChanges = 0;
 
+        // Update UI
         dom.activeName.textContent = name || "Untitled";
         dom.empty.style.display = "none";
-        dom.inputArea.style.display = "block";
-        dom.statusBar.style.display = "flex";
+        dom.input.disabled = false;
+        dom.input.placeholder = `พิมพ์คำสั่ง... เช่น "ดูราคาสินค้า"`;
+        dom.statusInfo.style.display = "inline-flex";
         dom.messages.innerHTML = "";
 
         // Try to load latest session
         const lastSession = await loadLatestSession(id);
         if (lastSession && lastSession.sessionId) {
-            // Offer to resume
-            appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว\n\nพบ session ก่อนหน้า — สามารถแชทต่อได้เลย หรือกด "New Chat" เพื่อเริ่มใหม่`);
+            appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว\n\nพบ session ก่อนหน้า — สามารถแชทต่อได้เลย หรือกด ✏️ เพื่อเริ่มใหม่`);
         } else {
             appendMessage("ai", `สวัสดีครับ! 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว\n\nสามารถถามหรือสั่งงานได้เลย เช่น:\n• "ดูภาพรวมข้อมูล"\n• "ค้นหาสินค้า X"\n• "เปลี่ยนราคา Y เป็น Z"\n• "เพิ่มแถวใหม่"`);
         }
+
+        // Show welcome cards as quick actions
+        renderWelcomeCards(true);
 
         renderInstructionList(dom.instructionSearch.value);
         updateStatusBar();
 
         // Close mobile sidebar
+        closeSidebar();
+
+        // Focus input
+        setTimeout(() => dom.input.focus(), 100);
+    }
+
+    function renderWelcomeCards(show) {
+        if (dom.welcomeCards) {
+            dom.welcomeCards.style.display = show ? "none" : "grid"; // Cards inside welcome only
+        }
+    }
+
+    // ─── Sidebar ────────────────────────────────────────────────────────
+
+    function toggleSidebar() {
+        state.sidebarOpen = !state.sidebarOpen;
+        if (state.sidebarOpen) {
+            openSidebar();
+        } else {
+            closeSidebar();
+        }
+    }
+
+    function openSidebar() {
+        state.sidebarOpen = true;
+        dom.sidebar.classList.remove("collapsed");
+        dom.sidebar.classList.add("open");
+        if (window.innerWidth < 769) {
+            dom.sidebarOverlay.classList.add("show");
+        }
+    }
+
+    function closeSidebar() {
+        state.sidebarOpen = false;
         dom.sidebar.classList.remove("open");
+        dom.sidebar.classList.add("collapsed");
         dom.sidebarOverlay.classList.remove("show");
     }
 
-    function appendMessage(role, content) {
-        const isUser = role === "user";
-        const div = document.createElement("div");
-        div.className = "ic-msg";
-        div.innerHTML = `
-      <div class="ic-msg-user">
-        <div class="ic-msg-avatar ${isUser ? "ic-msg-avatar-user" : "ic-msg-avatar-ai"}">
-          <i class="fas ${isUser ? "fa-user" : "fa-robot"}"></i>
-        </div>
-        <div class="ic-msg-body">
-          <div class="ic-msg-role">${isUser ? "คุณ" : "AI Assistant"}</div>
-          <div class="ic-msg-content">${formatContent(content)}</div>
-        </div>
-      </div>
-    `;
-        dom.messages.appendChild(div);
-        scrollToBottom();
-    }
-
-    function appendThinking(content, time) {
-        const div = document.createElement("div");
-        div.className = "ic-msg";
-        div.innerHTML = `
-      <div class="ic-msg-user">
-        <div class="ic-msg-avatar ic-msg-avatar-ai"><i class="fas fa-robot"></i></div>
-        <div class="ic-msg-body">
-          <div class="ic-thinking-block">
-            <div class="ic-thinking-header" onclick="this.parentElement.classList.toggle('collapsed')">
-              <span><i class="fas fa-lightbulb"></i> 💭 Thought${time ? ` for ${time}s` : ""}</span>
-              <i class="fas fa-chevron-down"></i>
-            </div>
-            <div class="ic-thinking-body">${escapeHtml(content)}</div>
-          </div>
-        </div>
-      </div>
-    `;
-        dom.messages.appendChild(div);
-        scrollToBottom();
-    }
-
-    function appendToolCard(tool) {
-        const type = getToolCardType(tool.tool);
-        const icon = { search: "fa-search", edit: "fa-pen", add: "fa-plus", delete: "fa-trash" }[type] || "fa-wrench";
-
-        const div = document.createElement("div");
-        div.className = "ic-msg";
-        div.innerHTML = `
-      <div class="ic-msg-user">
-        <div class="ic-msg-avatar ic-msg-avatar-ai"><i class="fas fa-robot"></i></div>
-        <div class="ic-msg-body">
-          <div class="ic-tool-card ${type}">
-            <div class="ic-tool-card-header">
-              <i class="fas ${icon}"></i>
-              <span class="ic-tool-name">${tool.tool}</span>
-              ${tool.resultCount !== undefined ? `<span style="margin-left:auto;">${tool.resultCount} results</span>` : ""}
-            </div>
-            <div class="ic-tool-card-body">
-              ${tool.summary || ""}
-              ${tool.result ? `<pre>${escapeHtml(typeof tool.result === "string" ? tool.result : JSON.stringify(tool.result, null, 2)).substring(0, 500)}</pre>` : ""}
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-        dom.messages.appendChild(div);
-        scrollToBottom();
-    }
-
-    function getToolCardType(toolName) {
-        if (!toolName) return "search";
-        if (toolName.includes("search") || toolName.includes("get")) return "search";
-        if (toolName.includes("update") || toolName.includes("rename")) return "edit";
-        if (toolName.includes("add")) return "add";
-        if (toolName.includes("delete")) return "delete";
-        return "search";
-    }
-
-    let typingCounter = 0;
-    function showTyping() {
-        const id = `typing-${++typingCounter}`;
-        const div = document.createElement("div");
-        div.className = "ic-msg";
-        div.id = id;
-        div.innerHTML = `
-      <div class="ic-msg-user">
-        <div class="ic-msg-avatar ic-msg-avatar-ai"><i class="fas fa-robot"></i></div>
-        <div class="ic-msg-body">
-          <div class="ic-typing"><span></span><span></span><span></span></div>
-        </div>
-      </div>
-    `;
-        dom.messages.appendChild(div);
-        scrollToBottom();
-        return id;
-    }
-
-    function removeTyping(id) {
-        const el = document.getElementById(id);
-        if (el) el.remove();
-    }
+    // ─── Status & UI Updates ────────────────────────────────────────────
 
     function updateStatusBar() {
         dom.statusModel.textContent = MODELS[state.model]?.label || state.model;
@@ -418,11 +487,29 @@
         dom.statusChanges.textContent = state.totalChanges;
     }
 
+    function updateSendButton() {
+        const hasText = dom.input.value.trim().length > 0;
+        const hasInstruction = !!state.selectedId;
+
+        if (state.sending) {
+            // Show stop button
+            dom.send.innerHTML = '<i class="fas fa-stop"></i>';
+            dom.send.disabled = false;
+            dom.send.title = "หยุด";
+            dom.send.classList.add("ic-btn-stop-active");
+        } else {
+            dom.send.innerHTML = '<i class="fas fa-arrow-up"></i>';
+            dom.send.disabled = !hasText || !hasInstruction;
+            dom.send.title = "ส่ง (Enter)";
+            dom.send.classList.remove("ic-btn-stop-active");
+        }
+    }
+
     function updateThinkingUI() {
         const modelConfig = MODELS[state.model];
         if (!modelConfig) return;
 
-        const buttons = dom.thinkingLevels.querySelectorAll(".ic-thinking-btn");
+        const buttons = dom.thinkingLevels.querySelectorAll(".ic-think-btn");
         buttons.forEach(btn => {
             const level = btn.dataset.level;
             const supported = modelConfig.efforts.includes(level);
@@ -430,13 +517,11 @@
             btn.classList.toggle("active", level === state.thinking);
         });
 
-        // Show notes
         const notes = [];
-        if (!modelConfig.efforts.includes("max")) notes.push("โมเดลนี้ไม่รองรับ Max (xhigh)");
-        if (!modelConfig.efforts.includes("off")) notes.push("โมเดลนี้ไม่รองรับ Off");
-        dom.thinkingNote.textContent = notes.join(" • ");
+        if (!modelConfig.efforts.includes("max")) notes.push("ไม่รองรับ Max");
+        if (!modelConfig.efforts.includes("off")) notes.push("ไม่รองรับ Off");
+        dom.thinkingNote.textContent = notes.join(" · ");
 
-        // If current thinking is not supported, reset to default
         if (!modelConfig.efforts.includes(state.thinking)) {
             state.thinking = modelConfig.default;
             updateThinkingUI();
@@ -449,14 +534,11 @@
 
     function setupEventListeners() {
         // Sidebar toggle
-        dom.toggleSidebar.addEventListener("click", () => {
-            dom.sidebar.classList.toggle("open");
-            dom.sidebarOverlay.classList.toggle("show");
-        });
-        dom.sidebarOverlay.addEventListener("click", () => {
-            dom.sidebar.classList.remove("open");
-            dom.sidebarOverlay.classList.remove("show");
-        });
+        dom.toggleSidebar.addEventListener("click", toggleSidebar);
+        dom.sidebarOverlay.addEventListener("click", closeSidebar);
+        if (dom.sidebarClose) {
+            dom.sidebarClose.addEventListener("click", closeSidebar);
+        }
 
         // Instruction selection
         dom.instructionList.addEventListener("click", (e) => {
@@ -469,27 +551,40 @@
             renderInstructionList(e.target.value);
         });
 
-        // Send message
-        dom.send.addEventListener("click", () => sendMessage(dom.input.value));
-        dom.input.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
+        // Send message / Stop
+        dom.send.addEventListener("click", () => {
+            if (state.sending) {
+                stopStreaming();
+            } else {
                 sendMessage(dom.input.value);
             }
         });
+
+        dom.input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (!state.sending) {
+                    sendMessage(dom.input.value);
+                }
+            }
+        });
+
         dom.input.addEventListener("input", () => {
-            dom.send.disabled = !dom.input.value.trim() || state.sending;
+            updateSendButton();
             autoResize(dom.input);
         });
 
         // Model dropdown
         dom.modelBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            dom.modelDropdown.classList.toggle("show");
+            const isOpen = dom.modelDropdown.classList.toggle("show");
+            dom.modelBtn.classList.toggle("open", isOpen);
         });
+
         document.addEventListener("click", (e) => {
             if (!dom.modelDropdown.contains(e.target) && !dom.modelBtn.contains(e.target)) {
                 dom.modelDropdown.classList.remove("show");
+                dom.modelBtn.classList.remove("open");
             }
         });
 
@@ -501,30 +596,35 @@
                 $$(".ic-model-option").forEach(o => o.classList.remove("active"));
                 opt.classList.add("active");
                 updateThinkingUI();
+                // Close dropdown
+                dom.modelDropdown.classList.remove("show");
+                dom.modelBtn.classList.remove("open");
             });
         });
 
         // Thinking level
         dom.thinkingLevels.addEventListener("click", (e) => {
-            const btn = e.target.closest(".ic-thinking-btn");
+            const btn = e.target.closest(".ic-think-btn");
             if (!btn || btn.disabled) return;
             state.thinking = btn.dataset.level;
             updateThinkingUI();
         });
 
-        // Quick actions
-        dom.quickActions.addEventListener("click", (e) => {
-            const chip = e.target.closest(".ic-chip");
-            if (!chip) return;
-            const prompt = chip.dataset.prompt;
-            dom.input.value = prompt;
-            dom.input.focus();
-            dom.send.disabled = false;
-            autoResize(dom.input);
-        });
+        // Welcome cards (quick actions)
+        if (dom.welcomeCards) {
+            dom.welcomeCards.addEventListener("click", (e) => {
+                const card = e.target.closest(".ic-welcome-card");
+                if (!card) return;
+                const prompt = card.dataset.prompt;
+                dom.input.value = prompt;
+                dom.input.focus();
+                updateSendButton();
+                autoResize(dom.input);
+            });
+        }
 
-        // New chat
-        dom.newChat.addEventListener("click", () => {
+        // New chat buttons
+        const handleNewChat = () => {
             if (!state.selectedId) return;
             state.sessionId = generateSessionId();
             state.history = [];
@@ -533,6 +633,23 @@
             dom.messages.innerHTML = "";
             appendMessage("ai", `แชทใหม่เริ่มแล้ว! 🔄 เลือก **${escapeHtml(state.selectedName)}** อยู่ สั่งงานได้เลย`);
             updateStatusBar();
+            dom.input.focus();
+        };
+
+        dom.newChat.addEventListener("click", handleNewChat);
+        if (dom.newChatSidebar) {
+            dom.newChatSidebar.addEventListener("click", handleNewChat);
+        }
+
+        // Resize handler
+        let resizeTimeout;
+        window.addEventListener("resize", () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                if (window.innerWidth >= 769) {
+                    dom.sidebarOverlay.classList.remove("show");
+                }
+            }, 150);
         });
     }
 
@@ -545,10 +662,31 @@
     }
 
     function formatContent(text) {
-        // Simple markdown-like formatting
-        return escapeHtml(text)
-            .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-            .replace(/\n/g, "<br>");
+        let html = escapeHtml(text);
+
+        // Bold
+        html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+
+        // Inline code
+        html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+        // Bullet lists (• or -)
+        html = html.replace(/^[•\-]\s+(.+)$/gm, "<li>$1</li>");
+        html = html.replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>");
+        // Fix nested ul
+        html = html.replace(/<\/ul>\s*<ul>/g, "");
+
+        // Numbered lists
+        html = html.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
+
+        // Line breaks
+        html = html.replace(/\n/g, "<br>");
+
+        // Clean up double <br> before lists
+        html = html.replace(/<br><ul>/g, "<ul>");
+        html = html.replace(/<\/ul><br>/g, "</ul>");
+
+        return html;
     }
 
     function scrollToBottom() {
