@@ -1275,6 +1275,7 @@ body {
 
 /* ─── Responsive ─────────────────────────────────────────────────────── */
 
+/* Mobile: sidebar as overlay */
 @media (max-width: 768px) {
     .ic-sidebar {
         position: fixed;
@@ -1293,10 +1294,6 @@ body {
     }
 
     .ic-sidebar-close {
-        display: flex;
-    }
-
-    .ic-topbar-btn#icToggleSidebar {
         display: flex;
     }
 
@@ -1340,23 +1337,22 @@ body {
     }
 }
 
-/* Desktop: hide toggle sidebar (sidebar always visible) */
+/* Desktop: sidebar visible by default, can be toggled */
 @media (min-width: 769px) {
-    #icToggleSidebar {
-        display: flex;
+    .ic-sidebar {
+        position: relative;
+        transform: none;
+    }
+
+    .ic-sidebar.hidden {
+        width: 0;
+        min-width: 0;
+        border-right: none;
+        overflow: hidden;
     }
 
     .ic-sidebar-close {
         display: none;
-    }
-
-    .ic-sidebar.collapsed {
-        transform: translateX(-100%);
-        position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        z-index: 200;
     }
 }
 

@@ -438,8 +438,11 @@
         renderInstructionList(dom.instructionSearch.value);
         updateStatusBar();
 
-        // Close mobile sidebar
-        closeSidebar();
+        // Close mobile sidebar only
+        if (window.innerWidth < 769) {
+            dom.sidebar.classList.remove("open");
+            dom.sidebarOverlay.classList.remove("show");
+        }
 
         // Focus input
         setTimeout(() => dom.input.focus(), 100);
@@ -454,28 +457,32 @@
     // ─── Sidebar ────────────────────────────────────────────────────────
 
     function toggleSidebar() {
-        state.sidebarOpen = !state.sidebarOpen;
-        if (state.sidebarOpen) {
-            openSidebar();
+        if (window.innerWidth < 769) {
+            // Mobile: toggle overlay sidebar
+            const isOpen = dom.sidebar.classList.toggle("open");
+            dom.sidebarOverlay.classList.toggle("show", isOpen);
         } else {
-            closeSidebar();
+            // Desktop: toggle width
+            dom.sidebar.classList.toggle("hidden");
         }
     }
 
     function openSidebar() {
-        state.sidebarOpen = true;
-        dom.sidebar.classList.remove("collapsed");
-        dom.sidebar.classList.add("open");
         if (window.innerWidth < 769) {
+            dom.sidebar.classList.add("open");
             dom.sidebarOverlay.classList.add("show");
+        } else {
+            dom.sidebar.classList.remove("hidden");
         }
     }
 
     function closeSidebar() {
-        state.sidebarOpen = false;
-        dom.sidebar.classList.remove("open");
-        dom.sidebar.classList.add("collapsed");
-        dom.sidebarOverlay.classList.remove("show");
+        if (window.innerWidth < 769) {
+            dom.sidebar.classList.remove("open");
+            dom.sidebarOverlay.classList.remove("show");
+        } else {
+            dom.sidebar.classList.add("hidden");
+        }
     }
 
     // ─── Status & UI Updates ────────────────────────────────────────────
