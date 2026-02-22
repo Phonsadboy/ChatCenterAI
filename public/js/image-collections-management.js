@@ -1084,14 +1084,14 @@
 
                 const normalDescription = description || '<span class="text-muted">ไม่มีคำอธิบาย</span>';
                 const actionsHtml = `
-                    <button type="button" class="btn btn-sm btn-outline-secondary" data-action="copy" data-label="${labelAttr}">
-                        <i class="fas fa-copy me-1"></i>โทเคน
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-action="copy" data-label="${labelAttr}" title="คัดลอกโทเคน">
+                        <i class="fas fa-copy"></i><span class="btn-label">โทเคน</span>
                     </button>
-                    <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-label="${labelAttr}">
-                        <i class="fas fa-edit me-1"></i>แก้ไข
+                    <button type="button" class="btn btn-sm btn-outline-primary" data-action="edit" data-label="${labelAttr}" title="แก้ไข">
+                        <i class="fas fa-edit"></i><span class="btn-label">แก้ไข</span>
                     </button>
-                    <button type="button" class="btn btn-sm btn-outline-danger asset-delete-btn" data-action="delete" data-label="${labelAttr}">
-                        <i class="fas fa-trash me-1"></i>ลบ
+                    <button type="button" class="btn btn-sm btn-outline-danger asset-delete-btn" data-action="delete" data-label="${labelAttr}" title="ลบ">
+                        <i class="fas fa-trash"></i><span class="btn-label">ลบ</span>
                     </button>
                 `;
 

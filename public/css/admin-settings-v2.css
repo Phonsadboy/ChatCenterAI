@@ -891,8 +891,26 @@ input:checked+.toggle-slider:before {
 
 .image-asset-actions .btn {
     font-size: 0.6875rem;
-    padding: 0.2rem 0.4rem;
+    padding: 0.25rem 0.35rem;
     white-space: nowrap;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* Hide button text labels in asset list - icon only for compact view */
+.image-assets-list .image-asset-actions .btn .btn-label {
+    display: none;
+}
+
+.image-assets-list .image-asset-actions .btn {
+    padding: 0.3rem;
+    font-size: 0.8rem;
+    border-radius: 6px;
+    min-width: 28px;
+    min-height: 28px;
+    justify-content: center;
 }
 
 .image-asset-edit-form {
