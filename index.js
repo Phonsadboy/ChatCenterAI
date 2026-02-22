@@ -18376,6 +18376,11 @@ ${dataItemsSummary}`;
           sendEvent("content", { text: content.substring(c, c + CHUNK_SIZE) });
         }
 
+        // Build compact tool context for history
+        const toolContext = toolsUsed.length > 0
+          ? toolsUsed.map(t => `[${t.tool}] ${t.summary || ''}`).join('\n')
+          : null;
+
         // Save audit log
         await db.collection("instruction_chat_audit").insertOne({
           sessionId, instructionId, username,
@@ -18387,7 +18392,7 @@ ${dataItemsSummary}`;
           responseLength: content.length,
         });
 
-        sendEvent("done", { toolsUsed, changes, usage: totalUsage });
+        sendEvent("done", { toolsUsed, changes, usage: totalUsage, toolContext });
         break;
       }
 
