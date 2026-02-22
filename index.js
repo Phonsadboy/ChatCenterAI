@@ -18058,7 +18058,7 @@ ${dataItemsSummary}
     const tools = chatService.getToolDefinitions();
     const payload = { model, messages, tools, tool_choice: "auto" };
     if (effort !== "none") {
-      payload.reasoning = { effort };
+      payload.reasoning_effort = effort;
     }
 
     // Tool loop (max 8 iterations)
@@ -18295,7 +18295,7 @@ ${dataItemsSummary}`;
     // Tool loop (max 8 iterations) — then stream final response
     for (let i = 0; i < 8; i++) {
       const payload = { model, messages, tools, tool_choice: "auto" };
-      if (effort !== "none") payload.reasoning = { effort };
+      if (effort !== "none") payload.reasoning_effort = effort;
 
       const response = await openai.chat.completions.create(payload);
       const choice = response.choices[0];
