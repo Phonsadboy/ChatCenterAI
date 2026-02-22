@@ -839,6 +839,11 @@ body {
     gap: 6px;
 }
 
+.ic-thinking-meta {
+    opacity: 0.6;
+    font-size: 11px;
+}
+
 .ic-thinking-header .ic-thinking-icon i {
     color: var(--ic-accent);
     font-size: 11px;

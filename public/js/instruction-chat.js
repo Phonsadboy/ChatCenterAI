@@ -148,6 +148,7 @@
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
+            let currentEventType = "";
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -158,54 +159,89 @@
                 buffer = lines.pop() || "";
 
                 for (const line of lines) {
-                    if (line.startsWith("event: ")) continue;
+                    // Track SSE event type
+                    if (line.startsWith("event: ")) {
+                        currentEventType = line.substring(7).trim();
+                        continue;
+                    }
                     if (!line.startsWith("data: ")) continue;
 
                     const jsonStr = line.substring(6);
                     let data;
                     try { data = JSON.parse(jsonStr); } catch { continue; }
 
-                    if (data.sessionId) {
-                        state.sessionId = data.sessionId;
-                    } else if (data.text !== undefined) {
-                        fullContent += data.text;
-                        contentEl.innerHTML = formatContent(fullContent);
-                        scrollToBottom();
-                    } else if (data.content && !data.text) {
-                        // Thinking
-                        const body = aiMsg.querySelector(".ic-msg-body");
-                        if (body) {
-                            const existing = body.querySelector(".ic-thinking-block");
-                            if (!existing) {
+                    const body = aiMsg.querySelector(".ic-msg-body");
+
+                    switch (currentEventType) {
+                        case "session":
+                            if (data.sessionId) state.sessionId = data.sessionId;
+                            break;
+
+                        case "thinking":
+                            if (data.content && body) {
                                 const thinkBlock = createThinkingBlock(data.content);
                                 body.insertBefore(thinkBlock, contentEl);
+                                scrollToBottom();
                             }
-                        }
-                    } else if (data.tool) {
-                        if (data.args) {
-                            const toolCard = createToolCard({ tool: data.tool, summary: "⏳ กำลังประมวลผล..." });
-                            const body = aiMsg.querySelector(".ic-msg-body");
-                            if (body) body.insertBefore(toolCard, contentEl);
-                            scrollToBottom();
-                        } else if (data.result || data.summary) {
-                            const cards = aiMsg.querySelectorAll(".ic-tool-card");
-                            const lastCard = cards[cards.length - 1];
-                            if (lastCard) {
-                                const cardBody = lastCard.querySelector(".ic-tool-card-body");
-                                if (cardBody) {
-                                    const summaryText = data.summary || data.result || "✅";
-                                    cardBody.textContent = summaryText;
+                            break;
+
+                        case "content":
+                            if (data.text !== undefined) {
+                                fullContent += data.text;
+                                contentEl.innerHTML = formatContent(fullContent);
+                                scrollToBottom();
+                            }
+                            break;
+
+                        case "tool_start":
+                            if (data.tool && data.args && body) {
+                                const toolCard = createToolCard({ tool: data.tool, summary: "⏳ กำลังประมวลผล..." });
+                                body.insertBefore(toolCard, contentEl);
+                                scrollToBottom();
+                            }
+                            break;
+
+                        case "tool_end":
+                            if (data.tool) {
+                                const cards = aiMsg.querySelectorAll(".ic-tool-card");
+                                const lastCard = cards[cards.length - 1];
+                                if (lastCard) {
+                                    const cardBody = lastCard.querySelector(".ic-tool-card-body");
+                                    if (cardBody) {
+                                        cardBody.textContent = data.summary || data.result || "✅";
+                                    }
                                 }
                             }
-                        }
-                    } else if (data.toolsUsed) {
-                        if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
-                        if (data.changes) state.totalChanges += data.changes.length;
-                        updateStatusBar();
-                    } else if (data.error) {
-                        fullContent += `\n❌ ${data.error}`;
-                        contentEl.innerHTML = formatContent(fullContent);
+                            break;
+
+                        case "done":
+                            if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
+                            if (data.changes) state.totalChanges += data.changes.length;
+                            updateStatusBar();
+                            break;
+
+                        case "error":
+                            if (data.error) {
+                                fullContent += `\n❌ ${data.error}`;
+                                contentEl.innerHTML = formatContent(fullContent);
+                            }
+                            break;
+
+                        default:
+                            // Fallback for unmatched event types
+                            if (data.sessionId) {
+                                state.sessionId = data.sessionId;
+                            } else if (data.text !== undefined) {
+                                fullContent += data.text;
+                                contentEl.innerHTML = formatContent(fullContent);
+                                scrollToBottom();
+                            } else if (data.error) {
+                                fullContent += `\n❌ ${data.error}`;
+                                contentEl.innerHTML = formatContent(fullContent);
+                            }
+                            break;
                     }
+                    currentEventType = ""; // Reset after processing
                 }
             }
 
@@ -295,10 +331,12 @@
 
     function createThinkingBlock(content) {
         const block = document.createElement("div");
-        block.className = "ic-thinking-block";
+        block.className = "ic-thinking-block collapsed";
+        const wordCount = content.split(/\s+/).length;
+        const preview = content.length > 200 ? content.substring(0, 200) + "..." : content;
         block.innerHTML = `
         <div class="ic-thinking-header" onclick="this.parentElement.classList.toggle('collapsed')">
-            <span class="ic-thinking-icon"><i class="fas fa-lightbulb"></i> Thinking...</span>
+            <span class="ic-thinking-icon"><i class="fas fa-lightbulb"></i> Thinking <span class="ic-thinking-meta">(${wordCount} words)</span></span>
             <i class="fas fa-chevron-down ic-chevron"></i>
         </div>
         <div class="ic-thinking-body">${escapeHtml(content)}</div>`;
