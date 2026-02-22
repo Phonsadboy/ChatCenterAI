@@ -18344,6 +18344,7 @@ ${dataItemsSummary}`;
     const toolsUsed = [];
     const changes = [];
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
+    const initialMsgCount = messages.length; // Track where tool messages start
 
     sendEvent("session", { sessionId });
 
@@ -18376,7 +18377,33 @@ ${dataItemsSummary}`;
           sendEvent("content", { text: content.substring(c, c + CHUNK_SIZE) });
         }
 
-        // Build compact tool context for history
+        // Build full assistant messages for history (tool calls + results + final)
+        const newMessages = messages.slice(initialMsgCount);
+        // Add the final assistant message
+        newMessages.push({ role: "assistant", content });
+
+        // Cap tool result content to prevent history bloat
+        const MAX_TOOL_RESULT_LEN = 4000;
+        const assistantMessages = newMessages.map(m => {
+          if (m.role === "tool" && typeof m.content === "string" && m.content.length > MAX_TOOL_RESULT_LEN) {
+            return { ...m, content: m.content.substring(0, MAX_TOOL_RESULT_LEN) + '\n...(truncated)' };
+          }
+          // For assistant messages with tool_calls, keep only essential fields
+          if (m.role === "assistant" && m.tool_calls) {
+            return {
+              role: "assistant",
+              content: m.content || null,
+              tool_calls: m.tool_calls.map(tc => ({
+                id: tc.id,
+                type: tc.type,
+                function: { name: tc.function.name, arguments: tc.function.arguments }
+              }))
+            };
+          }
+          return m;
+        });
+
+        // Build compact tool context summary
         const toolContext = toolsUsed.length > 0
           ? toolsUsed.map(t => `[${t.tool}] ${t.summary || ''}`).join('\n')
           : null;
@@ -18392,7 +18419,7 @@ ${dataItemsSummary}`;
           responseLength: content.length,
         });
 
-        sendEvent("done", { toolsUsed, changes, usage: totalUsage, toolContext });
+        sendEvent("done", { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages });
         break;
       }
 

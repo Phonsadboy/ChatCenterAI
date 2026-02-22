@@ -217,7 +217,7 @@
                         case "done":
                             if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
                             if (data.changes) state.totalChanges += data.changes.length;
-                            if (data.toolContext) state._lastToolContext = data.toolContext;
+                            if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
                             updateStatusBar();
                             break;
 
@@ -246,18 +246,18 @@
                 }
             }
 
-            // Save to history — include tool context so AI knows what tools were used
+            // Save to history — use full tool messages if available
             if (fullContent) {
-                const toolCtx = state._lastToolContext;
-                if (toolCtx) {
-                    state.history.push({
-                        role: "assistant",
-                        content: `[Tools used in this turn]\n${toolCtx}\n\n[Response]\n${fullContent}`
-                    });
+                const fullMsgs = state._lastAssistantMessages;
+                if (fullMsgs && fullMsgs.length > 0) {
+                    // Push all messages (assistant tool_calls + tool results + final assistant)
+                    for (const m of fullMsgs) {
+                        state.history.push(m);
+                    }
                 } else {
                     state.history.push({ role: "assistant", content: fullContent });
                 }
-                state._lastToolContext = null;
+                state._lastAssistantMessages = null;
             }
 
             // Auto-save session
