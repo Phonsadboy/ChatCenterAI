@@ -1052,9 +1052,11 @@
 
                     return `
                         <div class="image-asset-item${itemClasses}" data-label="${labelAttr}">
-                            <div class="image-asset-thumb">
+                            <div class="image-asset-thumb-col">
                                 <input class="form-check-input asset-select-checkbox" type="checkbox" data-label="${labelAttr}" ${isSelected ? 'checked' : ''} ${saving ? 'disabled' : ''}>
-                                ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
+                                <div class="image-asset-thumb">
+                                    ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
+                                </div>
                             </div>
                             <div class="image-asset-info">
                                 <div class="image-asset-edit-form">
@@ -1095,9 +1097,11 @@
 
                 return `
                     <div class="image-asset-item${itemClasses}" data-label="${labelAttr}">
-                        <div class="image-asset-thumb">
+                        <div class="image-asset-thumb-col">
                             <input class="form-check-input asset-select-checkbox" type="checkbox" data-label="${labelAttr}" ${isSelected ? 'checked' : ''}>
-                            ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
+                            <div class="image-asset-thumb">
+                                ${thumb ? `<img src="${thumb}" alt="${escapedLabel}">` : '<div class="image-asset-thumb-placeholder"><i class="fas fa-image"></i></div>'}
+                            </div>
                         </div>
                         <div class="image-asset-info">
                             <div class="image-asset-title">

@@ -813,12 +813,16 @@ input:checked+.toggle-slider:before {
     font-size: 1.25rem;
 }
 
-/* Checkbox overlay on thumbnail */
-.image-asset-thumb .asset-select-checkbox {
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    z-index: 2;
+/* Checkbox above thumbnail - vertical column */
+.image-asset-thumb-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    flex-shrink: 0;
+}
+
+.image-asset-thumb-col .asset-select-checkbox {
     width: 16px;
     height: 16px;
     margin: 0;
