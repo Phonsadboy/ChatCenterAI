@@ -210,4 +210,78 @@ function initTelemetry(db) {
     if (intervalRef.unref) intervalRef.unref();
 }
 
-module.exports = { initTelemetry };
+// ── InstructionAI Activity Tracking ────────────────────────────────────
+// Rate-limit: ส่ง page visit notification ไม่เกิน 1 ครั้ง / 10 นาที / instance
+const PAGE_VISIT_COOLDOWN_MS = 10 * 60 * 1000;
+let lastPageVisitNotification = 0;
+
+/**
+ * แจ้งเมื่อมีคนเข้าหน้า InstructionAI
+ * @param {string} username - ชื่อ admin ที่เข้า
+ */
+async function notifyPageVisit(username) {
+    if (!TELEMETRY_ENABLED || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+
+    const now = Date.now();
+    if (now - lastPageVisitNotification < PAGE_VISIT_COOLDOWN_MS) return;
+    lastPageVisitNotification = now;
+
+    try {
+        const instanceId = getInstanceId();
+        const domainHint = process.env.PUBLIC_BASE_URL
+            ? new URL(process.env.PUBLIC_BASE_URL).hostname
+            : "unknown";
+        const timeStr = new Date().toLocaleString("th-TH", {
+            timeZone: "Asia/Bangkok",
+            hour12: false,
+        });
+
+        const message =
+            `👀 <b>InstructionAI — มีคนเข้าใช้</b>\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `👤 User: <b>${username || "unknown"}</b>\n` +
+            `🌐 Domain: <code>${domainHint}</code>\n` +
+            `🆔 Instance: <code>${instanceId}</code>\n` +
+            `🕐 ${timeStr}`;
+
+        await sendToTelegram(message);
+    } catch (err) {
+        // fire-and-forget
+    }
+}
+
+/**
+ * แจ้งเมื่อมีคนส่งคำสั่งใน InstructionAI (ใช้งานจริง)
+ * @param {string} username - ชื่อ admin
+ * @param {string} instructionName - ชื่อ instruction ที่กำลังใช้
+ * @param {string} model - โมเดลที่ใช้
+ */
+async function notifyInstructionAIUsage(username, instructionName, model) {
+    if (!TELEMETRY_ENABLED || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+
+    try {
+        const instanceId = getInstanceId();
+        const domainHint = process.env.PUBLIC_BASE_URL
+            ? new URL(process.env.PUBLIC_BASE_URL).hostname
+            : "unknown";
+        const timeStr = new Date().toLocaleString("th-TH", {
+            timeZone: "Asia/Bangkok",
+            hour12: false,
+        });
+
+        const message =
+            `💬 <b>InstructionAI — กำลังใช้งาน</b>\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `👤 User: <b>${username || "unknown"}</b>\n` +
+            `📋 Instruction: ${instructionName || "—"}\n` +
+            `🧠 Model: ${model || "—"}\n` +
+            `🌐 <code>${domainHint}</code> · <code>${instanceId}</code>\n` +
+            `🕐 ${timeStr}`;
+
+        await sendToTelegram(message);
+    } catch (err) {
+        // fire-and-forget
+    }
+}
+
+module.exports = { initTelemetry, notifyPageVisit, notifyInstructionAIUsage };

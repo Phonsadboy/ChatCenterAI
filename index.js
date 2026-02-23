@@ -85,7 +85,7 @@ const {
 const {
   migrateChatHistorySenderId,
 } = require("./utils/chatHistoryMigration");
-const { initTelemetry } = require("./utils/telemetry");
+const { initTelemetry, notifyPageVisit, notifyInstructionAIUsage } = require("./utils/telemetry");
 
 function resolveInstructionAssetUrl(url, fallbackFileName) {
   const base =
@@ -18252,6 +18252,8 @@ ${dataItemsSummary}
 // InstructionAI Page
 app.get("/admin/instruction-ai", requireAdmin, async (req, res) => {
   try {
+    const username = req.session?.user?.username || req.session?.user?.label || "admin";
+    notifyPageVisit(username).catch(() => { });
     res.render("admin-instruction-chat");
   } catch (error) {
     console.error("[InstructionAI] Error loading page:", error);
@@ -18550,6 +18552,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
     const sessionId = clientSessionId || `ses_${Date.now().toString(36)}`;
     const username = req.session?.user?.username || "admin";
+
+    // Telemetry: แจ้งว่ามีคนกำลังใช้งาน InstructionAI
+    notifyInstructionAIUsage(username, instruction.name, model).catch(() => { });
 
     const systemPrompt = buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsSummary);
 
