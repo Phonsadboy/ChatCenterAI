@@ -173,11 +173,19 @@
             <div class="ic-input-area" id="icInputArea">
                 <div class="ic-input-container">
                     <div class="ic-input-wrapper" id="icInputWrapper">
-                        <textarea id="icInput" placeholder="พิมพ์ข้อความ..." rows="1" disabled></textarea>
-                        <div class="ic-input-actions">
-                            <button class="ic-btn-send" id="icSend" disabled title="ส่ง (Enter)">
-                                <i class="fas fa-arrow-up"></i>
+                        <div class="ic-image-preview" id="icImagePreview" style="display:none;"></div>
+                        <div class="ic-input-row">
+                            <button class="ic-btn-attach" id="icAttach" title="แนบรูปภาพ" disabled>
+                                <i class="fas fa-paperclip"></i>
                             </button>
+                            <input type="file" id="icFileInput" accept="image/jpeg,image/png,image/webp" multiple
+                                style="display:none;">
+                            <textarea id="icInput" placeholder="พิมพ์ข้อความ..." rows="1" disabled></textarea>
+                            <div class="ic-input-actions">
+                                <button class="ic-btn-send" id="icSend" disabled title="ส่ง (Enter)">
+                                    <i class="fas fa-arrow-up"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div class="ic-input-footer">

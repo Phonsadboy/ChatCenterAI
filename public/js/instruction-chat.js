@@ -30,6 +30,7 @@
         sending: false,
         sidebarOpen: window.innerWidth >= 769,
         abortController: null,
+        pendingImages: [], // { file, dataUrl }
     };
 
     // ─── DOM ────────────────────────────────────────────────────────────
@@ -68,6 +69,9 @@
         thinkingLevels: $("#icThinkingLevels"),
         thinkingNote: $("#icThinkingNote"),
         newChat: $("#icNewChat"),
+        attach: $("#icAttach"),
+        fileInput: $("#icFileInput"),
+        imagePreview: $("#icImagePreview"),
     };
 
     // ─── Init ───────────────────────────────────────────────────────────
@@ -110,11 +114,16 @@
         dom.input.value = "";
         autoResize(dom.input);
 
+        // Capture and clear pending images
+        const imagesToSend = [...state.pendingImages];
+        state.pendingImages = [];
+        clearImagePreview();
+
         // Hide welcome cards
         if (dom.empty) dom.empty.style.display = "none";
 
-        // Add user message
-        appendMessage("user", text);
+        // Add user message (with images if any)
+        appendMessage("user", text, imagesToSend);
         state.history.push({ role: "user", content: text });
 
         // Create streaming AI response container
@@ -126,6 +135,20 @@
         state.abortController = new AbortController();
 
         try {
+            // Upload images first if any
+            let uploadedImages = [];
+            for (const img of imagesToSend) {
+                try {
+                    const formData = new FormData();
+                    formData.append("image", img.file);
+                    const uploadRes = await fetch("/api/instruction-ai/upload-image", {
+                        method: "POST", body: formData,
+                    });
+                    const uploadData = await uploadRes.json();
+                    if (uploadData.success) uploadedImages.push({ data: uploadData.imageData });
+                } catch (e) { console.warn("Image upload failed:", e); }
+            }
+
             const response = await fetch("/api/instruction-ai/stream", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -136,6 +159,7 @@
                     thinking: state.thinking,
                     history: state.history,
                     sessionId: state.sessionId,
+                    images: uploadedImages.length > 0 ? uploadedImages : undefined,
                 }),
                 signal: state.abortController.signal,
             });
@@ -301,15 +325,23 @@
         return div;
     }
 
-    function appendMessage(role, content) {
+    function appendMessage(role, content, images) {
         const isUser = role === "user";
         const div = document.createElement("div");
         div.className = `ic-msg ${isUser ? "ic-msg--user" : "ic-msg--ai"}`;
+
+        let imageHtml = "";
+        if (isUser && Array.isArray(images) && images.length > 0) {
+            imageHtml = `<div class="ic-msg-images">${images.map(img =>
+                `<img src="${img.dataUrl || img.data || ''}" class="ic-msg-thumb" alt="uploaded image">`
+            ).join("")}</div>`;
+        }
 
         if (isUser) {
             div.innerHTML = `
             <div class="ic-msg-row">
                 <div class="ic-msg-body">
+                    ${imageHtml}
                     <div class="ic-msg-content">${formatContent(content)}</div>
                 </div>
             </div>`;
@@ -345,6 +377,56 @@
         </div>
         <div class="ic-thinking-body">${escapeHtml(content)}</div>`;
         return block;
+    }
+
+    // ─── Image Upload Helpers ────────────────────────────────────────────
+
+    function handleImageSelect(e) {
+        const files = Array.from(e.target.files || []).slice(0, 3);
+        if (!files.length) return;
+
+        for (const file of files) {
+            if (state.pendingImages.length >= 3) break;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                state.pendingImages.push({ file, dataUrl: ev.target.result });
+                renderImagePreview();
+                updateSendButton();
+            };
+            reader.readAsDataURL(file);
+        }
+        // Reset file input
+        e.target.value = "";
+    }
+
+    function renderImagePreview() {
+        if (!dom.imagePreview) return;
+        if (state.pendingImages.length === 0) {
+            dom.imagePreview.style.display = "none";
+            dom.imagePreview.innerHTML = "";
+            return;
+        }
+        dom.imagePreview.style.display = "flex";
+        dom.imagePreview.innerHTML = state.pendingImages.map((img, i) => `
+            <div class="ic-preview-item">
+                <img src="${img.dataUrl}" alt="preview">
+                <button class="ic-preview-remove" data-idx="${i}" title="ลบ">&times;</button>
+            </div>
+        `).join("");
+        // Remove buttons
+        dom.imagePreview.querySelectorAll(".ic-preview-remove").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                const idx = parseInt(e.target.dataset.idx, 10);
+                state.pendingImages.splice(idx, 1);
+                renderImagePreview();
+                updateSendButton();
+            });
+        });
+    }
+
+    function clearImagePreview() {
+        state.pendingImages = [];
+        renderImagePreview();
     }
 
     // ─── Tool Pipeline (collapsed real-time summary) ──────────────────
@@ -542,6 +624,7 @@
         dom.activeName.textContent = name || "Untitled";
         dom.empty.style.display = "none";
         dom.input.disabled = false;
+        if (dom.attach) dom.attach.disabled = false;
         dom.input.placeholder = `พิมพ์คำสั่ง... เช่น "ดูราคาสินค้า"`;
         dom.statusInfo.style.display = "inline-flex";
         dom.messages.innerHTML = "";
@@ -638,6 +721,7 @@
 
     function updateSendButton() {
         const hasText = dom.input.value.trim().length > 0;
+        const hasImages = state.pendingImages.length > 0;
         const hasInstruction = !!state.selectedId;
 
         if (state.sending) {
@@ -648,7 +732,7 @@
             dom.send.classList.add("ic-btn-stop-active");
         } else {
             dom.send.innerHTML = '<i class="fas fa-arrow-up"></i>';
-            dom.send.disabled = !hasText || !hasInstruction;
+            dom.send.disabled = !(hasText || hasImages) || !hasInstruction;
             dom.send.title = "ส่ง (Enter)";
             dom.send.classList.remove("ic-btn-stop-active");
         }
@@ -722,6 +806,16 @@
             updateSendButton();
             autoResize(dom.input);
         });
+
+        // Image attach
+        if (dom.attach) {
+            dom.attach.addEventListener("click", () => {
+                if (dom.fileInput) dom.fileInput.click();
+            });
+        }
+        if (dom.fileInput) {
+            dom.fileInput.addEventListener("change", handleImageSelect);
+        }
 
         // Model dropdown
         dom.modelBtn.addEventListener("click", (e) => {
