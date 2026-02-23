@@ -150,7 +150,7 @@
             <input type="checkbox" id="annDismissCheck" style="
         accent-color: #4A6FA5; width: 14px; height: 14px; cursor: pointer;
       ">
-            ไม่แสดงอีกภายใน 3 วัน
+            ไม่แสดงอีกภายใน 1 วัน
         </label>
     </div>
 </div>
@@ -193,8 +193,8 @@
 
 <script>
     (function () {
-        var COOKIE_NAME = 'ann_5A0F-4A9B-53ED-9B38';
-        var COOKIE_DAYS = 3;
+        var COOKIE_NAME = 'announcement_dismissed';
+        var COOKIE_DAYS = 1;
 
         function getCookie(name) {
             var v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
