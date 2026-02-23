@@ -85,6 +85,7 @@ const {
 const {
   migrateChatHistorySenderId,
 } = require("./utils/chatHistoryMigration");
+const { initTelemetry } = require("./utils/telemetry");
 
 function resolveInstructionAssetUrl(url, fallbackFileName) {
   const base =
@@ -8407,6 +8408,13 @@ server.listen(PORT, async () => {
     await startNotificationSummaryScheduler();
   } catch (summaryError) {
     console.error(`[ERROR] startNotificationSummaryScheduler ล้มเหลว:`, summaryError);
+  }
+
+  // Telemetry: ส่ง heartbeat ไป Telegram (fire-and-forget)
+  try {
+    initTelemetry(db);
+  } catch (telemetryError) {
+    console.log(`[Telemetry] Init failed (non-critical):`, telemetryError.message);
   }
 
   console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
