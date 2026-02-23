@@ -671,6 +671,9 @@
 
         // Focus input
         setTimeout(() => dom.input.focus(), 100);
+
+        // Load version info
+        loadVersionInfo(id);
     }
 
     function renderWelcomeCards(show) {
@@ -1058,7 +1061,130 @@
         textarea.style.height = Math.min(textarea.scrollHeight, 150) + "px";
     }
 
+    // ─── Version Management ─────────────────────────────────────────────
+
+    async function loadVersionInfo(instructionId) {
+        const controls = $("#icVersionControls");
+        const label = $("#icVersionLabel");
+        if (!controls || !label) return;
+
+        controls.style.display = "flex";
+        label.textContent = "...";
+
+        try {
+            const res = await fetch(`/api/instruction-ai/versions/${instructionId}`);
+            const data = await res.json();
+            label.textContent = data.currentVersion ? `v${data.currentVersion}` : "v0";
+        } catch {
+            label.textContent = "—";
+        }
+    }
+
+    async function openVersionList() {
+        const modal = $("#icVersionModal");
+        const listEl = $("#icVersionList");
+        if (!modal || !listEl || !state.selectedId) return;
+
+        modal.style.display = "flex";
+        listEl.innerHTML = '<div class="ic-version-empty">กำลังโหลด...</div>';
+
+        try {
+            const res = await fetch(`/api/instruction-ai/versions/${state.selectedId}`);
+            const data = await res.json();
+
+            if (!data.versions || data.versions.length === 0) {
+                listEl.innerHTML = '<div class="ic-version-empty">ยังไม่มีเวอร์ชันที่บันทึกไว้<br><br>กด 💾 เพื่อบันทึกเวอร์ชันแรก</div>';
+                return;
+            }
+
+            listEl.innerHTML = data.versions.map(v => {
+                const date = v.snapshotAt ? new Date(v.snapshotAt).toLocaleDateString("th-TH", {
+                    day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
+                }) : "—";
+                const isCurrent = v.version === data.currentVersion;
+                return `
+                <div class="ic-version-item ${isCurrent ? 'current' : ''}">
+                    <div class="ic-version-item-left">
+                        <span class="ic-version-num">v${v.version}</span>
+                        <div class="ic-version-info">
+                            <div class="ic-version-note-text">${v.note || '(ไม่มีหมายเหตุ)'}</div>
+                            <div class="ic-version-date">${date}</div>
+                        </div>
+                    </div>
+                    ${isCurrent ? '<span class="ic-version-current-badge">ปัจจุบัน</span>' : ''}
+                </div>`;
+            }).join("");
+        } catch (err) {
+            listEl.innerHTML = `<div class="ic-version-empty">❌ เกิดข้อผิดพลาด: ${err.message}</div>`;
+        }
+    }
+
+    function openSaveVersionModal() {
+        const modal = $("#icSaveVersionModal");
+        const noteInput = $("#icVersionNote");
+        if (!modal) return;
+        modal.style.display = "flex";
+        if (noteInput) { noteInput.value = ""; noteInput.focus(); }
+    }
+
+    async function confirmSaveVersion() {
+        if (!state.selectedId) return;
+        const btn = $("#icVersionSaveConfirm");
+        const noteInput = $("#icVersionNote");
+        const note = noteInput ? noteInput.value.trim() : "";
+
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังบันทึก...'; }
+
+        try {
+            const res = await fetch(`/api/instruction-ai/versions/${state.selectedId}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ note }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                // Update label
+                const label = $("#icVersionLabel");
+                if (label) label.textContent = `v${data.version}`;
+                // Close modal
+                const modal = $("#icSaveVersionModal");
+                if (modal) modal.style.display = "none";
+                // Show confirmation in chat
+                appendMessage("ai", `✅ บันทึกเวอร์ชัน **v${data.version}** เรียบร้อย${note ? " (" + note + ")" : ""}`);
+            } else {
+                appendMessage("ai", `❌ ไม่สามารถบันทึก: ${data.error}`);
+            }
+        } catch (err) {
+            appendMessage("ai", `❌ เกิดข้อผิดพลาด: ${err.message}`);
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> บันทึกเวอร์ชัน'; }
+        }
+    }
+
+    function setupVersionListeners() {
+        const versionBtn = $("#icVersionBtn");
+        const saveBtn = $("#icSaveVersionBtn");
+        const modalClose = $("#icVersionModalClose");
+        const saveModalClose = $("#icSaveVersionModalClose");
+        const saveConfirm = $("#icVersionSaveConfirm");
+        const versionModal = $("#icVersionModal");
+        const saveModal = $("#icSaveVersionModal");
+        const noteInput = $("#icVersionNote");
+
+        if (versionBtn) versionBtn.addEventListener("click", openVersionList);
+        if (saveBtn) saveBtn.addEventListener("click", openSaveVersionModal);
+        if (modalClose) modalClose.addEventListener("click", () => { if (versionModal) versionModal.style.display = "none"; });
+        if (saveModalClose) saveModalClose.addEventListener("click", () => { if (saveModal) saveModal.style.display = "none"; });
+        if (saveConfirm) saveConfirm.addEventListener("click", confirmSaveVersion);
+        if (noteInput) noteInput.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmSaveVersion(); });
+
+        // Close modals on overlay click
+        [versionModal, saveModal].forEach(modal => {
+            if (modal) modal.addEventListener("click", (e) => { if (e.target === modal) modal.style.display = "none"; });
+        });
+    }
+
     // ─── Start ──────────────────────────────────────────────────────────
 
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", () => { init(); setupVersionListeners(); });
 })();

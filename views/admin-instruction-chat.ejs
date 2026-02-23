@@ -135,6 +135,16 @@
                             <div class="ic-thinking-note" id="icThinkingNote"></div>
                         </div>
                     </div>
+                    <!-- Version Management -->
+                    <div class="ic-version-controls" id="icVersionControls" style="display:none;">
+                        <button class="ic-version-btn" id="icVersionBtn" title="จัดการเวอร์ชัน">
+                            <i class="fas fa-code-branch"></i>
+                            <span id="icVersionLabel">—</span>
+                        </button>
+                        <button class="ic-save-version-btn" id="icSaveVersionBtn" title="บันทึกเวอร์ชันใหม่">
+                            <i class="fas fa-floppy-disk"></i>
+                        </button>
+                    </div>
                     <button class="ic-new-chat-btn" id="icNewChat" title="เริ่มแชทใหม่">
                         <i class="fas fa-pen-to-square"></i>
                         <span>New Chat</span>
@@ -208,6 +218,40 @@
     </div>
 
     <%- include('partials/announcement-modal') %>
+
+        <!-- Version Modal -->
+        <div class="ic-version-modal-overlay" id="icVersionModal" style="display:none;">
+            <div class="ic-version-modal">
+                <div class="ic-version-modal-header">
+                    <h3><i class="fas fa-code-branch"></i> เวอร์ชัน</h3>
+                    <button class="ic-version-modal-close" id="icVersionModalClose"><i
+                            class="fas fa-xmark"></i></button>
+                </div>
+                <div class="ic-version-modal-body" id="icVersionList">
+                    <div class="ic-version-empty">กำลังโหลด...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save Version Modal -->
+        <div class="ic-version-modal-overlay" id="icSaveVersionModal" style="display:none;">
+            <div class="ic-version-modal ic-version-modal-sm">
+                <div class="ic-version-modal-header">
+                    <h3><i class="fas fa-floppy-disk"></i> บันทึกเวอร์ชันใหม่</h3>
+                    <button class="ic-version-modal-close" id="icSaveVersionModalClose"><i
+                            class="fas fa-xmark"></i></button>
+                </div>
+                <div class="ic-version-modal-body">
+                    <label class="ic-version-note-label">หมายเหตุ (ไม่บังคับ)</label>
+                    <input type="text" id="icVersionNote" class="ic-version-note-input"
+                        placeholder="เช่น เพิ่มโปรโมชันเดือน ก.พ." maxlength="200">
+                    <button class="ic-version-save-confirm" id="icVersionSaveConfirm">
+                        <i class="fas fa-check"></i> บันทึกเวอร์ชัน
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <script src="/js/instruction-chat.js"></script>
 </body>
 

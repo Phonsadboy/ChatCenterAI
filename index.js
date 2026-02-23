@@ -18472,6 +18472,114 @@ app.post("/api/instruction-conversations/:instructionId/rebuild", requireAdmin, 
   }
 });
 
+// ═══════════════════════ Version Management API ═══════════════════════
+
+// GET versions for an instruction
+app.get("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req, res) => {
+  try {
+    const { instructionId } = req.params;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    // Get current instruction
+    const inst = ObjectId.isValid(instructionId)
+      ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) })
+      : null;
+
+    const instId = inst?.instructionId || instructionId;
+    const currentVersion = Number.isInteger(inst?.version) ? inst.version : 0;
+
+    // Get all version snapshots
+    const versions = await db.collection("instruction_versions")
+      .find({ instructionId: instId })
+      .sort({ version: -1 })
+      .project({ version: 1, snapshotAt: 1, note: 1 })
+      .toArray();
+
+    res.json({
+      currentVersion,
+      versions: versions.map(v => ({
+        version: v.version,
+        snapshotAt: v.snapshotAt,
+        note: v.note || "",
+      })),
+    });
+  } catch (error) {
+    console.error("[Versions] List error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST save a new version
+app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req, res) => {
+  try {
+    const { instructionId } = req.params;
+    const { note = "" } = req.body;
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
+    const inst = ObjectId.isValid(instructionId)
+      ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) })
+      : null;
+
+    if (!inst) return res.status(404).json({ error: "ไม่พบ Instruction" });
+
+    const instId = inst.instructionId || instructionId;
+    const versionColl = db.collection("instruction_versions");
+
+    // Find next version number
+    const latest = await versionColl.find({ instructionId: instId })
+      .sort({ version: -1 }).limit(1).toArray();
+    const nextVersion = latest.length > 0 ? (latest[0].version || 0) + 1 : 1;
+
+    // Create snapshot
+    const snapshot = {
+      instructionId: instId,
+      version: nextVersion,
+      name: inst.name || "",
+      description: inst.description || "",
+      dataItems: (inst.dataItems || []).map(item => {
+        const copy = { itemId: item.itemId, title: item.title, type: item.type };
+        if (item.type === "table" && item.data) {
+          copy.data = {
+            columns: item.data.columns || [],
+            rows: item.data.rows || [],
+            rowCount: Array.isArray(item.data.rows) ? item.data.rows.length : 0,
+          };
+        } else if (item.type === "text") {
+          copy.content = item.content || "";
+        }
+        return copy;
+      }),
+      note: (note || "").substring(0, 500),
+      snapshotAt: new Date(),
+      savedBy: "admin_ui",
+    };
+
+    await versionColl.updateOne(
+      { instructionId: instId, version: nextVersion },
+      { $set: snapshot },
+      { upsert: true }
+    );
+
+    // Update instruction's version number
+    await db.collection("instructions_v2").updateOne(
+      { _id: new ObjectId(instructionId) },
+      { $set: { version: nextVersion, updatedAt: new Date() } }
+    );
+
+    res.json({
+      success: true,
+      version: nextVersion,
+      note: snapshot.note,
+      snapshotAt: snapshot.snapshotAt,
+    });
+  } catch (error) {
+    console.error("[Versions] Save error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Instruction Chat API — Main chat endpoint with tool loop
 app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
   try {
