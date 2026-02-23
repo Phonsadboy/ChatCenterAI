@@ -1,127 +1,154 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      Announcement Modal — ใช้ร่วมกันทุกหน้า (include ใน navbar / standalone)
      Cookie: announcement_dismissed — หมดอายุ 1 วัน
+     Design: ใช้ design system เดียวกับเว็บหลัก (light theme, Mali font)
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="announcementOverlay" style="
   display: none;
   position: fixed; inset: 0; z-index: 99999;
-  background: rgba(0,0,0,0.55);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  animation: annFadeIn 0.3s ease;
+  background: rgba(18, 25, 38, 0.35);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  animation: annFadeIn 0.25s ease;
   justify-content: center; align-items: center;
 ">
     <div id="announcementModal" style="
     position: relative;
-    background: linear-gradient(145deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    border: 1px solid rgba(124, 92, 252, 0.3);
-    border-radius: 20px;
-    padding: 36px 32px 28px;
-    max-width: 480px;
+    background: #FFFFFF;
+    border: 1px solid #E1E5EF;
+    border-radius: 12px;
+    padding: 28px 24px 22px;
+    max-width: 420px;
     width: 92%;
-    color: #e8e8e8;
-    box-shadow: 0 25px 60px rgba(0,0,0,0.5), 0 0 40px rgba(124,92,252,0.15);
-    animation: annSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-    font-family: 'Inter', 'Mali', sans-serif;
+    color: #1E2430;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);
+    animation: annSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    font-family: 'Mali', 'Inter', sans-serif;
   ">
         <!-- Close Button -->
         <button id="annCloseBtn" style="
-      position: absolute; top: 14px; right: 16px;
-      background: rgba(255,255,255,0.08); border: none;
-      color: #aaa; font-size: 18px; cursor: pointer;
-      width: 32px; height: 32px; border-radius: 8px;
+      position: absolute; top: 12px; right: 12px;
+      background: transparent; border: 1px solid #E1E5EF;
+      color: #8B92A3; font-size: 16px; cursor: pointer;
+      width: 30px; height: 30px; border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
     " title="ปิด">&times;</button>
 
         <!-- Badge -->
         <div style="
-      display: inline-flex; align-items: center; gap: 6px;
-      background: linear-gradient(135deg, #7c5cfc, #6c47ff);
-      color: #fff; font-size: 11px; font-weight: 700;
-      padding: 4px 12px; border-radius: 20px;
-      margin-bottom: 16px; letter-spacing: 0.5px;
+      display: inline-flex; align-items: center; gap: 5px;
+      background: rgba(74, 111, 165, 0.1);
+      color: #4A6FA5; font-size: 11px; font-weight: 600;
+      padding: 4px 10px; border-radius: 999px;
+      margin-bottom: 14px;
     ">
-            <span style="font-size: 13px;">✨</span> ฟีเจอร์ใหม่
+            <span style="font-size: 12px;">✨</span> ฟีเจอร์ใหม่
         </div>
 
         <!-- Title -->
         <h2 style="
-      font-size: 22px; font-weight: 800; margin: 0 0 8px;
-      background: linear-gradient(135deg, #fff 0%, #c4b5fd 100%);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      background-clip: text;
-      line-height: 1.3;
+      font-family: 'Mali', 'Inter', sans-serif;
+      font-size: 20px; font-weight: 700; margin: 0 0 6px;
+      color: #1E2430; line-height: 1.3;
     ">InstructionAI</h2>
 
         <p style="
-      font-size: 14px; color: #b0b0c8; margin: 0 0 20px;
-      line-height: 1.6;
-    ">จัดการข้อมูล Instruction ผ่านการ<b style="color:#d4c5ff;">แชทกับ AI</b> ได้โดยตรง ไม่ต้องเปิดตาราง
+      font-size: 13.5px; color: #5C6372; margin: 0 0 18px;
+      line-height: 1.65;
+    ">จัดการข้อมูล Instruction ผ่านการ<b style="color:#365983;">แชทกับ AI</b> ได้โดยตรง ไม่ต้องเปิดตาราง
             ไม่ต้องแก้ทีละช่อง</p>
 
         <!-- Features -->
         <div style="
-      display: flex; flex-direction: column; gap: 10px;
-      margin-bottom: 24px;
+      display: flex; flex-direction: column; gap: 8px;
+      margin-bottom: 20px;
+      background: #F6F7FB;
+      border: 1px solid #E1E5EF;
+      border-radius: 10px;
+      padding: 14px 14px;
     ">
-            <div style="display:flex; align-items:flex-start; gap:10px;">
-                <span style="font-size:18px; flex-shrink:0; margin-top:1px;">🔍</span>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="
+          width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+          background: rgba(61, 127, 193, 0.12);
+          display: flex; align-items: center; justify-content: center;
+          font-size: 15px;
+        ">🔍</div>
                 <div>
-                    <div style="font-size:13px; font-weight:700; color:#e0d4ff;">ค้นหาข้อมูลทันที</div>
-                    <div style="font-size:12px; color:#8888a8; line-height:1.5;">ถาม AI
-                        เพื่อค้นหาข้อมูลในตารางและเนื้อหาทั้งหมด</div>
+                    <div style="font-size: 13px; font-weight: 600; color: #1E2430;">ค้นหาข้อมูลทันที</div>
+                    <div style="font-size: 11.5px; color: #8B92A3; line-height: 1.4;">ถาม AI
+                        เพื่อค้นหาในตารางและเนื้อหาทั้งหมด</div>
                 </div>
             </div>
-            <div style="display:flex; align-items:flex-start; gap:10px;">
-                <span style="font-size:18px; flex-shrink:0; margin-top:1px;">✏️</span>
+            <div style="height: 1px; background: #E1E5EF; margin: 2px 0;"></div>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="
+          width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+          background: rgba(230, 183, 92, 0.15);
+          display: flex; align-items: center; justify-content: center;
+          font-size: 15px;
+        ">✏️</div>
                 <div>
-                    <div style="font-size:13px; font-weight:700; color:#e0d4ff;">แก้ไขด้วยคำสั่ง</div>
-                    <div style="font-size:12px; color:#8888a8; line-height:1.5;">สั่ง AI เพิ่ม ลบ
-                        แก้ไขข้อมูลในตารางผ่านการพิมพ์</div>
+                    <div style="font-size: 13px; font-weight: 600; color: #1E2430;">แก้ไขด้วยคำสั่ง</div>
+                    <div style="font-size: 11.5px; color: #8B92A3; line-height: 1.4;">สั่ง AI เพิ่ม ลบ
+                        แก้ไขข้อมูลผ่านการพิมพ์</div>
                 </div>
             </div>
-            <div style="display:flex; align-items:flex-start; gap:10px;">
-                <span style="font-size:18px; flex-shrink:0; margin-top:1px;">🧠</span>
+            <div style="height: 1px; background: #E1E5EF; margin: 2px 0;"></div>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="
+          width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+          background: rgba(45, 143, 111, 0.12);
+          display: flex; align-items: center; justify-content: center;
+          font-size: 15px;
+        ">🧠</div>
                 <div>
-                    <div style="font-size:13px; font-weight:700; color:#e0d4ff;">วิเคราะห์อัตโนมัติ</div>
-                    <div style="font-size:12px; color:#8888a8; line-height:1.5;">ตรวจสอบ เปรียบเทียบ
+                    <div style="font-size: 13px; font-weight: 600; color: #1E2430;">วิเคราะห์อัตโนมัติ</div>
+                    <div style="font-size: 11.5px; color: #8B92A3; line-height: 1.4;">ตรวจสอบ เปรียบเทียบ
                         หาข้อผิดพลาดในข้อมูล</div>
                 </div>
             </div>
-            <div style="display:flex; align-items:flex-start; gap:10px;">
-                <span style="font-size:18px; flex-shrink:0; margin-top:1px;">↩️</span>
+            <div style="height: 1px; background: #E1E5EF; margin: 2px 0;"></div>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="
+          width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+          background: rgba(74, 111, 165, 0.12);
+          display: flex; align-items: center; justify-content: center;
+          font-size: 15px;
+        ">↩️</div>
                 <div>
-                    <div style="font-size:13px; font-weight:700; color:#e0d4ff;">ย้อนกลับได้ทุกขั้นตอน</div>
-                    <div style="font-size:12px; color:#8888a8; line-height:1.5;">ทุกการแก้ไขมี Undo
-                        พร้อมบันทึกประวัติทั้งหมด</div>
+                    <div style="font-size: 13px; font-weight: 600; color: #1E2430;">ย้อนกลับได้ทุกขั้นตอน</div>
+                    <div style="font-size: 11.5px; color: #8B92A3; line-height: 1.4;">ทุกการแก้ไขมี Undo
+                        พร้อมบันทึกประวัติ</div>
                 </div>
             </div>
         </div>
 
         <!-- CTA Button -->
         <a href="/admin/instruction-ai" id="annCtaBtn" style="
-      display: flex; align-items: center; justify-content: center; gap: 8px;
-      width: 100%; padding: 12px 0;
-      background: linear-gradient(135deg, #7c5cfc 0%, #6c47ff 100%);
-      color: #fff; font-size: 15px; font-weight: 700;
-      border: none; border-radius: 12px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      width: 100%; padding: 10px 0;
+      background: #4A6FA5;
+      color: #fff; font-size: 14px; font-weight: 600;
+      border: none; border-radius: 8px; cursor: pointer;
       text-decoration: none;
-      transition: all 0.2s;
-      box-shadow: 0 4px 15px rgba(124,92,252,0.35);
+      transition: all 0.2s ease;
+      font-family: 'Mali', 'Inter', sans-serif;
+      box-shadow: 0 2px 8px rgba(74, 111, 165, 0.25);
     ">
             <span>ไปลองเลย</span>
-            <span style="font-size:16px;">→</span>
+            <span style="font-size: 15px;">→</span>
         </a>
 
         <!-- Dismiss checkbox -->
         <label id="annDismissLabel" style="
-      display: flex; align-items: center; gap: 8px;
-      margin-top: 16px; cursor: pointer;
-      font-size: 12px; color: #777;
+      display: flex; align-items: center; gap: 7px;
+      margin-top: 14px; cursor: pointer;
+      font-size: 12px; color: #8B92A3;
       user-select: none;
     ">
             <input type="checkbox" id="annDismissCheck" style="
-        accent-color: #7c5cfc; width: 15px; height: 15px; cursor: pointer;
+        accent-color: #4A6FA5; width: 14px; height: 14px; cursor: pointer;
       ">
             ไม่แสดงอีกภายใน 1 วัน
         </label>
@@ -142,7 +169,7 @@
     @keyframes annSlideUp {
         from {
             opacity: 0;
-            transform: translateY(30px) scale(0.96);
+            transform: translateY(20px) scale(0.98);
         }
 
         to {
@@ -152,12 +179,14 @@
     }
 
     #annCloseBtn:hover {
-        background: rgba(255, 255, 255, 0.15);
-        color: #fff;
+        background: #F6F7FB;
+        color: #1E2430;
+        border-color: #ccc;
     }
 
     #annCtaBtn:hover {
-        box-shadow: 0 6px 25px rgba(124, 92, 252, 0.5);
+        background: #365983;
+        box-shadow: 0 4px 12px rgba(74, 111, 165, 0.35);
         transform: translateY(-1px);
     }
 </style>
