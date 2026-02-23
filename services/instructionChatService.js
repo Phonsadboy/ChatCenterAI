@@ -709,6 +709,181 @@ class InstructionChatService {
         };
     }
 
+    // ──────────────────────────── VERSION MANAGEMENT TOOLS ────────────────────────────
+
+    async list_versions(instructionId) {
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const instId = inst.instructionId || instructionId;
+        const versionColl = this.db.collection("instruction_versions");
+        const versions = await versionColl.find({ instructionId: instId })
+            .sort({ version: -1 })
+            .project({ version: 1, snapshotAt: 1, note: 1, title: 1, instructionId: 1 })
+            .toArray();
+
+        // Also check current instruction version
+        const currentVersion = Number.isInteger(inst.version) ? inst.version : 1;
+
+        return {
+            instructionId: instId,
+            instructionName: inst.name || "Untitled",
+            currentVersion,
+            totalVersions: versions.length,
+            versions: versions.map(v => ({
+                version: v.version,
+                snapshotAt: v.snapshotAt,
+                note: v.note || "",
+            })),
+            note: versions.length === 0
+                ? "ยังไม่มีเวอร์ชันที่บันทึกไว้ — ใช้ save_version เพื่อบันทึกเวอร์ชันใหม่"
+                : "ใช้ view_version_detail(version) เพื่อดูรายละเอียดของแต่ละเวอร์ชัน",
+        };
+    }
+
+    async save_version(instructionId, { note = "" }, sessionId) {
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const instId = inst.instructionId || instructionId;
+        const versionColl = this.db.collection("instruction_versions");
+
+        // Find the next version number
+        const latest = await versionColl.find({ instructionId: instId })
+            .sort({ version: -1 }).limit(1).toArray();
+        const nextVersion = latest.length > 0 ? (latest[0].version || 0) + 1 : 1;
+
+        // Create snapshot of current instruction state
+        const snapshot = {
+            instructionId: instId,
+            version: nextVersion,
+            name: inst.name || "",
+            description: inst.description || "",
+            dataItems: (inst.dataItems || []).map(item => {
+                const copy = { itemId: item.itemId, title: item.title, type: item.type };
+                if (item.type === "table" && item.data) {
+                    copy.data = {
+                        columns: item.data.columns || [],
+                        rowCount: Array.isArray(item.data.rows) ? item.data.rows.length : 0,
+                        // Store full rows for recovery
+                        rows: item.data.rows || [],
+                    };
+                } else if (item.type === "text") {
+                    copy.content = item.content || "";
+                }
+                return copy;
+            }),
+            note: (note || "").substring(0, 500),
+            snapshotAt: new Date(),
+            savedBy: "instructionAI",
+        };
+
+        await versionColl.updateOne(
+            { instructionId: instId, version: nextVersion },
+            { $set: snapshot },
+            { upsert: true }
+        );
+
+        // Also update the current instruction's version number
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $set: { version: nextVersion, updatedAt: new Date() } }
+        );
+        this._invalidateCache();
+
+        // Log the change
+        await this._logChange(instructionId, sessionId, "save_version",
+            { version: nextVersion, note },
+            null,
+            { version: nextVersion }
+        );
+
+        return {
+            success: true,
+            version: nextVersion,
+            note: snapshot.note,
+            snapshotAt: snapshot.snapshotAt,
+            dataItemCount: snapshot.dataItems.length,
+            message: `✅ บันทึกเวอร์ชัน ${nextVersion} เรียบร้อย${snapshot.note ? " (" + snapshot.note + ")" : ""}`,
+        };
+    }
+
+    async view_version_detail(instructionId, { version }) {
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const instId = inst.instructionId || instructionId;
+        if (version == null) return { error: "ต้องระบุ version" };
+
+        const versionColl = this.db.collection("instruction_versions");
+        const snapshot = await versionColl.findOne({ instructionId: instId, version: Number(version) });
+        if (!snapshot) return { error: `ไม่พบเวอร์ชัน ${version}` };
+
+        return {
+            version: snapshot.version,
+            name: snapshot.name || snapshot.title || "",
+            note: snapshot.note || "",
+            snapshotAt: snapshot.snapshotAt,
+            dataItems: (snapshot.dataItems || []).map(item => {
+                const base = { itemId: item.itemId, title: item.title, type: item.type };
+                if (item.type === "table" && item.data) {
+                    base.columns = item.data.columns || [];
+                    base.rowCount = item.data.rowCount || (Array.isArray(item.data.rows) ? item.data.rows.length : 0);
+                } else if (item.type === "text") {
+                    const content = item.content || "";
+                    base.charCount = content.length;
+                    base.preview = content.substring(0, 200) + (content.length > 200 ? "..." : "");
+                }
+                return base;
+            }),
+            // For legacy format
+            ...(snapshot.content && !snapshot.dataItems ? {
+                legacyContent: (snapshot.content || "").substring(0, 500),
+            } : {}),
+        };
+    }
+
+    async compare_version_stats(instructionId, { version1, version2 }) {
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+        if (version1 == null || version2 == null) return { error: "ต้องระบุ version1 และ version2" };
+
+        const instId = inst.instructionId || instructionId;
+        const threadService = new ConversationThreadService(this.db);
+
+        const [stats1, stats2] = await Promise.all([
+            threadService.getConversationAnalytics(instId, Number(version1)),
+            threadService.getConversationAnalytics(instId, Number(version2)),
+        ]);
+
+        const fmt = (v) => ({
+            totalConversations: v.totalThreads || 0,
+            conversionRate: (v.conversionRate || 0) + "%",
+            avgUserMessages: v.avgUserMessages || 0,
+            purchasedCount: v.purchasedCount || 0,
+            notPurchasedCount: v.notPurchasedCount || 0,
+            totalOrderAmount: v.totalOrderAmount || 0,
+            topProducts: (v.topProducts || []).slice(0, 3),
+        });
+
+        const s1 = fmt(stats1);
+        const s2 = fmt(stats2);
+
+        // Compute deltas
+        const convDelta = (stats2.conversionRate || 0) - (stats1.conversionRate || 0);
+        const msgDelta = (stats2.avgUserMessages || 0) - (stats1.avgUserMessages || 0);
+
+        return {
+            version1: { version: Number(version1), stats: s1 },
+            version2: { version: Number(version2), stats: s2 },
+            comparison: {
+                conversionChange: convDelta > 0 ? `+${convDelta.toFixed(1)}% 📈` : `${convDelta.toFixed(1)}% 📉`,
+                avgMessagesChange: msgDelta > 0 ? `+${msgDelta.toFixed(1)} msgs` : `${msgDelta.toFixed(1)} msgs`,
+                moreConversations: (stats2.totalThreads || 0) - (stats1.totalThreads || 0),
+            },
+        };
+    }
+
     // ──────────────────────────── CONVERSATION ANALYSIS TOOLS ────────────────────────────
 
     async get_conversation_stats(instructionId) {
@@ -826,6 +1001,11 @@ class InstructionChatService {
             { type: "function", function: { name: "get_conversation_stats", description: "ดูสถิติภาพรวมของสนทนาลูกค้าที่ใช้ instruction นี้: conversion rate, จำนวนสนทนา, ยอดขาย, สินค้ายอดนิยม, แพลตฟอร์ม — ใช้เพื่อวิเคราะห์ประสิทธิภาพ", parameters: { type: "object", properties: {} } } },
             { type: "function", function: { name: "search_conversations", description: "ค้นหาสนทนาลูกค้าตามเงื่อนไข: outcome (purchased/not_purchased/pending), จำนวนข้อความ, สินค้า — ส่งคืนรายการ threads พร้อม threadId สำหรับดูรายละเอียด", parameters: { type: "object", properties: { outcome: { type: "string", description: "กรอง: purchased, not_purchased, pending" }, minMessages: { type: "number", description: "จำนวนข้อความลูกค้าขั้นต่ำ" }, maxMessages: { type: "number", description: "จำนวนข้อความลูกค้าสูงสุด" }, products: { type: "array", items: { type: "string" }, description: "กรองตามสินค้าที่ซื้อ" }, limit: { type: "number", description: "จำนวนผลลัพธ์ (default 10, max 20)" } } } } },
             { type: "function", function: { name: "get_conversation_detail", description: "ดูข้อความจริงของสนทนาลูกค้า — ใช้ threadId จาก search_conversations — แสดงทั้งข้อความลูกค้าและคำตอบ AI", parameters: { type: "object", properties: { threadId: { type: "string", description: "ID ของ thread จาก search_conversations" }, page: { type: "number" }, limit: { type: "number" } }, required: ["threadId"] } } },
+            // ── Version Management Tools ──
+            { type: "function", function: { name: "list_versions", description: "ดูรายการเวอร์ชันทั้งหมดของ instruction นี้ — แสดง version number, วันที่บันทึก, หมายเหตุ", parameters: { type: "object", properties: {} } } },
+            { type: "function", function: { name: "save_version", description: "บันทึกสถานะปัจจุบันของ instruction เป็นเวอร์ชันใหม่ พร้อมหมายเหตุ — ใช้เมื่อแก้ไขเสร็จแล้วต้องการจดบันทึกไว้", parameters: { type: "object", properties: { note: { type: "string", description: "หมายเหตุสำหรับเวอร์ชันนี้ เช่น 'เพิ่มโปรโมชันเดือน ก.พ.'" } } } } },
+            { type: "function", function: { name: "view_version_detail", description: "ดูรายละเอียดของเวอร์ชันเก่า — แสดง data items, columns, row count, เนื้อหา text", parameters: { type: "object", properties: { version: { type: "number", description: "หมายเลขเวอร์ชัน" } }, required: ["version"] } } },
+            { type: "function", function: { name: "compare_version_stats", description: "เปรียบเทียบสถิติสนทนาลูกค้าระหว่าง 2 เวอร์ชัน — ดูว่า conversion rate เพิ่มขึ้นหรือลดลง", parameters: { type: "object", properties: { version1: { type: "number", description: "เวอร์ชันแรก" }, version2: { type: "number", description: "เวอร์ชันที่สอง" } }, required: ["version1", "version2"] } } },
         ];
     }
 
@@ -867,6 +1047,17 @@ class InstructionChatService {
         if (conversationTools.includes(toolName)) {
             if (toolName === "get_conversation_stats") return this.get_conversation_stats(instructionId);
             return this[toolName](instructionId, args);
+        }
+
+        // Version management tools
+        const versionReadTools = ["list_versions", "view_version_detail", "compare_version_stats"];
+        const versionWriteTools = ["save_version"];
+        if (versionReadTools.includes(toolName)) {
+            if (toolName === "list_versions") return this.list_versions(instructionId);
+            return this[toolName](instructionId, args);
+        }
+        if (versionWriteTools.includes(toolName)) {
+            return this[toolName](instructionId, args, sessionId);
         }
 
         return { error: `Unknown tool: ${toolName}` };
