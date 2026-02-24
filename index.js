@@ -20,6 +20,11 @@ const InstructionChatService = require("./services/instructionChatService");
 const ConversationThreadService = require("./services/conversationThreadService");
 const createNotificationService = require("./services/notificationService");
 const slipOkService = require("./services/slipOkService");
+const { AgentForgeService } = require("./services/agentForgeService");
+const { AgentForgeRunner } = require("./services/agentForgeRunner");
+const { AgentForgeScheduler } = require("./services/agentForgeScheduler");
+const createAgentForgeRouter = require("./routes/agentForge");
+const createAgentForgeAdminRouter = require("./routes/agentForgeAdmin");
 // Middleware & misc packages for UI
 const helmet = require("helmet");
 const cors = require("cors");
@@ -996,6 +1001,51 @@ function requireAdmin(req, res, next) {
     });
   }
   return next();
+}
+
+const agentForgeService = new AgentForgeService(connectDB, {
+  timezone: "Asia/Bangkok",
+});
+
+const agentForgeRunner = new AgentForgeRunner({
+  connectDB,
+  agentForgeService,
+  openaiClient: openaiSingleton,
+  timezone: "Asia/Bangkok",
+});
+
+const agentForgeScheduler = new AgentForgeScheduler({
+  agentForgeService,
+  agentForgeRunner,
+  timezone: "Asia/Bangkok",
+});
+
+async function getAgentRuntimeForPage(platform, botId) {
+  if (!platform || !botId) {
+    return {
+      managed: false,
+      agentId: null,
+      agentName: null,
+      mode: null,
+      customerDefaultModel: null,
+    };
+  }
+  const pageKey = `${platform}:${botId}`;
+  try {
+    return await agentForgeService.getPageAgentRuntime(pageKey);
+  } catch (error) {
+    console.warn(
+      `[AgentForge] Failed to resolve runtime for ${pageKey}:`,
+      error?.message || error,
+    );
+    return {
+      managed: false,
+      agentId: null,
+      agentName: null,
+      mode: null,
+      customerDefaultModel: null,
+    };
+  }
 }
 
 function buildChatHistoryUserMatch(userId) {
@@ -5749,7 +5799,17 @@ async function processFlushedMessages(
   const platform = queueContext.platform || queueContext.botType || "line";
   const botIdForHistory = queueContext.botId || null;
   const aiModelOverride = queueContext.aiModel || null;
-  const disableAiReply = !!queueContext.disableAiReply;
+  const queueDisableAiReply = !!queueContext.disableAiReply;
+  const agentManaged = !!queueContext.agentManaged;
+  const agentMode =
+    queueContext.agentMode === "ai-live-reply"
+      ? "ai-live-reply"
+      : queueContext.agentMode === "human-only"
+        ? "human-only"
+        : null;
+  const disableAiReply = agentManaged
+    ? agentMode === "human-only"
+    : queueDisableAiReply;
   const replyToken =
     mergedContent.length > 0
       ? mergedContent[mergedContent.length - 1].replyToken
@@ -5807,6 +5867,21 @@ async function processFlushedMessages(
     }
   }
 
+  const emergencyStop = await getSettingValue("agentEmergencyStop", false);
+  if (emergencyStop) {
+    console.log("[LOG] Agent emergency stop เปิดใช้งาน - ข้ามการตอบ AI");
+    await saveChatHistory(
+      userId,
+      mergedContent,
+      "",
+      platform,
+      botIdForHistory,
+      queueContext.selectedInstructions,
+      queueContext.botName,
+    );
+    return;
+  }
+
   // ตรวจสอบโหมดระบบ
   const systemMode = await getSettingValue("systemMode", "production");
   if (systemMode === "maintenance") {
@@ -5819,7 +5894,24 @@ async function processFlushedMessages(
     return;
   }
 
-  // กรณีปิด bot/หยุดตอบอัตโนมัติ (ยังคงบันทึกประวัติ + งานติดตาม/ออเดอร์)
+  // agent.mode มี priority เหนือ bot.status สำหรับเพจที่อยู่ภายใต้ Agent Forge
+  if (agentManaged && agentMode === "human-only") {
+    console.log(
+      `[LOG] Agent mode = human-only, บันทึกข้อความโดยไม่ตอบกลับสำหรับผู้ใช้: ${userId}`,
+    );
+    await saveChatHistory(
+      userId,
+      mergedContent,
+      "",
+      platform,
+      botIdForHistory,
+      queueContext.selectedInstructions,
+      queueContext.botName,
+    );
+    return;
+  }
+
+  // กรณีเพจที่ไม่ได้ถูกจัดการโดย Agent Forge ให้ใช้พฤติกรรมเดิมตาม bot.status
   if (disableAiReply) {
     console.log(
       `[LOG] Bot ปิดการตอบอัตโนมัติ - บันทึกข้อความโดยไม่ตอบกลับสำหรับผู้ใช้: ${userId}`,
@@ -5832,11 +5924,6 @@ async function processFlushedMessages(
   const aiEnabled = userStatus.aiEnabled;
   console.log(
     `[LOG] สถานะการใช้ AI ของผู้ใช้ ${userId}: ${aiEnabled ? "เปิดใช้งาน" : "ปิดใช้งาน"}`,
-  );
-
-  const history = await getAIHistory(userId);
-  console.log(
-    `[LOG] ดึงประวัติ (สำหรับ AI) ของผู้ใช้ ${userId}: ${history.length} ข้อความ`,
   );
 
   // ตรวจสอบการตั้งค่า AI ในระดับระบบ
@@ -5852,9 +5939,22 @@ async function processFlushedMessages(
     console.log(
       `[LOG] AI ปิดใช้งาน, บันทึกข้อความโดยไม่มีการตอบกลับสำหรับผู้ใช้: ${userId}`,
     );
-    await saveChatHistory(userId, mergedContent, "", platform, botIdForHistory);
+    await saveChatHistory(
+      userId,
+      mergedContent,
+      "",
+      platform,
+      botIdForHistory,
+      queueContext.selectedInstructions,
+      queueContext.botName,
+    );
     return;
   }
+
+  const history = await getAIHistory(userId);
+  console.log(
+    `[LOG] ดึงประวัติ (สำหรับ AI) ของผู้ใช้ ${userId}: ${history.length} ข้อความ`,
+  );
 
   // ตรวจสอบการตั้งค่าการรวมข้อความ
   const enableMessageMerging = await getSettingValue(
@@ -8414,6 +8514,15 @@ server.listen(PORT, async () => {
   }
 
   try {
+    await agentForgeService.ensureIndexes();
+  } catch (agentForgeIndexError) {
+    console.error(
+      `[ERROR] agentForgeService.ensureIndexes ล้มเหลว:`,
+      agentForgeIndexError,
+    );
+  }
+
+  try {
     await ensureFollowUpIndexes();
   } catch (followUpIndexError) {
     console.error(`[ERROR] ensureFollowUpIndexes ล้มเหลว:`, followUpIndexError);
@@ -8429,6 +8538,15 @@ server.listen(PORT, async () => {
     await startNotificationSummaryScheduler();
   } catch (summaryError) {
     console.error(`[ERROR] startNotificationSummaryScheduler ล้มเหลว:`, summaryError);
+  }
+
+  try {
+    agentForgeScheduler.start();
+  } catch (agentForgeSchedulerError) {
+    console.error(
+      `[ERROR] agentForgeScheduler.start ล้มเหลว:`,
+      agentForgeSchedulerError,
+    );
   }
 
   // Telemetry: ส่ง heartbeat ไป Telegram (fire-and-forget)
@@ -11242,6 +11360,26 @@ app.post("/admin/logout", async (req, res) => {
 
 app.use("/admin", enforceAdminLogin);
 
+app.use(
+  "/api/agent-forge",
+  createAgentForgeRouter({
+    connectDB,
+    requireAdmin,
+    getAdminUserContext,
+    agentForgeService,
+    agentForgeRunner,
+    agentForgeScheduler,
+  }),
+);
+
+app.use(
+  "/admin/agent-forge",
+  createAgentForgeAdminRouter({
+    requireAdmin,
+    agentForgeService,
+  }),
+);
+
 // ============================ Admin Passcode Management API ============================
 
 app.get("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
@@ -11386,9 +11524,24 @@ app.post("/webhook/line/:botId", async (req, res) => {
 
     const lineBot = await coll.findOne({ $or: queryConditions });
 
-    if (!lineBot || lineBot.status !== "active") {
+    if (!lineBot) {
       return res.status(404).json({ error: "Line Bot ไม่พบหรือไม่เปิดใช้งาน" });
     }
+
+    const botIsActive = lineBot.status === "active";
+    const pageRuntime = await getAgentRuntimeForPage(
+      "line",
+      lineBot._id ? lineBot._id.toString() : botId,
+    );
+    const allowInbound = botIsActive || pageRuntime.managed;
+
+    if (!allowInbound) {
+      return res.status(404).json({ error: "Line Bot ไม่พบหรือไม่เปิดใช้งาน" });
+    }
+
+    const disableAiReply = pageRuntime.managed
+      ? pageRuntime.mode === "human-only"
+      : !botIsActive;
 
     // Create Line client for this bot
     const lineConfig = {
@@ -11415,10 +11568,19 @@ app.post("/webhook/line/:botId", async (req, res) => {
       lineClient,
       channelAccessToken: lineBot.channelAccessToken,
       channelSecret: lineBot.channelSecret,
-      aiModel: lineBot.aiModel || null,
+      aiModel:
+        pageRuntime.managed && pageRuntime.customerDefaultModel
+          ? pageRuntime.customerDefaultModel
+          : lineBot.aiModel || null,
       selectedInstructions: lineBot.selectedInstructions || [],
       botName: lineBot.name || null,
       selectedImageCollections: lineBot.selectedImageCollections || null,
+      disableAiReply,
+      agentManaged: pageRuntime.managed,
+      agentId: pageRuntime.agentId || null,
+      agentMode: pageRuntime.mode || null,
+      botStatus: lineBot.status || null,
+      runtimePriority: pageRuntime.managed ? "agent_mode" : "bot_status",
     };
 
     for (const event of events) {
@@ -11497,7 +11659,13 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
     }
 
     const botIsActive = facebookBot.status === "active";
-    const disableAiReply = !botIsActive;
+    const pageRuntime = await getAgentRuntimeForPage(
+      "facebook",
+      facebookBot._id ? facebookBot._id.toString() : botId,
+    );
+    const disableAiReply = pageRuntime.managed
+      ? pageRuntime.mode === "human-only"
+      : !botIsActive;
 
     const pageId = facebookBot.pageId || facebookBot._id.toString();
     const accessToken = facebookBot.accessToken;
@@ -11507,11 +11675,19 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
       platform: "facebook",
       botId: facebookBot._id ? facebookBot._id.toString() : null,
       facebookAccessToken: facebookBot.accessToken,
-      aiModel: facebookBot.aiModel || null,
+      aiModel:
+        pageRuntime.managed && pageRuntime.customerDefaultModel
+          ? pageRuntime.customerDefaultModel
+          : facebookBot.aiModel || null,
       selectedInstructions: facebookBot.selectedInstructions || [],
       botName: facebookBot.name || null,
       selectedImageCollections: facebookBot.selectedImageCollections || null,
       disableAiReply,
+      agentManaged: pageRuntime.managed,
+      agentId: pageRuntime.agentId || null,
+      agentMode: pageRuntime.mode || null,
+      botStatus: facebookBot.status || null,
+      runtimePriority: pageRuntime.managed ? "agent_mode" : "bot_status",
     };
 
     // Respond immediately to avoid Facebook retries
@@ -18611,12 +18787,19 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     // Build system prompt (GPT-5.2 optimized)
     const systemPrompt = buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsSummary);
 
-    // Build messages array
-    const messages = [
-      { role: "system", content: systemPrompt },
-      ...history,
-      { role: "user", content: message },
-    ];
+    const safeHistory = Array.isArray(history) ? history : [];
+    const lastHistoryMsg = safeHistory[safeHistory.length - 1];
+    const isDuplicatedUserMessage =
+      lastHistoryMsg &&
+      lastHistoryMsg.role === "user" &&
+      typeof lastHistoryMsg.content === "string" &&
+      lastHistoryMsg.content.trim() === message.trim();
+
+    // Build messages array (avoid duplicating latest user turn)
+    const messages = [{ role: "system", content: systemPrompt }, ...safeHistory];
+    if (!isDuplicatedUserMessage) {
+      messages.push({ role: "user", content: message });
+    }
 
     // Model-specific reasoning config
     const REASONING_SUPPORT = {
@@ -18962,9 +19145,10 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     // SSE headers
     res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("Content-Encoding", "identity");
     res.flushHeaders();
 
     const sessionId = clientSessionId || `ses_${Date.now().toString(36)}`;
@@ -18986,7 +19170,12 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
       requestState.events.push({ event, data, payload });
       for (const listener of requestState.listeners) {
-        try { listener.write(payload); } catch (e) { requestState.listeners.delete(listener); }
+        try {
+          listener.write(payload);
+          if (typeof listener.flush === "function") listener.flush();
+        } catch (e) {
+          requestState.listeners.delete(listener);
+        }
       }
     };
 
@@ -18994,7 +19183,12 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const heartbeatInterval = setInterval(() => {
       const comment = `: heartbeat ${Date.now()}\n\n`;
       for (const listener of requestState.listeners) {
-        try { listener.write(comment); } catch (e) { requestState.listeners.delete(listener); }
+        try {
+          listener.write(comment);
+          if (typeof listener.flush === "function") listener.flush();
+        } catch (e) {
+          requestState.listeners.delete(listener);
+        }
       }
     }, 15000);
 
@@ -19022,8 +19216,18 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const systemPrompt = buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsSummary);
 
     // Build user message with optional images (vision API)
+    const safeHistory = Array.isArray(history) ? history : [];
+    const hasIncomingImages = Array.isArray(images) && images.length > 0;
+    const lastHistoryMsg = safeHistory[safeHistory.length - 1];
+    const isDuplicatedUserMessage =
+      !hasIncomingImages &&
+      lastHistoryMsg &&
+      lastHistoryMsg.role === "user" &&
+      typeof lastHistoryMsg.content === "string" &&
+      lastHistoryMsg.content.trim() === message.trim();
+
     let userContent;
-    if (Array.isArray(images) && images.length > 0) {
+    if (hasIncomingImages) {
       const imageParts = [];
       for (const img of images.slice(0, 10)) {
         // Include filename as text annotation so AI knows the original name
@@ -19045,9 +19249,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     const messages = [
       { role: "system", content: systemPrompt },
-      ...history,
-      { role: "user", content: userContent },
+      ...safeHistory,
     ];
+    if (!isDuplicatedUserMessage) {
+      messages.push({ role: "user", content: userContent });
+    }
 
     // Reasoning config
     const REASONING_SUPPORT = {
@@ -19066,8 +19272,6 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const changes = [];
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
     const initialMsgCount = messages.length; // Track where tool messages start
-
-    sendEvent("session", { sessionId });
 
     // ─── Fully Streaming Tool Loop (max 8 iterations) ─────────────────────────
     // Every iteration uses streaming for real-time thinking + tool detection
@@ -19236,7 +19440,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
       // Auto-save session (even if client disconnected)
       try {
-        const fullHistory = [...history, { role: "user", content: message }, ...assistantMessages];
+        const fullHistory = isDuplicatedUserMessage
+          ? [...safeHistory, ...assistantMessages]
+          : [...safeHistory, { role: "user", content: message }, ...assistantMessages];
         await db.collection("instruction_chat_sessions").updateOne(
           { sessionId },
           {
@@ -19290,9 +19496,10 @@ app.get("/api/instruction-ai/stream/resume", requireAdmin, (req, res) => {
 
   // SSE headers
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("Content-Encoding", "identity");
   res.flushHeaders();
 
   // Replay all buffered events

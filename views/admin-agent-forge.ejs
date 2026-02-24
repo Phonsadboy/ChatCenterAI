@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ระบบโรงหลอมเอเจนต์</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <link href="/css/style.css" rel="stylesheet" />
+  <link href="/css/agent-forge.css" rel="stylesheet" />
+</head>
+
+<body class="app-shell">
+  <%- include('partials/admin-navbar', { activePage: 'agent-forge' }) %>
+
+    <div class="app-content">
+      <div class="container-fluid py-4">
+        <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-4">
+          <div>
+            <h1 class="h4 mb-1"><i class="fas fa-industry me-2 text-primary"></i>ระบบโรงหลอมเอเจนต์ (Agent Forge)</h1>
+            <p class="text-muted mb-0">ปรับ instruction อัตโนมัติ, ทดสอบอย่างน้อย 5 เคส, และเก็บ trace แบบ forensic</p>
+          </div>
+          <button class="btn btn-primary" id="refreshAgentsBtn"><i class="fas fa-sync-alt me-2"></i>รีเฟรช</button>
+        </div>
+
+        <div class="row g-3 mb-4" id="healthCards"></div>
+
+        <div class="card mb-4 shadow-sm border-0">
+          <div class="card-header bg-white border-0 py-3">
+            <strong>สร้าง Agent ใหม่</strong>
+          </div>
+          <div class="card-body">
+            <form id="createAgentForm" class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">ชื่อ Agent</label>
+                <input type="text" class="form-control" id="newAgentName" required placeholder="เช่น Forge - เพจน้ำมันทิพยมนต์" />
+              </div>
+              <div class="col-md-2">
+                <label class="form-label">โหมดเริ่มต้น</label>
+                <select id="newAgentMode" class="form-select">
+                  <option value="human-only">human-only</option>
+                  <option value="ai-live-reply">ai-live-reply</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Instruction ID (Mongo _id)</label>
+                <input type="text" class="form-control" id="newInstructionId" placeholder="optional" />
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Customer Model Default</label>
+                <input type="text" class="form-control" id="newCustomerModel" value="gpt-4.1" />
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">เลือกเพจที่ดูแล</label>
+                <div class="managed-pages" id="managedPageSelector"></div>
+              </div>
+
+              <div class="col-12 d-flex gap-2">
+                <button class="btn btn-success" type="submit"><i class="fas fa-plus me-2"></i>สร้าง Agent</button>
+                <button class="btn btn-outline-secondary" type="button" id="clearCreateFormBtn">ล้างฟอร์ม</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="card shadow-sm border-0">
+          <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
+            <strong>รายการ Agent</strong>
+            <small class="text-muted" id="agentCountLabel">0 agents</small>
+          </div>
+          <div class="table-responsive">
+            <table class="table align-middle mb-0" id="agentsTable">
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Mode</th>
+                  <th>Pages</th>
+                  <th>Customer Model</th>
+                  <th>ล่าสุด</th>
+                  <th class="text-end">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="agentsTableBody">
+                <tr>
+                  <td colspan="6" class="text-center text-muted py-4">กำลังโหลด...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__AGENT_FORGE_BOOTSTRAP__ = {
+        agents: <%- JSON.stringify(agents || []).replace(/</g, '\\u003c') %>,
+        managedPages: <%- JSON.stringify(managedPages || []).replace(/</g, '\\u003c') %>
+      };
+    </script>
+    <script src="/js/agent-forge.js"></script>
+</body>
+
+</html>

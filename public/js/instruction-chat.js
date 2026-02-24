@@ -110,6 +110,7 @@
     async function sendMessage(text) {
         if (!text.trim() || !state.selectedId || state.sending) return;
 
+        const historyForRequest = [...state.history];
         state.sending = true;
         updateSendButton();
         dom.input.value = "";
@@ -158,7 +159,7 @@
                     message: text,
                     model: state.model,
                     thinking: state.thinking,
-                    history: state.history,
+                    history: historyForRequest,
                     sessionId: state.sessionId,
                     images: uploadedImages.length > 0 ? uploadedImages : undefined,
                 }),
@@ -216,6 +217,17 @@
         let buffer = "";
         let currentEventType = "";
         let fullContent = "";
+
+        const getFinalAssistantContent = (assistantMessages) => {
+            if (!Array.isArray(assistantMessages)) return "";
+            for (let i = assistantMessages.length - 1; i >= 0; i--) {
+                const msg = assistantMessages[i];
+                if (msg && msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
+                    return msg.content;
+                }
+            }
+            return "";
+        };
 
         while (true) {
             const { done, value } = await reader.read();
@@ -339,6 +351,17 @@
                         if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
                         if (data.changes) state.totalChanges += data.changes.length;
                         if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
+
+                        // Fallback: some responses may arrive only in done.assistantMessages
+                        if (!fullContent && data.assistantMessages) {
+                            const fallbackContent = getFinalAssistantContent(data.assistantMessages);
+                            if (fallbackContent) {
+                                fullContent = fallbackContent;
+                                contentEl.innerHTML = formatContent(fullContent);
+                                scrollToBottom();
+                            }
+                        }
+
                         state.activeRequestId = null;
                         try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
                         updateStatusBar();
@@ -421,7 +444,24 @@
 
             const result = await handleSSEStream(response, aiMsg, contentEl);
 
-            if (result.fullContent) {
+            const latestAssistantContent = (() => {
+                for (let i = state.history.length - 1; i >= 0; i--) {
+                    const msg = state.history[i];
+                    if (msg && msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
+                        return msg.content.trim();
+                    }
+                }
+                return "";
+            })();
+            const isReplayDuplicate =
+                result.fullContent &&
+                latestAssistantContent &&
+                result.fullContent.trim() === latestAssistantContent;
+
+            if (isReplayDuplicate) {
+                aiMsg.remove();
+                state._lastAssistantMessages = null;
+            } else if (result.fullContent) {
                 const fullMsgs = state._lastAssistantMessages;
                 if (fullMsgs && fullMsgs.length > 0) {
                     for (const m of fullMsgs) state.history.push(m);
