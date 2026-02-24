@@ -356,6 +356,10 @@
   margin-left: auto;
 }
 
+.orders-export-format-select {
+  min-width: 130px;
+}
+
 /* Table Card */
 .orders-table-card {
   background: var(--card-bg, #fff);

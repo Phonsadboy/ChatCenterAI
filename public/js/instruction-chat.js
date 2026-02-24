@@ -287,6 +287,20 @@
                         }
                         break;
 
+                    case "status":
+                        // Show processing status to user while waiting for OpenAI
+                        if (data.phase && contentEl) {
+                            const statusMap = {
+                                thinking: "🧠 AI กำลังคิด...",
+                                continuing: `🔄 ประมวลผลรอบ ${data.iteration || ""}...`,
+                                responding: "✍️ กำลังเขียนคำตอบ...",
+                            };
+                            const statusText = statusMap[data.phase] || "⏳ กำลังประมวลผล...";
+                            contentEl.innerHTML = `<div class="ic-status-text">${statusText}</div>`;
+                            scrollToBottom();
+                        }
+                        break;
+
                     case "content":
                         if (data.text !== undefined) {
                             fullContent += data.text;

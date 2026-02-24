@@ -65,6 +65,7 @@
     els.detailOverlay = document.getElementById('ordersDetailOverlay');
     els.detailPanel = document.getElementById('ordersDetailPanel');
     els.exportBtn = document.getElementById('ordersExportBtn');
+    els.exportFormat = document.getElementById('ordersExportFormat');
     els.detailPrint = document.getElementById('ordersDetailPrint');
   }
 
@@ -491,7 +492,7 @@
     // Backend expects selectedIds as comma-separated string
     const params = new URLSearchParams();
     params.set('selectedIds', ids.join(','));
-    window.location.href = `/admin/orders/export?${params.toString()}`;
+    window.location.href = buildExportUrl(params);
   }
 
   function handleExport() {
@@ -501,12 +502,23 @@
       // Backend expects selectedIds as comma-separated string
       const params = new URLSearchParams();
       params.set('selectedIds', ids.join(','));
-      window.location.href = `/admin/orders/export?${params.toString()}`;
+      window.location.href = buildExportUrl(params);
     } else {
       // Export all orders matching current filters
       const params = buildQueryParams();
-      window.location.href = `/admin/orders/export?${params.toString()}`;
+      window.location.href = buildExportUrl(params);
     }
+  }
+
+  function getExportFormat() {
+    const value = String(els.exportFormat?.value || '').trim().toLowerCase();
+    return value === 'kex' ? 'kex' : 'myorder';
+  }
+
+  function buildExportUrl(params = new URLSearchParams()) {
+    const nextParams = new URLSearchParams(params);
+    nextParams.set('exportFormat', getExportFormat());
+    return `/admin/orders/export?${nextParams.toString()}`;
   }
 
   function handleSortClick(column) {

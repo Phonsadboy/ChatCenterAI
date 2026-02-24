@@ -19058,6 +19058,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       const payload = { model, messages, tools, tool_choice: "auto" };
       if (effort !== "none") payload.reasoning_effort = effort;
 
+      // Let frontend know we're waiting for OpenAI
+      sendEvent("status", { phase: i === 0 ? "thinking" : "continuing", iteration: i + 1 });
+
       // Non-streaming call to detect tool_calls reliably
       const response = await openai.chat.completions.create(payload);
       const choice = response.choices[0];
@@ -19097,6 +19100,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       }
 
       // ─── No tool calls — Final response with real-time streaming ───
+      sendEvent("status", { phase: "responding" });
       try {
         const streamPayload = { ...payload, stream: true, stream_options: { include_usage: true } };
         delete streamPayload.tools;
@@ -23602,9 +23606,35 @@ app.get("/admin/orders/export", async (req, res) => {
       pageNameMap.set(key, label);
     });
 
+    const supportedFormats = new Set(["myorder", "kex"]);
+    const requestFormat =
+      typeof req.query.exportFormat === "string"
+        ? req.query.exportFormat.trim().toLowerCase()
+        : "";
+    const exportFormat = supportedFormats.has(requestFormat)
+      ? requestFormat
+      : "myorder";
     const timezone = "Asia/Bangkok";
 
-    const formatItemsField = (items, getter) => {
+    const toText = (value, fallback = "") => {
+      if (value === null || value === undefined) return fallback;
+      const text = String(value).trim();
+      return text || fallback;
+    };
+
+    const toNumber = (value) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : null;
+    };
+
+    const formatNumberValue = (value) => {
+      const numeric = toNumber(value);
+      if (numeric === null) return "";
+      if (Number.isInteger(numeric)) return String(numeric);
+      return String(Number(numeric.toFixed(3)));
+    };
+
+    const formatItemsField = (items, getter, separator = "\n") => {
       if (!Array.isArray(items) || !items.length) return "";
       return items
         .map((item, idx) => {
@@ -23612,16 +23642,7 @@ app.get("/admin/orders/export", async (req, res) => {
           return value ? String(value).trim() : "";
         })
         .filter(Boolean)
-        .join("\n");
-    };
-
-    const formatDimensionValue = (value) => {
-      if (value === null || value === undefined || value === "") return "";
-      const numeric = Number(value);
-      if (Number.isFinite(numeric)) {
-        return String(numeric);
-      }
-      return String(value);
+        .join(separator);
     };
 
     const formatDateValue = (value) => {
@@ -23645,7 +23666,118 @@ app.get("/admin/orders/export", async (req, res) => {
       return trimmed;
     };
 
-    const exportRows = orders.map((order, index) => {
+    const toQtyText = (value) => {
+      const qty = toNumber(value);
+      return Number.isFinite(qty) && qty > 0 ? String(qty) : "1";
+    };
+
+    const statusLabelMap = {
+      pending: "รอดำเนินการ",
+      confirmed: "ยืนยันแล้ว",
+      shipped: "พิมพ์ใบส่งของแล้ว",
+      completed: "พิมพ์ใบส่งของแล้ว",
+      cancelled: "ยกเลิก",
+    };
+
+    const pickFirstNumeric = (items, keys = []) => {
+      if (!Array.isArray(items) || !items.length) return null;
+      for (const item of items) {
+        if (!item || typeof item !== "object") continue;
+        for (const key of keys) {
+          const numeric = toNumber(item[key]);
+          if (numeric !== null) return numeric;
+        }
+      }
+      return null;
+    };
+
+    const resolveDimension = (orderData, items, keys = []) => {
+      const fromItems = pickFirstNumeric(items, keys);
+      if (fromItems !== null) return fromItems;
+      for (const key of keys) {
+        const numeric = toNumber(orderData?.[key]);
+        if (numeric !== null) return numeric;
+      }
+      return null;
+    };
+
+    const resolveTotalWeight = (orderData, items) => {
+      if (Array.isArray(items) && items.length) {
+        let total = 0;
+        let hasWeight = false;
+        items.forEach((item) => {
+          if (!item || typeof item !== "object") return;
+          const weight = toNumber(item.weight ?? item.weightKg);
+          if (weight === null || weight < 0) return;
+          const qty = toNumber(item.quantity);
+          const safeQty = Number.isFinite(qty) && qty > 0 ? qty : 1;
+          total += weight * safeQty;
+          hasWeight = true;
+        });
+        if (hasWeight) return total;
+      }
+      return toNumber(orderData?.weight ?? orderData?.weightKg ?? orderData?.totalWeight);
+    };
+
+    const normalizePaymentMethodForExport = (value) => {
+      const text = toText(value, "");
+      if (!text) return "";
+      const normalized = text.toLowerCase();
+      if (normalized.includes("cod") || normalized.includes("เก็บเงินปลายทาง")) {
+        return "COD";
+      }
+      return text;
+    };
+
+    const derivePaymentState = (orderData = {}, paymentMethod = "") => {
+      const explicitState = toText(
+        orderData.paymentStatus ||
+        orderData.paymentState ||
+        orderData.paymentResult ||
+        "",
+      );
+      if (explicitState) return explicitState;
+
+      const hasTransfer = Boolean(
+        toText(orderData.transferDate || orderData.paymentDate || "") ||
+        toText(orderData.transferTime || orderData.paymentTime || ""),
+      );
+      if (hasTransfer) return "ชำระเงินแล้ว";
+      if (paymentMethod === "COD") return "รอชำระเงิน";
+      return "-";
+    };
+
+    const resolveOrderNumber = (order, orderData, extractedMoment) => {
+      const directOrderNo = toText(
+        order.orderNo ||
+        order.orderNumber ||
+        orderData.orderNo ||
+        orderData.orderNumber ||
+        orderData.referenceNo ||
+        "",
+      );
+      if (directOrderNo) return directOrderNo;
+      if (extractedMoment && extractedMoment.isValid()) {
+        return String(extractedMoment.valueOf());
+      }
+      return order?._id?.toString?.() || "";
+    };
+
+    const resolveTrackingNo = (orderData = {}) => {
+      const trackingNo = toText(
+        orderData.trackingNo ||
+        orderData.trackingNumber ||
+        orderData.tracking ||
+        "",
+      );
+      const carrier = toText(
+        orderData.shippingProvider || orderData.courier || orderData.carrier || "",
+      );
+      if (trackingNo && carrier) return `${trackingNo} (${carrier})`;
+      return trackingNo || "-";
+    };
+
+    const normalizedRows = orders.map((order, index) => {
       const orderData = order.orderData || {};
       const items = Array.isArray(orderData.items) ? orderData.items : [];
       const addressInfo = normalizeOrderAddress(orderData);
@@ -23663,107 +23795,243 @@ app.get("/admin/orders/export", async (req, res) => {
           : platform === "facebook"
             ? "Facebook (default)"
             : "LINE (default)");
-      const recipientName =
-        normalizeCustomerName(orderData.recipientName) ||
-        normalizeCustomerName(orderData.customerName) ||
-        profileMap[order.userId] ||
-        order.userId ||
-        "";
-      const email = orderData.email || orderData.customerEmail || "";
-      const noteText = order.notes || orderData.notes || "";
-      const transferDate =
-        orderData.transferDate || orderData.paymentDate || "";
-      const transferTime =
-        orderData.transferTime || orderData.paymentTime || "";
-      const paymentReceiver =
-        orderData.paymentReceiver || orderData.receivedBy || "";
-      const paymentMethod =
-        orderData.paymentMethod || orderData.paymentType || "";
-      const phone =
-        orderData.phone ||
-        orderData.customerPhone ||
-        orderData.shippingPhone ||
-        "";
-      const productNames = formatItemsField(items, (item) => {
-        if (!item.product) return "";
-        const qtyText =
-          item.quantity && Number(item.quantity) !== 1
-            ? ` x${item.quantity}`
-            : "";
-        return `${item.product}${qtyText}`;
-      });
-      const shippingProductNames = formatItemsField(items, (item) => {
-        const name =
-          item.shippingName ||
-          item.shippingProductName ||
-          item.product ||
-          "";
-        if (!name) return "";
-        const qtyText =
-          item.quantity && Number(item.quantity) !== 1
-            ? ` x${item.quantity}`
-            : "";
-        return `${name}${qtyText}`;
-      });
-      const colors = formatItemsField(items, (item) => item.color || "");
-      const widths = formatItemsField(items, (item) =>
-        formatDimensionValue(
-          item.width ?? item.widthCm ?? item.itemWidth ?? "",
-        ),
+
+      const customerName = toText(
+        normalizeCustomerName(orderData.customerName) || profileMap[order.userId],
       );
-      const lengths = formatItemsField(items, (item) =>
-        formatDimensionValue(
-          item.length ?? item.lengthCm ?? item.itemLength ?? "",
-        ),
+      const recipientName = toText(
+        normalizeCustomerName(orderData.recipientName) || customerName || order.userId,
       );
-      const heights = formatItemsField(items, (item) =>
-        formatDimensionValue(
-          item.height ?? item.heightCm ?? item.itemHeight ?? "",
-        ),
+      const phone = toText(
+        orderData.phone || orderData.customerPhone || orderData.shippingPhone || "",
       );
-      const weights = formatItemsField(items, (item) =>
-        formatDimensionValue(item.weight ?? item.weightKg ?? ""),
+      const noteText = toText(order.notes || orderData.notes || "");
+      const paymentMethodRaw = toText(orderData.paymentMethod || orderData.paymentType || "");
+      const paymentMethod = normalizePaymentMethodForExport(paymentMethodRaw);
+      const transferDate = orderData.transferDate || orderData.paymentDate || "";
+      const transferTime = orderData.transferTime || orderData.paymentTime || "";
+      const totalAmount = toNumber(orderData.totalAmount) || 0;
+      const shippingCost = toNumber(orderData.shippingCost) || 0;
+      const discount =
+        toNumber(orderData.discount ?? orderData.discountAmount ?? order.discount) || 0;
+      const totalWeight = resolveTotalWeight(orderData, items);
+      const width = resolveDimension(orderData, items, ["width", "widthCm", "itemWidth"]);
+      const length = resolveDimension(orderData, items, ["length", "lengthCm", "itemLength"]);
+      const height = resolveDimension(orderData, items, ["height", "heightCm", "itemHeight"]);
+
+      const extractedMoment = order.extractedAt
+        ? moment(order.extractedAt).tz(timezone)
+        : null;
+      const orderNo = resolveOrderNumber(order, orderData, extractedMoment);
+      const paymentState = derivePaymentState(orderData, paymentMethod);
+
+      const addressText = toText(
+        addressInfo.fullAddress || orderData.shippingAddress || orderData.address || "",
+      );
+      const postalCodeText = toText(addressInfo.postalCode || orderData.addressPostalCode || "");
+
+      const productCodeList = formatItemsField(
+        items,
+        (item) => {
+          const code = toText(
+            item.sku ||
+            item.code ||
+            item.productCode ||
+            item.productId ||
+            item.shippingName ||
+            item.product ||
+            "",
+          );
+          if (!code) return "";
+          return `${code} (${toQtyText(item.quantity)})`;
+        },
+        ", ",
+      );
+      const productNameList = formatItemsField(
+        items,
+        (item) => {
+          const name = toText(item.product || item.shippingName || item.shippingProductName || "");
+          if (!name) return "";
+          return `${name} (${toQtyText(item.quantity)})`;
+        },
+        ", ",
+      );
+      const shippingProductList = formatItemsField(
+        items,
+        (item) => {
+          const name = toText(
+            item.shippingName || item.shippingProductName || item.product || "",
+          );
+          if (!name) return "";
+          return `${name} (${toQtyText(item.quantity)})`;
+        },
+        ", ",
       );
 
       return {
-        ลำดับ: index + 1,
-        ชื่อผู้รับ: recipientName,
-        เบอร์โทร: phone,
-        ที่อยู่: addressInfo.fullAddress || orderData.shippingAddress || "",
-        ตำบล: addressInfo.subDistrict || "",
-        อำเภอ: addressInfo.district || "",
-        จังหวัด: addressInfo.province || "",
-        รหัสไปรษณีย์: addressInfo.postalCode || "",
-        อีเมล: email,
-        หมายเหตุ: noteText,
-        ชื่อสินค้า: productNames,
-        "ชื่อสินค้า (สำหรับขนส่ง)": shippingProductNames,
-        สีสินค้า: colors,
-        "ความกว้างของสินค้า(เว้นว่าง)": widths,
-        "ความยาวของสินค้า(เว้นว่าง)": lengths,
-        "ความสูงของสินค้า(เว้นว่าง)": heights,
-        "น้ำหนัก(กก.) (เว้นว่าง)": weights,
-        ประเภทการชำระ: paymentMethod,
-        จำนวนเงิน: Number(orderData.totalAmount) || 0,
-        วันที่โอนเงิน: formatDateValue(transferDate),
-        เวลาที่โอน: formatTimeValue(transferTime),
-        ผู้รับเงิน: paymentReceiver,
-        แพลตฟอร์ม: order.platform || "line",
-        เพจ: pageName,
-        วันที่ดึงออเดอร์: order.extractedAt
-          ? moment(order.extractedAt)
-            .tz(timezone)
-            .format("YYYY-MM-DD HH:mm:ss")
-          : "",
+        index: index + 1,
+        orderNo,
+        pageName,
+        orderDateText:
+          extractedMoment && extractedMoment.isValid()
+            ? extractedMoment.format("DD/MM/YYYY HH:mm")
+            : "-",
+        recipientName,
+        customerName,
+        phone: phone || "-",
+        address: addressText || "-",
+        postalCode: postalCodeText || "",
+        noteText: noteText || "-",
+        productCodeList: productCodeList || "-",
+        productNameList: productNameList || "-",
+        shippingProductList: shippingProductList || productNameList || "",
+        totalWeightText: formatNumberValue(totalWeight),
+        widthText: formatNumberValue(width),
+        lengthText: formatNumberValue(length),
+        heightText: formatNumberValue(height),
+        trackingNo: resolveTrackingNo(orderData),
+        packageStatus: toText(
+          orderData.shippingStatus ||
+          orderData.parcelStatus ||
+          statusLabelMap[order.status] ||
+          "",
+          "-",
+        ),
+        discount,
+        shippingCost,
+        totalAmount,
+        paymentMethod: paymentMethod || "-",
+        paymentDate: formatDateValue(transferDate) || "-",
+        paymentState,
+        createdBy: toText(order.createdBy || orderData.createdBy || "-", "-"),
+        paymentConfirmedBy: toText(
+          order.paymentConfirmedBy ||
+          orderData.paymentConfirmedBy ||
+          orderData.confirmedBy ||
+          "-",
+          "-",
+        ),
+        latestSalesBy: toText(
+          order.latestSalesBy || orderData.latestSalesBy || orderData.updatedBy || "-",
+          "-",
+        ),
+        codAmount: paymentMethod === "COD" ? totalAmount : "",
+        ref1: orderNo,
+        ref2: pageName,
+        senderRef: customerName || recipientName,
+        transferTime: formatTimeValue(transferTime),
       };
     });
 
     const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(exportRows);
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Orders");
+
+    if (exportFormat === "kex") {
+      const headers = [
+        "No",
+        "*ชื่อผู้รับ/Recipient Name",
+        "*เบอร์ผู้รับ/Mobile No.",
+        "*ที่อยู่/Address",
+        "*รหัสไปรษณีย์/Postal code",
+        "COD Amt (Baht)",
+        "ชื่อสินค้า/Product name",
+        "น้ำหนัก/Weight(kg)",
+        "กว้าง/Width(cm)",
+        "ยาว/Length(cm)",
+        "สูง/Height(cm)",
+        "Remark",
+        "Ref #1",
+        "Ref #2",
+        "Sender Ref",
+      ];
+      const dataRows = normalizedRows.map((row) => ({
+        No: row.index,
+        "*ชื่อผู้รับ/Recipient Name": row.recipientName === "-" ? "" : row.recipientName,
+        "*เบอร์ผู้รับ/Mobile No.": row.phone === "-" ? "" : row.phone,
+        "*ที่อยู่/Address": row.address === "-" ? "" : row.address,
+        "*รหัสไปรษณีย์/Postal code": row.postalCode,
+        "COD Amt (Baht)": row.codAmount,
+        "ชื่อสินค้า/Product name": row.shippingProductList,
+        "น้ำหนัก/Weight(kg)": row.totalWeightText,
+        "กว้าง/Width(cm)": row.widthText,
+        "ยาว/Length(cm)": row.lengthText,
+        "สูง/Height(cm)": row.heightText,
+        Remark: row.noteText === "-" ? "" : row.noteText,
+        "Ref #1": row.ref1,
+        "Ref #2": row.ref2,
+        "Sender Ref": row.senderRef,
+      }));
+      const aoa = [
+        headers,
+        ...dataRows.map((row) => headers.map((header) => row[header] ?? "")),
+      ];
+      const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+
+      const packageSheet = XLSX.utils.aoa_to_sheet([
+        ["กล่อง/Box"],
+        ["ซองเอกสาร/Envelope"],
+        ["ซองพลาสติก/Seal bag"],
+      ]);
+      XLSX.utils.book_append_sheet(workbook, packageSheet, "Sheet2");
+    } else {
+      const headers = [
+        "No.",
+        "Order No.",
+        "ช่องทาง/เพจ",
+        "วันที่สั่งซื้อ",
+        "ชื่อลูกค้า",
+        "เบอร์โทร",
+        "ที่อยู่",
+        "หมายเหตุ",
+        "รหัสสินค้า (จำนวนชิ้น)",
+        "สินค้า (จำนวนชิ้น)",
+        "น้ำหนัก (กก.)",
+        "TRACKING NO.",
+        "สถานะพัสดุ",
+        "ส่วนลด(บาท)",
+        "ค่าจัดส่ง(บาท)",
+        "ยอดเงิน(บาท)",
+        "วิธีการชำระเงิน",
+        "วันที่ชำระเงิน",
+        "การชำระเงิน",
+        "สร้างออเดอร์โดย",
+        "ยืนยันการชำระเงินโดย",
+        "เพิ่มยอดขายล่าสุดโดย",
+      ];
+      const dataRows = normalizedRows.map((row) => ({
+        "No.": row.index,
+        "Order No.": row.orderNo,
+        "ช่องทาง/เพจ": row.pageName,
+        "วันที่สั่งซื้อ": row.orderDateText,
+        "ชื่อลูกค้า": row.recipientName,
+        เบอร์โทร: row.phone,
+        ที่อยู่: row.address,
+        หมายเหตุ: row.noteText,
+        "รหัสสินค้า (จำนวนชิ้น)": row.productCodeList,
+        "สินค้า (จำนวนชิ้น)": row.productNameList,
+        "น้ำหนัก (กก.)": row.totalWeightText,
+        "TRACKING NO.": row.trackingNo,
+        สถานะพัสดุ: row.packageStatus,
+        "ส่วนลด(บาท)": row.discount,
+        "ค่าจัดส่ง(บาท)": row.shippingCost,
+        "ยอดเงิน(บาท)": row.totalAmount,
+        "วิธีการชำระเงิน": row.paymentMethod,
+        "วันที่ชำระเงิน": row.paymentDate,
+        การชำระเงิน: row.paymentState,
+        สร้างออเดอร์โดย: row.createdBy,
+        ยืนยันการชำระเงินโดย: row.paymentConfirmedBy,
+        เพิ่มยอดขายล่าสุดโดย: row.latestSalesBy,
+      }));
+      const aoa = [
+        headers,
+        ...dataRows.map((row) => headers.map((header) => row[header] ?? "")),
+      ];
+      const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Employee Data");
+    }
 
     const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
-    const filename = `orders_${moment().tz("Asia/Bangkok").format("YYYYMMDD_HHmmss")}.xlsx`;
+    const filename = `orders_${exportFormat}_${moment().tz(timezone).format("YYYYMMDD_HHmmss")}.xlsx`;
 
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader(
