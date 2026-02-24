@@ -19048,91 +19048,37 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     sendEvent("session", { sessionId });
 
-    // ─── Unified Streaming Tool Loop (max 8 iterations) ───────────────────────
-    // Uses a single streaming call per iteration:
-    //   • reasoning_content delta → thinking_delta events (real-time)
-    //   • tool_calls delta → accumulated, executed after stream ends
-    //   • content delta → content events (real-time)
-    // No need for a separate non-streaming "tool check" call.
+    // ─── Hybrid Tool Loop (max 8 iterations) ────────────────────────────────
+    // Tool iterations: non-streaming (reliable tool_calls detection)
+    // Final response: streaming (real-time thinking + content)
 
     let finalContent = "";
 
     for (let i = 0; i < 8; i++) {
-      const streamPayload = {
-        model, messages, tools, tool_choice: "auto",
-        stream: true, stream_options: { include_usage: true },
-      };
-      if (effort !== "none") streamPayload.reasoning_effort = effort;
+      const payload = { model, messages, tools, tool_choice: "auto" };
+      if (effort !== "none") payload.reasoning_effort = effort;
 
-      // Accumulators for this iteration
-      const toolCallsAcc = []; // assemble tool_call deltas by index
-      let iterContent = "";
-      let iterReasoning = "";
-      let hasToolCalls = false;
+      // Non-streaming call to detect tool_calls reliably
+      const response = await openai.chat.completions.create(payload);
+      const choice = response.choices[0];
+      const msg = choice.message;
 
-      try {
-        const stream = await openai.chat.completions.create(streamPayload);
-        for await (const chunk of stream) {
-          const delta = chunk.choices?.[0]?.delta;
-
-          // ✅ Real-time thinking stream
-          if (delta?.reasoning_content) {
-            iterReasoning += delta.reasoning_content;
-            sendEvent("thinking_delta", { text: delta.reasoning_content });
-          }
-
-          // Real-time content stream
-          if (delta?.content) {
-            iterContent += delta.content;
-            sendEvent("content", { text: delta.content });
-          }
-
-          // Assemble tool_calls from streaming deltas
-          if (delta?.tool_calls) {
-            hasToolCalls = true;
-            for (const tc of delta.tool_calls) {
-              if (!toolCallsAcc[tc.index]) {
-                toolCallsAcc[tc.index] = { id: "", type: "function", function: { name: "", arguments: "" } };
-              }
-              if (tc.id) toolCallsAcc[tc.index].id = tc.id;
-              if (tc.function?.name) toolCallsAcc[tc.index].function.name += tc.function.name;
-              if (tc.function?.arguments) toolCallsAcc[tc.index].function.arguments += tc.function.arguments;
-            }
-          }
-
-          if (chunk.usage) {
-            totalUsage.prompt_tokens += chunk.usage.prompt_tokens || 0;
-            totalUsage.completion_tokens += chunk.usage.completion_tokens || 0;
-            totalUsage.reasoning_tokens += chunk.usage.reasoning_tokens || 0;
-            totalUsage.total_tokens += chunk.usage.total_tokens || 0;
-          }
-        }
-      } catch (streamErr) {
-        console.error("[InstructionChat] Stream error:", streamErr.message);
-        sendEvent("error", { error: streamErr.message });
-        requestState.status = "error";
-        break;
+      if (response.usage) {
+        totalUsage.prompt_tokens += response.usage.prompt_tokens || 0;
+        totalUsage.completion_tokens += response.usage.completion_tokens || 0;
+        totalUsage.reasoning_tokens += response.usage.reasoning_tokens || 0;
+        totalUsage.total_tokens += response.usage.total_tokens || 0;
       }
 
-      // Signal thinking block is complete (update word count)
-      if (iterReasoning) {
-        const wordCount = iterReasoning.split(/\s+/).filter(Boolean).length;
-        sendEvent("thinking_done", { wordCount });
+      // Send thinking from tool iterations (non-streaming, full block)
+      if (msg.reasoning_content) {
+        sendEvent("thinking", { content: msg.reasoning_content });
       }
 
-      // Has tool calls — execute them and continue loop
-      if (hasToolCalls && toolCallsAcc.length > 0) {
-        const assistantMsg = {
-          role: "assistant",
-          content: iterContent || null,
-          tool_calls: toolCallsAcc.map(tc => ({
-            id: tc.id, type: "function",
-            function: { name: tc.function.name, arguments: tc.function.arguments },
-          })),
-        };
-        messages.push(assistantMsg);
-
-        for (const toolCall of toolCallsAcc) {
+      // Has tool calls — process them and continue loop
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        messages.push(msg);
+        for (const toolCall of msg.tool_calls) {
           const toolName = toolCall.function.name;
           let args = {};
           try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch (e) { }
@@ -19147,11 +19093,50 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           sendEvent("tool_end", { tool: toolName, summary: toolSummary, result: toolSummary });
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(result) });
         }
-        continue; // Next iteration
+        continue; // Continue tool loop
       }
 
-      // No tool calls — this is the final response, content already streamed
-      finalContent = iterContent;
+      // ─── No tool calls — Final response with real-time streaming ───
+      try {
+        const streamPayload = { ...payload, stream: true, stream_options: { include_usage: true } };
+        delete streamPayload.tools;
+        delete streamPayload.tool_choice;
+
+        const stream = await openai.chat.completions.create(streamPayload);
+        for await (const chunk of stream) {
+          const delta = chunk.choices?.[0]?.delta;
+
+          // ✅ Real-time thinking stream
+          if (delta?.reasoning_content) {
+            sendEvent("thinking_delta", { text: delta.reasoning_content });
+          }
+
+          // Real-time content stream
+          if (delta?.content) {
+            finalContent += delta.content;
+            sendEvent("content", { text: delta.content });
+          }
+
+          if (chunk.usage) {
+            totalUsage.prompt_tokens += chunk.usage.prompt_tokens || 0;
+            totalUsage.completion_tokens += chunk.usage.completion_tokens || 0;
+            totalUsage.reasoning_tokens += chunk.usage.reasoning_tokens || 0;
+            totalUsage.total_tokens += chunk.usage.total_tokens || 0;
+          }
+        }
+
+        // Signal thinking complete
+        sendEvent("thinking_done", {});
+
+      } catch (streamErr) {
+        // Fallback: use the already-fetched non-streaming response
+        console.warn("[InstructionChat] Stream fallback:", streamErr.message);
+        if (msg.reasoning_content) {
+          sendEvent("thinking", { content: msg.reasoning_content });
+        }
+        finalContent = msg.content || "";
+        sendEvent("content", { text: finalContent });
+      }
 
       // Build full assistant messages for history
       const newMessages = messages.slice(initialMsgCount);
