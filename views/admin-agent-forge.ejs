@@ -37,7 +37,14 @@
                 <input type="text" class="form-control" id="newAgentName" required placeholder="เช่น Forge - เพจน้ำมันทิพยมนต์" />
               </div>
               <div class="col-md-2">
-                <label class="form-label">โหมดเริ่มต้น</label>
+                <label class="form-label">ประเภทงาน</label>
+                <select id="newOptimizationMode" class="form-select">
+                  <option value="improve">ปรับปรุง (Improve)</option>
+                  <option value="create-new">สร้างใหม่ (Create-new)</option>
+                </select>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label">โหมด runtime</label>
                 <select id="newAgentMode" class="form-select">
                   <option value="human-only">human-only</option>
                   <option value="ai-live-reply">ai-live-reply</option>
@@ -45,16 +52,19 @@
               </div>
               <div class="col-md-3">
                 <label class="form-label">Instruction ID (Mongo _id)</label>
-                <input type="text" class="form-control" id="newInstructionId" placeholder="optional" />
+                <select id="newInstructionId" class="form-select"></select>
               </div>
               <div class="col-md-3">
                 <label class="form-label">Customer Model Default</label>
-                <input type="text" class="form-control" id="newCustomerModel" value="gpt-4.1" />
+                <select id="newCustomerModel" class="form-select"></select>
               </div>
 
               <div class="col-12">
                 <label class="form-label">เลือกเพจที่ดูแล</label>
                 <div class="managed-pages" id="managedPageSelector"></div>
+                <div class="form-text" id="pageSelectionHint">
+                  โหมดปรับปรุง: ระบบจะติ๊กเพจที่ใช้ instruction นี้ให้อัตโนมัติ
+                </div>
               </div>
 
               <div class="col-12 d-flex gap-2">
@@ -75,7 +85,9 @@
               <thead>
                 <tr>
                   <th>Agent</th>
+                  <th>ประเภทงาน</th>
                   <th>Mode</th>
+                  <th>Instruction</th>
                   <th>Pages</th>
                   <th>Customer Model</th>
                   <th>ล่าสุด</th>
@@ -84,7 +96,7 @@
               </thead>
               <tbody id="agentsTableBody">
                 <tr>
-                  <td colspan="6" class="text-center text-muted py-4">กำลังโหลด...</td>
+                  <td colspan="8" class="text-center text-muted py-4">กำลังโหลด...</td>
                 </tr>
               </tbody>
             </table>
@@ -96,7 +108,10 @@
     <script>
       window.__AGENT_FORGE_BOOTSTRAP__ = {
         agents: <%- JSON.stringify(agents || []).replace(/</g, '\\u003c') %>,
-        managedPages: <%- JSON.stringify(managedPages || []).replace(/</g, '\\u003c') %>
+        managedPages: <%- JSON.stringify(managedPages || []).replace(/</g, '\\u003c') %>,
+        instructions: <%- JSON.stringify(instructions || []).replace(/</g, '\\u003c') %>,
+        instructionUsageMap: <%- JSON.stringify(instructionUsageMap || {}).replace(/</g, '\\u003c') %>,
+        customerModelOptions: <%- JSON.stringify(customerModelOptions || []).replace(/</g, '\\u003c') %>
       };
     </script>
     <script src="/js/agent-forge.js"></script>

@@ -461,6 +461,10 @@ class AgentForgeRunner {
         !run.dryRun &&
         instructionContext &&
         instructionContext._id;
+      const shouldAutoSwitchWorkflow =
+        !run.dryRun &&
+        profile.optimizationMode === "create-new" &&
+        profile.createNewBootstrapDone === false;
 
       if (shouldPublish) {
         await this.agentForgeService.appendRunEvent(runId, "checkpoint", {
@@ -540,6 +544,27 @@ class AgentForgeRunner {
           phase: "runner",
           createdBy: "agent_forge_runner",
         });
+      }
+
+      if (shouldAutoSwitchWorkflow) {
+        const switchedProfile = await this.agentForgeService.markCreateNewBootstrapCompleted(
+          profile._id,
+          runId,
+        );
+        if (switchedProfile) {
+          await this.agentForgeService.syncAgentConfigToPages(switchedProfile, {
+            username: "agent_forge_runner",
+            role: "system",
+          });
+          await this.agentForgeService.appendRunEvent(runId, "workflow_auto_switched", {
+            from: "create-new",
+            to: "improve",
+            mode: switchedProfile.mode,
+          }, {
+            phase: "runner",
+            createdBy: "agent_forge_runner",
+          });
+        }
       }
 
       await this.agentForgeService.releaseRunLock(profile._id, runId, "active");

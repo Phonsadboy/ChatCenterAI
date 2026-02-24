@@ -72,8 +72,8 @@
 
 #agentsTable td:nth-child(1),
 #agentsTable th:nth-child(1),
-#agentsTable td:nth-child(3),
-#agentsTable th:nth-child(3) {
+#agentsTable td:nth-child(5),
+#agentsTable th:nth-child(5) {
   white-space: normal;
 }
 
@@ -81,4 +81,8 @@
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+}
+
+#agentsTable .form-select {
+  min-width: 180px;
 }

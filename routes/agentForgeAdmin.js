@@ -14,15 +14,21 @@ function createAgentForgeAdminRouter(options = {}) {
 
   router.get("/", async (req, res) => {
     try {
-      const [agents, pages] = await Promise.all([
+      const [agents, pages, instructions, instructionUsageMap, customerModelOptions] = await Promise.all([
         agentForgeService.listAgents(),
         agentForgeService.listManagedPages(),
+        agentForgeService.listInstructionOptions(),
+        agentForgeService.getInstructionUsageMap(),
+        Promise.resolve(agentForgeService.getCustomerModelOptions()),
       ]);
 
       res.render("admin-agent-forge", {
         activePage: "agent-forge",
         agents,
         managedPages: pages,
+        instructions,
+        instructionUsageMap,
+        customerModelOptions,
       });
     } catch (error) {
       console.error("[AgentForgeAdmin] render error:", error);

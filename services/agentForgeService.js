@@ -18,6 +18,18 @@ const COLLECTIONS = {
   accessAudit: "agent_log_access_audit",
 };
 
+const CUSTOMER_MODEL_OPTIONS = [
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-5.2-mini",
+];
+
+function generateInstructionId() {
+  return `inst_${crypto.randomBytes(6).toString("hex")}`;
+}
+
 function toObjectId(value) {
   if (!value) return null;
   if (value instanceof ObjectId) return value;
@@ -49,6 +61,45 @@ function normalizePageKeys(pageKeys) {
     result.push(normalized);
   }
   return result;
+}
+
+function parsePageKey(pageKey) {
+  const normalized = normalizePageKey(pageKey);
+  if (!normalized) return null;
+  const [platform, ...rest] = normalized.split(":");
+  return {
+    pageKey: normalized,
+    platform,
+    botId: rest.join(":") || null,
+  };
+}
+
+function extractInstructionCodesFromSelections(selections = []) {
+  if (!Array.isArray(selections)) return [];
+  const results = [];
+  const seen = new Set();
+  for (const entry of selections) {
+    let code = null;
+    if (
+      entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      typeof entry.instructionId === "string" &&
+      entry.instructionId.trim()
+    ) {
+      code = entry.instructionId.trim();
+    } else if (typeof entry === "string" && entry.trim()) {
+      const value = entry.trim();
+      if (/^inst_/i.test(value)) {
+        code = value;
+      }
+    }
+
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    results.push(code);
+  }
+  return results;
 }
 
 function maskValue(value) {
@@ -217,6 +268,21 @@ class AgentForgeService {
   }
 
   _normalizeProfileInput(input = {}, current = null) {
+    const requestedCustomerModel =
+      typeof input.customerDefaultModel === "string" && input.customerDefaultModel.trim()
+        ? input.customerDefaultModel.trim()
+        : current?.customerDefaultModel || "gpt-4.1";
+    const customerDefaultModel = CUSTOMER_MODEL_OPTIONS.includes(requestedCustomerModel)
+      ? requestedCustomerModel
+      : "gpt-4.1";
+
+    const optimizationMode =
+      input.optimizationMode === "create-new"
+        ? "create-new"
+        : input.optimizationMode === "improve"
+          ? "improve"
+          : current?.optimizationMode || "improve";
+
     const normalized = {
       name:
         typeof input.name === "string" && input.name.trim()
@@ -236,10 +302,7 @@ class AgentForgeService {
         typeof input.runnerThinking === "string" && input.runnerThinking.trim()
           ? input.runnerThinking.trim()
           : current?.runnerThinking || "xhigh",
-      customerDefaultModel:
-        typeof input.customerDefaultModel === "string" && input.customerDefaultModel.trim()
-          ? input.customerDefaultModel.trim()
-          : current?.customerDefaultModel || "gpt-4.1",
+      customerDefaultModel,
       processingEveryDays: Math.max(1, Math.min(30, Number(input.processingEveryDays || current?.processingEveryDays || 1))),
       evaluationWindowDays: Math.max(1, Math.min(30, Number(input.evaluationWindowDays || current?.evaluationWindowDays || 3))),
       ghostThresholdHours: Math.max(1, Math.min(168, Number(input.ghostThresholdHours || current?.ghostThresholdHours || 24))),
@@ -256,15 +319,336 @@ class AgentForgeService {
       logPolicy: "forensic_mask",
       unmaskRole: "admin",
       timezone: this.timezone,
+      optimizationMode,
+      createNewBootstrapDone:
+        typeof input.createNewBootstrapDone === "boolean"
+          ? input.createNewBootstrapDone
+          : typeof current?.createNewBootstrapDone === "boolean"
+            ? current.createNewBootstrapDone
+            : optimizationMode !== "create-new",
     };
 
     return normalized;
+  }
+
+  getCustomerModelOptions() {
+    return [...CUSTOMER_MODEL_OPTIONS];
+  }
+
+  _buildCreateNewInstructionTemplate(agentName) {
+    const safeName =
+      typeof agentName === "string" && agentName.trim()
+        ? agentName.trim()
+        : "Agent Forge";
+    const content = [
+      "## บทบาท",
+      "คุณคือแอดมินขายสินค้า ตอบสุภาพ สั้น กระชับ และช่วยให้ลูกค้าตัดสินใจง่าย",
+      "",
+      "## กติกา",
+      "1) ตอบเป็นตัวเลือกชัดเจน ไม่เยิ่นเย้อ",
+      "2) ถ้าข้อมูลไม่ครบ ให้ถามเฉพาะข้อมูลที่ขาด",
+      "3) ถ้าข้อมูลครบ ให้สรุปยอดและข้อมูลจัดส่งในข้อความเดียว",
+      "4) ห้ามเดาข้อมูลสินค้า ราคา โปรโมชั่น หรือข้อมูลโอนเงิน",
+    ].join("\n");
+
+    return {
+      instructionId: generateInstructionId(),
+      name: `${safeName} (Auto)`,
+      description: "สร้างอัตโนมัติโดย Agent Forge (create-new)",
+      dataItems: [
+        {
+          itemId: "role-and-rules",
+          type: "text",
+          title: "Role & Rules",
+          content,
+          order: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      usageCount: 0,
+      version: 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdBy: "agent_forge",
+      updatedBy: "agent_forge",
+      source: "agent_forge_create_new",
+    };
+  }
+
+  async _resolveInstructionDoc(instructionRef, db = null) {
+    if (!instructionRef) return null;
+    const localDb = db || (await this._db());
+    const coll = localDb.collection("instructions_v2");
+    const objectId = toObjectId(instructionRef);
+
+    if (objectId) {
+      const byObjectId = await coll.findOne({ _id: objectId });
+      if (byObjectId) return byObjectId;
+    }
+
+    const value = String(instructionRef).trim();
+    if (!value) return null;
+    return coll.findOne({ instructionId: value });
+  }
+
+  async createInstructionForAgent(agentName) {
+    const db = await this._db();
+    const coll = db.collection("instructions_v2");
+    const doc = this._buildCreateNewInstructionTemplate(agentName);
+    const result = await coll.insertOne(doc);
+    return {
+      ...doc,
+      _id: result.insertedId.toString(),
+    };
+  }
+
+  async listInstructionOptions() {
+    const db = await this._db();
+    const coll = db.collection("instructions_v2");
+    const rows = await coll
+      .find(
+        {},
+        {
+          projection: {
+            _id: 1,
+            instructionId: 1,
+            name: 1,
+            updatedAt: 1,
+            version: 1,
+          },
+        },
+      )
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .toArray();
+
+    return rows.map((row) => ({
+      _id: row._id.toString(),
+      instructionId: row.instructionId || null,
+      name: row.name || "",
+      version: Number.isInteger(row.version) ? row.version : null,
+      updatedAt: row.updatedAt || null,
+    }));
+  }
+
+  async getInstructionUsageMap() {
+    const db = await this._db();
+    const instructions = await this.listInstructionOptions();
+
+    const [lineBots, facebookBots] = await Promise.all([
+      db
+        .collection("line_bots")
+        .find({}, { projection: { _id: 1, selectedInstructions: 1 } })
+        .toArray(),
+      db
+        .collection("facebook_bots")
+        .find({}, { projection: { _id: 1, selectedInstructions: 1 } })
+        .toArray(),
+    ]);
+
+    const usageByInstructionCode = new Map();
+    const upsertUsage = (instructionCode, pageKey) => {
+      if (!instructionCode || !pageKey) return;
+      if (!usageByInstructionCode.has(instructionCode)) {
+        usageByInstructionCode.set(instructionCode, new Set());
+      }
+      usageByInstructionCode.get(instructionCode).add(pageKey);
+    };
+
+    for (const bot of lineBots) {
+      const pageKey = `line:${bot._id.toString()}`;
+      const codes = extractInstructionCodesFromSelections(bot.selectedInstructions || []);
+      for (const code of codes) {
+        upsertUsage(code, pageKey);
+      }
+    }
+
+    for (const bot of facebookBots) {
+      const pageKey = `facebook:${bot._id.toString()}`;
+      const codes = extractInstructionCodesFromSelections(bot.selectedInstructions || []);
+      for (const code of codes) {
+        upsertUsage(code, pageKey);
+      }
+    }
+
+    const usageMap = {};
+    for (const instruction of instructions) {
+      const codes = new Set();
+      if (instruction.instructionId) codes.add(instruction.instructionId);
+      if (instruction._id) codes.add(instruction._id);
+      const pageKeySet = new Set();
+      for (const code of codes) {
+        const pages = usageByInstructionCode.get(code);
+        if (!pages) continue;
+        for (const pageKey of pages) pageKeySet.add(pageKey);
+      }
+      usageMap[instruction._id] = Array.from(pageKeySet);
+    }
+
+    return usageMap;
+  }
+
+  async findPagesUsingInstruction(instructionRef) {
+    const db = await this._db();
+    const instructionDoc = await this._resolveInstructionDoc(instructionRef, db);
+    if (!instructionDoc) return [];
+
+    const codes = new Set();
+    codes.add(instructionDoc._id.toString());
+    if (instructionDoc.instructionId) {
+      codes.add(instructionDoc.instructionId);
+    }
+
+    const [lineBots, facebookBots] = await Promise.all([
+      db
+        .collection("line_bots")
+        .find({}, { projection: { _id: 1, selectedInstructions: 1 } })
+        .toArray(),
+      db
+        .collection("facebook_bots")
+        .find({}, { projection: { _id: 1, selectedInstructions: 1 } })
+        .toArray(),
+    ]);
+
+    const pages = [];
+    for (const bot of lineBots) {
+      const selectedCodes = extractInstructionCodesFromSelections(bot.selectedInstructions || []);
+      if (selectedCodes.some((code) => codes.has(code))) {
+        pages.push(`line:${bot._id.toString()}`);
+      }
+    }
+
+    for (const bot of facebookBots) {
+      const selectedCodes = extractInstructionCodesFromSelections(bot.selectedInstructions || []);
+      if (selectedCodes.some((code) => codes.has(code))) {
+        pages.push(`facebook:${bot._id.toString()}`);
+      }
+    }
+
+    return normalizePageKeys(pages);
+  }
+
+  async syncAgentConfigToPages(agentOrId, userContext = {}) {
+    const db = await this._db();
+    const profile =
+      typeof agentOrId === "object" && agentOrId
+        ? agentOrId
+        : await this.getAgentById(agentOrId);
+    if (!profile) return { updatedPages: 0 };
+
+    const instructionDoc = profile.instructionId
+      ? await this._resolveInstructionDoc(profile.instructionId, db)
+      : null;
+    const selectedInstructions =
+      instructionDoc && instructionDoc.instructionId
+        ? [{ instructionId: instructionDoc.instructionId, version: null }]
+        : null;
+
+    let updatedPages = 0;
+    for (const pageKey of normalizePageKeys(profile.pageKeys || [])) {
+      const parsed = parsePageKey(pageKey);
+      if (!parsed || !parsed.botId) continue;
+
+      const setDoc = {
+        aiModel: profile.customerDefaultModel || "gpt-4.1",
+        updatedAt: new Date(),
+        agentForge: {
+          agentId: profile._id || String(profile._id || ""),
+          mode: profile.mode || "human-only",
+          optimizationMode: profile.optimizationMode || "improve",
+          instructionRef: profile.instructionId || null,
+          syncedBy: userContext?.username || "agent_forge",
+          syncedAt: new Date(),
+        },
+      };
+
+      if (selectedInstructions) {
+        setDoc.selectedInstructions = selectedInstructions;
+      }
+
+      if (parsed.platform === "line") {
+        const result = await db.collection("line_bots").updateOne(
+          { _id: toObjectId(parsed.botId) || parsed.botId },
+          { $set: setDoc },
+        );
+        if (result.matchedCount > 0) updatedPages += 1;
+      } else if (parsed.platform === "facebook") {
+        const result = await db.collection("facebook_bots").updateOne(
+          { _id: toObjectId(parsed.botId) || parsed.botId },
+          { $set: setDoc },
+        );
+        if (result.matchedCount > 0) updatedPages += 1;
+      }
+    }
+
+    return {
+      updatedPages,
+      instructionId: instructionDoc ? instructionDoc._id.toString() : null,
+      instructionCode: instructionDoc?.instructionId || null,
+      model: profile.customerDefaultModel || "gpt-4.1",
+    };
+  }
+
+  async markCreateNewBootstrapCompleted(agentId, runId = null) {
+    const db = await this._db();
+    const objectId = toObjectId(agentId);
+    if (!objectId) return null;
+    const now = new Date();
+
+    const updated = await db.collection(COLLECTIONS.profiles).findOneAndUpdate(
+      {
+        _id: objectId,
+        optimizationMode: "create-new",
+        createNewBootstrapDone: false,
+      },
+      {
+        $set: {
+          optimizationMode: "improve",
+          createNewBootstrapDone: true,
+          mode: "human-only",
+          updatedAt: now,
+          bootstrapCompletedAt: now,
+          bootstrapCompletedRunId: runId ? String(runId) : null,
+        },
+      },
+      { returnDocument: "after" },
+    );
+
+    if (!updated) return null;
+    this._pageAgentCache.clear();
+    return this._formatProfile(updated);
   }
 
   async createAgent(input = {}, userContext = {}) {
     const db = await this._db();
     const now = new Date();
     const profile = this._normalizeProfileInput(input);
+
+    if (profile.optimizationMode === "create-new") {
+      if (profile.mode !== "human-only") {
+        throw new Error("create_new_requires_human_only");
+      }
+      if (!Array.isArray(profile.pageKeys) || profile.pageKeys.length === 0) {
+        throw new Error("page_keys_required_for_create_new");
+      }
+      const createdInstruction = await this.createInstructionForAgent(profile.name);
+      profile.instructionId = createdInstruction._id;
+      profile.createNewBootstrapDone = false;
+    } else {
+      if (!profile.instructionId) {
+        throw new Error("instruction_required_for_improve");
+      }
+      const instructionDoc = await this._resolveInstructionDoc(profile.instructionId, db);
+      if (!instructionDoc) {
+        throw new Error("instruction_not_found");
+      }
+      const autoPages = await this.findPagesUsingInstruction(profile.instructionId);
+      if (autoPages.length === 0) {
+        throw new Error("instruction_not_linked_to_pages");
+      }
+      profile.pageKeys = autoPages;
+      profile.createNewBootstrapDone = true;
+    }
 
     const payload = {
       ...profile,
@@ -278,7 +662,20 @@ class AgentForgeService {
     };
 
     const result = await db.collection(COLLECTIONS.profiles).insertOne(payload);
-    return this.getAgentById(result.insertedId.toString());
+    const created = await this.getAgentById(result.insertedId.toString());
+    let syncResult = null;
+    try {
+      syncResult = await this.syncAgentConfigToPages(created, userContext);
+    } catch (syncError) {
+      syncResult = {
+        updatedPages: 0,
+        error: syncError?.message || "sync_failed",
+      };
+    }
+    return {
+      ...created,
+      syncResult,
+    };
   }
 
   async listAgents() {
@@ -305,6 +702,14 @@ class AgentForgeService {
       ...profile,
       _id: profile._id.toString(),
       pageKeys: normalizePageKeys(profile.pageKeys || []),
+      optimizationMode:
+        profile.optimizationMode === "create-new" ? "create-new" : "improve",
+      createNewBootstrapDone:
+        typeof profile.createNewBootstrapDone === "boolean"
+          ? profile.createNewBootstrapDone
+          : profile.optimizationMode === "create-new"
+            ? false
+            : true,
     };
   }
 
@@ -322,6 +727,40 @@ class AgentForgeService {
 
     const normalized = this._normalizeProfileInput({ ...current, ...patch }, current);
 
+    if (normalized.optimizationMode === "create-new") {
+      normalized.mode = "human-only";
+      if (!Array.isArray(normalized.pageKeys) || normalized.pageKeys.length === 0) {
+        throw new Error("page_keys_required_for_create_new");
+      }
+
+      // If switching from improve to create-new, create a fresh instruction baseline.
+      if (current.optimizationMode !== "create-new") {
+        const createdInstruction = await this.createInstructionForAgent(normalized.name);
+        normalized.instructionId = createdInstruction._id;
+        normalized.createNewBootstrapDone = false;
+      }
+    } else {
+      const instructionExplicitlyPatched = Object.prototype.hasOwnProperty.call(
+        patch,
+        "instructionId",
+      );
+      if (!normalized.instructionId && instructionExplicitlyPatched) {
+        throw new Error("instruction_required_for_improve");
+      }
+      if (normalized.instructionId) {
+        const instructionDoc = await this._resolveInstructionDoc(normalized.instructionId, db);
+        if (!instructionDoc) {
+          throw new Error("instruction_not_found");
+        }
+        const autoPages = await this.findPagesUsingInstruction(normalized.instructionId);
+        if (autoPages.length === 0 && instructionExplicitlyPatched) {
+          throw new Error("instruction_not_linked_to_pages");
+        }
+        if (autoPages.length > 0) normalized.pageKeys = autoPages;
+      }
+      normalized.createNewBootstrapDone = true;
+    }
+
     await db.collection(COLLECTIONS.profiles).updateOne(
       { _id: objectId },
       {
@@ -334,7 +773,20 @@ class AgentForgeService {
     );
 
     this._pageAgentCache.clear();
-    return this.getAgentById(agentId);
+    const updated = await this.getAgentById(agentId);
+    let syncResult = null;
+    try {
+      syncResult = await this.syncAgentConfigToPages(updated, userContext);
+    } catch (syncError) {
+      syncResult = {
+        updatedPages: 0,
+        error: syncError?.message || "sync_failed",
+      };
+    }
+    return {
+      ...updated,
+      syncResult,
+    };
   }
 
   async updateAgentMode(agentId, mode, userContext = {}) {
@@ -357,11 +809,11 @@ class AgentForgeService {
     const [lineBots, facebookBots] = await Promise.all([
       db
         .collection("line_bots")
-        .find({}, { projection: { _id: 1, name: 1, status: 1, aiModel: 1 } })
+        .find({}, { projection: { _id: 1, name: 1, status: 1, aiModel: 1, selectedInstructions: 1 } })
         .toArray(),
       db
         .collection("facebook_bots")
-        .find({}, { projection: { _id: 1, name: 1, status: 1, aiModel: 1, pageId: 1 } })
+        .find({}, { projection: { _id: 1, name: 1, status: 1, aiModel: 1, pageId: 1, selectedInstructions: 1 } })
         .toArray(),
     ]);
 
@@ -374,6 +826,7 @@ class AgentForgeService {
         name: bot.name || "LINE Bot",
         status: bot.status || "unknown",
         aiModel: bot.aiModel || null,
+        selectedInstructions: bot.selectedInstructions || [],
       });
     }
 
@@ -385,6 +838,7 @@ class AgentForgeService {
         name: bot.name || bot.pageId || "Facebook Page",
         status: bot.status || "unknown",
         aiModel: bot.aiModel || null,
+        selectedInstructions: bot.selectedInstructions || [],
       });
     }
 

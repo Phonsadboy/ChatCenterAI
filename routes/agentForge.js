@@ -71,6 +71,11 @@ function createAgentForgeRouter(options = {}) {
         "run_not_found",
         "agent_not_found",
         "checkpoint_not_found",
+        "create_new_requires_human_only",
+        "page_keys_required_for_create_new",
+        "instruction_required_for_improve",
+        "instruction_not_found",
+        "instruction_not_linked_to_pages",
       ].includes(message)
     ) {
       return res.status(400).json({ success: false, error: message });
@@ -139,6 +144,26 @@ function createAgentForgeRouter(options = {}) {
       }
 
       return res.json({ success: true, agents: enriched });
+    } catch (error) {
+      return handleError(res, error);
+    }
+  });
+
+  router.get("/bootstrap/options", async (req, res) => {
+    try {
+      const [instructions, managedPages, instructionUsageMap] = await Promise.all([
+        agentForgeService.listInstructionOptions(),
+        agentForgeService.listManagedPages(),
+        agentForgeService.getInstructionUsageMap(),
+      ]);
+
+      return res.json({
+        success: true,
+        instructions,
+        managedPages,
+        instructionUsageMap,
+        customerModelOptions: agentForgeService.getCustomerModelOptions(),
+      });
     } catch (error) {
       return handleError(res, error);
     }
