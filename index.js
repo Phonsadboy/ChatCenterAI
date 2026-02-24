@@ -19513,13 +19513,19 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     const cancelledOrders = orders.filter(o => o.status === "cancelled").length;
 
     let totalSales = 0;
+    let totalSalesConfirmed = 0;
     let totalShipping = 0;
     orders.forEach(order => {
       const orderData = order.orderData || {};
       const items = Array.isArray(orderData.items) ? orderData.items : [];
+      let orderTotal = 0;
       items.forEach(item => {
-        totalSales += (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 0);
+        orderTotal += (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 0);
       });
+      totalSales += orderTotal;
+      if (order.status === "confirmed") {
+        totalSalesConfirmed += orderTotal;
+      }
       totalShipping += parseFloat(orderData.shippingCost) || 0;
     });
 
@@ -19672,6 +19678,7 @@ app.get("/admin/customer-stats/data", async (req, res) => {
           completedOrders,
           cancelledOrders,
           totalSales: Math.round(totalSales),
+          totalSalesConfirmed: Math.round(totalSalesConfirmed),
           totalShipping: Math.round(totalShipping)
         },
         conversion: {
@@ -23333,8 +23340,22 @@ app.get("/admin/orders/data", async (req, res) => {
               totalAmount: {
                 $sum: { $ifNull: ["$orderData.totalAmount", 0] },
               },
+              totalAmountConfirmed: {
+                $sum: {
+                  $cond: [
+                    { $eq: ["$status", "confirmed"] },
+                    { $ifNull: ["$orderData.totalAmount", 0] },
+                    0,
+                  ],
+                },
+              },
               totalShipping: {
                 $sum: { $ifNull: ["$orderData.shippingCost", 0] },
+              },
+              confirmedOrders: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0],
+                },
               },
             },
           },
@@ -23507,7 +23528,9 @@ app.get("/admin/orders/data", async (req, res) => {
       summary: {
         totalOrders: totalCount,
         totalAmount: totalsEntry.totalAmount || 0,
+        totalAmountConfirmed: totalsEntry.totalAmountConfirmed || 0,
         totalShipping: totalsEntry.totalShipping || 0,
+        confirmedOrders: totalsEntry.confirmedOrders || 0,
       },
       statusCounts,
     });

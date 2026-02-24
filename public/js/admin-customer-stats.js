@@ -223,7 +223,16 @@
           <i class="fas fa-baht-sign"></i>
         </div>
         <div class="stats-summary-content">
-          <div class="stats-summary-value">฿${formatNumber(sales?.totalSales || 0)}</div>
+          <div class="stats-summary-value-group">
+            <div class="stats-summary-value-row is-draft">
+              <span class="stats-summary-inline-label">ร่าง</span>
+              <strong>฿${formatNumber(sales?.totalSales || 0)}</strong>
+            </div>
+            <div class="stats-summary-value-row is-confirmed">
+              <span class="stats-summary-inline-label">ยืนยันแล้ว</span>
+              <strong>฿${formatNumber(sales?.totalSalesConfirmed || 0)}</strong>
+            </div>
+          </div>
           <div class="stats-summary-label">ยอดขายรวม</div>
         </div>
       </div>

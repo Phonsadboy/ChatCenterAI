@@ -108,6 +108,41 @@
   line-height: 1.1;
 }
 
+.orders-summary-value-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.orders-summary-value-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+
+.orders-summary-value-row strong {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.orders-summary-inline-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.orders-summary-value-row.is-draft {
+  color: #DFA94B;
+}
+
+.orders-summary-value-row.is-confirmed {
+  color: #2D8F6F;
+}
+
 /* ============ Sidebar Filters ============ */
 .orders-filter-section {
   background: var(--card-bg, #fff);

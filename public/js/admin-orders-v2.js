@@ -11,7 +11,13 @@
     filteredOrders: [],
     selectedIds: new Set(),
     pagination: { page: 1, limit: 50, total: 0, pages: 1 },
-    summary: { totalOrders: 0, totalAmount: 0, totalShipping: 0 },
+    summary: {
+      totalOrders: 0,
+      totalAmount: 0,
+      totalAmountConfirmed: 0,
+      totalShipping: 0,
+      confirmedOrders: 0
+    },
     statusCounts: {},
     filters: {
       status: 'all',
@@ -202,10 +208,18 @@
   function renderSummary() {
     if (!els.summaryCards) return;
 
-    const { totalOrders, totalAmount, totalShipping } = state.summary;
+    const {
+      totalOrders,
+      totalAmount,
+      totalAmountConfirmed,
+      totalShipping,
+      confirmedOrders
+    } = state.summary;
     const avgOrder = totalOrders > 0 ? Math.round(totalAmount / totalOrders) : 0;
-    const completedCount = state.statusCounts.completed || 0;
-    const completionRate = totalOrders > 0 ? Math.round((completedCount / totalOrders) * 100) : 0;
+    const confirmedCount = Number.isFinite(Number(confirmedOrders))
+      ? Number(confirmedOrders)
+      : (state.statusCounts.confirmed || 0);
+    const confirmedRate = totalOrders > 0 ? Math.round((confirmedCount / totalOrders) * 100) : 0;
 
     els.summaryCards.innerHTML = `
       <div class="orders-summary-card">
@@ -219,7 +233,16 @@
         <div class="orders-summary-icon icon-success"><i class="fas fa-coins"></i></div>
         <div class="orders-summary-content">
           <div class="orders-summary-label">ยอดรวม</div>
-          <div class="orders-summary-value">฿${totalAmount.toLocaleString()}</div>
+          <div class="orders-summary-value-group">
+            <div class="orders-summary-value-row is-draft">
+              <span class="orders-summary-inline-label">ร่าง</span>
+              <strong>฿${(totalAmount || 0).toLocaleString()}</strong>
+            </div>
+            <div class="orders-summary-value-row is-confirmed">
+              <span class="orders-summary-inline-label">ยืนยันแล้ว</span>
+              <strong>฿${(totalAmountConfirmed || 0).toLocaleString()}</strong>
+            </div>
+          </div>
         </div>
       </div>
       <div class="orders-summary-card">
@@ -239,8 +262,8 @@
       <div class="orders-summary-card">
         <div class="orders-summary-icon icon-success"><i class="fas fa-percentage"></i></div>
         <div class="orders-summary-content">
-          <div class="orders-summary-label">สำเร็จแล้ว</div>
-          <div class="orders-summary-value">${completionRate}%</div>
+          <div class="orders-summary-label">ยืนยันแล้ว</div>
+          <div class="orders-summary-value">${confirmedRate}%</div>
         </div>
       </div>
     `;
