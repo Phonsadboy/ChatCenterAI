@@ -253,20 +253,31 @@
                     case "thinking":
                         // Fallback for SSE resume replay (full content at once)
                         if (data.content && body) {
-                            if (!body.querySelector(".ic-thinking-block")) {
-                                const thinkBlock = createThinkingBlock(data.content);
-                                body.insertBefore(thinkBlock, contentEl);
-                                scrollToBottom();
-                            }
+                            const thinkBlock = createThinkingBlock(data.content);
+                            body.insertBefore(thinkBlock, contentEl);
+                            scrollToBottom();
+                        }
+                        break;
+
+                    case "thinking_start":
+                        // ✅ New thinking block for each iteration (supports multiple)
+                        if (body) {
+                            const newBlock = createThinkingBlock("");
+                            body.insertBefore(newBlock, contentEl);
+                            // Clear status text when thinking starts
+                            const statusEl = contentEl.querySelector(".ic-status-text");
+                            if (statusEl) statusEl.remove();
+                            scrollToBottom();
                         }
                         break;
 
                     case "thinking_delta":
-                        // ✅ Real-time thinking stream — append chunk by chunk
+                        // ✅ Real-time thinking stream — append to the LAST thinking block
                         if (data.text && body) {
-                            let thinkBlock = body.querySelector(".ic-thinking-block");
+                            const allBlocks = body.querySelectorAll(".ic-thinking-block");
+                            let thinkBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
                             if (!thinkBlock) {
-                                // Create empty block on first chunk
+                                // Create block if thinking_start wasn't received (fallback)
                                 thinkBlock = createThinkingBlock("");
                                 body.insertBefore(thinkBlock, contentEl);
                             }
@@ -277,11 +288,12 @@
                         break;
 
                     case "thinking_done":
-                        // Update word count after thinking finishes
+                        // Update word count on the LAST thinking block
                         if (body) {
-                            const thinkBlock = body.querySelector(".ic-thinking-block");
-                            if (thinkBlock && data.wordCount !== undefined) {
-                                const meta = thinkBlock.querySelector(".ic-thinking-meta");
+                            const allBlocks = body.querySelectorAll(".ic-thinking-block");
+                            const lastBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
+                            if (lastBlock && data.wordCount !== undefined) {
+                                const meta = lastBlock.querySelector(".ic-thinking-meta");
                                 if (meta) meta.textContent = `(${data.wordCount} words)`;
                             }
                         }
@@ -575,7 +587,7 @@
         if (!toolName) return "search";
         if (toolName.includes("search") || toolName.includes("get")) return "search";
         if (toolName.includes("update") || toolName.includes("rename")) return "edit";
-        if (toolName.includes("add")) return "add";
+        if (toolName.includes("add") || toolName.includes("create")) return "add";
         if (toolName.includes("delete")) return "delete";
         return "search";
     }

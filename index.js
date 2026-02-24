@@ -18270,6 +18270,14 @@ ${dataItemsSummary}
 ใช้ข้อมูลข้างต้นเพื่อตัดสินใจว่าควรค้นหาหรือดึงข้อมูลจาก data item ไหน
 ไม่ต้องเรียก get_instruction_overview ซ้ำ ถ้าข้อมูลข้างต้นเพียงพอแล้ว
 
+# จัดการชุดข้อมูล (Manage Data Items)
+คุณสามารถสร้าง/ลบชุดข้อมูลและคอลัมน์ใน instruction ได้:
+- **create_table_item** — สร้างตารางใหม่ (ระบุชื่อ, คอลัมน์, ข้อมูลเริ่มต้น)
+- **create_text_item** — สร้างข้อความใหม่ (ระบุชื่อ, เนื้อหา)
+- **delete_column** — ลบคอลัมน์ออกจากตาราง (ลบหัวคอลัมน์ + ข้อมูลทุกแถว)
+- **delete_data_item** — ลบชุดข้อมูลทั้งอัน (ต้องยืนยันด้วย confirmTitle ที่ตรงกับชื่อ — เรียกครั้งแรกไม่ต้องใส่ confirmTitle เพื่อดู preview ก่อน)
+ใช้เมื่อผู้ใช้ต้องการจัดการโครงสร้างข้อมูล เช่น เพิ่มตารางสินค้า, ลบคอลัมน์ที่ไม่ใช้, ลบชุดข้อมูลเก่า
+
 # ระบบติดตามลูกค้า (Follow-Up System)
 คุณสามารถจัดการระบบติดตามลูกค้าอัตโนมัติผ่าน tools ที่มี:
 - **get_followup_config** — ดูสถานะปัจจุบัน (เปิด/ปิด, จำนวน rounds, prompt)
@@ -18874,6 +18882,12 @@ function buildToolSummary(toolName, result) {
     case 'add_row':
       return `➕ เพิ่มแถวสำเร็จ`;
 
+    case 'create_table_item':
+      return `📊 สร้างตาราง "${result.title || ''}" (${result.columns?.length || 0} คอลัมน์, ${result.totalRows || 0} แถว)`;
+
+    case 'create_text_item':
+      return `📝 สร้างข้อความ "${result.title || ''}" (${result.contentLength || 0} ตัวอักษร)`;
+
     case 'delete_row':
       return `🗑️ ลบแถวสำเร็จ`;
 
@@ -18882,6 +18896,13 @@ function buildToolSummary(toolName, result) {
 
     case 'delete_rows_bulk_confirm':
       return `⚠️ ยืนยันลบ ${result.count || 0} แถว — ต้องใช้ confirmToken`;
+
+    case 'delete_column':
+      return `🗑️ ลบคอลัมน์ "${result.deletedColumn || ''}" สำเร็จ (เหลือ ${result.newColumnCount || 0} คอลัมน์)`;
+
+    case 'delete_data_item':
+      if (result.requireConfirm) return `⚠️ ยืนยันลบชุดข้อมูล "${result.title || ''}" — ต้องส่ง confirmTitle`;
+      return `🗑️ ลบชุดข้อมูล "${result.deletedTitle || ''}" สำเร็จ`;
 
     case 'update_text_content':
       return `✏️ อัปเดตข้อความสำเร็จ`;
@@ -19048,40 +19069,100 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     sendEvent("session", { sessionId });
 
-    // ─── Hybrid Tool Loop (max 8 iterations) ────────────────────────────────
-    // Tool iterations: non-streaming (reliable tool_calls detection)
-    // Final response: streaming (real-time thinking + content)
+    // ─── Fully Streaming Tool Loop (max 8 iterations) ─────────────────────────
+    // Every iteration uses streaming for real-time thinking + tool detection
+    // Tool_calls are accumulated from stream deltas
 
     let finalContent = "";
 
     for (let i = 0; i < 8; i++) {
-      const payload = { model, messages, tools, tool_choice: "auto" };
+      const payload = {
+        model, messages, tools, tool_choice: "auto",
+        stream: true, stream_options: { include_usage: true },
+      };
       if (effort !== "none") payload.reasoning_effort = effort;
 
-      // Let frontend know we're waiting for OpenAI
+      // Let frontend know we're processing
       sendEvent("status", { phase: i === 0 ? "thinking" : "continuing", iteration: i + 1 });
 
-      // Non-streaming call to detect tool_calls reliably
-      const response = await openai.chat.completions.create(payload);
-      const choice = response.choices[0];
-      const msg = choice.message;
+      // ─── Streaming call — accumulate tool_calls from deltas ───
+      const stream = await openai.chat.completions.create(payload);
 
-      if (response.usage) {
-        totalUsage.prompt_tokens += response.usage.prompt_tokens || 0;
-        totalUsage.completion_tokens += response.usage.completion_tokens || 0;
-        totalUsage.reasoning_tokens += response.usage.reasoning_tokens || 0;
-        totalUsage.total_tokens += response.usage.total_tokens || 0;
+      let iterationContent = "";
+      let iterationToolCalls = [];   // Accumulated tool_calls from deltas
+      let iterationReasoning = "";
+      let hasThinkingBlock = false;
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices?.[0]?.delta;
+        const finishReason = chunk.choices?.[0]?.finish_reason;
+
+        // ✅ Real-time thinking stream (every iteration)
+        if (delta?.reasoning_content) {
+          iterationReasoning += delta.reasoning_content;
+          if (!hasThinkingBlock) {
+            hasThinkingBlock = true;
+            sendEvent("thinking_start", { iteration: i + 1 });
+          }
+          sendEvent("thinking_delta", { text: delta.reasoning_content });
+        }
+
+        // ✅ Accumulate tool_calls from stream deltas
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index;
+            if (!iterationToolCalls[idx]) {
+              iterationToolCalls[idx] = {
+                id: tc.id || "",
+                type: tc.type || "function",
+                function: { name: "", arguments: "" },
+              };
+            }
+            if (tc.id) iterationToolCalls[idx].id = tc.id;
+            if (tc.function?.name) iterationToolCalls[idx].function.name += tc.function.name;
+            if (tc.function?.arguments) iterationToolCalls[idx].function.arguments += tc.function.arguments;
+          }
+        }
+
+        // ✅ Real-time content stream
+        if (delta?.content) {
+          iterationContent += delta.content;
+          sendEvent("content", { text: delta.content });
+        }
+
+        // Collect usage
+        if (chunk.usage) {
+          totalUsage.prompt_tokens += chunk.usage.prompt_tokens || 0;
+          totalUsage.completion_tokens += chunk.usage.completion_tokens || 0;
+          totalUsage.reasoning_tokens += chunk.usage.reasoning_tokens || 0;
+          totalUsage.total_tokens += chunk.usage.total_tokens || 0;
+        }
       }
 
-      // Send thinking from tool iterations (non-streaming, full block)
-      if (msg.reasoning_content) {
-        sendEvent("thinking", { content: msg.reasoning_content });
+      // Signal thinking complete for this iteration
+      if (hasThinkingBlock) {
+        const wordCount = iterationReasoning.split(/\s+/).filter(Boolean).length;
+        sendEvent("thinking_done", { wordCount });
       }
 
-      // Has tool calls — process them and continue loop
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
-        messages.push(msg);
-        for (const toolCall of msg.tool_calls) {
+      // ─── Has tool calls? Execute them and continue loop ───
+      const validToolCalls = iterationToolCalls.filter(tc => tc && tc.function?.name);
+      if (validToolCalls.length > 0) {
+        // Reconstruct assistant message with tool_calls for history
+        const assistantMsg = {
+          role: "assistant",
+          content: iterationContent || null,
+          tool_calls: validToolCalls.map(tc => ({
+            id: tc.id,
+            type: tc.type,
+            function: { name: tc.function.name, arguments: tc.function.arguments },
+          })),
+        };
+        if (iterationReasoning) assistantMsg.reasoning_content = iterationReasoning;
+        messages.push(assistantMsg);
+
+        // Execute each tool
+        for (const toolCall of validToolCalls) {
           const toolName = toolCall.function.name;
           let args = {};
           try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch (e) { }
@@ -19099,48 +19180,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         continue; // Continue tool loop
       }
 
-      // ─── No tool calls — Final response with real-time streaming ───
-      sendEvent("status", { phase: "responding" });
-      try {
-        const streamPayload = { ...payload, stream: true, stream_options: { include_usage: true } };
-        delete streamPayload.tools;
-        delete streamPayload.tool_choice;
-
-        const stream = await openai.chat.completions.create(streamPayload);
-        for await (const chunk of stream) {
-          const delta = chunk.choices?.[0]?.delta;
-
-          // ✅ Real-time thinking stream
-          if (delta?.reasoning_content) {
-            sendEvent("thinking_delta", { text: delta.reasoning_content });
-          }
-
-          // Real-time content stream
-          if (delta?.content) {
-            finalContent += delta.content;
-            sendEvent("content", { text: delta.content });
-          }
-
-          if (chunk.usage) {
-            totalUsage.prompt_tokens += chunk.usage.prompt_tokens || 0;
-            totalUsage.completion_tokens += chunk.usage.completion_tokens || 0;
-            totalUsage.reasoning_tokens += chunk.usage.reasoning_tokens || 0;
-            totalUsage.total_tokens += chunk.usage.total_tokens || 0;
-          }
-        }
-
-        // Signal thinking complete
-        sendEvent("thinking_done", {});
-
-      } catch (streamErr) {
-        // Fallback: use the already-fetched non-streaming response
-        console.warn("[InstructionChat] Stream fallback:", streamErr.message);
-        if (msg.reasoning_content) {
-          sendEvent("thinking", { content: msg.reasoning_content });
-        }
-        finalContent = msg.content || "";
-        sendEvent("content", { text: finalContent });
-      }
+      // ─── No tool calls — This was the final response ───
+      finalContent = iterationContent;
 
       // Build full assistant messages for history
       const newMessages = messages.slice(initialMsgCount);
@@ -19567,6 +19608,106 @@ app.get("/admin/customer-stats/data", async (req, res) => {
       nonBuyers: hourlyNonBuyers.map(set => set.size)
     };
 
+    const normalizeTrendUserId = (value) => {
+      if (value === null || value === undefined) return "";
+      return String(value).trim();
+    };
+
+    const isSingleDayRange = startDateKey === endDateKey;
+    let closingRateTrend = {
+      mode: isSingleDayRange ? "hourly" : "daily",
+      points: [],
+      totalUsers: totalActiveUsers,
+      buyerUsers: uniqueBuyers,
+      overallRate: Number(conversionRate.toFixed(1))
+    };
+
+    if (isSingleDayRange) {
+      const totalUsersByHour = Array.from({ length: 24 }, () => new Set());
+      const buyerUsersByHour = Array.from({ length: 24 }, () => new Set());
+
+      chatMessages.forEach((message) => {
+        const senderId = normalizeTrendUserId(message.senderId || message.userId);
+        if (!senderId) return;
+        const hour = getBangkokMoment(message.timestamp).hour();
+        totalUsersByHour[hour].add(senderId);
+      });
+
+      orders.forEach((order) => {
+        const userId = normalizeTrendUserId(order.userId);
+        if (!userId) return;
+        const hour = getBangkokMoment(
+          order.extractedAt || order.createdAt || order.updatedAt || dateStart,
+        ).hour();
+        buyerUsersByHour[hour].add(userId);
+      });
+
+      closingRateTrend.points = Array.from({ length: 24 }, (_, hour) => {
+        const totalUsersInHour = totalUsersByHour[hour].size;
+        const buyerUsersInHour = buyerUsersByHour[hour].size;
+        const closeRate = totalUsersInHour > 0
+          ? (buyerUsersInHour / totalUsersInHour) * 100
+          : 0;
+
+        return {
+          key: String(hour).padStart(2, "0"),
+          label: String(hour).padStart(2, "0"),
+          totalUsers: totalUsersInHour,
+          buyerUsers: buyerUsersInHour,
+          closeRate: Number(closeRate.toFixed(1))
+        };
+      });
+    } else {
+      const totalUsersByDay = new Map();
+      const buyerUsersByDay = new Map();
+
+      const getSetForDate = (sourceMap, key) => {
+        if (!sourceMap.has(key)) {
+          sourceMap.set(key, new Set());
+        }
+        return sourceMap.get(key);
+      };
+
+      chatMessages.forEach((message) => {
+        const senderId = normalizeTrendUserId(message.senderId || message.userId);
+        if (!senderId) return;
+        const dateKey = getBangkokMoment(message.timestamp).format("YYYY-MM-DD");
+        if (dateKey < startDateKey || dateKey > endDateKey) return;
+        getSetForDate(totalUsersByDay, dateKey).add(senderId);
+      });
+
+      orders.forEach((order) => {
+        const userId = normalizeTrendUserId(order.userId);
+        if (!userId) return;
+        const dateKey = getBangkokMoment(
+          order.extractedAt || order.createdAt || order.updatedAt || dateStart,
+        ).format("YYYY-MM-DD");
+        if (dateKey < startDateKey || dateKey > endDateKey) return;
+        getSetForDate(buyerUsersByDay, dateKey).add(userId);
+      });
+
+      const points = [];
+      const cursor = startMoment.clone().startOf("day");
+      while (cursor.isSameOrBefore(endMoment, "day")) {
+        const dateKey = cursor.format("YYYY-MM-DD");
+        const totalUsersInDay = (totalUsersByDay.get(dateKey) || new Set()).size;
+        const buyerUsersInDay = (buyerUsersByDay.get(dateKey) || new Set()).size;
+        const closeRate = totalUsersInDay > 0
+          ? (buyerUsersInDay / totalUsersInDay) * 100
+          : 0;
+
+        points.push({
+          key: dateKey,
+          label: cursor.format("DD/MM"),
+          totalUsers: totalUsersInDay,
+          buyerUsers: buyerUsersInDay,
+          closeRate: Number(closeRate.toFixed(1))
+        });
+        cursor.add(1, "day");
+      }
+      closingRateTrend.points = points;
+    }
+
     // Get follow-up stats
     const followUpQuery = {
       dateKey: { $gte: startDateKey, $lte: endDateKey }
@@ -19695,6 +19836,7 @@ app.get("/admin/customer-stats/data", async (req, res) => {
           failed: followUpFailed
         },
         hourlyMessages,
+        closingRateTrend,
         topProducts,
         topCustomers,
         paymentMethods: {

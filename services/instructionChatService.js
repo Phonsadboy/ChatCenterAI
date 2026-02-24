@@ -4,6 +4,7 @@
  */
 
 const { ObjectId } = require("mongodb");
+const crypto = require("crypto");
 const InstructionRAGService = require("./instructionRAGService");
 const ConversationThreadService = require("./conversationThreadService");
 
@@ -405,6 +406,102 @@ class InstructionChatService {
         return { success: true, itemId, columnName, columnIndex: insertIndex, newColumnCount: cols.length, changeId };
     }
 
+    async delete_column(instructionId, { itemId, columnName }, sessionId) {
+        if (!columnName || typeof columnName !== "string") return { error: "ต้องระบุ columnName" };
+
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
+
+        const item = inst.dataItems[itemIndex];
+        if (item.type !== "table" || !item.data) return { error: "ไม่ใช่ตาราง" };
+
+        const cols = item.data.columns || [];
+        const rows = item.data.rows || [];
+        const colIndex = cols.indexOf(columnName);
+        if (colIndex === -1) return { error: `ไม่พบคอลัมน์ "${columnName}"` };
+
+        // Save before state for undo
+        const beforeData = rows.slice(0, 5).map(row => (Array.isArray(row) && row[colIndex] !== undefined) ? row[colIndex] : "");
+
+        cols.splice(colIndex, 1);
+        rows.forEach(row => { if (Array.isArray(row)) row.splice(colIndex, 1); });
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $set: { [`dataItems.${itemIndex}.data`]: { columns: cols, rows }, [`dataItems.${itemIndex}.updatedAt`]: new Date(), updatedAt: new Date() } }
+        );
+        this._invalidateCache();
+
+        const changeId = await this._logChange(instructionId, sessionId, "delete_column",
+            { itemId, columnName, columnIndex: colIndex },
+            { columnName, columnIndex: colIndex, sampleValues: beforeData },
+            null
+        );
+        return { success: true, itemId, deletedColumn: columnName, remainingColumns: cols, newColumnCount: cols.length, changeId };
+    }
+
+    async delete_data_item(instructionId, { itemId, confirmTitle }, sessionId) {
+        if (!itemId) return { error: "ต้องระบุ itemId" };
+
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
+
+        const item = inst.dataItems[itemIndex];
+
+        // Safety: require confirmTitle to match
+        if (!confirmTitle || confirmTitle.trim() !== (item.title || "").trim()) {
+            return {
+                error: "ต้องยืนยันการลบ",
+                requireConfirm: true,
+                itemId,
+                title: item.title,
+                type: item.type,
+                summary: item.type === "table"
+                    ? `ตาราง ${(item.data?.columns || []).length} คอลัมน์, ${(item.data?.rows || []).length} แถว`
+                    : `ข้อความ ${(item.content || "").length} ตัวอักษร`,
+                message: `⚠️ กรุณายืนยันการลบโดยส่ง confirmTitle = "${item.title}"`,
+            };
+        }
+
+        // Save before state for changelog
+        const beforeSnapshot = {
+            itemId: item.itemId,
+            title: item.title,
+            type: item.type,
+        };
+        if (item.type === "table" && item.data) {
+            beforeSnapshot.columns = item.data.columns || [];
+            beforeSnapshot.rowCount = (item.data.rows || []).length;
+        } else if (item.type === "text") {
+            beforeSnapshot.contentLength = (item.content || "").length;
+        }
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $pull: { dataItems: { itemId } }, $set: { updatedAt: new Date() } }
+        );
+        this._invalidateCache();
+
+        const changeId = await this._logChange(instructionId, sessionId, "delete_data_item",
+            { itemId, title: item.title },
+            beforeSnapshot,
+            null
+        );
+
+        return {
+            success: true,
+            deletedItemId: itemId,
+            deletedTitle: item.title,
+            deletedType: item.type,
+            changeId,
+            message: `🗑️ ลบชุดข้อมูล "${item.title}" เรียบร้อย`,
+        };
+    }
+
     // ──────────────────────────── BULK DELETE SAFETY ────────────────────────────
 
     /**
@@ -511,6 +608,109 @@ class InstructionChatService {
             deletedRows: deletedData,
             newTotalRows: rows.length,
             changeId,
+        };
+    }
+
+    // ──────────────────────────── CREATE DATA ITEM TOOLS ────────────────────────────
+
+    async create_table_item(instructionId, { title, columns, rows }, sessionId) {
+        if (!title || typeof title !== "string" || !title.trim()) return { error: "ต้องระบุ title (ชื่อชุดข้อมูล)" };
+        if (!Array.isArray(columns) || columns.length === 0) return { error: "ต้องระบุ columns (array ของชื่อคอลัมน์) อย่างน้อย 1 คอลัมน์" };
+        if (columns.length > 50) return { error: "คอลัมน์สูงสุด 50" };
+
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const itemId = `item_${crypto.randomBytes(8).toString("hex")}`;
+        const cleanCols = columns.map(c => String(c).trim()).filter(c => c.length > 0);
+        if (cleanCols.length === 0) return { error: "ชื่อคอลัมน์ไม่ถูกต้อง" };
+
+        // Build rows data
+        let tableRows = [];
+        if (Array.isArray(rows) && rows.length > 0) {
+            tableRows = rows.slice(0, 500).map(row => {
+                if (Array.isArray(row)) {
+                    // Array format: ["val1", "val2", ...]
+                    return cleanCols.map((_, i) => row[i] !== undefined ? String(row[i]) : "");
+                } else if (row && typeof row === "object") {
+                    // Object format: { colName: "val" }
+                    return cleanCols.map(c => row[c] !== undefined ? String(row[c]) : "");
+                }
+                return cleanCols.map(() => "");
+            });
+        }
+
+        const newItem = {
+            itemId,
+            title: title.trim(),
+            type: "table",
+            data: { columns: cleanCols, rows: tableRows },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        };
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $push: { dataItems: newItem }, $set: { updatedAt: new Date() } }
+        );
+        this._invalidateCache();
+
+        const changeId = await this._logChange(instructionId, sessionId, "create_table_item",
+            { title: newItem.title, columns: cleanCols, rowCount: tableRows.length },
+            null,
+            { itemId, title: newItem.title }
+        );
+
+        return {
+            success: true,
+            itemId,
+            title: newItem.title,
+            type: "table",
+            columns: cleanCols,
+            totalRows: tableRows.length,
+            changeId,
+            message: `✅ สร้างตาราง "${newItem.title}" เรียบร้อย (${cleanCols.length} คอลัมน์, ${tableRows.length} แถว)`,
+        };
+    }
+
+    async create_text_item(instructionId, { title, content }, sessionId) {
+        if (!title || typeof title !== "string" || !title.trim()) return { error: "ต้องระบุ title (ชื่อชุดข้อมูล)" };
+
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const itemId = `item_${crypto.randomBytes(8).toString("hex")}`;
+        const textContent = typeof content === "string" ? content : "";
+
+        const newItem = {
+            itemId,
+            title: title.trim(),
+            type: "text",
+            content: textContent,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        };
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $push: { dataItems: newItem }, $set: { updatedAt: new Date() } }
+        );
+        this._invalidateCache();
+
+        const changeId = await this._logChange(instructionId, sessionId, "create_text_item",
+            { title: newItem.title, contentLength: textContent.length },
+            null,
+            { itemId, title: newItem.title }
+        );
+
+        return {
+            success: true,
+            itemId,
+            title: newItem.title,
+            type: "text",
+            contentLength: textContent.length,
+            changeId,
+            message: `✅ สร้างข้อความ "${newItem.title}" เรียบร้อย (${textContent.length} ตัวอักษร)`,
         };
     }
 
@@ -1285,6 +1485,11 @@ class InstructionChatService {
             { type: "function", function: { name: "add_column", description: "เพิ่มคอลัมน์ใหม่ในตาราง", parameters: { type: "object", properties: { itemId: { type: "string" }, columnName: { type: "string" }, defaultValue: { type: "string" }, position: { type: "string", enum: ["start", "end", "after"] }, afterColumn: { type: "string" } }, required: ["itemId", "columnName"] } } },
             { type: "function", function: { name: "delete_rows_bulk_confirm", description: "ขั้นตอน 1 ของการลบหลายแถว — ดูตัวอย่างแถวที่จะลบ + ได้ confirmToken (ต้องเรียกก่อน delete_rows_bulk เสมอ)", parameters: { type: "object", properties: { itemId: { type: "string" }, rowIndices: { type: "array", items: { type: "number" }, description: "รายการ rowIndex ที่ต้องการลบ (สูงสุด 50)" } }, required: ["itemId", "rowIndices"] } } },
             { type: "function", function: { name: "delete_rows_bulk", description: "ขั้นตอน 2 ของการลบหลายแถว — ลบจริงโดยใช้ confirmToken จาก delete_rows_bulk_confirm", parameters: { type: "object", properties: { itemId: { type: "string" }, confirmToken: { type: "string", description: "token จาก delete_rows_bulk_confirm" } }, required: ["itemId", "confirmToken"] } } },
+            { type: "function", function: { name: "delete_column", description: "ลบคอลัมน์ออกจากตาราง — ลบทั้งหัวคอลัมน์และข้อมูลในคอลัมน์ทุกแถว", parameters: { type: "object", properties: { itemId: { type: "string" }, columnName: { type: "string", description: "ชื่อคอลัมน์ที่ต้องการลบ" } }, required: ["itemId", "columnName"] } } },
+            { type: "function", function: { name: "delete_data_item", description: "ลบชุดข้อมูลทั้งอัน (ตารางหรือข้อความ) — ต้องยืนยันด้วย confirmTitle ที่ตรงกับชื่อชุดข้อมูล — เรียกครั้งแรกโดยไม่มี confirmTitle เพื่อดู preview ก่อน", parameters: { type: "object", properties: { itemId: { type: "string", description: "ID ของชุดข้อมูลที่ต้องการลบ" }, confirmTitle: { type: "string", description: "ชื่อชุดข้อมูลเพื่อยืนยันการลบ (ต้องตรงกับ title)" } }, required: ["itemId"] } } },
+            // ── Create Data Item Tools ──
+            { type: "function", function: { name: "create_table_item", description: "สร้างชุดข้อมูลใหม่ประเภทตาราง — ระบุชื่อ, คอลัมน์, และข้อมูลเริ่มต้น (optional) — ใช้เมื่อต้องการเพิ่มตารางใหม่ใน instruction", parameters: { type: "object", properties: { title: { type: "string", description: "ชื่อของชุดข้อมูล" }, columns: { type: "array", items: { type: "string" }, description: "รายการชื่อคอลัมน์" }, rows: { type: "array", items: { type: "object" }, description: "ข้อมูลเริ่มต้น — array ของ object { columnName: value } (optional, สูงสุด 500 แถว)" } }, required: ["title", "columns"] } } },
+            { type: "function", function: { name: "create_text_item", description: "สร้างชุดข้อมูลใหม่ประเภทข้อความ — ระบุชื่อและเนื้อหาข้อความ — ใช้เมื่อต้องการเพิ่มคำอธิบาย, คำแนะนำ, หรือเนื้อหาอื่นๆ ใน instruction", parameters: { type: "object", properties: { title: { type: "string", description: "ชื่อของชุดข้อมูล" }, content: { type: "string", description: "เนื้อหาข้อความ" } }, required: ["title"] } } },
             // ── Follow-Up Management Tools ──
             { type: "function", function: { name: "list_followup_pages", description: "ดูรายการเพจทั้งหมด (LINE + Facebook) พร้อม pageKey, สถานะติดตาม, จำนวน rounds — ใช้เพื่อดู pageKey สำหรับ tools อื่น", parameters: { type: "object", properties: {} } } },
             { type: "function", function: { name: "get_followup_config", description: "ดูการตั้งค่าระบบติดตามลูกค้า — ถ้าระบุ pageKeys จะดึง config เฉพาะเพจ, ถ้าไม่ระบุจะดึง config กลาง", parameters: { type: "object", properties: { pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey (เช่น ['line:abc123', 'facebook:xyz456']) — ถ้าไม่ระบุจะดู config กลาง" } } } } },
@@ -1309,7 +1514,7 @@ class InstructionChatService {
 
     async executeTool(toolName, args, instructionId, sessionId) {
         const readTools = ["get_instruction_overview", "get_data_item_detail", "get_rows", "get_text_content", "search_in_table", "search_content"];
-        const writeTools = ["update_cell", "update_rows_bulk", "add_row", "delete_row", "update_text_content", "add_column", "delete_rows_bulk"];
+        const writeTools = ["update_cell", "update_rows_bulk", "add_row", "delete_row", "update_text_content", "add_column", "delete_column", "delete_rows_bulk", "delete_data_item", "create_table_item", "create_text_item"];
         const confirmTools = ["delete_rows_bulk_confirm"];
         // Follow-up tools (not tied to instructionId)
         const followUpReadTools = ["get_followup_config", "get_followup_round_detail", "list_followup_assets", "list_followup_pages"];
