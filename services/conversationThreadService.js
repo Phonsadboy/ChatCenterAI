@@ -95,6 +95,11 @@ class ConversationThreadService {
                 updateOps,
                 { upsert: true }
             );
+
+            // Enrich with order data & auto-tag (background, non-blocking)
+            this.updateThreadOrderInfo(threadId, senderId, platform, botId).then(() => {
+                this.autoTagThread(threadId).catch(() => { });
+            }).catch(() => { });
         } catch (err) {
             console.warn("[ConversationThread] upsert error:", err.message);
         }

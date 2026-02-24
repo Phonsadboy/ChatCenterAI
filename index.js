@@ -18897,6 +18897,10 @@ function buildToolSummary(toolName, result) {
       return `✏️ แก้ไข Round ${result.roundIndex ?? '?'} สำเร็จ`;
     case 'manage_followup_images':
       return `🖼️ ${result.action === 'add' ? 'เพิ่ม' : 'ลบ'}รูปใน Round ${result.roundIndex ?? '?'} (${result.currentImageCount || 0} รูป)`;
+    case 'list_followup_pages':
+      return `📋 พบ ${result.totalPages || 0} เพจ`;
+    case 'update_page_model':
+      return `🤖 เปลี่ยนโมเดลเป็น ${result.model || '?'} (${result.results?.length || 0} เพจ)`;
     case 'list_followup_assets':
       return `🖼️ พบ ${result.totalAssets || 0} รูปภาพ`;
 
@@ -18919,8 +18923,16 @@ app.post("/api/instruction-ai/upload-image", requireAdmin, imageUpload.single("i
   }
 });
 
+// ─── Active Requests Store (for SSE resilience) ───
+const activeRequests = new Map();
+
+function cleanupActiveRequest(requestId) {
+  setTimeout(() => { activeRequests.delete(requestId); }, 2 * 60 * 1000);
+}
+
 // ─── SSE Streaming Chat Endpoint ───
 app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
+  const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 6)}`;
   try {
     const { instructionId, message, model = "gpt-5.2", thinking = "off", history = [], sessionId: clientSessionId, images } = req.body;
 
@@ -18934,20 +18946,54 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
-    const sendEvent = (event, data) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const sessionId = clientSessionId || `ses_${Date.now().toString(36)}`;
+    const username = req.session?.user?.username || "admin";
+
+    // Initialize active request buffer
+    const requestState = {
+      events: [], status: "processing", sessionId, requestId,
+      instructionId, username, model, thinking,
+      listeners: new Set(), createdAt: Date.now(),
     };
+    activeRequests.set(requestId, requestState);
+    requestState.listeners.add(res);
+
+    req.on("close", () => { requestState.listeners.delete(res); });
+
+    // Buffered sendEvent — stores + broadcasts
+    const sendEvent = (event, data) => {
+      const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+      requestState.events.push({ event, data, payload });
+      for (const listener of requestState.listeners) {
+        try { listener.write(payload); } catch (e) { requestState.listeners.delete(listener); }
+      }
+    };
+
+    // Heartbeat — keep SSE alive through proxies
+    const heartbeatInterval = setInterval(() => {
+      const comment = `: heartbeat ${Date.now()}\n\n`;
+      for (const listener of requestState.listeners) {
+        try { listener.write(comment); } catch (e) { requestState.listeners.delete(listener); }
+      }
+    }, 15000);
+
+    const finishRequest = () => {
+      clearInterval(heartbeatInterval);
+      for (const listener of requestState.listeners) { try { listener.end(); } catch (e) { } }
+      requestState.listeners.clear();
+      cleanupActiveRequest(requestId);
+    };
+
+    sendEvent("session", { sessionId, requestId });
 
     const client = await connectDB();
     const db = client.db("chatbot");
     const openai = openaiSingleton;
     const chatService = new InstructionChatService(db, openai, { resetFollowUpConfigCache });
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
-    if (!instruction) { sendEvent("error", { error: "ไม่พบ Instruction" }); res.end(); return; }
+    if (!instruction) { sendEvent("error", { error: "ไม่พบ Instruction" }); requestState.status = "error"; finishRequest(); return; }
 
     const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
-    const sessionId = clientSessionId || `ses_${Date.now().toString(36)}`;
-    const username = req.session?.user?.username || "admin";
 
     // Telemetry: แจ้งว่ามีคนกำลังใช้งาน InstructionAI
     notifyInstructionAIUsage(username, instruction.name, model).catch(() => { });
@@ -18957,12 +19003,20 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     // Build user message with optional images (vision API)
     let userContent;
     if (Array.isArray(images) && images.length > 0) {
-      userContent = [
-        { type: "text", text: message },
-        ...images.slice(0, 3).map(img => ({
+      const imageParts = [];
+      for (const img of images.slice(0, 10)) {
+        // Include filename as text annotation so AI knows the original name
+        if (img.name) {
+          imageParts.push({ type: "text", text: `[ไฟล์แนบ: ${img.name}]` });
+        }
+        imageParts.push({
           type: "image_url",
           image_url: { url: img.data || img, detail: img.detail || "low" },
-        })),
+        });
+      }
+      userContent = [
+        { type: "text", text: message },
+        ...imageParts,
       ];
     } else {
       userContent = message;
@@ -18994,32 +19048,91 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     sendEvent("session", { sessionId });
 
-    // Tool loop (max 8 iterations) — use real streaming for final response
+    // ─── Unified Streaming Tool Loop (max 8 iterations) ───────────────────────
+    // Uses a single streaming call per iteration:
+    //   • reasoning_content delta → thinking_delta events (real-time)
+    //   • tool_calls delta → accumulated, executed after stream ends
+    //   • content delta → content events (real-time)
+    // No need for a separate non-streaming "tool check" call.
+
+    let finalContent = "";
+
     for (let i = 0; i < 8; i++) {
-      const payload = { model, messages, tools, tool_choice: "auto" };
-      if (effort !== "none") payload.reasoning_effort = effort;
+      const streamPayload = {
+        model, messages, tools, tool_choice: "auto",
+        stream: true, stream_options: { include_usage: true },
+      };
+      if (effort !== "none") streamPayload.reasoning_effort = effort;
 
-      // First, try non-streaming to check for tool calls
-      // (We need the full response to detect tool_calls)
-      const response = await openai.chat.completions.create(payload);
-      const choice = response.choices[0];
-      const msg = choice.message;
+      // Accumulators for this iteration
+      const toolCallsAcc = []; // assemble tool_call deltas by index
+      let iterContent = "";
+      let iterReasoning = "";
+      let hasToolCalls = false;
 
-      if (response.usage) {
-        totalUsage.prompt_tokens += response.usage.prompt_tokens || 0;
-        totalUsage.completion_tokens += response.usage.completion_tokens || 0;
-        totalUsage.reasoning_tokens += response.usage.reasoning_tokens || 0;
-        totalUsage.total_tokens += response.usage.total_tokens || 0;
+      try {
+        const stream = await openai.chat.completions.create(streamPayload);
+        for await (const chunk of stream) {
+          const delta = chunk.choices?.[0]?.delta;
+
+          // ✅ Real-time thinking stream
+          if (delta?.reasoning_content) {
+            iterReasoning += delta.reasoning_content;
+            sendEvent("thinking_delta", { text: delta.reasoning_content });
+          }
+
+          // Real-time content stream
+          if (delta?.content) {
+            iterContent += delta.content;
+            sendEvent("content", { text: delta.content });
+          }
+
+          // Assemble tool_calls from streaming deltas
+          if (delta?.tool_calls) {
+            hasToolCalls = true;
+            for (const tc of delta.tool_calls) {
+              if (!toolCallsAcc[tc.index]) {
+                toolCallsAcc[tc.index] = { id: "", type: "function", function: { name: "", arguments: "" } };
+              }
+              if (tc.id) toolCallsAcc[tc.index].id = tc.id;
+              if (tc.function?.name) toolCallsAcc[tc.index].function.name += tc.function.name;
+              if (tc.function?.arguments) toolCallsAcc[tc.index].function.arguments += tc.function.arguments;
+            }
+          }
+
+          if (chunk.usage) {
+            totalUsage.prompt_tokens += chunk.usage.prompt_tokens || 0;
+            totalUsage.completion_tokens += chunk.usage.completion_tokens || 0;
+            totalUsage.reasoning_tokens += chunk.usage.reasoning_tokens || 0;
+            totalUsage.total_tokens += chunk.usage.total_tokens || 0;
+          }
+        }
+      } catch (streamErr) {
+        console.error("[InstructionChat] Stream error:", streamErr.message);
+        sendEvent("error", { error: streamErr.message });
+        requestState.status = "error";
+        break;
       }
 
-      if (msg.reasoning_content) {
-        sendEvent("thinking", { content: msg.reasoning_content });
+      // Signal thinking block is complete (update word count)
+      if (iterReasoning) {
+        const wordCount = iterReasoning.split(/\s+/).filter(Boolean).length;
+        sendEvent("thinking_done", { wordCount });
       }
 
-      // Has tool calls — process them and continue loop
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
-        messages.push(msg);
-        for (const toolCall of msg.tool_calls) {
+      // Has tool calls — execute them and continue loop
+      if (hasToolCalls && toolCallsAcc.length > 0) {
+        const assistantMsg = {
+          role: "assistant",
+          content: iterContent || null,
+          tool_calls: toolCallsAcc.map(tc => ({
+            id: tc.id, type: "function",
+            function: { name: tc.function.name, arguments: tc.function.arguments },
+          })),
+        };
+        messages.push(assistantMsg);
+
+        for (const toolCall of toolCallsAcc) {
           const toolName = toolCall.function.name;
           let args = {};
           try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch (e) { }
@@ -19034,48 +19147,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           sendEvent("tool_end", { tool: toolName, summary: toolSummary, result: toolSummary });
           messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(result) });
         }
-        continue; // Continue tool loop
+        continue; // Next iteration
       }
 
-      // No tool calls — this is the final response
-      // Re-request with real streaming for smooth content delivery
-      let finalContent = "";
-      let finalReasoning = "";
-      try {
-        const streamPayload = { ...payload, stream: true, stream_options: { include_usage: true } };
-        // Remove tools on the final streaming call since we already know there are no tool calls
-        delete streamPayload.tools;
-        delete streamPayload.tool_choice;
-
-        const stream = await openai.chat.completions.create(streamPayload);
-        for await (const chunk of stream) {
-          const delta = chunk.choices?.[0]?.delta;
-          if (delta?.reasoning_content) {
-            finalReasoning += delta.reasoning_content;
-          }
-          if (delta?.content) {
-            finalContent += delta.content;
-            sendEvent("content", { text: delta.content });
-          }
-          // Track usage from stream (last chunk has usage)
-          if (chunk.usage) {
-            totalUsage.prompt_tokens += chunk.usage.prompt_tokens || 0;
-            totalUsage.completion_tokens += chunk.usage.completion_tokens || 0;
-            totalUsage.reasoning_tokens += chunk.usage.reasoning_tokens || 0;
-            totalUsage.total_tokens += chunk.usage.total_tokens || 0;
-          }
-        }
-      } catch (streamErr) {
-        // Fallback: use the already-fetched non-streaming response
-        console.warn("[InstructionChat] Stream fallback:", streamErr.message);
-        finalContent = msg.content || "";
-        sendEvent("content", { text: finalContent });
-      }
-
-      // Send thinking if captured from streaming
-      if (finalReasoning && !msg.reasoning_content) {
-        sendEvent("thinking", { content: finalReasoning });
-      }
+      // No tool calls — this is the final response, content already streamed
+      finalContent = iterContent;
 
       // Build full assistant messages for history
       const newMessages = messages.slice(initialMsgCount);
@@ -19126,15 +19202,83 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       });
 
       sendEvent("done", { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages });
+      requestState.status = "complete";
+
+      // Auto-save session (even if client disconnected)
+      try {
+        const fullHistory = [...history, { role: "user", content: message }, ...assistantMessages];
+        await db.collection("instruction_chat_sessions").updateOne(
+          { sessionId },
+          {
+            $set: {
+              sessionId, instructionId, instructionName: instruction.name || "",
+              history: fullHistory, model, thinking,
+              totalTokens: totalUsage.total_tokens,
+              totalChanges: changes.length,
+              username, updatedAt: new Date(),
+            },
+            $setOnInsert: { createdAt: new Date() }
+          },
+          { upsert: true }
+        );
+      } catch (saveErr) {
+        console.warn("[InstructionChat] Auto-save session failed:", saveErr.message);
+      }
+
       break;
     }
 
-    res.end();
+    finishRequest();
   } catch (error) {
     console.error("[InstructionChat SSE] Error:", error);
-    try { res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`); } catch (e) { }
-    res.end();
+    const reqState = activeRequests.get(requestId);
+    if (reqState) {
+      const errPayload = `event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`;
+      reqState.events.push({ event: "error", data: { error: error.message }, payload: errPayload });
+      reqState.status = "error";
+      for (const listener of reqState.listeners) {
+        try { listener.write(errPayload); listener.end(); } catch (e) { }
+      }
+      reqState.listeners.clear();
+      cleanupActiveRequest(requestId);
+    } else {
+      try { res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`); } catch (e) { }
+      res.end();
+    }
   }
+});
+
+// ─── SSE Resume Endpoint ───
+app.get("/api/instruction-ai/stream/resume", requireAdmin, (req, res) => {
+  const { requestId } = req.query;
+  if (!requestId) return res.status(400).json({ error: "Missing requestId" });
+
+  const reqState = activeRequests.get(requestId);
+  if (!reqState) {
+    return res.status(404).json({ error: "not_found", message: "Request not found — session may have completed" });
+  }
+
+  // SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  // Replay all buffered events
+  for (const entry of reqState.events) {
+    try { res.write(entry.payload); } catch (e) { res.end(); return; }
+  }
+
+  // If already complete or errored, just end
+  if (reqState.status === "complete" || reqState.status === "error") {
+    res.end();
+    return;
+  }
+
+  // Still processing — subscribe for future events
+  reqState.listeners.add(res);
+  req.on("close", () => { reqState.listeners.delete(res); });
 });
 
 // ─── Session Persistence APIs ───

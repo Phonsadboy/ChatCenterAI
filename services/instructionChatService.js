@@ -540,38 +540,177 @@ class InstructionChatService {
         };
     }
 
+    // ──────────────────────────── FOLLOW-UP HELPERS ────────────────────────────
+
+    _parsePageKey(pageKey) {
+        if (!pageKey || typeof pageKey !== "string") return null;
+        const idx = pageKey.indexOf(":");
+        if (idx === -1) return null;
+        const platform = pageKey.substring(0, idx).toLowerCase();
+        const botId = pageKey.substring(idx + 1);
+        if (!platform || !botId) return null;
+        return { platform, botId };
+    }
+
+    async _getPageRounds(pageKey) {
+        const parsed = this._parsePageKey(pageKey);
+        if (!parsed) return null;
+        const doc = await this.db.collection("follow_up_page_settings").findOne({ platform: parsed.platform, botId: parsed.botId });
+        return doc?.settings?.rounds || null;
+    }
+
+    async _getGlobalRounds() {
+        const doc = await this.db.collection("settings").findOne({ key: "followUpRounds" });
+        return Array.isArray(doc?.value) ? doc.value : [];
+    }
+
+    async _getMergedRoundsForPage(pageKey) {
+        const pageRounds = await this._getPageRounds(pageKey);
+        if (pageRounds && Array.isArray(pageRounds) && pageRounds.length > 0) return pageRounds;
+        return await this._getGlobalRounds();
+    }
+
     // ──────────────────────────── FOLLOW-UP TOOLS ────────────────────────────
 
-    async get_followup_config() {
+    async list_followup_pages() {
+        const lineBots = await this.db.collection("line_bots").find({}).sort({ createdAt: -1 }).toArray();
+        const facebookBots = await this.db.collection("facebook_bots").find({}).sort({ createdAt: -1 }).toArray();
+        const overrides = await this.db.collection("follow_up_page_settings").find({}).toArray();
+        const overrideMap = {};
+        overrides.forEach(d => { if (d.platform && d.botId) overrideMap[`${d.platform}:${d.botId}`] = d; });
+
+        // Global base config
+        const settingsColl = this.db.collection("settings");
+        const keys = ["followUpAutoEnabled", "followUpRounds"];
+        const docs = await settingsColl.find({ key: { $in: keys } }).toArray();
+        const map = {};
+        docs.forEach(d => { map[d.key] = d.value; });
+        const globalEnabled = typeof map.followUpAutoEnabled === "boolean" ? map.followUpAutoEnabled : false;
+        const globalRounds = Array.isArray(map.followUpRounds) ? map.followUpRounds : [];
+
+        const pages = [];
+
+        lineBots.forEach(bot => {
+            const pageKey = `line:${bot._id.toString()}`;
+            const override = overrideMap[pageKey];
+            const effectiveRounds = override?.settings?.rounds || globalRounds;
+            const effectiveEnabled = override?.settings?.autoFollowUpEnabled !== undefined
+                ? override.settings.autoFollowUpEnabled : globalEnabled;
+            pages.push({
+                pageKey,
+                platform: "line",
+                botId: bot._id.toString(),
+                name: bot.name || bot.displayName || bot.botName || `LINE Bot (${bot._id.toString().slice(-4)})`,
+                aiModel: bot.aiModel || "gpt-5",
+                autoFollowUpEnabled: effectiveEnabled,
+                totalRounds: effectiveRounds.length,
+                hasOverride: !!override,
+            });
+        });
+
+        facebookBots.forEach(bot => {
+            const pageKey = `facebook:${bot._id.toString()}`;
+            const override = overrideMap[pageKey];
+            const effectiveRounds = override?.settings?.rounds || globalRounds;
+            const effectiveEnabled = override?.settings?.autoFollowUpEnabled !== undefined
+                ? override.settings.autoFollowUpEnabled : globalEnabled;
+            pages.push({
+                pageKey,
+                platform: "facebook",
+                botId: bot._id.toString(),
+                name: bot.pageName || bot.name || `Facebook Page (${bot._id.toString().slice(-4)})`,
+                aiModel: bot.aiModel || "gpt-5",
+                autoFollowUpEnabled: effectiveEnabled,
+                totalRounds: effectiveRounds.length,
+                hasOverride: !!override,
+            });
+        });
+
+        return {
+            totalPages: pages.length,
+            globalConfig: { autoFollowUpEnabled: globalEnabled, totalRounds: globalRounds.length },
+            pages,
+            note: "ใช้ pageKeys ใน get_followup_config, update_followup_settings, update_followup_round, manage_followup_images เพื่อแก้ไขเฉพาะเพจ",
+        };
+    }
+
+    async get_followup_config({ pageKeys } = {}) {
         const settingsColl = this.db.collection("settings");
         const keys = ["followUpAutoEnabled", "followUpRounds", "followUpOrderPromptInstructions"];
         const docs = await settingsColl.find({ key: { $in: keys } }).toArray();
         const map = {};
         docs.forEach(d => { map[d.key] = d.value; });
 
-        const rounds = Array.isArray(map.followUpRounds) ? map.followUpRounds : [];
-        return {
+        const globalRounds = Array.isArray(map.followUpRounds) ? map.followUpRounds : [];
+        const globalConfig = {
+            scope: "global",
             autoFollowUpEnabled: typeof map.followUpAutoEnabled === "boolean" ? map.followUpAutoEnabled : false,
             orderPromptInstructions: typeof map.followUpOrderPromptInstructions === "string" ? map.followUpOrderPromptInstructions : "",
-            totalRounds: rounds.length,
-            rounds: rounds.map((r, i) => ({
+            totalRounds: globalRounds.length,
+            rounds: globalRounds.map((r, i) => ({
                 roundIndex: i,
                 delayMinutes: r.delayMinutes || 0,
                 messagePreview: (r.message || "").substring(0, 100) + ((r.message || "").length > 100 ? "..." : ""),
                 imageCount: Array.isArray(r.images) ? r.images.length : 0,
             })),
         };
+
+        // If no pageKeys, return global config only (backward compatible)
+        if (!Array.isArray(pageKeys) || pageKeys.length === 0) {
+            return globalConfig;
+        }
+
+        // Fetch per-page configs
+        const pageConfigs = [];
+        for (const pk of pageKeys.slice(0, 20)) {
+            const parsed = this._parsePageKey(pk);
+            if (!parsed) { pageConfigs.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง (ใช้ platform:botId)" }); continue; }
+            const doc = await this.db.collection("follow_up_page_settings").findOne({ platform: parsed.platform, botId: parsed.botId });
+            const settings = doc?.settings || {};
+            const effectiveRounds = Array.isArray(settings.rounds) && settings.rounds.length > 0 ? settings.rounds : globalRounds;
+            pageConfigs.push({
+                pageKey: pk,
+                platform: parsed.platform,
+                botId: parsed.botId,
+                hasOverride: !!doc,
+                autoFollowUpEnabled: typeof settings.autoFollowUpEnabled === "boolean" ? settings.autoFollowUpEnabled : globalConfig.autoFollowUpEnabled,
+                orderPromptInstructions: typeof settings.orderPromptInstructions === "string" ? settings.orderPromptInstructions : globalConfig.orderPromptInstructions,
+                totalRounds: effectiveRounds.length,
+                rounds: effectiveRounds.map((r, i) => ({
+                    roundIndex: i,
+                    delayMinutes: r.delayMinutes || 0,
+                    messagePreview: (r.message || "").substring(0, 100) + ((r.message || "").length > 100 ? "..." : ""),
+                    imageCount: Array.isArray(r.images) ? r.images.length : 0,
+                })),
+                source: doc ? "page-specific" : "inherited from global",
+            });
+        }
+
+        return { globalConfig, pageConfigs };
     }
 
-    async get_followup_round_detail({ roundIndex }) {
-        const settingsColl = this.db.collection("settings");
-        const doc = await settingsColl.findOne({ key: "followUpRounds" });
-        const rounds = Array.isArray(doc?.value) ? doc.value : [];
+    async get_followup_round_detail({ roundIndex, pageKey }) {
+        let rounds;
+        let source = "global";
+        if (pageKey) {
+            const pageRounds = await this._getPageRounds(pageKey);
+            if (pageRounds && Array.isArray(pageRounds) && pageRounds.length > 0) {
+                rounds = pageRounds;
+                source = `page-specific (${pageKey})`;
+            } else {
+                rounds = await this._getGlobalRounds();
+                source = `inherited from global (${pageKey} has no override)`;
+            }
+        } else {
+            rounds = await this._getGlobalRounds();
+        }
+
         if (roundIndex < 0 || roundIndex >= rounds.length) return { error: `Round ${roundIndex} ไม่มีอยู่ (มี ${rounds.length} rounds)` };
 
         const round = rounds[roundIndex];
         const result = {
             roundIndex,
+            source,
             delayMinutes: round.delayMinutes || 0,
             message: round.message || "",
             images: [],
@@ -584,8 +723,7 @@ class InstructionChatService {
                 const assetId = img.assetId || img.id;
                 if (assetId) {
                     try {
-                        const { ObjectId: OId } = require("mongodb");
-                        const asset = await assetsColl.findOne({ _id: new OId(assetId) });
+                        const asset = await assetsColl.findOne({ _id: new ObjectId(assetId) });
                         result.images.push({
                             assetId,
                             url: asset?.url || img.url || "",
@@ -603,7 +741,41 @@ class InstructionChatService {
         return result;
     }
 
-    async update_followup_settings({ autoFollowUpEnabled, orderPromptInstructions }) {
+    async update_followup_settings({ autoFollowUpEnabled, orderPromptInstructions, pageKeys }) {
+        // If pageKeys provided, write to per-page settings
+        if (Array.isArray(pageKeys) && pageKeys.length > 0) {
+            const results = [];
+            const pageColl = this.db.collection("follow_up_page_settings");
+            for (const pk of pageKeys.slice(0, 20)) {
+                const parsed = this._parsePageKey(pk);
+                if (!parsed) { results.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง" }); continue; }
+
+                const setFields = {};
+                const updates = [];
+                if (typeof autoFollowUpEnabled === "boolean") {
+                    setFields["settings.autoFollowUpEnabled"] = autoFollowUpEnabled;
+                    updates.push({ field: "autoFollowUpEnabled", value: autoFollowUpEnabled });
+                }
+                if (typeof orderPromptInstructions === "string" && orderPromptInstructions.trim().length > 0) {
+                    const trimmed = orderPromptInstructions.trim().slice(0, 4000);
+                    setFields["settings.orderPromptInstructions"] = trimmed;
+                    updates.push({ field: "orderPromptInstructions", value: trimmed.substring(0, 100) + (trimmed.length > 100 ? "..." : "") });
+                }
+
+                if (!Object.keys(setFields).length) { results.push({ pageKey: pk, error: "ไม่มีการเปลี่ยนแปลง" }); continue; }
+
+                await pageColl.updateOne(
+                    { platform: parsed.platform, botId: parsed.botId },
+                    { $set: { platform: parsed.platform, botId: parsed.botId, ...setFields, updatedAt: new Date() } },
+                    { upsert: true }
+                );
+                results.push({ pageKey: pk, success: true, updated: updates });
+            }
+            if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
+            return { success: true, scope: "per-page", results };
+        }
+
+        // Global update (backward compatible)
         const settingsColl = this.db.collection("settings");
         const updates = [];
 
@@ -620,10 +792,48 @@ class InstructionChatService {
         if (!updates.length) return { error: "ไม่มีการเปลี่ยนแปลง — ระบุ autoFollowUpEnabled หรือ orderPromptInstructions" };
 
         if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
-        return { success: true, updated: updates };
+        return { success: true, scope: "global", updated: updates };
     }
 
-    async update_followup_round({ roundIndex, message, delayMinutes }) {
+    async update_followup_round({ roundIndex, message, delayMinutes, pageKeys }) {
+        // If pageKeys provided, update per-page rounds
+        if (Array.isArray(pageKeys) && pageKeys.length > 0) {
+            const results = [];
+            const pageColl = this.db.collection("follow_up_page_settings");
+            for (const pk of pageKeys.slice(0, 20)) {
+                const parsed = this._parsePageKey(pk);
+                if (!parsed) { results.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง" }); continue; }
+
+                // Get current page rounds (or copy from global if none)
+                const doc = await pageColl.findOne({ platform: parsed.platform, botId: parsed.botId });
+                let rounds = doc?.settings?.rounds;
+                if (!Array.isArray(rounds) || rounds.length === 0) {
+                    // Copy global rounds to this page first
+                    rounds = JSON.parse(JSON.stringify(await this._getGlobalRounds()));
+                }
+                if (roundIndex < 0 || roundIndex >= rounds.length) {
+                    results.push({ pageKey: pk, error: `Round ${roundIndex} ไม่มีอยู่ (มี ${rounds.length} rounds)` }); continue;
+                }
+
+                const before = { message: rounds[roundIndex].message, delayMinutes: rounds[roundIndex].delayMinutes };
+                if (typeof message === "string") rounds[roundIndex].message = message;
+                if (typeof delayMinutes === "number" && delayMinutes >= 1) rounds[roundIndex].delayMinutes = Math.round(delayMinutes);
+
+                await pageColl.updateOne(
+                    { platform: parsed.platform, botId: parsed.botId },
+                    { $set: { platform: parsed.platform, botId: parsed.botId, "settings.rounds": rounds, updatedAt: new Date() } },
+                    { upsert: true }
+                );
+                results.push({
+                    pageKey: pk, success: true, roundIndex,
+                    before, after: { message: rounds[roundIndex].message, delayMinutes: rounds[roundIndex].delayMinutes },
+                });
+            }
+            if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
+            return { success: true, scope: "per-page", results };
+        }
+
+        // Global update (backward compatible)
         const settingsColl = this.db.collection("settings");
         const doc = await settingsColl.findOne({ key: "followUpRounds" });
         const rounds = Array.isArray(doc?.value) ? [...doc.value] : [];
@@ -639,12 +849,77 @@ class InstructionChatService {
 
         if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
         return {
-            success: true, roundIndex,
+            success: true, scope: "global", roundIndex,
             before, after: { message: rounds[roundIndex].message, delayMinutes: rounds[roundIndex].delayMinutes },
         };
     }
 
-    async manage_followup_images({ roundIndex, action, assetId, imageUrl }) {
+    async manage_followup_images({ roundIndex, action, assetId, imageUrl, pageKeys }) {
+        // Resolve asset once (shared across pages)
+        let resolvedImgObj = null;
+        if (action === "add") {
+            if (!assetId && !imageUrl) return { error: "ต้องระบุ assetId หรือ imageUrl" };
+            resolvedImgObj = { url: imageUrl || "" };
+            if (assetId) {
+                try {
+                    const asset = await this.db.collection("follow_up_assets").findOne({ _id: new ObjectId(assetId) });
+                    if (asset) {
+                        resolvedImgObj = { assetId, url: asset.url, previewUrl: asset.thumbUrl || asset.url };
+                    } else {
+                        return { error: `ไม่พบ asset ID: ${assetId}` };
+                    }
+                } catch {
+                    return { error: `assetId ไม่ถูกต้อง: ${assetId}` };
+                }
+            }
+        }
+
+        // Per-page update
+        if (Array.isArray(pageKeys) && pageKeys.length > 0) {
+            const results = [];
+            const pageColl = this.db.collection("follow_up_page_settings");
+            for (const pk of pageKeys.slice(0, 20)) {
+                const parsed = this._parsePageKey(pk);
+                if (!parsed) { results.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง" }); continue; }
+
+                const doc = await pageColl.findOne({ platform: parsed.platform, botId: parsed.botId });
+                let rounds = doc?.settings?.rounds;
+                if (!Array.isArray(rounds) || rounds.length === 0) {
+                    rounds = JSON.parse(JSON.stringify(await this._getGlobalRounds()));
+                }
+                if (roundIndex < 0 || roundIndex >= rounds.length) {
+                    results.push({ pageKey: pk, error: `Round ${roundIndex} ไม่มีอยู่` }); continue;
+                }
+
+                if (!Array.isArray(rounds[roundIndex].images)) rounds[roundIndex].images = [];
+
+                if (action === "add") {
+                    rounds[roundIndex].images.push({ ...resolvedImgObj });
+                } else if (action === "remove") {
+                    if (!assetId && !imageUrl) { results.push({ pageKey: pk, error: "ต้องระบุ assetId หรือ imageUrl เพื่อลบ" }); continue; }
+                    const before = rounds[roundIndex].images.length;
+                    rounds[roundIndex].images = rounds[roundIndex].images.filter(img => {
+                        if (assetId && (img.assetId === assetId || img.id === assetId)) return false;
+                        if (imageUrl && img.url === imageUrl) return false;
+                        return true;
+                    });
+                    if (rounds[roundIndex].images.length === before) { results.push({ pageKey: pk, error: "ไม่พบรูปที่ต้องการลบ" }); continue; }
+                } else {
+                    results.push({ pageKey: pk, error: "action ต้องเป็น 'add' หรือ 'remove'" }); continue;
+                }
+
+                await pageColl.updateOne(
+                    { platform: parsed.platform, botId: parsed.botId },
+                    { $set: { platform: parsed.platform, botId: parsed.botId, "settings.rounds": rounds, updatedAt: new Date() } },
+                    { upsert: true }
+                );
+                results.push({ pageKey: pk, success: true, roundIndex, action, currentImageCount: rounds[roundIndex].images.length });
+            }
+            if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
+            return { success: true, scope: "per-page", results };
+        }
+
+        // Global update (backward compatible)
         const settingsColl = this.db.collection("settings");
         const doc = await settingsColl.findOne({ key: "followUpRounds" });
         const rounds = Array.isArray(doc?.value) ? [...doc.value] : [];
@@ -654,23 +929,7 @@ class InstructionChatService {
         if (!Array.isArray(rounds[roundIndex].images)) rounds[roundIndex].images = [];
 
         if (action === "add") {
-            if (!assetId && !imageUrl) return { error: "ต้องระบุ assetId หรือ imageUrl" };
-            // Resolve asset info if assetId provided
-            let imgObj = { url: imageUrl || "" };
-            if (assetId) {
-                try {
-                    const { ObjectId: OId } = require("mongodb");
-                    const asset = await this.db.collection("follow_up_assets").findOne({ _id: new OId(assetId) });
-                    if (asset) {
-                        imgObj = { assetId, url: asset.url, previewUrl: asset.thumbUrl || asset.url };
-                    } else {
-                        return { error: `ไม่พบ asset ID: ${assetId}` };
-                    }
-                } catch {
-                    return { error: `assetId ไม่ถูกต้อง: ${assetId}` };
-                }
-            }
-            rounds[roundIndex].images.push(imgObj);
+            rounds[roundIndex].images.push({ ...resolvedImgObj });
         } else if (action === "remove") {
             if (!assetId && !imageUrl) return { error: "ต้องระบุ assetId หรือ imageUrl เพื่อลบ" };
             const before = rounds[roundIndex].images.length;
@@ -688,7 +947,7 @@ class InstructionChatService {
         if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
 
         return {
-            success: true, roundIndex, action,
+            success: true, scope: "global", roundIndex, action,
             currentImageCount: rounds[roundIndex].images.length,
         };
     }
@@ -706,6 +965,42 @@ class InstructionChatService {
                 width: a.width || null,
                 height: a.height || null,
             })),
+        };
+    }
+
+    // ──────────────────────────── PAGE MODEL TOOL ────────────────────────────
+
+    async update_page_model({ pageKeys, model }) {
+        if (!model || typeof model !== "string" || !model.trim()) {
+            return { error: "ต้องระบุ model เช่น 'gpt-5', 'gpt-4.1-mini', 'gpt-5-mini'" };
+        }
+        if (!Array.isArray(pageKeys) || pageKeys.length === 0) {
+            return { error: "ต้องระบุ pageKeys (array) เช่น ['line:abc123', 'facebook:xyz456']" };
+        }
+
+        const results = [];
+        for (const pk of pageKeys.slice(0, 20)) {
+            const parsed = this._parsePageKey(pk);
+            if (!parsed) { results.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง" }); continue; }
+
+            const collName = parsed.platform === "line" ? "line_bots" : "facebook_bots";
+            const result = await this.db.collection(collName).updateOne(
+                { _id: new ObjectId(parsed.botId) },
+                { $set: { aiModel: model.trim() } }
+            );
+
+            if (result.matchedCount === 0) {
+                results.push({ pageKey: pk, error: `ไม่พบ bot ID: ${parsed.botId}` });
+            } else {
+                results.push({ pageKey: pk, success: true, model: model.trim() });
+            }
+        }
+
+        return {
+            success: true,
+            model: model.trim(),
+            results,
+            note: "เปลี่ยนโมเดลเรียบร้อยแล้ว จะมีผลกับข้อความใหม่ทันที",
         };
     }
 
@@ -991,12 +1286,15 @@ class InstructionChatService {
             { type: "function", function: { name: "delete_rows_bulk_confirm", description: "ขั้นตอน 1 ของการลบหลายแถว — ดูตัวอย่างแถวที่จะลบ + ได้ confirmToken (ต้องเรียกก่อน delete_rows_bulk เสมอ)", parameters: { type: "object", properties: { itemId: { type: "string" }, rowIndices: { type: "array", items: { type: "number" }, description: "รายการ rowIndex ที่ต้องการลบ (สูงสุด 50)" } }, required: ["itemId", "rowIndices"] } } },
             { type: "function", function: { name: "delete_rows_bulk", description: "ขั้นตอน 2 ของการลบหลายแถว — ลบจริงโดยใช้ confirmToken จาก delete_rows_bulk_confirm", parameters: { type: "object", properties: { itemId: { type: "string" }, confirmToken: { type: "string", description: "token จาก delete_rows_bulk_confirm" } }, required: ["itemId", "confirmToken"] } } },
             // ── Follow-Up Management Tools ──
-            { type: "function", function: { name: "get_followup_config", description: "ดูการตั้งค่าระบบติดตามลูกค้า: เปิด/ปิด, จำนวน rounds, orderPromptInstructions — ใช้เพื่อดูสถานะปัจจุบัน", parameters: { type: "object", properties: {} } } },
-            { type: "function", function: { name: "get_followup_round_detail", description: "ดูรายละเอียด round ติดตามลูกค้า: ข้อความ, delay, รูปภาพ", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" } }, required: ["roundIndex"] } } },
-            { type: "function", function: { name: "update_followup_settings", description: "แก้ไขการตั้งค่าระบบติดตามลูกค้า: เปิด/ปิด autoFollowUp, แก้ orderPromptInstructions", parameters: { type: "object", properties: { autoFollowUpEnabled: { type: "boolean", description: "เปิด/ปิดระบบติดตามอัตโนมัติ" }, orderPromptInstructions: { type: "string", description: "คำสั่ง prompt สำหรับวิเคราะห์ออเดอร์" } } } } },
-            { type: "function", function: { name: "update_followup_round", description: "แก้ไขข้อความหรือ delay ของ round ติดตามลูกค้า", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" }, message: { type: "string", description: "ข้อความใหม่" }, delayMinutes: { type: "number", description: "ระยะเวลารอ (นาที)" } }, required: ["roundIndex"] } } },
-            { type: "function", function: { name: "manage_followup_images", description: "เพิ่มหรือลบรูปภาพใน round ติดตามลูกค้า — ใช้ list_followup_assets เพื่อดูรูปที่ใช้ได้", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" }, action: { type: "string", enum: ["add", "remove"] }, assetId: { type: "string", description: "ID ของ asset จาก list_followup_assets" }, imageUrl: { type: "string", description: "URL ของรูปภาพ (ถ้าไม่มี assetId)" } }, required: ["roundIndex", "action"] } } },
+            { type: "function", function: { name: "list_followup_pages", description: "ดูรายการเพจทั้งหมด (LINE + Facebook) พร้อม pageKey, สถานะติดตาม, จำนวน rounds — ใช้เพื่อดู pageKey สำหรับ tools อื่น", parameters: { type: "object", properties: {} } } },
+            { type: "function", function: { name: "get_followup_config", description: "ดูการตั้งค่าระบบติดตามลูกค้า — ถ้าระบุ pageKeys จะดึง config เฉพาะเพจ, ถ้าไม่ระบุจะดึง config กลาง", parameters: { type: "object", properties: { pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey (เช่น ['line:abc123', 'facebook:xyz456']) — ถ้าไม่ระบุจะดู config กลาง" } } } } },
+            { type: "function", function: { name: "get_followup_round_detail", description: "ดูรายละเอียด round ติดตามลูกค้า: ข้อความ, delay, รูปภาพ — ระบุ pageKey เพื่อดูของเพจเฉพาะ", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" }, pageKey: { type: "string", description: "pageKey ของเพจ เช่น 'line:abc123' (optional, ถ้าไม่ระบุจะดู global)" } }, required: ["roundIndex"] } } },
+            { type: "function", function: { name: "update_followup_settings", description: "แก้ไขการตั้งค่าระบบติดตามลูกค้า — ระบุ pageKeys (array) เพื่อแก้เฉพาะเพจหลายเพจพร้อมกัน, ถ้าไม่ระบุจะแก้ config กลาง", parameters: { type: "object", properties: { autoFollowUpEnabled: { type: "boolean", description: "เปิด/ปิดระบบติดตามอัตโนมัติ" }, orderPromptInstructions: { type: "string", description: "คำสั่ง prompt สำหรับวิเคราะห์ออเดอร์" }, pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey เพื่อแก้เฉพาะเพจ — รองรับหลายเพจพร้อมกัน" } } } } },
+            { type: "function", function: { name: "update_followup_round", description: "แก้ไขข้อความหรือ delay ของ round ติดตามลูกค้า — ระบุ pageKeys เพื่อแก้หลายเพจพร้อมกัน, ถ้าไม่ระบุจะแก้ global", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" }, message: { type: "string", description: "ข้อความใหม่" }, delayMinutes: { type: "number", description: "ระยะเวลารอ (นาที)" }, pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey เพื่อแก้เฉพาะเพจ" } }, required: ["roundIndex"] } } },
+            { type: "function", function: { name: "manage_followup_images", description: "เพิ่มหรือลบรูปภาพใน round ติดตามลูกค้า — ระบุ pageKeys เพื่อแก้หลายเพจพร้อมกัน", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" }, action: { type: "string", enum: ["add", "remove"] }, assetId: { type: "string", description: "ID ของ asset จาก list_followup_assets" }, imageUrl: { type: "string", description: "URL ของรูปภาพ (ถ้าไม่มี assetId)" }, pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey เพื่อแก้เฉพาะเพจ" } }, required: ["roundIndex", "action"] } } },
             { type: "function", function: { name: "list_followup_assets", description: "ดูรายการรูปภาพที่อัปโหลดไว้สำหรับระบบติดตามลูกค้า — ใช้เพื่อดู assetId ที่จะ reference ใน manage_followup_images", parameters: { type: "object", properties: {} } } },
+            // ── Page Model Tool ──
+            { type: "function", function: { name: "update_page_model", description: "เปลี่ยนโมเดล AI ของเพจ — ระบุ pageKeys (array) เพื่อเปลี่ยนหลายเพจพร้อมกัน เช่น gpt-5, gpt-4.1-mini, gpt-5-mini", parameters: { type: "object", properties: { pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey ที่ต้องการเปลี่ยนโมเดล" }, model: { type: "string", description: "ชื่อโมเดล เช่น gpt-5, gpt-4.1-mini, gpt-5-mini, gpt-5-nano" } }, required: ["pageKeys", "model"] } } },
             // ── Conversation Analysis Tools ──
             { type: "function", function: { name: "get_conversation_stats", description: "ดูสถิติภาพรวมของสนทนาลูกค้าที่ใช้ instruction นี้: conversion rate, จำนวนสนทนา, ยอดขาย, สินค้ายอดนิยม, แพลตฟอร์ม — ใช้เพื่อวิเคราะห์ประสิทธิภาพ", parameters: { type: "object", properties: {} } } },
             { type: "function", function: { name: "search_conversations", description: "ค้นหาสนทนาลูกค้าตามเงื่อนไข: outcome (purchased/not_purchased/pending), จำนวนข้อความ, สินค้า — ส่งคืนรายการ threads พร้อม threadId สำหรับดูรายละเอียด", parameters: { type: "object", properties: { outcome: { type: "string", description: "กรอง: purchased, not_purchased, pending" }, minMessages: { type: "number", description: "จำนวนข้อความลูกค้าขั้นต่ำ" }, maxMessages: { type: "number", description: "จำนวนข้อความลูกค้าสูงสุด" }, products: { type: "array", items: { type: "string" }, description: "กรองตามสินค้าที่ซื้อ" }, limit: { type: "number", description: "จำนวนผลลัพธ์ (default 10, max 20)" } } } } },
@@ -1014,8 +1312,8 @@ class InstructionChatService {
         const writeTools = ["update_cell", "update_rows_bulk", "add_row", "delete_row", "update_text_content", "add_column", "delete_rows_bulk"];
         const confirmTools = ["delete_rows_bulk_confirm"];
         // Follow-up tools (not tied to instructionId)
-        const followUpReadTools = ["get_followup_config", "get_followup_round_detail", "list_followup_assets"];
-        const followUpWriteTools = ["update_followup_settings", "update_followup_round", "manage_followup_images"];
+        const followUpReadTools = ["get_followup_config", "get_followup_round_detail", "list_followup_assets", "list_followup_pages"];
+        const followUpWriteTools = ["update_followup_settings", "update_followup_round", "manage_followup_images", "update_page_model"];
 
         if (readTools.includes(toolName)) {
             if (toolName === "get_instruction_overview") return this.get_instruction_overview(instructionId);
@@ -1033,7 +1331,8 @@ class InstructionChatService {
 
         // Follow-up tools — no instructionId needed
         if (followUpReadTools.includes(toolName)) {
-            if (toolName === "get_followup_config") return this.get_followup_config();
+            if (toolName === "list_followup_pages") return this.list_followup_pages();
+            if (toolName === "get_followup_config") return this.get_followup_config(args);
             if (toolName === "list_followup_assets") return this.list_followup_assets();
             return this[toolName](args);
         }

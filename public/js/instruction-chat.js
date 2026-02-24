@@ -31,6 +31,7 @@
         sidebarOpen: window.innerWidth >= 769,
         abortController: null,
         pendingImages: [], // { file, dataUrl }
+        activeRequestId: null, // for SSE reconnect
     };
 
     // ─── DOM ────────────────────────────────────────────────────────────
@@ -145,7 +146,7 @@
                         method: "POST", body: formData,
                     });
                     const uploadData = await uploadRes.json();
-                    if (uploadData.success) uploadedImages.push({ data: uploadData.imageData });
+                    if (uploadData.success) uploadedImages.push({ data: uploadData.imageData, name: img.file.name });
                 } catch (e) { console.warn("Image upload failed:", e); }
             }
 
@@ -170,105 +171,14 @@
                 return;
             }
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
-            let currentEventType = "";
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n");
-                buffer = lines.pop() || "";
-
-                for (const line of lines) {
-                    // Track SSE event type
-                    if (line.startsWith("event: ")) {
-                        currentEventType = line.substring(7).trim();
-                        continue;
-                    }
-                    if (!line.startsWith("data: ")) continue;
-
-                    const jsonStr = line.substring(6);
-                    let data;
-                    try { data = JSON.parse(jsonStr); } catch { continue; }
-
-                    const body = aiMsg.querySelector(".ic-msg-body");
-
-                    switch (currentEventType) {
-                        case "session":
-                            if (data.sessionId) state.sessionId = data.sessionId;
-                            break;
-
-                        case "thinking":
-                            if (data.content && body) {
-                                const thinkBlock = createThinkingBlock(data.content);
-                                body.insertBefore(thinkBlock, contentEl);
-                                scrollToBottom();
-                            }
-                            break;
-
-                        case "content":
-                            if (data.text !== undefined) {
-                                fullContent += data.text;
-                                contentEl.innerHTML = formatContent(fullContent);
-                                scrollToBottom();
-                            }
-                            break;
-
-                        case "tool_start":
-                            if (data.tool && body) {
-                                ensureToolPipeline(body, contentEl);
-                                addToolToPipeline(body, data.tool, data.args);
-                                scrollToBottom();
-                            }
-                            break;
-
-                        case "tool_end":
-                            if (data.tool) {
-                                updateToolInPipeline(aiMsg, data.tool, data.summary || data.result || "✅");
-                            }
-                            break;
-
-                        case "done":
-                            if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
-                            if (data.changes) state.totalChanges += data.changes.length;
-                            if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
-                            updateStatusBar();
-                            break;
-
-                        case "error":
-                            if (data.error) {
-                                fullContent += `\n❌ ${data.error}`;
-                                contentEl.innerHTML = formatContent(fullContent);
-                            }
-                            break;
-
-                        default:
-                            // Fallback for unmatched event types
-                            if (data.sessionId) {
-                                state.sessionId = data.sessionId;
-                            } else if (data.text !== undefined) {
-                                fullContent += data.text;
-                                contentEl.innerHTML = formatContent(fullContent);
-                                scrollToBottom();
-                            } else if (data.error) {
-                                fullContent += `\n❌ ${data.error}`;
-                                contentEl.innerHTML = formatContent(fullContent);
-                            }
-                            break;
-                    }
-                    currentEventType = ""; // Reset after processing
-                }
-            }
+            // Process SSE stream with shared handler
+            const result = await handleSSEStream(response, aiMsg, contentEl);
+            fullContent = result.fullContent;
 
             // Save to history — use full tool messages if available
             if (fullContent) {
                 const fullMsgs = state._lastAssistantMessages;
                 if (fullMsgs && fullMsgs.length > 0) {
-                    // Push all messages (assistant tool_calls + tool results + final assistant)
                     for (const m of fullMsgs) {
                         state.history.push(m);
                     }
@@ -278,7 +188,7 @@
                 state._lastAssistantMessages = null;
             }
 
-            // Auto-save session
+            // Auto-save session (backend also saves, but this keeps frontend state in sync)
             saveSession();
 
         } catch (err) {
@@ -290,8 +200,224 @@
         } finally {
             state.sending = false;
             state.abortController = null;
+            state.activeRequestId = null;
+            try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
             updateSendButton();
-            // Remove typing indicator if still present
+            const typingEl = contentEl.querySelector(".ic-typing");
+            if (typingEl) typingEl.remove();
+        }
+    }
+
+    // ─── Shared SSE Stream Handler ──────────────────────────────────────
+
+    async function handleSSEStream(response, aiMsg, contentEl) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let currentEventType = "";
+        let fullContent = "";
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+                // Skip heartbeat comments
+                if (line.startsWith(":")) continue;
+
+                if (line.startsWith("event: ")) {
+                    currentEventType = line.substring(7).trim();
+                    continue;
+                }
+                if (!line.startsWith("data: ")) continue;
+
+                const jsonStr = line.substring(6);
+                let data;
+                try { data = JSON.parse(jsonStr); } catch { continue; }
+
+                const body = aiMsg.querySelector(".ic-msg-body");
+
+                switch (currentEventType) {
+                    case "session":
+                        if (data.sessionId) state.sessionId = data.sessionId;
+                        if (data.requestId) {
+                            state.activeRequestId = data.requestId;
+                            try { sessionStorage.setItem("ic_activeRequestId", data.requestId); } catch (e) { }
+                        }
+                        break;
+
+                    case "thinking":
+                        // Fallback for SSE resume replay (full content at once)
+                        if (data.content && body) {
+                            if (!body.querySelector(".ic-thinking-block")) {
+                                const thinkBlock = createThinkingBlock(data.content);
+                                body.insertBefore(thinkBlock, contentEl);
+                                scrollToBottom();
+                            }
+                        }
+                        break;
+
+                    case "thinking_delta":
+                        // ✅ Real-time thinking stream — append chunk by chunk
+                        if (data.text && body) {
+                            let thinkBlock = body.querySelector(".ic-thinking-block");
+                            if (!thinkBlock) {
+                                // Create empty block on first chunk
+                                thinkBlock = createThinkingBlock("");
+                                body.insertBefore(thinkBlock, contentEl);
+                            }
+                            const thinkBody = thinkBlock.querySelector(".ic-thinking-body");
+                            if (thinkBody) thinkBody.textContent += data.text;
+                            scrollToBottom();
+                        }
+                        break;
+
+                    case "thinking_done":
+                        // Update word count after thinking finishes
+                        if (body) {
+                            const thinkBlock = body.querySelector(".ic-thinking-block");
+                            if (thinkBlock && data.wordCount !== undefined) {
+                                const meta = thinkBlock.querySelector(".ic-thinking-meta");
+                                if (meta) meta.textContent = `(${data.wordCount} words)`;
+                            }
+                        }
+                        break;
+
+                    case "content":
+                        if (data.text !== undefined) {
+                            fullContent += data.text;
+                            contentEl.innerHTML = formatContent(fullContent);
+                            scrollToBottom();
+                        }
+                        break;
+
+                    case "tool_start":
+                        if (data.tool && body) {
+                            ensureToolPipeline(body, contentEl);
+                            addToolToPipeline(body, data.tool, data.args);
+                            scrollToBottom();
+                        }
+                        break;
+
+                    case "tool_end":
+                        if (data.tool) {
+                            updateToolInPipeline(aiMsg, data.tool, data.summary || data.result || "✅");
+                        }
+                        break;
+
+                    case "done":
+                        if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
+                        if (data.changes) state.totalChanges += data.changes.length;
+                        if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
+                        state.activeRequestId = null;
+                        try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
+                        updateStatusBar();
+                        break;
+
+                    case "error":
+                        if (data.error) {
+                            fullContent += `\n❌ ${data.error}`;
+                            contentEl.innerHTML = formatContent(fullContent);
+                        }
+                        state.activeRequestId = null;
+                        try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
+                        break;
+
+                    default:
+                        if (data.sessionId) {
+                            state.sessionId = data.sessionId;
+                        } else if (data.text !== undefined) {
+                            fullContent += data.text;
+                            contentEl.innerHTML = formatContent(fullContent);
+                            scrollToBottom();
+                        } else if (data.error) {
+                            fullContent += `\n❌ ${data.error}`;
+                            contentEl.innerHTML = formatContent(fullContent);
+                        }
+                        break;
+                }
+                currentEventType = "";
+            }
+        }
+
+        return { fullContent };
+    }
+
+    // ─── Resume Active Request ──────────────────────────────────────────
+
+    async function resumeActiveRequest(requestId) {
+        if (state.sending) return; // Already processing
+
+        state.sending = true;
+        updateSendButton();
+
+        const aiMsg = appendStreamingMessage();
+        const contentEl = aiMsg.querySelector(".ic-msg-content");
+
+        state.abortController = new AbortController();
+
+        try {
+            const response = await fetch(`/api/instruction-ai/stream/resume?requestId=${encodeURIComponent(requestId)}`, {
+                signal: state.abortController.signal,
+            });
+
+            // If 404 — request completed while we were away, reload session
+            if (response.status === 404) {
+                // Remove streaming message and reload session from DB
+                aiMsg.remove();
+                state.activeRequestId = null;
+                try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
+                const lastSession = await loadLatestSession(state.selectedId);
+                if (lastSession?.sessionId && lastSession?.history?.length > 0) {
+                    state.sessionId = lastSession.sessionId;
+                    state.history = lastSession.history;
+                    state.totalTokens = lastSession.totalTokens || 0;
+                    state.totalChanges = lastSession.totalChanges || 0;
+                    // Re-render messages
+                    dom.messages.innerHTML = "";
+                    for (const msg of state.history) {
+                        if (msg.role === "user") appendMessage("user", msg.content);
+                        else if (msg.role === "assistant" && msg.content && !msg.tool_calls) appendMessage("ai", msg.content);
+                    }
+                    updateStatusBar();
+                }
+                return;
+            }
+
+            if (!response.ok) {
+                contentEl.innerHTML = formatContent("❌ ไม่สามารถต่อเนื่องได้");
+                return;
+            }
+
+            const result = await handleSSEStream(response, aiMsg, contentEl);
+
+            if (result.fullContent) {
+                const fullMsgs = state._lastAssistantMessages;
+                if (fullMsgs && fullMsgs.length > 0) {
+                    for (const m of fullMsgs) state.history.push(m);
+                } else {
+                    state.history.push({ role: "assistant", content: result.fullContent });
+                }
+                state._lastAssistantMessages = null;
+            }
+
+            saveSession();
+        } catch (err) {
+            if (err.name === "AbortError") {
+                contentEl.innerHTML += formatContent("\n\n⏹️ หยุดการตอบ");
+            } else {
+                contentEl.innerHTML = formatContent(`❌ เกิดข้อผิดพลาด: ${err.message}`);
+            }
+        } finally {
+            state.sending = false;
+            state.abortController = null;
+            state.activeRequestId = null;
+            try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
+            updateSendButton();
             const typingEl = contentEl.querySelector(".ic-typing");
             if (typingEl) typingEl.remove();
         }
@@ -368,11 +494,11 @@
     function createThinkingBlock(content) {
         const block = document.createElement("div");
         block.className = "ic-thinking-block collapsed";
-        const wordCount = content.split(/\s+/).length;
-        const preview = content.length > 200 ? content.substring(0, 200) + "..." : content;
+        const wordCount = content ? content.split(/\s+/).filter(Boolean).length : 0;
+        const metaText = wordCount > 0 ? `(${wordCount} words)` : "...";
         block.innerHTML = `
         <div class="ic-thinking-header" onclick="this.parentElement.classList.toggle('collapsed')">
-            <span class="ic-thinking-icon"><i class="fas fa-lightbulb"></i> Thinking <span class="ic-thinking-meta">(${wordCount} words)</span></span>
+            <span class="ic-thinking-icon"><i class="fas fa-lightbulb"></i> Thinking <span class="ic-thinking-meta">${metaText}</span></span>
             <i class="fas fa-chevron-down ic-chevron"></i>
         </div>
         <div class="ic-thinking-body">${escapeHtml(content)}</div>`;
@@ -382,11 +508,11 @@
     // ─── Image Upload Helpers ────────────────────────────────────────────
 
     function handleImageSelect(e) {
-        const files = Array.from(e.target.files || []).slice(0, 3);
+        const files = Array.from(e.target.files || []).slice(0, 10);
         if (!files.length) return;
 
         for (const file of files) {
-            if (state.pendingImages.length >= 3) break;
+            if (state.pendingImages.length >= 10) break;
             const reader = new FileReader();
             reader.onload = (ev) => {
                 state.pendingImages.push({ file, dataUrl: ev.target.result });
@@ -648,9 +774,16 @@
                 // Skip tool_calls and tool result messages (visual only)
             }
 
-            appendMessage("ai", `💬 เซสชันก่อนหน้า (${state.history.length} messages) — แชทต่อได้เลย หรือกด ✏️ ที่มุมขวาบนของหน้าจอเพื่อเริ่มใหม่`);
             // Hide quick suggest if has history
             if (dom.quickSuggestWrap) dom.quickSuggestWrap.style.display = "none";
+
+            // Check if there's an active request to resume
+            try {
+                const savedRequestId = sessionStorage.getItem("ic_activeRequestId");
+                if (savedRequestId) {
+                    resumeActiveRequest(savedRequestId);
+                }
+            } catch (e) { }
         } else {
             appendMessage("ai", `สวัสดีครับ 👋 เลือก **${escapeHtml(name)}** เรียบร้อยแล้ว พิมพ์คำถามหรือคำสั่งได้เลยครับ`);
             // Show quick suggest for new chats
@@ -885,6 +1018,8 @@
             state.history = [];
             state.totalTokens = 0;
             state.totalChanges = 0;
+            state.activeRequestId = null;
+            try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
             dom.messages.innerHTML = "";
             appendMessage("ai", `แชทใหม่เริ่มแล้ว! 🔄 เลือก **${escapeHtml(state.selectedName)}** อยู่ สั่งงานได้เลย`);
             updateStatusBar();
