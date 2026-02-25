@@ -226,14 +226,28 @@
         const decoder = new TextDecoder();
         let buffer = "";
         let fullContent = "";
-        let renderScheduled = false;
         let lastRenderedContent = "";
         let hasRenderedContent = false;
         let statusEl = null;
+        let streamRenderHandle = null;
+        let streamTextEl = null;
+        let streamTextVisible = "";
+        let streamRenderCarry = 0;
+        let streamLastFrameAt = 0;
+        let lastStreamScrollAt = 0;
         let doneHandled = false;
         let errorHandled = false;
+        let statusPhase = "thinking";
+        let statusIteration = 1;
+        let statusTool = null;
+        let statusBaseElapsedSec = 0;
+        let statusTicker = null;
         let receivedSseContent = false;
-        let useStateDrivenContent = false;
+        let sseContentBuffer = "";
+        let lastSseContentAt = 0;
+        const streamStartedAt = Date.now();
+        const STATE_POLL_MS = 450;
+        const SSE_STALE_FOR_STATE_MS = 700;
         let cancelledByState = false;
         let statePollTimer = null;
         let statePollInFlight = false;
@@ -275,7 +289,9 @@
 
         const showStatus = (text) => {
             if (hasRenderedContent || !text) return;
-            ensureStatusEl().textContent = text;
+            const statusNode = ensureStatusEl();
+            if (statusNode.textContent === text) return;
+            statusNode.textContent = text;
             scrollToBottom();
         };
 
@@ -285,22 +301,196 @@
             statusEl = null;
         };
 
-        const renderContentNow = (force = false) => {
-            if (!force && fullContent === lastRenderedContent) return;
-            clearStatus();
-            contentEl.innerHTML = formatContent(fullContent);
-            lastRenderedContent = fullContent;
-            hasRenderedContent = fullContent.length > 0;
+        const getElapsedSeconds = () => {
+            const localElapsed = Math.floor((Date.now() - streamStartedAt) / 1000);
+            return Math.max(0, statusBaseElapsedSec + localElapsed);
+        };
+
+        const syncElapsedFromServer = (serverElapsedSec) => {
+            if (!Number.isFinite(serverElapsedSec)) return;
+            const localElapsed = Math.floor((Date.now() - streamStartedAt) / 1000);
+            const targetBase = Math.max(0, serverElapsedSec - localElapsed);
+            if (targetBase > statusBaseElapsedSec) {
+                statusBaseElapsedSec = targetBase;
+            }
+        };
+
+        const buildLiveStatusText = () => {
+            const elapsed = ` (${getElapsedSeconds()}s)`;
+            const statusMap = {
+                thinking: `AI กำลังคิด...${elapsed}`,
+                continuing: `ประมวลผลรอบ ${statusIteration || ""}...${elapsed}`,
+                responding: `กำลังเขียนคำตอบ...${elapsed}`,
+                tool_plan: `เตรียมเรียก tool: ${statusTool || "..."}${elapsed}`,
+                tool: `กำลังรัน tool: ${statusTool || "..."}${elapsed}`,
+            };
+            return statusMap[statusPhase] || `กำลังประมวลผล...${elapsed}`;
+        };
+
+        const renderLiveStatus = () => {
+            showStatus(buildLiveStatusText());
+        };
+
+        const startLiveStatusTicker = () => {
+            if (statusTicker) return;
+            renderLiveStatus();
+            statusTicker = setInterval(renderLiveStatus, 250);
+        };
+
+        const stopLiveStatusTicker = () => {
+            if (!statusTicker) return;
+            clearInterval(statusTicker);
+            statusTicker = null;
+        };
+
+        const formatElapsedTime = (totalSec) => {
+            const secs = Math.max(0, Math.floor(totalSec));
+            const mins = Math.floor(secs / 60);
+            const remainSec = secs % 60;
+            if (mins <= 0) return `${remainSec}s`;
+            return `${mins}m ${remainSec}s`;
+        };
+
+        const renderTotalElapsedMeta = (isError = false) => {
+            if (!body) return;
+            let metaEl = body.querySelector(".ic-msg-total-time");
+            if (!metaEl) {
+                metaEl = document.createElement("div");
+                metaEl.className = "ic-msg-total-time";
+                body.appendChild(metaEl);
+            }
+            if (isError) {
+                metaEl.classList.add("error");
+            } else {
+                metaEl.classList.remove("error");
+            }
+            metaEl.textContent = `เวลารวม ${formatElapsedTime(getElapsedSeconds())}`;
             scrollToBottom();
         };
 
+        const ensureStreamTextEl = () => {
+            if (streamTextEl) return streamTextEl;
+            clearStatus();
+            contentEl.innerHTML = "";
+            streamTextEl = document.createElement("div");
+            streamTextEl.className = "ic-streaming-raw";
+            streamTextEl.textContent = streamTextVisible;
+            contentEl.appendChild(streamTextEl);
+            return streamTextEl;
+        };
+
+        const scrollStreamToBottom = (force = false) => {
+            const now = performance.now();
+            if (!force && now - lastStreamScrollAt < 40) return;
+            lastStreamScrollAt = now;
+            scrollToBottom();
+        };
+
+        const getStreamCharsPerSecond = (lag) => {
+            if (lag > 12000) return 7600;
+            if (lag > 6000) return 5200;
+            if (lag > 3000) return 3400;
+            if (lag > 1500) return 2300;
+            if (lag > 700) return 1500;
+            if (lag > 250) return 900;
+            return 300;
+        };
+
+        const findStreamOverlap = (baseText, candidateText) => {
+            const maxOverlap = Math.min(512, baseText.length, candidateText.length);
+            for (let size = maxOverlap; size > 0; size--) {
+                if (baseText.endsWith(candidateText.slice(0, size))) return size;
+            }
+            return 0;
+        };
+
+        const mergeIncomingSseText = (deltaText) => {
+            const chunk = typeof deltaText === "string" ? deltaText : String(deltaText || "");
+            if (!chunk) return;
+            receivedSseContent = true;
+            lastSseContentAt = Date.now();
+            sseContentBuffer += chunk;
+
+            let merged = fullContent;
+            if (!merged) {
+                merged = sseContentBuffer;
+            } else if (merged.startsWith(sseContentBuffer)) {
+                // State snapshot already has more content than SSE has streamed so far.
+            } else if (sseContentBuffer.startsWith(merged)) {
+                merged = sseContentBuffer;
+            } else {
+                const overlap = findStreamOverlap(merged, sseContentBuffer);
+                if (overlap > 0) {
+                    merged = `${merged}${sseContentBuffer.slice(overlap)}`;
+                } else if (sseContentBuffer.length >= merged.length) {
+                    merged = sseContentBuffer;
+                }
+            }
+
+            if (merged !== fullContent) {
+                fullContent = merged;
+                scheduleRender();
+            }
+        };
+
+        const flushStreamText = (frameTs = performance.now()) => {
+            streamRenderHandle = null;
+            const lag = fullContent.length - streamTextVisible.length;
+            if (lag <= 0) {
+                streamRenderCarry = 0;
+                streamLastFrameAt = frameTs;
+                return;
+            }
+
+            const prevFrame = streamLastFrameAt || frameTs;
+            const deltaMs = Math.max(10, Math.min(48, frameTs - prevFrame || 16));
+            streamLastFrameAt = frameTs;
+
+            streamRenderCarry += (getStreamCharsPerSecond(lag) * deltaMs) / 1000;
+            let take = Math.floor(streamRenderCarry);
+            if (take < 1) take = 1;
+            if (lag <= 120) take = Math.min(take, 3);
+            if (lag <= 40) take = Math.min(take, 2);
+            take = Math.min(take, lag);
+            streamRenderCarry = Math.max(0, streamRenderCarry - take);
+
+            const nextLength = streamTextVisible.length + take;
+            const nextChunk = fullContent.slice(streamTextVisible.length, nextLength);
+            if (nextChunk) {
+                ensureStreamTextEl().textContent += nextChunk;
+                streamTextVisible += nextChunk;
+            }
+            hasRenderedContent = streamTextVisible.length > 0;
+            scrollStreamToBottom();
+
+            if (streamTextVisible.length < fullContent.length) {
+                streamRenderHandle = requestAnimationFrame(flushStreamText);
+            } else {
+                streamRenderCarry = 0;
+            }
+        };
+
+        const renderContentNow = (force = false) => {
+            if (!force && fullContent === lastRenderedContent) return;
+            if (streamRenderHandle) {
+                cancelAnimationFrame(streamRenderHandle);
+                streamRenderHandle = null;
+            }
+            streamTextVisible = fullContent;
+            streamRenderCarry = 0;
+            streamLastFrameAt = 0;
+            clearStatus();
+            contentEl.innerHTML = formatContent(fullContent);
+            streamTextEl = null;
+            lastRenderedContent = fullContent;
+            hasRenderedContent = fullContent.length > 0;
+            scrollStreamToBottom(true);
+        };
+
         const scheduleRender = () => {
-            if (renderScheduled) return;
-            renderScheduled = true;
-            requestAnimationFrame(() => {
-                renderScheduled = false;
-                renderContentNow(false);
-            });
+            if (fullContent.length === streamTextVisible.length) return;
+            if (streamRenderHandle) return;
+            streamRenderHandle = requestAnimationFrame(flushStreamText);
         };
 
         const stopStatePolling = () => {
@@ -339,6 +529,8 @@
             clearActiveRequestId();
             updateStatusBar();
             stopStatePolling();
+            stopLiveStatusTicker();
+            renderTotalElapsedMeta(false);
         };
 
         const applyErrorPayload = (errorMessage) => {
@@ -352,6 +544,8 @@
             }
             clearActiveRequestId();
             stopStatePolling();
+            stopLiveStatusTicker();
+            renderTotalElapsedMeta(true);
         };
 
         const syncToolPipelineFromState = (tools) => {
@@ -393,13 +587,22 @@
             }
 
             if (typeof snapshot.partialContent === "string" && snapshot.partialContent.length > 0) {
-                const canAdoptStateContent =
-                    !receivedSseContent ||
-                    (snapshot.partialContent.length > fullContent.length && snapshot.partialContent.startsWith(fullContent));
-                if (canAdoptStateContent && snapshot.partialContent !== fullContent) {
-                    useStateDrivenContent = true;
+                const sseIdleMs = receivedSseContent
+                    ? Date.now() - lastSseContentAt
+                    : Date.now() - streamStartedAt;
+                const shouldUseStateContent = sseIdleMs >= SSE_STALE_FOR_STATE_MS;
+                const growsForward =
+                    !fullContent ||
+                    snapshot.partialContent.startsWith(fullContent) ||
+                    (!receivedSseContent && snapshot.partialContent.length >= fullContent.length);
+
+                if (
+                    shouldUseStateContent &&
+                    growsForward &&
+                    snapshot.partialContent.length > fullContent.length
+                ) {
                     fullContent = snapshot.partialContent;
-                    renderContentNow(true);
+                    scheduleRender();
                 }
             }
 
@@ -463,7 +666,7 @@
         const startStatePolling = () => {
             if (statePollTimer || !state.activeRequestId) return;
             pollStateOnce();
-            statePollTimer = setInterval(pollStateOnce, 1500);
+            statePollTimer = setInterval(pollStateOnce, STATE_POLL_MS);
         };
 
         const handleEvent = (eventType, data) => {
@@ -520,15 +723,13 @@
 
                 case "status":
                     if (data.phase && contentEl) {
-                        const elapsed = Number.isFinite(data.elapsedSec) ? ` (${data.elapsedSec}s)` : "";
-                        const statusMap = {
-                            thinking: `AI กำลังคิด...${elapsed}`,
-                            continuing: `ประมวลผลรอบ ${data.iteration || ""}...${elapsed}`,
-                            responding: `กำลังเขียนคำตอบ...${elapsed}`,
-                            tool_plan: `เตรียมเรียก tool: ${data.tool || "..."}`,
-                            tool: `กำลังรัน tool: ${data.tool || "..."}${elapsed}`,
-                        };
-                        showStatus(statusMap[data.phase] || "กำลังประมวลผล...");
+                        statusPhase = data.phase || statusPhase;
+                        statusIteration = data.iteration || statusIteration;
+                        if (Object.prototype.hasOwnProperty.call(data, "tool")) {
+                            statusTool = data.tool || null;
+                        }
+                        syncElapsedFromServer(data.elapsedSec);
+                        renderLiveStatus();
                     }
                     break;
 
@@ -542,10 +743,7 @@
 
                 case "content":
                     if (data.text !== undefined) {
-                        if (useStateDrivenContent && !receivedSseContent) break;
-                        receivedSseContent = true;
-                        fullContent += String(data.text);
-                        scheduleRender();
+                        mergeIncomingSseText(data.text);
                     }
                     break;
 
@@ -575,10 +773,7 @@
                     if (data.sessionId) {
                         state.sessionId = data.sessionId;
                     } else if (data.text !== undefined) {
-                        if (useStateDrivenContent && !receivedSseContent) break;
-                        receivedSseContent = true;
-                        fullContent += String(data.text);
-                        scheduleRender();
+                        mergeIncomingSseText(data.text);
                     } else if (data.error) {
                         applyErrorPayload(data.error);
                     }
@@ -630,6 +825,7 @@
         if (headerSessionId) state.sessionId = headerSessionId;
         const headerRequestId = response.headers.get("X-Instruction-Request-Id");
         if (headerRequestId) setActiveRequestId(headerRequestId);
+        startLiveStatusTicker();
         startStatePolling();
 
         try {
@@ -651,9 +847,11 @@
             if (!cancelledByState) throw streamError;
         } finally {
             stopStatePolling();
+            stopLiveStatusTicker();
         }
 
         renderContentNow(true);
+        renderTotalElapsedMeta(errorHandled);
         return { fullContent };
     }
 

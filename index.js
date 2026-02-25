@@ -18775,12 +18775,86 @@ const INSTRUCTION_REASONING_SUPPORT = {
 };
 
 const INSTRUCTION_THINKING_MAP = { off: "none", low: "low", medium: "medium", high: "high", max: "xhigh" };
+const INSTRUCTION_MAX_TOOL_ITERATIONS = (() => {
+  const raw = Number.parseInt(process.env.INSTRUCTION_MAX_TOOL_ITERATIONS || "12", 10);
+  if (!Number.isFinite(raw)) return 12;
+  return Math.min(24, Math.max(4, raw));
+})();
 
 function resolveInstructionReasoningEffort(model, thinking) {
   const modelConfig = INSTRUCTION_REASONING_SUPPORT[model] || INSTRUCTION_REASONING_SUPPORT["gpt-5.2"];
   let effort = INSTRUCTION_THINKING_MAP[thinking] || modelConfig.default;
   if (!modelConfig.efforts.includes(effort)) effort = modelConfig.default;
   return effort;
+}
+
+function hasInstructionAssistantText(messages) {
+  if (!Array.isArray(messages)) return false;
+  return messages.some((msg) =>
+    msg &&
+    msg.role === "assistant" &&
+    typeof msg.content === "string" &&
+    msg.content.trim().length > 0
+  );
+}
+
+function getInstructionFinalTextFallback(toolsUsed = []) {
+  const toolCount = Array.isArray(toolsUsed) ? toolsUsed.length : 0;
+  if (toolCount > 0) {
+    return "⌛ โมเดลยังไม่ส่งข้อความสรุปสุดท้าย แต่ประมวลผลเครื่องมือเรียบร้อยแล้ว กรุณาพิมพ์ \"สรุปผลล่าสุด\" อีกครั้ง";
+  }
+  return "⌛ โมเดลยังไม่ส่งข้อความสรุปสุดท้าย กรุณาลองส่งคำถามเดิมอีกครั้ง";
+}
+
+async function requestInstructionFinalSummaryWithoutTools(openai, options = {}) {
+  const {
+    model = "gpt-5.2",
+    previousResponseId = null,
+    effort = "low",
+    toolsUsed = [],
+  } = options || {};
+
+  const normalizedEffort = effort === "xhigh" ? "high" : (effort === "none" ? "low" : effort);
+  const recentTools = Array.isArray(toolsUsed) ? toolsUsed.slice(-6) : [];
+  const toolContext = recentTools.length > 0
+    ? recentTools
+      .map((tool, idx) => {
+        const name = tool?.tool || "tool";
+        const summary = typeof tool?.summary === "string" ? tool.summary.trim() : "";
+        return `${idx + 1}. ${name}${summary ? ` — ${summary}` : ""}`;
+      })
+      .join("\n")
+    : "ไม่มี";
+
+  const payload = {
+    model,
+    previous_response_id: previousResponseId || undefined,
+    tools: [],
+    reasoning: { effort: normalizedEffort },
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: [
+              "สรุปคำตอบสุดท้ายให้ผู้ใช้จากบริบทก่อนหน้า",
+              "ห้ามเรียกใช้เครื่องมือเพิ่ม",
+              "ถ้ามีการแก้ไขข้อมูล ให้สรุปรายการที่เปลี่ยนแปลงสั้น ๆ",
+              `บริบทเครื่องมือล่าสุด:\n${toolContext}`,
+            ].join("\n\n"),
+          },
+        ],
+      },
+    ],
+  };
+
+  const response = await openai.responses.create(payload);
+  return {
+    responseId: response?.id || null,
+    usage: mapInstructionResponseUsage(response?.usage),
+    content: extractInstructionResponseText(response).trim(),
+  };
 }
 
 function mapInstructionToolsForResponses(tools) {
@@ -18939,7 +19013,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     let finalContent = "";
     let previousResponseId = null;
 
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < INSTRUCTION_MAX_TOOL_ITERATIONS; i++) {
       const payload = {
         model,
         input: nextInput,
@@ -18983,6 +19057,26 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       }
 
       nextInput = toolOutputs;
+    }
+
+    if (!finalContent || !finalContent.trim()) {
+      try {
+        const forcedSummary = await requestInstructionFinalSummaryWithoutTools(openai, {
+          model,
+          previousResponseId,
+          effort,
+          toolsUsed,
+        });
+        if (forcedSummary.responseId) previousResponseId = forcedSummary.responseId;
+        addInstructionUsage(totalUsage, forcedSummary.usage);
+        if (forcedSummary.content) finalContent = forcedSummary.content;
+      } catch (forcedSummaryError) {
+        console.warn("[InstructionChat] Forced summary failed:", forcedSummaryError.message);
+      }
+    }
+
+    if (!finalContent || !finalContent.trim()) {
+      finalContent = getInstructionFinalTextFallback(toolsUsed);
     }
 
     res.json({
@@ -19286,6 +19380,10 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     res.setHeader("X-Instruction-Request-Id", requestId);
     res.setHeader("X-Instruction-Session-Id", sessionId);
     res.flushHeaders();
+    if (res.socket) {
+      res.socket.setNoDelay(true);
+      res.socket.setKeepAlive(true, 60 * 1000);
+    }
 
     // Initialize active request buffer
     const requestState = {
@@ -19437,7 +19535,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     let finalContent = "";
     const assistantMessages = [];
 
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < INSTRUCTION_MAX_TOOL_ITERATIONS; i++) {
       sendStatus(i === 0 ? "thinking" : "continuing", { iteration: i + 1, tool: null });
 
       const payload = {
@@ -19686,12 +19784,43 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       break;
     }
 
-    if (assistantMessages.length === 0) {
-      finalContent = finalContent || "⚠️ ไม่พบคำตอบจากโมเดล";
-      requestState.streamedContent += finalContent;
-      requestState.updatedAt = Date.now();
-      sendEvent("content", { text: finalContent });
-      assistantMessages.push({ role: "assistant", content: finalContent });
+    const hasAssistantText = hasInstructionAssistantText(assistantMessages);
+    if (!hasAssistantText) {
+      assistantMessages.length = 0;
+      const streamedText = typeof requestState.streamedContent === "string"
+        ? requestState.streamedContent.trim()
+        : "";
+
+      if (streamedText) {
+        finalContent = streamedText;
+        assistantMessages.push({ role: "assistant", content: finalContent });
+      } else {
+        try {
+          sendStatus("responding", { iteration: INSTRUCTION_MAX_TOOL_ITERATIONS + 1, tool: null, recovery: true });
+          const forcedSummary = await requestInstructionFinalSummaryWithoutTools(openai, {
+            model,
+            previousResponseId,
+            effort,
+            toolsUsed,
+          });
+          if (forcedSummary.responseId) previousResponseId = forcedSummary.responseId;
+          addInstructionUsage(totalUsage, forcedSummary.usage);
+          if (forcedSummary.content) {
+            finalContent = forcedSummary.content;
+          }
+        } catch (forcedSummaryError) {
+          console.warn("[InstructionChat SSE] Forced summary failed:", forcedSummaryError.message);
+        }
+
+        if (!finalContent || !finalContent.trim()) {
+          finalContent = getInstructionFinalTextFallback(toolsUsed);
+        }
+
+        requestState.streamedContent += finalContent;
+        requestState.updatedAt = Date.now();
+        sendEvent("content", { text: finalContent });
+        assistantMessages.push({ role: "assistant", content: finalContent });
+      }
     }
 
     const toolContext = toolsUsed.length > 0
@@ -19789,6 +19918,10 @@ app.get("/api/instruction-ai/stream/resume", requireAdmin, (req, res) => {
   res.setHeader("X-Instruction-Request-Id", reqState.requestId || String(requestId));
   if (reqState.sessionId) res.setHeader("X-Instruction-Session-Id", reqState.sessionId);
   res.flushHeaders();
+  if (res.socket) {
+    res.socket.setNoDelay(true);
+    res.socket.setKeepAlive(true, 60 * 1000);
+  }
 
   // Replay all buffered events
   for (const entry of reqState.events) {
