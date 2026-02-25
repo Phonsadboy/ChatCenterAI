@@ -52,7 +52,6 @@
         topbarTitle: $("#icTopbarTitle"),
         messages: $("#icMessages"),
         empty: $("#icEmpty"),
-        welcomeCards: $("#icWelcomeCards"),
         quickSuggest: $("#icQuickSuggest"),
         quickSuggestWrap: $("#icQuickSuggestWrap"),
         inputArea: $("#icInputArea"),
@@ -108,7 +107,8 @@
     }
 
     async function sendMessage(text) {
-        if (!text.trim() || !state.selectedId || state.sending) return;
+        const rawText = typeof text === "string" ? text : "";
+        if ((!rawText.trim() && state.pendingImages.length === 0) || !state.selectedId || state.sending) return;
 
         const historyForRequest = [...state.history];
         state.sending = true;
@@ -125,8 +125,9 @@
         if (dom.empty) dom.empty.style.display = "none";
 
         // Add user message (with images if any)
-        appendMessage("user", text, imagesToSend);
-        state.history.push({ role: "user", content: text });
+        appendMessage("user", rawText, imagesToSend);
+        const historyUserText = rawText.trim() || (imagesToSend.length > 0 ? `[แนบรูปภาพ ${imagesToSend.length} รูป]` : "");
+        state.history.push({ role: "user", content: historyUserText });
 
         // Create streaming AI response container
         const aiMsg = appendStreamingMessage();
@@ -156,7 +157,7 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     instructionId: state.selectedId,
-                    message: text,
+                    message: rawText,
                     model: state.model,
                     thinking: state.thinking,
                     history: historyForRequest,
@@ -215,8 +216,12 @@
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        let currentEventType = "";
         let fullContent = "";
+        let renderScheduled = false;
+        let lastRenderedContent = "";
+        let hasRenderedContent = false;
+        let statusEl = null;
+        const body = aiMsg.querySelector(".ic-msg-body");
 
         const getFinalAssistantContent = (assistantMessages) => {
             if (!Array.isArray(assistantMessages)) return "";
@@ -229,170 +234,227 @@
             return "";
         };
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+        const ensureStatusEl = () => {
+            if (statusEl) return statusEl;
+            statusEl = document.createElement("div");
+            statusEl.className = "ic-status-text";
+            contentEl.innerHTML = "";
+            contentEl.appendChild(statusEl);
+            return statusEl;
+        };
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
+        const showStatus = (text) => {
+            if (hasRenderedContent || !text) return;
+            ensureStatusEl().textContent = text;
+            scrollToBottom();
+        };
+
+        const clearStatus = () => {
+            if (!statusEl) return;
+            statusEl.remove();
+            statusEl = null;
+        };
+
+        const renderContentNow = (force = false) => {
+            if (!force && fullContent === lastRenderedContent) return;
+            clearStatus();
+            contentEl.innerHTML = formatContent(fullContent);
+            lastRenderedContent = fullContent;
+            hasRenderedContent = fullContent.length > 0;
+            scrollToBottom();
+        };
+
+        const scheduleRender = () => {
+            if (renderScheduled) return;
+            renderScheduled = true;
+            requestAnimationFrame(() => {
+                renderScheduled = false;
+                renderContentNow(false);
+            });
+        };
+
+        const handleEvent = (eventType, data) => {
+            switch (eventType) {
+                case "session":
+                    if (data.sessionId) state.sessionId = data.sessionId;
+                    if (data.requestId) {
+                        state.activeRequestId = data.requestId;
+                        try { sessionStorage.setItem("ic_activeRequestId", data.requestId); } catch (e) { }
+                    }
+                    break;
+
+                case "thinking":
+                    // Fallback for SSE resume replay (full content at once)
+                    if (data.content && body) {
+                        const thinkBlock = createThinkingBlock(data.content);
+                        body.insertBefore(thinkBlock, contentEl);
+                        scrollToBottom();
+                    }
+                    break;
+
+                case "thinking_start":
+                    if (body) {
+                        const newBlock = createThinkingBlock("");
+                        body.insertBefore(newBlock, contentEl);
+                        clearStatus();
+                        scrollToBottom();
+                    }
+                    break;
+
+                case "thinking_delta":
+                    if (data.text && body) {
+                        const allBlocks = body.querySelectorAll(".ic-thinking-block");
+                        let thinkBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
+                        if (!thinkBlock) {
+                            thinkBlock = createThinkingBlock("");
+                            body.insertBefore(thinkBlock, contentEl);
+                        }
+                        const thinkBody = thinkBlock.querySelector(".ic-thinking-body");
+                        if (thinkBody) thinkBody.textContent += data.text;
+                        scrollToBottom();
+                    }
+                    break;
+
+                case "thinking_done":
+                    if (body) {
+                        const allBlocks = body.querySelectorAll(".ic-thinking-block");
+                        const lastBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
+                        if (lastBlock && data.wordCount !== undefined) {
+                            const meta = lastBlock.querySelector(".ic-thinking-meta");
+                            if (meta) meta.textContent = `(${data.wordCount} words)`;
+                        }
+                    }
+                    break;
+
+                case "status":
+                    if (data.phase && contentEl) {
+                        const statusMap = {
+                            thinking: "AI กำลังคิด...",
+                            continuing: `ประมวลผลรอบ ${data.iteration || ""}...`,
+                            responding: "กำลังเขียนคำตอบ...",
+                        };
+                        showStatus(statusMap[data.phase] || "กำลังประมวลผล...");
+                    }
+                    break;
+
+                case "content":
+                    if (data.text !== undefined) {
+                        fullContent += String(data.text);
+                        scheduleRender();
+                    }
+                    break;
+
+                case "tool_start":
+                    if (data.tool && body) {
+                        ensureToolPipeline(body, contentEl);
+                        addToolToPipeline(body, data.tool, data.args);
+                        scrollToBottom();
+                    }
+                    break;
+
+                case "tool_end":
+                    if (data.tool) {
+                        updateToolInPipeline(aiMsg, data.tool, data.summary || data.result || "✅");
+                    }
+                    break;
+
+                case "done":
+                    if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
+                    if (data.changes) state.totalChanges += data.changes.length;
+                    if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
+
+                    // Fallback: some responses may arrive only in done.assistantMessages
+                    if (!fullContent && data.assistantMessages) {
+                        const fallbackContent = getFinalAssistantContent(data.assistantMessages);
+                        if (fallbackContent) {
+                            fullContent = fallbackContent;
+                            renderContentNow(true);
+                        }
+                    }
+
+                    state.activeRequestId = null;
+                    try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
+                    updateStatusBar();
+                    break;
+
+                case "error":
+                    if (data.error) {
+                        fullContent += `\n❌ ${data.error}`;
+                        renderContentNow(true);
+                    }
+                    state.activeRequestId = null;
+                    try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
+                    break;
+
+                default:
+                    if (data.sessionId) {
+                        state.sessionId = data.sessionId;
+                    } else if (data.text !== undefined) {
+                        fullContent += String(data.text);
+                        scheduleRender();
+                    } else if (data.error) {
+                        fullContent += `\n❌ ${data.error}`;
+                        renderContentNow(true);
+                    }
+                    break;
+            }
+        };
+
+        const processRawSSEEvent = (rawEvent) => {
+            if (!rawEvent) return;
+            const lines = rawEvent.replace(/\r/g, "").split("\n");
+            let eventType = "message";
+            const dataLines = [];
 
             for (const line of lines) {
-                // Skip heartbeat comments
-                if (line.startsWith(":")) continue;
-
-                if (line.startsWith("event: ")) {
-                    currentEventType = line.substring(7).trim();
+                if (!line) continue;
+                if (line.startsWith(":")) continue; // heartbeat/comment
+                if (line.startsWith("event:")) {
+                    eventType = line.slice(6).trim();
                     continue;
                 }
-                if (!line.startsWith("data: ")) continue;
-
-                const jsonStr = line.substring(6);
-                let data;
-                try { data = JSON.parse(jsonStr); } catch { continue; }
-
-                const body = aiMsg.querySelector(".ic-msg-body");
-
-                switch (currentEventType) {
-                    case "session":
-                        if (data.sessionId) state.sessionId = data.sessionId;
-                        if (data.requestId) {
-                            state.activeRequestId = data.requestId;
-                            try { sessionStorage.setItem("ic_activeRequestId", data.requestId); } catch (e) { }
-                        }
-                        break;
-
-                    case "thinking":
-                        // Fallback for SSE resume replay (full content at once)
-                        if (data.content && body) {
-                            const thinkBlock = createThinkingBlock(data.content);
-                            body.insertBefore(thinkBlock, contentEl);
-                            scrollToBottom();
-                        }
-                        break;
-
-                    case "thinking_start":
-                        // ✅ New thinking block for each iteration (supports multiple)
-                        if (body) {
-                            const newBlock = createThinkingBlock("");
-                            body.insertBefore(newBlock, contentEl);
-                            // Clear status text when thinking starts
-                            const statusEl = contentEl.querySelector(".ic-status-text");
-                            if (statusEl) statusEl.remove();
-                            scrollToBottom();
-                        }
-                        break;
-
-                    case "thinking_delta":
-                        // ✅ Real-time thinking stream — append to the LAST thinking block
-                        if (data.text && body) {
-                            const allBlocks = body.querySelectorAll(".ic-thinking-block");
-                            let thinkBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
-                            if (!thinkBlock) {
-                                // Create block if thinking_start wasn't received (fallback)
-                                thinkBlock = createThinkingBlock("");
-                                body.insertBefore(thinkBlock, contentEl);
-                            }
-                            const thinkBody = thinkBlock.querySelector(".ic-thinking-body");
-                            if (thinkBody) thinkBody.textContent += data.text;
-                            scrollToBottom();
-                        }
-                        break;
-
-                    case "thinking_done":
-                        // Update word count on the LAST thinking block
-                        if (body) {
-                            const allBlocks = body.querySelectorAll(".ic-thinking-block");
-                            const lastBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
-                            if (lastBlock && data.wordCount !== undefined) {
-                                const meta = lastBlock.querySelector(".ic-thinking-meta");
-                                if (meta) meta.textContent = `(${data.wordCount} words)`;
-                            }
-                        }
-                        break;
-
-                    case "status":
-                        // Show processing status to user while waiting for OpenAI
-                        if (data.phase && contentEl) {
-                            const statusMap = {
-                                thinking: "🧠 AI กำลังคิด...",
-                                continuing: `🔄 ประมวลผลรอบ ${data.iteration || ""}...`,
-                                responding: "✍️ กำลังเขียนคำตอบ...",
-                            };
-                            const statusText = statusMap[data.phase] || "⏳ กำลังประมวลผล...";
-                            contentEl.innerHTML = `<div class="ic-status-text">${statusText}</div>`;
-                            scrollToBottom();
-                        }
-                        break;
-
-                    case "content":
-                        if (data.text !== undefined) {
-                            fullContent += data.text;
-                            contentEl.innerHTML = formatContent(fullContent);
-                            scrollToBottom();
-                        }
-                        break;
-
-                    case "tool_start":
-                        if (data.tool && body) {
-                            ensureToolPipeline(body, contentEl);
-                            addToolToPipeline(body, data.tool, data.args);
-                            scrollToBottom();
-                        }
-                        break;
-
-                    case "tool_end":
-                        if (data.tool) {
-                            updateToolInPipeline(aiMsg, data.tool, data.summary || data.result || "✅");
-                        }
-                        break;
-
-                    case "done":
-                        if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
-                        if (data.changes) state.totalChanges += data.changes.length;
-                        if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
-
-                        // Fallback: some responses may arrive only in done.assistantMessages
-                        if (!fullContent && data.assistantMessages) {
-                            const fallbackContent = getFinalAssistantContent(data.assistantMessages);
-                            if (fallbackContent) {
-                                fullContent = fallbackContent;
-                                contentEl.innerHTML = formatContent(fullContent);
-                                scrollToBottom();
-                            }
-                        }
-
-                        state.activeRequestId = null;
-                        try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
-                        updateStatusBar();
-                        break;
-
-                    case "error":
-                        if (data.error) {
-                            fullContent += `\n❌ ${data.error}`;
-                            contentEl.innerHTML = formatContent(fullContent);
-                        }
-                        state.activeRequestId = null;
-                        try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
-                        break;
-
-                    default:
-                        if (data.sessionId) {
-                            state.sessionId = data.sessionId;
-                        } else if (data.text !== undefined) {
-                            fullContent += data.text;
-                            contentEl.innerHTML = formatContent(fullContent);
-                            scrollToBottom();
-                        } else if (data.error) {
-                            fullContent += `\n❌ ${data.error}`;
-                            contentEl.innerHTML = formatContent(fullContent);
-                        }
-                        break;
+                if (line.startsWith("data:")) {
+                    dataLines.push(line.slice(5).trimStart());
                 }
-                currentEventType = "";
             }
+
+            if (dataLines.length === 0) return;
+            const jsonStr = dataLines.join("\n");
+            let data;
+            try { data = JSON.parse(jsonStr); } catch { return; }
+            handleEvent(eventType, data);
+        };
+
+        const processBuffer = (flush = false) => {
+            let separatorIndex = buffer.indexOf("\n\n");
+            while (separatorIndex !== -1) {
+                const rawEvent = buffer.slice(0, separatorIndex);
+                buffer = buffer.slice(separatorIndex + 2);
+                processRawSSEEvent(rawEvent);
+                separatorIndex = buffer.indexOf("\n\n");
+            }
+
+            if (flush && buffer.trim()) {
+                processRawSSEEvent(buffer);
+                buffer = "";
+            }
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                buffer += decoder.decode();
+                buffer = buffer.replace(/\r\n/g, "\n");
+                processBuffer(true);
+                break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            buffer = buffer.replace(/\r\n/g, "\n");
+            processBuffer(false);
         }
 
+        renderContentNow(true);
         return { fullContent };
     }
 
@@ -519,6 +581,7 @@
 
     function appendMessage(role, content, images) {
         const isUser = role === "user";
+        const hasTextContent = typeof content === "string" && content.trim().length > 0;
         const div = document.createElement("div");
         div.className = `ic-msg ${isUser ? "ic-msg--user" : "ic-msg--ai"}`;
 
@@ -534,7 +597,7 @@
             <div class="ic-msg-row">
                 <div class="ic-msg-body">
                     ${imageHtml}
-                    <div class="ic-msg-content">${formatContent(content)}</div>
+                    ${hasTextContent ? `<div class="ic-msg-content">${formatContent(content)}</div>` : ""}
                 </div>
             </div>`;
         } else {
@@ -856,9 +919,6 @@
             if (dom.quickSuggestWrap) dom.quickSuggestWrap.style.display = "flex";
         }
 
-        // Show welcome cards as quick actions
-        renderWelcomeCards(true);
-
         renderInstructionList(dom.instructionSearch.value);
         updateStatusBar();
 
@@ -873,12 +933,6 @@
 
         // Load version info
         loadVersionInfo(id);
-    }
-
-    function renderWelcomeCards(show) {
-        if (dom.welcomeCards) {
-            dom.welcomeCards.style.display = show ? "none" : "grid"; // Cards inside welcome only
-        }
     }
 
     // ─── Sidebar ────────────────────────────────────────────────────────
@@ -1055,19 +1109,6 @@
             updateThinkingUI();
         });
 
-        // Welcome cards (quick actions)
-        if (dom.welcomeCards) {
-            dom.welcomeCards.addEventListener("click", (e) => {
-                const card = e.target.closest(".ic-welcome-card");
-                if (!card) return;
-                const prompt = card.dataset.prompt;
-                dom.input.value = prompt;
-                dom.input.focus();
-                updateSendButton();
-                autoResize(dom.input);
-            });
-        }
-
         // New chat buttons
         const handleNewChat = async () => {
             if (!state.selectedId) return;
@@ -1223,18 +1264,64 @@
         // ── 5. Inline code ──
         html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
 
-        // ── 6. Bullet lists ──
+        // ── 6. Lists ──
         html = html.replace(/^[•\-]\s+(.+)$/gm, "<li>$1</li>");
-        html = html.replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>");
-        html = html.replace(/<\/ul>\s*<ul>/g, "");
+        html = html.replace(/^\d+\.\s+(.+)$/gm, '<li class="ic-ol-item">$1</li>');
+        html = (() => {
+            const lines = html.split("\n");
+            const grouped = [];
+            let activeList = "";
+            const closeList = () => {
+                if (activeList) {
+                    grouped.push(`</${activeList}>`);
+                    activeList = "";
+                }
+            };
 
-        // ── 7. Numbered lists ──
-        html = html.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
+            for (const line of lines) {
+                const trimmed = line.trim();
+                const isOrderedItem = /^<li class="ic-ol-item">.*<\/li>$/.test(trimmed);
+                const isUnorderedItem = /^<li>.*<\/li>$/.test(trimmed);
+
+                if (isOrderedItem) {
+                    if (activeList !== "ol") {
+                        closeList();
+                        activeList = "ol";
+                        grouped.push("<ol>");
+                    }
+                    grouped.push(trimmed);
+                    continue;
+                }
+
+                if (isUnorderedItem) {
+                    if (activeList !== "ul") {
+                        closeList();
+                        activeList = "ul";
+                        grouped.push("<ul>");
+                    }
+                    grouped.push(trimmed);
+                    continue;
+                }
+
+                closeList();
+                grouped.push(line);
+            }
+
+            closeList();
+            return grouped.join("\n");
+        })();
 
         // ── 8. Line breaks ──
         html = html.replace(/\n/g, "<br>");
         html = html.replace(/<br><ul>/g, "<ul>");
+        html = html.replace(/<ul><br>/g, "<ul>");
+        html = html.replace(/<br><\/ul>/g, "</ul>");
         html = html.replace(/<\/ul><br>/g, "</ul>");
+        html = html.replace(/<br><ol>/g, "<ol>");
+        html = html.replace(/<ol><br>/g, "<ol>");
+        html = html.replace(/<br><\/ol>/g, "</ol>");
+        html = html.replace(/<\/ol><br>/g, "</ol>");
+        html = html.replace(/<\/li><br><li/g, "</li><li");
         html = html.replace(/<br><h/g, "<h");
         html = html.replace(/<\/h([234])><br>/g, "</h$1>");
 

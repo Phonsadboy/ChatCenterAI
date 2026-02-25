@@ -18764,13 +18764,142 @@ app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req
   }
 });
 
-// Instruction Chat API — Main chat endpoint with tool loop
+// ─── InstructionAI Responses API Helpers ───
+const INSTRUCTION_REASONING_SUPPORT = {
+  "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+  "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+  "gpt-5.1": { efforts: ["none", "low", "medium", "high"], default: "none" },
+  "gpt-5": { efforts: ["low", "medium", "high"], default: "medium" },
+};
+
+const INSTRUCTION_THINKING_MAP = { off: "none", low: "low", medium: "medium", high: "high", max: "xhigh" };
+
+function resolveInstructionReasoningEffort(model, thinking) {
+  const modelConfig = INSTRUCTION_REASONING_SUPPORT[model] || INSTRUCTION_REASONING_SUPPORT["gpt-5.2"];
+  let effort = INSTRUCTION_THINKING_MAP[thinking] || modelConfig.default;
+  if (!modelConfig.efforts.includes(effort)) effort = modelConfig.default;
+  return effort;
+}
+
+function mapInstructionToolsForResponses(tools) {
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .map((tool) => {
+      if (tool?.type === "function" && tool.function) {
+        return {
+          type: "function",
+          name: tool.function.name,
+          description: tool.function.description,
+          parameters: tool.function.parameters || { type: "object", properties: {} },
+        };
+      }
+      return tool;
+    })
+    .filter(Boolean);
+}
+
+function normalizeInstructionHistoryForResponses(history) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  const normalized = [];
+  for (const msg of safeHistory) {
+    if (!msg || typeof msg !== "object") continue;
+    if (!["system", "developer", "user", "assistant"].includes(msg.role)) continue;
+    if (typeof msg.content === "string") {
+      const content = msg.content.trim();
+      if (!content) continue;
+      normalized.push({ role: msg.role, content });
+    } else if (Array.isArray(msg.content) && msg.content.length > 0) {
+      normalized.push({ role: msg.role, content: msg.content });
+    }
+  }
+  return normalized;
+}
+
+function buildInstructionUserInputForResponses(message, images) {
+  const text = typeof message === "string" ? message.trim() : "";
+  const hasImages = Array.isArray(images) && images.length > 0;
+  if (!hasImages) return text;
+
+  const content = [];
+  if (text) content.push({ type: "input_text", text });
+
+  for (const img of images.slice(0, 10)) {
+    if (img?.name) {
+      content.push({ type: "input_text", text: `[ไฟล์แนบ: ${img.name}]` });
+    }
+    const imageUrl = img?.data || img?.imageData || img;
+    if (!imageUrl) continue;
+    content.push({
+      type: "input_image",
+      image_url: imageUrl,
+      detail: img?.detail || "low",
+    });
+  }
+
+  return content.length > 0 ? content : [{ type: "input_text", text: "[แนบรูปภาพ]" }];
+}
+
+function buildInstructionUserHistoryText(message, images) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (text) return text;
+  const imageCount = Array.isArray(images) ? images.length : 0;
+  if (imageCount > 0) return `[แนบรูปภาพ ${imageCount} รูป]`;
+  return "";
+}
+
+function mapInstructionResponseUsage(usage) {
+  const promptTokens = usage?.input_tokens || 0;
+  const completionTokens = usage?.output_tokens || 0;
+  const reasoningTokens = usage?.output_tokens_details?.reasoning_tokens || 0;
+  const totalTokens = usage?.total_tokens || (promptTokens + completionTokens);
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    reasoning_tokens: reasoningTokens,
+    total_tokens: totalTokens,
+  };
+}
+
+function addInstructionUsage(totalUsage, usage) {
+  if (!usage) return;
+  totalUsage.prompt_tokens += usage.prompt_tokens || 0;
+  totalUsage.completion_tokens += usage.completion_tokens || 0;
+  totalUsage.reasoning_tokens += usage.reasoning_tokens || 0;
+  totalUsage.total_tokens += usage.total_tokens || 0;
+}
+
+function extractInstructionResponseFunctionCalls(response) {
+  const output = Array.isArray(response?.output) ? response.output : [];
+  return output.filter((item) =>
+    item?.type === "function_call" &&
+    typeof item?.name === "string" &&
+    typeof item?.call_id === "string"
+  );
+}
+
+function extractInstructionResponseText(response) {
+  if (typeof response?.output_text === "string") return response.output_text;
+  const output = Array.isArray(response?.output) ? response.output : [];
+  let text = "";
+  for (const item of output) {
+    if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const part of item.content) {
+      if (part?.type === "output_text" && typeof part?.text === "string") {
+        text += part.text;
+      }
+    }
+  }
+  return text;
+}
+
+// Instruction Chat API — Main chat endpoint with tool loop (Responses API)
 app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
   try {
-    const { instructionId, message, model = "gpt-5.2", thinking = "off", history = [] } = req.body;
+    const { instructionId, message = "", model = "gpt-5.2", thinking = "off", history = [], images } = req.body;
+    const hasIncomingImages = Array.isArray(images) && images.length > 0;
 
     if (!instructionId) return res.json({ error: "ต้องเลือก Instruction ก่อน" });
-    if (!message || !message.trim()) return res.json({ error: "ต้องพิมพ์ข้อความ" });
+    if ((!message || !message.trim()) && !hasIncomingImages) return res.json({ error: "ต้องพิมพ์ข้อความ" });
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -18783,88 +18912,56 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
 
     const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
     const sessionId = `ses_${Date.now().toString(36)}`;
-
-    // Build system prompt (GPT-5.2 optimized)
     const systemPrompt = buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsSummary);
 
-    const safeHistory = Array.isArray(history) ? history : [];
+    const safeHistory = normalizeInstructionHistoryForResponses(history);
     const lastHistoryMsg = safeHistory[safeHistory.length - 1];
     const isDuplicatedUserMessage =
+      !hasIncomingImages &&
       lastHistoryMsg &&
       lastHistoryMsg.role === "user" &&
       typeof lastHistoryMsg.content === "string" &&
-      lastHistoryMsg.content.trim() === message.trim();
+      lastHistoryMsg.content.trim() === String(message).trim();
 
-    // Build messages array (avoid duplicating latest user turn)
-    const messages = [{ role: "system", content: systemPrompt }, ...safeHistory];
+    const tools = mapInstructionToolsForResponses(chatService.getToolDefinitions());
+    const effort = resolveInstructionReasoningEffort(model, thinking);
+
+    let nextInput = [{ role: "system", content: systemPrompt }, ...safeHistory];
     if (!isDuplicatedUserMessage) {
-      messages.push({ role: "user", content: message });
+      nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
     }
 
-    // Model-specific reasoning config
-    const REASONING_SUPPORT = {
-      "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
-      "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
-      "gpt-5.1": { efforts: ["none", "low", "medium", "high"], default: "none" },
-      "gpt-5": { efforts: ["low", "medium", "high"], default: "medium" },
-    };
-
-    const THINKING_MAP = { off: "none", low: "low", medium: "medium", high: "high", max: "xhigh" };
-    const modelConfig = REASONING_SUPPORT[model] || REASONING_SUPPORT["gpt-5.2"];
-    let effort = THINKING_MAP[thinking] || modelConfig.default;
-    if (!modelConfig.efforts.includes(effort)) {
-      effort = modelConfig.efforts[modelConfig.efforts.length - 1];
-    }
-
-    // Build OpenAI payload
-    const tools = chatService.getToolDefinitions();
-    const payload = { model, messages, tools, tool_choice: "auto" };
-    if (effort !== "none") {
-      payload.reasoning_effort = effort;
-    }
-
-    // Tool loop (max 8 iterations)
     const toolsUsed = [];
     const changes = [];
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
     let finalContent = "";
-    let reasoningContent = "";
-    let thinkingTime = null;
-
-    const startTime = Date.now();
+    let previousResponseId = null;
 
     for (let i = 0; i < 8; i++) {
-      const response = await openai.chat.completions.create(payload);
-      const choice = response.choices[0];
-      const msg = choice.message;
+      const payload = {
+        model,
+        input: nextInput,
+        tools,
+        tool_choice: "auto",
+        reasoning: { effort },
+      };
+      if (previousResponseId) payload.previous_response_id = previousResponseId;
 
-      // Track usage
-      if (response.usage) {
-        totalUsage.prompt_tokens += response.usage.prompt_tokens || 0;
-        totalUsage.completion_tokens += response.usage.completion_tokens || 0;
-        totalUsage.reasoning_tokens += response.usage.reasoning_tokens || 0;
-        totalUsage.total_tokens += response.usage.total_tokens || 0;
-      }
+      const response = await openai.responses.create(payload);
+      previousResponseId = response.id;
+      addInstructionUsage(totalUsage, mapInstructionResponseUsage(response.usage));
 
-      // Capture reasoning content
-      if (msg.reasoning_content) {
-        reasoningContent = msg.reasoning_content;
-        thinkingTime = ((Date.now() - startTime) / 1000).toFixed(1);
-      }
-
-      // No tool calls — we have the final response
-      if (!msg.tool_calls || msg.tool_calls.length === 0) {
-        finalContent = msg.content || "";
+      const toolCalls = extractInstructionResponseFunctionCalls(response);
+      if (toolCalls.length === 0) {
+        finalContent = extractInstructionResponseText(response);
         break;
       }
 
-      // Process tool calls
-      messages.push(msg);
-
-      for (const toolCall of msg.tool_calls) {
-        const toolName = toolCall.function.name;
+      const toolOutputs = [];
+      for (const toolCall of toolCalls) {
+        const toolName = toolCall.name;
         let args = {};
-        try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch (e) { }
+        try { args = JSON.parse(toolCall.arguments || "{}"); } catch (e) { }
 
         const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
 
@@ -18872,30 +18969,24 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
           tool: toolName,
           args,
           resultCount: result.results?.length || result.totalMatches || undefined,
-          summary: result.error || (result.success ? `✅ สำเร็จ` : undefined),
+          summary: result.error || (result.success ? "✅ สำเร็จ" : undefined),
         });
+        if (result.changeId) changes.push({ changeId: result.changeId, tool: toolName });
 
-        // Track changes
-        if (result.changeId) {
-          changes.push({ changeId: result.changeId, tool: toolName });
-        }
-
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: JSON.stringify(result),
+        toolOutputs.push({
+          type: "function_call_output",
+          call_id: toolCall.call_id,
+          output: JSON.stringify(result),
         });
       }
 
-      // Continue loop — let AI process tool results
+      nextInput = toolOutputs;
     }
 
     res.json({
       content: finalContent,
       toolsUsed,
       changes,
-      reasoning_content: reasoningContent || undefined,
-      thinking_time: thinkingTime || undefined,
       usage: totalUsage,
       model,
       thinking,
@@ -19134,14 +19225,15 @@ function cleanupActiveRequest(requestId) {
   setTimeout(() => { activeRequests.delete(requestId); }, 2 * 60 * 1000);
 }
 
-// ─── SSE Streaming Chat Endpoint ───
+// ─── SSE Streaming Chat Endpoint (Responses API) ───
 app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 6)}`;
   try {
-    const { instructionId, message, model = "gpt-5.2", thinking = "off", history = [], sessionId: clientSessionId, images } = req.body;
+    const { instructionId, message = "", model = "gpt-5.2", thinking = "off", history = [], sessionId: clientSessionId, images } = req.body;
+    const hasIncomingImages = Array.isArray(images) && images.length > 0;
 
     if (!instructionId) return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
-    if (!message || !message.trim()) return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
+    if ((!message || !message.trim()) && !hasIncomingImages) return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
 
     // SSE headers
     res.setHeader("Content-Type", "text/event-stream");
@@ -19162,7 +19254,6 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     };
     activeRequests.set(requestId, requestState);
     requestState.listeners.add(res);
-
     req.on("close", () => { requestState.listeners.delete(res); });
 
     // Buffered sendEvent — stores + broadcasts
@@ -19206,7 +19297,12 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const openai = openaiSingleton;
     const chatService = new InstructionChatService(db, openai, { resetFollowUpConfigCache });
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
-    if (!instruction) { sendEvent("error", { error: "ไม่พบ Instruction" }); requestState.status = "error"; finishRequest(); return; }
+    if (!instruction) {
+      sendEvent("error", { error: "ไม่พบ Instruction" });
+      requestState.status = "error";
+      finishRequest();
+      return;
+    }
 
     const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
 
@@ -19214,162 +19310,215 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     notifyInstructionAIUsage(username, instruction.name, model).catch(() => { });
 
     const systemPrompt = buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsSummary);
-
-    // Build user message with optional images (vision API)
-    const safeHistory = Array.isArray(history) ? history : [];
-    const hasIncomingImages = Array.isArray(images) && images.length > 0;
+    const safeHistory = normalizeInstructionHistoryForResponses(history);
     const lastHistoryMsg = safeHistory[safeHistory.length - 1];
     const isDuplicatedUserMessage =
       !hasIncomingImages &&
       lastHistoryMsg &&
       lastHistoryMsg.role === "user" &&
       typeof lastHistoryMsg.content === "string" &&
-      lastHistoryMsg.content.trim() === message.trim();
+      lastHistoryMsg.content.trim() === String(message).trim();
+    const userHistoryText = buildInstructionUserHistoryText(message, images);
 
-    let userContent;
-    if (hasIncomingImages) {
-      const imageParts = [];
-      for (const img of images.slice(0, 10)) {
-        // Include filename as text annotation so AI knows the original name
-        if (img.name) {
-          imageParts.push({ type: "text", text: `[ไฟล์แนบ: ${img.name}]` });
-        }
-        imageParts.push({
-          type: "image_url",
-          image_url: { url: img.data || img, detail: img.detail || "low" },
-        });
-      }
-      userContent = [
-        { type: "text", text: message },
-        ...imageParts,
-      ];
-    } else {
-      userContent = message;
-    }
+    const tools = mapInstructionToolsForResponses(chatService.getToolDefinitions());
+    const effort = resolveInstructionReasoningEffort(model, thinking);
 
-    const messages = [
-      { role: "system", content: systemPrompt },
-      ...safeHistory,
-    ];
+    let nextInput = [{ role: "system", content: systemPrompt }, ...safeHistory];
     if (!isDuplicatedUserMessage) {
-      messages.push({ role: "user", content: userContent });
+      nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
     }
 
-    // Reasoning config
-    const REASONING_SUPPORT = {
-      "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
-      "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
-      "gpt-5.1": { efforts: ["none", "low", "medium", "high"], default: "none" },
-      "gpt-5": { efforts: ["low", "medium", "high"], default: "medium" },
-    };
-    const THINKING_MAP = { off: "none", low: "low", medium: "medium", high: "high", max: "xhigh" };
-    const modelConfig = REASONING_SUPPORT[model] || REASONING_SUPPORT["gpt-5.2"];
-    let effort = THINKING_MAP[thinking] || modelConfig.default;
-    if (!modelConfig.efforts.includes(effort)) effort = modelConfig.efforts[modelConfig.efforts.length - 1];
-
-    const tools = chatService.getToolDefinitions();
     const toolsUsed = [];
     const changes = [];
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
-    const initialMsgCount = messages.length; // Track where tool messages start
-
-    // ─── Fully Streaming Tool Loop (max 8 iterations) ─────────────────────────
-    // Every iteration uses streaming for real-time thinking + tool detection
-    // Tool_calls are accumulated from stream deltas
-
+    let previousResponseId = null;
     let finalContent = "";
+    const assistantMessages = [];
 
     for (let i = 0; i < 8; i++) {
-      const payload = {
-        model, messages, tools, tool_choice: "auto",
-        stream: true, stream_options: { include_usage: true },
-      };
-      if (effort !== "none") payload.reasoning_effort = effort;
-
-      // Let frontend know we're processing
       sendEvent("status", { phase: i === 0 ? "thinking" : "continuing", iteration: i + 1 });
 
-      // ─── Streaming call — accumulate tool_calls from deltas ───
-      const stream = await openai.chat.completions.create(payload);
+      const payload = {
+        model,
+        input: nextInput,
+        tools,
+        tool_choice: "auto",
+        reasoning: { effort },
+        stream: true,
+      };
+      if (previousResponseId) payload.previous_response_id = previousResponseId;
 
+      const stream = await openai.responses.create(payload);
+      const streamedToolCallsByKey = new Map();
+      const streamedToolCallKeyByOutputIndex = new Map();
+      const streamedToolCallKeyByItemId = new Map();
+      let streamedResponse = null;
+      let streamErrorMessage = null;
       let iterationContent = "";
-      let iterationToolCalls = [];   // Accumulated tool_calls from deltas
-      let iterationReasoning = "";
-      let hasThinkingBlock = false;
+      let activeReasoningText = "";
+      let reasoningStreaming = false;
 
-      for await (const chunk of stream) {
-        const delta = chunk.choices?.[0]?.delta;
-        const finishReason = chunk.choices?.[0]?.finish_reason;
-
-        // ✅ Real-time thinking stream (every iteration)
-        if (delta?.reasoning_content) {
-          iterationReasoning += delta.reasoning_content;
-          if (!hasThinkingBlock) {
-            hasThinkingBlock = true;
-            sendEvent("thinking_start", { iteration: i + 1 });
-          }
-          sendEvent("thinking_delta", { text: delta.reasoning_content });
+      const getToolCallKey = (itemId, outputIndex) => {
+        if (itemId && streamedToolCallKeyByItemId.has(itemId)) {
+          return streamedToolCallKeyByItemId.get(itemId);
         }
-
-        // ✅ Accumulate tool_calls from stream deltas
-        if (delta?.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            const idx = tc.index;
-            if (!iterationToolCalls[idx]) {
-              iterationToolCalls[idx] = {
-                id: tc.id || "",
-                type: tc.type || "function",
-                function: { name: "", arguments: "" },
-              };
-            }
-            if (tc.id) iterationToolCalls[idx].id = tc.id;
-            if (tc.function?.name) iterationToolCalls[idx].function.name += tc.function.name;
-            if (tc.function?.arguments) iterationToolCalls[idx].function.arguments += tc.function.arguments;
-          }
+        if (typeof outputIndex === "number" && streamedToolCallKeyByOutputIndex.has(outputIndex)) {
+          return streamedToolCallKeyByOutputIndex.get(outputIndex);
         }
+        return itemId || `output_${typeof outputIndex === "number" ? outputIndex : streamedToolCallsByKey.size}`;
+      };
 
-        // ✅ Real-time content stream
-        if (delta?.content) {
-          iterationContent += delta.content;
-          sendEvent("content", { text: delta.content });
-        }
-
-        // Collect usage
-        if (chunk.usage) {
-          totalUsage.prompt_tokens += chunk.usage.prompt_tokens || 0;
-          totalUsage.completion_tokens += chunk.usage.completion_tokens || 0;
-          totalUsage.reasoning_tokens += chunk.usage.reasoning_tokens || 0;
-          totalUsage.total_tokens += chunk.usage.total_tokens || 0;
-        }
-      }
-
-      // Signal thinking complete for this iteration
-      if (hasThinkingBlock) {
-        const wordCount = iterationReasoning.split(/\s+/).filter(Boolean).length;
-        sendEvent("thinking_done", { wordCount });
-      }
-
-      // ─── Has tool calls? Execute them and continue loop ───
-      const validToolCalls = iterationToolCalls.filter(tc => tc && tc.function?.name);
-      if (validToolCalls.length > 0) {
-        // Reconstruct assistant message with tool_calls for history
-        const assistantMsg = {
-          role: "assistant",
-          content: iterationContent || null,
-          tool_calls: validToolCalls.map(tc => ({
-            id: tc.id,
-            type: tc.type,
-            function: { name: tc.function.name, arguments: tc.function.arguments },
-          })),
+      const upsertToolCall = (itemId, outputIndex, patch = {}) => {
+        const key = getToolCallKey(itemId, outputIndex);
+        const prev = streamedToolCallsByKey.get(key) || {
+          key,
+          id: itemId || null,
+          output_index: typeof outputIndex === "number" ? outputIndex : null,
+          name: null,
+          call_id: null,
+          arguments: "",
         };
-        if (iterationReasoning) assistantMsg.reasoning_content = iterationReasoning;
-        messages.push(assistantMsg);
 
-        // Execute each tool
-        for (const toolCall of validToolCalls) {
-          const toolName = toolCall.function.name;
+        const next = { ...prev, ...patch };
+        if (itemId) next.id = itemId;
+        if (typeof outputIndex === "number") next.output_index = outputIndex;
+
+        streamedToolCallsByKey.set(key, next);
+        if (typeof next.output_index === "number") streamedToolCallKeyByOutputIndex.set(next.output_index, key);
+        if (next.id) streamedToolCallKeyByItemId.set(next.id, key);
+        return next;
+      };
+
+      const closeReasoningStream = () => {
+        if (!reasoningStreaming) return;
+        const text = (activeReasoningText || "").trim();
+        const wordCount = text ? text.split(/\s+/).length : 0;
+        sendEvent("thinking_done", { wordCount });
+        activeReasoningText = "";
+        reasoningStreaming = false;
+      };
+
+      for await (const event of stream) {
+        switch (event?.type) {
+          case "response.created":
+            if (event.response?.id) previousResponseId = event.response.id;
+            break;
+
+          case "response.output_text.delta":
+            if (typeof event.delta === "string" && event.delta.length > 0) {
+              iterationContent += event.delta;
+              sendEvent("content", { text: event.delta });
+            }
+            break;
+
+          case "response.output_item.added":
+            if (event.item?.type === "function_call") {
+              upsertToolCall(event.item.id, event.output_index, {
+                name: event.item.name || null,
+                call_id: event.item.call_id || null,
+                arguments: typeof event.item.arguments === "string" ? event.item.arguments : "",
+              });
+            }
+            break;
+
+          case "response.function_call_arguments.delta":
+            {
+              const current = upsertToolCall(event.item_id, event.output_index);
+              upsertToolCall(event.item_id, event.output_index, {
+                arguments: `${current.arguments || ""}${event.delta || ""}`,
+              });
+            }
+            break;
+
+          case "response.function_call_arguments.done":
+            upsertToolCall(event.item_id, event.output_index, {
+              arguments: typeof event.arguments === "string" ? event.arguments : "",
+            });
+            break;
+
+          case "response.output_item.done":
+            if (event.item?.type === "function_call") {
+              upsertToolCall(event.item.id, event.output_index, {
+                name: event.item.name || null,
+                call_id: event.item.call_id || null,
+                arguments: typeof event.item.arguments === "string" ? event.item.arguments : "",
+              });
+            }
+            break;
+
+          case "response.reasoning_summary_part.added":
+            if (!reasoningStreaming) {
+              sendEvent("thinking_start", { iteration: i + 1 });
+              reasoningStreaming = true;
+            }
+            if (event.part?.text) {
+              activeReasoningText += event.part.text;
+              sendEvent("thinking_delta", { text: event.part.text });
+            }
+            break;
+
+          case "response.reasoning_summary_text.delta":
+            if (!reasoningStreaming) {
+              sendEvent("thinking_start", { iteration: i + 1 });
+              reasoningStreaming = true;
+            }
+            if (event.delta) {
+              activeReasoningText += event.delta;
+              sendEvent("thinking_delta", { text: event.delta });
+            }
+            break;
+
+          case "response.reasoning_summary_text.done":
+            if (typeof event.text === "string") activeReasoningText = event.text;
+            closeReasoningStream();
+            break;
+
+          case "response.completed":
+            streamedResponse = event.response || null;
+            if (event.response?.id) previousResponseId = event.response.id;
+            closeReasoningStream();
+            break;
+
+          case "response.failed":
+            streamedResponse = event.response || null;
+            streamErrorMessage = event.response?.error?.message || "Model response failed";
+            closeReasoningStream();
+            break;
+
+          case "error":
+            streamErrorMessage = event.message || "Response stream error";
+            closeReasoningStream();
+            break;
+
+          default:
+            break;
+        }
+      }
+
+      closeReasoningStream();
+
+      if (streamErrorMessage) throw new Error(streamErrorMessage);
+
+      if (streamedResponse) {
+        addInstructionUsage(totalUsage, mapInstructionResponseUsage(streamedResponse.usage));
+      }
+
+      const toolCalls = Array.from(streamedToolCallsByKey.values())
+        .filter((item) =>
+          item &&
+          item.name &&
+          typeof item.name === "string" &&
+          item.call_id &&
+          typeof item.call_id === "string"
+        )
+        .sort((a, b) => (a.output_index ?? Number.MAX_SAFE_INTEGER) - (b.output_index ?? Number.MAX_SAFE_INTEGER));
+
+      if (toolCalls.length > 0) {
+        const toolOutputs = [];
+        for (const toolCall of toolCalls) {
+          const toolName = toolCall.name;
           let args = {};
-          try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch (e) { }
+          try { args = JSON.parse(toolCall.arguments || "{}"); } catch (e) { }
 
           sendEvent("tool_start", { tool: toolName, args });
           const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
@@ -19379,89 +19528,82 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           if (result.changeId) changes.push({ changeId: result.changeId, tool: toolName });
 
           sendEvent("tool_end", { tool: toolName, summary: toolSummary, result: toolSummary });
-          messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(result) });
+          toolOutputs.push({
+            type: "function_call_output",
+            call_id: toolCall.call_id,
+            output: JSON.stringify(result),
+          });
         }
-        continue; // Continue tool loop
+
+        nextInput = toolOutputs;
+        continue;
       }
 
-      // ─── No tool calls — This was the final response ───
-      finalContent = iterationContent;
-
-      // Build full assistant messages for history
-      const newMessages = messages.slice(initialMsgCount);
-      newMessages.push({ role: "assistant", content: finalContent });
-
-      const MAX_TOOL_RESULT_LEN = 4000;
-      const assistantMessages = newMessages.map(m => {
-        if (m.role === "tool" && typeof m.content === "string" && m.content.length > MAX_TOOL_RESULT_LEN) {
-          return { ...m, content: m.content.substring(0, MAX_TOOL_RESULT_LEN) + '\n...(truncated)' };
-        }
-        if (m.role === "assistant" && m.tool_calls) {
-          return {
-            role: "assistant",
-            content: m.content || null,
-            tool_calls: m.tool_calls.map(tc => ({
-              id: tc.id,
-              type: tc.type,
-              function: { name: tc.function.name, arguments: tc.function.arguments }
-            }))
-          };
-        }
-        return m;
-      });
-
-      const toolContext = toolsUsed.length > 0
-        ? toolsUsed.map(t => `[${t.tool}] ${t.summary || ''}`).join('\n')
-        : null;
-
-      await logOpenAIUsage({
-        apiKeyId: null,
-        botId: 'instruction-chat',
-        platform: 'admin',
-        model,
-        promptTokens: totalUsage.prompt_tokens,
-        completionTokens: totalUsage.completion_tokens,
-        totalTokens: totalUsage.total_tokens,
-        functionName: 'instruction-chat',
-      });
-
-      await db.collection("instruction_chat_audit").insertOne({
-        sessionId, instructionId, username,
-        timestamp: new Date(),
-        message, model, thinking, effort,
-        toolsUsed: toolsUsed.map(t => t.tool),
-        changes: changes.map(c => c.changeId),
-        usage: totalUsage,
-        responseLength: finalContent.length,
-      });
-
-      sendEvent("done", { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages });
-      requestState.status = "complete";
-
-      // Auto-save session (even if client disconnected)
-      try {
-        const fullHistory = isDuplicatedUserMessage
-          ? [...safeHistory, ...assistantMessages]
-          : [...safeHistory, { role: "user", content: message }, ...assistantMessages];
-        await db.collection("instruction_chat_sessions").updateOne(
-          { sessionId },
-          {
-            $set: {
-              sessionId, instructionId, instructionName: instruction.name || "",
-              history: fullHistory, model, thinking,
-              totalTokens: totalUsage.total_tokens,
-              totalChanges: changes.length,
-              username, updatedAt: new Date(),
-            },
-            $setOnInsert: { createdAt: new Date() }
-          },
-          { upsert: true }
-        );
-      } catch (saveErr) {
-        console.warn("[InstructionChat] Auto-save session failed:", saveErr.message);
+      if (!iterationContent && streamedResponse) {
+        iterationContent = extractInstructionResponseText(streamedResponse) || "";
+        if (iterationContent) sendEvent("content", { text: iterationContent });
       }
 
+      finalContent = iterationContent || "";
+      assistantMessages.push({ role: "assistant", content: finalContent });
       break;
+    }
+
+    if (assistantMessages.length === 0) {
+      finalContent = finalContent || "⚠️ ไม่พบคำตอบจากโมเดล";
+      sendEvent("content", { text: finalContent });
+      assistantMessages.push({ role: "assistant", content: finalContent });
+    }
+
+    const toolContext = toolsUsed.length > 0
+      ? toolsUsed.map(t => `[${t.tool}] ${t.summary || ""}`).join("\n")
+      : null;
+
+    await logOpenAIUsage({
+      apiKeyId: null,
+      botId: "instruction-chat",
+      platform: "admin",
+      model,
+      promptTokens: totalUsage.prompt_tokens,
+      completionTokens: totalUsage.completion_tokens,
+      totalTokens: totalUsage.total_tokens,
+      functionName: "instruction-chat",
+    });
+
+    await db.collection("instruction_chat_audit").insertOne({
+      sessionId, instructionId, username,
+      timestamp: new Date(),
+      message, model, thinking, effort,
+      toolsUsed: toolsUsed.map(t => t.tool),
+      changes: changes.map(c => c.changeId),
+      usage: totalUsage,
+      responseLength: finalContent.length,
+    });
+
+    sendEvent("done", { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages });
+    requestState.status = "complete";
+
+    // Auto-save session (even if client disconnected)
+    try {
+      const fullHistory = isDuplicatedUserMessage
+        ? [...safeHistory, ...assistantMessages]
+        : [...safeHistory, ...(userHistoryText ? [{ role: "user", content: userHistoryText }] : []), ...assistantMessages];
+      await db.collection("instruction_chat_sessions").updateOne(
+        { sessionId },
+        {
+          $set: {
+            sessionId, instructionId, instructionName: instruction.name || "",
+            history: fullHistory, model, thinking,
+            totalTokens: totalUsage.total_tokens,
+            totalChanges: changes.length,
+            username, updatedAt: new Date(),
+          },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+    } catch (saveErr) {
+      console.warn("[InstructionChat] Auto-save session failed:", saveErr.message);
     }
 
     finishRequest();

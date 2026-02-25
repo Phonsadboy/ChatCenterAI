@@ -1140,6 +1140,26 @@ body {
     overflow-wrap: break-word;
 }
 
+.ic-status-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--ic-text-muted);
+    font-size: 12px;
+    font-family: var(--ic-font-mono);
+    padding: 4px 0;
+}
+
+.ic-status-text::before {
+    content: "";
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(0, 255, 170, 0.2);
+    border-top-color: var(--ic-accent);
+    animation: ic-spin 0.9s linear infinite;
+}
+
 .ic-msg-content p {
     margin: 0 0 8px;
 }
