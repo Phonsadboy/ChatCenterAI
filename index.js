@@ -19270,21 +19270,29 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       }
     };
 
-    // Heartbeat — keep SSE alive through proxies
-    const heartbeatInterval = setInterval(() => {
-      const comment = `: heartbeat ${Date.now()}\n\n`;
-      for (const listener of requestState.listeners) {
-        try {
-          listener.write(comment);
-          if (typeof listener.flush === "function") listener.flush();
-        } catch (e) {
-          requestState.listeners.delete(listener);
-        }
-      }
-    }, 15000);
+    let currentPhase = "thinking";
+    let currentIteration = 1;
+    let currentTool = null;
+    const sendStatus = (phase, extra = {}) => {
+      if (phase) currentPhase = phase;
+      if (typeof extra.iteration === "number") currentIteration = extra.iteration;
+      if (Object.prototype.hasOwnProperty.call(extra, "tool")) currentTool = extra.tool || null;
+      sendEvent("status", {
+        phase: currentPhase,
+        iteration: currentIteration,
+        tool: currentTool,
+        elapsedSec: Math.floor((Date.now() - requestState.createdAt) / 1000),
+        ...extra,
+      });
+    };
+
+    // Visible progress heartbeat + keep-alive
+    const progressInterval = setInterval(() => {
+      sendStatus(null, { heartbeat: true });
+    }, 4000);
 
     const finishRequest = () => {
-      clearInterval(heartbeatInterval);
+      clearInterval(progressInterval);
       for (const listener of requestState.listeners) { try { listener.end(); } catch (e) { } }
       requestState.listeners.clear();
       cleanupActiveRequest(requestId);
@@ -19336,7 +19344,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const assistantMessages = [];
 
     for (let i = 0; i < 8; i++) {
-      sendEvent("status", { phase: i === 0 ? "thinking" : "continuing", iteration: i + 1 });
+      sendStatus(i === 0 ? "thinking" : "continuing", { iteration: i + 1, tool: null });
 
       const payload = {
         model,
@@ -19357,6 +19365,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       let iterationContent = "";
       let activeReasoningText = "";
       let reasoningStreaming = false;
+      let sentRespondingStatus = false;
 
       const getToolCallKey = (itemId, outputIndex) => {
         if (itemId && streamedToolCallKeyByItemId.has(itemId)) {
@@ -19406,6 +19415,10 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
           case "response.output_text.delta":
             if (typeof event.delta === "string" && event.delta.length > 0) {
+              if (!sentRespondingStatus) {
+                sendStatus("responding", { iteration: i + 1, tool: null });
+                sentRespondingStatus = true;
+              }
               iterationContent += event.delta;
               sendEvent("content", { text: event.delta });
             }
@@ -19413,6 +19426,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
           case "response.output_item.added":
             if (event.item?.type === "function_call") {
+              sendStatus("tool_plan", { iteration: i + 1, tool: event.item.name || "tool" });
+              sendEvent("tool_plan", {
+                tool: event.item.name || "tool",
+                callId: event.item.call_id || event.item.id || null,
+              });
               upsertToolCall(event.item.id, event.output_index, {
                 name: event.item.name || null,
                 call_id: event.item.call_id || null,
@@ -19520,14 +19538,16 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           let args = {};
           try { args = JSON.parse(toolCall.arguments || "{}"); } catch (e) { }
 
-          sendEvent("tool_start", { tool: toolName, args });
+          sendStatus("tool", { iteration: i + 1, tool: toolName });
+          sendEvent("tool_start", { tool: toolName, args, callId: toolCall.call_id });
           const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
 
           const toolSummary = buildToolSummary(toolName, result);
           toolsUsed.push({ tool: toolName, args, summary: toolSummary });
           if (result.changeId) changes.push({ changeId: result.changeId, tool: toolName });
 
-          sendEvent("tool_end", { tool: toolName, summary: toolSummary, result: toolSummary });
+          sendEvent("tool_end", { tool: toolName, summary: toolSummary, result: toolSummary, callId: toolCall.call_id });
+          sendStatus("continuing", { iteration: i + 1, tool: null });
           toolOutputs.push({
             type: "function_call_output",
             call_id: toolCall.call_id,
@@ -19606,7 +19626,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       console.warn("[InstructionChat] Auto-save session failed:", saveErr.message);
     }
 
-    finishRequest();
+    setTimeout(() => finishRequest(), 80);
   } catch (error) {
     console.error("[InstructionChat SSE] Error:", error);
     const reqState = activeRequests.get(requestId);

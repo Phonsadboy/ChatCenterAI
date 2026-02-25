@@ -1642,6 +1642,11 @@ body {
     animation: ic-blink 1s step-end infinite;
 }
 
+.ic-pipeline-entry.queued::before {
+    content: '…';
+    color: #f59e0b;
+}
+
 .ic-pipeline-entry.done::before {
     content: '✓';
     color: var(--ic-success);
@@ -1659,6 +1664,10 @@ body {
 
 .ic-pipeline-entry.running {
     background: rgba(0, 255, 170, 0.03);
+}
+
+.ic-pipeline-entry.queued {
+    background: rgba(245, 158, 11, 0.06);
 }
 
 .ic-pipeline-entry-left {
@@ -1725,6 +1734,10 @@ body {
     color: var(--ic-accent);
 }
 
+.ic-pipeline-entry.queued .ic-pipeline-entry-status {
+    color: #f59e0b;
+}
+
 .ic-pipeline-entry.done .ic-pipeline-entry-status {
     color: var(--ic-text-muted);
 }
@@ -1741,6 +1754,18 @@ body {
 .ic-pipeline-entry-check {
     font-size: 9px;
     color: var(--ic-success);
+}
+
+.ic-pipeline-entry-pending {
+    font-size: 9px;
+    color: #f59e0b;
+}
+
+.ic-tools-used {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--ic-text-muted);
+    font-family: var(--ic-font-mono);
 }
 
 /* Pipeline body scrollbar */

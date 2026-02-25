@@ -176,9 +176,18 @@
             // Process SSE stream with shared handler
             const result = await handleSSEStream(response, aiMsg, contentEl);
             fullContent = result.fullContent;
+            let historyRecovered = false;
+
+            if (!fullContent && !(state._lastAssistantMessages && state._lastAssistantMessages.length)) {
+                const recovered = await recoverMissingAssistantResult(contentEl);
+                if (recovered.recovered) {
+                    fullContent = recovered.content || "";
+                    historyRecovered = true;
+                }
+            }
 
             // Save to history — use full tool messages if available
-            if (fullContent) {
+            if (fullContent && !historyRecovered) {
                 const fullMsgs = state._lastAssistantMessages;
                 if (fullMsgs && fullMsgs.length > 0) {
                     for (const m of fullMsgs) {
@@ -328,12 +337,23 @@
 
                 case "status":
                     if (data.phase && contentEl) {
+                        const elapsed = Number.isFinite(data.elapsedSec) ? ` (${data.elapsedSec}s)` : "";
                         const statusMap = {
-                            thinking: "AI กำลังคิด...",
-                            continuing: `ประมวลผลรอบ ${data.iteration || ""}...`,
-                            responding: "กำลังเขียนคำตอบ...",
+                            thinking: `AI กำลังคิด...${elapsed}`,
+                            continuing: `ประมวลผลรอบ ${data.iteration || ""}...${elapsed}`,
+                            responding: `กำลังเขียนคำตอบ...${elapsed}`,
+                            tool_plan: `เตรียมเรียก tool: ${data.tool || "..."}`,
+                            tool: `กำลังรัน tool: ${data.tool || "..."}${elapsed}`,
                         };
                         showStatus(statusMap[data.phase] || "กำลังประมวลผล...");
+                    }
+                    break;
+
+                case "tool_plan":
+                    if (data.tool && body) {
+                        ensureToolPipeline(body, contentEl);
+                        addToolToPipeline(body, data.tool, null, { callId: data.callId, status: "queued" });
+                        scrollToBottom();
                     }
                     break;
 
@@ -347,14 +367,14 @@
                 case "tool_start":
                     if (data.tool && body) {
                         ensureToolPipeline(body, contentEl);
-                        addToolToPipeline(body, data.tool, data.args);
+                        addToolToPipeline(body, data.tool, data.args, { callId: data.callId, status: "running" });
                         scrollToBottom();
                     }
                     break;
 
                 case "tool_end":
                     if (data.tool) {
-                        updateToolInPipeline(aiMsg, data.tool, data.summary || data.result || "✅");
+                        updateToolInPipeline(aiMsg, data.tool, data.summary || data.result || "✅", data.callId);
                     }
                     break;
 
@@ -362,6 +382,10 @@
                     if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
                     if (data.changes) state.totalChanges += data.changes.length;
                     if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
+
+                    if (data.toolsUsed && Array.isArray(data.toolsUsed) && data.toolsUsed.length > 0 && body) {
+                        renderToolsUsedSummary(body, data.toolsUsed.map(t => t.tool).filter(Boolean));
+                    }
 
                     // Fallback: some responses may arrive only in done.assistantMessages
                     if (!fullContent && data.assistantMessages) {
@@ -505,6 +529,15 @@
             }
 
             const result = await handleSSEStream(response, aiMsg, contentEl);
+            let historyRecovered = false;
+
+            if (!result.fullContent && !(state._lastAssistantMessages && state._lastAssistantMessages.length)) {
+                const recovered = await recoverMissingAssistantResult(contentEl);
+                if (recovered.recovered) {
+                    result.fullContent = recovered.content || "";
+                    historyRecovered = true;
+                }
+            }
 
             const latestAssistantContent = (() => {
                 for (let i = state.history.length - 1; i >= 0; i--) {
@@ -523,7 +556,7 @@
             if (isReplayDuplicate) {
                 aiMsg.remove();
                 state._lastAssistantMessages = null;
-            } else if (result.fullContent) {
+            } else if (result.fullContent && !historyRecovered) {
                 const fullMsgs = state._lastAssistantMessages;
                 if (fullMsgs && fullMsgs.length > 0) {
                     for (const m of fullMsgs) state.history.push(m);
@@ -722,7 +755,43 @@
         body.insertBefore(pipeline, contentEl);
     }
 
-    function addToolToPipeline(body, toolName, args) {
+    function refreshToolPipelineHeader(pipeline) {
+        if (!pipeline) return;
+        const pipelineBody = pipeline.querySelector(".ic-pipeline-body");
+        if (!pipelineBody) return;
+
+        const entries = Array.from(pipelineBody.querySelectorAll(".ic-pipeline-entry"));
+        const total = entries.length;
+        const running = entries.filter((entry) => entry.classList.contains("running")).length;
+        const queued = entries.filter((entry) => entry.classList.contains("queued")).length;
+        const pending = running + queued;
+
+        const countEl = pipeline.querySelector(".ic-pipeline-count");
+        if (countEl) countEl.textContent = `${total} call${total > 1 ? "s" : ""}`;
+
+        const labelEl = pipeline.querySelector(".ic-pipeline-label");
+        const spinnerEl = pipeline.querySelector(".ic-pipeline-spinner");
+
+        if (pending > 0) {
+            pipeline.classList.add("active");
+            if (spinnerEl) spinnerEl.style.display = "";
+            const next = entries.find((entry) => entry.classList.contains("running")) ||
+                entries.find((entry) => entry.classList.contains("queued"));
+            if (labelEl) {
+                const toolName = next?.dataset?.tool || "tool";
+                labelEl.innerHTML = `<code>${escapeHtml(toolName)}</code>`;
+            }
+            return;
+        }
+
+        pipeline.classList.remove("active");
+        if (spinnerEl) spinnerEl.style.display = "none";
+        if (labelEl) {
+            labelEl.innerHTML = `<span class="ic-pipeline-done-text">Done</span> · ${total} tool${total > 1 ? "s" : ""} executed`;
+        }
+    }
+
+    function addToolToPipeline(body, toolName, args, options = {}) {
         const pipeline = body.querySelector(".ic-tool-pipeline");
         if (!pipeline) return;
 
@@ -730,67 +799,101 @@
         const type = getToolType(toolName);
         const icon = getToolIcon(type);
         const color = getToolColor(type);
+        const status = options.status || "running";
+        const callId = options.callId ? String(options.callId) : null;
+
+        const existing = callId
+            ? Array.from(pipelineBody.querySelectorAll(".ic-pipeline-entry")).find((entry) => entry.dataset.callId === callId)
+            : null;
+        if (existing) {
+            existing.classList.remove("queued", "running", "done");
+            existing.classList.add(status);
+            const statusEl = existing.querySelector(".ic-pipeline-entry-status");
+            if (statusEl) statusEl.textContent = status;
+            const right = existing.querySelector(".ic-pipeline-entry-right");
+            if (right) {
+                const spinner = right.querySelector(".ic-pipeline-entry-spinner");
+                if (spinner) spinner.remove();
+                const pending = right.querySelector(".ic-pipeline-entry-pending");
+                if (pending) pending.remove();
+                if (status === "running") {
+                    const spin = document.createElement("div");
+                    spin.className = "ic-pipeline-entry-spinner";
+                    right.appendChild(spin);
+                } else if (status === "queued") {
+                    const waiting = document.createElement("i");
+                    waiting.className = "fas fa-hourglass-half ic-pipeline-entry-pending";
+                    right.appendChild(waiting);
+                }
+            }
+            refreshToolPipelineHeader(pipeline);
+            return;
+        }
 
         // Add tool entry
         const entry = document.createElement("div");
-        entry.className = "ic-pipeline-entry running";
+        entry.className = `ic-pipeline-entry ${status}`;
         entry.dataset.tool = toolName;
         entry.dataset.type = type;
+        if (callId) entry.dataset.callId = callId;
+        const rightStatusAddon = status === "running"
+            ? '<div class="ic-pipeline-entry-spinner"></div>'
+            : (status === "queued" ? '<i class="fas fa-hourglass-half ic-pipeline-entry-pending"></i>' : "");
         entry.innerHTML = `
             <div class="ic-pipeline-entry-left">
                 <i class="fas ${icon} ic-pipeline-entry-icon" style="color:${color}"></i>
                 <span class="ic-pipeline-entry-name" style="color:${color}">${toolName}</span>
             </div>
             <div class="ic-pipeline-entry-right">
-                <span class="ic-pipeline-entry-status">running</span>
-                <div class="ic-pipeline-entry-spinner"></div>
+                <span class="ic-pipeline-entry-status">${status}</span>
+                ${rightStatusAddon}
             </div>`;
         pipelineBody.appendChild(entry);
-
-        // Update header
-        const entries = pipelineBody.querySelectorAll(".ic-pipeline-entry");
-        const runningCount = pipelineBody.querySelectorAll(".ic-pipeline-entry.running").length;
-        pipeline.querySelector(".ic-pipeline-count").textContent = `${entries.length} call${entries.length > 1 ? "s" : ""}`;
-        pipeline.querySelector(".ic-pipeline-label").innerHTML = `<code>${toolName}</code>`;
-        pipeline.classList.add("active");
+        refreshToolPipelineHeader(pipeline);
     }
 
-    function updateToolInPipeline(aiMsg, toolName, summary) {
+    function updateToolInPipeline(aiMsg, toolName, summary, callId = null) {
         const pipeline = aiMsg.querySelector(".ic-tool-pipeline");
         if (!pipeline) return;
 
         const pipelineBody = pipeline.querySelector(".ic-pipeline-body");
-        // Find the last running entry with this tool name
-        const entries = pipelineBody.querySelectorAll(`.ic-pipeline-entry.running[data-tool="${toolName}"]`);
-        const entry = entries[entries.length - 1];
+        let entry = null;
+        if (callId) {
+            entry = Array.from(pipelineBody.querySelectorAll(".ic-pipeline-entry"))
+                .find((el) => el.dataset.callId === String(callId));
+        }
+        if (!entry) {
+            const entries = pipelineBody.querySelectorAll(`.ic-pipeline-entry.running[data-tool="${toolName}"], .ic-pipeline-entry.queued[data-tool="${toolName}"]`);
+            entry = entries[entries.length - 1];
+        }
         if (entry) {
+            entry.classList.remove("queued");
             entry.classList.remove("running");
             entry.classList.add("done");
             const statusEl = entry.querySelector(".ic-pipeline-entry-status");
             const spinnerEl = entry.querySelector(".ic-pipeline-entry-spinner");
+            const pendingEl = entry.querySelector(".ic-pipeline-entry-pending");
             if (statusEl) statusEl.textContent = summary;
             if (spinnerEl) spinnerEl.remove();
+            if (pendingEl) pendingEl.remove();
             // Add checkmark
             const check = document.createElement("i");
             check.className = "fas fa-check ic-pipeline-entry-check";
             entry.querySelector(".ic-pipeline-entry-right").appendChild(check);
         }
+        refreshToolPipelineHeader(pipeline);
+    }
 
-        // Update header status
-        const remaining = pipelineBody.querySelectorAll(".ic-pipeline-entry.running").length;
-        const total = pipelineBody.querySelectorAll(".ic-pipeline-entry").length;
-        const doneCount = total - remaining;
-
-        if (remaining === 0) {
-            pipeline.classList.remove("active");
-            pipeline.querySelector(".ic-pipeline-spinner").style.display = "none";
-            pipeline.querySelector(".ic-pipeline-label").innerHTML = `<span class="ic-pipeline-done-text">Done</span> · ${total} tool${total > 1 ? "s" : ""} executed`;
-        } else {
-            const nextRunning = pipelineBody.querySelector(".ic-pipeline-entry.running");
-            if (nextRunning) {
-                pipeline.querySelector(".ic-pipeline-label").innerHTML = `<code>${nextRunning.dataset.tool}</code>`;
-            }
+    function renderToolsUsedSummary(body, tools) {
+        if (!body || !Array.isArray(tools) || tools.length === 0) return;
+        let summary = body.querySelector(".ic-tools-used");
+        if (!summary) {
+            summary = document.createElement("div");
+            summary.className = "ic-tools-used";
+            body.appendChild(summary);
         }
+        const uniqueTools = [...new Set(tools)];
+        summary.textContent = `Tools used: ${uniqueTools.join(", ")}`;
     }
 
     // ─── Session Persistence ────────────────────────────────────────────
@@ -832,6 +935,54 @@
             console.warn("Failed to load sessions:", err);
         }
         return null;
+    }
+
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    function getLatestAssistantMessage(history = []) {
+        if (!Array.isArray(history)) return null;
+        for (let i = history.length - 1; i >= 0; i--) {
+            const msg = history[i];
+            if (msg && msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
+                return msg;
+            }
+        }
+        return null;
+    }
+
+    async function recoverMissingAssistantResult(contentEl) {
+        if (!state.selectedId) return { recovered: false, content: "" };
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const latestSession = await loadLatestSession(state.selectedId);
+            if (latestSession?.history?.length) {
+                const serverLastAssistant = getLatestAssistantMessage(latestSession.history);
+                const localLastAssistant = getLatestAssistantMessage(state.history);
+                const hasNewAssistant = Boolean(
+                    serverLastAssistant &&
+                    (!localLastAssistant || serverLastAssistant.content.trim() !== localLastAssistant.content.trim())
+                );
+
+                if (hasNewAssistant) {
+                    state.sessionId = latestSession.sessionId || state.sessionId;
+                    state.history = latestSession.history;
+                    state.totalTokens = latestSession.totalTokens || state.totalTokens;
+                    state.totalChanges = latestSession.totalChanges || state.totalChanges;
+
+                    if (contentEl && serverLastAssistant.content) {
+                        contentEl.innerHTML = formatContent(serverLastAssistant.content);
+                        scrollToBottom();
+                    }
+
+                    updateStatusBar();
+                    return { recovered: true, content: serverLastAssistant.content };
+                }
+            }
+
+            if (attempt < 2) await wait(600);
+        }
+
+        return { recovered: false, content: "" };
     }
 
     // ─── Render Lists ───────────────────────────────────────────────────
