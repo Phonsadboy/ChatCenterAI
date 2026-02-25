@@ -1,4 +1,7 @@
 (function () {
+  const MAX_TIMELINE_EVENTS = 400;
+  const INITIAL_EVENT_LIMIT = 120;
+
   const bootstrap = window.__AGENT_FORGE_RUN_BOOTSTRAP__ || {};
   const run = bootstrap.run || {};
 
@@ -8,6 +11,7 @@
     events: [],
     eventSource: null,
     snapshots: [],
+    refreshingRunInfo: false,
   };
 
   const dom = {
@@ -52,6 +56,31 @@
     return date.toLocaleString("th-TH");
   }
 
+  function appendPanelText(element, text, maxChars = 25000) {
+    if (!element) return;
+    const next = `${element.textContent || ""}${text}`;
+    if (next.length <= maxChars) {
+      element.textContent = next;
+      return;
+    }
+    element.textContent = next.slice(next.length - maxChars);
+  }
+
+  function toPayloadPreview(payload, maxLength = 6000) {
+    let text = "";
+    try {
+      text = JSON.stringify(payload || {}, null, 2);
+    } catch (error) {
+      text = JSON.stringify({ message: "payload_not_serializable" }, null, 2);
+    }
+
+    if (text.length <= maxLength) {
+      return text;
+    }
+
+    return `${text.slice(0, maxLength)}\n... [truncated ${text.length - maxLength} chars]`;
+  }
+
   function renderTimeline() {
     if (!dom.timelineEvents) return;
 
@@ -61,7 +90,11 @@
     }
 
     dom.timelineEvents.innerHTML = state.events.map((event) => {
-      const payload = escapeHtml(JSON.stringify(event.payloadMasked || event.payload || {}, null, 2));
+      const payloadText =
+        typeof event._payloadPreview === "string"
+          ? event._payloadPreview
+          : toPayloadPreview(event.payloadMasked || event.payload || {});
+      const payload = escapeHtml(payloadText);
       return `
         <div class="timeline-item">
           <div class="event-title">#${event.seq} ${event.eventType}</div>
@@ -74,18 +107,22 @@
     dom.timelineEvents.scrollTop = dom.timelineEvents.scrollHeight;
   }
 
-  function appendEvent(event) {
+  function appendEvent(event, options = {}) {
     state.events.push(event);
+    if (state.events.length > MAX_TIMELINE_EVENTS) {
+      state.events = state.events.slice(state.events.length - MAX_TIMELINE_EVENTS);
+    }
     state.afterSeq = Math.max(state.afterSeq, Number(event.seq) || 0);
 
-    const eventText = JSON.stringify(event.payloadMasked || event.payload || {}, null, 2);
+    const eventText = toPayloadPreview(event.payloadMasked || event.payload || {});
+    event._payloadPreview = eventText;
 
     if (event.phase === "history") {
-      dom.agentSawPanel.textContent += `\n[${event.eventType}]\n${eventText}\n`;
+      appendPanelText(dom.agentSawPanel, `\n[${event.eventType}]\n${eventText}\n`);
     }
 
     if (event.phase === "decision" || event.eventType === "agent_decision") {
-      dom.agentThoughtPanel.textContent += `\n[${event.eventType}]\n${eventText}\n`;
+      appendPanelText(dom.agentThoughtPanel, `\n[${event.eventType}]\n${eventText}\n`);
     }
 
     if (event.phase === "self_test") {
@@ -93,7 +130,7 @@
     }
 
     if (event.phase === "compaction" || event.eventType === "context_compaction") {
-      dom.compactionPanel.textContent += `\n${eventText}\n`;
+      appendPanelText(dom.compactionPanel, `\n${eventText}\n`);
     }
 
     if (event.phase === "patch") {
@@ -101,21 +138,31 @@
     }
 
     if (event.eventType && event.eventType.includes("tool")) {
-      dom.agentToolsPanel.textContent += `\n[${event.eventType}]\n${eventText}\n`;
+      appendPanelText(dom.agentToolsPanel, `\n[${event.eventType}]\n${eventText}\n`);
     }
 
-    renderTimeline();
+    if (options.render !== false) {
+      renderTimeline();
+    }
   }
 
   async function loadEventsOnce() {
-    const response = await fetch(`/api/agent-forge/runs/${state.runId}/events?afterSeq=${state.afterSeq}`);
+    const response = await fetch(
+      `/api/agent-forge/runs/${state.runId}/events?afterSeq=${state.afterSeq}&limit=${INITIAL_EVENT_LIMIT}`,
+    );
     const payload = await response.json();
     if (!response.ok || !payload.success) {
       throw new Error(payload.error || "load_events_failed");
     }
 
     const rows = Array.isArray(payload.events) ? payload.events : [];
-    rows.forEach(appendEvent);
+    if (!rows.length) {
+      renderTimeline();
+      return;
+    }
+
+    rows.forEach((event) => appendEvent(event, { render: false }));
+    renderTimeline();
   }
 
   function connectStream() {
@@ -143,30 +190,39 @@
   }
 
   async function refreshRunInfo() {
-    const response = await fetch(`/api/agent-forge/runs/${state.runId}`);
-    const payload = await response.json();
-    if (!response.ok || !payload.success) {
-      throw new Error(payload.error || "load_run_failed");
-    }
+    if (state.refreshingRunInfo) return;
+    state.refreshingRunInfo = true;
 
-    const currentRun = payload.run;
-    dom.runStatusLabel.textContent = currentRun.status || "-";
-    dom.runIterationsLabel.textContent = currentRun.iterations || 0;
-    dom.runSelfTestCountLabel.textContent = currentRun.selfTestCount || 0;
+    try {
+      const response = await fetch(`/api/agent-forge/runs/${state.runId}?includeEvalResults=0`);
+      const payload = await response.json();
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.error || "load_run_failed");
+      }
 
-    if (currentRun?.meta?.candidatePatchText) {
-      dom.instructionDiffPanel.textContent = currentRun.meta.candidatePatchText;
-    }
+      const currentRun = payload.run;
+      dom.runStatusLabel.textContent = currentRun.status || "-";
+      dom.runIterationsLabel.textContent = currentRun.iterations || 0;
+      dom.runSelfTestCountLabel.textContent = currentRun.selfTestCount || 0;
 
-    if (Array.isArray(payload.decisionJournal)) {
-      dom.agentThoughtPanel.textContent = payload.decisionJournal
-        .map((item) => `[${item.iteration}] ${item.decision}: ${item.reasoningSummary || ""}`)
-        .join("\n");
+      if (currentRun?.meta?.candidatePatchText) {
+        dom.instructionDiffPanel.textContent = currentRun.meta.candidatePatchText;
+      }
+
+      if (Array.isArray(payload.decisionJournal)) {
+        dom.agentThoughtPanel.textContent = payload.decisionJournal
+          .map((item) => `[${item.iteration}] ${item.decision}: ${item.reasoningSummary || ""}`)
+          .join("\n");
+      }
+    } finally {
+      state.refreshingRunInfo = false;
     }
   }
 
   async function loadSelfTests() {
-    const response = await fetch(`/api/agent-forge/runs/${state.runId}/self-tests`);
+    const response = await fetch(
+      `/api/agent-forge/runs/${state.runId}/self-tests?allIterations=0&includeTranscript=0`,
+    );
     const payload = await response.json();
     if (!response.ok || !payload.success) {
       throw new Error(payload.error || "load_self_tests_failed");
@@ -326,10 +382,15 @@
 
     await refreshRunInfo();
     await loadEventsOnce();
-    await loadSelfTests();
-    await loadSnapshots();
 
     connectStream();
+
+    loadSelfTests().catch((error) => {
+      console.error("[AgentForgeRun] load self-tests error", error);
+    });
+    loadSnapshots().catch((error) => {
+      console.error("[AgentForgeRun] load snapshots error", error);
+    });
 
     setInterval(() => {
       refreshRunInfo().catch((error) => {

@@ -1249,27 +1249,36 @@ class AgentForgeService {
     };
   }
 
-  async listSnapshots(runId, limit = 200) {
+  async listSnapshots(runId, limit = 200, options = {}) {
     const db = await this._db();
     const runObjectId = toObjectId(runId);
     if (!runObjectId) return [];
+    const includePayloadMasked = options.includePayloadMasked === true;
+    const projection = includePayloadMasked
+      ? { payloadEncrypted: 0 }
+      : { payloadMasked: 0, payloadEncrypted: 0 };
 
     const rows = await db
       .collection(COLLECTIONS.snapshots)
-      .find({ runId: runObjectId.toString() })
+      .find({ runId: runObjectId.toString() }, { projection })
       .sort({ createdAt: 1 })
       .limit(Math.min(500, Math.max(1, Number(limit) || 200)))
       .toArray();
 
-    return rows.map((row) => ({
-      _id: row._id.toString(),
-      runId: row.runId,
-      turnId: row.turnId,
-      direction: row.direction,
-      payloadMasked: row.payloadMasked,
-      usage: row.usage || null,
-      createdAt: row.createdAt,
-    }));
+    return rows.map((row) => {
+      const formatted = {
+        _id: row._id.toString(),
+        runId: row.runId,
+        turnId: row.turnId,
+        direction: row.direction,
+        usage: row.usage || null,
+        createdAt: row.createdAt,
+      };
+      if (includePayloadMasked && Object.prototype.hasOwnProperty.call(row, "payloadMasked")) {
+        formatted.payloadMasked = row.payloadMasked;
+      }
+      return formatted;
+    });
   }
 
   async getSnapshot(snapshotId) {
@@ -1412,14 +1421,36 @@ class AgentForgeService {
     return doc;
   }
 
-  async listEvalResults(runId) {
+  async listEvalResults(runId, options = {}) {
     const db = await this._db();
     const runObjectId = toObjectId(runId);
     if (!runObjectId) return [];
+    const includeTranscript = options.includeTranscript !== false;
+    const latestIterationOnly = options.latestIterationOnly === true;
+    const query = { runId: runObjectId.toString() };
+    const collection = db.collection(COLLECTIONS.evalResults);
 
-    const rows = await db
-      .collection(COLLECTIONS.evalResults)
-      .find({ runId: runObjectId.toString() })
+    if (latestIterationOnly) {
+      const latestRow = await collection
+        .find(query, { projection: { iteration: 1 } })
+        .sort({ iteration: -1, createdAt: -1 })
+        .limit(1)
+        .next();
+
+      if (!latestRow) {
+        return [];
+      }
+
+      query.iteration = latestRow.iteration || 0;
+    }
+
+    const rows = await collection
+      .find(
+        query,
+        includeTranscript
+          ? {}
+          : { projection: { transcript: 0 } },
+      )
       .sort({ iteration: 1, createdAt: 1 })
       .toArray();
 

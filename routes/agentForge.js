@@ -264,10 +264,14 @@ function createAgentForgeRouter(options = {}) {
       if (!run) {
         return res.status(404).json({ success: false, error: "run_not_found" });
       }
+      const includeEvalResults =
+        req.query.includeEvalResults === "1" || req.query.includeEvalResults === "true";
 
       const [journal, evalResults] = await Promise.all([
         agentForgeService.listDecisionJournal(req.params.runId),
-        agentForgeService.listEvalResults(req.params.runId),
+        includeEvalResults
+          ? agentForgeService.listEvalResults(req.params.runId)
+          : Promise.resolve([]),
       ]);
 
       return res.json({
@@ -341,7 +345,13 @@ function createAgentForgeRouter(options = {}) {
   // OpenAI snapshots
   router.get("/runs/:runId/openai-snapshots", async (req, res) => {
     try {
-      const snapshots = await agentForgeService.listSnapshots(req.params.runId, parsePositiveNumber(req.query.limit, 200));
+      const includePayloadMasked =
+        req.query.includePayloadMasked === "1" || req.query.includePayloadMasked === "true";
+      const snapshots = await agentForgeService.listSnapshots(
+        req.params.runId,
+        parsePositiveNumber(req.query.limit, 200),
+        { includePayloadMasked },
+      );
       return res.json({ success: true, snapshots });
     } catch (error) {
       return handleError(res, error);
@@ -391,7 +401,14 @@ function createAgentForgeRouter(options = {}) {
 
   router.get("/runs/:runId/self-tests", async (req, res) => {
     try {
-      const evalResults = await agentForgeService.listEvalResults(req.params.runId);
+      const allIterations =
+        req.query.allIterations === "1" || req.query.allIterations === "true";
+      const includeTranscript =
+        req.query.includeTranscript === "1" || req.query.includeTranscript === "true";
+      const evalResults = await agentForgeService.listEvalResults(req.params.runId, {
+        includeTranscript,
+        latestIterationOnly: !allIterations,
+      });
       const grouped = new Map();
       for (const row of evalResults) {
         const key = row.iteration || 0;

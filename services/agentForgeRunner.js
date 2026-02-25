@@ -87,6 +87,38 @@ function extractResponseText(response) {
   return "";
 }
 
+function tryParseJson(text) {
+  if (!text || typeof text !== "string") return null;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // continue
+  }
+
+  const jsonBlockMatch = trimmed.match(/```json\s*([\s\S]*?)```/i);
+  if (jsonBlockMatch && jsonBlockMatch[1]) {
+    try {
+      return JSON.parse(jsonBlockMatch[1].trim());
+    } catch {
+      return null;
+    }
+  }
+
+  const genericBlockMatch = trimmed.match(/```\s*([\s\S]*?)```/i);
+  if (genericBlockMatch && genericBlockMatch[1]) {
+    try {
+      return JSON.parse(genericBlockMatch[1].trim());
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 class AgentForgeRunner {
   constructor(options = {}) {
     this.connectDB = options.connectDB;
@@ -318,6 +350,14 @@ class AgentForgeRunner {
           get_customer_conversation: 0,
         },
         conversationInsights: [],
+        signalCounters: {
+          asksPrice: 0,
+          asksShipping: 0,
+          asksPayment: 0,
+          missingOrderFields: 0,
+          hasGhostSignal: 0,
+        },
+        compactedSummaries: [],
         pageCursorUpdates: {},
         tokenEstimate: 0,
         compactionManifest: null,
@@ -702,6 +742,12 @@ class AgentForgeRunner {
           insights,
         });
 
+        if (insights.asksPrice) contextData.signalCounters.asksPrice += 1;
+        if (insights.asksShipping) contextData.signalCounters.asksShipping += 1;
+        if (insights.asksPayment) contextData.signalCounters.asksPayment += 1;
+        if (insights.missingOrderFields) contextData.signalCounters.missingOrderFields += 1;
+        if (insights.hasGhostSignal) contextData.signalCounters.hasGhostSignal += 1;
+
         contextData.tokenEstimate += estimateTokensFromText(
           JSON.stringify(conversation.messages || []),
         );
@@ -723,24 +769,12 @@ class AgentForgeRunner {
         contextData.tokenEstimate >
         Number(profile.compactionTriggerTokens || 220000)
       ) {
-        contextData.compactionManifest = {
-          customersProcessed: contextData.customersProcessed.map((item) => `${item.pageKey}:${item.senderId}`),
-          toolCallsSummary: { ...contextData.toolCallsSummary },
-          lastProcessedCursor: lastProcessedAt || null,
-        };
-
-        // Keep insights lightweight after compaction trigger.
-        contextData.conversationInsights = contextData.conversationInsights.slice(-120);
-
-        await this.agentForgeService.appendRunEvent(runId, "context_compaction", {
-          triggeredAtEstimate: contextData.tokenEstimate,
-          manifest: contextData.compactionManifest,
-        }, {
-          phase: "compaction",
-          createdBy: "agent_forge_runner",
+        await this._compactContextWithModel({
+          runId,
+          profile,
+          contextData,
+          lastProcessedAt,
         });
-
-        contextData.tokenEstimate = Math.floor(contextData.tokenEstimate * 0.4);
       }
 
       hasMore = !!batchResponse.hasMore;
@@ -754,6 +788,170 @@ class AgentForgeRunner {
       lastProcessedAt,
       lastMessageId,
     };
+  }
+
+  _buildCompactionManifest(contextData, lastProcessedAt) {
+    const latestSummary =
+      Array.isArray(contextData.compactedSummaries) &&
+      contextData.compactedSummaries.length > 0
+        ? contextData.compactedSummaries[contextData.compactedSummaries.length - 1]
+        : null;
+
+    return {
+      customersProcessed: contextData.customersProcessed.map(
+        (item) => `${item.pageKey}:${item.senderId}`,
+      ),
+      toolCallsSummary: { ...contextData.toolCallsSummary },
+      signalCounters: { ...(contextData.signalCounters || {}) },
+      lastProcessedCursor: lastProcessedAt || null,
+      rounds: Array.isArray(contextData.compactedSummaries)
+        ? contextData.compactedSummaries.length
+        : 0,
+      latestSummary: latestSummary?.summaryText || null,
+      keyPatterns: Array.isArray(latestSummary?.keyPatterns)
+        ? latestSummary.keyPatterns
+        : [],
+    };
+  }
+
+  async _compactContextWithModel({
+    runId,
+    profile,
+    contextData,
+    lastProcessedAt,
+  }) {
+    if (!this.openaiClient) {
+      throw new Error("model_compaction_required");
+    }
+
+    const pendingInsights = Array.isArray(contextData.conversationInsights)
+      ? contextData.conversationInsights
+      : [];
+    const triggeredAtEstimate = Number(contextData.tokenEstimate || 0);
+
+    if (pendingInsights.length === 0) {
+      return;
+    }
+
+    const previousSummary =
+      Array.isArray(contextData.compactedSummaries) &&
+      contextData.compactedSummaries.length > 0
+        ? contextData.compactedSummaries[contextData.compactedSummaries.length - 1]
+        : null;
+
+    const requestPayload = {
+      model: profile.runnerModel || "gpt-5.2",
+      reasoning: {
+        effort: profile.runnerThinking || "xhigh",
+      },
+      input: [
+        {
+          role: "system",
+          content: [
+            "You are Context Compactor for Agent Forge.",
+            "Compact conversation signals while preserving business-critical facts.",
+            "Return strict JSON only with keys:",
+            "summaryText, keyPatterns, recommendedActions, riskFlags",
+            "Do not include markdown.",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            previousSummary: previousSummary || null,
+            signalCounters: contextData.signalCounters || {},
+            toolCallsSummary: contextData.toolCallsSummary || {},
+            customersProcessedCount: contextData.customersProcessed.length,
+            pendingInsights: pendingInsights.slice(-600),
+          }),
+        },
+      ],
+    };
+
+    const compactionTurnId = `context_compaction_${Date.now()}`;
+
+    await this.agentForgeService.storeOpenAISnapshot(
+      runId,
+      compactionTurnId,
+      "request",
+      requestPayload,
+    );
+
+    let response = null;
+    try {
+      response = await this.openaiClient.responses.create(requestPayload);
+    } catch (error) {
+      await this.agentForgeService.appendRunEvent(runId, "context_compaction_failed", {
+        message: error?.message || "model_compaction_failed",
+      }, {
+        phase: "compaction",
+        createdBy: "agent_forge_runner",
+      });
+      throw new Error("model_compaction_failed");
+    }
+
+    await this.agentForgeService.storeOpenAISnapshot(
+      runId,
+      compactionTurnId,
+      "response",
+      response,
+      response?.usage || null,
+    );
+
+    const outputText = extractResponseText(response);
+    const parsed = tryParseJson(outputText);
+
+    const summaryText =
+      typeof parsed?.summaryText === "string" && parsed.summaryText.trim()
+        ? parsed.summaryText.trim()
+        : outputText.trim().slice(0, 8000) || "No summary generated";
+    const keyPatterns = Array.isArray(parsed?.keyPatterns) ? parsed.keyPatterns : [];
+    const recommendedActions = Array.isArray(parsed?.recommendedActions)
+      ? parsed.recommendedActions
+      : [];
+    const riskFlags = Array.isArray(parsed?.riskFlags) ? parsed.riskFlags : [];
+
+    if (!Array.isArray(contextData.compactedSummaries)) {
+      contextData.compactedSummaries = [];
+    }
+
+    const round = contextData.compactedSummaries.length + 1;
+    contextData.compactedSummaries.push({
+      round,
+      summaryText,
+      keyPatterns,
+      recommendedActions,
+      riskFlags,
+    });
+
+    // Model-direct compaction: raw detailed insights are dropped after summarization.
+    contextData.conversationInsights = [];
+
+    contextData.tokenEstimate = estimateTokensFromText(
+      JSON.stringify({
+        summaryText,
+        keyPatterns,
+        recommendedActions,
+        riskFlags,
+        signalCounters: contextData.signalCounters,
+      }),
+    );
+
+    contextData.compactionManifest = this._buildCompactionManifest(
+      contextData,
+      lastProcessedAt,
+    );
+
+    await this.agentForgeService.appendRunEvent(runId, "context_compaction", {
+      mode: "model_direct",
+      triggeredAtEstimate,
+      summaryPreview: summaryText.slice(0, 1200),
+      manifest: contextData.compactionManifest,
+      modelUsed: requestPayload.model,
+    }, {
+      phase: "compaction",
+      createdBy: "agent_forge_runner",
+    });
   }
 
   _extractConversationInsights(messages = []) {
@@ -847,22 +1045,19 @@ class AgentForgeRunner {
     instructionContext,
     contextData,
   }) {
-    const counters = {
-      asksPrice: 0,
-      asksShipping: 0,
-      asksPayment: 0,
-      missingOrderFields: 0,
-      hasGhostSignal: 0,
-    };
-
-    for (const row of contextData.conversationInsights) {
-      const i = row.insights || {};
-      if (i.asksPrice) counters.asksPrice += 1;
-      if (i.asksShipping) counters.asksShipping += 1;
-      if (i.asksPayment) counters.asksPayment += 1;
-      if (i.missingOrderFields) counters.missingOrderFields += 1;
-      if (i.hasGhostSignal) counters.hasGhostSignal += 1;
-    }
+    const counters = contextData.signalCounters && typeof contextData.signalCounters === "object"
+      ? { ...contextData.signalCounters }
+      : {
+        asksPrice: 0,
+        asksShipping: 0,
+        asksPayment: 0,
+        missingOrderFields: 0,
+        hasGhostSignal: 0,
+      };
+    const latestCompactionSummary =
+      Array.isArray(contextData.compactedSummaries) && contextData.compactedSummaries.length > 0
+        ? contextData.compactedSummaries[contextData.compactedSummaries.length - 1]
+        : null;
 
     const summaryPrompt = {
       role: "system",
@@ -882,6 +1077,7 @@ class AgentForgeRunner {
         `Customer model default: ${profile.customerDefaultModel}`,
         `Counters: ${JSON.stringify(counters)}`,
         `Customers processed: ${contextData.customersProcessed.length}`,
+        `Compaction summary: ${latestCompactionSummary ? JSON.stringify(latestCompactionSummary) : "none"}`,
         `Current instruction excerpt:\n${(instructionContext?.text || "").slice(0, 5000)}`,
         "ต้องคง KB เดิมให้ครบถ้วน และเพิ่มโครงสร้างตอบสั้นแบบปิดการขาย",
         "เพิ่มตัวอย่าง instruction แบบง่ายด้วย",
