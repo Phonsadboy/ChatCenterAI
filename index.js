@@ -18776,9 +18776,9 @@ const INSTRUCTION_REASONING_SUPPORT = {
 
 const INSTRUCTION_THINKING_MAP = { off: "none", low: "low", medium: "medium", high: "high", max: "xhigh" };
 const INSTRUCTION_MAX_TOOL_ITERATIONS = (() => {
-  const raw = Number.parseInt(process.env.INSTRUCTION_MAX_TOOL_ITERATIONS || "12", 10);
-  if (!Number.isFinite(raw)) return 12;
-  return Math.min(24, Math.max(4, raw));
+  const raw = Number.parseInt(process.env.INSTRUCTION_MAX_TOOL_ITERATIONS || "30", 10);
+  if (!Number.isFinite(raw)) return 30;
+  return Math.min(60, Math.max(4, raw));
 })();
 
 function resolveInstructionReasoningEffort(model, thinking) {
