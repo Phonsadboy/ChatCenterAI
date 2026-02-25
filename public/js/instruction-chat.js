@@ -230,7 +230,28 @@
         let lastRenderedContent = "";
         let hasRenderedContent = false;
         let statusEl = null;
+        let doneHandled = false;
+        let errorHandled = false;
+        let receivedSseContent = false;
+        let useStateDrivenContent = false;
+        let cancelledByState = false;
+        let statePollTimer = null;
+        let statePollInFlight = false;
+        let statePollingStopped = false;
+        let lastStateDigest = "";
         const body = aiMsg.querySelector(".ic-msg-body");
+
+        const setActiveRequestId = (requestId) => {
+            if (!requestId) return;
+            const value = String(requestId);
+            state.activeRequestId = value;
+            try { sessionStorage.setItem("ic_activeRequestId", value); } catch (e) { }
+        };
+
+        const clearActiveRequestId = () => {
+            state.activeRequestId = null;
+            try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
+        };
 
         const getFinalAssistantContent = (assistantMessages) => {
             if (!Array.isArray(assistantMessages)) return "";
@@ -282,18 +303,180 @@
             });
         };
 
+        const stopStatePolling = () => {
+            statePollingStopped = true;
+            if (statePollTimer) {
+                clearInterval(statePollTimer);
+                statePollTimer = null;
+            }
+        };
+
+        const applyDonePayload = (data = {}) => {
+            if (doneHandled) return;
+            doneHandled = true;
+
+            if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
+            if (data.changes) state.totalChanges += data.changes.length;
+            if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
+
+            if (data.toolsUsed && Array.isArray(data.toolsUsed) && data.toolsUsed.length > 0 && body) {
+                const toolNames = data.toolsUsed
+                    .map((tool) => (typeof tool === "string" ? tool : tool?.tool))
+                    .filter(Boolean);
+                if (toolNames.length > 0) {
+                    renderToolsUsedSummary(body, toolNames);
+                }
+            }
+
+            if (!fullContent && data.assistantMessages) {
+                const fallbackContent = getFinalAssistantContent(data.assistantMessages);
+                if (fallbackContent) {
+                    fullContent = fallbackContent;
+                    renderContentNow(true);
+                }
+            }
+
+            clearActiveRequestId();
+            updateStatusBar();
+            stopStatePolling();
+        };
+
+        const applyErrorPayload = (errorMessage) => {
+            if (errorHandled) return;
+            errorHandled = true;
+            if (errorMessage) {
+                fullContent = fullContent
+                    ? `${fullContent}\n❌ ${errorMessage}`
+                    : `❌ ${errorMessage}`;
+                renderContentNow(true);
+            }
+            clearActiveRequestId();
+            stopStatePolling();
+        };
+
+        const syncToolPipelineFromState = (tools) => {
+            if (!body || !Array.isArray(tools) || tools.length === 0) return;
+            ensureToolPipeline(body, contentEl);
+            for (const toolState of tools) {
+                if (!toolState || !toolState.tool) continue;
+                const stateStatus = String(toolState.status || "queued");
+                const baseStatus = stateStatus === "running" ? "running" : (stateStatus === "queued" ? "queued" : "done");
+                addToolToPipeline(body, toolState.tool, toolState.args || null, {
+                    callId: toolState.callId || null,
+                    status: baseStatus,
+                });
+                if (baseStatus === "done") {
+                    const summary = toolState.summary || (stateStatus === "error" ? "❌" : "✅");
+                    updateToolInPipeline(aiMsg, toolState.tool, summary, toolState.callId || null);
+                }
+            }
+            scrollToBottom();
+        };
+
+        const applyStateSnapshot = async (snapshot) => {
+            if (!snapshot || typeof snapshot !== "object") return;
+            if (snapshot.sessionId) state.sessionId = snapshot.sessionId;
+            if (snapshot.requestId) setActiveRequestId(snapshot.requestId);
+
+            if (snapshot.phase) {
+                const statusData = {
+                    phase: snapshot.phase,
+                    iteration: snapshot.iteration,
+                    tool: snapshot.tool,
+                    elapsedSec: snapshot.elapsedSec,
+                };
+                handleEvent("status", statusData);
+            }
+
+            if (Array.isArray(snapshot.tools) && snapshot.tools.length > 0) {
+                syncToolPipelineFromState(snapshot.tools);
+            }
+
+            if (typeof snapshot.partialContent === "string" && snapshot.partialContent.length > 0) {
+                const canAdoptStateContent =
+                    !receivedSseContent ||
+                    (snapshot.partialContent.length > fullContent.length && snapshot.partialContent.startsWith(fullContent));
+                if (canAdoptStateContent && snapshot.partialContent !== fullContent) {
+                    useStateDrivenContent = true;
+                    fullContent = snapshot.partialContent;
+                    renderContentNow(true);
+                }
+            }
+
+            if (snapshot.status === "complete") {
+                applyDonePayload({
+                    usage: snapshot.usage,
+                    changes: snapshot.changes,
+                    toolsUsed: snapshot.toolsUsed,
+                    assistantMessages: snapshot.assistantMessages,
+                });
+                cancelledByState = true;
+                try { await reader.cancel(); } catch (e) { }
+            } else if (snapshot.status === "error") {
+                applyErrorPayload(snapshot.error || "การประมวลผลล้มเหลว");
+                cancelledByState = true;
+                try { await reader.cancel(); } catch (e) { }
+            }
+        };
+
+        const pollStateOnce = async () => {
+            if (statePollingStopped || statePollInFlight || !state.activeRequestId) return;
+            statePollInFlight = true;
+            try {
+                const res = await fetch(`/api/instruction-ai/stream/state?requestId=${encodeURIComponent(state.activeRequestId)}`, {
+                    cache: "no-store",
+                });
+                if (res.status === 404) {
+                    clearActiveRequestId();
+                    stopStatePolling();
+                    return;
+                }
+                if (!res.ok) return;
+                const payload = await res.json().catch(() => null);
+                if (!payload || !payload.success) return;
+
+                const toolDigest = Array.isArray(payload.tools)
+                    ? payload.tools.map((t) => `${t.callId || ""}:${t.status || ""}:${t.summary || ""}`).join("|")
+                    : "";
+                const digest = [
+                    payload.status || "",
+                    payload.phase || "",
+                    String(payload.iteration || ""),
+                    payload.tool || "",
+                    String((payload.partialContent || "").length),
+                    toolDigest,
+                    payload.error || "",
+                ].join("||");
+
+                if (digest === lastStateDigest && payload.status !== "complete" && payload.status !== "error") {
+                    return;
+                }
+                lastStateDigest = digest;
+                await applyStateSnapshot(payload);
+            } catch (e) {
+                // ignore fallback polling errors and continue streaming
+            } finally {
+                statePollInFlight = false;
+            }
+        };
+
+        const startStatePolling = () => {
+            if (statePollTimer || !state.activeRequestId) return;
+            pollStateOnce();
+            statePollTimer = setInterval(pollStateOnce, 1500);
+        };
+
         const handleEvent = (eventType, data) => {
             switch (eventType) {
                 case "session":
                     if (data.sessionId) state.sessionId = data.sessionId;
                     if (data.requestId) {
-                        state.activeRequestId = data.requestId;
-                        try { sessionStorage.setItem("ic_activeRequestId", data.requestId); } catch (e) { }
+                        setActiveRequestId(data.requestId);
+                        startStatePolling();
                     }
                     break;
 
                 case "thinking":
-                    // Fallback for SSE resume replay (full content at once)
                     if (data.content && body) {
                         const thinkBlock = createThinkingBlock(data.content);
                         body.insertBefore(thinkBlock, contentEl);
@@ -359,6 +542,8 @@
 
                 case "content":
                     if (data.text !== undefined) {
+                        if (useStateDrivenContent && !receivedSseContent) break;
+                        receivedSseContent = true;
                         fullContent += String(data.text);
                         scheduleRender();
                     }
@@ -379,46 +564,23 @@
                     break;
 
                 case "done":
-                    if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
-                    if (data.changes) state.totalChanges += data.changes.length;
-                    if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
-
-                    if (data.toolsUsed && Array.isArray(data.toolsUsed) && data.toolsUsed.length > 0 && body) {
-                        renderToolsUsedSummary(body, data.toolsUsed.map(t => t.tool).filter(Boolean));
-                    }
-
-                    // Fallback: some responses may arrive only in done.assistantMessages
-                    if (!fullContent && data.assistantMessages) {
-                        const fallbackContent = getFinalAssistantContent(data.assistantMessages);
-                        if (fallbackContent) {
-                            fullContent = fallbackContent;
-                            renderContentNow(true);
-                        }
-                    }
-
-                    state.activeRequestId = null;
-                    try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
-                    updateStatusBar();
+                    applyDonePayload(data);
                     break;
 
                 case "error":
-                    if (data.error) {
-                        fullContent += `\n❌ ${data.error}`;
-                        renderContentNow(true);
-                    }
-                    state.activeRequestId = null;
-                    try { sessionStorage.removeItem("ic_activeRequestId"); } catch (e) { }
+                    applyErrorPayload(data.error);
                     break;
 
                 default:
                     if (data.sessionId) {
                         state.sessionId = data.sessionId;
                     } else if (data.text !== undefined) {
+                        if (useStateDrivenContent && !receivedSseContent) break;
+                        receivedSseContent = true;
                         fullContent += String(data.text);
                         scheduleRender();
                     } else if (data.error) {
-                        fullContent += `\n❌ ${data.error}`;
-                        renderContentNow(true);
+                        applyErrorPayload(data.error);
                     }
                     break;
             }
@@ -432,7 +594,7 @@
 
             for (const line of lines) {
                 if (!line) continue;
-                if (line.startsWith(":")) continue; // heartbeat/comment
+                if (line.startsWith(":")) continue;
                 if (line.startsWith("event:")) {
                     eventType = line.slice(6).trim();
                     continue;
@@ -464,18 +626,31 @@
             }
         };
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                buffer += decoder.decode();
-                buffer = buffer.replace(/\r\n/g, "\n");
-                processBuffer(true);
-                break;
-            }
+        const headerSessionId = response.headers.get("X-Instruction-Session-Id");
+        if (headerSessionId) state.sessionId = headerSessionId;
+        const headerRequestId = response.headers.get("X-Instruction-Request-Id");
+        if (headerRequestId) setActiveRequestId(headerRequestId);
+        startStatePolling();
 
-            buffer += decoder.decode(value, { stream: true });
-            buffer = buffer.replace(/\r\n/g, "\n");
-            processBuffer(false);
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    buffer += decoder.decode();
+                    buffer = buffer.replace(/\r\n/g, "\n");
+                    processBuffer(true);
+                    break;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                buffer = buffer.replace(/\r\n/g, "\n");
+                processBuffer(false);
+            }
+        } catch (streamError) {
+            if (streamError?.name === "AbortError") throw streamError;
+            if (!cancelledByState) throw streamError;
+        } finally {
+            stopStatePolling();
         }
 
         renderContentNow(true);
@@ -876,10 +1051,12 @@
             if (statusEl) statusEl.textContent = summary;
             if (spinnerEl) spinnerEl.remove();
             if (pendingEl) pendingEl.remove();
-            // Add checkmark
-            const check = document.createElement("i");
-            check.className = "fas fa-check ic-pipeline-entry-check";
-            entry.querySelector(".ic-pipeline-entry-right").appendChild(check);
+            const right = entry.querySelector(".ic-pipeline-entry-right");
+            if (right && !right.querySelector(".ic-pipeline-entry-check")) {
+                const check = document.createElement("i");
+                check.className = "fas fa-check ic-pipeline-entry-check";
+                right.appendChild(check);
+            }
         }
         refreshToolPipelineHeader(pipeline);
     }

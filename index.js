@@ -18470,7 +18470,9 @@ app.get("/admin/instruction-ai", requireAdmin, async (req, res) => {
   try {
     const username = req.session?.user?.username || req.session?.user?.label || "admin";
     notifyPageVisit(username).catch(() => { });
-    res.render("admin-instruction-chat");
+    res.render("admin-instruction-chat", {
+      assetVersion: Date.now().toString(36),
+    });
   } catch (error) {
     console.error("[InstructionAI] Error loading page:", error);
     res.status(500).send("Error loading InstructionAI");
@@ -19225,6 +19227,43 @@ function cleanupActiveRequest(requestId) {
   setTimeout(() => { activeRequests.delete(requestId); }, 2 * 60 * 1000);
 }
 
+function buildActiveInstructionRequestSnapshot(reqState) {
+  const lastStatus = reqState?.lastStatus || {};
+  const createdAt = reqState?.createdAt || Date.now();
+  const tools = Array.isArray(reqState?.toolTimeline)
+    ? reqState.toolTimeline.map((entry) => ({
+      callId: entry.callId || null,
+      tool: entry.tool || "tool",
+      status: entry.status || "queued",
+      iteration: typeof entry.iteration === "number" ? entry.iteration : null,
+      args: entry.args && typeof entry.args === "object" ? entry.args : {},
+      summary: entry.summary || "",
+      startedAt: entry.startedAt || null,
+      endedAt: entry.endedAt || null,
+      updatedAt: entry.updatedAt || null,
+    }))
+    : [];
+
+  return {
+    requestId: reqState?.requestId || null,
+    sessionId: reqState?.sessionId || null,
+    status: reqState?.status || "processing",
+    createdAt,
+    updatedAt: reqState?.updatedAt || createdAt,
+    elapsedSec: Math.floor((Date.now() - createdAt) / 1000),
+    phase: lastStatus.phase || null,
+    iteration: typeof lastStatus.iteration === "number" ? lastStatus.iteration : null,
+    tool: lastStatus.tool || null,
+    tools,
+    partialContent: reqState?.streamedContent || "",
+    usage: reqState?.donePayload?.usage || null,
+    changes: reqState?.donePayload?.changes || null,
+    toolsUsed: reqState?.donePayload?.toolsUsed || null,
+    assistantMessages: reqState?.donePayload?.assistantMessages || null,
+    error: reqState?.error || null,
+  };
+}
+
 // ─── SSE Streaming Chat Endpoint (Responses API) ───
 app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 6)}`;
@@ -19235,22 +19274,31 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     if (!instructionId) return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
     if ((!message || !message.trim()) && !hasIncomingImages) return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
 
+    const sessionId = clientSessionId || `ses_${Date.now().toString(36)}`;
+    const username = req.session?.user?.username || "admin";
+
     // SSE headers
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
     res.setHeader("Content-Encoding", "identity");
+    res.setHeader("X-Instruction-Request-Id", requestId);
+    res.setHeader("X-Instruction-Session-Id", sessionId);
     res.flushHeaders();
-
-    const sessionId = clientSessionId || `ses_${Date.now().toString(36)}`;
-    const username = req.session?.user?.username || "admin";
 
     // Initialize active request buffer
     const requestState = {
       events: [], status: "processing", sessionId, requestId,
       instructionId, username, model, thinking,
       listeners: new Set(), createdAt: Date.now(),
+      updatedAt: Date.now(),
+      lastStatus: { phase: "thinking", iteration: 1, tool: null, elapsedSec: 0 },
+      toolTimeline: [],
+      toolLookup: new Map(),
+      streamedContent: "",
+      donePayload: null,
+      error: null,
     };
     activeRequests.set(requestId, requestState);
     requestState.listeners.add(res);
@@ -19260,6 +19308,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const sendEvent = (event, data) => {
       const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
       requestState.events.push({ event, data, payload });
+      requestState.updatedAt = Date.now();
       for (const listener of requestState.listeners) {
         try {
           listener.write(payload);
@@ -19273,17 +19322,60 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     let currentPhase = "thinking";
     let currentIteration = 1;
     let currentTool = null;
+    const upsertRequestToolState = (toolName, status, options = {}) => {
+      const safeToolName = toolName || "tool";
+      const requestedCallId = options.callId != null ? String(options.callId) : "";
+      const fallbackCallId = `tool_${safeToolName}_${currentIteration}_${requestState.toolTimeline.length + 1}`;
+      const callId = requestedCallId || fallbackCallId;
+
+      let entry = requestState.toolLookup.get(callId);
+      if (!entry) {
+        entry = {
+          callId,
+          tool: safeToolName,
+          status: status || "queued",
+          iteration: typeof options.iteration === "number" ? options.iteration : currentIteration,
+          args: options.args && typeof options.args === "object" ? options.args : {},
+          summary: options.summary || "",
+          startedAt: status === "running" ? Date.now() : null,
+          endedAt: status === "done" || status === "error" ? Date.now() : null,
+          updatedAt: Date.now(),
+        };
+        requestState.toolLookup.set(callId, entry);
+        requestState.toolTimeline.push(entry);
+      } else {
+        entry.tool = safeToolName;
+        entry.status = status || entry.status;
+        if (typeof options.iteration === "number") entry.iteration = options.iteration;
+        if (options.args && typeof options.args === "object") entry.args = options.args;
+        if (typeof options.summary === "string") entry.summary = options.summary;
+        if (status === "running" && !entry.startedAt) entry.startedAt = Date.now();
+        if ((status === "done" || status === "error") && !entry.endedAt) entry.endedAt = Date.now();
+        entry.updatedAt = Date.now();
+      }
+      requestState.updatedAt = Date.now();
+      return entry;
+    };
+
     const sendStatus = (phase, extra = {}) => {
       if (phase) currentPhase = phase;
       if (typeof extra.iteration === "number") currentIteration = extra.iteration;
       if (Object.prototype.hasOwnProperty.call(extra, "tool")) currentTool = extra.tool || null;
-      sendEvent("status", {
+      const statusPayload = {
         phase: currentPhase,
         iteration: currentIteration,
         tool: currentTool,
         elapsedSec: Math.floor((Date.now() - requestState.createdAt) / 1000),
         ...extra,
-      });
+      };
+      requestState.lastStatus = {
+        phase: statusPayload.phase,
+        iteration: statusPayload.iteration,
+        tool: statusPayload.tool || null,
+        elapsedSec: statusPayload.elapsedSec,
+      };
+      requestState.updatedAt = Date.now();
+      sendEvent("status", statusPayload);
     };
 
     // Visible progress heartbeat + keep-alive
@@ -19308,6 +19400,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     if (!instruction) {
       sendEvent("error", { error: "ไม่พบ Instruction" });
       requestState.status = "error";
+      requestState.error = "ไม่พบ Instruction";
+      requestState.updatedAt = Date.now();
       finishRequest();
       return;
     }
@@ -19420,17 +19514,21 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
                 sentRespondingStatus = true;
               }
               iterationContent += event.delta;
+              requestState.streamedContent += event.delta;
+              requestState.updatedAt = Date.now();
               sendEvent("content", { text: event.delta });
             }
             break;
 
           case "response.output_item.added":
             if (event.item?.type === "function_call") {
+              const callId = event.item.call_id || event.item.id || null;
               sendStatus("tool_plan", { iteration: i + 1, tool: event.item.name || "tool" });
               sendEvent("tool_plan", {
                 tool: event.item.name || "tool",
-                callId: event.item.call_id || event.item.id || null,
+                callId,
               });
+              upsertRequestToolState(event.item.name || "tool", "queued", { callId, iteration: i + 1 });
               upsertToolCall(event.item.id, event.output_index, {
                 name: event.item.name || null,
                 call_id: event.item.call_id || null,
@@ -19456,6 +19554,10 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
           case "response.output_item.done":
             if (event.item?.type === "function_call") {
+              upsertRequestToolState(event.item.name || "tool", "queued", {
+                callId: event.item.call_id || event.item.id || null,
+                iteration: i + 1,
+              });
               upsertToolCall(event.item.id, event.output_index, {
                 name: event.item.name || null,
                 call_id: event.item.call_id || null,
@@ -19540,6 +19642,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
           sendStatus("tool", { iteration: i + 1, tool: toolName });
           sendEvent("tool_start", { tool: toolName, args, callId: toolCall.call_id });
+          upsertRequestToolState(toolName, "running", {
+            callId: toolCall.call_id,
+            args,
+            iteration: i + 1,
+          });
           const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
 
           const toolSummary = buildToolSummary(toolName, result);
@@ -19547,6 +19654,12 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           if (result.changeId) changes.push({ changeId: result.changeId, tool: toolName });
 
           sendEvent("tool_end", { tool: toolName, summary: toolSummary, result: toolSummary, callId: toolCall.call_id });
+          upsertRequestToolState(toolName, "done", {
+            callId: toolCall.call_id,
+            summary: toolSummary,
+            args,
+            iteration: i + 1,
+          });
           sendStatus("continuing", { iteration: i + 1, tool: null });
           toolOutputs.push({
             type: "function_call_output",
@@ -19561,7 +19674,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
       if (!iterationContent && streamedResponse) {
         iterationContent = extractInstructionResponseText(streamedResponse) || "";
-        if (iterationContent) sendEvent("content", { text: iterationContent });
+        if (iterationContent) {
+          requestState.streamedContent += iterationContent;
+          requestState.updatedAt = Date.now();
+          sendEvent("content", { text: iterationContent });
+        }
       }
 
       finalContent = iterationContent || "";
@@ -19571,6 +19688,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     if (assistantMessages.length === 0) {
       finalContent = finalContent || "⚠️ ไม่พบคำตอบจากโมเดล";
+      requestState.streamedContent += finalContent;
+      requestState.updatedAt = Date.now();
       sendEvent("content", { text: finalContent });
       assistantMessages.push({ role: "assistant", content: finalContent });
     }
@@ -19600,8 +19719,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       responseLength: finalContent.length,
     });
 
-    sendEvent("done", { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages });
+    const donePayload = { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages };
+    requestState.donePayload = donePayload;
     requestState.status = "complete";
+    requestState.updatedAt = Date.now();
+    sendEvent("done", donePayload);
 
     // Auto-save session (even if client disconnected)
     try {
@@ -19634,6 +19756,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       const errPayload = `event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`;
       reqState.events.push({ event: "error", data: { error: error.message }, payload: errPayload });
       reqState.status = "error";
+      reqState.error = error.message || "Unexpected stream error";
+      reqState.updatedAt = Date.now();
       for (const listener of reqState.listeners) {
         try { listener.write(errPayload); listener.end(); } catch (e) { }
       }
@@ -19662,6 +19786,8 @@ app.get("/api/instruction-ai/stream/resume", requireAdmin, (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.setHeader("Content-Encoding", "identity");
+  res.setHeader("X-Instruction-Request-Id", reqState.requestId || String(requestId));
+  if (reqState.sessionId) res.setHeader("X-Instruction-Session-Id", reqState.sessionId);
   res.flushHeaders();
 
   // Replay all buffered events
@@ -19678,6 +19804,20 @@ app.get("/api/instruction-ai/stream/resume", requireAdmin, (req, res) => {
   // Still processing — subscribe for future events
   reqState.listeners.add(res);
   req.on("close", () => { reqState.listeners.delete(res); });
+});
+
+// ─── SSE State Fallback Endpoint (for polling when stream is buffered) ───
+app.get("/api/instruction-ai/stream/state", requireAdmin, (req, res) => {
+  const { requestId } = req.query;
+  if (!requestId) return res.status(400).json({ error: "Missing requestId" });
+
+  const reqState = activeRequests.get(String(requestId));
+  if (!reqState) {
+    return res.status(404).json({ error: "not_found", message: "Request not found — session may have completed" });
+  }
+
+  const snapshot = buildActiveInstructionRequestSnapshot(reqState);
+  res.json({ success: true, ...snapshot });
 });
 
 // ─── Session Persistence APIs ───
