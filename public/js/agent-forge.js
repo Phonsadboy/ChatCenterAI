@@ -55,6 +55,7 @@
       load_bootstrap_failed: "โหลดข้อมูลตั้งต้นไม่สำเร็จ",
       create_agent_failed: "สร้าง Agent ไม่สำเร็จ",
       update_agent_failed: "อัปเดต Agent ไม่สำเร็จ",
+      delete_agent_failed: "ลบ Agent ไม่สำเร็จ",
       toggle_mode_failed: "เปลี่ยนโหมดไม่สำเร็จ",
       run_failed: "เริ่มรันไม่สำเร็จ",
     };
@@ -85,6 +86,13 @@
 
   function getInstructionByMongoId(mongoId) {
     return state.instructions.find((item) => item._id === mongoId) || null;
+  }
+
+  function resolveManagedPageLabel(pageKey) {
+    if (!pageKey) return "-";
+    const matched = state.managedPages.find((page) => page.pageKey === pageKey);
+    if (!matched) return pageKey;
+    return matched.name || matched.pageKey || pageKey;
   }
 
   function resolveInstructionMongoId(ref) {
@@ -267,6 +275,24 @@
     `;
   }
 
+  function buildManagedPagesCell(agent) {
+    const pageKeys = Array.isArray(agent.pageKeys) ? agent.pageKeys : [];
+    if (!pageKeys.length) return "-";
+
+    const previewLimit = 2;
+    const previewRows = pageKeys
+      .slice(0, previewLimit)
+      .map((pageKey) => escapeHtml(resolveManagedPageLabel(pageKey)));
+    const moreCount = Math.max(0, pageKeys.length - previewLimit);
+
+    return `
+      <div class="managed-pages-cell">
+        ${previewRows.join("<br>")}
+        ${moreCount > 0 ? `<div class="small text-muted mt-1">+${moreCount} more</div>` : ""}
+      </div>
+    `;
+  }
+
   function renderAgentTable() {
     if (!dom.agentsTableBody) return;
     dom.agentCountLabel.textContent = `${state.agents.length} agents`;
@@ -280,9 +306,6 @@
       const latestRun = Array.isArray(agent.latestRuns) && agent.latestRuns.length > 0
         ? agent.latestRuns[0]
         : null;
-      const pageList = Array.isArray(agent.pageKeys) && agent.pageKeys.length
-        ? agent.pageKeys.map((pageKey) => escapeHtml(pageKey)).join("<br>")
-        : "-";
       const runLink = latestRun
         ? `<a href="/admin/agent-forge/runs/${latestRun._id}" class="btn btn-sm btn-outline-secondary">View Run</a>`
         : "";
@@ -301,7 +324,7 @@
           </td>
           <td><span class="mode-badge ${agent.mode}">${escapeHtml(agent.mode || "-")}</span></td>
           <td>${buildInstructionSelectForRow(agent)}</td>
-          <td>${pageList}</td>
+          <td>${buildManagedPagesCell(agent)}</td>
           <td>${buildModelSelectForRow(agent)}</td>
           <td>${latestRun ? `${escapeHtml(latestRun.status)} · ${formatDateTime(latestRun.createdAt)}` : "-"}</td>
           <td class="text-end">
@@ -309,6 +332,7 @@
               <button class="btn btn-sm btn-primary" data-action="run" data-agent-id="${agent._id}">Run</button>
               <button class="btn btn-sm btn-outline-primary" data-action="dry-run" data-agent-id="${agent._id}">Dry</button>
               <button class="btn btn-sm btn-outline-dark" data-action="toggle-mode" data-agent-id="${agent._id}" data-mode="${agent.mode}">Mode</button>
+              <button class="btn btn-sm btn-outline-danger" data-action="delete" data-agent-id="${agent._id}">Delete</button>
               ${runLink}
             </div>
           </td>
@@ -445,6 +469,27 @@
     await loadAgents();
   }
 
+  async function deleteAgent(agentId, agentName) {
+    const displayName = agentName || "Agent";
+    const confirmed = window.confirm(
+      `ยืนยันลบ "${displayName}"?\nระบบจะปลดการผูก Agent Forge ออกจากเพจที่ดูแลอยู่`,
+    );
+    if (!confirmed) return;
+
+    const response = await fetch(`/api/agent-forge/agents/${agentId}`, {
+      method: "DELETE",
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || "delete_agent_failed");
+    }
+
+    const detachedPages = Number(data.detachedPages || 0);
+    showToast(`ลบ Agent สำเร็จ (ปลดการผูก ${detachedPages} เพจ)`);
+    await Promise.all([loadBootstrapOptions(), loadAgents()]);
+  }
+
   function handleTableAction(event) {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -465,6 +510,9 @@
           await runAgent(agentId, true);
         } else if (action === "toggle-mode") {
           await toggleMode(agentId, mode);
+        } else if (action === "delete") {
+          const targetAgent = state.agents.find((agent) => agent._id === agentId) || null;
+          await deleteAgent(agentId, targetAgent?.name || null);
         }
       })
       .catch((error) => {

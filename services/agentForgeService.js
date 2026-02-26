@@ -794,13 +794,95 @@ class AgentForgeService {
     return this.updateAgent(agentId, { mode: nextMode }, userContext);
   }
 
+  async _detachAgentFromPages(profile) {
+    const db = await this._db();
+    const pageKeys = normalizePageKeys(profile?.pageKeys || []);
+    if (!pageKeys.length) {
+      return { attemptedPages: 0, detachedPages: 0 };
+    }
+
+    const agentIdString = profile?._id ? String(profile._id) : null;
+    const agentIdObject = toObjectId(agentIdString);
+    const agentIdCandidates = [];
+    if (agentIdString) agentIdCandidates.push(agentIdString);
+    if (agentIdObject) agentIdCandidates.push(agentIdObject);
+
+    let detachedPages = 0;
+
+    for (const pageKey of pageKeys) {
+      const parsed = parsePageKey(pageKey);
+      if (!parsed || !parsed.botId) continue;
+
+      const botObjectId = toObjectId(parsed.botId);
+      const collectionName =
+        parsed.platform === "line"
+          ? "line_bots"
+          : parsed.platform === "facebook"
+            ? "facebook_bots"
+            : null;
+      if (!collectionName) continue;
+
+      const filter = {
+        _id: botObjectId || parsed.botId,
+      };
+      if (agentIdCandidates.length > 0) {
+        filter["agentForge.agentId"] = { $in: agentIdCandidates };
+      }
+
+      const result = await db.collection(collectionName).updateOne(
+        filter,
+        {
+          $unset: { agentForge: "" },
+          $set: {
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      if (result.modifiedCount > 0) {
+        detachedPages += 1;
+      }
+    }
+
+    return { attemptedPages: pageKeys.length, detachedPages };
+  }
+
   async deleteAgent(agentId) {
     const db = await this._db();
     const objectId = toObjectId(agentId);
-    if (!objectId) return { deletedCount: 0 };
-    const result = await db.collection(COLLECTIONS.profiles).deleteOne({ _id: objectId });
+    if (!objectId) {
+      throw new Error("invalid_agent_id");
+    }
+
+    const profile = await db.collection(COLLECTIONS.profiles).findOne({ _id: objectId });
+    if (!profile) {
+      throw new Error("agent_not_found");
+    }
+
+    let detachResult = {
+      attemptedPages: normalizePageKeys(profile.pageKeys || []).length,
+      detachedPages: 0,
+      error: null,
+    };
+
+    try {
+      detachResult = await this._detachAgentFromPages(profile);
+    } catch (detachError) {
+      detachResult.error = detachError?.message || "detach_failed";
+    }
+
+    const [deleteResult] = await Promise.all([
+      db.collection(COLLECTIONS.profiles).deleteOne({ _id: objectId }),
+      db.collection(COLLECTIONS.cursors).deleteMany({ agentId: objectId.toString() }),
+    ]);
+
     this._pageAgentCache.clear();
-    return result;
+    return {
+      deletedCount: deleteResult.deletedCount || 0,
+      detachedPages: detachResult.detachedPages || 0,
+      attemptedPages: detachResult.attemptedPages || 0,
+      detachError: detachResult.error || null,
+    };
   }
 
   async listManagedPages() {

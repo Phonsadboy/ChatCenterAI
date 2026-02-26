@@ -206,6 +206,18 @@ function createAgentForgeRouter(options = {}) {
     }
   });
 
+  router.delete("/agents/:agentId", async (req, res) => {
+    try {
+      const result = await agentForgeService.deleteAgent(req.params.agentId);
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      if (error?.message === "agent_not_found") {
+        return res.status(404).json({ success: false, error: "agent_not_found" });
+      }
+      return handleError(res, error);
+    }
+  });
+
   router.post("/agents/:agentId/mode", async (req, res) => {
     try {
       const userContext = buildUserContext(req, getAdminUserContext);

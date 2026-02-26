@@ -272,11 +272,32 @@ body.dark {
   white-space: nowrap;
 }
 
+#agentsTable {
+  table-layout: fixed;
+  width: 100%;
+}
+
 #agentsTable td:nth-child(1),
 #agentsTable th:nth-child(1),
 #agentsTable td:nth-child(5),
 #agentsTable th:nth-child(5) {
   white-space: normal;
+}
+
+#agentsTable td:nth-child(1),
+#agentsTable td:nth-child(5) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+#agentsTable th:nth-child(5),
+#agentsTable td:nth-child(5) {
+  width: 17rem;
+  max-width: 17rem;
+}
+
+.managed-pages-cell {
+  line-height: 1.35;
 }
 
 /* Buttons */
@@ -332,6 +353,7 @@ body.dark {
 .agent-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
