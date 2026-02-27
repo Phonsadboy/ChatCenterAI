@@ -82,7 +82,7 @@
     const instructionCardsWrapper = document.getElementById('instructionCardsWrapper');
     const instructionCardsEmptyState = document.getElementById('instructionCardsEmptyState');
     const instructionCards = Array.from(document.querySelectorAll('.instruction-card'));
-    const openStarterModalBtn = document.getElementById('openStarterModalBtn');
+    const openStarterModalButtons = Array.from(document.querySelectorAll('.open-starter-modal'));
     const instructionStarterQuickStatus = document.getElementById('instructionStarterQuickStatus');
     const instructionStarterQuickStatusText = document.getElementById('instructionStarterQuickStatusText');
 
@@ -327,7 +327,6 @@
         if (instructionEditorUpdatedAt) instructionEditorUpdatedAt.textContent = '';
         if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
         if (saveInstructionChangesBtn) saveInstructionChangesBtn.disabled = true;
-        if (openStarterModalBtn) openStarterModalBtn.disabled = true;
         toggleEditorFields(false);
         setEditorStatus('ยังไม่ได้เลือก Instruction', false);
         setStarterQuickStatus('', false, 0);
@@ -482,7 +481,6 @@
                 editorState.isDirty = false;
                 if (instructionDirtyAlert) instructionDirtyAlert.classList.add('d-none');
                 if (saveInstructionChangesBtn) saveInstructionChangesBtn.disabled = true;
-                if (openStarterModalBtn) openStarterModalBtn.disabled = false;
 
                 const selectedOption = instructionSelect
                     ? instructionSelect.querySelector(`option[value="${instructionId}"]`)
@@ -896,20 +894,20 @@
         }
     };
 
-    const openStarterModal = async () => {
-        const instructionId = editorState.currentInstructionId || instructionSelect?.value || '';
+    const openStarterModal = async (requestedInstructionId = '', triggerButton = null) => {
+        const instructionId = requestedInstructionId || editorState.currentInstructionId || instructionSelect?.value || '';
         if (!instructionId) {
             showToast('กรุณาเลือก Instruction ก่อนตั้งค่าข้อความเริ่มต้น', 'warning');
             return;
         }
         if (!conversationStarterModal) return;
 
-        if (openStarterModalBtn) {
-            openStarterModalBtn.disabled = true;
-            if (!openStarterModalBtn.dataset.defaultHtml) {
-                openStarterModalBtn.dataset.defaultHtml = openStarterModalBtn.innerHTML;
+        if (triggerButton) {
+            triggerButton.disabled = true;
+            if (!triggerButton.dataset.defaultHtml) {
+                triggerButton.dataset.defaultHtml = triggerButton.innerHTML;
             }
-            openStarterModalBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังโหลด...';
+            triggerButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>';
         }
 
         try {
@@ -939,10 +937,10 @@
             console.error('Error opening starter modal:', error);
             showToast(error.message || 'ไม่สามารถเปิดหน้าตั้งค่าข้อความเริ่มต้นได้', 'error');
         } finally {
-            if (openStarterModalBtn) {
-                openStarterModalBtn.disabled = false;
-                if (openStarterModalBtn.dataset.defaultHtml) {
-                    openStarterModalBtn.innerHTML = openStarterModalBtn.dataset.defaultHtml;
+            if (triggerButton) {
+                triggerButton.disabled = false;
+                if (triggerButton.dataset.defaultHtml) {
+                    triggerButton.innerHTML = triggerButton.dataset.defaultHtml;
                 }
             }
         }
@@ -1004,8 +1002,32 @@
         }
     };
 
-    if (openStarterModalBtn) {
-        openStarterModalBtn.addEventListener('click', openStarterModal);
+    if (openStarterModalButtons.length > 0) {
+        openStarterModalButtons.forEach((button) => {
+            button.addEventListener('click', async () => {
+                const targetInstructionId = (button.dataset.id || '').trim();
+                if (!targetInstructionId) return;
+
+                if (
+                    editorState.isDirty &&
+                    editorState.currentInstructionId &&
+                    editorState.currentInstructionId !== targetInstructionId &&
+                    !confirm('มีการแก้ไขที่ยังไม่บันทึก ต้องการละทิ้งการเปลี่ยนแปลงหรือไม่?')
+                ) {
+                    return;
+                }
+
+                if (instructionSelect && instructionSelect.value !== targetInstructionId) {
+                    instructionSelect.value = targetInstructionId;
+                }
+
+                if (editorState.currentInstructionId !== targetInstructionId) {
+                    await loadInstructionIntoEditor(targetInstructionId);
+                }
+
+                await openStarterModal(targetInstructionId, button);
+            });
+        });
     }
 
     if (starterAddTextBtn) {

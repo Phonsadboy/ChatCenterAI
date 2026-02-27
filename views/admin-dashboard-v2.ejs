@@ -148,10 +148,6 @@
 	                                        <div
 	                                            class="col-md-3 col-lg-4 col-xl-3 d-flex align-items-end justify-content-md-end">
 	                                            <div class="instruction-editor-actions">
-	                                                <button class="btn btn-outline-primary" id="openStarterModalBtn"
-	                                                    disabled>
-	                                                    <i class="fas fa-comments me-1"></i> ข้อความเริ่มต้น
-	                                                </button>
 	                                                <button class="btn btn-success" id="saveInstructionChangesBtn"
 	                                                    disabled>
 	                                                    <i class="fas fa-save me-1"></i> บันทึกการแก้ไข
@@ -251,6 +247,12 @@
 	                                                                </div>
 	                                                    </div>
 		                                                    <div class="instruction-actions">
+	                                                        <button class="btn btn-sm btn-outline-primary open-starter-modal"
+	                                                            data-id="<%= instruction._id %>"
+	                                                            aria-label="ตั้งค่าข้อความเริ่มต้น"
+	                                                            title="ตั้งค่าข้อความเริ่มต้น">
+	                                                            <i class="fas fa-comments"></i>
+	                                                        </button>
 	                                                        <button class="btn btn-sm btn-outline-primary edit-instruction"
 	                                                            data-id="<%= instruction._id %>"
 	                                                            aria-label="แก้ไข Instruction">
