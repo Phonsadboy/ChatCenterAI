@@ -22,6 +22,7 @@
     filters: {
       status: 'all',
       search: '',
+      pageKeys: [],
       pageKey: '',
       startDate: '',
       endDate: '',
@@ -62,7 +63,14 @@
     els.pagination = document.getElementById('ordersPagination');
     els.paginationInfo = document.getElementById('ordersPaginationInfo');
     els.searchInput = document.getElementById('ordersSearchInput');
-    els.pageSelect = document.getElementById('ordersPageSelect');
+    els.pageDropdownBtn = document.getElementById('ordersPageBtnToggle');
+    els.pageBtnText = document.getElementById('ordersPageBtnText');
+    els.pageMenu = document.getElementById('ordersPageMenu');
+    els.pageList = document.getElementById('ordersPageList');
+    els.pageSearch = document.getElementById('ordersPageSearch');
+    els.pageSelectAll = document.getElementById('ordersPageSelectAll');
+    els.pageApplyBtn = document.getElementById('ordersPageApplyBtn');
+    els.pageSelectedCount = document.getElementById('ordersPageSelectedCount');
     els.startDate = document.getElementById('ordersStartDate');
     els.endDate = document.getElementById('ordersEndDate');
     els.bulkBar = document.getElementById('ordersBulkBar');
@@ -86,9 +94,61 @@
       els.searchInput.addEventListener('input', debounce(handleSearch, 300));
     }
 
-    // Page Select
-    if (els.pageSelect) {
-      els.pageSelect.addEventListener('change', handlePageSelect);
+    // Page Dropdown
+    if (els.pageDropdownBtn) {
+      els.pageDropdownBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        els.pageMenu.classList.toggle('show');
+      });
+      document.addEventListener('click', (e) => {
+        if (els.pageMenu && els.pageMenu.classList.contains('show') && !e.target.closest('#ordersPageDropdown')) {
+          els.pageMenu.classList.remove('show');
+          renderPageDropdownText(); // Revert if closed
+        }
+      });
+    }
+
+    if (els.pageSearch) {
+      els.pageSearch.addEventListener('input', debounce((e) => {
+        const text = e.target.value.toLowerCase();
+        document.querySelectorAll('.orders-page-item').forEach(el => {
+          if (el.classList.contains('select-all')) return;
+          const name = el.innerText.toLowerCase();
+          el.style.display = name.includes(text) ? 'flex' : 'none';
+        });
+      }, 200));
+    }
+
+    if (els.pageSelectAll) {
+      els.pageSelectAll.addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        document.querySelectorAll('#ordersPageList input[type="checkbox"]').forEach(cb => {
+          if (cb.closest('.orders-page-item').style.display !== 'none') {
+            cb.checked = checked;
+          }
+        });
+        updatePageSelectedCount();
+      });
+    }
+
+    if (els.pageApplyBtn) {
+      els.pageApplyBtn.addEventListener('click', () => {
+        const selected = Array.from(document.querySelectorAll('#ordersPageList input[type="checkbox"]:checked')).map(cb => cb.value);
+        state.filters.pageKeys = selected;
+        state.filters.pageKey = selected.length > 0 ? selected.join(',') : '';
+        els.pageMenu.classList.remove('show');
+        state.pagination.page = 1;
+        saveFilters();
+        loadOrders();
+        renderPageDropdownText();
+      });
+    }
+
+    // Delegate checkbox clicks
+    if (els.pageList) {
+      els.pageList.addEventListener('change', (e) => {
+        if (e.target.type === 'checkbox') updatePageSelectedCount();
+      });
     }
 
     // Date Range
@@ -191,7 +251,9 @@
     if (state.filters.search) {
       params.set('search', state.filters.search);
     }
-    if (state.filters.pageKey) {
+    if (state.filters.pageKeys && state.filters.pageKeys.length > 0) {
+      params.set('pageKey', state.filters.pageKeys.join(','));
+    } else if (state.filters.pageKey) {
       params.set('pageKey', state.filters.pageKey);
     }
     if (state.filters.startDate) {
@@ -423,17 +485,60 @@
   }
 
   function renderPageSelect() {
-    if (!els.pageSelect) return;
+    if (!els.pageList) return;
 
-    let options = '<option value="">ทุกเพจ/บอท</option>';
+    let html = '';
     state.pages.forEach(page => {
       const label = page.name || page.pageKey || 'Unknown';
-      options += `<option value="${page.pageKey}">${escapeHtml(label)}</option>`;
+      html += `
+        <label class="orders-page-item">
+          <input type="checkbox" value="${page.pageKey}">
+          <span>${escapeHtml(label)}</span>
+        </label>
+      `;
     });
 
-    els.pageSelect.innerHTML = options;
-    if (state.filters.pageKey) {
-      els.pageSelect.value = state.filters.pageKey;
+    els.pageList.innerHTML = html;
+
+    if (state.filters.pageKey && (!state.filters.pageKeys || state.filters.pageKeys.length === 0)) {
+      state.filters.pageKeys = state.filters.pageKey.split(',').filter(Boolean);
+    }
+
+    renderPageDropdownText();
+  }
+
+  function updatePageSelectedCount() {
+    if (!els.pageSelectedCount) return;
+    const count = document.querySelectorAll('#ordersPageList input[type="checkbox"]:checked').length;
+    els.pageSelectedCount.textContent = count > 0 ? `เลือก ${count} เพจ` : 'ทุกเพจ/บอท';
+
+    // Update select all state
+    const allVisible = Array.from(document.querySelectorAll('#ordersPageList input[type="checkbox"]'))
+      .filter(cb => cb.closest('.orders-page-item').style.display !== 'none');
+    const checkedVisible = allVisible.filter(cb => cb.checked);
+    if (els.pageSelectAll) {
+      els.pageSelectAll.checked = checkedVisible.length === allVisible.length && allVisible.length > 0;
+      els.pageSelectAll.indeterminate = checkedVisible.length > 0 && checkedVisible.length < allVisible.length;
+    }
+  }
+
+  function renderPageDropdownText() {
+    if (!els.pageBtnText) return;
+    const selected = state.filters.pageKeys || [];
+    if (selected.length === 0) {
+      els.pageBtnText.textContent = 'ทุกเพจ/บอท';
+    } else if (selected.length === 1) {
+      const page = state.pages.find(p => p.pageKey === selected[0]);
+      els.pageBtnText.textContent = page ? (page.name || page.pageKey) : '1 เพจ';
+    } else {
+      els.pageBtnText.textContent = `${selected.length} เพจ`;
+    }
+
+    if (els.pageList) {
+      document.querySelectorAll('#ordersPageList input[type="checkbox"]').forEach(cb => {
+        cb.checked = selected.includes(cb.value);
+      });
+      updatePageSelectedCount();
     }
   }
 
@@ -445,12 +550,7 @@
     loadOrders();
   }
 
-  function handlePageSelect(e) {
-    state.filters.pageKey = e.target.value;
-    state.pagination.page = 1;
-    saveFilters();
-    loadOrders();
-  }
+  // Removed handlePageSelect
 
   function handleDateChange() {
     state.filters.startDate = els.startDate?.value || '';
@@ -541,7 +641,7 @@
   function buildExportUrl(params = new URLSearchParams()) {
     const nextParams = new URLSearchParams(params);
     nextParams.set('exportFormat', getExportFormat());
-    return `/admin/orders/export?${nextParams.toString()}`;
+    return `/ admin / orders /export?${nextParams.toString()} `;
   }
 
   function handleSortClick(column) {
@@ -632,7 +732,7 @@
 
   async function updateStatus(orderId, newStatus) {
     try {
-      const response = await fetch(`/admin/orders/${orderId}/status`, {
+      const response = await fetch(`/ admin / orders / ${orderId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -880,19 +980,25 @@
   function restoreFilters() {
     try {
       const saved = localStorage.getItem('ordersV2Filters');
-      if (saved) {
-        const filters = JSON.parse(saved);
-        state.filters = { ...state.filters, ...filters };
+      let filters = saved ? JSON.parse(saved) : {};
 
-        // Apply to inputs
-        if (els.searchInput) els.searchInput.value = state.filters.search || '';
-        if (els.startDate) els.startDate.value = state.filters.startDate || '';
-        if (els.endDate) els.endDate.value = state.filters.endDate || '';
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlPageKey = urlParams.get('pageKey');
+      if (urlPageKey) {
+        filters.pageKey = urlPageKey;
+        filters.pageKeys = urlPageKey.split(',').filter(Boolean);
+      }
 
-        // Quick date active
-        if (state.filters.quickDate) {
-          document.querySelector(`.orders-quick-date-btn[data-range="${state.filters.quickDate}"]`)?.classList.add('active');
-        }
+      state.filters = { ...state.filters, ...filters };
+
+      // Apply to inputs
+      if (els.searchInput) els.searchInput.value = state.filters.search || '';
+      if (els.startDate) els.startDate.value = state.filters.startDate || '';
+      if (els.endDate) els.endDate.value = state.filters.endDate || '';
+
+      // Quick date active
+      if (state.filters.quickDate) {
+        document.querySelector(`.orders-quick-date-btn[data-range="${state.filters.quickDate}"]`)?.classList.add('active');
       }
     } catch (e) { }
   }

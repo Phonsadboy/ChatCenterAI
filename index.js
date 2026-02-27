@@ -4001,41 +4001,53 @@ async function markMessagesAsOrderExtracted(
 function buildOrderQuery(params = {}) {
   const query = {};
   const pageKeyParam = params.pageKey;
-  let platformFilter = params.platform;
-  let botIdFilter = params.botId;
 
   if (pageKeyParam && pageKeyParam !== "all") {
-    const parsed = parseOrderPageKey(pageKeyParam);
-    if (parsed.platform) {
-      platformFilter = parsed.platform;
-    }
-    if (parsed.botId || parsed.botId === null) {
-      botIdFilter = parsed.botId === null ? "default" : parsed.botId;
-    }
-  }
+    const pageKeys = Array.isArray(pageKeyParam) ? pageKeyParam : String(pageKeyParam).split(',').filter(Boolean);
 
-  if (platformFilter && platformFilter !== "all") {
-    query.platform = normalizeOrderPlatform(platformFilter);
-  }
+    if (pageKeys.length > 0) {
+      const pageConditions = pageKeys.map(key => {
+        const parsed = parseOrderPageKey(key);
+        const cond = {};
+        if (parsed.platform) cond.platform = normalizeOrderPlatform(parsed.platform);
+        if (parsed.botId === null) {
+          cond.$or = [{ botId: null }, { botId: { $exists: false } }, { botId: "" }];
+        } else if (parsed.botId) {
+          cond.botId = normalizeOrderBotId(parsed.botId);
+        }
+        return cond;
+      });
 
-  if (
-    typeof botIdFilter === "string" &&
-    botIdFilter.length > 0 &&
-    botIdFilter !== "all"
-  ) {
-    if (botIdFilter === "default") {
-      const defaultConditions = [
-        { botId: null },
-        { botId: { $exists: false } },
-        { botId: "" },
-      ];
-      if (!query.$or) {
-        query.$or = defaultConditions;
+      if (pageConditions.length === 1) {
+        const cond = pageConditions[0];
+        if (cond.platform) query.platform = cond.platform;
+        if (cond.botId) {
+          query.botId = cond.botId;
+        } else if (cond.$or) {
+          if (!query.$or) query.$or = cond.$or;
+          else query.$or.push(...cond.$or);
+        }
       } else {
-        query.$or.push(...defaultConditions);
+        if (!query.$and) query.$and = [];
+        query.$and.push({ $or: pageConditions });
       }
-    } else {
-      query.botId = normalizeOrderBotId(botIdFilter);
+    }
+  } else {
+    let platformFilter = params.platform;
+    let botIdFilter = params.botId;
+
+    if (platformFilter && platformFilter !== "all") {
+      query.platform = normalizeOrderPlatform(platformFilter);
+    }
+
+    if (typeof botIdFilter === "string" && botIdFilter.length > 0 && botIdFilter !== "all") {
+      if (botIdFilter === "default") {
+        const defaultConditions = [{ botId: null }, { botId: { $exists: false } }, { botId: "" }];
+        if (!query.$or) query.$or = defaultConditions;
+        else query.$or.push(...defaultConditions);
+      } else {
+        query.botId = normalizeOrderBotId(botIdFilter);
+      }
     }
   }
 
