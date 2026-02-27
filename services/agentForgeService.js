@@ -366,6 +366,11 @@ class AgentForgeService {
           updatedAt: new Date(),
         },
       ],
+      conversationStarter: {
+        enabled: false,
+        messages: [],
+        updatedAt: new Date(),
+      },
       usageCount: 0,
       version: 1,
       createdAt: new Date(),

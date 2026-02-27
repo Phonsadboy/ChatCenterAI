@@ -205,6 +205,11 @@ class InstructionDataService {
                         name: targetName || sheetName,
                         description: `Imported from ${sheetName}`,
                         dataItems: [dataItem],
+                        conversationStarter: {
+                            enabled: false,
+                            messages: [],
+                            updatedAt: now,
+                        },
                         usageCount: 0,
                         isActive: true,
                         updatedAt: now,

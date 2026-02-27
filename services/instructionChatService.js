@@ -61,16 +61,110 @@ class InstructionChatService {
         }).join("\n");
     }
 
+    _generateStarterMessageId() {
+        return `starter_${crypto.randomBytes(8).toString("hex")}`;
+    }
+
+    _normalizeStarterMessage(message, index = 0) {
+        if (!message || typeof message !== "object") return null;
+        const type = typeof message.type === "string" ? message.type.trim().toLowerCase() : "";
+        const rawOrder = Number(message.order);
+        const order = Number.isFinite(rawOrder) && rawOrder >= 0 ? Math.floor(rawOrder) : Math.max(0, Number(index) || 0);
+        const idSource = message.id || message.messageId || message.itemId;
+        const id = typeof idSource === "string" && idSource.trim()
+            ? idSource.trim()
+            : this._generateStarterMessageId();
+
+        if (type === "text") {
+            const rawText =
+                typeof message.content === "string"
+                    ? message.content
+                    : typeof message.text === "string"
+                        ? message.text
+                        : "";
+            const content = rawText.trim();
+            if (!content) return null;
+            return { id, type: "text", content, order };
+        }
+
+        if (type === "image") {
+            const url = typeof message.url === "string" ? message.url.trim() : "";
+            if (!url) return null;
+            const previewUrl = typeof message.previewUrl === "string" && message.previewUrl.trim()
+                ? message.previewUrl.trim()
+                : typeof message.thumbUrl === "string" && message.thumbUrl.trim()
+                    ? message.thumbUrl.trim()
+                    : url;
+
+            const normalized = {
+                id,
+                type: "image",
+                url,
+                previewUrl,
+                order,
+            };
+
+            const alt = typeof message.alt === "string"
+                ? message.alt.trim()
+                : typeof message.caption === "string"
+                    ? message.caption.trim()
+                    : "";
+            if (alt) normalized.alt = alt;
+
+            const fileName = typeof message.fileName === "string" ? message.fileName.trim() : "";
+            if (fileName) normalized.fileName = fileName;
+
+            const assetId = message.assetId ?? message.id ?? message._id;
+            if (assetId !== null && assetId !== undefined) {
+                try {
+                    const text = typeof assetId === "string" ? assetId.trim() : assetId.toString();
+                    if (text) normalized.assetId = text;
+                } catch {
+                    const fallback = String(assetId || "").trim();
+                    if (fallback) normalized.assetId = fallback;
+                }
+            }
+            return normalized;
+        }
+
+        return null;
+    }
+
+    _normalizeStarterConfig(config) {
+        const enabled = !!config?.enabled;
+        const rawMessages = Array.isArray(config?.messages) ? config.messages : [];
+        const messages = rawMessages
+            .map((message, index) => this._normalizeStarterMessage(message, index))
+            .filter(Boolean)
+            .sort((a, b) => (a.order || 0) - (b.order || 0))
+            .map((message, index) => ({
+                ...message,
+                order: index,
+                id: message.id || this._generateStarterMessageId(),
+            }));
+        return {
+            enabled,
+            messages,
+            updatedAt: config?.updatedAt ? new Date(config.updatedAt) : null,
+        };
+    }
+
     // ──────────────────────────── READ TOOLS ────────────────────────────
 
     async get_instruction_overview(instructionId) {
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
 
+        const starter = this._normalizeStarterConfig(inst.conversationStarter);
+
         return {
             name: inst.name,
             description: inst.description || "",
             totalDataItems: (inst.dataItems || []).length,
+            conversationStarter: {
+                enabled: starter.enabled,
+                messageCount: starter.messages.length,
+            },
             dataItems: (inst.dataItems || []).map(item => {
                 const base = { itemId: item.itemId, title: item.title || "Untitled", type: item.type };
                 if (item.type === "table" && item.data) {
@@ -1168,6 +1262,364 @@ class InstructionChatService {
         };
     }
 
+    // ──────────────────────────── CONVERSATION STARTER TOOLS ────────────────────────────
+
+    async _resolveStarterImageInput({ assetId, imageUrl, previewUrl, alt }) {
+        if (assetId) {
+            try {
+                const asset = await this.db.collection("follow_up_assets").findOne({ _id: new ObjectId(assetId) });
+                if (!asset) {
+                    return { error: `ไม่พบ asset ID: ${assetId}` };
+                }
+                return {
+                    message: {
+                        type: "image",
+                        url: asset.url || "",
+                        previewUrl: asset.thumbUrl || asset.url || "",
+                        alt: typeof alt === "string" ? alt.trim() : "",
+                        assetId: String(assetId),
+                        fileName: asset.fileName || "",
+                    },
+                };
+            } catch {
+                return { error: `assetId ไม่ถูกต้อง: ${assetId}` };
+            }
+        }
+
+        const normalizedImageUrl = typeof imageUrl === "string" ? imageUrl.trim() : "";
+        if (!normalizedImageUrl) {
+            return { error: "ต้องระบุ imageUrl หรือ assetId" };
+        }
+
+        const normalizedPreview = typeof previewUrl === "string" && previewUrl.trim()
+            ? previewUrl.trim()
+            : normalizedImageUrl;
+
+        return {
+            message: {
+                type: "image",
+                url: normalizedImageUrl,
+                previewUrl: normalizedPreview,
+                alt: typeof alt === "string" ? alt.trim() : "",
+            },
+        };
+    }
+
+    async get_conversation_starter(instructionId) {
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+        const starter = this._normalizeStarterConfig(inst.conversationStarter);
+        return {
+            enabled: starter.enabled,
+            messageCount: starter.messages.length,
+            messages: starter.messages,
+        };
+    }
+
+    async set_conversation_starter_enabled(instructionId, { enabled }, sessionId) {
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+        if (typeof enabled !== "boolean") return { error: "ต้องระบุ enabled เป็น true/false" };
+
+        const beforeStarter = this._normalizeStarterConfig(inst.conversationStarter);
+        const now = new Date();
+        const nextStarter = {
+            enabled,
+            messages: beforeStarter.messages,
+            updatedAt: now,
+        };
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $set: { conversationStarter: nextStarter, updatedAt: now } }
+        );
+        this._invalidateCache();
+
+        const changeId = await this._logChange(
+            instructionId,
+            sessionId,
+            "set_conversation_starter_enabled",
+            { enabled },
+            { enabled: beforeStarter.enabled },
+            { enabled }
+        );
+
+        return {
+            success: true,
+            enabled,
+            messageCount: nextStarter.messages.length,
+            changeId,
+        };
+    }
+
+    async add_conversation_starter_message(
+        instructionId,
+        { type, content, imageUrl, previewUrl, alt, assetId, position = "end" },
+        sessionId
+    ) {
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const starter = this._normalizeStarterConfig(inst.conversationStarter);
+        const beforeMessages = starter.messages.map(m => ({ ...m }));
+        let nextMessage = null;
+
+        if (type === "text") {
+            const normalizedText = typeof content === "string" ? content.trim() : "";
+            if (!normalizedText) return { error: "ข้อความต้องไม่ว่าง" };
+            nextMessage = {
+                id: this._generateStarterMessageId(),
+                type: "text",
+                content: normalizedText,
+            };
+        } else if (type === "image") {
+            const resolved = await this._resolveStarterImageInput({
+                assetId,
+                imageUrl,
+                previewUrl,
+                alt,
+            });
+            if (resolved.error) return { error: resolved.error };
+            nextMessage = {
+                id: this._generateStarterMessageId(),
+                ...resolved.message,
+            };
+        } else {
+            return { error: "type ต้องเป็น 'text' หรือ 'image'" };
+        }
+
+        const messages = [...starter.messages];
+        if (position === "start") {
+            messages.unshift(nextMessage);
+        } else {
+            messages.push(nextMessage);
+        }
+
+        const normalizedMessages = this._normalizeStarterConfig({
+            enabled: starter.enabled,
+            messages,
+        }).messages;
+        const now = new Date();
+        const nextStarter = {
+            enabled: starter.enabled,
+            messages: normalizedMessages,
+            updatedAt: now,
+        };
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $set: { conversationStarter: nextStarter, updatedAt: now } }
+        );
+        this._invalidateCache();
+
+        const changeId = await this._logChange(
+            instructionId,
+            sessionId,
+            "add_conversation_starter_message",
+            { type, position, assetId: assetId || null },
+            { messages: beforeMessages },
+            { messageId: nextMessage.id, messages: normalizedMessages }
+        );
+
+        return {
+            success: true,
+            messageId: nextMessage.id,
+            messageCount: normalizedMessages.length,
+            messages: normalizedMessages,
+            changeId,
+        };
+    }
+
+    async update_conversation_starter_message(
+        instructionId,
+        { messageId, content, imageUrl, previewUrl, alt, assetId },
+        sessionId
+    ) {
+        if (!messageId) return { error: "ต้องระบุ messageId" };
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const starter = this._normalizeStarterConfig(inst.conversationStarter);
+        const idx = starter.messages.findIndex(m => m.id === messageId);
+        if (idx === -1) return { error: `ไม่พบ messageId: ${messageId}` };
+
+        const beforeMessage = { ...starter.messages[idx] };
+        const messages = [...starter.messages];
+        const target = { ...messages[idx] };
+
+        if (target.type === "text") {
+            if (typeof content !== "string") return { error: "ต้องระบุ content สำหรับข้อความ" };
+            const normalizedText = content.trim();
+            if (!normalizedText) return { error: "ข้อความต้องไม่ว่าง" };
+            target.content = normalizedText;
+        } else if (target.type === "image") {
+            if (assetId || imageUrl) {
+                const resolved = await this._resolveStarterImageInput({
+                    assetId,
+                    imageUrl,
+                    previewUrl,
+                    alt,
+                });
+                if (resolved.error) return { error: resolved.error };
+                target.url = resolved.message.url;
+                target.previewUrl = resolved.message.previewUrl;
+                target.assetId = resolved.message.assetId;
+                target.fileName = resolved.message.fileName;
+            }
+            if (typeof alt === "string") {
+                target.alt = alt.trim();
+            }
+        }
+
+        messages[idx] = target;
+        const normalizedMessages = this._normalizeStarterConfig({
+            enabled: starter.enabled,
+            messages,
+        }).messages;
+        const now = new Date();
+        const nextStarter = {
+            enabled: starter.enabled,
+            messages: normalizedMessages,
+            updatedAt: now,
+        };
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $set: { conversationStarter: nextStarter, updatedAt: now } }
+        );
+        this._invalidateCache();
+
+        const updatedMessage = normalizedMessages.find(m => m.id === messageId) || null;
+        const changeId = await this._logChange(
+            instructionId,
+            sessionId,
+            "update_conversation_starter_message",
+            { messageId },
+            { message: beforeMessage },
+            { message: updatedMessage }
+        );
+
+        return {
+            success: true,
+            messageId,
+            message: updatedMessage,
+            changeId,
+        };
+    }
+
+    async remove_conversation_starter_message(instructionId, { messageId }, sessionId) {
+        if (!messageId) return { error: "ต้องระบุ messageId" };
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const starter = this._normalizeStarterConfig(inst.conversationStarter);
+        const idx = starter.messages.findIndex(m => m.id === messageId);
+        if (idx === -1) return { error: `ไม่พบ messageId: ${messageId}` };
+
+        const beforeMessage = { ...starter.messages[idx] };
+        const messages = starter.messages.filter(m => m.id !== messageId);
+        const normalizedMessages = this._normalizeStarterConfig({
+            enabled: starter.enabled,
+            messages,
+        }).messages;
+        const now = new Date();
+        const nextStarter = {
+            enabled: starter.enabled,
+            messages: normalizedMessages,
+            updatedAt: now,
+        };
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $set: { conversationStarter: nextStarter, updatedAt: now } }
+        );
+        this._invalidateCache();
+
+        const changeId = await this._logChange(
+            instructionId,
+            sessionId,
+            "remove_conversation_starter_message",
+            { messageId },
+            { message: beforeMessage },
+            { messageCount: normalizedMessages.length }
+        );
+
+        return {
+            success: true,
+            messageId,
+            messageCount: normalizedMessages.length,
+            messages: normalizedMessages,
+            changeId,
+        };
+    }
+
+    async reorder_conversation_starter_message(
+        instructionId,
+        { messageId, direction = "up", toIndex = null },
+        sessionId
+    ) {
+        if (!messageId) return { error: "ต้องระบุ messageId" };
+        const inst = await this._getInstruction(instructionId);
+        if (!inst) return { error: "ไม่พบ Instruction" };
+
+        const starter = this._normalizeStarterConfig(inst.conversationStarter);
+        const currentIndex = starter.messages.findIndex(m => m.id === messageId);
+        if (currentIndex === -1) return { error: `ไม่พบ messageId: ${messageId}` };
+
+        const beforeOrder = starter.messages.map(m => m.id);
+        const messages = [...starter.messages];
+        let targetIndex = currentIndex;
+
+        if (Number.isInteger(toIndex)) {
+            targetIndex = Math.max(0, Math.min(toIndex, messages.length - 1));
+        } else if (direction === "down") {
+            targetIndex = Math.min(messages.length - 1, currentIndex + 1);
+        } else {
+            targetIndex = Math.max(0, currentIndex - 1);
+        }
+
+        if (targetIndex === currentIndex) {
+            return { success: true, messages, order: beforeOrder, note: "ลำดับไม่เปลี่ยน" };
+        }
+
+        const [item] = messages.splice(currentIndex, 1);
+        messages.splice(targetIndex, 0, item);
+
+        const normalizedMessages = this._normalizeStarterConfig({
+            enabled: starter.enabled,
+            messages,
+        }).messages;
+        const now = new Date();
+        const nextStarter = {
+            enabled: starter.enabled,
+            messages: normalizedMessages,
+            updatedAt: now,
+        };
+
+        await this.collection.updateOne(
+            { _id: new ObjectId(instructionId) },
+            { $set: { conversationStarter: nextStarter, updatedAt: now } }
+        );
+        this._invalidateCache();
+
+        const changeId = await this._logChange(
+            instructionId,
+            sessionId,
+            "reorder_conversation_starter_message",
+            { messageId, direction, toIndex },
+            { order: beforeOrder },
+            { order: normalizedMessages.map(m => m.id) }
+        );
+
+        return {
+            success: true,
+            messageId,
+            messages: normalizedMessages,
+            order: normalizedMessages.map(m => m.id),
+            changeId,
+        };
+    }
+
     // ──────────────────────────── PAGE MODEL TOOL ────────────────────────────
 
     async update_page_model({ pageKeys, model }) {
@@ -1247,6 +1699,7 @@ class InstructionChatService {
         const latest = await versionColl.find({ instructionId: instId })
             .sort({ version: -1 }).limit(1).toArray();
         const nextVersion = latest.length > 0 ? (latest[0].version || 0) + 1 : 1;
+        const starterConfig = this._normalizeStarterConfig(inst.conversationStarter);
 
         // Create snapshot of current instruction state
         const snapshot = {
@@ -1254,6 +1707,7 @@ class InstructionChatService {
             version: nextVersion,
             name: inst.name || "",
             description: inst.description || "",
+            conversationStarter: starterConfig,
             dataItems: (inst.dataItems || []).map(item => {
                 const copy = { itemId: item.itemId, title: item.title, type: item.type };
                 if (item.type === "table" && item.data) {
@@ -1299,6 +1753,7 @@ class InstructionChatService {
             note: snapshot.note,
             snapshotAt: snapshot.snapshotAt,
             dataItemCount: snapshot.dataItems.length,
+            starterMessageCount: starterConfig.messages.length,
             message: `✅ บันทึกเวอร์ชัน ${nextVersion} เรียบร้อย${snapshot.note ? " (" + snapshot.note + ")" : ""}`,
         };
     }
@@ -1313,12 +1768,18 @@ class InstructionChatService {
         const versionColl = this.db.collection("instruction_versions");
         const snapshot = await versionColl.findOne({ instructionId: instId, version: Number(version) });
         if (!snapshot) return { error: `ไม่พบเวอร์ชัน ${version}` };
+        const starter = this._normalizeStarterConfig(snapshot.conversationStarter);
 
         return {
             version: snapshot.version,
             name: snapshot.name || snapshot.title || "",
             note: snapshot.note || "",
             snapshotAt: snapshot.snapshotAt,
+            conversationStarter: {
+                enabled: starter.enabled,
+                messageCount: starter.messages.length,
+                messages: starter.messages,
+            },
             dataItems: (snapshot.dataItems || []).map(item => {
                 const base = { itemId: item.itemId, title: item.title, type: item.type };
                 if (item.type === "table" && item.data) {
@@ -1490,6 +1951,13 @@ class InstructionChatService {
             // ── Create Data Item Tools ──
             { type: "function", function: { name: "create_table_item", description: "สร้างชุดข้อมูลใหม่ประเภทตาราง — ระบุชื่อ, คอลัมน์, และข้อมูลเริ่มต้น (optional) — ใช้เมื่อต้องการเพิ่มตารางใหม่ใน instruction", parameters: { type: "object", properties: { title: { type: "string", description: "ชื่อของชุดข้อมูล" }, columns: { type: "array", items: { type: "string" }, description: "รายการชื่อคอลัมน์" }, rows: { type: "array", items: { type: "object" }, description: "ข้อมูลเริ่มต้น — array ของ object { columnName: value } (optional, สูงสุด 500 แถว)" } }, required: ["title", "columns"] } } },
             { type: "function", function: { name: "create_text_item", description: "สร้างชุดข้อมูลใหม่ประเภทข้อความ — ระบุชื่อและเนื้อหาข้อความ — ใช้เมื่อต้องการเพิ่มคำอธิบาย, คำแนะนำ, หรือเนื้อหาอื่นๆ ใน instruction", parameters: { type: "object", properties: { title: { type: "string", description: "ชื่อของชุดข้อมูล" }, content: { type: "string", description: "เนื้อหาข้อความ" } }, required: ["title"] } } },
+            // ── Conversation Starter Tools ──
+            { type: "function", function: { name: "get_conversation_starter", description: "ดูการตั้งค่าข้อความเริ่มต้นการสนทนา (เปิด/ปิด + ลำดับข้อความ/รูปภาพ)", parameters: { type: "object", properties: {} } } },
+            { type: "function", function: { name: "set_conversation_starter_enabled", description: "เปิดหรือปิดระบบข้อความเริ่มต้นการสนทนา", parameters: { type: "object", properties: { enabled: { type: "boolean", description: "true=เปิด, false=ปิด" } }, required: ["enabled"] } } },
+            { type: "function", function: { name: "add_conversation_starter_message", description: "เพิ่มข้อความเริ่มต้น (text/image) เข้า sequence ตามลำดับ", parameters: { type: "object", properties: { type: { type: "string", enum: ["text", "image"] }, content: { type: "string", description: "เนื้อหาข้อความ (เมื่อ type=text)" }, imageUrl: { type: "string", description: "URL รูป (เมื่อ type=image และไม่มี assetId)" }, previewUrl: { type: "string", description: "URL preview ของรูป (optional)" }, alt: { type: "string", description: "ข้อความกำกับรูป (optional)" }, assetId: { type: "string", description: "assetId จาก follow_up_assets (optional)" }, position: { type: "string", enum: ["start", "end"], description: "เพิ่มต้นรายการหรือท้ายรายการ (default=end)" } }, required: ["type"] } } },
+            { type: "function", function: { name: "update_conversation_starter_message", description: "แก้ไขข้อความเริ่มต้นที่มีอยู่ตาม messageId", parameters: { type: "object", properties: { messageId: { type: "string", description: "ID ของข้อความที่ต้องการแก้ไข" }, content: { type: "string", description: "เนื้อหาใหม่ (เมื่อเป็น text)" }, imageUrl: { type: "string", description: "URL รูปใหม่ (เมื่อเป็น image)" }, previewUrl: { type: "string", description: "URL preview ใหม่ (optional)" }, alt: { type: "string", description: "alt/caption ใหม่ (optional)" }, assetId: { type: "string", description: "assetId ใหม่ (optional)" } }, required: ["messageId"] } } },
+            { type: "function", function: { name: "remove_conversation_starter_message", description: "ลบข้อความเริ่มต้นออกจาก sequence ตาม messageId", parameters: { type: "object", properties: { messageId: { type: "string", description: "ID ของข้อความที่ต้องการลบ" } }, required: ["messageId"] } } },
+            { type: "function", function: { name: "reorder_conversation_starter_message", description: "จัดลำดับข้อความเริ่มต้นใหม่ (เลื่อนขึ้น/ลง หรือย้ายไป index ที่กำหนด)", parameters: { type: "object", properties: { messageId: { type: "string", description: "ID ของข้อความที่ต้องการย้าย" }, direction: { type: "string", enum: ["up", "down"], description: "ทิศทางการเลื่อน (default=up)" }, toIndex: { type: "number", description: "ระบุตำแหน่งปลายทางแบบ 0-index (optional)" } }, required: ["messageId"] } } },
             // ── Follow-Up Management Tools ──
             { type: "function", function: { name: "list_followup_pages", description: "ดูรายการเพจทั้งหมด (LINE + Facebook) พร้อม pageKey, สถานะติดตาม, จำนวน rounds — ใช้เพื่อดู pageKey สำหรับ tools อื่น", parameters: { type: "object", properties: {} } } },
             { type: "function", function: { name: "get_followup_config", description: "ดูการตั้งค่าระบบติดตามลูกค้า — ถ้าระบุ pageKeys จะดึง config เฉพาะเพจ, ถ้าไม่ระบุจะดึง config กลาง", parameters: { type: "object", properties: { pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey (เช่น ['line:abc123', 'facebook:xyz456']) — ถ้าไม่ระบุจะดู config กลาง" } } } } },
@@ -1513,8 +1981,33 @@ class InstructionChatService {
     }
 
     async executeTool(toolName, args, instructionId, sessionId) {
-        const readTools = ["get_instruction_overview", "get_data_item_detail", "get_rows", "get_text_content", "search_in_table", "search_content"];
-        const writeTools = ["update_cell", "update_rows_bulk", "add_row", "delete_row", "update_text_content", "add_column", "delete_column", "delete_rows_bulk", "delete_data_item", "create_table_item", "create_text_item"];
+        const readTools = [
+            "get_instruction_overview",
+            "get_data_item_detail",
+            "get_rows",
+            "get_text_content",
+            "search_in_table",
+            "search_content",
+            "get_conversation_starter",
+        ];
+        const writeTools = [
+            "update_cell",
+            "update_rows_bulk",
+            "add_row",
+            "delete_row",
+            "update_text_content",
+            "add_column",
+            "delete_column",
+            "delete_rows_bulk",
+            "delete_data_item",
+            "create_table_item",
+            "create_text_item",
+            "set_conversation_starter_enabled",
+            "add_conversation_starter_message",
+            "update_conversation_starter_message",
+            "remove_conversation_starter_message",
+            "reorder_conversation_starter_message",
+        ];
         const confirmTools = ["delete_rows_bulk_confirm"];
         // Follow-up tools (not tied to instructionId)
         const followUpReadTools = ["get_followup_config", "get_followup_round_detail", "list_followup_assets", "list_followup_pages"];

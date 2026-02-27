@@ -1413,6 +1413,7 @@ async function saveChatHistory(
   botId = null,
   instructionRefs = [],
   botName = null,
+  options = {},
 ) {
   // ตรวจสอบการตั้งค่าการบันทึกประวัติ
   const enableChatHistory = await getSettingValue("enableChatHistory", true);
@@ -1430,6 +1431,13 @@ async function saveChatHistory(
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection("chat_history");
+  const normalizedOptions =
+    options && typeof options === "object" ? options : {};
+  const assistantSource =
+    typeof normalizedOptions.assistantSource === "string" &&
+      normalizedOptions.assistantSource.trim()
+      ? normalizedOptions.assistantSource.trim()
+      : "ai";
   let userMsgToSave =
     typeof userMsg === "string" ? userMsg : JSON.stringify(userMsg);
 
@@ -1516,7 +1524,7 @@ async function saveChatHistory(
       timestamp: assistantTimestamp,
       platform,
       botId,
-      source: "ai",
+      source: assistantSource,
       ...(Array.isArray(instructionRefs) && instructionRefs.length > 0 ? { instructionRefs } : {}),
       ...(botName ? { botName } : {}),
     };
@@ -2003,6 +2011,131 @@ function sanitizeFollowUpImage(image) {
 function sanitizeFollowUpImages(images) {
   if (!Array.isArray(images)) return [];
   return images.map(sanitizeFollowUpImage).filter(Boolean);
+}
+
+function generateConversationStarterMessageId() {
+  return `starter_${crypto.randomBytes(8).toString("hex")}`;
+}
+
+function normalizeConversationStarterMessage(message, index = 0) {
+  if (!message || typeof message !== "object") return null;
+
+  const type = typeof message.type === "string" ? message.type.trim().toLowerCase() : "";
+  const rawOrder = Number(message.order);
+  const order =
+    Number.isFinite(rawOrder) && rawOrder >= 0
+      ? Math.floor(rawOrder)
+      : Math.max(0, Number(index) || 0);
+  const idSource = message.id || message.messageId || message.itemId;
+  const id =
+    typeof idSource === "string" && idSource.trim()
+      ? idSource.trim()
+      : generateConversationStarterMessageId();
+
+  if (type === "text") {
+    const rawText =
+      typeof message.content === "string"
+        ? message.content
+        : typeof message.text === "string"
+          ? message.text
+          : "";
+    const content = rawText.trim();
+    if (!content) return null;
+    return {
+      id,
+      type: "text",
+      content,
+      order,
+    };
+  }
+
+  if (type === "image") {
+    const resolveUrl = (value) => {
+      if (typeof value !== "string") return "";
+      const trimmed = value.trim();
+      if (!trimmed) return "";
+      if (/^https?:\/\//i.test(trimmed)) return trimmed;
+      if (trimmed.startsWith("/") && PUBLIC_BASE_URL) {
+        return `${PUBLIC_BASE_URL.replace(/\/$/, "")}${trimmed}`;
+      }
+      return trimmed;
+    };
+
+    const url = resolveUrl(message.url || message.originalContentUrl || "");
+    if (!url) return null;
+
+    const previewUrl = resolveUrl(
+      message.previewUrl || message.thumbUrl || message.previewImageUrl || url,
+    );
+
+    const normalized = {
+      id,
+      type: "image",
+      url,
+      previewUrl: previewUrl || url,
+      order,
+    };
+
+    const alt =
+      typeof message.alt === "string"
+        ? message.alt.trim()
+        : typeof message.caption === "string"
+          ? message.caption.trim()
+          : "";
+    if (alt) normalized.alt = alt;
+
+    const fileName =
+      typeof message.fileName === "string" ? message.fileName.trim() : "";
+    if (fileName) normalized.fileName = fileName;
+
+    const assetId = message.assetId ?? message.id ?? message._id;
+    if (assetId !== null && assetId !== undefined) {
+      try {
+        const text = typeof assetId === "string" ? assetId.trim() : assetId.toString();
+        if (text) normalized.assetId = text;
+      } catch (_) {
+        const fallback = String(assetId || "").trim();
+        if (fallback) normalized.assetId = fallback;
+      }
+    }
+
+    return normalized;
+  }
+
+  return null;
+}
+
+function normalizeConversationStarterConfig(config) {
+  const enabled = !!config?.enabled;
+  const rawMessages = Array.isArray(config?.messages) ? config.messages : [];
+  const messages = rawMessages
+    .map((message, index) => normalizeConversationStarterMessage(message, index))
+    .filter(Boolean)
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+    .map((message, index) => ({
+      ...message,
+      order: index,
+      id: message.id || generateConversationStarterMessageId(),
+    }));
+
+  return {
+    enabled,
+    messages,
+    updatedAt: config?.updatedAt ? new Date(config.updatedAt) : null,
+  };
+}
+
+function cloneConversationStarterConfigForStorage(config = {}, now = new Date()) {
+  const normalized = normalizeConversationStarterConfig(config);
+  return {
+    enabled: !!normalized.enabled,
+    messages: normalized.messages.map((message, index) => ({
+      ...message,
+      id: generateConversationStarterMessageId(),
+      order: index,
+    })),
+    updatedAt: now,
+  };
 }
 
 function summarizeFollowUpRound(round) {
@@ -5691,6 +5824,307 @@ function filterContentSequenceForStrategy(sequence, strategy = "original") {
   return { sequence: result, textParts, meta };
 }
 
+function buildStarterThreadQuery(userId, platform = "line", botId = null) {
+  const conditions = [buildChatHistoryUserMatch(userId), { role: "user" }];
+
+  const normalizedPlatform =
+    typeof platform === "string" && platform.trim() ? platform.trim() : "line";
+  conditions.push({ platform: normalizedPlatform });
+
+  const normalizedBotId =
+    botId === null || typeof botId === "undefined"
+      ? null
+      : typeof botId === "string"
+        ? botId.trim()
+        : String(botId);
+
+  if (normalizedBotId) {
+    const botCandidates = [normalizedBotId];
+    const botObjectId = toObjectId(normalizedBotId);
+    if (botObjectId) botCandidates.push(botObjectId);
+    conditions.push({ botId: { $in: botCandidates } });
+  } else {
+    conditions.push({
+      $or: [
+        { botId: null },
+        { botId: "" },
+        { botId: { $exists: false } },
+      ],
+    });
+  }
+
+  return { $and: conditions };
+}
+
+async function hasStarterUserHistory(userId, platform = "line", botId = null) {
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("chat_history");
+  const query = buildStarterThreadQuery(userId, platform, botId);
+  const existing = await coll.findOne(query, { projection: { _id: 1 } });
+  return !!existing;
+}
+
+async function resolveConversationStarterForQueue(queueContext = {}) {
+  const rawSelections = Array.isArray(queueContext.selectedInstructions)
+    ? queueContext.selectedInstructions
+    : [];
+  if (!rawSelections.length) return null;
+
+  const normalizedSelections = normalizeInstructionSelections(rawSelections);
+  const objectSelections = normalizedSelections.filter(
+    isInstructionSelectionObject,
+  );
+  if (!objectSelections.length) return null;
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const docs = await resolveInstructionSelectionsV2(objectSelections, db);
+  if (!Array.isArray(docs) || docs.length === 0) return null;
+
+  const byInstructionId = new Map();
+  docs.forEach((doc) => {
+    if (!doc || !doc.instructionId) return;
+    byInstructionId.set(doc.instructionId, doc);
+  });
+
+  for (const selection of objectSelections) {
+    const doc = byInstructionId.get(selection.instructionId);
+    if (!doc) continue;
+    const starter = normalizeConversationStarterConfig(doc.conversationStarter);
+    if (starter.enabled && Array.isArray(starter.messages) && starter.messages.length > 0) {
+      return {
+        instructionId: doc.instructionId,
+        instructionObjectId:
+          doc._id && typeof doc._id.toString === "function"
+            ? doc._id.toString()
+            : doc._id || null,
+        starter,
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildConversationStarterHistory(messages = []) {
+  const parts = [];
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    if (message.type === "text") {
+      const content =
+        typeof message.content === "string"
+          ? message.content.trim()
+          : typeof message.text === "string"
+            ? message.text.trim()
+            : "";
+      if (!content) continue;
+      parts.push({ type: "text", text: content });
+      continue;
+    }
+    if (message.type === "image") {
+      const url =
+        typeof message.url === "string" ? message.url.trim() : "";
+      if (!url) continue;
+      const previewUrl =
+        typeof message.previewUrl === "string" && message.previewUrl.trim()
+          ? message.previewUrl.trim()
+          : url;
+      parts.push({
+        type: "image",
+        url,
+        previewUrl,
+        alt: typeof message.alt === "string" ? message.alt.trim() : "",
+        caption: typeof message.alt === "string" ? message.alt.trim() : "",
+      });
+    }
+  }
+
+  if (parts.length === 0) return "";
+  if (parts.length === 1 && parts[0].type === "text") {
+    return parts[0].text;
+  }
+  return JSON.stringify(parts);
+}
+
+async function sendLineConversationStarterSequence(
+  userId,
+  messages = [],
+  queueContext = {},
+) {
+  const payloads = [];
+  const normalizedMessages = normalizeConversationStarterConfig({
+    enabled: true,
+    messages,
+  }).messages;
+
+  for (const message of normalizedMessages) {
+    if (message.type === "text") {
+      const text = normalizeOutgoingText(message.content || "");
+      if (!text) continue;
+      payloads.push({
+        type: "text",
+        text: text.slice(0, 4000),
+      });
+      continue;
+    }
+
+    if (message.type === "image") {
+      if (!message.url) continue;
+      payloads.push({
+        type: "image",
+        originalContentUrl: message.url,
+        previewImageUrl: message.previewUrl || message.url,
+      });
+    }
+  }
+
+  if (!payloads.length) return false;
+
+  const botId = queueContext.botId || queueContext.lineBotId || null;
+  let client = null;
+  try {
+    if (queueContext.channelAccessToken && queueContext.channelSecret) {
+      client = createLineClient(
+        queueContext.channelAccessToken,
+        queueContext.channelSecret,
+      );
+    } else if (queueContext.lineClient) {
+      client = queueContext.lineClient;
+    } else {
+      client = await getLineClientForContext(botId);
+    }
+  } catch (error) {
+    console.error("[Starter] LINE client init failed:", error?.message || error);
+    return false;
+  }
+
+  if (!client) {
+    console.error("[Starter] ไม่พบ LINE client สำหรับส่งข้อความเริ่มต้น");
+    return false;
+  }
+
+  const chunks = [];
+  for (let i = 0; i < payloads.length; i += 5) {
+    chunks.push(payloads.slice(i, i + 5));
+  }
+
+  try {
+    for (const chunk of chunks) {
+      await client.pushMessage(userId, chunk.length === 1 ? chunk[0] : chunk);
+    }
+    return true;
+  } catch (error) {
+    console.error(
+      "[Starter] ส่งข้อความเริ่มต้น LINE ไม่สำเร็จ:",
+      error?.message || error,
+    );
+    return false;
+  }
+}
+
+async function sendFacebookConversationStarterSequence(
+  userId,
+  messages = [],
+  queueContext = {},
+) {
+  const accessToken =
+    queueContext.facebookAccessToken ||
+    queueContext.accessToken ||
+    queueContext.pageAccessToken ||
+    null;
+  if (!accessToken) {
+    console.error("[Starter] ไม่พบ Facebook access token สำหรับส่งข้อความ");
+    return false;
+  }
+
+  const normalizedMessages = normalizeConversationStarterConfig({
+    enabled: true,
+    messages,
+  }).messages;
+  if (!normalizedMessages.length) return false;
+
+  const segments = [];
+  const assets = [];
+  let imageCounter = 0;
+
+  for (const message of normalizedMessages) {
+    if (message.type === "text") {
+      const text = normalizeOutgoingText(message.content || "");
+      if (text) segments.push(text);
+      continue;
+    }
+
+    if (message.type === "image" && message.url) {
+      imageCounter += 1;
+      const label =
+        (typeof message.alt === "string" && message.alt.trim()) ||
+        (typeof message.fileName === "string" && message.fileName.trim()) ||
+        `Starter Image ${imageCounter}`;
+      segments.push(`#[IMAGE:${label}]`);
+      assets.push({
+        label,
+        url: message.url,
+        thumbUrl: message.previewUrl || message.url,
+        fileName: message.fileName || "",
+        alt: message.alt || "",
+      });
+    }
+  }
+
+  const combinedMessage = segments
+    .map((segment) => String(segment || "").trim())
+    .filter(Boolean)
+    .join("[cut]");
+  if (!combinedMessage) return false;
+
+  const assetsMap = buildAssetsLookup(assets);
+
+  try {
+    await sendFacebookMessage(
+      userId,
+      combinedMessage,
+      accessToken,
+      { metadata: "ai_generated", selectedImageCollections: null },
+      assetsMap,
+    );
+    return true;
+  } catch (error) {
+    console.error(
+      "[Starter] ส่งข้อความเริ่มต้น Facebook ไม่สำเร็จ:",
+      error?.message || error,
+    );
+    return false;
+  }
+}
+
+async function sendConversationStarterSequence(
+  userId,
+  platform = "line",
+  messages = [],
+  queueContext = {},
+) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { success: false, reason: "no_messages" };
+  }
+
+  if (platform === "facebook") {
+    const sent = await sendFacebookConversationStarterSequence(
+      userId,
+      messages,
+      queueContext,
+    );
+    return { success: sent, reason: sent ? "sent" : "send_failed" };
+  }
+
+  const sent = await sendLineConversationStarterSequence(
+    userId,
+    messages,
+    queueContext,
+  );
+  return { success: sent, reason: sent ? "sent" : "send_failed" };
+}
+
 async function addToQueue(userId, incomingItem, options = {}) {
   console.log(`[LOG] เพิ่มข้อมูลเข้าคิวสำหรับผู้ใช้: ${userId}`);
   const queueKey = buildQueueKey(userId, options);
@@ -5961,6 +6395,71 @@ async function processFlushedMessages(
       queueContext.botName,
     );
     return;
+  }
+
+  try {
+    const starterConfig = await resolveConversationStarterForQueue(queueContext);
+    if (
+      starterConfig &&
+      starterConfig.starter &&
+      starterConfig.starter.enabled &&
+      Array.isArray(starterConfig.starter.messages) &&
+      starterConfig.starter.messages.length > 0
+    ) {
+      const hasUserHistory = await hasStarterUserHistory(
+        userId,
+        platform,
+        botIdForHistory,
+      );
+
+      if (!hasUserHistory) {
+        console.log(
+          `[Starter] เริ่มส่งข้อความเริ่มต้นแทน AI สำหรับผู้ใช้ ${userId} (${platform})`,
+        );
+        const starterSendResult = await sendConversationStarterSequence(
+          userId,
+          platform,
+          starterConfig.starter.messages,
+          queueContext,
+        );
+
+        if (starterSendResult.success) {
+          const assistantPayload = buildConversationStarterHistory(
+            starterConfig.starter.messages,
+          );
+          await saveChatHistory(
+            userId,
+            mergedContent,
+            assistantPayload,
+            platform,
+            botIdForHistory,
+            queueContext.selectedInstructions,
+            queueContext.botName,
+            { assistantSource: "instruction_starter" },
+          );
+          return;
+        }
+
+        console.warn(
+          `[Starter] ส่งข้อความเริ่มต้นไม่สำเร็จสำหรับผู้ใช้ ${userId} (${platform})`,
+        );
+        await saveChatHistory(
+          userId,
+          mergedContent,
+          "",
+          platform,
+          botIdForHistory,
+          queueContext.selectedInstructions,
+          queueContext.botName,
+        );
+        return;
+      }
+    }
+  } catch (starterError) {
+    console.error(
+      "[Starter] ไม่สามารถประมวลผลข้อความเริ่มต้นได้:",
+      starterError?.message || starterError,
+    );
   }
 
   const history = await getAIHistory(userId);
@@ -7459,6 +7958,9 @@ async function getInstructionsV2() {
   const instructions = await cursor.toArray();
   return instructions.map((instruction) => ({
     ...instruction,
+    conversationStarter: normalizeConversationStarterConfig(
+      instruction?.conversationStarter,
+    ),
     _id: instruction._id.toString(),
   }));
 }
@@ -7487,7 +7989,16 @@ app.get("/api/instructions-v2/:id", async (req, res) => {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
 
-    res.json({ success: true, instruction: { ...instruction, _id: instruction._id.toString() } });
+    res.json({
+      success: true,
+      instruction: {
+        ...instruction,
+        conversationStarter: normalizeConversationStarterConfig(
+          instruction?.conversationStarter,
+        ),
+        _id: instruction._id.toString(),
+      },
+    });
   } catch (err) {
     console.error("Error fetching instruction v2:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -7513,6 +8024,11 @@ app.post("/api/instructions-v2", async (req, res) => {
       name: name.trim(),
       description: (description || "").trim(),
       dataItems: [],
+      conversationStarter: {
+        enabled: false,
+        messages: [],
+        updatedAt: now,
+      },
       usageCount: 0,
       createdAt: now,
       updatedAt: now
@@ -7532,7 +8048,7 @@ app.post("/api/instructions-v2", async (req, res) => {
 app.put("/api/instructions-v2/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description } = req.body;
+    const { name, description, conversationStarter } = req.body || {};
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -7541,6 +8057,16 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
     const updateData = { updatedAt: new Date() };
     if (name !== undefined) updateData.name = name.trim();
     if (description !== undefined) updateData.description = description.trim();
+    if (conversationStarter !== undefined) {
+      const normalizedStarter = normalizeConversationStarterConfig(
+        conversationStarter,
+      );
+      updateData.conversationStarter = {
+        enabled: !!normalizedStarter.enabled,
+        messages: normalizedStarter.messages,
+        updatedAt: new Date(),
+      };
+    }
 
     const result = await coll.updateOne(
       { _id: toObjectId(id) },
@@ -7552,7 +8078,16 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
     }
 
     const instruction = await coll.findOne({ _id: toObjectId(id) });
-    res.json({ success: true, instruction: { ...instruction, _id: instruction._id.toString() } });
+    res.json({
+      success: true,
+      instruction: {
+        ...instruction,
+        conversationStarter: normalizeConversationStarterConfig(
+          instruction?.conversationStarter,
+        ),
+        _id: instruction._id.toString(),
+      },
+    });
   } catch (err) {
     console.error("Error updating instruction v2:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -7630,6 +8165,10 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
         createdAt: now,
         updatedAt: now
       })),
+      conversationStarter: cloneConversationStarterConfigForStorage(
+        original?.conversationStarter || {},
+        now,
+      ),
       usageCount: 0,
       createdAt: now,
       updatedAt: now
@@ -7644,6 +8183,142 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+app.post(
+  "/api/instructions-v2/starter-assets",
+  imageUpload.array("images", 10),
+  async (req, res) => {
+    try {
+      const files =
+        Array.isArray(req.files) && req.files.length
+          ? req.files
+          : req.file
+            ? [req.file]
+            : [];
+
+      if (!files.length) {
+        return res
+          .status(400)
+          .json({ success: false, error: "กรุณาอัพโหลดไฟล์รูปภาพ" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("follow_up_assets");
+      const bucket = new GridFSBucket(db, { bucketName: "followupAssets" });
+      const urlBase = PUBLIC_BASE_URL
+        ? PUBLIC_BASE_URL.replace(/\/$/, "")
+        : req.get("host")
+          ? `https://${req.get("host")}`
+          : "";
+
+      const assets = [];
+
+      for (const file of files) {
+        const image = sharp(file.buffer);
+        const metadata = await image.metadata();
+        const optimized = await image
+          .jpeg({ quality: 88, progressive: true })
+          .toBuffer();
+        const sha256 = crypto
+          .createHash("sha256")
+          .update(optimized)
+          .digest("hex");
+
+        const existing = await coll.findOne({ sha256 });
+        if (existing) {
+          assets.push({
+            id: existing._id?.toString(),
+            assetId: existing._id?.toString(),
+            url: existing.url,
+            previewUrl: existing.thumbUrl || existing.url,
+            thumbUrl: existing.thumbUrl || existing.url,
+            width: existing.width || null,
+            height: existing.height || null,
+            size: existing.size || null,
+            fileName: existing.fileName || null,
+          });
+          continue;
+        }
+
+        const thumb = await sharp(optimized)
+          .resize({
+            width: 512,
+            height: 512,
+            fit: "inside",
+            withoutEnlargement: true,
+          })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+
+        const uniqueId = crypto.randomBytes(8).toString("hex");
+        const timestamp = Date.now();
+        const baseName = `starter_${timestamp}_${uniqueId}`;
+        const fileName = `${baseName}.jpg`;
+        const thumbName = `${baseName}_thumb.jpg`;
+        const [fileId, thumbFileId] = await Promise.all([
+          uploadBufferToGridFS(bucket, fileName, optimized, {
+            contentType: "image/jpeg",
+            metadata: {
+              type: "original",
+              width: metadata.width || null,
+              height: metadata.height || null,
+            },
+          }),
+          uploadBufferToGridFS(bucket, thumbName, thumb, {
+            contentType: "image/jpeg",
+            metadata: { type: "thumb" },
+          }),
+        ]);
+
+        const assetDoc = {
+          fileName,
+          thumbName,
+          thumbFileName: thumbName,
+          fileId,
+          thumbFileId,
+          storage: "mongo",
+          sha256,
+          mime: "image/jpeg",
+          size: optimized.length,
+          width: metadata.width || null,
+          height: metadata.height || null,
+          url: `${urlBase}/assets/followup/${fileName}`,
+          thumbUrl: `${urlBase}/assets/followup/${thumbName}`,
+          originalName: file.originalname || "",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        const insertResult = await coll.insertOne(assetDoc);
+        const assetId = insertResult.insertedId?.toString();
+
+        assets.push({
+          id: assetId,
+          assetId,
+          url: assetDoc.url,
+          previewUrl: assetDoc.thumbUrl || assetDoc.url,
+          thumbUrl: assetDoc.thumbUrl || assetDoc.url,
+          width: assetDoc.width,
+          height: assetDoc.height,
+          size: assetDoc.size,
+          fileName: assetDoc.fileName,
+        });
+      }
+
+      res.json({ success: true, assets });
+    } catch (error) {
+      console.error(
+        "[Starter] อัพโหลดรูปภาพข้อความเริ่มต้นไม่สำเร็จ:",
+        error,
+      );
+      res.status(400).json({
+        success: false,
+        error: error.message || "อัพโหลดรูปภาพข้อความเริ่มต้นไม่สำเร็จ",
+      });
+    }
+  },
+);
 
 // API: Add data item to instruction
 app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
@@ -8218,6 +8893,11 @@ async function migrateToInstructionsV2() {
         name: instructionName,
         description: library.description || `Instruction จาก Library: ${library.date}`,
         dataItems: dataItems,
+        conversationStarter: {
+          enabled: false,
+          messages: [],
+          updatedAt: now,
+        },
         usageCount: 0,
         libraryDate: library.date, // เก็บ reference ไว้
         createdAt: now,
@@ -14512,6 +15192,11 @@ app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
         library.description ||
         `Instruction จาก Library: ${library.displayDate || date}`,
       dataItems,
+      conversationStarter: {
+        enabled: false,
+        messages: [],
+        updatedAt: now,
+      },
       usageCount: 0,
       libraryDate: date,
       createdAt: now,
@@ -18466,6 +19151,15 @@ ${dataItemsSummary}
 - **delete_data_item** — ลบชุดข้อมูลทั้งอัน (ต้องยืนยันด้วย confirmTitle ที่ตรงกับชื่อ — เรียกครั้งแรกไม่ต้องใส่ confirmTitle เพื่อดู preview ก่อน)
 ใช้เมื่อผู้ใช้ต้องการจัดการโครงสร้างข้อมูล เช่น เพิ่มตารางสินค้า, ลบคอลัมน์ที่ไม่ใช้, ลบชุดข้อมูลเก่า
 
+# ระบบข้อความเริ่มต้นการสนทนา (Conversation Starter)
+คุณสามารถจัดการข้อความเริ่มต้นที่ส่งแทนคำตอบ AI ครั้งแรกได้:
+- **get_conversation_starter** — ดูสถานะเปิด/ปิด + ลำดับข้อความ/รูปภาพปัจจุบัน
+- **set_conversation_starter_enabled** — เปิดหรือปิดระบบข้อความเริ่มต้น
+- **add_conversation_starter_message** — เพิ่มข้อความหรือรูปภาพเข้า sequence
+- **update_conversation_starter_message** — แก้ไขข้อความ/รูปภาพตาม messageId
+- **remove_conversation_starter_message** — ลบข้อความตาม messageId
+- **reorder_conversation_starter_message** — จัดลำดับขึ้น/ลง หรือย้ายไป index ที่ต้องการ
+
 # ระบบติดตามลูกค้า (Follow-Up System)
 คุณสามารถจัดการระบบติดตามลูกค้าอัตโนมัติผ่าน tools ที่มี:
 - **get_followup_config** — ดูสถานะปัจจุบัน (เปิด/ปิด, จำนวน rounds, prompt)
@@ -18749,6 +19443,9 @@ app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req
         }
         return copy;
       }),
+      conversationStarter: normalizeConversationStarterConfig(
+        inst.conversationStarter,
+      ),
       note: (note || "").substring(0, 500),
       snapshotAt: new Date(),
       savedBy: "admin_ui",
@@ -19288,6 +19985,20 @@ function buildToolSummary(toolName, result) {
 
     case 'update_text_content':
       return `✏️ อัปเดตข้อความสำเร็จ`;
+
+    // Conversation Starter tools
+    case 'get_conversation_starter':
+      return `🚀 Starter: ${result.enabled ? 'เปิด' : 'ปิด'} (${result.messageCount || result.messages?.length || 0} รายการ)`;
+    case 'set_conversation_starter_enabled':
+      return `🚀 Starter ${result.enabled ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}แล้ว`;
+    case 'add_conversation_starter_message':
+      return `➕ เพิ่มข้อความเริ่มต้นแล้ว (รวม ${result.messageCount || result.messages?.length || 0} รายการ)`;
+    case 'update_conversation_starter_message':
+      return `✏️ แก้ไขข้อความเริ่มต้น ${result.messageId || ''} สำเร็จ`;
+    case 'remove_conversation_starter_message':
+      return `🗑️ ลบข้อความเริ่มต้นแล้ว (เหลือ ${result.messageCount || result.messages?.length || 0} รายการ)`;
+    case 'reorder_conversation_starter_message':
+      return `↕️ จัดลำดับข้อความเริ่มต้นสำเร็จ`;
 
     // Follow-Up tools
     case 'get_followup_config':
