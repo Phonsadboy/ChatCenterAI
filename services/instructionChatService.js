@@ -146,14 +146,14 @@ class InstructionChatService {
         };
     }
 
-    async get_text_content(instructionId, { itemId, startChar = 0, length = 1000 }) {
+    async get_text_content(instructionId, { itemId, startChar = 0, length = Number.MAX_SAFE_INTEGER }) {
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
         const item = this._getDataItem(inst, itemId);
         if (!item || item.type !== "text") return { error: "ไม่พบชุดข้อมูลข้อความ" };
 
         const content = item.content || "";
-        const len = Math.min(length, 2000);
+        const len = length;
         const endChar = Math.min(startChar + len, content.length);
 
         return {
@@ -1473,7 +1473,7 @@ class InstructionChatService {
             { type: "function", function: { name: "get_instruction_overview", description: "ดูภาพรวมของ instruction: ชื่อ, description, จำนวน data items, สรุปแต่ละ item (title, type, row count, column names) — ไม่ดึงเนื้อหาจริง", parameters: { type: "object", properties: {} } } },
             { type: "function", function: { name: "get_data_item_detail", description: "ดูข้อมูลของ data item: ถ้าเป็น text ดึง content บางส่วน, ถ้าเป็น table ดึง columns + preview 5 rows แรก", parameters: { type: "object", properties: { itemId: { type: "string", description: "ID ของ data item" } }, required: ["itemId"] } } },
             { type: "function", function: { name: "get_rows", description: "ดึงแถวจาก data item ประเภทตาราง แบบแบ่งหน้า", parameters: { type: "object", properties: { itemId: { type: "string" }, startRow: { type: "number", description: "แถวเริ่มต้น (0-indexed, default 0)" }, limit: { type: "number", description: "จำนวนแถว (max 50, default 20)" }, columns: { type: "array", items: { type: "string" }, description: "เลือกเฉพาะคอลัมน์ (optional)" } }, required: ["itemId"] } } },
-            { type: "function", function: { name: "get_text_content", description: "ดึงเนื้อหาของ data item ประเภท text แบบแบ่ง chunk", parameters: { type: "object", properties: { itemId: { type: "string" }, startChar: { type: "number" }, length: { type: "number", description: "จำนวนตัวอักษร (max 2000)" } }, required: ["itemId"] } } },
+            { type: "function", function: { name: "get_text_content", description: "ดึงเนื้อหาของ data item ประเภท text", parameters: { type: "object", properties: { itemId: { type: "string" }, startChar: { type: "number" }, length: { type: "number", description: "จำนวนตัวอักษร" } }, required: ["itemId"] } } },
             { type: "function", function: { name: "search_in_table", description: "ค้นหาแถวในตารางที่มี keyword ตรงกับคอลัมน์ที่ระบุ (หรือทุกคอลัมน์)", parameters: { type: "object", properties: { itemId: { type: "string" }, keyword: { type: "string" }, column: { type: "string", description: "ค้นเฉพาะคอลัมน์นี้ (optional)" }, matchMode: { type: "string", enum: ["contains", "exact", "startsWith"] }, limit: { type: "number" } }, required: ["itemId", "keyword"] } } },
             { type: "function", function: { name: "search_content", description: "ค้นหาเนื้อหาเกี่ยวข้องทั้ง instruction ด้วย Hybrid Search (keyword + semantic embedding) — ค้นทั้ง text content และ table data ทุก item — ส่งคืน snippet + ตำแหน่ง + relevance score", parameters: { type: "object", properties: { query: { type: "string", description: "สิ่งที่ต้องการค้นหา (รองรับภาษาธรรมชาติ)" }, limit: { type: "number" } }, required: ["query"] } } },
             // ── Instruction Write Tools ──
