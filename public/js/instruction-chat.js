@@ -32,7 +32,11 @@
         abortController: null,
         pendingImages: [], // { file, dataUrl }
         activeRequestId: null, // for SSE reconnect
+        isUserNearBottom: true,
     };
+
+    const SCROLL_BOTTOM_THRESHOLD_PX = 48;
+    let scrollToBottomRafId = null;
 
     // ─── DOM ────────────────────────────────────────────────────────────
 
@@ -111,6 +115,7 @@
         if ((!rawText.trim() && state.pendingImages.length === 0) || !state.selectedId || state.sending) return;
 
         const historyForRequest = [...state.history];
+        state.isUserNearBottom = isNearMessagesBottom();
         state.sending = true;
         updateSendButton();
         dom.input.value = "";
@@ -383,7 +388,7 @@
             const now = performance.now();
             if (!force && now - lastStreamScrollAt < 40) return;
             lastStreamScrollAt = now;
-            scrollToBottom();
+            scrollToBottom(force);
         };
 
         const getStreamCharsPerSecond = (lag) => {
@@ -484,7 +489,7 @@
             streamTextEl = null;
             lastRenderedContent = fullContent;
             hasRenderedContent = fullContent.length > 0;
-            scrollStreamToBottom(true);
+            scrollStreamToBottom();
         };
 
         const scheduleRender = () => {
@@ -852,6 +857,7 @@
 
         renderContentNow(true);
         renderTotalElapsedMeta(errorHandled);
+        scrollToBottom(true);
         return { fullContent };
     }
 
@@ -860,6 +866,7 @@
     async function resumeActiveRequest(requestId) {
         if (state.sending) return; // Already processing
 
+        state.isUserNearBottom = isNearMessagesBottom();
         state.sending = true;
         updateSendButton();
 
@@ -1400,6 +1407,7 @@
         state.history = [];
         state.totalTokens = 0;
         state.totalChanges = 0;
+        state.isUserNearBottom = true;
 
         // Update UI
         dom.activeName.textContent = name || "Untitled";
@@ -1588,6 +1596,14 @@
             updateSendButton();
             autoResize(dom.input);
         });
+
+        dom.messages.addEventListener("scroll", () => {
+            state.isUserNearBottom = isNearMessagesBottom();
+            if (state.sending && !state.isUserNearBottom && scrollToBottomRafId) {
+                cancelAnimationFrame(scrollToBottomRafId);
+                scrollToBottomRafId = null;
+            }
+        }, { passive: true });
 
         // Image attach
         if (dom.attach) {
@@ -1864,9 +1880,27 @@
         return html;
     }
 
-    function scrollToBottom() {
-        requestAnimationFrame(() => {
+    function isNearMessagesBottom() {
+        if (!dom.messages) return true;
+        const distanceFromBottom = dom.messages.scrollHeight - (dom.messages.scrollTop + dom.messages.clientHeight);
+        return distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX;
+    }
+
+    function shouldAutoScroll(force = false) {
+        if (force) return true;
+        if (!state.sending) return true;
+        return state.isUserNearBottom;
+    }
+
+    function scrollToBottom(force = false) {
+        if (!dom.messages || !shouldAutoScroll(force)) return;
+        if (scrollToBottomRafId) cancelAnimationFrame(scrollToBottomRafId);
+        const forced = force;
+        scrollToBottomRafId = requestAnimationFrame(() => {
+            scrollToBottomRafId = null;
+            if (!dom.messages || !shouldAutoScroll(forced)) return;
             dom.messages.scrollTop = dom.messages.scrollHeight;
+            state.isUserNearBottom = true;
         });
     }
 
