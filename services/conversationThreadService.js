@@ -30,7 +30,14 @@ class ConversationThreadService {
      * Create or update a conversation thread when a message is saved.
      * This is called from saveChatHistory() in index.js.
      */
-    async upsertThread(senderId, platform, botId, instructionRefs = [], botName = null) {
+    async upsertThread(
+        senderId,
+        platform,
+        botId,
+        instructionRefs = [],
+        botName = null,
+        instructionMeta = [],
+    ) {
         if (!senderId) return null;
 
         const threadId = this._generateThreadId(senderId, botId, platform);
@@ -70,7 +77,12 @@ class ConversationThreadService {
             setAlways.botName = botName;
         }
 
-        // Merge instruction refs (addToSet each one)
+        const normalizedInstructionMeta = this._normalizeInstructionMeta(
+            instructionMeta,
+            instructionRefs,
+        );
+
+        // Merge instruction refs/meta (addToSet each one)
         const addToSetOps = {};
         if (Array.isArray(instructionRefs) && instructionRefs.length > 0) {
             addToSetOps.instructionRefs = {
@@ -78,6 +90,11 @@ class ConversationThreadService {
                     instructionId: r.instructionId,
                     version: r.version != null ? r.version : null,
                 })),
+            };
+        }
+        if (normalizedInstructionMeta.length > 0) {
+            addToSetOps.instructionMeta = {
+                $each: normalizedInstructionMeta,
             };
         }
 
@@ -105,6 +122,111 @@ class ConversationThreadService {
         }
 
         return threadId;
+    }
+
+    _normalizeInstructionMeta(instructionMeta = [], instructionRefs = []) {
+        const normalized = [];
+        const seen = new Set();
+
+        const pushMeta = (candidate = {}) => {
+            const instructionId =
+                typeof candidate.instructionId === "string"
+                    ? candidate.instructionId.trim()
+                    : "";
+            if (!instructionId) return;
+            const versionNumber =
+                Number.isInteger(candidate.versionNumber) && candidate.versionNumber > 0
+                    ? candidate.versionNumber
+                    : Number.isInteger(candidate.version) && candidate.version > 0
+                        ? candidate.version
+                        : null;
+            const versionLabel =
+                typeof candidate.versionLabel === "string" && candidate.versionLabel.trim()
+                    ? candidate.versionLabel.trim()
+                    : versionNumber != null
+                        ? `v${versionNumber}`
+                        : "legacy";
+            const source =
+                typeof candidate.source === "string" && candidate.source.trim()
+                    ? candidate.source.trim()
+                    : versionNumber != null
+                        ? "resolved"
+                        : "legacy";
+            const key = `${instructionId}::${versionLabel}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            normalized.push({
+                instructionId,
+                versionNumber,
+                versionLabel,
+                source,
+            });
+        };
+
+        if (Array.isArray(instructionMeta)) {
+            instructionMeta.forEach((entry) => {
+                if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+                pushMeta(entry);
+            });
+        }
+        if (Array.isArray(instructionRefs)) {
+            instructionRefs.forEach((entry) => {
+                if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+                if (!entry.instructionId) return;
+                pushMeta({
+                    instructionId: entry.instructionId,
+                    versionNumber: Number.isInteger(entry.version) ? entry.version : null,
+                    source: Number.isInteger(entry.version) ? "resolved" : "legacy",
+                });
+            });
+        }
+
+        return normalized;
+    }
+
+    _buildInstructionQuery(instructionId, version = null) {
+        const normalizedInstructionId =
+            typeof instructionId === "string" ? instructionId.trim() : "";
+        if (!normalizedInstructionId) return {};
+
+        const parsedVersion = Number(version);
+        if (Number.isInteger(parsedVersion) && parsedVersion > 0) {
+            return {
+                $or: [
+                    {
+                        instructionRefs: {
+                            $elemMatch: {
+                                instructionId: normalizedInstructionId,
+                                version: parsedVersion,
+                            },
+                        },
+                    },
+                    {
+                        instructionMeta: {
+                            $elemMatch: {
+                                instructionId: normalizedInstructionId,
+                                versionNumber: parsedVersion,
+                            },
+                        },
+                    },
+                    {
+                        instructionMeta: {
+                            $elemMatch: {
+                                instructionId: normalizedInstructionId,
+                                versionLabel: `v${parsedVersion}`,
+                            },
+                        },
+                    },
+                ],
+            };
+        }
+
+        return {
+            $or: [
+                { "instructionRefs.instructionId": normalizedInstructionId },
+                { "instructionMeta.instructionId": normalizedInstructionId },
+            ],
+        };
     }
 
     /**
@@ -225,14 +347,7 @@ class ConversationThreadService {
      * Get conversation threads for a specific instruction + version with advanced filters.
      */
     async getThreadsByInstruction(instructionId, version, filters = {}, pagination = {}) {
-        const query = {
-            "instructionRefs.instructionId": instructionId,
-        };
-
-        // Version filter — null means "latest" (all versions)
-        if (version != null) {
-            query["instructionRefs.version"] = version;
-        }
+        const query = this._buildInstructionQuery(instructionId, version);
 
         // Outcome filter
         if (filters.outcome && Array.isArray(filters.outcome) && filters.outcome.length > 0) {
@@ -321,26 +436,44 @@ class ConversationThreadService {
 
         const [messages, totalCount] = await Promise.all([
             this.chatColl.find(query, {
-                projection: { senderId: 1, role: 1, content: 1, timestamp: 1, source: 1 },
+                projection: {
+                    senderId: 1,
+                    role: 1,
+                    content: 1,
+                    timestamp: 1,
+                    source: 1,
+                    instructionRefs: 1,
+                    instructionMeta: 1,
+                },
             }).sort({ timestamp: 1 }).skip(skip).limit(limit).toArray(),
             this.chatColl.countDocuments(query),
         ]);
 
         // Sanitize content (hide base64 images, limit length)
         const sanitized = messages.map(m => {
-            let content = m.content || "";
+            let content =
+                typeof m.content === "string" ? m.content : JSON.stringify(m.content || "");
             // Strip base64 images
             content = content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, "[รูปภาพ]");
             // Limit long messages
             if (content.length > 2000) {
                 content = content.substring(0, 2000) + "... (ตัดเหลือ 2,000 ตัวอักษร)";
             }
+            const messageInstructionRefs = Array.isArray(m.instructionRefs)
+                ? m.instructionRefs
+                : [];
+            const messageInstructionMeta = this._normalizeInstructionMeta(
+                m.instructionMeta,
+                messageInstructionRefs,
+            );
             return {
                 _id: m._id?.toString(),
                 role: m.role,
                 content,
                 timestamp: m.timestamp,
                 source: m.source || (m.role === "user" ? "user" : "ai"),
+                instructionRefs: messageInstructionRefs,
+                instructionMeta: messageInstructionMeta,
             };
         });
 
@@ -362,8 +495,7 @@ class ConversationThreadService {
      */
     async searchInThreads(instructionId, version, keyword, limit = 20) {
         // First get threadIds for this instruction
-        const threadQuery = { "instructionRefs.instructionId": instructionId };
-        if (version != null) threadQuery["instructionRefs.version"] = version;
+        const threadQuery = this._buildInstructionQuery(instructionId, version);
 
         const threads = await this.threadColl.find(threadQuery, {
             projection: { threadId: 1, senderId: 1, botId: 1, platform: 1 },
@@ -396,8 +528,7 @@ class ConversationThreadService {
      * Get available filter options for a given instruction
      */
     async getFilterOptions(instructionId, version) {
-        const query = { "instructionRefs.instructionId": instructionId };
-        if (version != null) query["instructionRefs.version"] = version;
+        const query = this._buildInstructionQuery(instructionId, version);
 
         const threads = await this.threadColl.find(query, {
             projection: { outcome: 1, orderedProducts: 1, platform: 1, botId: 1, botName: 1, tags: 1 },
@@ -443,8 +574,7 @@ class ConversationThreadService {
      * Get aggregate analytics for conversations using a specific instruction
      */
     async getConversationAnalytics(instructionId, version, dateRange = {}) {
-        const query = { "instructionRefs.instructionId": instructionId };
-        if (version != null) query["instructionRefs.version"] = version;
+        const query = this._buildInstructionQuery(instructionId, version);
         if (dateRange.from || dateRange.to) {
             query["stats.lastMessageAt"] = {};
             if (dateRange.from) query["stats.lastMessageAt"].$gte = new Date(dateRange.from);
@@ -595,16 +725,26 @@ class ConversationThreadService {
 
             // Look up instruction refs from bot config
             let instructionRefs = [];
+            let instructionMeta = [];
             let botName = null;
             if (botId && botMap.has(botId)) {
                 const botInfo = botMap.get(botId);
                 botName = botInfo.name;
                 instructionRefs = (botInfo.selectedInstructions || [])
-                    .filter(s => s && s.instructionId)
-                    .map(s => ({
-                        instructionId: s.instructionId,
-                        version: s.version != null ? s.version : null,
-                    }));
+                    .map((s) => {
+                        if (s && typeof s === "object" && s.instructionId) {
+                            return {
+                                instructionId: s.instructionId,
+                                version: s.version != null ? s.version : null,
+                            };
+                        }
+                        if (typeof s === "string" && s.trim()) {
+                            return { instructionId: s.trim(), version: null };
+                        }
+                        return null;
+                    })
+                    .filter(Boolean);
+                instructionMeta = this._normalizeInstructionMeta([], instructionRefs);
             }
 
             const durationMinutes = group.firstMessageAt && group.lastMessageAt
@@ -622,6 +762,7 @@ class ConversationThreadService {
                         botId: botId || null,
                         botName,
                         instructionRefs,
+                        instructionMeta,
                         stats: {
                             totalMessages: group.totalMessages,
                             userMessages: group.userMessages,
@@ -663,6 +804,10 @@ class ConversationThreadService {
             botId: thread.botId,
             botName: thread.botName || null,
             instructionRefs: thread.instructionRefs || [],
+            instructionMeta: this._normalizeInstructionMeta(
+                thread.instructionMeta,
+                thread.instructionRefs,
+            ),
             stats: thread.stats || {},
             hasOrder: thread.hasOrder || false,
             orderIds: thread.orderIds || [],
@@ -684,6 +829,9 @@ class ConversationThreadService {
             await this.threadColl.createIndex({ threadId: 1 }, { unique: true });
             await this.threadColl.createIndex(
                 { "instructionRefs.instructionId": 1, "instructionRefs.version": 1, updatedAt: -1 }
+            );
+            await this.threadColl.createIndex(
+                { "instructionMeta.instructionId": 1, "instructionMeta.versionNumber": 1, updatedAt: -1 }
             );
             await this.threadColl.createIndex(
                 { senderId: 1, botId: 1, platform: 1 }

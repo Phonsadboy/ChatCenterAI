@@ -1438,6 +1438,34 @@ async function saveChatHistory(
   const coll = db.collection("chat_history");
   const normalizedOptions =
     options && typeof options === "object" ? options : {};
+  const normalizedInstructionRefs = [];
+  if (Array.isArray(instructionRefs)) {
+    const seenInstructionRefs = new Set();
+    for (const entry of instructionRefs) {
+      let instructionId = "";
+      let version = null;
+      if (
+        entry &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        typeof entry.instructionId === "string"
+      ) {
+        instructionId = entry.instructionId.trim();
+        version = Number.isInteger(entry.version) ? entry.version : null;
+      } else if (typeof entry === "string" && entry.trim()) {
+        instructionId = entry.trim();
+      }
+      if (!instructionId) continue;
+      const key = `${instructionId}::${version === null ? "legacy" : version}`;
+      if (seenInstructionRefs.has(key)) continue;
+      seenInstructionRefs.add(key);
+      normalizedInstructionRefs.push({ instructionId, version });
+    }
+  }
+  const normalizedInstructionMeta = normalizeInstructionMetaRecords(
+    normalizedOptions.instructionMeta,
+    normalizedInstructionRefs,
+  );
   const assistantSource =
     typeof normalizedOptions.assistantSource === "string" &&
       normalizedOptions.assistantSource.trim()
@@ -1456,7 +1484,12 @@ async function saveChatHistory(
     platform,
     botId,
     source: "user",
-    ...(Array.isArray(instructionRefs) && instructionRefs.length > 0 ? { instructionRefs } : {}),
+    ...(normalizedInstructionRefs.length > 0
+      ? { instructionRefs: normalizedInstructionRefs }
+      : {}),
+    ...(normalizedInstructionMeta.length > 0
+      ? { instructionMeta: normalizedInstructionMeta }
+      : {}),
     ...(botName ? { botName } : {}),
   };
   const userInsertResult = await coll.insertOne(userMessageDoc);
@@ -1530,7 +1563,12 @@ async function saveChatHistory(
       platform,
       botId,
       source: assistantSource,
-      ...(Array.isArray(instructionRefs) && instructionRefs.length > 0 ? { instructionRefs } : {}),
+      ...(normalizedInstructionRefs.length > 0
+        ? { instructionRefs: normalizedInstructionRefs }
+        : {}),
+      ...(normalizedInstructionMeta.length > 0
+        ? { instructionMeta: normalizedInstructionMeta }
+        : {}),
       ...(botName ? { botName } : {}),
     };
     const assistantInsertResult = await coll.insertOne(assistantMessageDoc);
@@ -1564,9 +1602,18 @@ async function saveChatHistory(
   // Update conversation thread (background, non-blocking)
   try {
     const threadService = new ConversationThreadService(db);
-    threadService.upsertThread(userId, platform, botId, instructionRefs, botName).catch((err) => {
-      console.warn("[ConversationThread] upsert error:", err.message);
-    });
+    threadService
+      .upsertThread(
+        userId,
+        platform,
+        botId,
+        normalizedInstructionRefs,
+        botName,
+        normalizedInstructionMeta,
+      )
+      .catch((err) => {
+        console.warn("[ConversationThread] upsert error:", err.message);
+      });
   } catch (threadErr) {
     console.warn("[ConversationThread] init error:", threadErr.message);
   }
@@ -5914,7 +5961,9 @@ async function resolveConversationStarterForQueue(queueContext = {}) {
     : [];
   if (!rawSelections.length) return null;
 
-  const normalizedSelections = normalizeInstructionSelections(rawSelections);
+  const normalizedSelections = normalizeLatestOnlyInstructionSelections(
+    rawSelections,
+  );
   const objectSelections = normalizedSelections.filter(
     isInstructionSelectionObject,
   );
@@ -6312,6 +6361,21 @@ async function processFlushedMessages(
     queueContext.pageAccessToken ||
     null;
   const isLinePlatform = queueContext.botType === "line" || platform === "line";
+  const runtimeInstructionContext = await resolveInstructionMetaForRuntime(
+    queueContext.selectedInstructions,
+    null,
+    { policy: "latest_only" },
+  );
+  const runtimeInstructionRefs = runtimeInstructionContext.instructionRefs;
+  const runtimeInstructionMeta = runtimeInstructionContext.instructionMeta;
+  const runtimeQueueContext = {
+    ...queueContext,
+    selectedInstructions: runtimeInstructionContext.promptSelections,
+  };
+  const buildHistoryOptions = (baseOptions = {}) => ({
+    ...(baseOptions && typeof baseOptions === "object" ? baseOptions : {}),
+    instructionMeta: runtimeInstructionMeta,
+  });
 
   async function replyWithLineText(messageText) {
     if (!isLinePlatform) {
@@ -6365,8 +6429,9 @@ async function processFlushedMessages(
       "",
       platform,
       botIdForHistory,
-      queueContext.selectedInstructions,
+      runtimeInstructionRefs,
       queueContext.botName,
+      buildHistoryOptions(),
     );
     return;
   }
@@ -6394,8 +6459,9 @@ async function processFlushedMessages(
       "",
       platform,
       botIdForHistory,
-      queueContext.selectedInstructions,
+      runtimeInstructionRefs,
       queueContext.botName,
+      buildHistoryOptions(),
     );
     return;
   }
@@ -6405,7 +6471,16 @@ async function processFlushedMessages(
     console.log(
       `[LOG] Bot ปิดการตอบอัตโนมัติ - บันทึกข้อความโดยไม่ตอบกลับสำหรับผู้ใช้: ${userId}`,
     );
-    await saveChatHistory(userId, mergedContent, "", platform, botIdForHistory, queueContext.selectedInstructions, queueContext.botName);
+    await saveChatHistory(
+      userId,
+      mergedContent,
+      "",
+      platform,
+      botIdForHistory,
+      runtimeInstructionRefs,
+      queueContext.botName,
+      buildHistoryOptions(),
+    );
     return;
   }
 
@@ -6419,7 +6494,16 @@ async function processFlushedMessages(
   const systemAiEnabled = await getSettingValue("aiEnabled", true);
   if (!systemAiEnabled) {
     console.log(`[LOG] AI ถูกปิดใช้งานในระดับระบบ`);
-    await saveChatHistory(userId, mergedContent, "", platform, botIdForHistory, queueContext.selectedInstructions, queueContext.botName);
+    await saveChatHistory(
+      userId,
+      mergedContent,
+      "",
+      platform,
+      botIdForHistory,
+      runtimeInstructionRefs,
+      queueContext.botName,
+      buildHistoryOptions(),
+    );
     return;
   }
 
@@ -6434,14 +6518,15 @@ async function processFlushedMessages(
       "",
       platform,
       botIdForHistory,
-      queueContext.selectedInstructions,
+      runtimeInstructionRefs,
       queueContext.botName,
+      buildHistoryOptions(),
     );
     return;
   }
 
   try {
-    const starterConfig = await resolveConversationStarterForQueue(queueContext);
+    const starterConfig = await resolveConversationStarterForQueue(runtimeQueueContext);
     if (
       starterConfig &&
       starterConfig.starter &&
@@ -6463,7 +6548,7 @@ async function processFlushedMessages(
           userId,
           platform,
           starterConfig.starter.messages,
-          queueContext,
+          runtimeQueueContext,
         );
 
         if (starterSendResult.success) {
@@ -6476,9 +6561,9 @@ async function processFlushedMessages(
             assistantPayload,
             platform,
             botIdForHistory,
-            queueContext.selectedInstructions,
+            runtimeInstructionRefs,
             queueContext.botName,
-            { assistantSource: "instruction_starter" },
+            buildHistoryOptions({ assistantSource: "instruction_starter" }),
           );
           return;
         }
@@ -6492,8 +6577,9 @@ async function processFlushedMessages(
           "",
           platform,
           botIdForHistory,
-          queueContext.selectedInstructions,
+          runtimeInstructionRefs,
           queueContext.botName,
+          buildHistoryOptions(),
         );
         return;
       }
@@ -6590,7 +6676,7 @@ async function processFlushedMessages(
     );
     const systemInstructions = await buildSystemInstructionsWithContext(
       history,
-      queueContext,
+      runtimeQueueContext,
     );
 
     if (hasImages) {
@@ -6646,8 +6732,9 @@ async function processFlushedMessages(
     assistantMsg,
     platform,
     botIdForHistory,
-    queueContext.selectedInstructions,
+    runtimeInstructionRefs,
     queueContext.botName,
+    buildHistoryOptions(),
   );
 
   // แจ้งเตือนแอดมินเมื่อมีข้อความใหม่จากผู้ใช้
@@ -7107,6 +7194,13 @@ async function handleLineEvent(event, queueOptions = {}) {
 
   const userId = event.source.userId || "unknownUser";
   console.log(`[LOG] รับคำขอจากผู้ใช้: ${userId}`);
+  const lineRuntimeInstructionContext = await resolveInstructionMetaForRuntime(
+    queueOptions.selectedInstructions,
+    null,
+    { policy: "latest_only" },
+  );
+  const lineRuntimeInstructionRefs = lineRuntimeInstructionContext.instructionRefs;
+  const lineRuntimeInstructionMeta = lineRuntimeInstructionContext.instructionMeta;
 
   // กรณีตรวจจับคีย์เวิร์ด #DELETEMANY (ลบประวัติทั้งหมดทันที)
   if (event.type === "message" && event.message.type === "text") {
@@ -7166,6 +7260,9 @@ async function handleLineEvent(event, queueOptions = {}) {
         "แอดมิน Venus สวัสดีค่ะ",
         "line",
         botIdForHistory,
+        lineRuntimeInstructionRefs,
+        null,
+        { instructionMeta: lineRuntimeInstructionMeta },
       );
       console.log(`[LOG] เปลี่ยนเป็นโหมดแอดมินเรียบร้อยแล้ว`);
       return;
@@ -7192,6 +7289,9 @@ async function handleLineEvent(event, queueOptions = {}) {
         "แอดมิน Venus ขอตัวก่อนนะคะ",
         "line",
         botIdForHistory,
+        lineRuntimeInstructionRefs,
+        null,
+        { instructionMeta: lineRuntimeInstructionMeta },
       );
       console.log(`[LOG] เปลี่ยนเป็นโหมด AI เรียบร้อยแล้ว`);
       return;
@@ -7363,6 +7463,9 @@ async function handleLineEvent(event, queueOptions = {}) {
             filteredReply,
             "line",
             botIdForHistory,
+            lineRuntimeInstructionRefs,
+            null,
+            { instructionMeta: lineRuntimeInstructionMeta },
           );
         } catch (historyError) {
           console.error(
@@ -8078,7 +8181,16 @@ app.post("/api/instructions-v2", async (req, res) => {
     };
 
     const result = await coll.insertOne(instruction);
-    instruction._id = result.insertedId.toString();
+    const createdId = result.insertedId;
+    instruction._id = createdId.toString();
+    const snapshotResult = await createDashboardSnapshotOrThrow(
+      createdId,
+      "create_instruction",
+      db,
+      "dashboard_api",
+    );
+    instruction.version = snapshotResult.version;
+    instruction.updatedAt = snapshotResult.snapshotAt;
 
     res.json({ success: true, instruction });
   } catch (err) {
@@ -8119,6 +8231,12 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    await createDashboardSnapshotOrThrow(
+      id,
+      "update_instruction",
+      db,
+      "dashboard_api",
+    );
 
     const instruction = await coll.findOne({ _id: toObjectId(id) });
     res.json({
@@ -8145,6 +8263,16 @@ app.delete("/api/instructions-v2/:id", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
+    const target = await coll.findOne({ _id: toObjectId(id) });
+    if (!target) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+    await createDashboardSnapshotOrThrow(
+      id,
+      "delete_instruction",
+      db,
+      "dashboard_api",
+    );
     const result = await coll.deleteOne({ _id: toObjectId(id) });
 
     if (result.deletedCount === 0) {
@@ -8218,7 +8346,16 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
     };
 
     const result = await coll.insertOne(duplicate);
-    duplicate._id = result.insertedId.toString();
+    const duplicateId = result.insertedId;
+    duplicate._id = duplicateId.toString();
+    const snapshotResult = await createDashboardSnapshotOrThrow(
+      duplicateId,
+      "duplicate_instruction",
+      db,
+      "dashboard_api",
+    );
+    duplicate.version = snapshotResult.version;
+    duplicate.updatedAt = snapshotResult.snapshotAt;
 
     res.json({ success: true, instruction: duplicate });
   } catch (err) {
@@ -8409,6 +8546,12 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    await createDashboardSnapshotOrThrow(
+      id,
+      "add_data_item",
+      db,
+      "dashboard_api",
+    );
 
     res.json({ success: true, dataItem: newItem });
   } catch (err) {
@@ -8455,6 +8598,12 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
         }
       }
     );
+    await createDashboardSnapshotOrThrow(
+      id,
+      "reorder_data_items",
+      db,
+      "dashboard_api",
+    );
 
     res.json({ success: true });
   } catch (err) {
@@ -8495,6 +8644,12 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
       { _id: toObjectId(id) },
       { $set: updateFields }
     );
+    await createDashboardSnapshotOrThrow(
+      id,
+      "update_data_item",
+      db,
+      "dashboard_api",
+    );
 
     const updatedInstruction = await coll.findOne({ _id: toObjectId(id) });
     const updatedItem = updatedInstruction.dataItems[itemIndex];
@@ -8526,6 +8681,12 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
+    await createDashboardSnapshotOrThrow(
+      id,
+      "delete_data_item",
+      db,
+      "dashboard_api",
+    );
 
     res.json({ success: true });
   } catch (err) {
@@ -8569,6 +8730,12 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
         $push: { dataItems: duplicateItem },
         $set: { updatedAt: now }
       }
+    );
+    await createDashboardSnapshotOrThrow(
+      id,
+      "duplicate_data_item",
+      db,
+      "dashboard_api",
     );
 
     res.json({ success: true, dataItem: duplicateItem });
@@ -8760,6 +8927,19 @@ app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
     const service = new InstructionDataService(db);
 
     const results = await service.executeImport(mappings, filePath);
+    for (const result of results) {
+      if (!result || result.success !== true) continue;
+      if (!["created", "updated"].includes(result.action)) continue;
+      if (!result.instructionObjectId) continue;
+      const snapshotResult = await createDashboardSnapshotOrThrow(
+        result.instructionObjectId,
+        "import_sheets",
+        db,
+        "dashboard_api",
+      );
+      result.version = snapshotResult.version;
+      result.snapshotAt = snapshotResult.snapshotAt;
+    }
 
     // Clean up
     try { fs.unlinkSync(filePath); } catch (e) { }
@@ -9618,7 +9798,9 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
   const rawSelections = Array.isArray(queueContext.selectedInstructions)
     ? queueContext.selectedInstructions
     : [];
-  const normalizedSelections = normalizeInstructionSelections(rawSelections);
+  const normalizedSelections = normalizeLatestOnlyInstructionSelections(
+    rawSelections,
+  );
   const botKind = queueContext.botType || queueContext.platform || "line";
   const supportsCustomSelections =
     normalizedSelections.length > 0 && ["line", "facebook"].includes(botKind);
@@ -10804,6 +10986,24 @@ function generateInstructionId() {
   return `inst_${crypto.randomBytes(6).toString("hex")}`;
 }
 
+const LATEST_ONLY_INSTRUCTION_RUNTIME = true;
+const INSTRUCTION_METRICS = {
+  snapshot_created_total: 0,
+  snapshot_failed_total: 0,
+  chat_meta_legacy_total: 0,
+  instruction_id_invalid_total: 0,
+};
+
+function incrementInstructionMetric(metric, amount = 1) {
+  if (!metric || !Object.prototype.hasOwnProperty.call(INSTRUCTION_METRICS, metric))
+    return;
+  const normalizedAmount = Number.isFinite(Number(amount))
+    ? Math.max(0, Math.floor(Number(amount)))
+    : 0;
+  if (normalizedAmount === 0) return;
+  INSTRUCTION_METRICS[metric] += normalizedAmount;
+}
+
 function isInstructionSelectionObject(entry) {
   return (
     !!entry &&
@@ -10848,6 +11048,16 @@ function normalizeInstructionSelections(selections = []) {
   }
 
   return normalized;
+}
+
+function normalizeLatestOnlyInstructionSelections(selections = []) {
+  const normalized = normalizeInstructionSelections(selections);
+  return normalized.map((entry) => {
+    if (isInstructionSelectionObject(entry)) {
+      return { instructionId: entry.instructionId, version: null };
+    }
+    return entry;
+  });
 }
 
 function normalizeImageCollectionSelections(collectionIds = []) {
@@ -11257,6 +11467,456 @@ function toObjectId(id) {
   } catch (e) {
     return null;
   }
+}
+
+function buildInstructionVersionLabel(versionNumber) {
+  if (Number.isInteger(versionNumber) && versionNumber > 0) {
+    return `v${versionNumber}`;
+  }
+  return "legacy";
+}
+
+function buildInstructionMetaRecord({
+  instructionId,
+  versionNumber = null,
+  versionLabel = "",
+  source = "resolved",
+} = {}) {
+  const normalizedInstructionId =
+    typeof instructionId === "string" ? instructionId.trim() : "";
+  if (!normalizedInstructionId) return null;
+
+  const normalizedVersion = Number.isInteger(versionNumber) && versionNumber > 0
+    ? versionNumber
+    : null;
+  const normalizedSource = ["resolved", "legacy", "missing"].includes(source)
+    ? source
+    : normalizedVersion !== null
+      ? "resolved"
+      : "legacy";
+  const normalizedLabel =
+    typeof versionLabel === "string" && versionLabel.trim()
+      ? versionLabel.trim()
+      : buildInstructionVersionLabel(normalizedVersion);
+
+  return {
+    instructionId: normalizedInstructionId,
+    versionNumber: normalizedVersion,
+    versionLabel: normalizedLabel,
+    source: normalizedSource,
+  };
+}
+
+function normalizeInstructionMetaRecords(metaRecords = [], instructionRefs = []) {
+  const normalized = [];
+  const seen = new Set();
+
+  const pushMeta = (metaCandidate) => {
+    const normalizedMeta = buildInstructionMetaRecord(metaCandidate);
+    if (!normalizedMeta) return;
+    const key = `${normalizedMeta.instructionId}::${normalizedMeta.versionNumber === null ? "legacy" : normalizedMeta.versionNumber}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    normalized.push(normalizedMeta);
+  };
+
+  if (Array.isArray(metaRecords)) {
+    metaRecords.forEach((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+      pushMeta({
+        instructionId: entry.instructionId,
+        versionNumber: Number.isInteger(entry.versionNumber)
+          ? entry.versionNumber
+          : Number.isInteger(entry.version)
+            ? entry.version
+            : null,
+        versionLabel: entry.versionLabel,
+        source: entry.source,
+      });
+    });
+  }
+
+  if (Array.isArray(instructionRefs)) {
+    instructionRefs.forEach((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+      if (!entry.instructionId) return;
+      pushMeta({
+        instructionId: entry.instructionId,
+        versionNumber: Number.isInteger(entry.version) ? entry.version : null,
+        source: Number.isInteger(entry.version) ? "resolved" : "legacy",
+      });
+    });
+  }
+
+  return normalized;
+}
+
+async function loadLatestInstruction(instructionRef, dbInstance = null) {
+  let db = dbInstance;
+  let client = null;
+  if (!db) {
+    client = await connectDB();
+    db = client.db("chatbot");
+  }
+  const coll = db.collection("instructions_v2");
+
+  const objectIdCandidate = toObjectId(instructionRef);
+  if (objectIdCandidate) {
+    const byObjectId = await coll.findOne({ _id: objectIdCandidate });
+    if (byObjectId) return byObjectId;
+  }
+
+  const instructionIdCandidate =
+    typeof instructionRef === "string"
+      ? instructionRef.trim()
+      : instructionRef &&
+          typeof instructionRef === "object" &&
+          typeof instructionRef.instructionId === "string"
+        ? instructionRef.instructionId.trim()
+        : "";
+  if (!instructionIdCandidate) return null;
+  return coll.findOne({ instructionId: instructionIdCandidate });
+}
+
+function buildInstructionVersionSnapshotDataItems(dataItems = []) {
+  if (!Array.isArray(dataItems)) return [];
+  return dataItems.map((item) => {
+    const copied = {
+      itemId: item?.itemId || "",
+      title: item?.title || "",
+      type: item?.type || "text",
+    };
+    if (item?.type === "table" && item?.data) {
+      copied.data = {
+        columns: Array.isArray(item.data.columns) ? item.data.columns : [],
+        rows: Array.isArray(item.data.rows) ? item.data.rows : [],
+        rowCount: Array.isArray(item.data.rows) ? item.data.rows.length : 0,
+      };
+    } else if (item?.type === "text") {
+      copied.content = item?.content || "";
+    }
+    return copied;
+  });
+}
+
+function buildInstructionVersionSnapshotPayload(instruction, options = {}) {
+  const snapshotAt = options.snapshotAt instanceof Date
+    ? options.snapshotAt
+    : new Date();
+  const note =
+    typeof options.note === "string" ? options.note.trim().slice(0, 500) : "";
+  const savedBy =
+    typeof options.savedBy === "string" && options.savedBy.trim()
+      ? options.savedBy.trim()
+      : "system";
+  const version = Number.isInteger(options.version) ? options.version : 1;
+
+  return {
+    instructionId: instruction.instructionId,
+    version,
+    name: instruction.name || "",
+    description: instruction.description || "",
+    dataItems: buildInstructionVersionSnapshotDataItems(instruction.dataItems),
+    conversationStarter: normalizeConversationStarterConfig(
+      instruction.conversationStarter,
+    ),
+    note,
+    snapshotAt,
+    savedBy,
+  };
+}
+
+async function createSnapshotFromLatest(
+  instructionRef,
+  note = "",
+  savedBy = "system",
+  dbInstance = null,
+) {
+  let db = dbInstance;
+  let client = null;
+  if (!db) {
+    client = await connectDB();
+    db = client.db("chatbot");
+  }
+
+  const coll = db.collection("instructions_v2");
+  const versionColl = db.collection("instruction_versions");
+  const latestInstruction = await loadLatestInstruction(instructionRef, db);
+  if (!latestInstruction) {
+    incrementInstructionMetric("snapshot_failed_total");
+    console.warn("[InstructionVersion] Snapshot failed: instruction not found", {
+      instructionRef:
+        typeof instructionRef === "string"
+          ? instructionRef
+          : instructionRef?._id || instructionRef?.instructionId || null,
+      snapshot_failed_total: INSTRUCTION_METRICS.snapshot_failed_total,
+    });
+    return { success: false, error: "instruction_not_found" };
+  }
+
+  let instructionId = latestInstruction.instructionId;
+  if (!instructionId || typeof instructionId !== "string" || !instructionId.trim()) {
+    instructionId = generateInstructionId();
+    await coll.updateOne(
+      { _id: latestInstruction._id },
+      { $set: { instructionId } },
+    );
+  }
+
+  const snapshotAt = new Date();
+  const latestSnapshotDoc = await versionColl
+    .find(
+      { instructionId },
+      { projection: { version: 1 } },
+    )
+    .sort({ version: -1 })
+    .limit(1)
+    .toArray();
+  const latestSnapshotVersion =
+    latestSnapshotDoc.length > 0 &&
+      Number.isInteger(latestSnapshotDoc[0]?.version) &&
+      latestSnapshotDoc[0].version > 0
+      ? latestSnapshotDoc[0].version
+      : 0;
+  const currentInstructionVersion =
+    Number.isInteger(latestInstruction.version) && latestInstruction.version > 0
+      ? latestInstruction.version
+      : 0;
+  const versionBaseline = Math.max(
+    latestSnapshotVersion,
+    currentInstructionVersion,
+  );
+
+  try {
+    const updatedInstruction = await coll.findOneAndUpdate(
+      { _id: latestInstruction._id },
+      [
+        {
+          $set: {
+            version: {
+              $add: [
+                { $max: [
+                  {
+                    $cond: [
+                      { $isNumber: "$version" },
+                      "$version",
+                      0,
+                    ],
+                  },
+                  versionBaseline,
+                ] },
+                1,
+              ],
+            },
+            instructionId,
+            updatedAt: snapshotAt,
+          },
+        },
+      ],
+      { returnDocument: "after", includeResultMetadata: false },
+    );
+
+    if (!updatedInstruction) {
+      incrementInstructionMetric("snapshot_failed_total");
+      console.warn(
+        "[InstructionVersion] Snapshot failed: instruction missing after update",
+        {
+          instructionId,
+          snapshot_failed_total: INSTRUCTION_METRICS.snapshot_failed_total,
+        },
+      );
+      return { success: false, error: "instruction_not_found_after_update" };
+    }
+
+    const resolvedVersion = Number.isInteger(updatedInstruction.version)
+      ? updatedInstruction.version
+      : 1;
+
+    const snapshot = buildInstructionVersionSnapshotPayload(
+      { ...updatedInstruction, instructionId },
+      {
+        version: resolvedVersion,
+        note,
+        savedBy,
+        snapshotAt,
+      },
+    );
+
+    await versionColl.updateOne(
+      { instructionId, version: resolvedVersion },
+      { $set: snapshot },
+      { upsert: true },
+    );
+
+    incrementInstructionMetric("snapshot_created_total");
+    console.log("[InstructionVersion] Snapshot created", {
+      instructionId,
+      version: resolvedVersion,
+      note: snapshot.note || "",
+      snapshot_created_total: INSTRUCTION_METRICS.snapshot_created_total,
+    });
+    return {
+      success: true,
+      instructionId,
+      version: resolvedVersion,
+      note: snapshot.note,
+      snapshotAt,
+    };
+  } catch (error) {
+    incrementInstructionMetric("snapshot_failed_total");
+    console.error("[InstructionVersion] Snapshot failed with exception", {
+      instructionId,
+      error: error?.message || error,
+      snapshot_failed_total: INSTRUCTION_METRICS.snapshot_failed_total,
+    });
+    throw error;
+  }
+}
+
+async function createDashboardSnapshotOrThrow(
+  instructionRef,
+  action = "update_instruction",
+  dbInstance = null,
+  savedBy = "dashboard",
+) {
+  const note = `dashboard:${action}`;
+  const snapshotResult = await createSnapshotFromLatest(
+    instructionRef,
+    note,
+    savedBy,
+    dbInstance,
+  );
+  if (!snapshotResult?.success) {
+    throw new Error(
+      snapshotResult?.error || "dashboard_snapshot_failed",
+    );
+  }
+  return snapshotResult;
+}
+
+async function resolveInstructionMetaForRuntime(
+  selectedInstructions = [],
+  dbInstance = null,
+  options = {},
+) {
+  const policy =
+    options && typeof options.policy === "string" && options.policy.trim()
+      ? options.policy.trim()
+      : "latest_only";
+  const latestOnly = policy === "latest_only" || LATEST_ONLY_INSTRUCTION_RUNTIME;
+  const normalizedSelections = normalizeInstructionSelections(selectedInstructions);
+  const promptSelections = latestOnly
+    ? normalizedSelections.map((entry) =>
+        isInstructionSelectionObject(entry)
+          ? { instructionId: entry.instructionId, version: null }
+          : entry
+      )
+    : normalizedSelections;
+
+  const objectSelections = promptSelections.filter(isInstructionSelectionObject);
+  const instructionRefs = [];
+  const metaCandidates = [];
+
+  if (objectSelections.length > 0) {
+    let db = dbInstance;
+    let client = null;
+    if (!db) {
+      client = await connectDB();
+      db = client.db("chatbot");
+    }
+
+    const instructionIds = [
+      ...new Set(
+        objectSelections
+          .map((entry) => entry.instructionId)
+          .filter((value) => typeof value === "string" && value.trim())
+      ),
+    ];
+
+    if (instructionIds.length > 0) {
+      const docs = await db
+        .collection("instructions_v2")
+        .find(
+          { instructionId: { $in: instructionIds } },
+          { projection: { instructionId: 1, version: 1 } },
+        )
+        .toArray();
+      const docMap = new Map();
+      docs.forEach((doc) => {
+        if (!doc || !doc.instructionId) return;
+        docMap.set(doc.instructionId, doc);
+      });
+
+      for (const selection of objectSelections) {
+        const doc = docMap.get(selection.instructionId);
+        const versionNumber =
+          doc && Number.isInteger(doc.version) && doc.version > 0
+            ? doc.version
+            : null;
+
+        instructionRefs.push({
+          instructionId: selection.instructionId,
+          version: versionNumber,
+        });
+
+        metaCandidates.push({
+          instructionId: selection.instructionId,
+          versionNumber,
+          source: versionNumber !== null ? "resolved" : "missing",
+        });
+      }
+    }
+  }
+
+  for (const selection of promptSelections) {
+    if (typeof selection !== "string") continue;
+    const value = selection.trim();
+    if (!value) continue;
+    metaCandidates.push({
+      instructionId: value,
+      versionNumber: null,
+      source: "legacy",
+    });
+  }
+
+  const dedupedRefs = [];
+  const seenRefs = new Set();
+  for (const ref of instructionRefs) {
+    if (!ref || !ref.instructionId) continue;
+    const key = `${ref.instructionId}::${ref.version === null ? "legacy" : ref.version}`;
+    if (seenRefs.has(key)) continue;
+    seenRefs.add(key);
+    dedupedRefs.push(ref);
+  }
+
+  const instructionMeta = normalizeInstructionMetaRecords(
+    metaCandidates,
+    dedupedRefs,
+  );
+  const legacyCount = instructionMeta.filter(
+    (entry) => !Number.isInteger(entry.versionNumber),
+  ).length;
+  if (legacyCount > 0) {
+    incrementInstructionMetric("chat_meta_legacy_total", legacyCount);
+    const legacyInstructionIds = instructionMeta
+      .filter((entry) => !Number.isInteger(entry.versionNumber))
+      .map((entry) => entry.instructionId);
+    console.warn(
+      "[InstructionMeta] Fallback to legacy/missing version metadata",
+      {
+        policy,
+        legacyCount,
+        instructionIds: legacyInstructionIds,
+      },
+    );
+  }
+
+  return {
+    instructionRefs: dedupedRefs,
+    instructionMeta,
+    promptSelections,
+    normalizedSelections,
+  };
 }
 
 function streamToBuffer(stream) {
@@ -12648,6 +13308,16 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                 );
               }
               const queueOptions = { ...queueOptionsBase };
+              const facebookRuntimeInstructionContext =
+                await resolveInstructionMetaForRuntime(
+                  queueOptions.selectedInstructions,
+                  null,
+                  { policy: "latest_only" },
+                );
+              const facebookRuntimeInstructionRefs =
+                facebookRuntimeInstructionContext.instructionRefs;
+              const facebookRuntimeInstructionMeta =
+                facebookRuntimeInstructionContext.instructionMeta;
               const itemsToQueue = [];
               const audioAttachments = [];
               const messageText = messagingEvent.message.text;
@@ -12715,6 +13385,9 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                       disableAiReply ? "" : filteredReply,
                       "facebook",
                       facebookBot._id ? facebookBot._id.toString() : null,
+                      facebookRuntimeInstructionRefs,
+                      queueOptions.botName || null,
+                      { instructionMeta: facebookRuntimeInstructionMeta },
                     );
                   } catch (historyErr) {
                     console.error(
@@ -12751,6 +13424,9 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                       disableAiReply ? "" : fallbackText,
                       "facebook",
                       facebookBot._id ? facebookBot._id.toString() : null,
+                      facebookRuntimeInstructionRefs,
+                      queueOptions.botName || null,
+                      { instructionMeta: facebookRuntimeInstructionMeta },
                     );
                   } catch (historyErr) {
                     console.error(
@@ -13402,8 +14078,16 @@ async function processFacebookMessageWithAI(
     const fbSelections = normalizeInstructionSelections(
       facebookBot.selectedInstructions || [],
     );
-    if (fbSelections.length > 0) {
-      const prompt = await buildSystemPromptFromSelections(fbSelections, db);
+    const fbRuntimeInstructionContext = await resolveInstructionMetaForRuntime(
+      fbSelections,
+      null,
+      { policy: "latest_only" },
+    );
+    if (fbRuntimeInstructionContext.promptSelections.length > 0) {
+      const prompt = await buildSystemPromptFromSelections(
+        fbRuntimeInstructionContext.promptSelections,
+        db,
+      );
       if (prompt.trim()) {
         systemPrompt = prompt.trim();
       }
@@ -13527,6 +14211,9 @@ async function processFacebookMessageWithAI(
       assistantReply,
       "facebook",
       facebookBot._id ? facebookBot._id.toString() : null,
+      fbRuntimeInstructionContext.instructionRefs,
+      facebookBot.name || null,
+      { instructionMeta: fbRuntimeInstructionContext.instructionMeta },
     );
 
     return finalReply.trim();
@@ -13729,7 +14416,7 @@ app.post("/api/line-bots", async (req, res) => {
       finalWebhookUrl = `${baseUrl}/webhook/line/${uniqueId}`;
     }
 
-    const normalizedSelections = normalizeInstructionSelections(
+    const normalizedSelections = normalizeLatestOnlyInstructionSelections(
       selectedInstructions || [],
     );
     const normalizedCollections = normalizeImageCollectionSelections(
@@ -14001,7 +14688,7 @@ app.put("/api/line-bots/:id/instructions", async (req, res) => {
     }
 
     const normalizedSelections =
-      normalizeInstructionSelections(selectedInstructions);
+      normalizeLatestOnlyInstructionSelections(selectedInstructions);
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -14248,11 +14935,6 @@ app.post("/api/facebook-bots", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
 
-    const existing = await coll.findOne({ _id: new ObjectId(id) });
-    if (!existing) {
-      return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
-    }
-
     // If this is default, unset other defaults
     if (isDefault) {
       await coll.updateMany({}, { $set: { isDefault: false } });
@@ -14268,7 +14950,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       finalWebhookUrl = `${baseUrl}/webhook/facebook/${uniqueId}`;
     }
 
-    const normalizedSelections = normalizeInstructionSelections(
+    const normalizedSelections = normalizeLatestOnlyInstructionSelections(
       selectedInstructions || [],
     );
     const normalizedCollections = normalizeImageCollectionSelections(
@@ -14595,7 +15277,7 @@ app.put("/api/facebook-bots/:id/instructions", async (req, res) => {
     }
 
     const normalizedSelections =
-      normalizeInstructionSelections(selectedInstructions);
+      normalizeLatestOnlyInstructionSelections(selectedInstructions);
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -15262,6 +15944,14 @@ app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
 
     const insertResult = await v2Coll.insertOne(instructionDoc);
     instructionDoc._id = insertResult.insertedId.toString();
+    const snapshotResult = await createDashboardSnapshotOrThrow(
+      insertResult.insertedId,
+      "create_instruction",
+      db,
+      "dashboard_api",
+    );
+    instructionDoc.version = snapshotResult.version;
+    instructionDoc.updatedAt = snapshotResult.snapshotAt;
 
     await libraryColl.updateOne(
       { date },
@@ -15663,6 +16353,12 @@ app.post(
           $set: { updatedAt: now },
         },
       );
+      await createDashboardSnapshotOrThrow(
+        instructionId,
+        "add_data_item",
+        db,
+        "dashboard_admin",
+      );
 
       res.redirect(
         `/admin/dashboard?success=${encodeURIComponent(
@@ -15745,6 +16441,12 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
     await coll.updateOne(
       { _id: new ObjectId(instructionId) },
       { $set: updateFields }
+    );
+    await createDashboardSnapshotOrThrow(
+      instructionId,
+      "update_data_item",
+      db,
+      "dashboard_admin",
     );
 
     res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
@@ -15898,6 +16600,12 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
         $set: { updatedAt: now },
       }
     );
+    await createDashboardSnapshotOrThrow(
+      instructionId,
+      "add_data_item",
+      db,
+      "dashboard_admin",
+    );
 
     res.redirect(
       `/admin/dashboard?success=${encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}`
@@ -15962,6 +16670,12 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
     await coll.updateOne(
       { _id: new ObjectId(instructionId) },
       { $set: updateFields }
+    );
+    await createDashboardSnapshotOrThrow(
+      instructionId,
+      "update_data_item",
+      db,
+      "dashboard_admin",
     );
 
     res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
@@ -18964,8 +19678,9 @@ function buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsS
 3. **แก้ทีละส่วน**: ใช้ update_cell หรือ update_rows_bulk — ห้ามแก้ทั้ง item
 4. **ยืนยันก่อนแก้**: แจ้งผู้ใช้ว่าจะแก้อะไร ก่อนเรียก write tool (ยกเว้นผู้ใช้สั่งตรงๆ)
 5. **ตอบกลับชัดเจน**: หลังแก้ไข แจ้ง before → after เสมอ
-6. **รองรับเวอร์ชันเก่า**: ถ้าผู้ใช้ขอดู/เทียบอดีต ให้ใช้ list_versions, view_version_detail, compare_version_stats
-7. **หลังแก้เสร็จต้องสร้างเวอร์ชันใหม่**: เรียก save_version พร้อม note สั้น ๆ ทุกครั้งหลังแก้ไขเสร็จในรอบนั้น
+6. **นโยบาย latest-first**: tools สำหรับอ่าน/แก้ข้อมูล instruction ปกติ ให้ใช้สถานะล่าสุด (latest) เท่านั้น
+7. **historical tools อ่านอย่างเดียว**: ใช้ list_versions, view_version_detail, compare_version_stats เพื่อดูย้อนหลัง/เปรียบเทียบเท่านั้น ห้ามแก้เวอร์ชันเก่าโดยตรง
+8. **หลังแก้เสร็จต้องสร้างเวอร์ชันใหม่**: เรียก save_version พร้อม note สั้น ๆ ทุกครั้งหลังแก้ไขเสร็จในรอบนั้น
 - Parallelize independent reads เมื่อเป็นไปได้
 - หลัง write tool: สรุป What changed + Where (itemId/rowIndex) เสมอ
 </tool_usage_rules>
@@ -19248,6 +19963,15 @@ app.get("/admin/instruction-chat", requireAdmin, (req, res) => res.redirect("/ad
 
 // ═══════════════════════ Conversation History API ═══════════════════════
 
+function parseInstructionConversationVersionQuery(rawVersion) {
+  if (rawVersion === null || typeof rawVersion === "undefined") return null;
+  const text = String(rawVersion).trim().toLowerCase();
+  if (!text || ["all", "latest", "any", "*"].includes(text)) return null;
+  const parsed = Number.parseInt(text, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 // Page route — Conversation History viewer
 app.get("/admin/instruction-conversations", requireAdmin, async (req, res) => {
   try {
@@ -19282,6 +20006,7 @@ app.get("/api/instruction-conversations/:instructionId", requireAdmin, async (re
     const client = await connectDB();
     const db = client.db("chatbot");
     const threadService = new ConversationThreadService(db);
+    const parsedVersion = parseInstructionConversationVersionQuery(version);
 
     // Parse filters
     const filters = {};
@@ -19300,7 +20025,7 @@ app.get("/api/instruction-conversations/:instructionId", requireAdmin, async (re
     if (search && search.trim()) {
       const searchResults = await threadService.searchInThreads(
         instructionId,
-        version ? Number(version) : null,
+        parsedVersion,
         search.trim(),
         Number(limit) || 20
       );
@@ -19309,7 +20034,7 @@ app.get("/api/instruction-conversations/:instructionId", requireAdmin, async (re
 
     const result = await threadService.getThreadsByInstruction(
       instructionId,
-      version ? Number(version) : null,
+      parsedVersion,
       filters,
       { page: Number(page) || 1, limit: Number(limit) || 20 }
     );
@@ -19350,10 +20075,11 @@ app.get("/api/instruction-conversations/:instructionId/analytics", requireAdmin,
     const client = await connectDB();
     const db = client.db("chatbot");
     const threadService = new ConversationThreadService(db);
+    const parsedVersion = parseInstructionConversationVersionQuery(version);
 
     const analytics = await threadService.getConversationAnalytics(
       instructionId,
-      version ? Number(version) : null,
+      parsedVersion,
       { from: dateFrom, to: dateTo }
     );
 
@@ -19372,10 +20098,11 @@ app.get("/api/instruction-conversations/:instructionId/filters", requireAdmin, a
     const client = await connectDB();
     const db = client.db("chatbot");
     const threadService = new ConversationThreadService(db);
+    const parsedVersion = parseInstructionConversationVersionQuery(version);
 
     const options = await threadService.getFilterOptions(
       instructionId,
-      version ? Number(version) : null
+      parsedVersion
     );
 
     res.json(options);
@@ -19828,8 +20555,24 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
 
-    if (!instructionId) return res.json({ error: "ต้องเลือก Instruction ก่อน" });
-    if ((!message || !message.trim()) && !hasIncomingImages) return res.json({ error: "ต้องพิมพ์ข้อความ" });
+    if (!instructionId || (typeof instructionId === "string" && !instructionId.trim())) {
+      incrementInstructionMetric("instruction_id_invalid_total");
+      console.warn("[InstructionChat] Missing instructionId", {
+        instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
+      });
+      return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
+    }
+    if (!ObjectId.isValid(instructionId)) {
+      incrementInstructionMetric("instruction_id_invalid_total");
+      console.warn("[InstructionChat] Invalid instructionId", {
+        instructionId,
+        instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
+      });
+      return res.status(400).json({ error: "instructionId ไม่ถูกต้อง" });
+    }
+    if ((!message || !message.trim()) && !hasIncomingImages) {
+      return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -20369,7 +21112,21 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], sessionId: clientSessionId, images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
 
-    if (!instructionId) return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
+    if (!instructionId || (typeof instructionId === "string" && !instructionId.trim())) {
+      incrementInstructionMetric("instruction_id_invalid_total");
+      console.warn("[InstructionChat SSE] Missing instructionId", {
+        instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
+      });
+      return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
+    }
+    if (!ObjectId.isValid(instructionId)) {
+      incrementInstructionMetric("instruction_id_invalid_total");
+      console.warn("[InstructionChat SSE] Invalid instructionId", {
+        instructionId,
+        instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
+      });
+      return res.status(400).json({ error: "instructionId ไม่ถูกต้อง" });
+    }
     if ((!message || !message.trim()) && !hasIncomingImages) return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
 
     const sessionId = clientSessionId || `ses_${Date.now().toString(36)}`;

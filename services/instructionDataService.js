@@ -216,8 +216,15 @@ class InstructionDataService {
                         createdAt: now
                     };
 
-                    await this.collection.insertOne(newInstruction);
-                    results.push({ sheetName, success: true, action: 'created', targetName: newInstruction.name });
+                    const insertResult = await this.collection.insertOne(newInstruction);
+                    results.push({
+                        sheetName,
+                        success: true,
+                        action: 'created',
+                        targetName: newInstruction.name,
+                        instructionObjectId: insertResult.insertedId.toString(),
+                        instructionId: newInstruction.instructionId,
+                    });
 
                 } else if (action === 'update') {
                     if (!ObjectId.isValid(targetId)) {
@@ -287,7 +294,14 @@ class InstructionDataService {
                         { _id: new ObjectId(targetId) },
                         { $set: { dataItems: newItems, updatedAt: new Date() } }
                     );
-                    results.push({ sheetName, success: true, action: 'updated', targetName: instruction.name });
+                    results.push({
+                        sheetName,
+                        success: true,
+                        action: 'updated',
+                        targetName: instruction.name,
+                        instructionObjectId: targetId,
+                        instructionId: instruction.instructionId || null,
+                    });
                 }
             } catch (err) {
                 console.error(`Error importing sheet ${map.sheetName}:`, err);
