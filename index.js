@@ -18964,6 +18964,8 @@ function buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsS
 3. **แก้ทีละส่วน**: ใช้ update_cell หรือ update_rows_bulk — ห้ามแก้ทั้ง item
 4. **ยืนยันก่อนแก้**: แจ้งผู้ใช้ว่าจะแก้อะไร ก่อนเรียก write tool (ยกเว้นผู้ใช้สั่งตรงๆ)
 5. **ตอบกลับชัดเจน**: หลังแก้ไข แจ้ง before → after เสมอ
+6. **รองรับเวอร์ชันเก่า**: ถ้าผู้ใช้ขอดู/เทียบอดีต ให้ใช้ list_versions, view_version_detail, compare_version_stats
+7. **หลังแก้เสร็จต้องสร้างเวอร์ชันใหม่**: เรียก save_version พร้อม note สั้น ๆ ทุกครั้งหลังแก้ไขเสร็จในรอบนั้น
 - Parallelize independent reads เมื่อเป็นไปได้
 - หลัง write tool: สรุป What changed + Where (itemId/rowIndex) เสมอ
 </tool_usage_rules>
@@ -19623,6 +19625,92 @@ async function requestInstructionFinalSummaryWithoutTools(openai, options = {}) 
   };
 }
 
+function sanitizeInstructionVersionNote(note) {
+  if (!note) return "";
+  let text = String(note)
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+
+  text = text
+    .replace(/^["'`]+/, "")
+    .replace(/["'`]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) return "";
+  return text.substring(0, 180);
+}
+
+async function generateInstructionVersionNoteWithModel(openai, options = {}) {
+  const {
+    model = "gpt-5.2",
+    previousResponseId = null,
+    effort = "low",
+    toolsUsed = [],
+    changes = [],
+    finalContent = "",
+  } = options || {};
+
+  const normalizedEffort = effort === "xhigh" ? "high" : (effort === "none" ? "low" : effort);
+  const writeTools = Array.isArray(toolsUsed)
+    ? toolsUsed
+      .map((item) => (typeof item === "string" ? item : item?.tool))
+      .filter((name) => INSTRUCTION_VERSION_AUTOSAVE_WRITE_TOOLS.has(name))
+    : [];
+
+  const toolSummary = writeTools.length > 0
+    ? writeTools.slice(-10).join(", ")
+    : "ไม่ระบุ";
+  const changeCount = Array.isArray(changes) ? changes.length : 0;
+  const finalSummary = typeof finalContent === "string" && finalContent.trim()
+    ? finalContent.trim().substring(0, 280)
+    : "";
+
+  const payload = {
+    model,
+    previous_response_id: previousResponseId || undefined,
+    tools: [],
+    reasoning: { effort: normalizedEffort },
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: [
+              "งาน: เขียน note สั้นสำหรับบันทึกเวอร์ชันของ instruction หลังจากแก้ไขเสร็จแล้ว",
+              "ข้อกำหนด:",
+              "- ตอบเป็นข้อความบรรทัดเดียวเท่านั้น",
+              "- ความยาวประมาณ 12-120 ตัวอักษร",
+              "- สรุปเฉพาะสิ่งที่แก้จริงในรอบนี้",
+              "- ห้ามใส่ markdown, quote, prefix พิเศษ",
+              "",
+              `จำนวนการแก้ไข: ${changeCount}`,
+              `เครื่องมือที่ใช้แก้ไข: ${toolSummary}`,
+              finalSummary ? `สรุปคำตอบล่าสุด: ${finalSummary}` : "",
+              "",
+              "ตอบเฉพาะ note พร้อมใช้ได้ทันที",
+            ].filter(Boolean).join("\n"),
+          },
+        ],
+      },
+    ],
+  };
+
+  const response = await openai.responses.create(payload);
+  const rawNote = extractInstructionResponseText(response);
+  const note = sanitizeInstructionVersionNote(rawNote);
+
+  return {
+    responseId: response?.id || null,
+    usage: mapInstructionResponseUsage(response?.usage),
+    note,
+  };
+}
+
 function mapInstructionToolsForResponses(tools) {
   if (!Array.isArray(tools)) return [];
   return tools
@@ -19737,7 +19825,7 @@ function extractInstructionResponseText(response) {
 // Instruction Chat API — Main chat endpoint with tool loop (Responses API)
 app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
   try {
-    const { instructionId, message = "", model = "gpt-5.2", thinking = "off", history = [], images } = req.body;
+    const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
 
     if (!instructionId) return res.json({ error: "ต้องเลือก Instruction ก่อน" });
@@ -19779,6 +19867,8 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
 
     const toolsUsed = [];
     const changes = [];
+    let versionSnapshot = null;
+    let unsavedWriteChanges = 0;
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
     let finalContent = "";
     let previousResponseId = null;
@@ -19810,14 +19900,26 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
         try { args = JSON.parse(toolCall.arguments || "{}"); } catch (e) { }
 
         const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
+        if (toolName === "save_version" && result?.success && Number.isInteger(result?.version)) {
+          versionSnapshot = {
+            auto: false,
+            version: result.version,
+            note: result.note || "",
+            snapshotAt: result.snapshotAt || null,
+          };
+          unsavedWriteChanges = 0;
+        }
 
         toolsUsed.push({
           tool: toolName,
           args,
           resultCount: result.results?.length || result.totalMatches || undefined,
-          summary: result.error || (result.success ? "✅ สำเร็จ" : undefined),
+          summary: buildToolSummary(toolName, result),
         });
-        if (result.changeId) changes.push({ changeId: result.changeId, tool: toolName });
+        if (result.changeId) {
+          changes.push({ changeId: result.changeId, tool: toolName });
+          unsavedWriteChanges += 1;
+        }
 
         toolOutputs.push({
           type: "function_call_output",
@@ -19849,11 +19951,68 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       finalContent = getInstructionFinalTextFallback(toolsUsed);
     }
 
+    const shouldAutoSaveVersion = unsavedWriteChanges > 0;
+    if (shouldAutoSaveVersion) {
+      let autoNote = "";
+      try {
+        const noteResult = await generateInstructionVersionNoteWithModel(openai, {
+          model,
+          previousResponseId,
+          effort,
+          toolsUsed,
+          changes,
+          finalContent,
+        });
+        if (noteResult?.responseId) previousResponseId = noteResult.responseId;
+        addInstructionUsage(totalUsage, noteResult?.usage);
+        autoNote = sanitizeInstructionVersionNote(noteResult?.note || "");
+      } catch (noteError) {
+        console.warn("[InstructionChat] Version note generation failed:", noteError?.message || noteError);
+      }
+      if (!autoNote) {
+        autoNote = buildInstructionAutoVersionFallbackNote(toolsUsed, changes);
+      }
+      try {
+        const autoVersion = await chatService.save_version(
+          instructionId,
+          { note: autoNote },
+          sessionId,
+        );
+        if (!autoVersion?.error && autoVersion?.success && Number.isInteger(autoVersion?.version)) {
+          versionSnapshot = {
+            auto: true,
+            version: autoVersion.version,
+            note: autoVersion.note || autoNote,
+            snapshotAt: autoVersion.snapshotAt || null,
+          };
+          toolsUsed.push({
+            tool: "save_version",
+            args: { note: autoNote },
+            summary: buildToolSummary("save_version", autoVersion),
+          });
+        } else {
+          versionSnapshot = {
+            auto: true,
+            error: autoVersion?.error || "save_version_failed",
+            note: autoNote,
+          };
+        }
+      } catch (autoVersionError) {
+        console.error("[InstructionChat] Auto save_version error:", autoVersionError);
+        versionSnapshot = {
+          auto: true,
+          error: autoVersionError?.message || "save_version_failed",
+          note: autoNote,
+        };
+      }
+    }
+
     res.json({
       content: finalContent,
       toolsUsed,
       changes,
       usage: totalUsage,
+      versionSnapshot,
       model,
       thinking,
     });
@@ -20083,9 +20242,65 @@ function buildToolSummary(toolName, result) {
     case 'list_followup_assets':
       return `🖼️ พบ ${result.totalAssets || 0} รูปภาพ`;
 
+    // Version tools
+    case 'list_versions':
+      return `🕘 พบเวอร์ชัน ${result.totalVersions || result.versions?.length || 0} รายการ`;
+    case 'view_version_detail':
+      return `🧾 เวอร์ชัน ${result.version || "?"} (${result.dataItems?.length || 0} data items)`;
+    case 'compare_version_stats':
+      return `📈 เปรียบเทียบ v${result.version1?.version ?? "?"} ↔ v${result.version2?.version ?? "?"}`;
+    case 'save_version':
+      return result.message || `💾 บันทึกเวอร์ชัน ${result.version || "?"} แล้ว`;
+
     default:
       return result.success ? '✅ สำเร็จ' : '📦 เสร็จสิ้น';
   }
+}
+
+const INSTRUCTION_VERSION_AUTOSAVE_WRITE_TOOLS = new Set([
+  "update_cell",
+  "update_rows_bulk",
+  "add_row",
+  "delete_row",
+  "update_text_content",
+  "add_column",
+  "delete_column",
+  "delete_rows_bulk",
+  "delete_data_item",
+  "create_table_item",
+  "create_text_item",
+  "set_conversation_starter_enabled",
+  "add_conversation_starter_message",
+  "update_conversation_starter_message",
+  "remove_conversation_starter_message",
+  "reorder_conversation_starter_message",
+]);
+
+function buildInstructionAutoVersionFallbackNote(toolsUsed = [], changes = []) {
+  const names = Array.isArray(toolsUsed)
+    ? toolsUsed
+      .map((item) => (typeof item === "string" ? item : item?.tool))
+      .filter((name) => INSTRUCTION_VERSION_AUTOSAVE_WRITE_TOOLS.has(name))
+    : [];
+
+  const counts = new Map();
+  names.forEach((name) => {
+    counts.set(name, (counts.get(name) || 0) + 1);
+  });
+
+  const topSummaries = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([name, count]) => `${name} x${count}`);
+  const extraToolKinds = Math.max(0, counts.size - topSummaries.length);
+  const changeCount = Array.isArray(changes) ? changes.length : 0;
+
+  const summaryText = topSummaries.length > 0
+    ? topSummaries.join(", ")
+    : "instruction updated";
+  const extraText = extraToolKinds > 0 ? ` +${extraToolKinds} tools` : "";
+  const note = `ปรับ instruction (${changeCount} จุด): ${summaryText}${extraText}`;
+  return note.substring(0, 180);
 }
 
 // ─── Image Upload for InstructionAI Chat ───
@@ -20142,6 +20357,7 @@ function buildActiveInstructionRequestSnapshot(reqState) {
     changes: reqState?.donePayload?.changes || null,
     toolsUsed: reqState?.donePayload?.toolsUsed || null,
     assistantMessages: reqState?.donePayload?.assistantMessages || null,
+    versionSnapshot: reqState?.donePayload?.versionSnapshot || null,
     error: reqState?.error || null,
   };
 }
@@ -20150,7 +20366,7 @@ function buildActiveInstructionRequestSnapshot(reqState) {
 app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 6)}`;
   try {
-    const { instructionId, message = "", model = "gpt-5.2", thinking = "off", history = [], sessionId: clientSessionId, images } = req.body;
+    const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], sessionId: clientSessionId, images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
 
     if (!instructionId) return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
@@ -20331,6 +20547,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     let previousResponseId = null;
     let finalContent = "";
     const assistantMessages = [];
+    let versionSnapshot = null;
+    let unsavedWriteChanges = 0;
 
     for (let i = 0; i < INSTRUCTION_MAX_TOOL_ITERATIONS; i++) {
       sendStatus(i === 0 ? "thinking" : "continuing", { iteration: i + 1, tool: null });
@@ -20543,10 +20761,22 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             iteration: i + 1,
           });
           const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
+          if (toolName === "save_version" && result?.success && Number.isInteger(result?.version)) {
+            versionSnapshot = {
+              auto: false,
+              version: result.version,
+              note: result.note || "",
+              snapshotAt: result.snapshotAt || null,
+            };
+            unsavedWriteChanges = 0;
+          }
 
           const toolSummary = buildToolSummary(toolName, result);
           toolsUsed.push({ tool: toolName, args, summary: toolSummary });
-          if (result.changeId) changes.push({ changeId: result.changeId, tool: toolName });
+          if (result.changeId) {
+            changes.push({ changeId: result.changeId, tool: toolName });
+            unsavedWriteChanges += 1;
+          }
 
           sendEvent("tool_end", { tool: toolName, summary: toolSummary, result: toolSummary, callId: toolCall.call_id });
           upsertRequestToolState(toolName, "done", {
@@ -20620,6 +20850,62 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       }
     }
 
+    const shouldAutoSaveVersion = unsavedWriteChanges > 0;
+    if (shouldAutoSaveVersion) {
+      let autoNote = "";
+      try {
+        const noteResult = await generateInstructionVersionNoteWithModel(openai, {
+          model,
+          previousResponseId,
+          effort,
+          toolsUsed,
+          changes,
+          finalContent,
+        });
+        if (noteResult?.responseId) previousResponseId = noteResult.responseId;
+        addInstructionUsage(totalUsage, noteResult?.usage);
+        autoNote = sanitizeInstructionVersionNote(noteResult?.note || "");
+      } catch (noteError) {
+        console.warn("[InstructionChat SSE] Version note generation failed:", noteError?.message || noteError);
+      }
+      if (!autoNote) {
+        autoNote = buildInstructionAutoVersionFallbackNote(toolsUsed, changes);
+      }
+      try {
+        const autoVersion = await chatService.save_version(
+          instructionId,
+          { note: autoNote },
+          sessionId,
+        );
+        if (!autoVersion?.error && autoVersion?.success && Number.isInteger(autoVersion?.version)) {
+          versionSnapshot = {
+            auto: true,
+            version: autoVersion.version,
+            note: autoVersion.note || autoNote,
+            snapshotAt: autoVersion.snapshotAt || null,
+          };
+          toolsUsed.push({
+            tool: "save_version",
+            args: { note: autoNote },
+            summary: buildToolSummary("save_version", autoVersion),
+          });
+        } else {
+          versionSnapshot = {
+            auto: true,
+            error: autoVersion?.error || "save_version_failed",
+            note: autoNote,
+          };
+        }
+      } catch (autoVersionError) {
+        console.error("[InstructionChat SSE] Auto save_version error:", autoVersionError);
+        versionSnapshot = {
+          auto: true,
+          error: autoVersionError?.message || "save_version_failed",
+          note: autoNote,
+        };
+      }
+    }
+
     const toolContext = toolsUsed.length > 0
       ? toolsUsed.map(t => `[${t.tool}] ${t.summary || ""}`).join("\n")
       : null;
@@ -20643,9 +20929,10 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       changes: changes.map(c => c.changeId),
       usage: totalUsage,
       responseLength: finalContent.length,
+      versionSnapshot: versionSnapshot || null,
     });
 
-    const donePayload = { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages };
+    const donePayload = { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages, versionSnapshot };
     requestState.donePayload = donePayload;
     requestState.status = "complete";
     requestState.updatedAt = Date.now();

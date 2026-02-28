@@ -9,10 +9,10 @@
     // ─── Config ─────────────────────────────────────────────────────────
 
     const MODELS = {
-        "gpt-5.2": { label: "GPT-5.2", efforts: ["off", "low", "medium", "high", "max"], default: "max" },
-        "gpt-5.2-codex": { label: "GPT-5.2 Codex", efforts: ["off", "low", "medium", "high", "max"], default: "max" },
-        "gpt-5.1": { label: "GPT-5.1", efforts: ["off", "low", "medium", "high"], default: "high" },
-        "gpt-5": { label: "GPT-5", efforts: ["low", "medium", "high"], default: "high" },
+        "gpt-5.2": { label: "GPT-5.2", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
+        "gpt-5.2-codex": { label: "GPT-5.2 Codex", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
+        "gpt-5.1": { label: "GPT-5.1", efforts: ["off", "low", "medium", "high"], default: "medium" },
+        "gpt-5": { label: "GPT-5", efforts: ["low", "medium", "high"], default: "medium" },
     };
 
     // ─── State ──────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@
         selectedName: "",
         sessionId: null,
         model: "gpt-5.2",
-        thinking: "max",
+        thinking: "medium",
         history: [],
         totalTokens: 0,
         totalChanges: 0,
@@ -513,6 +513,11 @@
             if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
             if (data.changes) state.totalChanges += data.changes.length;
             if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
+            if (data.versionSnapshot && Number.isInteger(data.versionSnapshot.version)) {
+                const label = $("#icVersionLabel");
+                if (label) label.textContent = `v${data.versionSnapshot.version}`;
+                if (body) renderVersionSnapshotSummary(body, data.versionSnapshot);
+            }
 
             if (data.toolsUsed && Array.isArray(data.toolsUsed) && data.toolsUsed.length > 0 && body) {
                 const toolNames = data.toolsUsed
@@ -617,6 +622,7 @@
                     changes: snapshot.changes,
                     toolsUsed: snapshot.toolsUsed,
                     assistantMessages: snapshot.assistantMessages,
+                    versionSnapshot: snapshot.versionSnapshot,
                 });
                 cancelledByState = true;
                 try { await reader.cancel(); } catch (e) { }
@@ -1276,6 +1282,19 @@
         }
         const uniqueTools = [...new Set(tools)];
         summary.textContent = `Tools used: ${uniqueTools.join(", ")}`;
+    }
+
+    function renderVersionSnapshotSummary(body, snapshot) {
+        if (!body || !snapshot || !Number.isInteger(snapshot.version)) return;
+        let summary = body.querySelector(".ic-version-snapshot");
+        if (!summary) {
+            summary = document.createElement("div");
+            summary.className = "ic-tools-used ic-version-snapshot";
+            body.appendChild(summary);
+        }
+        const source = snapshot.auto ? "auto" : "tool";
+        const note = snapshot.note ? ` — ${snapshot.note}` : "";
+        summary.textContent = `Version saved: v${snapshot.version} (${source})${note}`;
     }
 
     // ─── Session Persistence ────────────────────────────────────────────
