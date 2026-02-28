@@ -1011,6 +1011,11 @@ const agentForgeRunner = new AgentForgeRunner({
   connectDB,
   agentForgeService,
   openaiClient: openaiSingleton,
+  resolveOpenAIClient: async () => {
+    const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
+    if (!apiKeyToUse.apiKey) return null;
+    return new OpenAI({ apiKey: apiKeyToUse.apiKey });
+  },
   timezone: "Asia/Bangkok",
 });
 
@@ -4313,11 +4318,6 @@ async function getExistingProductNames(options = {}) {
 }
 
 async function analyzeOrderFromChat(userId, messages, options = {}) {
-  if (!OPENAI_API_KEY) {
-    console.warn("[Order] ไม่มี OPENAI_API_KEY ข้ามการวิเคราะห์ออเดอร์");
-    return null;
-  }
-
   const {
     modelOverride = null,
     previousAddress = null,
@@ -4348,7 +4348,13 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
   // Get orderModel from page settings if not overridden
   const orderModel = modelOverride || pageSettings?.orderModel || (await getSettingValue("orderModel", "gpt-4.1-nano"));
 
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
+  if (!apiKeyToUse.apiKey) {
+    console.warn("[Order] ไม่มี OpenAI API Key ข้ามการวิเคราะห์ออเดอร์");
+    return null;
+  }
+
+  const openai = new OpenAI({ apiKey: apiKeyToUse.apiKey });
 
   // Use page-specific prompt if available, otherwise use default
   let promptBody;
@@ -7595,7 +7601,7 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel, botId = 
     // Get per-bot API key or fallback to default
     const apiKeyToUse = await getOpenAIApiKeyForBot(botId, 'facebook');
 
-    if (!apiKeyToUse.key) {
+    if (!apiKeyToUse.apiKey) {
       console.error("[Facebook Comment AI] No API key available");
       return "";
     }
@@ -7605,7 +7611,7 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel, botId = 
       return "";
     }
 
-    const openai = new OpenAI({ apiKey: apiKeyToUse.key });
+    const openai = new OpenAI({ apiKey: apiKeyToUse.apiKey });
     const messages = [
       {
         role: "system",
@@ -7642,7 +7648,7 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel, botId = 
     // Log usage to database
     if (completion.usage) {
       await logOpenAIUsage({
-        apiKeyId: apiKeyToUse.id,
+        apiKeyId: apiKeyToUse.keyId,
         botId,
         platform: 'facebook',
         model: aiModel || 'gpt-4o-mini',
@@ -9814,7 +9820,11 @@ async function getAssistantResponseTextOnly(
   try {
     // Get per-bot API key or fallback to default
     const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
-    const openai = new OpenAI({ apiKey: apiKeyToUse.key });
+    if (!apiKeyToUse.apiKey) {
+      console.warn("[OpenAI Text] No API key available");
+      return "";
+    }
+    const openai = new OpenAI({ apiKey: apiKeyToUse.apiKey });
 
     console.log(
       `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (ข้อความอย่างเดียว)...`,
@@ -10172,7 +10182,7 @@ async function getAssistantResponseTextOnly(
 
       // Log usage to database
       await logOpenAIUsage({
-        apiKeyId: apiKeyToUse.id,
+        apiKeyId: apiKeyToUse.keyId,
         botId,
         platform,
         model: textModel,
@@ -10206,7 +10216,11 @@ async function getAssistantResponseMultimodal(
   try {
     // Get per-bot API key or fallback to default
     const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
-    const openai = new OpenAI({ apiKey: apiKeyToUse.key });
+    if (!apiKeyToUse.apiKey) {
+      console.warn("[OpenAI Multimodal] No API key available");
+      return "";
+    }
+    const openai = new OpenAI({ apiKey: apiKeyToUse.apiKey });
 
     console.log(
       `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (multimodal)...`,
@@ -10625,7 +10639,7 @@ async function getAssistantResponseMultimodal(
 
       // Log usage to database
       await logOpenAIUsage({
-        apiKeyId: apiKeyToUse.id,
+        apiKeyId: apiKeyToUse.keyId,
         botId,
         platform,
         model: visionModel,
@@ -13542,7 +13556,13 @@ async function processMessageWithAI(message, userId, lineBot) {
       }
     }
 
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    const lineBotId = lineBot?._id ? lineBot._id.toString() : null;
+    const apiKeyToUse = await getOpenAIApiKeyForBot(lineBotId, "line");
+    if (!apiKeyToUse.apiKey) {
+      console.warn("[Line AI] No API key available");
+      return "";
+    }
+    const openai = new OpenAI({ apiKey: apiKeyToUse.apiKey });
 
     const messageVariants = [
       {
@@ -19725,7 +19745,11 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
 
     const client = await connectDB();
     const db = client.db("chatbot");
-    const openai = openaiSingleton;
+    const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
+    if (!apiKeyToUse.apiKey) {
+      return res.json({ error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
+    }
+    const openai = new OpenAI({ apiKey: apiKeyToUse.apiKey });
     const chatService = new InstructionChatService(db, openai, { resetFollowUpConfigCache });
 
     // Get instruction for system prompt
@@ -19863,7 +19887,11 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
     const changeLog = await db.collection("instruction_chat_changelog").findOne({ changeId: req.params.changeId, undone: false });
     if (!changeLog) return res.json({ error: "ไม่พบหรือยกเลิกแล้ว" });
 
-    const chatService = new InstructionChatService(db, openaiSingleton, { resetFollowUpConfigCache });
+    const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
+    const openaiClient = apiKeyToUse.apiKey
+      ? new OpenAI({ apiKey: apiKeyToUse.apiKey })
+      : null;
+    const chatService = new InstructionChatService(db, openaiClient, { resetFollowUpConfigCache });
 
     // Reverse the operation
     if (changeLog.tool === "update_cell" && changeLog.before) {
@@ -20252,7 +20280,16 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     const client = await connectDB();
     const db = client.db("chatbot");
-    const openai = openaiSingleton;
+    const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
+    if (!apiKeyToUse.apiKey) {
+      sendEvent("error", { error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
+      requestState.status = "error";
+      requestState.error = "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment";
+      requestState.updatedAt = Date.now();
+      finishRequest();
+      return;
+    }
+    const openai = new OpenAI({ apiKey: apiKeyToUse.apiKey });
     const chatService = new InstructionChatService(db, openai, { resetFollowUpConfigCache });
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
@@ -20588,7 +20625,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       : null;
 
     await logOpenAIUsage({
-      apiKeyId: null,
+      apiKeyId: apiKeyToUse.keyId || null,
       botId: "instruction-chat",
       platform: "admin",
       model,
@@ -24073,6 +24110,15 @@ function maskApiKey(apiKey) {
 
 // Helper: Get API key for a bot (with fallback to default key or env var)
 async function getOpenAIApiKeyForBot(botId, platform) {
+  const normalizeKeyPayload = (apiKey, keyId = null, keyName = null) => ({
+    apiKey: apiKey || null,
+    key: apiKey || null, // backward compatibility for legacy call sites
+    keyId: keyId || null,
+    id: keyId || null, // backward compatibility for legacy call sites
+    keyName: keyName || null,
+    name: keyName || null, // backward compatibility for legacy call sites
+  });
+
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -24092,7 +24138,11 @@ async function getOpenAIApiKeyForBot(botId, platform) {
         isActive: true
       });
       if (keyDoc && keyDoc.apiKey) {
-        return { apiKey: keyDoc.apiKey, keyId: keyDoc._id.toString(), keyName: keyDoc.name };
+        return normalizeKeyPayload(
+          keyDoc.apiKey,
+          keyDoc._id.toString(),
+          keyDoc.name,
+        );
       }
     }
 
@@ -24102,24 +24152,36 @@ async function getOpenAIApiKeyForBot(botId, platform) {
       isActive: true
     });
     if (defaultKey && defaultKey.apiKey) {
-      return { apiKey: defaultKey.apiKey, keyId: defaultKey._id.toString(), keyName: defaultKey.name };
+      return normalizeKeyPayload(
+        defaultKey.apiKey,
+        defaultKey._id.toString(),
+        defaultKey.name,
+      );
     }
 
     // Fallback to any active key
     const anyKey = await db.collection("openai_api_keys").findOne({ isActive: true });
     if (anyKey && anyKey.apiKey) {
-      return { apiKey: anyKey.apiKey, keyId: anyKey._id.toString(), keyName: anyKey.name };
+      return normalizeKeyPayload(
+        anyKey.apiKey,
+        anyKey._id.toString(),
+        anyKey.name,
+      );
     }
 
     // Final fallback to environment variable
     if (OPENAI_API_KEY) {
-      return { apiKey: OPENAI_API_KEY, keyId: null, keyName: "Environment Variable" };
+      return normalizeKeyPayload(OPENAI_API_KEY, null, "Environment Variable");
     }
 
-    return { apiKey: null, keyId: null, keyName: null };
+    return normalizeKeyPayload(null, null, null);
   } catch (err) {
     console.error("[OpenAI Keys] Error getting API key for bot:", err);
-    return { apiKey: OPENAI_API_KEY, keyId: null, keyName: "Environment Variable (fallback)" };
+    return normalizeKeyPayload(
+      OPENAI_API_KEY || null,
+      null,
+      OPENAI_API_KEY ? "Environment Variable (fallback)" : null,
+    );
   }
 }
 

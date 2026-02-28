@@ -124,8 +124,22 @@ class AgentForgeRunner {
     this.connectDB = options.connectDB;
     this.agentForgeService = options.agentForgeService;
     this.openaiClient = options.openaiClient || null;
+    this.resolveOpenAIClient = typeof options.resolveOpenAIClient === "function"
+      ? options.resolveOpenAIClient
+      : null;
     this.timezone = options.timezone || DEFAULT_TIMEZONE;
     this.activeRuns = new Map();
+  }
+
+  async _getOpenAIClient() {
+    if (this.openaiClient) return this.openaiClient;
+    if (!this.resolveOpenAIClient) return null;
+    try {
+      const client = await this.resolveOpenAIClient();
+      return client || null;
+    } catch (error) {
+      return null;
+    }
   }
 
   async startRun(agentId, options = {}, userContext = {}) {
@@ -174,7 +188,9 @@ class AgentForgeRunner {
       ? instructionText.trim()
       : SIMPLE_INSTRUCTION_TEMPLATE;
 
-    if (this.openaiClient) {
+    const openaiClient = await this._getOpenAIClient();
+
+    if (openaiClient) {
       const requestPayload = {
         model: model || "gpt-4.1",
         input: [
@@ -194,7 +210,7 @@ class AgentForgeRunner {
       };
 
       try {
-        const response = await this.openaiClient.responses.create(requestPayload);
+        const response = await openaiClient.responses.create(requestPayload);
         const text = extractResponseText(response) || this._buildFallbackSimulatedReply({}, safeScenario);
         return {
           reply: text,
@@ -820,7 +836,8 @@ class AgentForgeRunner {
     contextData,
     lastProcessedAt,
   }) {
-    if (!this.openaiClient) {
+    const openaiClient = await this._getOpenAIClient();
+    if (!openaiClient) {
       throw new Error("model_compaction_required");
     }
 
@@ -879,7 +896,7 @@ class AgentForgeRunner {
 
     let response = null;
     try {
-      response = await this.openaiClient.responses.create(requestPayload);
+      response = await openaiClient.responses.create(requestPayload);
     } catch (error) {
       await this.agentForgeService.appendRunEvent(runId, "context_compaction_failed", {
         message: error?.message || "model_compaction_failed",
@@ -1087,7 +1104,8 @@ class AgentForgeRunner {
     let generatedText = "";
     let modelUsed = null;
 
-    if (this.openaiClient) {
+    const openaiClient = await this._getOpenAIClient();
+    if (openaiClient) {
       const requestPayload = {
         model: profile.runnerModel || "gpt-5.2",
         reasoning: {
@@ -1104,7 +1122,7 @@ class AgentForgeRunner {
       );
 
       try {
-        const response = await this.openaiClient.responses.create(requestPayload);
+        const response = await openaiClient.responses.create(requestPayload);
         generatedText = extractResponseText(response);
         modelUsed = requestPayload.model;
 
@@ -1187,7 +1205,8 @@ class AgentForgeRunner {
       `- รอบ ${iteration}: บังคับตอบแบบ choice close ทุกครั้งเมื่อถามราคา`,
     ].join("\n");
 
-    if (!this.openaiClient) {
+    const openaiClient = await this._getOpenAIClient();
+    if (!openaiClient) {
       return {
         patchText: fallback,
       };
@@ -1222,7 +1241,7 @@ class AgentForgeRunner {
     );
 
     try {
-      const response = await this.openaiClient.responses.create(requestPayload);
+      const response = await openaiClient.responses.create(requestPayload);
       const text = extractResponseText(response) || fallback;
 
       await this.agentForgeService.storeOpenAISnapshot(
@@ -1404,7 +1423,8 @@ class AgentForgeRunner {
 
     let assistantText = "";
 
-    if (this.openaiClient) {
+    const openaiClient = await this._getOpenAIClient();
+    if (openaiClient) {
       const requestPayload = {
         model: profile.customerDefaultModel || "gpt-4.1",
         input: [
@@ -1421,7 +1441,7 @@ class AgentForgeRunner {
       );
 
       try {
-        const response = await this.openaiClient.responses.create(requestPayload);
+        const response = await openaiClient.responses.create(requestPayload);
         assistantText = extractResponseText(response);
 
         await this.agentForgeService.storeOpenAISnapshot(
