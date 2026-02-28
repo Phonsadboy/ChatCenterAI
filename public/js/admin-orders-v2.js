@@ -168,6 +168,7 @@
     // Bulk Actions
     document.getElementById('ordersBulkCancel')?.addEventListener('click', clearSelection);
     document.getElementById('ordersBulkExport')?.addEventListener('click', handleBulkExport);
+    document.getElementById('ordersBulkDelete')?.addEventListener('click', handleBulkDelete);
 
     // Detail Panel Close
     els.detailOverlay?.addEventListener('click', (e) => {
@@ -619,6 +620,37 @@
     const params = new URLSearchParams();
     params.set('selectedIds', ids.join(','));
     window.location.href = buildExportUrl(params);
+  }
+
+  async function handleBulkDelete() {
+    const ids = Array.from(state.selectedIds);
+    if (ids.length === 0) return;
+
+    const confirmDelete = window.confirm(`ต้องการลบออเดอร์ที่เลือก ${ids.length} รายการถาวรหรือไม่? การลบไม่สามารถกู้คืนได้`);
+    if (!confirmDelete) return;
+
+    try {
+      const response = await fetch('/admin/orders/bulk/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderIds: ids })
+      });
+      const data = await response.json();
+
+      if (data.success) {
+        if (state.detailOrderId && ids.includes(state.detailOrderId)) {
+          closeDetail();
+        }
+        clearSelection();
+        showToast(`ลบออเดอร์ ${data.deletedCount || 0} รายการเรียบร้อย`, 'success');
+        loadOrders();
+      } else {
+        showToast(data.error || 'ไม่สามารถลบออเดอร์ได้', 'error');
+      }
+    } catch (error) {
+      console.error('[Orders] Bulk delete error:', error);
+      showToast('เกิดข้อผิดพลาดในการลบออเดอร์', 'error');
+    }
   }
 
   function handleExport() {

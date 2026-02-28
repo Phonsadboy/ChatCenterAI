@@ -26141,6 +26141,87 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
   }
 });
 
+// API: ลบออเดอร์หลายรายการพร้อมกัน (Bulk)
+app.delete("/admin/orders/bulk/delete", async (req, res) => {
+  try {
+    const { orderIds } = req.body || {};
+
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุรายการออเดอร์" });
+    }
+
+    if (orderIds.length > 100) {
+      return res.status(400).json({ success: false, error: "สามารถลบได้สูงสุด 100 รายการต่อครั้ง" });
+    }
+
+    const validIds = orderIds
+      .map((id) => (typeof id === "string" ? id.trim() : String(id || "").trim()))
+      .filter((id) => ObjectId.isValid(id));
+
+    if (validIds.length === 0) {
+      return res.status(400).json({ success: false, error: "ไม่พบรหัสออเดอร์ที่ถูกต้อง" });
+    }
+
+    const objectIds = validIds.map((id) => new ObjectId(id));
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const orders = await coll
+      .find({ _id: { $in: objectIds } })
+      .project({ _id: 1, userId: 1, platform: 1, botId: 1 })
+      .toArray();
+
+    if (!orders.length) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์ที่ต้องการลบ" });
+    }
+
+    const deleteResult = await coll.deleteMany({
+      _id: { $in: orders.map((order) => order._id) },
+    });
+
+    const followUpTargets = new Map();
+    orders.forEach((order) => {
+      const orderId = order?._id?.toString?.() || "";
+      const userId = order?.userId || null;
+      if (io && orderId && userId) {
+        try {
+          io.emit("orderDeleted", { orderId, userId });
+        } catch (_) { }
+      }
+
+      if (!userId) return;
+      const platform = normalizeOrderPlatform(order?.platform || "line");
+      const botId = normalizeOrderBotId(order?.botId);
+      const key = `${userId}:${platform}:${botId || ""}`;
+      if (!followUpTargets.has(key)) {
+        followUpTargets.set(key, { userId, platform, botId });
+      }
+    });
+
+    await Promise.all(
+      Array.from(followUpTargets.values()).map((target) =>
+        maybeAnalyzeFollowUp(target.userId, target.platform, target.botId, {
+          forceUpdate: true,
+        }),
+      ),
+    );
+
+    console.log(
+      `[Orders] ลบออเดอร์แบบกลุ่มสำเร็จ ${deleteResult.deletedCount}/${orders.length} รายการ`,
+    );
+    res.json({
+      success: true,
+      deletedCount: deleteResult.deletedCount,
+      requestedCount: orderIds.length,
+      matchedCount: orders.length,
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถลบออเดอร์แบบกลุ่มได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // API: เปลี่ยนสถานะออเดอร์เดี่ยว
 app.patch("/admin/orders/:orderId/status", async (req, res) => {
   try {

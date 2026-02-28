@@ -791,6 +791,15 @@
   color: #fff;
 }
 
+.orders-bulk-btn.btn-delete {
+  background: #D2555A;
+  color: #fff;
+}
+
+.orders-bulk-btn.btn-delete:hover {
+  background: #b84b4f;
+}
+
 .orders-bulk-btn.btn-cancel {
   background: transparent;
   color: rgba(255, 255, 255, 0.7);
