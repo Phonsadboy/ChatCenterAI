@@ -4059,6 +4059,15 @@ function parseOrderPageKey(pageKey) {
   return { platform, botId };
 }
 
+function buildOrderBotIdMatchCondition(botId) {
+  const normalizedBotId = normalizeOrderBotId(botId);
+  if (!normalizedBotId) return null;
+  if (ObjectId.isValid(normalizedBotId)) {
+    return { $in: [normalizedBotId, new ObjectId(normalizedBotId)] };
+  }
+  return normalizedBotId;
+}
+
 
 
 async function ensureOrderBufferIndexes() {
@@ -4136,33 +4145,50 @@ function buildOrderQuery(params = {}) {
   const pageKeyParam = params.pageKey;
 
   if (pageKeyParam && pageKeyParam !== "all") {
-    const pageKeys = Array.isArray(pageKeyParam) ? pageKeyParam : String(pageKeyParam).split(',').filter(Boolean);
+    const pageKeys = (Array.isArray(pageKeyParam)
+      ? pageKeyParam
+      : String(pageKeyParam).split(","))
+      .map((key) => String(key || "").trim())
+      .filter(Boolean);
 
     if (pageKeys.length > 0) {
-      const pageConditions = pageKeys.map(key => {
-        const parsed = parseOrderPageKey(key);
-        const cond = {};
-        if (parsed.platform) cond.platform = normalizeOrderPlatform(parsed.platform);
-        if (parsed.botId === null) {
-          cond.$or = [{ botId: null }, { botId: { $exists: false } }, { botId: "" }];
-        } else if (parsed.botId) {
-          cond.botId = normalizeOrderBotId(parsed.botId);
-        }
-        return cond;
-      });
+      const pageConditions = pageKeys
+        .map((key) => {
+          // Backward compatibility: old links may still pass plain botId (without platform prefix).
+          if (!key.includes(":")) {
+            const legacyBotIdCondition = buildOrderBotIdMatchCondition(key);
+            if (!legacyBotIdCondition) return null;
+            return { botId: legacyBotIdCondition };
+          }
 
-      if (pageConditions.length === 1) {
-        const cond = pageConditions[0];
-        if (cond.platform) query.platform = cond.platform;
-        if (cond.botId) {
-          query.botId = cond.botId;
-        } else if (cond.$or) {
-          if (!query.$or) query.$or = cond.$or;
-          else query.$or.push(...cond.$or);
+          const parsed = parseOrderPageKey(key);
+          if (!parsed.platform) return null;
+
+          const cond = {
+            platform: normalizeOrderPlatform(parsed.platform),
+          };
+          if (parsed.botId === null) {
+            cond.$or = [
+              { botId: null },
+              { botId: { $exists: false } },
+              { botId: "" },
+            ];
+          } else {
+            const botIdCondition = buildOrderBotIdMatchCondition(parsed.botId);
+            if (!botIdCondition) return null;
+            cond.botId = botIdCondition;
+          }
+          return cond;
+        })
+        .filter((cond) => cond && Object.keys(cond).length > 0);
+
+      if (pageConditions.length > 0) {
+        if (pageConditions.length === 1) {
+          Object.assign(query, pageConditions[0]);
+        } else {
+          if (!query.$and) query.$and = [];
+          query.$and.push({ $or: pageConditions });
         }
-      } else {
-        if (!query.$and) query.$and = [];
-        query.$and.push({ $or: pageConditions });
       }
     }
   } else {
@@ -4173,13 +4199,24 @@ function buildOrderQuery(params = {}) {
       query.platform = normalizeOrderPlatform(platformFilter);
     }
 
-    if (typeof botIdFilter === "string" && botIdFilter.length > 0 && botIdFilter !== "all") {
+    if (
+      typeof botIdFilter === "string" &&
+      botIdFilter.length > 0 &&
+      botIdFilter !== "all"
+    ) {
       if (botIdFilter === "default") {
-        const defaultConditions = [{ botId: null }, { botId: { $exists: false } }, { botId: "" }];
+        const defaultConditions = [
+          { botId: null },
+          { botId: { $exists: false } },
+          { botId: "" },
+        ];
         if (!query.$or) query.$or = defaultConditions;
         else query.$or.push(...defaultConditions);
       } else {
-        query.botId = normalizeOrderBotId(botIdFilter);
+        const botIdCondition = buildOrderBotIdMatchCondition(botIdFilter);
+        if (botIdCondition) {
+          query.botId = botIdCondition;
+        }
       }
     }
   }
@@ -20835,10 +20872,14 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     // Parse pageKey to get platform and botId
     let filterPlatform = null;
     let filterBotId = null;
+    let orderBotIdCondition = null;
+    let isDefaultPageBot = false;
     if (pageKey) {
       const parsed = parseOrderPageKey(pageKey);
       filterPlatform = parsed.platform;
       filterBotId = parsed.botId;
+      orderBotIdCondition = buildOrderBotIdMatchCondition(filterBotId);
+      isDefaultPageBot = !!(parsed.platform && parsed.botId === null);
     }
 
     // Build base query for orders
@@ -20846,7 +20887,15 @@ app.get("/admin/customer-stats/data", async (req, res) => {
       extractedAt: { $gte: dateStart, $lte: dateEnd }
     };
     if (filterPlatform) orderQuery.platform = filterPlatform;
-    if (filterBotId) orderQuery.botId = filterBotId;
+    if (orderBotIdCondition) {
+      orderQuery.botId = orderBotIdCondition;
+    } else if (isDefaultPageBot) {
+      orderQuery.$or = [
+        { botId: null },
+        { botId: { $exists: false } },
+        { botId: "" },
+      ];
+    }
 
     // Build base query for chat history
     const chatQuery = {
@@ -20854,7 +20903,15 @@ app.get("/admin/customer-stats/data", async (req, res) => {
       role: "user"
     };
     if (filterPlatform) chatQuery.platform = filterPlatform;
-    if (filterBotId) chatQuery.botId = filterBotId;
+    if (filterBotId) {
+      chatQuery.botId = filterBotId;
+    } else if (isDefaultPageBot) {
+      chatQuery.$or = [
+        { botId: null },
+        { botId: { $exists: false } },
+        { botId: "" },
+      ];
+    }
 
     // Get orders
     const orders = await db.collection("orders").find(orderQuery).toArray();
@@ -20893,7 +20950,15 @@ app.get("/admin/customer-stats/data", async (req, res) => {
         role: "user",
       };
       if (filterPlatform) existingMatch.platform = filterPlatform;
-      if (filterBotId) existingMatch.botId = filterBotId;
+      if (filterBotId) {
+        existingMatch.botId = filterBotId;
+      } else if (isDefaultPageBot) {
+        existingMatch.$or = [
+          { botId: null },
+          { botId: { $exists: false } },
+          { botId: "" },
+        ];
+      }
 
       const existingUsers = await db.collection("chat_history")
         .aggregate([
@@ -21218,16 +21283,176 @@ app.get("/admin/customer-stats/data", async (req, res) => {
 });
 
 app.get("/admin/orders/pages", async (req, res) => {
-  res.json({
-    success: true,
-    pages: [],
-    settings: {
-      schedulingEnabled: false,
-      defaultCutoffTime: "00:00",
-      extractionMode: "realtime",
-    },
-  });
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
 
+    const [lineBots, facebookBots, orderGroups] = await Promise.all([
+      db
+        .collection("line_bots")
+        .find({})
+        .project({ name: 1, displayName: 1, botName: 1 })
+        .toArray(),
+      db
+        .collection("facebook_bots")
+        .find({})
+        .project({ name: 1, pageName: 1 })
+        .toArray(),
+      db
+        .collection("orders")
+        .aggregate([
+          {
+            $project: {
+              platform: {
+                $toLower: { $ifNull: ["$platform", "line"] },
+              },
+              botIdText: {
+                $trim: {
+                  input: {
+                    $convert: {
+                      input: "$botId",
+                      to: "string",
+                      onError: "",
+                      onNull: "",
+                    },
+                  },
+                },
+              },
+              extractedAt: "$extractedAt",
+            },
+          },
+          {
+            $group: {
+              _id: {
+                platform: "$platform",
+                botIdText: "$botIdText",
+              },
+              orderCount: { $sum: 1 },
+              lastOrderAt: { $max: "$extractedAt" },
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+
+    const pageMap = new Map();
+
+    const upsertPage = ({
+      platform,
+      botId = null,
+      name = "",
+      orderCount = 0,
+      lastOrderAt = null,
+    }) => {
+      const normalizedPlatform = normalizeOrderPlatform(platform);
+      const normalizedBotId = normalizeOrderBotId(botId);
+      const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
+      const existing = pageMap.get(pageKey);
+
+      if (existing) {
+        if (name && !existing.name) existing.name = name;
+        if (Number.isFinite(orderCount)) {
+          existing.orderCount = Math.max(existing.orderCount || 0, orderCount);
+        }
+        if (lastOrderAt) {
+          const existingTime = existing.lastOrderAt
+            ? new Date(existing.lastOrderAt).getTime()
+            : 0;
+          const nextTime = new Date(lastOrderAt).getTime();
+          if (nextTime > existingTime) {
+            existing.lastOrderAt = lastOrderAt;
+          }
+        }
+        return;
+      }
+
+      pageMap.set(pageKey, {
+        pageKey,
+        platform: normalizedPlatform,
+        botId: normalizedBotId,
+        name,
+        orderCount: Number.isFinite(orderCount) ? orderCount : 0,
+        lastOrderAt: lastOrderAt || null,
+      });
+    };
+
+    lineBots.forEach((bot) => {
+      const botId = bot?._id?.toString?.() || null;
+      if (!botId) return;
+      const label =
+        bot.displayName ||
+        bot.name ||
+        bot.botName ||
+        `LINE Bot (${botId.slice(-4)})`;
+      upsertPage({
+        platform: "line",
+        botId,
+        name: label,
+      });
+    });
+
+    facebookBots.forEach((bot) => {
+      const botId = bot?._id?.toString?.() || null;
+      if (!botId) return;
+      const label =
+        bot.pageName ||
+        bot.name ||
+        `Facebook Page (${botId.slice(-4)})`;
+      upsertPage({
+        platform: "facebook",
+        botId,
+        name: label,
+      });
+    });
+
+    orderGroups.forEach((entry) => {
+      const platform = normalizeOrderPlatform(entry?._id?.platform || "line");
+      const botId = normalizeOrderBotId(entry?._id?.botIdText || null);
+      const fallbackName = botId
+        ? `${platform === "facebook" ? "Facebook Page" : "LINE Bot"} (${botId.slice(-4)})`
+        : `${platform === "facebook" ? "Facebook" : "LINE"} (default)`;
+      upsertPage({
+        platform,
+        botId,
+        name: fallbackName,
+        orderCount: Number(entry?.orderCount) || 0,
+        lastOrderAt: entry?.lastOrderAt || null,
+      });
+    });
+
+    const pages = Array.from(pageMap.values())
+      .sort((a, b) => {
+        const orderDiff = (b.orderCount || 0) - (a.orderCount || 0);
+        if (orderDiff !== 0) return orderDiff;
+        return String(a.name || a.pageKey).localeCompare(
+          String(b.name || b.pageKey),
+          "th",
+          { sensitivity: "base" },
+        );
+      });
+
+    res.json({
+      success: true,
+      pages,
+      settings: {
+        schedulingEnabled: false,
+        defaultCutoffTime: "00:00",
+        extractionMode: "realtime",
+      },
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถดึงรายการเพจ/บอทได้:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "ไม่สามารถดึงรายการเพจได้",
+      pages: [],
+      settings: {
+        schedulingEnabled: false,
+        defaultCutoffTime: "00:00",
+        extractionMode: "realtime",
+      },
+    });
+  }
 });
 
 
@@ -24822,6 +25047,23 @@ app.get("/admin/orders/data", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("orders");
+    const numericTotalAmountExpr = {
+      $convert: {
+        input: "$orderData.totalAmount",
+        to: "double",
+        onError: 0,
+        onNull: 0,
+      },
+    };
+    const numericShippingExpr = {
+      $convert: {
+        input: "$orderData.shippingCost",
+        to: "double",
+        onError: 0,
+        onNull: 0,
+      },
+    };
+    const confirmedStatuses = ["confirmed", "shipped", "completed"];
 
     const ordersCursor = coll
       .find(query)
@@ -24845,23 +25087,35 @@ app.get("/admin/orders/data", async (req, res) => {
             $group: {
               _id: null,
               totalAmount: {
-                $sum: { $ifNull: ["$orderData.totalAmount", 0] },
+                $sum: {
+                  $cond: [
+                    { $ne: ["$status", "cancelled"] },
+                    numericTotalAmountExpr,
+                    0,
+                  ],
+                },
               },
               totalAmountConfirmed: {
                 $sum: {
                   $cond: [
-                    { $eq: ["$status", "confirmed"] },
-                    { $ifNull: ["$orderData.totalAmount", 0] },
+                    { $in: ["$status", confirmedStatuses] },
+                    numericTotalAmountExpr,
                     0,
                   ],
                 },
               },
               totalShipping: {
-                $sum: { $ifNull: ["$orderData.shippingCost", 0] },
+                $sum: {
+                  $cond: [
+                    { $ne: ["$status", "cancelled"] },
+                    numericShippingExpr,
+                    0,
+                  ],
+                },
               },
               confirmedOrders: {
                 $sum: {
-                  $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0],
+                  $cond: [{ $in: ["$status", confirmedStatuses] }, 1, 0],
                 },
               },
             },
@@ -24946,6 +25200,11 @@ app.get("/admin/orders/data", async (req, res) => {
       pageNameMap.set(key, label);
     });
 
+    const parseNumeric = (value) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : 0;
+    };
+
     const formattedOrders = orders.map((order) => {
       const orderData = order.orderData || {};
       const customerName = normalizeCustomerName(orderData.customerName);
@@ -24994,8 +25253,8 @@ app.get("/admin/orders/data", async (req, res) => {
         pageKey,
         pageName,
         status: order.status || "pending",
-        totalAmount: orderData.totalAmount || 0,
-        shippingCost: orderData.shippingCost || 0,
+        totalAmount: parseNumeric(orderData.totalAmount),
+        shippingCost: parseNumeric(orderData.shippingCost),
         paymentMethod,
         shippingAddress:
           addressInfo.fullAddress || orderData.shippingAddress || null,
@@ -25921,6 +26180,54 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
     res.json({ success: true, orderId, notes: sanitizedNotes });
   } catch (error) {
     console.error("[Orders] ไม่สามารถอัปเดต notes ได้:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// API: ลบออเดอร์ (Orders page)
+app.delete("/admin/orders/:orderId", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+
+    const order = await coll.findOne({ _id: new ObjectId(orderId) });
+    if (!order) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    const result = await coll.deleteOne({ _id: new ObjectId(orderId) });
+    if (result.deletedCount === 0) {
+      return res.status(500).json({ success: false, error: "ไม่สามารถลบออเดอร์ได้" });
+    }
+
+    try {
+      if (io) {
+        io.emit("orderDeleted", {
+          orderId,
+          userId: order.userId,
+        });
+      }
+    } catch (_) { }
+
+    await maybeAnalyzeFollowUp(order.userId, order.platform, order.botId, {
+      forceUpdate: true,
+    });
+
+    console.log(`[Orders] ลบออเดอร์สำเร็จ ${orderId}`);
+    res.json({
+      success: true,
+      orderId,
+      message: "ลบออเดอร์เรียบร้อยแล้ว",
+    });
+  } catch (error) {
+    console.error("[Orders] ไม่สามารถลบออเดอร์ได้:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

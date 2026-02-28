@@ -729,6 +729,11 @@
   color: var(--success);
 }
 
+.orders-action-btn.btn-delete:hover {
+  color: #D2555A;
+  background: rgba(210, 85, 90, 0.12);
+}
+
 /* ============ Bulk Actions Bar ============ */
 .orders-bulk-bar {
   display: none;
@@ -1092,6 +1097,15 @@
 .orders-btn-outline:hover {
   border-color: var(--primary);
   color: var(--primary);
+}
+
+.orders-btn-danger {
+  background: #D2555A;
+  color: #fff;
+}
+
+.orders-btn-danger:hover {
+  background: #b84b4f;
 }
 
 .orders-btn-icon {

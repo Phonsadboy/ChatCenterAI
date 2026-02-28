@@ -420,6 +420,9 @@
               <button class="orders-action-btn btn-chat" title="ไปยังแชท" onclick="window.OrdersV2.goToChat('${order.userId}')">
                 <i class="fas fa-comment"></i>
               </button>
+              <button class="orders-action-btn btn-delete" title="ลบออเดอร์" onclick="window.OrdersV2.deleteOrder('${order.id}')">
+                <i class="fas fa-trash-alt"></i>
+              </button>
             </div>
           </td>
         </tr>
@@ -641,7 +644,7 @@
   function buildExportUrl(params = new URLSearchParams()) {
     const nextParams = new URLSearchParams(params);
     nextParams.set('exportFormat', getExportFormat());
-    return `/ admin / orders /export?${nextParams.toString()} `;
+    return `/admin/orders/export?${nextParams.toString()}`;
   }
 
   function handleSortClick(column) {
@@ -732,7 +735,7 @@
 
   async function updateStatus(orderId, newStatus) {
     try {
-      const response = await fetch(`/ admin / orders / ${orderId}/status`, {
+      const response = await fetch(`/admin/orders/${orderId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -918,6 +921,13 @@
     }).join('')}
         </div>
       </div>
+
+      <div class="orders-detail-section">
+        <div class="orders-detail-section-title"><i class="fas fa-trash-alt"></i> ลบออเดอร์</div>
+        <button class="orders-btn orders-btn-danger" onclick="window.OrdersV2.deleteOrder('${order.id}')">
+          <i class="fas fa-trash-alt"></i> ลบออเดอร์นี้
+        </button>
+      </div>
     `;
 
     // Update title
@@ -968,6 +978,33 @@
     if (page < 1 || page > state.pagination.pages) return;
     state.pagination.page = page;
     loadOrders();
+  }
+
+  async function deleteOrder(orderId) {
+    if (!orderId) return;
+    const confirmDelete = window.confirm('ต้องการลบออเดอร์นี้ถาวรหรือไม่? การลบไม่สามารถกู้คืนได้');
+    if (!confirmDelete) return;
+
+    try {
+      const response = await fetch(`/admin/orders/${orderId}`, {
+        method: 'DELETE'
+      });
+      const data = await response.json();
+
+      if (data.success) {
+        state.selectedIds.delete(orderId);
+        if (state.detailOrderId === orderId) {
+          closeDetail();
+        }
+        showToast('ลบออเดอร์เรียบร้อย', 'success');
+        loadOrders();
+      } else {
+        showToast(data.error || 'ไม่สามารถลบออเดอร์ได้', 'error');
+      }
+    } catch (error) {
+      console.error('[Orders] Delete order error:', error);
+      showToast('เกิดข้อผิดพลาดในการลบออเดอร์', 'error');
+    }
   }
 
   // ============ Filters Persistence ============
@@ -1105,6 +1142,7 @@
     printLabel,
     goToChat,
     goToPage,
+    deleteOrder,
     saveNotes,
     showToast,
     showError
