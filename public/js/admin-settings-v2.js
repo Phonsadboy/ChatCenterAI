@@ -2191,6 +2191,46 @@ function setPasscodeMessage(type, message) {
 
 // --- API Keys Management ---
 let apiKeysCache = [];
+const API_PROVIDER_OPENAI = 'openai';
+const API_PROVIDER_OPENROUTER = 'openrouter';
+
+function normalizeApiProvider(provider) {
+    if (typeof provider !== 'string') return API_PROVIDER_OPENAI;
+    return provider.trim().toLowerCase() === API_PROVIDER_OPENROUTER
+        ? API_PROVIDER_OPENROUTER
+        : API_PROVIDER_OPENAI;
+}
+
+function isMaskedApiKeyValue(value) {
+    return typeof value === 'string' && value.includes('...');
+}
+
+function getApiKeyHintByProvider(provider) {
+    return normalizeApiProvider(provider) === API_PROVIDER_OPENROUTER
+        ? 'API Key จาก OpenRouter (ขึ้นต้นด้วย sk-or-v1-)'
+        : 'API Key จาก OpenAI (ขึ้นต้นด้วย sk-)';
+}
+
+function isApiKeyValidForProvider(apiKey, provider) {
+    const normalizedProvider = normalizeApiProvider(provider);
+    if (!apiKey) return false;
+    if (normalizedProvider === API_PROVIDER_OPENROUTER) {
+        return apiKey.startsWith('sk-or-v1-');
+    }
+    return apiKey.startsWith('sk-');
+}
+
+function updateApiKeyProviderHint() {
+    const providerSelect = document.getElementById('apiKeyProvider');
+    const input = document.getElementById('apiKeyValue');
+    const hint = document.getElementById('apiKeyFormatHint');
+    const provider = normalizeApiProvider(providerSelect?.value);
+
+    if (hint) hint.textContent = getApiKeyHintByProvider(provider);
+    if (input && !isMaskedApiKeyValue(input.value || '')) {
+        input.placeholder = provider === API_PROVIDER_OPENROUTER ? 'sk-or-v1-...' : 'sk-...';
+    }
+}
 
 async function loadApiKeys() {
     const tbody = document.getElementById('apiKeysTableBody');
@@ -2243,6 +2283,8 @@ function renderApiKeys() {
         const statusClass = key.isActive ? 'success' : 'secondary';
         const statusText = key.isActive ? 'เปิดใช้งาน' : 'ปิดใช้งาน';
         const defaultBadge = key.isDefault ? '<span class="badge bg-primary ms-1">หลัก</span>' : '';
+        const provider = normalizeApiProvider(key.provider);
+        const providerBadge = `<span class="badge bg-dark ms-1">${escapeHtml(provider.toUpperCase())}</span>`;
         const lastUsed = key.lastUsedAt ? formatBotUpdatedAt(key.lastUsedAt) : 'ยังไม่มี';
         const usage = key.usageCount || 0;
 
@@ -2251,6 +2293,7 @@ function renderApiKeys() {
                 <td>
                     <strong>${escapeHtml(key.name)}</strong>
                     ${defaultBadge}
+                    ${providerBadge}
                 </td>
                 <td>
                     <code class="text-muted">${escapeHtml(key.maskedKey)}</code>
@@ -2288,10 +2331,13 @@ function renderApiKeys() {
 function openAddApiKeyModal() {
     document.getElementById('apiKeyId').value = '';
     document.getElementById('apiKeyName').value = '';
+    document.getElementById('apiKeyProvider').value = API_PROVIDER_OPENAI;
     document.getElementById('apiKeyValue').value = '';
+    document.getElementById('apiKeyValue').placeholder = 'sk-...';
     document.getElementById('apiKeyIsDefault').checked = false;
     document.getElementById('apiKeyModalLabel').innerHTML = '<i class="fas fa-key me-2"></i>เพิ่ม API Key';
     document.getElementById('apiKeyTestResult').classList.add('d-none');
+    updateApiKeyProviderHint();
 
     const modal = new bootstrap.Modal(document.getElementById('apiKeyModal'));
     modal.show();
@@ -2306,11 +2352,13 @@ function openEditApiKeyModal(id) {
 
     document.getElementById('apiKeyId').value = key.id;
     document.getElementById('apiKeyName').value = key.name;
+    document.getElementById('apiKeyProvider').value = normalizeApiProvider(key.provider);
     document.getElementById('apiKeyValue').value = key.maskedKey; // Show masked key
     document.getElementById('apiKeyValue').placeholder = 'ใส่ใหม่เพื่อเปลี่ยน หรือปล่อยว่าง';
     document.getElementById('apiKeyIsDefault').checked = key.isDefault;
     document.getElementById('apiKeyModalLabel').innerHTML = '<i class="fas fa-edit me-2"></i>แก้ไข API Key';
     document.getElementById('apiKeyTestResult').classList.add('d-none');
+    updateApiKeyProviderHint();
 
     const modal = new bootstrap.Modal(document.getElementById('apiKeyModal'));
     modal.show();
@@ -2319,6 +2367,7 @@ function openEditApiKeyModal(id) {
 async function saveApiKey() {
     const id = document.getElementById('apiKeyId').value;
     const name = document.getElementById('apiKeyName').value.trim();
+    const provider = normalizeApiProvider(document.getElementById('apiKeyProvider')?.value);
     const apiKey = document.getElementById('apiKeyValue').value.trim();
     const isDefault = document.getElementById('apiKeyIsDefault').checked;
     const saveBtn = document.getElementById('saveApiKeyBtn');
@@ -2329,20 +2378,22 @@ async function saveApiKey() {
     }
 
     const isEdit = Boolean(id);
-    const existingKey = isEdit ? apiKeysCache.find(k => k.id === id) : null;
-    const isNewKey = !isEdit || (apiKey && !apiKey.startsWith('sk-...'));
+    const isNewKey = !isEdit || (apiKey && !isMaskedApiKeyValue(apiKey));
 
-    if (!isEdit && (!apiKey || !apiKey.startsWith('sk-'))) {
-        showToast('กรุณาระบุ API Key ที่ถูกต้อง (ขึ้นต้นด้วย sk-)', 'warning');
+    if (!isEdit && (!apiKey || !isApiKeyValidForProvider(apiKey, provider))) {
+        showToast(`กรุณาระบุ API Key ที่ถูกต้อง (${getApiKeyHintByProvider(provider)})`, 'warning');
         return;
     }
 
     setLoading(saveBtn, true);
 
     try {
-        const payload = { name, isDefault };
+        const payload = { name, isDefault, provider };
         // Only send apiKey if it's a new key or if it's been changed (not the masked value)
-        if (isNewKey && apiKey && !apiKey.startsWith('sk-...')) {
+        if (isNewKey && apiKey && !isMaskedApiKeyValue(apiKey)) {
+            if (!isApiKeyValidForProvider(apiKey, provider)) {
+                throw new Error(getApiKeyHintByProvider(provider));
+            }
             payload.apiKey = apiKey;
         }
 
@@ -2423,18 +2474,25 @@ async function testApiKey(id) {
 
 async function testApiKeyFromModal() {
     const apiKey = document.getElementById('apiKeyValue').value.trim();
+    const provider = normalizeApiProvider(document.getElementById('apiKeyProvider')?.value);
     const resultDiv = document.getElementById('apiKeyTestResult');
     const testBtn = document.getElementById('testApiKeyBtn');
 
-    if (!apiKey || apiKey.startsWith('sk-...')) {
+    if (!apiKey || isMaskedApiKeyValue(apiKey)) {
         resultDiv.classList.remove('d-none', 'alert-success', 'alert-danger');
         resultDiv.classList.add('alert-warning');
         resultDiv.textContent = 'กรุณาใส่ API Key ใหม่เพื่อทดสอบ';
         return;
     }
+    if (!isApiKeyValidForProvider(apiKey, provider)) {
+        resultDiv.classList.remove('d-none', 'alert-success', 'alert-danger', 'alert-info');
+        resultDiv.classList.add('alert-warning');
+        resultDiv.textContent = getApiKeyHintByProvider(provider);
+        return;
+    }
 
     const id = document.getElementById('apiKeyId').value;
-    if (id) {
+    if (id && isMaskedApiKeyValue(apiKey)) {
         // Existing key - test via API
         await testApiKey(id);
         return;
@@ -2453,7 +2511,7 @@ async function testApiKeyFromModal() {
         const response = await fetch('/api/openai-keys/test', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ apiKey })
+            body: JSON.stringify({ apiKey, provider })
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok || !result.success) {
@@ -2498,6 +2556,7 @@ async function toggleApiKeyStatus(id, isActive) {
 // Toggle API key visibility
 document.addEventListener('DOMContentLoaded', function () {
     const toggleBtn = document.getElementById('toggleApiKeyVisibility');
+    const providerSelect = document.getElementById('apiKeyProvider');
     if (toggleBtn) {
         toggleBtn.addEventListener('click', function () {
             const input = document.getElementById('apiKeyValue');
@@ -2510,6 +2569,10 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
     }
+    if (providerSelect) {
+        providerSelect.addEventListener('change', updateApiKeyProviderHint);
+    }
+    updateApiKeyProviderHint();
 });
 
 // Auto-load API keys when section becomes visible

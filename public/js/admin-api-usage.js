@@ -138,16 +138,23 @@ function updateSummaryCards(summary) {
     const totalCalls = summary.totalCalls || 0;
     const totalTokens = summary.totalTokens || 0;
     const totalCostUSD = summary.totalCostUSD || 0;
-    const avgCostPerCall = totalCalls > 0 ? totalCostUSD / totalCalls : 0;
+    const pricedCalls = summary.pricedCalls ?? totalCalls;
+    const avgCostPerCall = pricedCalls > 0 ? totalCostUSD / pricedCalls : null;
 
     animateValue('totalCalls', 0, totalCalls, 800, formatNumber);
     animateValue('totalTokens', 0, totalTokens, 800, formatNumber);
 
-    document.getElementById('totalCost').textContent = '$' + formatCost(totalCostUSD);
-    document.getElementById('totalCostTHB').textContent = '~฿' + formatNumber(Math.round(totalCostUSD * THB_RATE));
-
-    document.getElementById('avgCostPerCall').textContent = '$' + avgCostPerCall.toFixed(4);
-    document.getElementById('avgCostPerCallTHB').textContent = '~฿' + (avgCostPerCall * THB_RATE).toFixed(2);
+    if (pricedCalls > 0) {
+        document.getElementById('totalCost').textContent = '$' + formatCost(totalCostUSD);
+        document.getElementById('totalCostTHB').textContent = '~฿' + formatNumber(Math.round(totalCostUSD * THB_RATE));
+        document.getElementById('avgCostPerCall').textContent = '$' + avgCostPerCall.toFixed(4);
+        document.getElementById('avgCostPerCallTHB').textContent = '~฿' + (avgCostPerCall * THB_RATE).toFixed(2);
+    } else {
+        document.getElementById('totalCost').textContent = '-';
+        document.getElementById('totalCostTHB').textContent = 'N/A';
+        document.getElementById('avgCostPerCall').textContent = '-';
+        document.getElementById('avgCostPerCallTHB').textContent = 'N/A';
+    }
 
     // Token breakdown (if available)
     if (summary.totalInputTokens !== undefined) {
@@ -505,10 +512,12 @@ function renderGroupedTable(tableHeader, tableBody) {
 
     let html = '';
     items.forEach((item, index) => {
-        const avgCostUSD = item.calls > 0 ? (item.costUSD / item.calls) : 0;
+        const pricedCalls = item.pricedCalls ?? item.calls ?? 0;
+        const hasCostData = pricedCalls > 0;
+        const avgCostUSD = hasCostData ? (item.costUSD / pricedCalls) : null;
         const avgCostTHB = avgCostUSD * THB_RATE;
         const totalCostTHB = (item.costUSD || 0) * THB_RATE;
-        const costPercent = maxCost > 0 ? ((item.costUSD || 0) / maxCost * 100) : 0;
+        const costPercent = hasCostData && maxCost > 0 ? ((item.costUSD || 0) / maxCost * 100) : 0;
 
         html += `
             <tr class="expandable" data-bot-id="${escapeHtml(item.botId || '')}" data-index="${index}">
@@ -524,12 +533,11 @@ function renderGroupedTable(tableHeader, tableBody) {
                 <td class="text-end">${formatNumber(item.calls)}</td>
                 <td class="text-end">${formatNumber(item.tokens)}</td>
                 <td class="text-end">
-                    <div class="cost-display">$${formatCost(item.costUSD)} <span class="cost-sub">(฿${totalCostTHB.toFixed(2)})</span></div>
+                    <div class="cost-display">${hasCostData ? `$${formatCost(item.costUSD)} <span class="cost-sub">(฿${totalCostTHB.toFixed(2)})</span>` : '<span class="text-muted">-</span>'}</div>
                     <div class="cost-bar"><div class="cost-bar-fill primary" style="width: ${costPercent}%"></div></div>
                 </td>
                 <td class="text-end">
-                    <span class="text-info fw-semibold">$${avgCostUSD.toFixed(4)}</span>
-                    <span class="cost-sub">(฿${avgCostTHB.toFixed(2)})</span>
+                    ${hasCostData ? `<span class="text-info fw-semibold">$${avgCostUSD.toFixed(4)}</span><span class="cost-sub">(฿${avgCostTHB.toFixed(2)})</span>` : '<span class="text-muted">-</span>'}
                 </td>
                 <td class="text-center">
                     <i class="fas fa-chevron-right expand-icon"></i>
@@ -631,7 +639,8 @@ async function loadDetailedLogs() {
         let html = '';
         filtered.forEach(log => {
             const botName = botNameMap[log.botId] || log.botId || '-';
-            const costTHB = (log.estimatedCostUSD || 0) * THB_RATE;
+            const hasCostData = typeof log.estimatedCostUSD === 'number';
+            const costTHB = hasCostData ? (log.estimatedCostUSD * THB_RATE) : 0;
 
             html += `
                 <tr>
@@ -643,8 +652,9 @@ async function loadDetailedLogs() {
                     <td class="text-end">${formatNumber(log.completionTokens || 0)}</td>
                     <td class="text-end fw-medium">${formatNumber(log.totalTokens || 0)}</td>
                     <td class="text-end">
-                        <span class="cost-display">$${formatCost(log.estimatedCostUSD || 0)}</span>
-                        <span class="cost-sub">(฿${costTHB.toFixed(2)})</span>
+                        ${hasCostData
+                    ? `<span class="cost-display">$${formatCost(log.estimatedCostUSD)}</span><span class="cost-sub">(฿${costTHB.toFixed(2)})</span>`
+                    : '<span class="text-muted">-</span>'}
                     </td>
                 </tr>
             `;
@@ -702,7 +712,9 @@ async function toggleRowExpand(row) {
         const data = await response.json();
 
         const totals = data.totals || {};
-        const avgCostPerCall = totals.totalCalls > 0 ? (totals.totalCost / totals.totalCalls) : 0;
+        const pricedCalls = totals.pricedCalls ?? totals.totalCalls ?? 0;
+        const hasCostData = pricedCalls > 0;
+        const avgCostPerCall = hasCostData ? (totals.totalCost / pricedCalls) : null;
 
         let html = `
             <div class="expanded-row-content">
@@ -716,13 +728,15 @@ async function toggleRowExpand(row) {
         `;
 
         (data.byModel || []).forEach(m => {
-            const avgCost = m.count > 0 ? (m.estimatedCost / m.count) : 0;
+            const pricedCallsForModel = m.pricedCalls ?? m.count ?? 0;
+            const hasCostForModel = pricedCallsForModel > 0;
+            const avgCost = hasCostForModel ? (m.estimatedCost / pricedCallsForModel) : null;
             html += `
                 <li>
                     <span><span class="model-badge ${getModelClass(m.model)}">${escapeHtml(m.model)}</span></span>
                     <span>
                         <strong>${formatNumber(m.count)}</strong> calls • 
-                        <span class="text-info">$${avgCost.toFixed(4)}</span>/call
+                        ${hasCostForModel ? `<span class="text-info">$${avgCost.toFixed(4)}</span>/call` : '<span class="text-muted">-</span>'}
                     </span>
                 </li>
             `;
@@ -740,10 +754,11 @@ async function toggleRowExpand(row) {
         `;
 
         (data.byKey || []).forEach(k => {
+            const hasCostForKey = (k.pricedCalls ?? k.count ?? 0) > 0;
             html += `
                 <li>
                     <span><i class="fas fa-key text-muted me-1"></i>${escapeHtml(k.keyName)}</span>
-                    <span><strong>${formatNumber(k.count)}</strong> calls • $${formatCost(k.estimatedCost)}</span>
+                    <span><strong>${formatNumber(k.count)}</strong> calls • ${hasCostForKey ? `$${formatCost(k.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
                 </li>
             `;
         });
@@ -760,10 +775,11 @@ async function toggleRowExpand(row) {
         `;
 
         (data.recentLogs || []).slice(0, 5).forEach(l => {
+            const hasCost = typeof l.estimatedCost === 'number';
             html += `
                 <li>
                     <span>${formatDateTime(l.timestamp)}</span>
-                    <span>${formatNumber(l.totalTokens)} tokens • $${formatCost(l.estimatedCost)}</span>
+                    <span>${formatNumber(l.totalTokens)} tokens • ${hasCost ? `$${formatCost(l.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
                 </li>
             `;
         });

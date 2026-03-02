@@ -28671,7 +28671,10 @@ app.get("/api/openai-usage/summary", async (req, res) => {
         unpricedCalls: summary.unpricedCalls || 0,
       },
       byModel: byModel.map(m => ({
-        model: m._id?.model || "unknown",
+        model:
+          normalizeProvider(m._id?.provider) === LLM_PROVIDER_OPENROUTER
+            ? `openrouter/${m._id?.model || "unknown"}`
+            : (m._id?.model || "unknown"),
         provider: normalizeProvider(m._id?.provider),
         calls: m.calls,
         tokens: m.tokens,
@@ -28906,7 +28909,10 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
       totals: totals[0] || { totalCalls: 0, totalTokens: 0, totalCost: 0, pricedCalls: 0 },
       byModel: byModel.map(m => ({
         ...m,
-        model: m._id?.model || "unknown",
+        model:
+          normalizeProvider(m._id?.provider) === LLM_PROVIDER_OPENROUTER
+            ? `openrouter/${m._id?.model || "unknown"}`
+            : (m._id?.model || "unknown"),
         provider: normalizeProvider(m._id?.provider),
       })),
       byKey: byKey.map(k => ({
