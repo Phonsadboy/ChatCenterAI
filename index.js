@@ -5922,10 +5922,10 @@ async function fetchAllSheetsData(spreadsheetId) {
 // ... existing code ...
 
 // ------------------------
-// ระบบคิว (ดีเลย์ 5 วินาที) - ปรับปรุงแล้ว
+// ระบบคิวข้อความ (ประมวลผลแบบต่อคิวทีละรอบต่อผู้ใช้/เพจ)
 // ------------------------
 const processedIds = new Set();
-const userQueues = {}; // { queueKey: { userId, messages: [], timer: null, context: {} } }
+const userQueues = {}; // { queueKey: { userId, messages: [], timer: null, context: {}, isProcessing: false, flushRequested: false, flushDelayMs: null } }
 
 function buildQueueKey(userId, options = {}) {
   if (options.queueKey) {
@@ -5957,6 +5957,60 @@ function mergeQueueContext(existingContext = {}, newContext = {}) {
     merged.platform = "line";
   }
   return merged;
+}
+
+function clearQueueTimer(queue) {
+  if (!queue || !queue.timer) {
+    return;
+  }
+  clearTimeout(queue.timer);
+  queue.timer = null;
+}
+
+function scheduleQueueFlush(queueKey, delayMs = 0) {
+  const queue = userQueues[queueKey];
+  if (!queue) return;
+
+  const normalizedDelayMs =
+    Number.isFinite(delayMs) && delayMs >= 0 ? Math.floor(delayMs) : 0;
+  const delaySeconds = (normalizedDelayMs / 1000).toFixed(2).replace(/\.00$/, "");
+
+  clearQueueTimer(queue);
+  queue.timer = setTimeout(() => {
+    const currentQueue = userQueues[queueKey];
+    if (!currentQueue) return;
+    const queueUserId = currentQueue.userId || "unknown";
+    console.log(
+      `[LOG] ครบเวลา delay (${delaySeconds} วินาที) เริ่มประมวลผลคิวสำหรับผู้ใช้: ${queueUserId} (queueKey: ${queueKey})`,
+    );
+    flushQueue(queueKey).catch((err) => {
+      console.error(
+        `[LOG] เกิดข้อผิดพลาดระหว่างประมวลผลคิวสำหรับผู้ใช้ ${queueUserId} (queueKey: ${queueKey}):`,
+        err,
+      );
+    });
+  }, normalizedDelayMs);
+}
+
+function requestQueueFlush(queueKey, delayMs = 0) {
+  const queue = userQueues[queueKey];
+  if (!queue) return;
+
+  const normalizedDelayMs =
+    Number.isFinite(delayMs) && delayMs >= 0 ? Math.floor(delayMs) : 0;
+  queue.flushRequested = true;
+  if (queue.flushDelayMs === null || normalizedDelayMs < queue.flushDelayMs) {
+    queue.flushDelayMs = normalizedDelayMs;
+  }
+
+  if (queue.isProcessing) {
+    console.log(
+      `[LOG] คิวกำลังประมวลผลอยู่ จะรอให้คำตอบก่อนหน้าส่งเสร็จก่อน (queueKey: ${queueKey})`,
+    );
+    return;
+  }
+
+  scheduleQueueFlush(queueKey, queue.flushDelayMs ?? 0);
 }
 
 // ฟังก์ชันสำหรับวิเคราะห์ประเภทเนื้อหาในคิว
@@ -6814,6 +6868,9 @@ async function addToQueue(userId, incomingItem, options = {}) {
       messages: [],
       timer: null,
       context: {},
+      isProcessing: false,
+      flushRequested: false,
+      flushDelayMs: null,
     };
   }
 
@@ -6831,54 +6888,33 @@ async function addToQueue(userId, incomingItem, options = {}) {
       ? Math.floor(maxQueueMessages)
       : 10;
 
-  if (queue.messages.length >= normalizedMax) {
-    console.log(
-      `[LOG] จำนวนข้อความในคิวถึงขีดจำกัด (${normalizedMax}) เริ่มประมวลผลทันที (queueKey: ${queueKey})`,
-    );
-    // ยกเลิกตัวจับเวลาเดิม
-    if (queue.timer) {
-      clearTimeout(queue.timer);
-      queue.timer = null;
-    }
-    // ประมวลผลทันทีและรอให้เสร็จ ก่อนเพิ่มข้อความใหม่
-    await flushQueue(queueKey);
-  }
-
   queue.messages.push(incomingItem);
   console.log(
     `[LOG] คิวของผู้ใช้ ${userId} (queueKey: ${queueKey}) มีข้อความ ${queue.messages.length} ข้อความ`,
   );
-
-  if (queue.timer) {
-    console.log(
-      `[LOG] ยกเลิกตัวจับเวลาคิวเดิมสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
-    );
-    clearTimeout(queue.timer);
-    queue.timer = null;
-  }
 
   // ใช้ค่าที่ตั้งไว้ในฐานข้อมูล
   const chatDelaySetting = await getSettingValue("chatDelaySeconds", 0);
   const chatDelay = Number(chatDelaySetting);
   const normalizedDelay =
     Number.isFinite(chatDelay) && chatDelay >= 0 ? chatDelay : 5;
+  const normalizedDelayMs = Math.floor(normalizedDelay * 1000);
+
+  if (queue.messages.length >= normalizedMax) {
+    console.log(
+      `[LOG] จำนวนข้อความในคิวถึงขีดจำกัด (${normalizedMax}) จะเร่งประมวลผลทันทีหลังรอบปัจจุบันเสร็จ (queueKey: ${queueKey})`,
+    );
+    requestQueueFlush(queueKey, 0);
+    return;
+  }
+
   console.log(
     `[LOG] ตั้งเวลาประมวลผลคิวใน ${normalizedDelay} วินาที สำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
   );
   console.log(
     `[LOG] ระบบจะรอข้อความเพิ่มจากผู้ใช้เป็นเวลา ${normalizedDelay} วินาที`,
   );
-  queue.timer = setTimeout(() => {
-    console.log(
-      `[LOG] ครบเวลา delay (${normalizedDelay} วินาที) เริ่มประมวลผลคิวสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
-    );
-    flushQueue(queueKey).catch((err) => {
-      console.error(
-        `[LOG] เกิดข้อผิดพลาดระหว่างประมวลผลคิวสำหรับผู้ใช้ ${userId} (queueKey: ${queueKey}):`,
-        err,
-      );
-    });
-  }, normalizedDelay * 1000);
+  requestQueueFlush(queueKey, normalizedDelayMs);
 }
 
 async function flushQueue(queueKey) {
@@ -6887,28 +6923,55 @@ async function flushQueue(queueKey) {
     console.log(`[LOG] ไม่พบคิวสำหรับ key: ${queueKey}`);
     return;
   }
-  const { userId, messages } = queue;
+  const { userId } = queue;
+
+  if (queue.isProcessing) {
+    console.log(
+      `[LOG] ข้ามการประมวลผลซ้ำเพราะคิวยังทำงานอยู่สำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
+    );
+    return;
+  }
+
+  clearQueueTimer(queue);
+
   console.log(
     `[LOG] เริ่มการประมวลผลคิวสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
   );
 
-  if (!messages || messages.length === 0) {
+  if (!queue.messages || queue.messages.length === 0) {
     console.log(
       `[LOG] ไม่พบข้อความในคิวสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
     );
-    queue.timer = null;
+    queue.flushRequested = false;
+    queue.flushDelayMs = null;
     return;
   }
-  const allItems = [...messages];
+  const allItems = [...queue.messages];
   console.log(
     `[LOG] มีข้อความ ${allItems.length} ข้อความในคิวของผู้ใช้: ${userId}`,
   );
   queue.messages = [];
-  queue.timer = null;
+  queue.isProcessing = true;
+  queue.flushRequested = false;
+  queue.flushDelayMs = null;
 
-  console.log(`[LOG] เริ่มประมวลผลข้อความทั้งหมดในคิวสำหรับผู้ใช้: ${userId}`);
-  await processFlushedMessages(userId, allItems, queue.context);
-  console.log(`[LOG] ประมวลผลคิวเสร็จสิ้นสำหรับผู้ใช้: ${userId}`);
+  try {
+    console.log(`[LOG] เริ่มประมวลผลข้อความทั้งหมดในคิวสำหรับผู้ใช้: ${userId}`);
+    await processFlushedMessages(userId, allItems, queue.context);
+    console.log(`[LOG] ประมวลผลคิวเสร็จสิ้นสำหรับผู้ใช้: ${userId}`);
+  } finally {
+    queue.isProcessing = false;
+    if (queue.messages.length > 0 || queue.flushRequested) {
+      const nextDelayMs =
+        Number.isFinite(queue.flushDelayMs) && queue.flushDelayMs >= 0
+          ? queue.flushDelayMs
+          : 0;
+      console.log(
+        `[LOG] พบข้อความค้างระหว่างประมวลผล จะเริ่มรอบถัดไปใน ${(nextDelayMs / 1000).toFixed(2).replace(/\.00$/, "")} วินาที (queueKey: ${queueKey})`,
+      );
+      scheduleQueueFlush(queueKey, nextDelayMs);
+    }
+  }
 }
 
 async function processFlushedMessages(
