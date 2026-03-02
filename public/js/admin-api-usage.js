@@ -311,7 +311,7 @@ function updatePieChart(modelData) {
     // Sort by cost and take top 5
     const sorted = [...modelData].sort((a, b) => (b.costUSD || 0) - (a.costUSD || 0)).slice(0, 6);
 
-    const labels = sorted.map(m => m.model);
+    const labels = sorted.map(m => formatModelLabel(m.model, m.provider));
     const data = sorted.map(m => m.costUSD || 0);
 
     const colors = [
@@ -390,12 +390,24 @@ function populateFilterDropdowns(data) {
     // Models
     const modelSelect = document.getElementById('filterModel');
     modelSelect.innerHTML = '<option value="">ทั้งหมด</option>';
+    const modelMap = new Map();
     (data.byModel || []).forEach(m => {
-        const opt = document.createElement('option');
-        opt.value = m.model || '';
-        opt.textContent = m.model || '-';
-        modelSelect.appendChild(opt);
+        const modelKey = buildModelFilterKey(m.model, m.provider);
+        if (!modelMap.has(modelKey)) {
+            modelMap.set(modelKey, {
+                model: m.model || '',
+                provider: m.provider
+            });
+        }
     });
+    Array.from(modelMap.entries())
+        .sort((a, b) => formatModelLabel(a[1].model, a[1].provider).localeCompare(formatModelLabel(b[1].model, b[1].provider)))
+        .forEach(([key, modelInfo]) => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = formatModelLabel(modelInfo.model, modelInfo.provider);
+            modelSelect.appendChild(opt);
+        });
 
     // Keys
     const keySelect = document.getElementById('filterKey');
@@ -403,7 +415,7 @@ function populateFilterDropdowns(data) {
     (data.byKey || []).forEach(k => {
         const opt = document.createElement('option');
         opt.value = k.keyId || 'env';
-        opt.textContent = k.name || 'Environment Variable';
+        opt.textContent = formatKeyLabel(k.name || 'Environment Variable', k.provider);
         keySelect.appendChild(opt);
     });
 }
@@ -611,11 +623,13 @@ async function loadDetailedLogs() {
 
         // Apply additional filters
         let filtered = logs.filter(log => {
-            if (State.filters.model && log.model !== State.filters.model) return false;
+            if (State.filters.model && buildModelFilterKey(log.model, log.provider) !== State.filters.model) {
+                return false;
+            }
             if (State.filters.search) {
                 const botName = (botNameMap[log.botId] || log.botId || '').toLowerCase();
-                const model = (log.model || '').toLowerCase();
-                if (!botName.includes(State.filters.search) && !model.includes(State.filters.search)) {
+                const modelLabel = formatModelLabel(log.model, log.provider).toLowerCase();
+                if (!botName.includes(State.filters.search) && !modelLabel.includes(State.filters.search)) {
                     return false;
                 }
             }
@@ -641,11 +655,12 @@ async function loadDetailedLogs() {
             const botName = botNameMap[log.botId] || log.botId || '-';
             const hasCostData = typeof log.estimatedCostUSD === 'number';
             const costTHB = hasCostData ? (log.estimatedCostUSD * THB_RATE) : 0;
+            const modelLabel = formatModelLabel(log.model, log.provider);
 
             html += `
                 <tr>
                     <td>${formatDateTime(log.timestamp)}</td>
-                    <td><span class="model-badge ${getModelClass(log.model)}">${escapeHtml(log.model || '-')}</span></td>
+                    <td><span class="model-badge ${getModelClass(log.model)}">${escapeHtml(modelLabel)}</span></td>
                     <td>${escapeHtml(botName)}</td>
                     <td><span class="platform-badge ${log.platform || ''}">${capitalize(log.platform || '-')}</span></td>
                     <td class="text-end">${formatNumber(log.promptTokens || 0)}</td>
@@ -731,9 +746,10 @@ async function toggleRowExpand(row) {
             const pricedCallsForModel = m.pricedCalls ?? m.count ?? 0;
             const hasCostForModel = pricedCallsForModel > 0;
             const avgCost = hasCostForModel ? (m.estimatedCost / pricedCallsForModel) : null;
+            const modelLabel = formatModelLabel(m.model, m.provider);
             html += `
                 <li>
-                    <span><span class="model-badge ${getModelClass(m.model)}">${escapeHtml(m.model)}</span></span>
+                    <span><span class="model-badge ${getModelClass(m.model)}">${escapeHtml(modelLabel)}</span></span>
                     <span>
                         <strong>${formatNumber(m.count)}</strong> calls • 
                         ${hasCostForModel ? `<span class="text-info">$${avgCost.toFixed(4)}</span>/call` : '<span class="text-muted">-</span>'}
@@ -755,9 +771,10 @@ async function toggleRowExpand(row) {
 
         (data.byKey || []).forEach(k => {
             const hasCostForKey = (k.pricedCalls ?? k.count ?? 0) > 0;
+            const keyLabel = formatKeyLabel(k.keyName, k.provider);
             html += `
                 <li>
-                    <span><i class="fas fa-key text-muted me-1"></i>${escapeHtml(k.keyName)}</span>
+                    <span><i class="fas fa-key text-muted me-1"></i>${escapeHtml(keyLabel)}</span>
                     <span><strong>${formatNumber(k.count)}</strong> calls • ${hasCostForKey ? `$${formatCost(k.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
                 </li>
             `;
@@ -776,10 +793,11 @@ async function toggleRowExpand(row) {
 
         (data.recentLogs || []).slice(0, 5).forEach(l => {
             const hasCost = typeof l.estimatedCost === 'number';
+            const modelLabel = formatModelLabel(l.model, l.provider);
             html += `
                 <li>
                     <span>${formatDateTime(l.timestamp)}</span>
-                    <span>${formatNumber(l.totalTokens)} tokens • ${hasCost ? `$${formatCost(l.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
+                    <span>${escapeHtml(modelLabel)} • ${formatNumber(l.totalTokens)} tokens • ${hasCost ? `$${formatCost(l.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
                 </li>
             `;
         });
@@ -952,6 +970,27 @@ function getModelClass(model) {
     if (model.includes('gpt-4')) return 'gpt-4';
     if (model.includes('gpt-3')) return 'gpt-3';
     return '';
+}
+
+function normalizeProviderName(provider) {
+    if (typeof provider !== 'string') return 'openai';
+    return provider.trim().toLowerCase() === 'openrouter' ? 'openrouter' : 'openai';
+}
+
+function formatModelLabel(model, provider) {
+    const normalizedProvider = normalizeProviderName(provider);
+    const modelId = model || '-';
+    return `[${normalizedProvider.toUpperCase()}] ${modelId}`;
+}
+
+function buildModelFilterKey(model, provider) {
+    return `${normalizeProviderName(provider)}::${model || ''}`;
+}
+
+function formatKeyLabel(name, provider) {
+    const normalizedProvider = normalizeProviderName(provider);
+    const keyName = name || 'Environment Variable';
+    return `[${normalizedProvider.toUpperCase()}] ${keyName}`;
 }
 
 function capitalize(str) {

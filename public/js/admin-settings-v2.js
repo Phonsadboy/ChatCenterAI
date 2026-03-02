@@ -5,6 +5,7 @@
 
 const INSTRUCTION_SOURCE = { V2: 'v2', LEGACY: 'legacy' };
 let instructionLibraries = [];
+let imageCollections = [];
 const BOT_CHANNELS = ['line', 'facebook', 'instagram', 'whatsapp'];
 let activeBotChannel = 'line';
 
@@ -176,7 +177,10 @@ function initNavigation() {
 // --- Data Loading ---
 async function loadAllSettings() {
     try {
-        await loadInstructionLibraries();
+        await Promise.all([
+            loadInstructionLibraries(),
+            loadImageCollections()
+        ]);
         await Promise.all([
             loadBotSettings(),
             loadChatSettings(),
@@ -205,6 +209,9 @@ async function loadBotSettings() {
     try {
         if (instructionLibraries.length === 0) {
             await loadInstructionLibraries();
+        }
+        if (imageCollections.length === 0) {
+            await loadImageCollections();
         }
 
         const [lineRes, fbRes, igRes, waRes] = await Promise.all([
@@ -1339,7 +1346,10 @@ function setupEventListeners() {
     const refreshBtn = document.getElementById('refreshSettingsBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
-            loadInstructionLibraries()
+            Promise.all([
+                loadInstructionLibraries(),
+                loadImageCollections()
+            ])
                 .then(() => loadBotSettings());
             loadChatSettings();
             loadSystemSettings();
@@ -1729,6 +1739,20 @@ async function loadInstructionLibraries() {
     }
 }
 
+async function loadImageCollections() {
+    try {
+        const response = await fetch('/api/image-collections');
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result?.success === false) {
+            throw new Error(result?.error || 'ไม่สามารถโหลดคลังรูปภาพได้');
+        }
+        imageCollections = Array.isArray(result.collections) ? result.collections : [];
+    } catch (error) {
+        console.error('Error loading image collections:', error);
+        imageCollections = [];
+    }
+}
+
 function getInstructionLibraryKey(lib) {
     if (!lib) return '';
     if (lib.source === INSTRUCTION_SOURCE.V2 && lib.instructionId) {
@@ -1751,7 +1775,8 @@ function buildInstructionInlineRow(bot, botType) {
     const selectedKey = getSelectedInstructionKey(bot);
     const options = buildInstructionOptions(selectedKey);
     const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
-    const summary = collectionCount > 0 ? `${collectionCount} ชุด` : 'ทุกภาพ';
+    const selectedCollectionValue = getSelectedImageCollectionValue(bot);
+    const collectionOptions = buildImageCollectionOptions(selectedCollectionValue, collectionCount);
 
     return `
         <div class="bot-inline-row compact">
@@ -1767,8 +1792,13 @@ function buildInstructionInlineRow(bot, botType) {
             </div>
             <div class="inline-control">
                 <span class="inline-label"><i class="fas fa-images"></i> ภาพ</span>
-                <span class="instruction-chip chip-muted slim">ใช้: ${escapeHtml(summary)}</span>
-                <button class="btn-ghost-sm btn-ghost-xs" type="button" onclick="window.imageCollectionsManager && window.imageCollectionsManager.openBotImageCollectionsModal && window.imageCollectionsManager.openBotImageCollectionsModal('${botType}', '${bot._id}')">เปลี่ยน</button>
+                <select class="form-select form-select-sm image-collection-select"
+                    data-bot-type="${botType}"
+                    data-bot-id="${bot._id}"
+                    data-previous-value="${escapeHtml(selectedCollectionValue)}"
+                    aria-label="เลือกคลังรูปภาพสำหรับบอท">
+                    ${collectionOptions}
+                </select>
             </div>
         </div>
     `;
@@ -1786,6 +1816,35 @@ function buildInstructionOptions(selectedKey) {
         const isSelected = selectedKey === key ? 'selected' : '';
         options.push(`<option value="${key}" ${isSelected}>${escapeHtml(label)}</option>`);
     });
+    return options.join('');
+}
+
+function getSelectedImageCollectionValue(bot) {
+    const selections = Array.isArray(bot?.selectedImageCollections)
+        ? bot.selectedImageCollections.filter(Boolean).map(String)
+        : [];
+    if (selections.length === 0) return '';
+    if (selections.length === 1) return selections[0];
+    return '__multiple__';
+}
+
+function buildImageCollectionOptions(selectedValue, selectedCount = 0) {
+    const options = [
+        `<option value="" ${selectedValue === '' ? 'selected' : ''}>— ทุกภาพ —</option>`
+    ];
+
+    if (selectedValue === '__multiple__') {
+        options.push(`<option value="__multiple__" selected>หลายชุด (${selectedCount} ชุด)</option>`);
+    }
+
+    imageCollections.forEach((collection) => {
+        const id = collection?._id ? String(collection._id) : '';
+        if (!id) return;
+        const label = collection.name || id;
+        const selected = selectedValue === id ? 'selected' : '';
+        options.push(`<option value="${escapeHtml(id)}" ${selected}>${escapeHtml(label)}</option>`);
+    });
+
     return options.join('');
 }
 
@@ -1814,12 +1873,22 @@ function getInstructionLabelByKey(key) {
 
 function handleInstructionSelectChange(event) {
     const select = event.target;
-    if (!select.classList.contains('instruction-select')) return;
-    const botType = select.dataset.botType;
-    const botId = select.dataset.botId;
-    const previousValue = select.dataset.previousValue || '';
-    const key = select.value;
-    saveInstructionSelection(botType, botId, key, select, previousValue);
+    if (select.classList.contains('instruction-select')) {
+        const botType = select.dataset.botType;
+        const botId = select.dataset.botId;
+        const previousValue = select.dataset.previousValue || '';
+        const key = select.value;
+        saveInstructionSelection(botType, botId, key, select, previousValue);
+        return;
+    }
+
+    if (select.classList.contains('image-collection-select')) {
+        const botType = select.dataset.botType;
+        const botId = select.dataset.botId;
+        const previousValue = select.dataset.previousValue || '';
+        const collectionId = select.value;
+        saveImageCollectionSelection(botType, botId, collectionId, select, previousValue);
+    }
 }
 
 function buildInstructionPayloadFromKey(key) {
@@ -1871,6 +1940,56 @@ async function saveInstructionSelection(botType, botId, key, select, previousVal
         select.value = previousValue;
         updateInstructionChip(select, previousValue);
         showToast('ไม่สามารถบันทึก Instruction ได้', 'danger');
+    } finally {
+        select.disabled = false;
+    }
+}
+
+async function saveImageCollectionSelection(botType, botId, collectionId, select, previousValue) {
+    if (collectionId === '__multiple__') {
+        select.value = previousValue;
+        return;
+    }
+
+    const payload = {
+        selectedImageCollections: collectionId ? [collectionId] : []
+    };
+    const collectionUrlMap = {
+        line: `/api/line-bots/${botId}/image-collections`,
+        facebook: `/api/facebook-bots/${botId}/image-collections`,
+        instagram: `/api/instagram-bots/${botId}/image-collections`,
+        whatsapp: `/api/whatsapp-bots/${botId}/image-collections`
+    };
+    const url = collectionUrlMap[botType];
+    if (!url) {
+        showToast('ประเภทบอทไม่รองรับการตั้งค่าคลังรูปภาพ', 'danger');
+        select.value = previousValue;
+        return;
+    }
+
+    select.disabled = true;
+    try {
+        const response = await fetch(url, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error || 'บันทึกไม่สำเร็จ');
+        }
+
+        select.dataset.previousValue = collectionId;
+        showToast('อัปเดตคลังรูปภาพของบอทแล้ว', 'success');
+
+        const imageCollectionsSection = document.getElementById('image-collections');
+        if (imageCollectionsSection && !imageCollectionsSection.classList.contains('d-none')) {
+            window.imageCollectionsManager?.refreshAll?.();
+        }
+    } catch (error) {
+        console.error('Error saving image collection selection:', error);
+        select.value = previousValue;
+        showToast('ไม่สามารถบันทึกคลังรูปภาพได้', 'danger');
     } finally {
         select.disabled = false;
     }
@@ -2213,11 +2332,15 @@ function getApiKeyHintByProvider(provider) {
 
 function isApiKeyValidForProvider(apiKey, provider) {
     const normalizedProvider = normalizeApiProvider(provider);
-    if (!apiKey) return false;
+    const key = typeof apiKey === 'string' ? apiKey.trim() : '';
+    if (!key) return false;
     if (normalizedProvider === API_PROVIDER_OPENROUTER) {
-        return apiKey.startsWith('sk-or-v1-');
+        return key.startsWith('sk-or-v1-');
     }
-    return apiKey.startsWith('sk-');
+    if (key.startsWith('sk-or-v1-')) {
+        return false;
+    }
+    return key.startsWith('sk-');
 }
 
 function updateApiKeyProviderHint() {

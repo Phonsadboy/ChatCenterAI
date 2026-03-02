@@ -447,7 +447,8 @@ input:checked+.toggle-slider:before {
     flex-wrap: nowrap;
 }
 
-.instruction-select {
+.instruction-select,
+.image-collection-select {
     padding: 0.1rem 1.4rem 0.1rem 0.4rem;
     font-size: 0.72rem;
     min-height: 0;
@@ -1933,7 +1934,8 @@ input:checked+.toggle-slider:before {
         width: 100%;
     }
 
-    .instruction-select {
+    .instruction-select,
+    .image-collection-select {
         width: 100%;
         font-size: 0.875rem;
         padding: 0.5rem 2rem 0.5rem 0.75rem;

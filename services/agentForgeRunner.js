@@ -124,22 +124,103 @@ class AgentForgeRunner {
     this.connectDB = options.connectDB;
     this.agentForgeService = options.agentForgeService;
     this.openaiClient = options.openaiClient || null;
+    this.openaiProvider = options.openaiProvider || "openai";
     this.resolveOpenAIClient = typeof options.resolveOpenAIClient === "function"
       ? options.resolveOpenAIClient
+      : null;
+    this.normalizeProvider = typeof options.normalizeProvider === "function"
+      ? options.normalizeProvider
+      : null;
+    this.resolveModelForProvider = typeof options.resolveModelForProvider === "function"
+      ? options.resolveModelForProvider
       : null;
     this.timezone = options.timezone || DEFAULT_TIMEZONE;
     this.activeRuns = new Map();
   }
 
-  async _getOpenAIClient() {
-    if (this.openaiClient) return this.openaiClient;
-    if (!this.resolveOpenAIClient) return null;
-    try {
-      const client = await this.resolveOpenAIClient();
-      return client || null;
-    } catch (error) {
-      return null;
+  _normalizeProvider(provider) {
+    if (this.normalizeProvider) {
+      return this.normalizeProvider(provider);
     }
+    if (typeof provider !== "string") return "openai";
+    const normalized = provider.trim().toLowerCase();
+    return normalized === "openrouter" ? "openrouter" : "openai";
+  }
+
+  _buildProviderModelError(contextLabel, modelId, provider, detail = "") {
+    const normalizedProvider = this._normalizeProvider(provider);
+    const detailText = detail ? ` รายละเอียด: ${detail}` : "";
+    const error = new Error(
+      `${contextLabel}: provider "${normalizedProvider}" ไม่รองรับ model "${modelId}".${detailText}`,
+    );
+    error.code = "provider_model_not_supported";
+    return error;
+  }
+
+  _isProviderModelApiError(error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (!message) return false;
+    if (!message.includes("model")) return false;
+    return (
+      message.includes("not support") ||
+      message.includes("not found") ||
+      message.includes("unsupported") ||
+      message.includes("no endpoints")
+    );
+  }
+
+  _resolveModelForProviderOrThrow(modelId, provider, contextLabel) {
+    const fallbackModel =
+      typeof modelId === "string" && modelId.trim() ? modelId.trim() : "gpt-4.1";
+    if (!this.resolveModelForProvider) {
+      return fallbackModel;
+    }
+    const resolved = this.resolveModelForProvider(fallbackModel, provider);
+    if (!resolved?.ok) {
+      throw this._buildProviderModelError(
+        contextLabel,
+        fallbackModel,
+        provider,
+        resolved?.error || "",
+      );
+    }
+    return resolved.model || fallbackModel;
+  }
+
+  async _getOpenAIContext() {
+    const fallbackProvider = this._normalizeProvider(this.openaiProvider);
+    if (this.openaiClient) {
+      return {
+        client: this.openaiClient,
+        provider: fallbackProvider,
+      };
+    }
+    if (!this.resolveOpenAIClient) {
+      return { client: null, provider: fallbackProvider };
+    }
+    try {
+      const resolved = await this.resolveOpenAIClient();
+      if (!resolved) {
+        return { client: null, provider: fallbackProvider };
+      }
+      if (resolved && typeof resolved === "object" && resolved.client) {
+        return {
+          client: resolved.client,
+          provider: this._normalizeProvider(resolved.provider),
+        };
+      }
+      return {
+        client: resolved,
+        provider: fallbackProvider,
+      };
+    } catch (error) {
+      return { client: null, provider: fallbackProvider };
+    }
+  }
+
+  async _getOpenAIClient() {
+    const context = await this._getOpenAIContext();
+    return context.client || null;
   }
 
   async startRun(agentId, options = {}, userContext = {}) {
@@ -188,11 +269,27 @@ class AgentForgeRunner {
       ? instructionText.trim()
       : SIMPLE_INSTRUCTION_TEMPLATE;
 
-    const openaiClient = await this._getOpenAIClient();
+    const openaiContext = await this._getOpenAIContext();
+    const openaiClient = openaiContext.client;
 
     if (openaiClient) {
+      let resolvedModel = model || "gpt-4.1";
+      try {
+        resolvedModel = this._resolveModelForProviderOrThrow(
+          resolvedModel,
+          openaiContext.provider,
+          "Agent Forge simulate-reply",
+        );
+      } catch (error) {
+        return {
+          reply: this._buildFallbackSimulatedReply({}, safeScenario),
+          modelUsed: "unsupported",
+          warning: error?.message || "provider_model_not_supported",
+        };
+      }
+
       const requestPayload = {
-        model: model || "gpt-4.1",
+        model: resolvedModel,
         input: [
           {
             role: "system",
@@ -218,6 +315,18 @@ class AgentForgeRunner {
           usage: response?.usage || null,
         };
       } catch (error) {
+        if (this._isProviderModelApiError(error)) {
+          return {
+            reply: this._buildFallbackSimulatedReply({}, safeScenario),
+            modelUsed: "unsupported",
+            warning: this._buildProviderModelError(
+              "Agent Forge simulate-reply",
+              requestPayload.model,
+              openaiContext.provider,
+              error?.message || "",
+            ).message,
+          };
+        }
         return {
           reply: this._buildFallbackSimulatedReply({}, safeScenario),
           modelUsed: "fallback",
@@ -836,7 +945,8 @@ class AgentForgeRunner {
     contextData,
     lastProcessedAt,
   }) {
-    const openaiClient = await this._getOpenAIClient();
+    const openaiContext = await this._getOpenAIContext();
+    const openaiClient = openaiContext.client;
     if (!openaiClient) {
       throw new Error("model_compaction_required");
     }
@@ -856,8 +966,14 @@ class AgentForgeRunner {
         ? contextData.compactedSummaries[contextData.compactedSummaries.length - 1]
         : null;
 
+    const resolvedModel = this._resolveModelForProviderOrThrow(
+      profile.runnerModel || "gpt-5.2",
+      openaiContext.provider,
+      "Agent Forge context compaction",
+    );
+
     const requestPayload = {
-      model: profile.runnerModel || "gpt-5.2",
+      model: resolvedModel,
       reasoning: {
         effort: profile.runnerThinking || "xhigh",
       },
@@ -898,6 +1014,14 @@ class AgentForgeRunner {
     try {
       response = await openaiClient.responses.create(requestPayload);
     } catch (error) {
+      if (this._isProviderModelApiError(error)) {
+        throw this._buildProviderModelError(
+          "Agent Forge context compaction",
+          requestPayload.model,
+          openaiContext.provider,
+          error?.message || "",
+        );
+      }
       await this.agentForgeService.appendRunEvent(runId, "context_compaction_failed", {
         message: error?.message || "model_compaction_failed",
       }, {
@@ -1104,10 +1228,17 @@ class AgentForgeRunner {
     let generatedText = "";
     let modelUsed = null;
 
-    const openaiClient = await this._getOpenAIClient();
+    const openaiContext = await this._getOpenAIContext();
+    const openaiClient = openaiContext.client;
     if (openaiClient) {
+      const resolvedModel = this._resolveModelForProviderOrThrow(
+        profile.runnerModel || "gpt-5.2",
+        openaiContext.provider,
+        "Agent Forge patch generation",
+      );
+
       const requestPayload = {
-        model: profile.runnerModel || "gpt-5.2",
+        model: resolvedModel,
         reasoning: {
           effort: profile.runnerThinking || "xhigh",
         },
@@ -1134,6 +1265,14 @@ class AgentForgeRunner {
           response?.usage || null,
         );
       } catch (error) {
+        if (this._isProviderModelApiError(error)) {
+          throw this._buildProviderModelError(
+            "Agent Forge patch generation",
+            requestPayload.model,
+            openaiContext.provider,
+            error?.message || "",
+          );
+        }
         await this.agentForgeService.appendRunEvent(runId, "openai_patch_generation_failed", {
           message: error?.message || "openai_error",
         }, {
@@ -1205,15 +1344,22 @@ class AgentForgeRunner {
       `- รอบ ${iteration}: บังคับตอบแบบ choice close ทุกครั้งเมื่อถามราคา`,
     ].join("\n");
 
-    const openaiClient = await this._getOpenAIClient();
+    const openaiContext = await this._getOpenAIContext();
+    const openaiClient = openaiContext.client;
     if (!openaiClient) {
       return {
         patchText: fallback,
       };
     }
 
+    const resolvedModel = this._resolveModelForProviderOrThrow(
+      profile.runnerModel || "gpt-5.2",
+      openaiContext.provider,
+      "Agent Forge patch refinement",
+    );
+
     const requestPayload = {
-      model: profile.runnerModel || "gpt-5.2",
+      model: resolvedModel,
       reasoning: {
         effort: profile.runnerThinking || "xhigh",
       },
@@ -1264,6 +1410,14 @@ class AgentForgeRunner {
         patchText: text,
       };
     } catch (error) {
+      if (this._isProviderModelApiError(error)) {
+        throw this._buildProviderModelError(
+          "Agent Forge patch refinement",
+          requestPayload.model,
+          openaiContext.provider,
+          error?.message || "",
+        );
+      }
       await this.agentForgeService.appendRunEvent(runId, "openai_patch_refine_failed", {
         iteration,
         message: error?.message || "openai_error",
@@ -1423,10 +1577,17 @@ class AgentForgeRunner {
 
     let assistantText = "";
 
-    const openaiClient = await this._getOpenAIClient();
+    const openaiContext = await this._getOpenAIContext();
+    const openaiClient = openaiContext.client;
     if (openaiClient) {
+      const resolvedModel = this._resolveModelForProviderOrThrow(
+        profile.customerDefaultModel || "gpt-4.1",
+        openaiContext.provider,
+        "Agent Forge self-test",
+      );
+
       const requestPayload = {
-        model: profile.customerDefaultModel || "gpt-4.1",
+        model: resolvedModel,
         input: [
           { role: "system", content: systemText },
           { role: "user", content: userText },
@@ -1452,6 +1613,14 @@ class AgentForgeRunner {
           response?.usage || null,
         );
       } catch (error) {
+        if (this._isProviderModelApiError(error)) {
+          throw this._buildProviderModelError(
+            "Agent Forge self-test",
+            requestPayload.model,
+            openaiContext.provider,
+            error?.message || "",
+          );
+        }
         await this.agentForgeService.appendRunEvent(runId, "openai_self_test_failed", {
           caseId,
           message: error?.message || "openai_error",

@@ -184,6 +184,9 @@ function validateApiKeyForProvider(apiKey, provider) {
   if (normalizedProvider === LLM_PROVIDER_OPENROUTER) {
     return key.startsWith("sk-or-v1-");
   }
+  if (key.startsWith("sk-or-v1-")) {
+    return false;
+  }
   return key.startsWith("sk-");
 }
 
@@ -1235,8 +1238,15 @@ const agentForgeRunner = new AgentForgeRunner({
   resolveOpenAIClient: async () => {
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     if (!apiKeyToUse.apiKey) return null;
-    return buildLLMClientFromKey(apiKeyToUse);
+    const client = buildLLMClientFromKey(apiKeyToUse);
+    if (!client) return null;
+    return {
+      client,
+      provider: apiKeyToUse.provider,
+    };
   },
+  normalizeProvider,
+  resolveModelForProvider,
   timezone: "Asia/Bangkok",
 });
 
@@ -28671,10 +28681,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
         unpricedCalls: summary.unpricedCalls || 0,
       },
       byModel: byModel.map(m => ({
-        model:
-          normalizeProvider(m._id?.provider) === LLM_PROVIDER_OPENROUTER
-            ? `openrouter/${m._id?.model || "unknown"}`
-            : (m._id?.model || "unknown"),
+        model: m._id?.model || "unknown",
         provider: normalizeProvider(m._id?.provider),
         calls: m.calls,
         tokens: m.tokens,
@@ -28909,10 +28916,7 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
       totals: totals[0] || { totalCalls: 0, totalTokens: 0, totalCost: 0, pricedCalls: 0 },
       byModel: byModel.map(m => ({
         ...m,
-        model:
-          normalizeProvider(m._id?.provider) === LLM_PROVIDER_OPENROUTER
-            ? `openrouter/${m._id?.model || "unknown"}`
-            : (m._id?.model || "unknown"),
+        model: m._id?.model || "unknown",
         provider: normalizeProvider(m._id?.provider),
       })),
       byKey: byKey.map(k => ({
