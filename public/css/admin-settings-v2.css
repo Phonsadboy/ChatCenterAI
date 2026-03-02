@@ -251,7 +251,7 @@ input:checked+.toggle-slider:before {
 /* Bot List Items */
 .bot-item-compact {
     display: flex;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 0.4rem;
     padding: 0.5rem 0.65rem;
     border: 1px solid var(--border-color);
@@ -363,13 +363,14 @@ input:checked+.toggle-slider:before {
     font-size: 0.72rem;
     color: var(--text-secondary);
     margin-bottom: 0.1rem;
+    line-height: 1.35;
+    word-break: break-word;
 }
 
 .bot-inline-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
     margin-top: 0.4rem;
     padding-top: 0.4rem;
     border-top: 1px solid #f1f5f9;
@@ -388,15 +389,16 @@ input:checked+.toggle-slider:before {
 }
 
 .inline-control {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: 0.4rem;
+    width: 100%;
+    min-width: 0;
     flex-wrap: wrap;
 }
 
 .instruction-control {
-    flex: 1;
-    min-width: 200px;
+    min-width: 0;
     flex-wrap: nowrap;
 }
 
@@ -409,9 +411,10 @@ input:checked+.toggle-slider:before {
     background-size: 8px 8px;
     border-radius: 0.3rem;
     border-color: var(--border-color);
-    width: auto;
+    width: 100%;
     flex: 1;
-    max-width: none;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .instruction-chip {
@@ -439,6 +442,22 @@ input:checked+.toggle-slider:before {
     align-items: center;
     gap: 0.25rem;
     margin-left: auto;
+    align-self: flex-start;
+}
+
+.bot-platform-list {
+    max-height: 360px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.bot-platform-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.bot-platform-list::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.6);
+    border-radius: 999px;
 }
 
 .actions-stack {

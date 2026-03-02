@@ -1694,7 +1694,6 @@ function getInstructionLibraryLabel(lib) {
 
 function buildInstructionInlineRow(bot, botType) {
     const selectedKey = getSelectedInstructionKey(bot);
-    const instructionLabel = getInstructionLabelByKey(selectedKey) || 'ไม่เลือก';
     const options = buildInstructionOptions(selectedKey);
     const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
     const summary = collectionCount > 0 ? `${collectionCount} ชุด` : 'ทุกภาพ';
@@ -1716,7 +1715,6 @@ function buildInstructionInlineRow(bot, botType) {
                 <span class="instruction-chip chip-muted slim">ใช้: ${escapeHtml(summary)}</span>
                 <button class="btn-ghost-sm btn-ghost-xs" type="button" onclick="window.imageCollectionsManager && window.imageCollectionsManager.openBotImageCollectionsModal && window.imageCollectionsManager.openBotImageCollectionsModal('${botType}', '${bot._id}')">เปลี่ยน</button>
             </div>
-            <span class="instruction-chip ${selectedKey ? '' : 'chip-muted'} slim">ใช้: ${escapeHtml(instructionLabel)}</span>
         </div>
     `;
 }
