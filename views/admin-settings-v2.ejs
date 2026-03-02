@@ -396,26 +396,53 @@
                                     <div class="card mb-3">
                                         <div class="card-body">
                                             <h6 class="mb-3">การกำหนดคลังรูปภาพให้บอท</h6>
-                                            <div class="row g-3">
-                                                <div class="col-md-6 col-xxl-3">
+                                            <div class="assignment-channel-tabs mb-3" id="assignmentChannelTabs"
+                                                role="tablist" aria-label="เลือกช่องทางสำหรับการกำหนดคลังรูปภาพ">
+                                                <button type="button" class="assignment-channel-tab active"
+                                                    data-assignment-channel="line" role="tab" aria-selected="true">
+                                                    <i class="fab fa-line"></i> LINE
+                                                </button>
+                                                <button type="button" class="assignment-channel-tab"
+                                                    data-assignment-channel="facebook" role="tab"
+                                                    aria-selected="false">
+                                                    <i class="fab fa-facebook-f"></i> Facebook
+                                                </button>
+                                                <button type="button" class="assignment-channel-tab"
+                                                    data-assignment-channel="instagram" role="tab"
+                                                    aria-selected="false">
+                                                    <i class="fab fa-instagram"></i> Instagram
+                                                </button>
+                                                <button type="button" class="assignment-channel-tab"
+                                                    data-assignment-channel="whatsapp" role="tab"
+                                                    aria-selected="false">
+                                                    <i class="fab fa-whatsapp"></i> WhatsApp
+                                                </button>
+                                            </div>
+
+                                            <div class="assignment-channel-panels">
+                                                <div class="assignment-channel-panel is-active"
+                                                    data-assignment-channel-panel="line">
                                                     <div class="assignment-list" id="lineBotCollectionsList">
                                                         <div class="text-muted small py-2 text-center">กำลังโหลด Line
                                                             Bots...</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-md-6 col-xxl-3">
+                                                <div class="assignment-channel-panel"
+                                                    data-assignment-channel-panel="facebook">
                                                     <div class="assignment-list" id="facebookBotCollectionsList">
                                                         <div class="text-muted small py-2 text-center">กำลังโหลด
                                                             Facebook Bots...</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-md-6 col-xxl-3">
+                                                <div class="assignment-channel-panel"
+                                                    data-assignment-channel-panel="instagram">
                                                     <div class="assignment-list" id="instagramBotCollectionsList">
                                                         <div class="text-muted small py-2 text-center">กำลังโหลด
                                                             Instagram Bots...</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-md-6 col-xxl-3">
+                                                <div class="assignment-channel-panel"
+                                                    data-assignment-channel-panel="whatsapp">
                                                     <div class="assignment-list" id="whatsappBotCollectionsList">
                                                         <div class="text-muted small py-2 text-center">กำลังโหลด
                                                             WhatsApp Bots...</div>

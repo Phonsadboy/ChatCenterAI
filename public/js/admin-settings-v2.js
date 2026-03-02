@@ -498,7 +498,8 @@ async function populateApiKeyDropdowns(selectId, selectedValue = '') {
         keys.filter(k => k.isActive).forEach(key => {
             const option = document.createElement('option');
             option.value = key.id;
-            option.textContent = key.name + (key.isDefault ? ' (หลัก)' : '');
+            const provider = normalizeApiProvider(key.provider);
+            option.textContent = `[${provider.toUpperCase()}] ${key.name}${key.isDefault ? ' (หลัก)' : ''}`;
             if (selectedValue === key.id) option.selected = true;
             select.appendChild(option);
         });
@@ -1501,7 +1502,8 @@ const defaultAiConfig = {
 
 function isReasoningModel(modelId) {
     if (!modelId || typeof modelId !== 'string') return false;
-    const id = modelId.toLowerCase();
+    const rawId = modelId.toLowerCase();
+    const id = rawId.includes('/') ? rawId.split('/').pop() : rawId;
     // Models that support reasoning_effort:
     // - o1, o1-mini, o1-preview (OpenAI reasoning models)
     // - o3, o3-mini (OpenAI reasoning models)

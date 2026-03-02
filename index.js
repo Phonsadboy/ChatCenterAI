@@ -10670,6 +10670,10 @@ async function getAssistantResponseTextOnly(
       return "";
     }
     const openai = buildLLMClientFromKey(apiKeyToUse);
+    if (!openai) {
+      console.warn("[OpenAI Text] Cannot create client for selected provider");
+      return "";
+    }
 
     console.log(
       `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (ข้อความอย่างเดียว)...`,
@@ -10687,6 +10691,14 @@ async function getAssistantResponseTextOnly(
 
     // ใช้โมเดลที่ส่งมา หรือ fallback ไปใช้ global setting
     const textModel = aiModel || (await getSettingValue("textModel", "gpt-5"));
+    const resolvedTextModel = resolveModelForProvider(
+      textModel,
+      apiKeyToUse.provider,
+    );
+    if (!resolvedTextModel.ok) {
+      console.warn(`[OpenAI Text] ${resolvedTextModel.error}`);
+      return "ขออภัย โมเดลที่เลือกไม่รองรับกับผู้ให้บริการ API key ปัจจุบัน";
+    }
     const botAiConfig = await fetchBotAiConfig(botId, platform);
     const apiMode = botAiConfig.apiMode === "chat" ? "chat" : "responses";
 
@@ -10886,7 +10898,7 @@ async function getAssistantResponseTextOnly(
 
     const buildPayload = () => {
       const payload = {
-        model: textModel,
+        model: resolvedTextModel.model,
         messages,
         tools,
         tool_choice: "auto",
@@ -11030,7 +11042,8 @@ async function getAssistantResponseTextOnly(
         apiKeyId: apiKeyToUse.keyId,
         botId,
         platform,
-        model: textModel,
+        provider: apiKeyToUse.provider,
+        model: resolvedTextModel.model,
         promptTokens: usage.prompt_tokens,
         completionTokens: usage.completion_tokens,
         totalTokens: usage.total_tokens,
@@ -11066,6 +11079,10 @@ async function getAssistantResponseMultimodal(
       return "";
     }
     const openai = buildLLMClientFromKey(apiKeyToUse);
+    if (!openai) {
+      console.warn("[OpenAI Multimodal] Cannot create client for selected provider");
+      return "";
+    }
 
     console.log(
       `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (multimodal)...`,
@@ -11171,6 +11188,14 @@ async function getAssistantResponseMultimodal(
     // ใช้โมเดลที่ส่งมา หรือ fallback ไปใช้ global setting
     const visionModel =
       aiModel || (await getSettingValue("visionModel", "gpt-5"));
+    const resolvedVisionModel = resolveModelForProvider(
+      visionModel,
+      apiKeyToUse.provider,
+    );
+    if (!resolvedVisionModel.ok) {
+      console.warn(`[OpenAI Multimodal] ${resolvedVisionModel.error}`);
+      return "ขออภัย โมเดลที่เลือกไม่รองรับกับผู้ให้บริการ API key ปัจจุบัน";
+    }
 
     const tools = [
       {
@@ -11367,7 +11392,7 @@ async function getAssistantResponseMultimodal(
 
     while (toolLoopCount < MAX_TOOL_LOOPS) {
       const response = await openai.chat.completions.create({
-        model: visionModel,
+        model: resolvedVisionModel.model,
         messages,
         tools,
         tool_choice: "auto",
@@ -11487,7 +11512,8 @@ async function getAssistantResponseMultimodal(
         apiKeyId: apiKeyToUse.keyId,
         botId,
         platform,
-        model: visionModel,
+        provider: apiKeyToUse.provider,
+        model: resolvedVisionModel.model,
         promptTokens: usage.prompt_tokens,
         completionTokens: usage.completion_tokens,
         totalTokens: usage.total_tokens,
@@ -15741,6 +15767,15 @@ async function processMessageWithAI(message, userId, lineBot) {
       return "";
     }
     const openai = buildLLMClientFromKey(apiKeyToUse);
+    if (!openai) {
+      console.warn("[Line AI] Cannot create client for selected provider");
+      return "";
+    }
+    const resolvedModel = resolveModelForProvider(aiModel, apiKeyToUse.provider);
+    if (!resolvedModel.ok) {
+      console.warn(`[Line AI] ${resolvedModel.error}`);
+      return "";
+    }
 
     const messageVariants = [
       {
@@ -15784,7 +15819,7 @@ async function processMessageWithAI(message, userId, lineBot) {
         );
         const aiConfig = normalizeAiConfig(lineBot.aiConfig || {});
         const payload = {
-          model: aiModel,
+          model: resolvedModel.model,
           messages: payloadMessages,
         };
         if (aiConfig.apiMode === "responses" && aiConfig.reasoningEffort) {
@@ -23096,6 +23131,19 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       return res.json({ error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
     }
     const openai = buildLLMClientFromKey(apiKeyToUse);
+    if (!openai) {
+      return res.json({ error: "ไม่สามารถสร้าง client สำหรับ API key ที่เลือกได้" });
+    }
+    const resolvedInstructionModel = resolveModelForProvider(
+      model,
+      apiKeyToUse.provider,
+    );
+    if (!resolvedInstructionModel.ok) {
+      return res.status(400).json({ error: resolvedInstructionModel.error });
+    }
+    const usePreviousResponseId = canUseInstructionPreviousResponseId(
+      apiKeyToUse.provider,
+    );
     const chatService = new InstructionChatService(db, openai, { resetFollowUpConfigCache });
 
     // Get instruction for system prompt
@@ -23122,6 +23170,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     if (!isDuplicatedUserMessage) {
       nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
     }
+    const statelessInput = [...nextInput];
 
     const toolsUsed = [];
     const changes = [];
@@ -23133,16 +23182,20 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
 
     for (let i = 0; i < INSTRUCTION_MAX_TOOL_ITERATIONS; i++) {
       const payload = {
-        model,
-        input: nextInput,
+        model: resolvedInstructionModel.model,
+        input: usePreviousResponseId ? nextInput : statelessInput,
         tools,
         tool_choice: "auto",
         reasoning: { effort },
       };
-      if (previousResponseId) payload.previous_response_id = previousResponseId;
+      if (usePreviousResponseId && previousResponseId) {
+        payload.previous_response_id = previousResponseId;
+      }
 
       const response = await openai.responses.create(payload);
-      previousResponseId = response.id;
+      if (usePreviousResponseId) {
+        previousResponseId = response.id;
+      }
       addInstructionUsage(totalUsage, mapInstructionResponseUsage(response.usage));
 
       const toolCalls = extractInstructionResponseFunctionCalls(response);
@@ -23186,18 +23239,30 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
         });
       }
 
-      nextInput = toolOutputs;
+      if (usePreviousResponseId) {
+        nextInput = toolOutputs;
+      } else {
+        appendInstructionTurnToStatelessInput(statelessInput, {
+          assistantText: extractInstructionResponseText(response),
+          toolCalls,
+          toolOutputs,
+        });
+      }
     }
 
     if (!finalContent || !finalContent.trim()) {
       try {
         const forcedSummary = await requestInstructionFinalSummaryWithoutTools(openai, {
-          model,
+          model: resolvedInstructionModel.model,
           previousResponseId,
           effort,
           toolsUsed,
+          stateful: usePreviousResponseId,
+          conversationInput: statelessInput,
         });
-        if (forcedSummary.responseId) previousResponseId = forcedSummary.responseId;
+        if (usePreviousResponseId && forcedSummary.responseId) {
+          previousResponseId = forcedSummary.responseId;
+        }
         addInstructionUsage(totalUsage, forcedSummary.usage);
         if (forcedSummary.content) finalContent = forcedSummary.content;
       } catch (forcedSummaryError) {
@@ -23214,14 +23279,18 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       let autoNote = "";
       try {
         const noteResult = await generateInstructionVersionNoteWithModel(openai, {
-          model,
+          model: resolvedInstructionModel.model,
           previousResponseId,
           effort,
           toolsUsed,
           changes,
           finalContent,
+          stateful: usePreviousResponseId,
+          conversationInput: statelessInput,
         });
-        if (noteResult?.responseId) previousResponseId = noteResult.responseId;
+        if (usePreviousResponseId && noteResult?.responseId) {
+          previousResponseId = noteResult.responseId;
+        }
         addInstructionUsage(totalUsage, noteResult?.usage);
         autoNote = sanitizeInstructionVersionNote(noteResult?.note || "");
       } catch (noteError) {
@@ -23271,7 +23340,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       changes,
       usage: totalUsage,
       versionSnapshot,
-      model,
+      model: resolvedInstructionModel.model,
       thinking,
     });
 
@@ -23776,6 +23845,29 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       return;
     }
     const openai = buildLLMClientFromKey(apiKeyToUse);
+    if (!openai) {
+      sendEvent("error", { error: "ไม่สามารถสร้าง client สำหรับ API key ที่เลือกได้" });
+      requestState.status = "error";
+      requestState.error = "ไม่สามารถสร้าง client สำหรับ API key ที่เลือกได้";
+      requestState.updatedAt = Date.now();
+      finishRequest();
+      return;
+    }
+    const resolvedInstructionModel = resolveModelForProvider(
+      model,
+      apiKeyToUse.provider,
+    );
+    if (!resolvedInstructionModel.ok) {
+      sendEvent("error", { error: resolvedInstructionModel.error });
+      requestState.status = "error";
+      requestState.error = resolvedInstructionModel.error;
+      requestState.updatedAt = Date.now();
+      finishRequest();
+      return;
+    }
+    const usePreviousResponseId = canUseInstructionPreviousResponseId(
+      apiKeyToUse.provider,
+    );
     const chatService = new InstructionChatService(db, openai, { resetFollowUpConfigCache });
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
@@ -23810,6 +23902,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     if (!isDuplicatedUserMessage) {
       nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
     }
+    const statelessInput = [...nextInput];
 
     const toolsUsed = [];
     const changes = [];
@@ -23824,14 +23917,16 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       sendStatus(i === 0 ? "thinking" : "continuing", { iteration: i + 1, tool: null });
 
       const payload = {
-        model,
-        input: nextInput,
+        model: resolvedInstructionModel.model,
+        input: usePreviousResponseId ? nextInput : statelessInput,
         tools,
         tool_choice: "auto",
         reasoning: { effort },
         stream: true,
       };
-      if (previousResponseId) payload.previous_response_id = previousResponseId;
+      if (usePreviousResponseId && previousResponseId) {
+        payload.previous_response_id = previousResponseId;
+      }
 
       const stream = await openai.responses.create(payload);
       const streamedToolCallsByKey = new Map();
@@ -23887,7 +23982,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       for await (const event of stream) {
         switch (event?.type) {
           case "response.created":
-            if (event.response?.id) previousResponseId = event.response.id;
+            if (usePreviousResponseId && event.response?.id) {
+              previousResponseId = event.response.id;
+            }
             break;
 
           case "response.output_text.delta":
@@ -23900,6 +23997,38 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
               requestState.streamedContent += event.delta;
               requestState.updatedAt = Date.now();
               sendEvent("content", { text: event.delta });
+            }
+            break;
+          case "response.content_part.added":
+            if (typeof event.part?.text === "string" && event.part.text.length > 0) {
+              if (!sentRespondingStatus) {
+                sendStatus("responding", { iteration: i + 1, tool: null });
+                sentRespondingStatus = true;
+              }
+              iterationContent += event.part.text;
+              requestState.streamedContent += event.part.text;
+              requestState.updatedAt = Date.now();
+              sendEvent("content", { text: event.part.text });
+            }
+            break;
+          case "response.content_part.delta":
+            {
+              const partDelta =
+                typeof event.delta === "string"
+                  ? event.delta
+                  : typeof event.delta?.text === "string"
+                    ? event.delta.text
+                    : "";
+              if (partDelta) {
+                if (!sentRespondingStatus) {
+                  sendStatus("responding", { iteration: i + 1, tool: null });
+                  sentRespondingStatus = true;
+                }
+                iterationContent += partDelta;
+                requestState.streamedContent += partDelta;
+                requestState.updatedAt = Date.now();
+                sendEvent("content", { text: partDelta });
+              }
             }
             break;
 
@@ -23926,6 +24055,25 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
               upsertToolCall(event.item_id, event.output_index, {
                 arguments: `${current.arguments || ""}${event.delta || ""}`,
               });
+            }
+            break;
+          case "response.function_call.delta":
+            {
+              const current = upsertToolCall(event.item_id, event.output_index, {
+                name: event.name || null,
+                call_id: event.call_id || null,
+              });
+              const argDelta =
+                typeof event.delta === "string"
+                  ? event.delta
+                  : typeof event.arguments_delta === "string"
+                    ? event.arguments_delta
+                    : "";
+              if (argDelta) {
+                upsertToolCall(event.item_id, event.output_index, {
+                  arguments: `${current.arguments || ""}${argDelta}`,
+                });
+              }
             }
             break;
 
@@ -23978,7 +24126,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
           case "response.completed":
             streamedResponse = event.response || null;
-            if (event.response?.id) previousResponseId = event.response.id;
+            if (usePreviousResponseId && event.response?.id) {
+              previousResponseId = event.response.id;
+            }
             closeReasoningStream();
             break;
 
@@ -24063,7 +24213,15 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           });
         }
 
-        nextInput = toolOutputs;
+        if (usePreviousResponseId) {
+          nextInput = toolOutputs;
+        } else {
+          appendInstructionTurnToStatelessInput(statelessInput, {
+            assistantText: iterationContent,
+            toolCalls,
+            toolOutputs,
+          });
+        }
         continue;
       }
 
@@ -24095,12 +24253,16 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         try {
           sendStatus("responding", { iteration: INSTRUCTION_MAX_TOOL_ITERATIONS + 1, tool: null, recovery: true });
           const forcedSummary = await requestInstructionFinalSummaryWithoutTools(openai, {
-            model,
+            model: resolvedInstructionModel.model,
             previousResponseId,
             effort,
             toolsUsed,
+            stateful: usePreviousResponseId,
+            conversationInput: statelessInput,
           });
-          if (forcedSummary.responseId) previousResponseId = forcedSummary.responseId;
+          if (usePreviousResponseId && forcedSummary.responseId) {
+            previousResponseId = forcedSummary.responseId;
+          }
           addInstructionUsage(totalUsage, forcedSummary.usage);
           if (forcedSummary.content) {
             finalContent = forcedSummary.content;
@@ -24125,14 +24287,18 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       let autoNote = "";
       try {
         const noteResult = await generateInstructionVersionNoteWithModel(openai, {
-          model,
+          model: resolvedInstructionModel.model,
           previousResponseId,
           effort,
           toolsUsed,
           changes,
           finalContent,
+          stateful: usePreviousResponseId,
+          conversationInput: statelessInput,
         });
-        if (noteResult?.responseId) previousResponseId = noteResult.responseId;
+        if (usePreviousResponseId && noteResult?.responseId) {
+          previousResponseId = noteResult.responseId;
+        }
         addInstructionUsage(totalUsage, noteResult?.usage);
         autoNote = sanitizeInstructionVersionNote(noteResult?.note || "");
       } catch (noteError) {
@@ -24184,7 +24350,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       apiKeyId: apiKeyToUse.keyId || null,
       botId: "instruction-chat",
       platform: "admin",
-      model,
+      provider: apiKeyToUse.provider,
+      model: resolvedInstructionModel.model,
       promptTokens: totalUsage.prompt_tokens,
       completionTokens: totalUsage.completion_tokens,
       totalTokens: totalUsage.total_tokens,
@@ -24194,7 +24361,10 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     await db.collection("instruction_chat_audit").insertOne({
       sessionId, instructionId, username,
       timestamp: new Date(),
-      message, model, thinking, effort,
+      message,
+      model: resolvedInstructionModel.model,
+      thinking,
+      effort,
       toolsUsed: toolsUsed.map(t => t.tool),
       changes: changes.map(c => c.changeId),
       usage: totalUsage,
@@ -24218,7 +24388,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         {
           $set: {
             sessionId, instructionId, instructionName: instruction.name || "",
-            history: fullHistory, model, thinking,
+            history: fullHistory,
+            model: resolvedInstructionModel.model,
+            thinking,
             totalTokens: totalUsage.total_tokens,
             totalChanges: changes.length,
             username, updatedAt: new Date(),

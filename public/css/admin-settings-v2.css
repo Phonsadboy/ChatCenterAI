@@ -1274,10 +1274,53 @@ input:checked+.toggle-slider:before {
     font-size: 0.6875rem;
 }
 
+.assignment-channel-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.assignment-channel-tab {
+    border: 1px solid var(--border-color);
+    background: #fff;
+    color: var(--text-main);
+    border-radius: 999px;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: all 0.2s ease;
+}
+
+.assignment-channel-tab:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.assignment-channel-tab.active {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+    box-shadow: 0 6px 16px rgba(74, 111, 165, 0.2);
+}
+
+.assignment-channel-panel {
+    display: none;
+}
+
+.assignment-channel-panel.is-active {
+    display: block;
+}
+
 .assignment-list {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 0.15rem;
 }
 
 .assignment-item {
@@ -1751,6 +1794,23 @@ input:checked+.toggle-slider:before {
         flex: 0 0 auto;
         white-space: nowrap;
         min-height: 42px;
+    }
+
+    .assignment-channel-tabs {
+        width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 0.25rem;
+    }
+
+    .assignment-channel-tabs::-webkit-scrollbar {
+        height: 4px;
+    }
+
+    .assignment-channel-tab {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        min-height: 40px;
     }
 
     /* Cards - Mobile */

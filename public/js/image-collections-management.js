@@ -7,6 +7,7 @@
         facebookBots: [],
         instagramBots: [],
         whatsappBots: [],
+        activeAssignmentChannel: 'line',
         collectionFilter: '',
         assetFilter: '',
         collectionAssetFilter: '',
@@ -38,6 +39,7 @@
         startUploadQueueBtn: null,
         uploadQueueSummary: null,
         uploadQueueList: null,
+        assignmentTabs: null,
         lineAssignments: null,
         facebookAssignments: null,
         instagramAssignments: null,
@@ -201,6 +203,32 @@
         }
     };
 
+    const setActiveAssignmentChannel = (channel, options = {}) => {
+        const { persist = true } = options;
+        const nextChannel = ['line', 'facebook', 'instagram', 'whatsapp'].includes(channel) ? channel : 'line';
+        state.activeAssignmentChannel = nextChannel;
+
+        const tabButtons = document.querySelectorAll('[data-assignment-channel]');
+        tabButtons.forEach((button) => {
+            const isActive = button.dataset.assignmentChannel === nextChannel;
+            button.classList.toggle('active', isActive);
+            button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+
+        const panels = document.querySelectorAll('[data-assignment-channel-panel]');
+        panels.forEach((panel) => {
+            panel.classList.toggle('is-active', panel.dataset.assignmentChannelPanel === nextChannel);
+        });
+
+        if (persist) {
+            try {
+                localStorage.setItem('adminSettingsV2.activeAssignmentChannel', nextChannel);
+            } catch (error) {
+                // Ignore storage errors
+            }
+        }
+    };
+
     const cacheElements = () => {
         elements.section = document.getElementById('imageCollectionsSection');
         if (!elements.section) return;
@@ -223,6 +251,7 @@
         elements.assetSelectionToolbar = document.getElementById('assetSelectionToolbar');
         elements.assetSelectionCount = elements.assetSelectionToolbar?.querySelector('.asset-selection-count') || null;
         elements.bulkDeleteAssetsBtn = document.getElementById('bulkDeleteAssetsBtn');
+        elements.assignmentTabs = document.getElementById('assignmentChannelTabs');
         elements.lineAssignments = document.getElementById('lineBotCollectionsList');
         elements.facebookAssignments = document.getElementById('facebookBotCollectionsList');
         elements.instagramAssignments = document.getElementById('instagramBotCollectionsList');
@@ -413,6 +442,14 @@
 
         if (elements.saveBotCollectionsBtn) {
             elements.saveBotCollectionsBtn.addEventListener('click', saveBotImageCollections);
+        }
+
+        if (elements.assignmentTabs) {
+            elements.assignmentTabs.addEventListener('click', (event) => {
+                const tabButton = event.target.closest('[data-assignment-channel]');
+                if (!tabButton) return;
+                setActiveAssignmentChannel(tabButton.dataset.assignmentChannel);
+            });
         }
 
         // Secret data consistency fix button (triple click on "ขั้นตอนที่ 1")
@@ -710,6 +747,18 @@
     const init = () => {
         cacheElements();
         if (!elements.section) return;
+
+        let initialAssignmentChannel = 'line';
+        try {
+            const savedChannel = localStorage.getItem('adminSettingsV2.activeAssignmentChannel');
+            if (['line', 'facebook', 'instagram', 'whatsapp'].includes(savedChannel)) {
+                initialAssignmentChannel = savedChannel;
+            }
+        } catch (error) {
+            // Ignore storage errors
+        }
+        setActiveAssignmentChannel(initialAssignmentChannel, { persist: false });
+
         bindEvents();
         renderUploadQueue();
         refreshAll();
