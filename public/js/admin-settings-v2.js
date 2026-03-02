@@ -5,10 +5,13 @@
 
 const INSTRUCTION_SOURCE = { V2: 'v2', LEGACY: 'legacy' };
 let instructionLibraries = [];
+const BOT_CHANNELS = ['line', 'facebook', 'instagram', 'whatsapp'];
+let activeBotChannel = 'line';
 
 document.addEventListener('DOMContentLoaded', function () {
     initMobileMenu();
     initNavigation();
+    initBotChannelTabs();
     loadAllSettings();
     setupEventListeners();
     showLegacySettingsNotice();
@@ -20,6 +23,56 @@ function showAlert(message, type = 'info') {
     showToast(message, type);
 }
 window.showAlert = showAlert;
+
+function setActiveBotChannel(channel, options = {}) {
+    const nextChannel = BOT_CHANNELS.includes(channel) ? channel : 'line';
+    const { persist = true } = options;
+    activeBotChannel = nextChannel;
+
+    const tabs = document.querySelectorAll('[data-bot-channel]');
+    tabs.forEach((tab) => {
+        const isActive = tab.dataset.botChannel === nextChannel;
+        tab.classList.toggle('active', isActive);
+        tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    const panels = document.querySelectorAll('[data-bot-channel-panel]');
+    panels.forEach((panel) => {
+        const isActive = panel.dataset.botChannelPanel === nextChannel;
+        panel.classList.toggle('is-active', isActive);
+    });
+
+    if (persist) {
+        try {
+            localStorage.setItem('adminSettingsV2.activeBotChannel', nextChannel);
+        } catch (error) {
+            // Ignore storage errors (private mode, quota, etc.)
+        }
+    }
+}
+
+function initBotChannelTabs() {
+    const tabsContainer = document.getElementById('botChannelTabs');
+    if (!tabsContainer) return;
+
+    tabsContainer.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-bot-channel]');
+        if (!button) return;
+        setActiveBotChannel(button.dataset.botChannel);
+    });
+
+    let initialChannel = 'line';
+    try {
+        const savedChannel = localStorage.getItem('adminSettingsV2.activeBotChannel');
+        if (BOT_CHANNELS.includes(savedChannel)) {
+            initialChannel = savedChannel;
+        }
+    } catch (error) {
+        // Ignore storage errors
+    }
+
+    setActiveBotChannel(initialChannel, { persist: false });
+}
 
 // --- Mobile Menu ---
 function initMobileMenu() {

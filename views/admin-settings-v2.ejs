@@ -93,8 +93,27 @@
                             </div>
                         </div>
 
-                        <div class="row g-3">
-                            <div class="col-lg-6 col-xxl-3">
+                        <div class="bot-channel-tabs" id="botChannelTabs" role="tablist" aria-label="เลือกช่องทางบอท">
+                            <button type="button" class="bot-channel-tab active" data-bot-channel="line" role="tab"
+                                aria-selected="true">
+                                <i class="fab fa-line"></i> LINE
+                            </button>
+                            <button type="button" class="bot-channel-tab" data-bot-channel="facebook" role="tab"
+                                aria-selected="false">
+                                <i class="fab fa-facebook-f"></i> Facebook
+                            </button>
+                            <button type="button" class="bot-channel-tab" data-bot-channel="instagram" role="tab"
+                                aria-selected="false">
+                                <i class="fab fa-instagram"></i> Instagram
+                            </button>
+                            <button type="button" class="bot-channel-tab" data-bot-channel="whatsapp" role="tab"
+                                aria-selected="false">
+                                <i class="fab fa-whatsapp"></i> WhatsApp
+                            </button>
+                        </div>
+
+                        <div class="bot-channel-panels">
+                            <div class="bot-channel-panel is-active" data-bot-channel-panel="line">
                                 <div class="settings-card">
                                     <div class="card-header-v2">
                                         <h3 class="card-title-v2"><i class="fab fa-line text-success me-2"></i>Line Bots
@@ -110,7 +129,8 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-lg-6 col-xxl-3">
+
+                            <div class="bot-channel-panel" data-bot-channel-panel="facebook">
                                 <div class="settings-card">
                                     <div class="card-header-v2">
                                         <h3 class="card-title-v2"><i
@@ -127,10 +147,12 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-lg-6 col-xxl-3">
+
+                            <div class="bot-channel-panel" data-bot-channel-panel="instagram">
                                 <div class="settings-card">
                                     <div class="card-header-v2">
-                                        <h3 class="card-title-v2"><i class="fab fa-instagram text-danger me-2"></i>Instagram Bots</h3>
+                                        <h3 class="card-title-v2"><i
+                                                class="fab fa-instagram text-danger me-2"></i>Instagram Bots</h3>
                                         <button class="btn-v2 btn-v2-primary btn-v2-sm"
                                             onclick="openAddInstagramBotModal()">
                                             <i class="fas fa-plus"></i> เพิ่มใหม่
@@ -143,10 +165,12 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-lg-6 col-xxl-3">
+
+                            <div class="bot-channel-panel" data-bot-channel-panel="whatsapp">
                                 <div class="settings-card">
                                     <div class="card-header-v2">
-                                        <h3 class="card-title-v2"><i class="fab fa-whatsapp text-success me-2"></i>WhatsApp Bots</h3>
+                                        <h3 class="card-title-v2"><i
+                                                class="fab fa-whatsapp text-success me-2"></i>WhatsApp Bots</h3>
                                         <button class="btn-v2 btn-v2-primary btn-v2-sm"
                                             onclick="openAddWhatsAppBotModal()">
                                             <i class="fas fa-plus"></i> เพิ่มใหม่

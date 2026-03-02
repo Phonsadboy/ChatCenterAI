@@ -116,6 +116,51 @@ body {
     margin-top: 0.25rem;
 }
 
+.bot-channel-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.9rem;
+}
+
+.bot-channel-tab {
+    border: 1px solid var(--border-color);
+    background: #fff;
+    color: var(--text-main);
+    border-radius: 999px;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    transition: all 0.2s ease;
+}
+
+.bot-channel-tab:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.bot-channel-tab.active {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+    box-shadow: 0 6px 16px rgba(74, 111, 165, 0.22);
+}
+
+.bot-channel-panel {
+    display: none;
+}
+
+.bot-channel-panel.is-active {
+    display: block;
+}
+
+.bot-channel-panels .settings-card {
+    margin-bottom: 0;
+}
+
 /* Cards */
 .settings-card {
     background: var(--card-bg);
@@ -446,7 +491,7 @@ input:checked+.toggle-slider:before {
 }
 
 .bot-platform-list {
-    max-height: 360px;
+    max-height: 520px;
     overflow-y: auto;
     overscroll-behavior: contain;
 }
@@ -1688,6 +1733,24 @@ input:checked+.toggle-slider:before {
         width: 100%;
         flex-wrap: wrap;
         gap: 0.75rem;
+    }
+
+    .bot-channel-tabs {
+        width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 0.25rem;
+        margin-bottom: 1rem;
+    }
+
+    .bot-channel-tabs::-webkit-scrollbar {
+        height: 4px;
+    }
+
+    .bot-channel-tab {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        min-height: 42px;
     }
 
     /* Cards - Mobile */
