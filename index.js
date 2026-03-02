@@ -2314,51 +2314,17 @@ function normalizeConversationStarterMessage(message, index = 0) {
     typeof idSource === "string" && idSource.trim()
       ? idSource.trim()
       : generateConversationStarterMessageId();
-
-  if (type === "text") {
-    const rawText =
-      typeof message.content === "string"
-        ? message.content
-        : typeof message.text === "string"
-          ? message.text
-          : "";
-    const content = rawText.trim();
-    if (!content) return null;
-    return {
-      id,
-      type: "text",
-      content,
-      order,
-    };
-  }
-
-  if (type === "image") {
-    const resolveUrl = (value) => {
-      if (typeof value !== "string") return "";
-      const trimmed = value.trim();
-      if (!trimmed) return "";
-      if (/^https?:\/\//i.test(trimmed)) return trimmed;
-      if (trimmed.startsWith("/") && PUBLIC_BASE_URL) {
-        return `${PUBLIC_BASE_URL.replace(/\/$/, "")}${trimmed}`;
-      }
-      return trimmed;
-    };
-
-    const url = resolveUrl(message.url || message.originalContentUrl || "");
-    if (!url) return null;
-
-    const previewUrl = resolveUrl(
-      message.previewUrl || message.thumbUrl || message.previewImageUrl || url,
-    );
-
-    const normalized = {
-      id,
-      type: "image",
-      url,
-      previewUrl: previewUrl || url,
-      order,
-    };
-
+  const resolveUrl = (value) => {
+    if (typeof value !== "string") return "";
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (trimmed.startsWith("/") && PUBLIC_BASE_URL) {
+      return `${PUBLIC_BASE_URL.replace(/\/$/, "")}${trimmed}`;
+    }
+    return trimmed;
+  };
+  const applyCommonMediaMetadata = (normalized) => {
     const alt =
       typeof message.alt === "string"
         ? message.alt.trim()
@@ -2381,7 +2347,67 @@ function normalizeConversationStarterMessage(message, index = 0) {
         if (fallback) normalized.assetId = fallback;
       }
     }
+  };
 
+  if (type === "text") {
+    const rawText =
+      typeof message.content === "string"
+        ? message.content
+        : typeof message.text === "string"
+          ? message.text
+          : "";
+    const content = rawText.trim();
+    if (!content) return null;
+    return {
+      id,
+      type: "text",
+      content,
+      order,
+    };
+  }
+
+  if (type === "image") {
+    const url = resolveUrl(message.url || message.originalContentUrl || "");
+    if (!url) return null;
+
+    const previewUrl = resolveUrl(
+      message.previewUrl || message.thumbUrl || message.previewImageUrl || url,
+    );
+
+    const normalized = {
+      id,
+      type: "image",
+      url,
+      previewUrl: previewUrl || url,
+      order,
+    };
+    applyCommonMediaMetadata(normalized);
+    return normalized;
+  }
+
+  if (type === "video") {
+    const url = resolveUrl(
+      message.url || message.videoUrl || message.originalContentUrl || "",
+    );
+    if (!url) return null;
+
+    const previewUrl = resolveUrl(
+      message.previewUrl ||
+      message.thumbUrl ||
+      message.previewImageUrl ||
+      message.thumbnailUrl ||
+      "",
+    );
+    const normalized = {
+      id,
+      type: "video",
+      url,
+      order,
+    };
+    if (previewUrl) {
+      normalized.previewUrl = previewUrl;
+    }
+    applyCommonMediaMetadata(normalized);
     return normalized;
   }
 
@@ -6485,6 +6511,23 @@ function buildConversationStarterHistory(messages = []) {
         alt: typeof message.alt === "string" ? message.alt.trim() : "",
         caption: typeof message.alt === "string" ? message.alt.trim() : "",
       });
+      continue;
+    }
+    if (message.type === "video") {
+      const url =
+        typeof message.url === "string" ? message.url.trim() : "";
+      if (!url) continue;
+      const previewUrl =
+        typeof message.previewUrl === "string" && message.previewUrl.trim()
+          ? message.previewUrl.trim()
+          : "";
+      parts.push({
+        type: "video",
+        url,
+        previewUrl,
+        alt: typeof message.alt === "string" ? message.alt.trim() : "",
+        caption: typeof message.alt === "string" ? message.alt.trim() : "",
+      });
     }
   }
 
@@ -6524,6 +6567,21 @@ async function sendLineConversationStarterSequence(
         originalContentUrl: message.url,
         previewImageUrl: message.previewUrl || message.url,
       });
+      continue;
+    }
+
+    if (message.type === "video") {
+      if (!message.url) continue;
+      const previewUrl =
+        typeof message.previewUrl === "string" ? message.previewUrl.trim() : "";
+      if (!previewUrl) {
+        continue;
+      }
+      payloads.push({
+        type: "video",
+        originalContentUrl: message.url,
+        previewImageUrl: previewUrl,
+      });
     }
   }
 
@@ -6552,23 +6610,19 @@ async function sendLineConversationStarterSequence(
     return false;
   }
 
-  const chunks = [];
-  for (let i = 0; i < payloads.length; i += 5) {
-    chunks.push(payloads.slice(i, i + 5));
-  }
-
-  try {
-    for (const chunk of chunks) {
-      await client.pushMessage(userId, chunk.length === 1 ? chunk[0] : chunk);
+  let sentCount = 0;
+  for (const payload of payloads) {
+    try {
+      await client.pushMessage(userId, payload);
+      sentCount += 1;
+    } catch (error) {
+      console.error(
+        "[Starter] ส่งข้อความเริ่มต้น LINE บางรายการไม่สำเร็จ:",
+        error?.message || error,
+      );
     }
-    return true;
-  } catch (error) {
-    console.error(
-      "[Starter] ส่งข้อความเริ่มต้น LINE ไม่สำเร็จ:",
-      error?.message || error,
-    );
-    return false;
   }
+  return sentCount > 0;
 }
 
 async function sendFacebookConversationStarterSequence(
@@ -6592,14 +6646,26 @@ async function sendFacebookConversationStarterSequence(
   }).messages;
   if (!normalizedMessages.length) return false;
 
-  const segments = [];
-  const assets = [];
+  let sentCount = 0;
   let imageCounter = 0;
-
   for (const message of normalizedMessages) {
     if (message.type === "text") {
       const text = normalizeOutgoingText(message.content || "");
-      if (text) segments.push(text);
+      if (!text) continue;
+      try {
+        await sendFacebookMessage(
+          userId,
+          text,
+          accessToken,
+          { metadata: "ai_generated", selectedImageCollections: null },
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น Facebook (text) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
       continue;
     }
 
@@ -6609,41 +6675,66 @@ async function sendFacebookConversationStarterSequence(
         (typeof message.alt === "string" && message.alt.trim()) ||
         (typeof message.fileName === "string" && message.fileName.trim()) ||
         `Starter Image ${imageCounter}`;
-      segments.push(`#[IMAGE:${label}]`);
-      assets.push({
-        label,
-        url: message.url,
-        thumbUrl: message.previewUrl || message.url,
-        fileName: message.fileName || "",
-        alt: message.alt || "",
-      });
+      const assetsMap = buildAssetsLookup([
+        {
+          label,
+          url: message.url,
+          thumbUrl: message.previewUrl || message.url,
+          fileName: message.fileName || "",
+          alt: message.alt || "",
+        },
+      ]);
+      try {
+        await sendFacebookMessage(
+          userId,
+          `#[IMAGE:${label}]`,
+          accessToken,
+          { metadata: "ai_generated", selectedImageCollections: null },
+          assetsMap,
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น Facebook (image) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
+      continue;
+    }
+
+    if (message.type === "video" && message.url) {
+      try {
+        await axios.post(
+          "https://graph.facebook.com/v18.0/me/messages",
+          {
+            recipient: { id: userId },
+            message: {
+              attachment: {
+                type: "video",
+                payload: {
+                  url: message.url,
+                  is_reusable: true,
+                },
+              },
+              metadata: "ai_generated",
+            },
+          },
+          {
+            params: { access_token: accessToken },
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น Facebook (video) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
     }
   }
 
-  const combinedMessage = segments
-    .map((segment) => String(segment || "").trim())
-    .filter(Boolean)
-    .join("[cut]");
-  if (!combinedMessage) return false;
-
-  const assetsMap = buildAssetsLookup(assets);
-
-  try {
-    await sendFacebookMessage(
-      userId,
-      combinedMessage,
-      accessToken,
-      { metadata: "ai_generated", selectedImageCollections: null },
-      assetsMap,
-    );
-    return true;
-  } catch (error) {
-    console.error(
-      "[Starter] ส่งข้อความเริ่มต้น Facebook ไม่สำเร็จ:",
-      error?.message || error,
-    );
-    return false;
-  }
+  return sentCount > 0;
 }
 
 async function sendInstagramConversationStarterSequence(
@@ -6675,14 +6766,27 @@ async function sendInstagramConversationStarterSequence(
   }).messages;
   if (!normalizedMessages.length) return false;
 
-  const segments = [];
-  const assets = [];
+  let sentCount = 0;
   let imageCounter = 0;
-
   for (const message of normalizedMessages) {
     if (message.type === "text") {
       const text = normalizeOutgoingText(message.content || "");
-      if (text) segments.push(text);
+      if (!text) continue;
+      try {
+        await sendInstagramMessage(
+          userId,
+          text,
+          accessToken,
+          instagramSenderId,
+          { selectedImageCollections: null },
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น Instagram (text) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
       continue;
     }
 
@@ -6692,42 +6796,66 @@ async function sendInstagramConversationStarterSequence(
         (typeof message.alt === "string" && message.alt.trim()) ||
         (typeof message.fileName === "string" && message.fileName.trim()) ||
         `Starter Image ${imageCounter}`;
-      segments.push(`#[IMAGE:${label}]`);
-      assets.push({
-        label,
-        url: message.url,
-        thumbUrl: message.previewUrl || message.url,
-        fileName: message.fileName || "",
-        alt: message.alt || "",
-      });
+      const assetsMap = buildAssetsLookup([
+        {
+          label,
+          url: message.url,
+          thumbUrl: message.previewUrl || message.url,
+          fileName: message.fileName || "",
+          alt: message.alt || "",
+        },
+      ]);
+      try {
+        await sendInstagramMessage(
+          userId,
+          `#[IMAGE:${label}]`,
+          accessToken,
+          instagramSenderId,
+          { selectedImageCollections: null },
+          assetsMap,
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น Instagram (image) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
+      continue;
+    }
+
+    if (message.type === "video" && message.url) {
+      try {
+        await axios.post(
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramSenderId}/messages`,
+          {
+            recipient: { id: userId },
+            message: {
+              attachment: {
+                type: "video",
+                payload: {
+                  url: message.url,
+                  is_reusable: true,
+                },
+              },
+            },
+          },
+          {
+            params: { access_token: accessToken },
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น Instagram (video) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
     }
   }
 
-  const combinedMessage = segments
-    .map((segment) => String(segment || "").trim())
-    .filter(Boolean)
-    .join("[cut]");
-  if (!combinedMessage) return false;
-
-  const assetsMap = buildAssetsLookup(assets);
-
-  try {
-    await sendInstagramMessage(
-      userId,
-      combinedMessage,
-      accessToken,
-      instagramSenderId,
-      { selectedImageCollections: null },
-      assetsMap,
-    );
-    return true;
-  } catch (error) {
-    console.error(
-      "[Starter] ส่งข้อความเริ่มต้น Instagram ไม่สำเร็จ:",
-      error?.message || error,
-    );
-    return false;
-  }
+  return sentCount > 0;
 }
 
 async function sendWhatsAppConversationStarterSequence(
@@ -6754,14 +6882,27 @@ async function sendWhatsAppConversationStarterSequence(
   }).messages;
   if (!normalizedMessages.length) return false;
 
-  const segments = [];
-  const assets = [];
+  let sentCount = 0;
   let imageCounter = 0;
-
   for (const message of normalizedMessages) {
     if (message.type === "text") {
       const text = normalizeOutgoingText(message.content || "");
-      if (text) segments.push(text);
+      if (!text) continue;
+      try {
+        await sendWhatsAppMessage(
+          userId,
+          text,
+          accessToken,
+          phoneNumberId,
+          { selectedImageCollections: null },
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น WhatsApp (text) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
       continue;
     }
 
@@ -6771,42 +6912,71 @@ async function sendWhatsAppConversationStarterSequence(
         (typeof message.alt === "string" && message.alt.trim()) ||
         (typeof message.fileName === "string" && message.fileName.trim()) ||
         `Starter Image ${imageCounter}`;
-      segments.push(`#[IMAGE:${label}]`);
-      assets.push({
-        label,
-        url: message.url,
-        thumbUrl: message.previewUrl || message.url,
-        fileName: message.fileName || "",
-        alt: message.alt || "",
-      });
+      const assetsMap = buildAssetsLookup([
+        {
+          label,
+          url: message.url,
+          thumbUrl: message.previewUrl || message.url,
+          fileName: message.fileName || "",
+          alt: message.alt || "",
+        },
+      ]);
+      try {
+        await sendWhatsAppMessage(
+          userId,
+          `#[IMAGE:${label}]`,
+          accessToken,
+          phoneNumberId,
+          { selectedImageCollections: null },
+          assetsMap,
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น WhatsApp (image) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
+      continue;
+    }
+
+    if (message.type === "video" && message.url) {
+      try {
+        const payload = {
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: userId,
+          type: "video",
+          video: {
+            link: message.url,
+          },
+        };
+        const trimmedCaption =
+          typeof message.alt === "string" ? message.alt.trim().slice(0, 1024) : "";
+        if (trimmedCaption) {
+          payload.video.caption = trimmedCaption;
+        }
+        await axios.post(
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+          payload,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+          },
+        );
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "[Starter] ส่งข้อความเริ่มต้น WhatsApp (video) ไม่สำเร็จ:",
+          error?.message || error,
+        );
+      }
     }
   }
 
-  const combinedMessage = segments
-    .map((segment) => String(segment || "").trim())
-    .filter(Boolean)
-    .join("[cut]");
-  if (!combinedMessage) return false;
-
-  const assetsMap = buildAssetsLookup(assets);
-
-  try {
-    await sendWhatsAppMessage(
-      userId,
-      combinedMessage,
-      accessToken,
-      phoneNumberId,
-      { selectedImageCollections: null },
-      assetsMap,
-    );
-    return true;
-  } catch (error) {
-    console.error(
-      "[Starter] ส่งข้อความเริ่มต้น WhatsApp ไม่สำเร็จ:",
-      error?.message || error,
-    );
-    return false;
-  }
+  return sentCount > 0;
 }
 
 async function sendConversationStarterSequence(
@@ -22487,10 +22657,10 @@ ${dataItemsSummary}
 
 # ระบบข้อความเริ่มต้นการสนทนา (Conversation Starter)
 คุณสามารถจัดการข้อความเริ่มต้นที่ส่งแทนคำตอบ AI ครั้งแรกได้:
-- **get_conversation_starter** — ดูสถานะเปิด/ปิด + ลำดับข้อความ/รูปภาพปัจจุบัน
+- **get_conversation_starter** — ดูสถานะเปิด/ปิด + ลำดับข้อความ/รูปภาพ/วิดีโอปัจจุบัน
 - **set_conversation_starter_enabled** — เปิดหรือปิดระบบข้อความเริ่มต้น
-- **add_conversation_starter_message** — เพิ่มข้อความหรือรูปภาพเข้า sequence
-- **update_conversation_starter_message** — แก้ไขข้อความ/รูปภาพตาม messageId
+- **add_conversation_starter_message** — เพิ่มข้อความหรือรูปภาพหรือวิดีโอเข้า sequence
+- **update_conversation_starter_message** — แก้ไขข้อความ/รูปภาพ/วิดีโอตาม messageId
 - **remove_conversation_starter_message** — ลบข้อความตาม messageId
 - **reorder_conversation_starter_message** — จัดลำดับขึ้น/ลง หรือย้ายไป index ที่ต้องการ
 

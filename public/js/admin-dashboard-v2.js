@@ -92,6 +92,7 @@
     const starterMessagesList = document.getElementById('starterMessagesList');
     const starterAddTextBtn = document.getElementById('starterAddTextBtn');
     const starterAddImageBtn = document.getElementById('starterAddImageBtn');
+    const starterAddVideoBtn = document.getElementById('starterAddVideoBtn');
     const starterImageUploadInput = document.getElementById('starterImageUploadInput');
     const saveStarterConfigBtn = document.getElementById('saveStarterConfigBtn');
 
@@ -167,6 +168,38 @@
                 previewUrl,
                 order
             };
+            const alt = typeof message.alt === 'string'
+                ? message.alt.trim()
+                : typeof message.caption === 'string'
+                    ? message.caption.trim()
+                    : '';
+            if (alt) normalized.alt = alt;
+            const fileName = typeof message.fileName === 'string' ? message.fileName.trim() : '';
+            if (fileName) normalized.fileName = fileName;
+            const assetId = message.assetId || message.id;
+            if (assetId) normalized.assetId = String(assetId).trim();
+            return normalized;
+        }
+
+        if (type === 'video') {
+            const url = typeof message.url === 'string'
+                ? message.url.trim()
+                : typeof message.videoUrl === 'string'
+                    ? message.videoUrl.trim()
+                    : '';
+            if (!url) return null;
+            const previewUrl = typeof message.previewUrl === 'string' && message.previewUrl.trim()
+                ? message.previewUrl.trim()
+                : typeof message.thumbUrl === 'string' && message.thumbUrl.trim()
+                    ? message.thumbUrl.trim()
+                    : '';
+            const normalized = {
+                id,
+                type: 'video',
+                url,
+                order
+            };
+            if (previewUrl) normalized.previewUrl = previewUrl;
             const alt = typeof message.alt === 'string'
                 ? message.alt.trim()
                 : typeof message.caption === 'string'
@@ -644,7 +677,7 @@
         reindexStarterMessages();
 
         if (!starterState.messages.length) {
-            starterMessagesList.innerHTML = '<div class="starter-message-empty">ยังไม่มีข้อความเริ่มต้น กดปุ่มด้านบนเพื่อเพิ่มข้อความหรือรูปภาพ</div>';
+            starterMessagesList.innerHTML = '<div class="starter-message-empty">ยังไม่มีข้อความเริ่มต้น กดปุ่มด้านบนเพื่อเพิ่มข้อความ รูปภาพ หรือวิดีโอ</div>';
             updateStarterCounter();
             return;
         }
@@ -653,12 +686,14 @@
             const orderLabel = index + 1;
             const moveUpDisabled = index === 0 ? 'disabled' : '';
             const moveDownDisabled = index === starterState.messages.length - 1 ? 'disabled' : '';
-            const messageTypeClass = message.type === 'image' ? 'type-image' : 'type-text';
-            const messageTypeLabel = message.type === 'image' ? 'Image' : 'Text';
-            const messageTypeIcon = message.type === 'image' ? 'fa-image' : 'fa-font';
+            const isImage = message.type === 'image';
+            const isVideo = message.type === 'video';
+            const messageTypeClass = isImage ? 'type-image' : isVideo ? 'type-video' : 'type-text';
+            const messageTypeLabel = isImage ? 'Image' : isVideo ? 'Video' : 'Text';
+            const messageTypeIcon = isImage ? 'fa-image' : isVideo ? 'fa-video' : 'fa-font';
 
             let bodyHtml = '';
-            if (message.type === 'image') {
+            if (isImage) {
                 const preview = escapeAttr(message.previewUrl || message.url || '');
                 const fullUrl = escapeHtml(message.url || '');
                 const altValue = escapeAttr(message.alt || '');
@@ -668,6 +703,25 @@
                         <div class="starter-message-image-meta">
                             <div class="starter-message-image-url">${fullUrl || '-'}</div>
                             <input type="text" class="form-control form-control-sm starter-message-alt" data-index="${index}" value="${altValue}" placeholder="คำอธิบายรูป (optional)">
+                        </div>
+                    </div>
+                `;
+            } else if (isVideo) {
+                const videoUrl = escapeAttr(message.url || '');
+                const videoPreviewUrl = escapeAttr(message.previewUrl || '');
+                const altValue = escapeAttr(message.alt || '');
+                const canPreviewVideo = videoUrl ? `
+                    <video class="starter-message-video-preview" controls preload="metadata">
+                        <source src="${videoUrl}">
+                    </video>
+                ` : '<div class="small text-muted">ยังไม่ได้ระบุ URL วิดีโอ</div>';
+                bodyHtml = `
+                    <div class="starter-message-image-wrap">
+                        ${canPreviewVideo}
+                        <div class="starter-message-image-meta">
+                            <input type="text" class="form-control form-control-sm starter-message-video-url" data-index="${index}" value="${videoUrl}" placeholder="URL วิดีโอ (จำเป็น)">
+                            <input type="text" class="form-control form-control-sm starter-message-video-preview-url" data-index="${index}" value="${videoPreviewUrl}" placeholder="URL รูปตัวอย่างวิดีโอ (แนะนำสำหรับ LINE)">
+                            <input type="text" class="form-control form-control-sm starter-message-alt" data-index="${index}" value="${altValue}" placeholder="คำอธิบายวิดีโอ (optional)">
                         </div>
                     </div>
                 `;
@@ -723,6 +777,22 @@
             });
         });
 
+        starterMessagesList.querySelectorAll('input.starter-message-video-url').forEach((input) => {
+            input.addEventListener('input', (event) => {
+                const index = Number(event.target.getAttribute('data-index'));
+                if (!Number.isFinite(index) || !starterState.messages[index]) return;
+                starterState.messages[index].url = event.target.value;
+            });
+        });
+
+        starterMessagesList.querySelectorAll('input.starter-message-video-preview-url').forEach((input) => {
+            input.addEventListener('input', (event) => {
+                const index = Number(event.target.getAttribute('data-index'));
+                if (!Number.isFinite(index) || !starterState.messages[index]) return;
+                starterState.messages[index].previewUrl = event.target.value;
+            });
+        });
+
         starterMessagesList.querySelectorAll('.starter-message-remove').forEach((button) => {
             button.addEventListener('click', () => {
                 const index = Number(button.getAttribute('data-index'));
@@ -755,6 +825,7 @@
         if (starterEnabledToggle) starterEnabledToggle.disabled = !!busy;
         if (starterAddTextBtn) starterAddTextBtn.disabled = !!busy;
         if (starterAddImageBtn) starterAddImageBtn.disabled = !!busy;
+        if (starterAddVideoBtn) starterAddVideoBtn.disabled = !!busy;
 
         if (saveStarterConfigBtn) {
             if (busy) {
@@ -811,6 +882,28 @@
                 const assetId = (message.assetId || '').trim();
                 if (assetId) nextImage.assetId = assetId;
                 payloadMessages.push(nextImage);
+                continue;
+            }
+            if (message.type === 'video') {
+                const url = (message.url || '').trim();
+                if (!url) {
+                    return { error: `วิดีโอลำดับ ${index + 1} ไม่มี URL` };
+                }
+                const nextVideo = {
+                    id: message.id || generateStarterTempId(),
+                    type: 'video',
+                    url,
+                    order: payloadMessages.length
+                };
+                const previewUrl = (message.previewUrl || '').trim();
+                if (previewUrl) nextVideo.previewUrl = previewUrl;
+                const alt = (message.alt || '').trim();
+                if (alt) nextVideo.alt = alt;
+                const fileName = (message.fileName || '').trim();
+                if (fileName) nextVideo.fileName = fileName;
+                const assetId = (message.assetId || '').trim();
+                if (assetId) nextVideo.assetId = assetId;
+                payloadMessages.push(nextVideo);
             }
         }
 
@@ -1048,6 +1141,20 @@
         });
         starterImageUploadInput.addEventListener('change', (event) => {
             uploadStarterImages(event.target.files);
+        });
+    }
+
+    if (starterAddVideoBtn) {
+        starterAddVideoBtn.addEventListener('click', () => {
+            starterState.messages.push({
+                id: generateStarterTempId(),
+                type: 'video',
+                url: '',
+                previewUrl: '',
+                alt: '',
+                order: starterState.messages.length
+            });
+            renderStarterMessages();
         });
     }
 

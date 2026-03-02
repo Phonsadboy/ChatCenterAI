@@ -74,6 +74,30 @@ class InstructionChatService {
         const id = typeof idSource === "string" && idSource.trim()
             ? idSource.trim()
             : this._generateStarterMessageId();
+        const normalizeUrl = (value) =>
+            typeof value === "string" && value.trim() ? value.trim() : "";
+        const applyCommonMediaMeta = (target) => {
+            const alt = typeof message.alt === "string"
+                ? message.alt.trim()
+                : typeof message.caption === "string"
+                    ? message.caption.trim()
+                    : "";
+            if (alt) target.alt = alt;
+
+            const fileName = typeof message.fileName === "string" ? message.fileName.trim() : "";
+            if (fileName) target.fileName = fileName;
+
+            const assetId = message.assetId ?? message.id ?? message._id;
+            if (assetId !== null && assetId !== undefined) {
+                try {
+                    const text = typeof assetId === "string" ? assetId.trim() : assetId.toString();
+                    if (text) target.assetId = text;
+                } catch {
+                    const fallback = String(assetId || "").trim();
+                    if (fallback) target.assetId = fallback;
+                }
+            }
+        };
 
         if (type === "text") {
             const rawText =
@@ -88,13 +112,9 @@ class InstructionChatService {
         }
 
         if (type === "image") {
-            const url = typeof message.url === "string" ? message.url.trim() : "";
+            const url = normalizeUrl(message.url);
             if (!url) return null;
-            const previewUrl = typeof message.previewUrl === "string" && message.previewUrl.trim()
-                ? message.previewUrl.trim()
-                : typeof message.thumbUrl === "string" && message.thumbUrl.trim()
-                    ? message.thumbUrl.trim()
-                    : url;
+            const previewUrl = normalizeUrl(message.previewUrl) || normalizeUrl(message.thumbUrl) || url;
 
             const normalized = {
                 id,
@@ -103,27 +123,26 @@ class InstructionChatService {
                 previewUrl,
                 order,
             };
+            applyCommonMediaMeta(normalized);
+            return normalized;
+        }
 
-            const alt = typeof message.alt === "string"
-                ? message.alt.trim()
-                : typeof message.caption === "string"
-                    ? message.caption.trim()
-                    : "";
-            if (alt) normalized.alt = alt;
-
-            const fileName = typeof message.fileName === "string" ? message.fileName.trim() : "";
-            if (fileName) normalized.fileName = fileName;
-
-            const assetId = message.assetId ?? message.id ?? message._id;
-            if (assetId !== null && assetId !== undefined) {
-                try {
-                    const text = typeof assetId === "string" ? assetId.trim() : assetId.toString();
-                    if (text) normalized.assetId = text;
-                } catch {
-                    const fallback = String(assetId || "").trim();
-                    if (fallback) normalized.assetId = fallback;
-                }
-            }
+        if (type === "video") {
+            const url = normalizeUrl(message.url) || normalizeUrl(message.videoUrl);
+            if (!url) return null;
+            const previewUrl =
+                normalizeUrl(message.previewUrl) ||
+                normalizeUrl(message.thumbUrl) ||
+                normalizeUrl(message.previewImageUrl) ||
+                normalizeUrl(message.thumbnailUrl);
+            const normalized = {
+                id,
+                type: "video",
+                url,
+                order,
+            };
+            if (previewUrl) normalized.previewUrl = previewUrl;
+            applyCommonMediaMeta(normalized);
             return normalized;
         }
 
@@ -1354,7 +1373,7 @@ class InstructionChatService {
 
     async add_conversation_starter_message(
         instructionId,
-        { type, content, imageUrl, previewUrl, alt, assetId, position = "end" },
+        { type, content, imageUrl, videoUrl, previewUrl, alt, assetId, position = "end" },
         sessionId
     ) {
         const inst = await this._getInstruction(instructionId);
@@ -1384,8 +1403,22 @@ class InstructionChatService {
                 id: this._generateStarterMessageId(),
                 ...resolved.message,
             };
+        } else if (type === "video") {
+            const normalizedVideoUrl = typeof videoUrl === "string" && videoUrl.trim()
+                ? videoUrl.trim()
+                : typeof imageUrl === "string" && imageUrl.trim()
+                    ? imageUrl.trim()
+                    : "";
+            if (!normalizedVideoUrl) return { error: "ต้องระบุ videoUrl" };
+            nextMessage = {
+                id: this._generateStarterMessageId(),
+                type: "video",
+                url: normalizedVideoUrl,
+                previewUrl: typeof previewUrl === "string" ? previewUrl.trim() : "",
+                alt: typeof alt === "string" ? alt.trim() : "",
+            };
         } else {
-            return { error: "type ต้องเป็น 'text' หรือ 'image'" };
+            return { error: "type ต้องเป็น 'text', 'image' หรือ 'video'" };
         }
 
         const messages = [...starter.messages];
@@ -1432,7 +1465,7 @@ class InstructionChatService {
 
     async update_conversation_starter_message(
         instructionId,
-        { messageId, content, imageUrl, previewUrl, alt, assetId },
+        { messageId, content, imageUrl, videoUrl, previewUrl, alt, assetId },
         sessionId
     ) {
         if (!messageId) return { error: "ต้องระบุ messageId" };
@@ -1465,6 +1498,21 @@ class InstructionChatService {
                 target.previewUrl = resolved.message.previewUrl;
                 target.assetId = resolved.message.assetId;
                 target.fileName = resolved.message.fileName;
+            }
+            if (typeof alt === "string") {
+                target.alt = alt.trim();
+            }
+        } else if (target.type === "video") {
+            const normalizedVideoUrl = typeof videoUrl === "string" && videoUrl.trim()
+                ? videoUrl.trim()
+                : typeof imageUrl === "string" && imageUrl.trim()
+                    ? imageUrl.trim()
+                    : "";
+            if (normalizedVideoUrl) {
+                target.url = normalizedVideoUrl;
+            }
+            if (typeof previewUrl === "string") {
+                target.previewUrl = previewUrl.trim();
             }
             if (typeof alt === "string") {
                 target.alt = alt.trim();
@@ -1952,10 +2000,10 @@ class InstructionChatService {
             { type: "function", function: { name: "create_table_item", description: "สร้างชุดข้อมูลใหม่ประเภทตาราง — ระบุชื่อ, คอลัมน์, และข้อมูลเริ่มต้น (optional) — ใช้เมื่อต้องการเพิ่มตารางใหม่ใน instruction", parameters: { type: "object", properties: { title: { type: "string", description: "ชื่อของชุดข้อมูล" }, columns: { type: "array", items: { type: "string" }, description: "รายการชื่อคอลัมน์" }, rows: { type: "array", items: { type: "object" }, description: "ข้อมูลเริ่มต้น — array ของ object { columnName: value } (optional, สูงสุด 500 แถว)" } }, required: ["title", "columns"] } } },
             { type: "function", function: { name: "create_text_item", description: "สร้างชุดข้อมูลใหม่ประเภทข้อความ — ระบุชื่อและเนื้อหาข้อความ — ใช้เมื่อต้องการเพิ่มคำอธิบาย, คำแนะนำ, หรือเนื้อหาอื่นๆ ใน instruction", parameters: { type: "object", properties: { title: { type: "string", description: "ชื่อของชุดข้อมูล" }, content: { type: "string", description: "เนื้อหาข้อความ" } }, required: ["title"] } } },
             // ── Conversation Starter Tools ──
-            { type: "function", function: { name: "get_conversation_starter", description: "ดูการตั้งค่าข้อความเริ่มต้นการสนทนา (เปิด/ปิด + ลำดับข้อความ/รูปภาพ)", parameters: { type: "object", properties: {} } } },
+            { type: "function", function: { name: "get_conversation_starter", description: "ดูการตั้งค่าข้อความเริ่มต้นการสนทนา (เปิด/ปิด + ลำดับข้อความ/รูปภาพ/วิดีโอ)", parameters: { type: "object", properties: {} } } },
             { type: "function", function: { name: "set_conversation_starter_enabled", description: "เปิดหรือปิดระบบข้อความเริ่มต้นการสนทนา", parameters: { type: "object", properties: { enabled: { type: "boolean", description: "true=เปิด, false=ปิด" } }, required: ["enabled"] } } },
-            { type: "function", function: { name: "add_conversation_starter_message", description: "เพิ่มข้อความเริ่มต้น (text/image) เข้า sequence ตามลำดับ", parameters: { type: "object", properties: { type: { type: "string", enum: ["text", "image"] }, content: { type: "string", description: "เนื้อหาข้อความ (เมื่อ type=text)" }, imageUrl: { type: "string", description: "URL รูป (เมื่อ type=image และไม่มี assetId)" }, previewUrl: { type: "string", description: "URL preview ของรูป (optional)" }, alt: { type: "string", description: "ข้อความกำกับรูป (optional)" }, assetId: { type: "string", description: "assetId จาก follow_up_assets (optional)" }, position: { type: "string", enum: ["start", "end"], description: "เพิ่มต้นรายการหรือท้ายรายการ (default=end)" } }, required: ["type"] } } },
-            { type: "function", function: { name: "update_conversation_starter_message", description: "แก้ไขข้อความเริ่มต้นที่มีอยู่ตาม messageId", parameters: { type: "object", properties: { messageId: { type: "string", description: "ID ของข้อความที่ต้องการแก้ไข" }, content: { type: "string", description: "เนื้อหาใหม่ (เมื่อเป็น text)" }, imageUrl: { type: "string", description: "URL รูปใหม่ (เมื่อเป็น image)" }, previewUrl: { type: "string", description: "URL preview ใหม่ (optional)" }, alt: { type: "string", description: "alt/caption ใหม่ (optional)" }, assetId: { type: "string", description: "assetId ใหม่ (optional)" } }, required: ["messageId"] } } },
+            { type: "function", function: { name: "add_conversation_starter_message", description: "เพิ่มข้อความเริ่มต้น (text/image/video) เข้า sequence ตามลำดับ", parameters: { type: "object", properties: { type: { type: "string", enum: ["text", "image", "video"] }, content: { type: "string", description: "เนื้อหาข้อความ (เมื่อ type=text)" }, imageUrl: { type: "string", description: "URL รูป (เมื่อ type=image และไม่มี assetId)" }, videoUrl: { type: "string", description: "URL วิดีโอ (เมื่อ type=video)" }, previewUrl: { type: "string", description: "URL preview ของรูป/วิดีโอ (optional, แนะนำเมื่อเป็น video บน LINE)" }, alt: { type: "string", description: "ข้อความกำกับรูป/วิดีโอ (optional)" }, assetId: { type: "string", description: "assetId จาก follow_up_assets (optional, ใช้ได้กับ type=image)" }, position: { type: "string", enum: ["start", "end"], description: "เพิ่มต้นรายการหรือท้ายรายการ (default=end)" } }, required: ["type"] } } },
+            { type: "function", function: { name: "update_conversation_starter_message", description: "แก้ไขข้อความเริ่มต้นที่มีอยู่ตาม messageId", parameters: { type: "object", properties: { messageId: { type: "string", description: "ID ของข้อความที่ต้องการแก้ไข" }, content: { type: "string", description: "เนื้อหาใหม่ (เมื่อเป็น text)" }, imageUrl: { type: "string", description: "URL รูปใหม่ (เมื่อเป็น image)" }, videoUrl: { type: "string", description: "URL วิดีโอใหม่ (เมื่อเป็น video)" }, previewUrl: { type: "string", description: "URL preview ใหม่ (optional)" }, alt: { type: "string", description: "alt/caption ใหม่ (optional)" }, assetId: { type: "string", description: "assetId ใหม่ (optional, ใช้ได้กับ image)" } }, required: ["messageId"] } } },
             { type: "function", function: { name: "remove_conversation_starter_message", description: "ลบข้อความเริ่มต้นออกจาก sequence ตาม messageId", parameters: { type: "object", properties: { messageId: { type: "string", description: "ID ของข้อความที่ต้องการลบ" } }, required: ["messageId"] } } },
             { type: "function", function: { name: "reorder_conversation_starter_message", description: "จัดลำดับข้อความเริ่มต้นใหม่ (เลื่อนขึ้น/ลง หรือย้ายไป index ที่กำหนด)", parameters: { type: "object", properties: { messageId: { type: "string", description: "ID ของข้อความที่ต้องการย้าย" }, direction: { type: "string", enum: ["up", "down"], description: "ทิศทางการเลื่อน (default=up)" }, toIndex: { type: "number", description: "ระบุตำแหน่งปลายทางแบบ 0-index (optional)" } }, required: ["messageId"] } } },
             // ── Follow-Up Management Tools ──

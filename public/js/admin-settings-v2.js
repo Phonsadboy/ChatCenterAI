@@ -7,6 +7,19 @@ const INSTRUCTION_SOURCE = { V2: 'v2', LEGACY: 'legacy' };
 let instructionLibraries = [];
 let imageCollections = [];
 const BOT_CHANNELS = ['line', 'facebook', 'instagram', 'whatsapp'];
+const BOT_MODEL_PRESETS = [
+    'gpt-5.2',
+    'gpt-5.1',
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5-nano',
+    'gpt-5-pro',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'gpt-4.1-nano',
+    'gpt-4o',
+    'gpt-4o-mini'
+];
 let activeBotChannel = 'line';
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -1777,6 +1790,8 @@ function buildInstructionInlineRow(bot, botType) {
     const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
     const selectedCollectionValue = getSelectedImageCollectionValue(bot);
     const collectionOptions = buildImageCollectionOptions(selectedCollectionValue, collectionCount);
+    const selectedModel = String(bot.aiModel || 'gpt-5');
+    const modelOptions = buildModelOptions(selectedModel);
 
     return `
         <div class="bot-inline-row compact">
@@ -1798,6 +1813,16 @@ function buildInstructionInlineRow(bot, botType) {
                     data-previous-value="${escapeHtml(selectedCollectionValue)}"
                     aria-label="เลือกคลังรูปภาพสำหรับบอท">
                     ${collectionOptions}
+                </select>
+            </div>
+            <div class="inline-control model-control">
+                <span class="inline-label"><i class="fas fa-microchip"></i> Model</span>
+                <select class="form-select form-select-sm bot-model-select"
+                    data-bot-type="${botType}"
+                    data-bot-id="${bot._id}"
+                    data-previous-value="${escapeHtml(selectedModel)}"
+                    aria-label="เลือกโมเดล AI สำหรับบอท">
+                    ${modelOptions}
                 </select>
             </div>
         </div>
@@ -1848,6 +1873,23 @@ function buildImageCollectionOptions(selectedValue, selectedCount = 0) {
     return options.join('');
 }
 
+function buildModelOptions(selectedValue) {
+    const options = [];
+    const normalizedSelectedValue = selectedValue || 'gpt-5';
+    const hasSelectedInPreset = BOT_MODEL_PRESETS.includes(normalizedSelectedValue);
+
+    if (!hasSelectedInPreset && normalizedSelectedValue) {
+        options.push(`<option value="${escapeHtml(normalizedSelectedValue)}" selected>${escapeHtml(normalizedSelectedValue)} (กำหนดเอง)</option>`);
+    }
+
+    BOT_MODEL_PRESETS.forEach((modelId) => {
+        const selected = normalizedSelectedValue === modelId ? 'selected' : '';
+        options.push(`<option value="${escapeHtml(modelId)}" ${selected}>${escapeHtml(modelId)}</option>`);
+    });
+
+    return options.join('');
+}
+
 function getSelectedInstructionKey(bot) {
     const selections = Array.isArray(bot?.selectedInstructions) ? bot.selectedInstructions : [];
     if (selections.length === 0) return '';
@@ -1888,6 +1930,15 @@ function handleInstructionSelectChange(event) {
         const previousValue = select.dataset.previousValue || '';
         const collectionId = select.value;
         saveImageCollectionSelection(botType, botId, collectionId, select, previousValue);
+        return;
+    }
+
+    if (select.classList.contains('bot-model-select')) {
+        const botType = select.dataset.botType;
+        const botId = select.dataset.botId;
+        const previousValue = select.dataset.previousValue || '';
+        const modelId = select.value;
+        saveBotModelSelection(botType, botId, modelId, select, previousValue);
     }
 }
 
@@ -1990,6 +2041,57 @@ async function saveImageCollectionSelection(botType, botId, collectionId, select
         console.error('Error saving image collection selection:', error);
         select.value = previousValue;
         showToast('ไม่สามารถบันทึกคลังรูปภาพได้', 'danger');
+    } finally {
+        select.disabled = false;
+    }
+}
+
+function getBotApiEndpoint(botType, botId) {
+    const endpointMap = {
+        line: `/api/line-bots/${botId}`,
+        facebook: `/api/facebook-bots/${botId}`,
+        instagram: `/api/instagram-bots/${botId}`,
+        whatsapp: `/api/whatsapp-bots/${botId}`
+    };
+    return endpointMap[botType] || '';
+}
+
+async function saveBotModelSelection(botType, botId, modelId, select, previousValue) {
+    const endpoint = getBotApiEndpoint(botType, botId);
+    if (!endpoint) {
+        showToast('ประเภทบอทไม่รองรับการตั้งค่าโมเดล', 'danger');
+        select.value = previousValue;
+        return;
+    }
+
+    select.disabled = true;
+    try {
+        const getRes = await fetch(endpoint);
+        const botData = await getRes.json().catch(() => ({}));
+        if (!getRes.ok) {
+            throw new Error(botData?.error || 'โหลดข้อมูลบอทไม่สำเร็จ');
+        }
+
+        botData.aiModel = modelId || 'gpt-5';
+        delete botData._id;
+
+        const updateRes = await fetch(endpoint, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(botData)
+        });
+        const updateData = await updateRes.json().catch(() => ({}));
+        if (!updateRes.ok) {
+            throw new Error(updateData?.error || 'บันทึกไม่สำเร็จ');
+        }
+
+        select.dataset.previousValue = botData.aiModel;
+        showToast('อัปเดตโมเดลของบอทแล้ว', 'success');
+        loadBotSettings();
+    } catch (error) {
+        console.error('Error saving bot model:', error);
+        select.value = previousValue;
+        showToast('ไม่สามารถบันทึกโมเดลได้', 'danger');
     } finally {
         select.disabled = false;
     }

@@ -484,6 +484,11 @@
   color: #1f7d5c;
 }
 
+.starter-message-type.type-video {
+  background: rgba(198, 122, 38, 0.14);
+  color: #9a5b16;
+}
+
 .starter-message-actions {
   display: inline-flex;
   gap: 0.3rem;
@@ -527,6 +532,15 @@
   font-size: 0.78rem;
   color: var(--text-sub, #5C6372);
   word-break: break-all;
+}
+
+.starter-message-video-preview {
+  width: 180px;
+  max-width: 100%;
+  max-height: 120px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #E1E5EF);
+  background: #f8f9fc;
 }
 
 @media (max-width: 767.98px) {
