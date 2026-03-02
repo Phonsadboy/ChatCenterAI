@@ -68,6 +68,20 @@ const GOOGLE_PRIVATE_KEY =
   "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDGhyeINArKZgaV\nitEcK+o89ilPYeRNTNZgJT7VNHB5hgNLLeAcFLJ7IlCIqTLMoJEnnoDQil6aKaz8\nExVL83uSXRrzk4zQvtt3tIP31+9wOCb9D4ZGWfVP1tD0qdD4WJ1qqg1j1/8879pH\nUeQGEMuCnyVbcQ3GbYQjyYb3wEz/Qv7kMVggF+MIaGGw2NQwM0XcufSFtyxvvX2S\nb8uGc1A8R+Dn/tmcgMODhbtEgcMg6yXI5Y26MPfDjVrEbk0lfCr7IGFJX4ASYeKl\n0jhm0RGb+aya2cb55auLN3VPO5MQ+cOp8gHBf5GiC/YgF1gbRgF5b7LgmENBxSfH\nb3WVQodLAgMBAAECggEACKB14M7LdekXZHyAQrZL0EitbzQknLv33Xyw2B3rvJ7M\nr4HM/nC4eBj7y+ciUc8GZQ+CWc2GzTHTa66+mwAia1qdYbPp3LuhGM4Leq5zn/o+\nA3rJuG6PS4qyUMy89msPXW5fSj/oE535QREiFKYP2dtlia2GI4xoag+x9uZwfMUO\nWKEe7tiUoZQEiGhwtjLq9lyST4kGGmlhNee9OyhDJcw4uCt8Cepr++hMDleWUF6c\nX0nbGmoSS0sZ5Boy8ATMhw/3luaOAlTUEz/nVDvbbWlNL9etwLKiAVw+AQXsPHNW\nNWF7gyEIsEi0qSM3PtA1X7IdReRXHqmfiZs0J3qSQQKBgQD1+Yj37Yuqj8hGi5PY\n+M0ieMdGcbUOmJsM1yUmBMV4bfaTiqm504P6DIYAqfDDWeozcHwcdpG1AfFAihEi\nh6lb0qRk8YaGbzvac8mWhwo/jDA5QB97fjFa6uwtlewZ0Er/U3QmOeVVnVC1y1b0\nrbJD5yjvI3ve+gpwAz0glpIMiwKBgQDOnpD7p7ylG4NQunqmzzdozrzZP0L6EZyE\n141st/Hsp9rtO9/ADuH6WhpirQ516l5LLv7mLPA8S9CF/cSdWF/7WlxBPjM8WRs9\nACFNBJIwUfjzPnvECmtsayzRlKuyCAspnNSkzgtdtvf2xI82Z3BGov9goZfu+D4A\n36b1qXsIQQKBgQCO1CojhO0vyjPKOuxL9hTvqmBUWFyBMD4AU8F/dQ/RYVDn1YG+\npMKi5Li/E+75EHH9EpkO0g7Do3AaQNG4UjwWVJcfAlxSHa8Mp2VsIdfilJ2/8KsX\nQ2yXVYh04/Rn/No/ro7oT4AKmcGu/nbstxuncEgFrH4WOOzspATPsn72BwKBgG5N\nBAT0NKbHm0B7bIKkWGYhB3vKY8zvnejk0WDaidHWge7nabkzuLtXYoKO9AtKxG/K\ndNUX5F+r8XO2V0HQLd0XDezecaejwgC8kwp0iD43ZHkmQBgVn+dPB6wSe94coSjj\nyjj4reSnipQ3tmRKsAtldIN3gI5YA3Gf85dtlHqBAoGAD5ePt7cmu3tDZhA3A8f9\no8mNPvqz/WGs7H2Qgjyfc3jUxEGhVt1Su7J1j+TppfkKtJIDKji6rVA9oIjZtpZT\ngxnU6hcYuiwbLh3wGEFIjP1XeYYILudqfWOEbwnxD1RgMkCqfSHf/niWlfiH6p3F\ndnBsLY/qXdKfS/OXyezAm4M=\n-----END PRIVATE KEY-----\n";
 const GOOGLE_DOC_ID = "1U-2OPVVI_Gz0-uFonrRNrcFopDqmPGUcJ4qJ1RdAqxY";
 const SPREADSHEET_ID = "15nU46XyAh0zLAyD_5DJPfZ2Gog6IOsoedSCCMpnjEJo";
+const META_GRAPH_API_VERSION =
+  process.env.META_GRAPH_API_VERSION || "v22.0";
+const SUPPORTED_CHAT_PLATFORMS = new Set([
+  "line",
+  "facebook",
+  "instagram",
+  "whatsapp",
+]);
+const BOT_COLLECTION_BY_PLATFORM = {
+  line: "line_bots",
+  facebook: "facebook_bots",
+  instagram: "instagram_bots",
+  whatsapp: "whatsapp_bots",
+};
 // FLOW_TEXT และรายละเอียด flow ต่าง ๆ ถูกลบออก เนื่องจากไม่ได้ใช้งานแล้ว
 const {
   isPasscodeFeatureEnabled,
@@ -192,6 +206,96 @@ async function getLineClientForContext(botId = null) {
 
   return null;
 }
+
+function normalizeChatPlatform(platform, fallback = "line") {
+  if (typeof platform !== "string") return fallback;
+  const normalized = platform.trim().toLowerCase();
+  return SUPPORTED_CHAT_PLATFORMS.has(normalized) ? normalized : fallback;
+}
+
+function getBotCollectionName(platform, fallbackCollection = "line_bots") {
+  const normalized = normalizeChatPlatform(platform);
+  return BOT_COLLECTION_BY_PLATFORM[normalized] || fallbackCollection;
+}
+
+function getPlatformLabel(platform) {
+  const normalized = normalizeChatPlatform(platform);
+  if (normalized === "facebook") return "Facebook";
+  if (normalized === "line") return "LINE";
+  if (normalized === "instagram") return "Instagram";
+  if (normalized === "whatsapp") return "WhatsApp";
+  return String(platform || "Unknown");
+}
+
+function getBotDisplayName(platform, bot = {}) {
+  const normalized = normalizeChatPlatform(platform);
+  if (normalized === "line") {
+    return bot.name || bot.displayName || bot.botName || null;
+  }
+  if (normalized === "facebook") {
+    return bot.pageName || bot.name || null;
+  }
+  if (normalized === "instagram") {
+    return (
+      bot.name ||
+      bot.instagramUsername ||
+      bot.username ||
+      bot.instagramUserId ||
+      bot.igUserId ||
+      null
+    );
+  }
+  if (normalized === "whatsapp") {
+    return bot.name || bot.displayName || bot.phoneNumber || bot.phoneNumberId || null;
+  }
+  return bot.name || null;
+}
+
+function resolveInstagramSenderId(bot = {}) {
+  return (
+    bot.instagramBusinessAccountId ||
+    bot.instagramUserId ||
+    bot.igUserId ||
+    bot.pageId ||
+    null
+  );
+}
+
+function resolveWhatsAppPhoneNumberId(bot = {}) {
+  return bot.phoneNumberId || bot.whatsappPhoneNumberId || null;
+}
+
+function resolveMetaAccessToken(bot = {}) {
+  return (
+    bot.accessToken ||
+    bot.facebookAccessToken ||
+    bot.instagramAccessToken ||
+    bot.whatsappAccessToken ||
+    null
+  );
+}
+
+function chunkTextByLength(value, maxLength) {
+  const text = typeof value === "string" ? value : String(value || "");
+  if (!text.trim()) return [];
+  const chunks = [];
+  for (let i = 0; i < text.length; i += maxLength) {
+    const chunk = text.slice(i, i + maxLength).trim();
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
+}
+
+async function findBotById(db, platform, botId) {
+  if (!db || !botId) return null;
+  const collection = getBotCollectionName(platform);
+  const coll = db.collection(collection);
+  if (ObjectId.isValid(botId)) {
+    return coll.findOne({ _id: new ObjectId(botId) });
+  }
+  return coll.findOne({ _id: botId });
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
@@ -2390,6 +2494,16 @@ async function listFollowUpPageSettings() {
     .find({})
     .sort({ createdAt: -1 })
     .toArray();
+  const instagramBots = await db
+    .collection("instagram_bots")
+    .find({})
+    .sort({ createdAt: -1 })
+    .toArray();
+  const whatsappBots = await db
+    .collection("whatsapp_bots")
+    .find({})
+    .sort({ createdAt: -1 })
+    .toArray();
   const settingsDocs = await db
     .collection("follow_up_page_settings")
     .find({})
@@ -2476,6 +2590,51 @@ async function listFollowUpPageSettings() {
       metadata: {
         status: bot.status || null,
         pageId: bot.pageId || null,
+      },
+    });
+  });
+
+  instagramBots.forEach((bot) => {
+    const key = `instagram:${bot._id.toString()}`;
+    const config = buildConfig("instagram", bot._id.toString());
+    const doc = settingsMap[key];
+    pages.push({
+      id: key,
+      platform: "instagram",
+      botId: bot._id.toString(),
+      type: "instagram_bot",
+      name:
+        getBotDisplayName("instagram", bot) ||
+        `Instagram (${bot._id.toString().slice(-4)})`,
+      settings: config,
+      hasOverride: !!doc,
+      updatedAt: doc?.updatedAt || null,
+      metadata: {
+        status: bot.status || null,
+        instagramUserId:
+          bot.instagramUserId || bot.igUserId || bot.instagramBusinessAccountId || null,
+      },
+    });
+  });
+
+  whatsappBots.forEach((bot) => {
+    const key = `whatsapp:${bot._id.toString()}`;
+    const config = buildConfig("whatsapp", bot._id.toString());
+    const doc = settingsMap[key];
+    pages.push({
+      id: key,
+      platform: "whatsapp",
+      botId: bot._id.toString(),
+      type: "whatsapp_bot",
+      name:
+        getBotDisplayName("whatsapp", bot) ||
+        `WhatsApp (${bot._id.toString().slice(-4)})`,
+      settings: config,
+      hasOverride: !!doc,
+      updatedAt: doc?.updatedAt || null,
+      metadata: {
+        status: bot.status || null,
+        phoneNumberId: bot.phoneNumberId || bot.whatsappPhoneNumberId || null,
       },
     });
   });
@@ -3140,7 +3299,112 @@ async function sendFollowUpMessage(task, round, db) {
       },
       assetsMap,
     );
+  } else if (task.platform === "instagram") {
+    if (!task.botId) {
+      throw new Error("ไม่พบ Instagram Bot สำหรับการส่งข้อความ");
+    }
+    const igBot = await findBotById(db, "instagram", task.botId);
+    if (!igBot) {
+      throw new Error("ไม่พบข้อมูล Instagram Bot");
+    }
+    const accessToken = resolveMetaAccessToken(igBot);
+    const instagramSenderId = resolveInstagramSenderId(igBot);
+    if (!accessToken || !instagramSenderId) {
+      throw new Error("ไม่พบ access token หรือ instagram sender id");
+    }
 
+    let combinedMessage = message || "";
+    if (message && images.length > 0) {
+      combinedMessage += "[cut]";
+    }
+
+    const followUpAssets = [];
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      const labelSource =
+        typeof image.label === "string" && image.label.trim()
+          ? image.label.trim()
+          : image.fileName || image.alt || `รูปที่ ${i + 1}`;
+      combinedMessage += `#[IMAGE:${labelSource}]`;
+      if (i < images.length - 1) {
+        combinedMessage += "[cut]";
+      }
+      followUpAssets.push({
+        ...image,
+        label: labelSource,
+      });
+    }
+
+    const assetsMap = buildAssetsLookup(
+      followUpAssets.map((asset) => ({
+        ...asset,
+        thumbUrl: asset.previewUrl || asset.thumbUrl || asset.url,
+        fileName: asset.fileName || "",
+      })),
+    );
+
+    await sendInstagramMessage(
+      task.userId,
+      combinedMessage,
+      accessToken,
+      instagramSenderId,
+      {
+        selectedImageCollections: null,
+      },
+      assetsMap,
+    );
+  } else if (task.platform === "whatsapp") {
+    if (!task.botId) {
+      throw new Error("ไม่พบ WhatsApp Bot สำหรับการส่งข้อความ");
+    }
+    const waBot = await findBotById(db, "whatsapp", task.botId);
+    if (!waBot) {
+      throw new Error("ไม่พบข้อมูล WhatsApp Bot");
+    }
+    const accessToken = resolveMetaAccessToken(waBot);
+    const phoneNumberId = resolveWhatsAppPhoneNumberId(waBot);
+    if (!accessToken || !phoneNumberId) {
+      throw new Error("ไม่พบ access token หรือ phoneNumberId");
+    }
+
+    let combinedMessage = message || "";
+    if (message && images.length > 0) {
+      combinedMessage += "[cut]";
+    }
+
+    const followUpAssets = [];
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      const labelSource =
+        typeof image.label === "string" && image.label.trim()
+          ? image.label.trim()
+          : image.fileName || image.alt || `รูปที่ ${i + 1}`;
+      combinedMessage += `#[IMAGE:${labelSource}]`;
+      if (i < images.length - 1) {
+        combinedMessage += "[cut]";
+      }
+      followUpAssets.push({
+        ...image,
+        label: labelSource,
+      });
+    }
+
+    const assetsMap = buildAssetsLookup(
+      followUpAssets.map((asset) => ({
+        ...asset,
+        thumbUrl: asset.previewUrl || asset.thumbUrl || asset.url,
+        fileName: asset.fileName || "",
+      })),
+    );
+
+    await sendWhatsAppMessage(
+      task.userId,
+      combinedMessage,
+      accessToken,
+      phoneNumberId,
+      { selectedImageCollections: null },
+      assetsMap,
+    );
   } else {
     await sendLineFollowUpMessage(task.userId, message, task.botId, db, images);
   }
@@ -4069,7 +4333,7 @@ function normalizeAiConfig(raw = {}) {
 function normalizeOrderPlatform(platform) {
   if (typeof platform !== "string") return "line";
   const normalized = platform.toLowerCase();
-  if (["facebook", "line"].includes(normalized)) {
+  if (["facebook", "line", "instagram", "whatsapp"].includes(normalized)) {
     return normalized;
   }
   return "line";
@@ -5326,8 +5590,7 @@ async function buildFollowUpOverview() {
       `${user.platform || "line"}:${user.botId || "default"}`;
     if (!groupMap.has(contextKey)) {
       const pageInfo = pageMap.get(contextKey) || null;
-      const label =
-        pageInfo?.name || (user.platform === "facebook" ? "Facebook" : "LINE");
+      const label = pageInfo?.name || getPlatformLabel(user.platform || "line");
       groupMap.set(contextKey, {
         contextKey,
         platform: user.platform || "line",
@@ -6190,18 +6453,200 @@ async function sendFacebookConversationStarterSequence(
   }
 }
 
+async function sendInstagramConversationStarterSequence(
+  userId,
+  messages = [],
+  queueContext = {},
+) {
+  const accessToken =
+    queueContext.instagramAccessToken ||
+    queueContext.accessToken ||
+    queueContext.pageAccessToken ||
+    null;
+  const instagramSenderId =
+    queueContext.instagramBusinessAccountId ||
+    queueContext.instagramUserId ||
+    queueContext.igUserId ||
+    null;
+
+  if (!accessToken || !instagramSenderId) {
+    console.error(
+      "[Starter] ไม่พบข้อมูล access token หรือ instagram sender id สำหรับส่งข้อความ",
+    );
+    return false;
+  }
+
+  const normalizedMessages = normalizeConversationStarterConfig({
+    enabled: true,
+    messages,
+  }).messages;
+  if (!normalizedMessages.length) return false;
+
+  const segments = [];
+  const assets = [];
+  let imageCounter = 0;
+
+  for (const message of normalizedMessages) {
+    if (message.type === "text") {
+      const text = normalizeOutgoingText(message.content || "");
+      if (text) segments.push(text);
+      continue;
+    }
+
+    if (message.type === "image" && message.url) {
+      imageCounter += 1;
+      const label =
+        (typeof message.alt === "string" && message.alt.trim()) ||
+        (typeof message.fileName === "string" && message.fileName.trim()) ||
+        `Starter Image ${imageCounter}`;
+      segments.push(`#[IMAGE:${label}]`);
+      assets.push({
+        label,
+        url: message.url,
+        thumbUrl: message.previewUrl || message.url,
+        fileName: message.fileName || "",
+        alt: message.alt || "",
+      });
+    }
+  }
+
+  const combinedMessage = segments
+    .map((segment) => String(segment || "").trim())
+    .filter(Boolean)
+    .join("[cut]");
+  if (!combinedMessage) return false;
+
+  const assetsMap = buildAssetsLookup(assets);
+
+  try {
+    await sendInstagramMessage(
+      userId,
+      combinedMessage,
+      accessToken,
+      instagramSenderId,
+      { selectedImageCollections: null },
+      assetsMap,
+    );
+    return true;
+  } catch (error) {
+    console.error(
+      "[Starter] ส่งข้อความเริ่มต้น Instagram ไม่สำเร็จ:",
+      error?.message || error,
+    );
+    return false;
+  }
+}
+
+async function sendWhatsAppConversationStarterSequence(
+  userId,
+  messages = [],
+  queueContext = {},
+) {
+  const accessToken =
+    queueContext.whatsappAccessToken ||
+    queueContext.accessToken ||
+    queueContext.pageAccessToken ||
+    null;
+  const phoneNumberId =
+    queueContext.whatsappPhoneNumberId || queueContext.phoneNumberId || null;
+
+  if (!accessToken || !phoneNumberId) {
+    console.error("[Starter] ไม่พบ WhatsApp access token หรือ phoneNumberId");
+    return false;
+  }
+
+  const normalizedMessages = normalizeConversationStarterConfig({
+    enabled: true,
+    messages,
+  }).messages;
+  if (!normalizedMessages.length) return false;
+
+  const segments = [];
+  const assets = [];
+  let imageCounter = 0;
+
+  for (const message of normalizedMessages) {
+    if (message.type === "text") {
+      const text = normalizeOutgoingText(message.content || "");
+      if (text) segments.push(text);
+      continue;
+    }
+
+    if (message.type === "image" && message.url) {
+      imageCounter += 1;
+      const label =
+        (typeof message.alt === "string" && message.alt.trim()) ||
+        (typeof message.fileName === "string" && message.fileName.trim()) ||
+        `Starter Image ${imageCounter}`;
+      segments.push(`#[IMAGE:${label}]`);
+      assets.push({
+        label,
+        url: message.url,
+        thumbUrl: message.previewUrl || message.url,
+        fileName: message.fileName || "",
+        alt: message.alt || "",
+      });
+    }
+  }
+
+  const combinedMessage = segments
+    .map((segment) => String(segment || "").trim())
+    .filter(Boolean)
+    .join("[cut]");
+  if (!combinedMessage) return false;
+
+  const assetsMap = buildAssetsLookup(assets);
+
+  try {
+    await sendWhatsAppMessage(
+      userId,
+      combinedMessage,
+      accessToken,
+      phoneNumberId,
+      { selectedImageCollections: null },
+      assetsMap,
+    );
+    return true;
+  } catch (error) {
+    console.error(
+      "[Starter] ส่งข้อความเริ่มต้น WhatsApp ไม่สำเร็จ:",
+      error?.message || error,
+    );
+    return false;
+  }
+}
+
 async function sendConversationStarterSequence(
   userId,
   platform = "line",
   messages = [],
   queueContext = {},
 ) {
+  const normalizedPlatform = normalizeChatPlatform(platform);
   if (!Array.isArray(messages) || messages.length === 0) {
     return { success: false, reason: "no_messages" };
   }
 
-  if (platform === "facebook") {
+  if (normalizedPlatform === "facebook") {
     const sent = await sendFacebookConversationStarterSequence(
+      userId,
+      messages,
+      queueContext,
+    );
+    return { success: sent, reason: sent ? "sent" : "send_failed" };
+  }
+
+  if (normalizedPlatform === "instagram") {
+    const sent = await sendInstagramConversationStarterSequence(
+      userId,
+      messages,
+      queueContext,
+    );
+    return { success: sent, reason: sent ? "sent" : "send_failed" };
+  }
+
+  if (normalizedPlatform === "whatsapp") {
+    const sent = await sendWhatsAppConversationStarterSequence(
       userId,
       messages,
       queueContext,
@@ -6334,7 +6779,9 @@ async function processFlushedMessages(
 ) {
   console.log(`[LOG] เริ่มประมวลผลข้อความในคิวสำหรับผู้ใช้: ${userId}`);
 
-  const platform = queueContext.platform || queueContext.botType || "line";
+  const platform = normalizeChatPlatform(
+    queueContext.platform || queueContext.botType || "line",
+  );
   const botIdForHistory = queueContext.botId || null;
   const aiModelOverride = queueContext.aiModel || null;
   const queueDisableAiReply = !!queueContext.disableAiReply;
@@ -6360,7 +6807,24 @@ async function processFlushedMessages(
     queueContext.accessToken ||
     queueContext.pageAccessToken ||
     null;
-  const isLinePlatform = queueContext.botType === "line" || platform === "line";
+  const instagramAccessToken =
+    queueContext.instagramAccessToken ||
+    queueContext.accessToken ||
+    queueContext.pageAccessToken ||
+    null;
+  const instagramSenderId =
+    queueContext.instagramBusinessAccountId ||
+    queueContext.instagramUserId ||
+    queueContext.igUserId ||
+    null;
+  const whatsappAccessToken =
+    queueContext.whatsappAccessToken ||
+    queueContext.accessToken ||
+    queueContext.pageAccessToken ||
+    null;
+  const whatsappPhoneNumberId =
+    queueContext.whatsappPhoneNumberId || queueContext.phoneNumberId || null;
+  const isLinePlatform = platform === "line";
   const runtimeInstructionContext = await resolveInstructionMetaForRuntime(
     queueContext.selectedInstructions,
     null,
@@ -6787,6 +7251,62 @@ async function processFlushedMessages(
         console.log("[Facebook] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
       } catch (error) {
         console.error("[Facebook] ไม่สามารถส่งข้อความตอบกลับได้:", error);
+      }
+    }
+  } else if (platform === "instagram") {
+    console.log(`[LOG] ส่งข้อความตอบกลับผ่าน Instagram ให้ผู้ใช้: ${userId}`);
+    const filteredMessage = await filterMessage(assistantMsg);
+    console.log(
+      `[LOG] ข้อความหลังกรอง (Instagram): ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? "..." : ""}`,
+    );
+
+    if (!instagramAccessToken || !instagramSenderId) {
+      console.error(
+        "[Instagram] ไม่พบ access token หรือ instagram sender id สำหรับการส่งข้อความ",
+      );
+    } else if (filteredMessage) {
+      try {
+        await sendInstagramMessage(
+          userId,
+          filteredMessage,
+          instagramAccessToken,
+          instagramSenderId,
+          {
+            selectedImageCollections:
+              queueContext.selectedImageCollections || null,
+          },
+        );
+        console.log("[Instagram] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
+      } catch (error) {
+        console.error("[Instagram] ไม่สามารถส่งข้อความตอบกลับได้:", error);
+      }
+    }
+  } else if (platform === "whatsapp") {
+    console.log(`[LOG] ส่งข้อความตอบกลับผ่าน WhatsApp ให้ผู้ใช้: ${userId}`);
+    const filteredMessage = await filterMessage(assistantMsg);
+    console.log(
+      `[LOG] ข้อความหลังกรอง (WhatsApp): ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? "..." : ""}`,
+    );
+
+    if (!whatsappAccessToken || !whatsappPhoneNumberId) {
+      console.error(
+        "[WhatsApp] ไม่พบ access token หรือ phoneNumberId สำหรับการส่งข้อความ",
+      );
+    } else if (filteredMessage) {
+      try {
+        await sendWhatsAppMessage(
+          userId,
+          filteredMessage,
+          whatsappAccessToken,
+          whatsappPhoneNumberId,
+          {
+            selectedImageCollections:
+              queueContext.selectedImageCollections || null,
+          },
+        );
+        console.log("[WhatsApp] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
+      } catch (error) {
+        console.error("[WhatsApp] ไม่สามารถส่งข้อความตอบกลับได้:", error);
       }
     }
   }
@@ -9801,9 +10321,11 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
   const normalizedSelections = normalizeLatestOnlyInstructionSelections(
     rawSelections,
   );
-  const botKind = queueContext.botType || queueContext.platform || "line";
+  const botKind = normalizeChatPlatform(
+    queueContext.botType || queueContext.platform || "line",
+  );
   const supportsCustomSelections =
-    normalizedSelections.length > 0 && ["line", "facebook"].includes(botKind);
+    normalizedSelections.length > 0 && SUPPORTED_CHAT_PLATFORMS.has(botKind);
 
   let systemPrompt = "";
   let client = null;
@@ -9826,8 +10348,7 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
     if (!queueContext.botId) return;
     try {
       const database = await ensureDb();
-      const botCollection =
-        botKind === "facebook" ? "facebook_bots" : "line_bots";
+      const botCollection = getBotCollectionName(botKind);
       const botId =
         queueContext.botId instanceof ObjectId
           ? queueContext.botId
@@ -9976,11 +10497,11 @@ async function fetchBotAiConfig(botId, platform) {
     if (!botId) return normalizeAiConfig({});
     const client = await connectDB();
     const db = client.db("chatbot");
-    const coll =
-      platform === "facebook"
-        ? db.collection("facebook_bots")
-        : db.collection("line_bots");
-    const bot = await coll.findOne({ _id: new ObjectId(botId) });
+    const coll = db.collection(getBotCollectionName(platform));
+    const query = ObjectId.isValid(botId)
+      ? { _id: new ObjectId(botId) }
+      : { _id: botId };
+    const bot = await coll.findOne(query);
     if (!bot) return normalizeAiConfig({});
     return normalizeAiConfig(bot.aiConfig || {});
   } catch (err) {
@@ -13465,6 +13986,584 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
   }
 });
 
+// ============================ Instagram Bot Webhook Handler ============================
+
+app.get("/webhook/instagram/:botId", async (req, res) => {
+  try {
+    const { botId } = req.params;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const escapeRegex = (value = "") =>
+      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedBotId = escapeRegex(botId);
+    const queryConditions = [
+      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
+    ];
+    if (ObjectId.isValid(botId)) {
+      queryConditions.push({ _id: new ObjectId(botId) });
+    }
+    const instagramBot = await coll.findOne({ $or: queryConditions });
+
+    if (!instagramBot) {
+      return res.status(404).send("Instagram Bot not found");
+    }
+
+    if (req.query["hub.mode"] === "subscribe") {
+      if (req.query["hub.verify_token"] === instagramBot.verifyToken) {
+        return res.status(200).send(req.query["hub.challenge"]);
+      }
+      return res.status(403).send("Invalid verify token");
+    }
+
+    return res.status(400).send("Invalid verification request");
+  } catch (err) {
+    console.error("Error handling Instagram webhook verification:", err);
+    res.status(500).send("Server error");
+  }
+});
+
+app.post("/webhook/instagram/:botId", async (req, res) => {
+  try {
+    const { botId } = req.params;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const escapeRegex = (value = "") =>
+      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedBotId = escapeRegex(botId);
+    const queryConditions = [
+      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
+    ];
+    if (ObjectId.isValid(botId)) {
+      queryConditions.push({ _id: new ObjectId(botId) });
+    }
+    const instagramBot = await coll.findOne({ $or: queryConditions });
+
+    if (!instagramBot) {
+      return res.status(404).json({ error: "Instagram Bot ไม่พบ" });
+    }
+
+    const botIsActive = instagramBot.status === "active";
+    const pageRuntime = await getAgentRuntimeForPage(
+      "instagram",
+      instagramBot._id.toString(),
+    );
+    const disableAiReply = pageRuntime.managed
+      ? pageRuntime.mode === "human-only"
+      : !botIsActive;
+
+    const queueOptionsBase = {
+      botType: "instagram",
+      platform: "instagram",
+      botId: instagramBot._id.toString(),
+      instagramAccessToken: resolveMetaAccessToken(instagramBot),
+      instagramBusinessAccountId: resolveInstagramSenderId(instagramBot),
+      aiModel:
+        pageRuntime.managed && pageRuntime.customerDefaultModel
+          ? pageRuntime.customerDefaultModel
+          : instagramBot.aiModel || null,
+      selectedInstructions: instagramBot.selectedInstructions || [],
+      botName: getBotDisplayName("instagram", instagramBot),
+      selectedImageCollections: instagramBot.selectedImageCollections || null,
+      disableAiReply,
+      agentManaged: pageRuntime.managed,
+      agentId: pageRuntime.agentId || null,
+      agentMode: pageRuntime.mode || null,
+      botStatus: instagramBot.status || null,
+      runtimePriority: pageRuntime.managed ? "agent_mode" : "bot_status",
+    };
+
+    res.status(200).json({ status: "EVENT_RECEIVED" });
+
+    const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+    for (const entry of entries) {
+      if (!Array.isArray(entry?.messaging)) continue;
+      for (const messagingEvent of entry.messaging) {
+        if (messagingEvent?.message?.is_echo) {
+          continue;
+        }
+        if (!messagingEvent?.message) {
+          continue;
+        }
+
+        const senderId = messagingEvent?.sender?.id;
+        if (!senderId) continue;
+
+        const queueOptions = { ...queueOptionsBase };
+        const runtimeInstructionContext = await resolveInstructionMetaForRuntime(
+          queueOptions.selectedInstructions,
+          null,
+          { policy: "latest_only" },
+        );
+        const runtimeInstructionRefs = runtimeInstructionContext.instructionRefs;
+        const runtimeInstructionMeta = runtimeInstructionContext.instructionMeta;
+
+        const itemsToQueue = [];
+        const audioAttachments = [];
+        const messageText = messagingEvent?.message?.text;
+
+        if (messageText) {
+          itemsToQueue.push({
+            data: { type: "text", text: messageText },
+          });
+        }
+
+        const attachments = Array.isArray(messagingEvent?.message?.attachments)
+          ? messagingEvent.message.attachments
+          : [];
+
+        for (const attachment of attachments) {
+          if (attachment?.type === "image" && attachment?.payload?.url) {
+            try {
+              const base64 = await fetchFacebookImageAsBase64(
+                attachment.payload.url,
+              );
+              itemsToQueue.push({
+                data: {
+                  type: "image",
+                  base64,
+                  text: "ผู้ใช้ส่งรูปภาพมา",
+                },
+              });
+            } catch (imgErr) {
+              console.error(
+                `[Instagram Bot: ${instagramBot.name || instagramBot._id}] Error fetching image:`,
+                imgErr?.message || imgErr,
+              );
+            }
+          } else if (attachment?.type === "audio") {
+            audioAttachments.push({
+              type: "audio",
+              payload: {
+                url: attachment?.payload?.url || null,
+                id: attachment?.payload?.id || null,
+              },
+            });
+          }
+        }
+
+        if (audioAttachments.length > 0) {
+          try {
+            const audioResponseSetting = await getSettingValue(
+              "audioAttachmentResponse",
+              DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+            );
+            const replyText =
+              audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
+            const filteredReply = await filterMessage(replyText);
+
+            if (
+              !disableAiReply &&
+              queueOptions.instagramAccessToken &&
+              queueOptions.instagramBusinessAccountId
+            ) {
+              await sendInstagramMessage(
+                senderId,
+                filteredReply,
+                queueOptions.instagramAccessToken,
+                queueOptions.instagramBusinessAccountId,
+              );
+            }
+
+            await saveChatHistory(
+              senderId,
+              { type: "audio", attachments: audioAttachments },
+              disableAiReply ? "" : filteredReply,
+              "instagram",
+              queueOptions.botId || null,
+              runtimeInstructionRefs,
+              queueOptions.botName || null,
+              { instructionMeta: runtimeInstructionMeta },
+            );
+          } catch (audioErr) {
+            console.error(
+              `[Instagram Bot: ${instagramBot.name || instagramBot._id}] Error handling audio attachment:`,
+              audioErr?.message || audioErr,
+            );
+          }
+        }
+
+        if (itemsToQueue.length === 0) {
+          if (audioAttachments.length === 0) {
+            const fallbackText = "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้";
+            try {
+              if (
+                !disableAiReply &&
+                queueOptions.instagramAccessToken &&
+                queueOptions.instagramBusinessAccountId
+              ) {
+                await sendInstagramMessage(
+                  senderId,
+                  fallbackText,
+                  queueOptions.instagramAccessToken,
+                  queueOptions.instagramBusinessAccountId,
+                );
+              }
+            } catch (sendErr) {
+              console.warn(
+                "[Instagram] ไม่สามารถส่งข้อความ fallback ได้:",
+                sendErr?.message || sendErr,
+              );
+            }
+
+            try {
+              await saveChatHistory(
+                senderId,
+                {
+                  type: "unsupported",
+                  attachments,
+                },
+                disableAiReply ? "" : fallbackText,
+                "instagram",
+                queueOptions.botId || null,
+                runtimeInstructionRefs,
+                queueOptions.botName || null,
+                { instructionMeta: runtimeInstructionMeta },
+              );
+            } catch (historyErr) {
+              console.error(
+                "[Instagram] ไม่สามารถบันทึกประวัติไฟล์แนบที่ไม่รองรับได้:",
+                historyErr?.message || historyErr,
+              );
+            }
+          }
+          continue;
+        }
+
+        for (const item of itemsToQueue) {
+          try {
+            await addToQueue(senderId, { ...item }, queueOptions);
+          } catch (queueErr) {
+            console.error(
+              `[Instagram Bot: ${instagramBot.name || instagramBot._id}] Error queuing message:`,
+              queueErr?.message || queueErr,
+            );
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error handling Instagram webhook:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
+    }
+  }
+});
+
+// ============================ WhatsApp Bot Webhook Handler ============================
+
+app.get("/webhook/whatsapp/:botId", async (req, res) => {
+  try {
+    const { botId } = req.params;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const escapeRegex = (value = "") =>
+      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedBotId = escapeRegex(botId);
+    const queryConditions = [
+      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
+    ];
+    if (ObjectId.isValid(botId)) {
+      queryConditions.push({ _id: new ObjectId(botId) });
+    }
+    const whatsappBot = await coll.findOne({ $or: queryConditions });
+    if (!whatsappBot) {
+      return res.status(404).send("WhatsApp Bot not found");
+    }
+
+    if (req.query["hub.mode"] === "subscribe") {
+      if (req.query["hub.verify_token"] === whatsappBot.verifyToken) {
+        return res.status(200).send(req.query["hub.challenge"]);
+      }
+      return res.status(403).send("Invalid verify token");
+    }
+
+    return res.status(400).send("Invalid verification request");
+  } catch (err) {
+    console.error("Error handling WhatsApp webhook verification:", err);
+    res.status(500).send("Server error");
+  }
+});
+
+app.post("/webhook/whatsapp/:botId", async (req, res) => {
+  try {
+    const { botId } = req.params;
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const escapeRegex = (value = "") =>
+      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedBotId = escapeRegex(botId);
+    const queryConditions = [
+      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
+    ];
+    if (ObjectId.isValid(botId)) {
+      queryConditions.push({ _id: new ObjectId(botId) });
+    }
+    const whatsappBot = await coll.findOne({ $or: queryConditions });
+    if (!whatsappBot) {
+      return res.status(404).json({ error: "WhatsApp Bot ไม่พบ" });
+    }
+
+    const botIsActive = whatsappBot.status === "active";
+    const pageRuntime = await getAgentRuntimeForPage(
+      "whatsapp",
+      whatsappBot._id.toString(),
+    );
+    const disableAiReply = pageRuntime.managed
+      ? pageRuntime.mode === "human-only"
+      : !botIsActive;
+
+    const queueOptionsBase = {
+      botType: "whatsapp",
+      platform: "whatsapp",
+      botId: whatsappBot._id.toString(),
+      whatsappAccessToken: resolveMetaAccessToken(whatsappBot),
+      whatsappPhoneNumberId: resolveWhatsAppPhoneNumberId(whatsappBot),
+      aiModel:
+        pageRuntime.managed && pageRuntime.customerDefaultModel
+          ? pageRuntime.customerDefaultModel
+          : whatsappBot.aiModel || null,
+      selectedInstructions: whatsappBot.selectedInstructions || [],
+      botName: getBotDisplayName("whatsapp", whatsappBot),
+      selectedImageCollections: whatsappBot.selectedImageCollections || null,
+      disableAiReply,
+      agentManaged: pageRuntime.managed,
+      agentId: pageRuntime.agentId || null,
+      agentMode: pageRuntime.mode || null,
+      botStatus: whatsappBot.status || null,
+      runtimePriority: pageRuntime.managed ? "agent_mode" : "bot_status",
+    };
+
+    res.status(200).json({ status: "EVENT_RECEIVED" });
+
+    const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+    for (const entry of entries) {
+      const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+      for (const change of changes) {
+        const value = change?.value || {};
+        const messages = Array.isArray(value?.messages) ? value.messages : [];
+        for (const incomingMessage of messages) {
+          const messageId =
+            typeof incomingMessage?.id === "string"
+              ? incomingMessage.id.trim()
+              : "";
+          if (messageId) {
+            const dedupeKey = `wa:${messageId}`;
+            if (processedIds.has(dedupeKey)) {
+              continue;
+            }
+            processedIds.add(dedupeKey);
+          }
+
+          const senderId = incomingMessage?.from;
+          if (!senderId) continue;
+
+          const queueOptions = { ...queueOptionsBase };
+          const runtimeInstructionContext =
+            await resolveInstructionMetaForRuntime(
+              queueOptions.selectedInstructions,
+              null,
+              { policy: "latest_only" },
+            );
+          const runtimeInstructionRefs =
+            runtimeInstructionContext.instructionRefs;
+          const runtimeInstructionMeta =
+            runtimeInstructionContext.instructionMeta;
+
+          const itemsToQueue = [];
+          const audioAttachments = [];
+          const incomingType =
+            typeof incomingMessage?.type === "string"
+              ? incomingMessage.type
+              : "";
+
+          if (
+            incomingType === "text" &&
+            typeof incomingMessage?.text?.body === "string"
+          ) {
+            const textBody = incomingMessage.text.body.trim();
+            if (textBody) {
+              itemsToQueue.push({
+                data: { type: "text", text: textBody },
+              });
+            }
+          } else if (incomingType === "button") {
+            const buttonText =
+              typeof incomingMessage?.button?.text === "string"
+                ? incomingMessage.button.text.trim()
+                : "";
+            if (buttonText) {
+              itemsToQueue.push({
+                data: { type: "text", text: buttonText },
+              });
+            }
+          } else if (incomingType === "interactive") {
+            const interactive = incomingMessage?.interactive || {};
+            const listTitle =
+              typeof interactive?.list_reply?.title === "string"
+                ? interactive.list_reply.title.trim()
+                : "";
+            const buttonTitle =
+              typeof interactive?.button_reply?.title === "string"
+                ? interactive.button_reply.title.trim()
+                : "";
+            const interactiveText = listTitle || buttonTitle;
+            if (interactiveText) {
+              itemsToQueue.push({
+                data: { type: "text", text: interactiveText },
+              });
+            }
+          } else if (incomingType === "image") {
+            const mediaId = incomingMessage?.image?.id || null;
+            if (mediaId && queueOptions.whatsappAccessToken) {
+              try {
+                const media = await fetchWhatsAppMediaAsBase64(
+                  mediaId,
+                  queueOptions.whatsappAccessToken,
+                );
+                itemsToQueue.push({
+                  data: {
+                    type: "image",
+                    base64: media.base64,
+                    text:
+                      incomingMessage?.image?.caption ||
+                      "ผู้ใช้ส่งรูปภาพมา",
+                    mime: media.mimeType || null,
+                  },
+                });
+              } catch (imgErr) {
+                console.error(
+                  `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] Error fetching image media:`,
+                  imgErr?.message || imgErr,
+                );
+              }
+            }
+          } else if (incomingType === "audio") {
+            audioAttachments.push({
+              type: "audio",
+              payload: {
+                id: incomingMessage?.audio?.id || null,
+                mimeType: incomingMessage?.audio?.mime_type || null,
+              },
+            });
+          }
+
+          if (audioAttachments.length > 0) {
+            try {
+              const audioResponseSetting = await getSettingValue(
+                "audioAttachmentResponse",
+                DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+              );
+              const replyText =
+                audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
+              const filteredReply = await filterMessage(replyText);
+
+              if (
+                !disableAiReply &&
+                queueOptions.whatsappAccessToken &&
+                queueOptions.whatsappPhoneNumberId
+              ) {
+                await sendWhatsAppMessage(
+                  senderId,
+                  filteredReply,
+                  queueOptions.whatsappAccessToken,
+                  queueOptions.whatsappPhoneNumberId,
+                );
+              }
+
+              await saveChatHistory(
+                senderId,
+                { type: "audio", attachments: audioAttachments },
+                disableAiReply ? "" : filteredReply,
+                "whatsapp",
+                queueOptions.botId || null,
+                runtimeInstructionRefs,
+                queueOptions.botName || null,
+                { instructionMeta: runtimeInstructionMeta },
+              );
+            } catch (audioErr) {
+              console.error(
+                `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] Error handling audio attachment:`,
+                audioErr?.message || audioErr,
+              );
+            }
+          }
+
+          if (itemsToQueue.length === 0) {
+            if (audioAttachments.length === 0) {
+              const fallbackText = "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้";
+              try {
+                if (
+                  !disableAiReply &&
+                  queueOptions.whatsappAccessToken &&
+                  queueOptions.whatsappPhoneNumberId
+                ) {
+                  await sendWhatsAppMessage(
+                    senderId,
+                    fallbackText,
+                    queueOptions.whatsappAccessToken,
+                    queueOptions.whatsappPhoneNumberId,
+                  );
+                }
+              } catch (sendErr) {
+                console.warn(
+                  "[WhatsApp] ไม่สามารถส่งข้อความ fallback ได้:",
+                  sendErr?.message || sendErr,
+                );
+              }
+
+              try {
+                await saveChatHistory(
+                  senderId,
+                  {
+                    type: "unsupported",
+                    attachments: [incomingMessage],
+                  },
+                  disableAiReply ? "" : fallbackText,
+                  "whatsapp",
+                  queueOptions.botId || null,
+                  runtimeInstructionRefs,
+                  queueOptions.botName || null,
+                  { instructionMeta: runtimeInstructionMeta },
+                );
+              } catch (historyErr) {
+                console.error(
+                  "[WhatsApp] ไม่สามารถบันทึกประวัติไฟล์แนบที่ไม่รองรับได้:",
+                  historyErr?.message || historyErr,
+                );
+              }
+            }
+            continue;
+          }
+
+          for (const item of itemsToQueue) {
+            try {
+              await addToQueue(senderId, { ...item }, queueOptions);
+            } catch (queueErr) {
+              console.error(
+                `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] Error queuing message:`,
+                queueErr?.message || queueErr,
+              );
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error handling WhatsApp webhook:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
+    }
+  }
+});
+
 // Helper function to send Facebook message
 async function sendFacebookMessage(
   recipientId,
@@ -13757,6 +14856,256 @@ async function sendFacebookImageByUpload(
     params: { access_token: accessToken },
     headers: { "Content-Type": "application/json" },
   });
+}
+
+async function sendInstagramMessage(
+  recipientId,
+  message,
+  accessToken,
+  instagramSenderId,
+  options = {},
+  customAssetsMap = null,
+) {
+  const { selectedImageCollections = null } = options || {};
+  const normalizedMessage = normalizeOutgoingText(message);
+  if (!normalizedMessage || !accessToken || !instagramSenderId || !recipientId) {
+    return;
+  }
+
+  const parts = String(normalizedMessage || "")
+    .split("[cut]")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  const assetsMap =
+    customAssetsMap || (await getAssetsMapForBot(selectedImageCollections));
+
+  for (const part of parts) {
+    const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
+    for (const seg of segments) {
+      if (seg.type === "text") {
+        const textChunks = chunkTextByLength(seg.text || "", 1000);
+        for (const chunk of textChunks) {
+          await axios.post(
+            `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramSenderId}/messages`,
+            {
+              recipient: { id: recipientId },
+              message: { text: chunk },
+            },
+            {
+              params: { access_token: accessToken },
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+        continue;
+      }
+
+      if (seg.type === "image" && seg.url) {
+        await axios.post(
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramSenderId}/messages`,
+          {
+            recipient: { id: recipientId },
+            message: {
+              attachment: {
+                type: "image",
+                payload: { url: seg.url, is_reusable: true },
+              },
+            },
+          },
+          {
+            params: { access_token: accessToken },
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+    }
+  }
+}
+
+async function sendWhatsAppImageByUrl(
+  recipientId,
+  imageUrl,
+  accessToken,
+  phoneNumberId,
+  caption = "",
+) {
+  if (!recipientId || !imageUrl || !accessToken || !phoneNumberId) {
+    return;
+  }
+
+  const payload = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: recipientId,
+    type: "image",
+    image: {
+      link: imageUrl,
+    },
+  };
+  const trimmedCaption =
+    typeof caption === "string" ? caption.trim().slice(0, 1024) : "";
+  if (trimmedCaption) {
+    payload.image.caption = trimmedCaption;
+  }
+
+  await axios.post(
+    `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+    payload,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+    },
+  );
+}
+
+async function sendWhatsAppMessage(
+  recipientId,
+  message,
+  accessToken,
+  phoneNumberId,
+  options = {},
+  customAssetsMap = null,
+) {
+  const { selectedImageCollections = null } = options || {};
+  const normalizedMessage = normalizeOutgoingText(message);
+  if (!normalizedMessage || !accessToken || !phoneNumberId || !recipientId) {
+    return;
+  }
+
+  const parts = String(normalizedMessage || "")
+    .split("[cut]")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  const assetsMap =
+    customAssetsMap || (await getAssetsMapForBot(selectedImageCollections));
+
+  for (const part of parts) {
+    const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
+    for (const seg of segments) {
+      if (seg.type === "text") {
+        const textChunks = chunkTextByLength(seg.text || "", 4096);
+        for (const chunk of textChunks) {
+          await axios.post(
+            `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+            {
+              messaging_product: "whatsapp",
+              recipient_type: "individual",
+              to: recipientId,
+              type: "text",
+              text: {
+                preview_url: false,
+                body: chunk,
+              },
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+            },
+          );
+        }
+        continue;
+      }
+
+      if (seg.type === "image" && seg.url) {
+        try {
+          await sendWhatsAppImageByUrl(
+            recipientId,
+            seg.url,
+            accessToken,
+            phoneNumberId,
+            seg.alt || "",
+          );
+        } catch (imageError) {
+          const fallback = `[ไม่สามารถส่งรูป ${seg.label || "image"}]`;
+          await axios.post(
+            `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+            {
+              messaging_product: "whatsapp",
+              recipient_type: "individual",
+              to: recipientId,
+              type: "text",
+              text: { body: fallback },
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+            },
+          );
+          console.warn(
+            "[WhatsApp] ส่งรูปไม่สำเร็จ:",
+            imageError?.response?.data || imageError?.message || imageError,
+          );
+        }
+      }
+    }
+  }
+}
+
+async function fetchWhatsAppMediaAsBase64(mediaId, accessToken) {
+  if (!mediaId || !accessToken) {
+    throw new Error("missing media id or access token");
+  }
+
+  const metaResponse = await axios.get(
+    `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${encodeURIComponent(
+      mediaId,
+    )}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  const mediaUrl = metaResponse?.data?.url;
+  const mimeType =
+    metaResponse?.data?.mime_type ||
+    metaResponse?.data?.mimeType ||
+    "application/octet-stream";
+  if (!mediaUrl) {
+    throw new Error("whatsapp media url not found");
+  }
+
+  const mediaResponse = await axios.get(mediaUrl, {
+    responseType: "arraybuffer",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  let buffer = Buffer.from(mediaResponse.data);
+  let finalMime = mimeType;
+
+  if (typeof mimeType === "string" && mimeType.startsWith("image/")) {
+    try {
+      buffer = await sharp(buffer)
+        .resize({
+          width: 1024,
+          height: 1024,
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .jpeg({ quality: 85, progressive: true })
+        .toBuffer();
+      finalMime = "image/jpeg";
+    } catch (imageError) {
+      console.warn(
+        "[WhatsApp] ไม่สามารถแปลงขนาดรูปจาก media API ได้:",
+        imageError?.message || imageError,
+      );
+    }
+  }
+
+  return {
+    base64: buffer.toString("base64"),
+    mimeType: finalMime,
+  };
 }
 
 // Helper: read local asset buffer robustly (handle ext variants and URL fallback)
@@ -15701,6 +17050,881 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
     });
   } catch (err) {
     console.error("Error updating facebook bot keyword settings:", err);
+    res.status(500).json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
+  }
+});
+
+// ============================ Instagram Bot API Endpoints ============================
+
+app.get("/api/instagram-bots", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const bots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    res.json(bots);
+  } catch (err) {
+    console.error("Error fetching instagram bots:", err);
+    res.status(500).json({ error: "ไม่สามารถดึงข้อมูล Instagram Bot ได้" });
+  }
+});
+
+app.get("/api/instagram-bots/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+    res.json(bot);
+  } catch (err) {
+    console.error("Error fetching instagram bot:", err);
+    res.status(500).json({ error: "ไม่สามารถดึงข้อมูล Instagram Bot ได้" });
+  }
+});
+
+app.post("/api/instagram-bots", async (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      instagramUserId,
+      igUserId,
+      instagramBusinessAccountId,
+      instagramUsername,
+      accessToken,
+      webhookUrl,
+      verifyToken,
+      status,
+      isDefault,
+      aiModel,
+      selectedInstructions,
+      selectedImageCollections,
+      openaiApiKeyId,
+    } = req.body || {};
+
+    const resolvedInstagramUserId =
+      instagramBusinessAccountId || instagramUserId || igUserId || "";
+    if (!name || !resolvedInstagramUserId || !accessToken) {
+      return res
+        .status(400)
+        .json({ error: "กรุณากรอก name, instagramUserId และ accessToken" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+
+    if (isDefault) {
+      await coll.updateMany({}, { $set: { isDefault: false } });
+    }
+
+    let finalWebhookUrl = webhookUrl;
+    if (!finalWebhookUrl) {
+      const baseUrl = process.env.PUBLIC_BASE_URL || "https://" + req.get("host");
+      const uniqueId =
+        Date.now().toString(36) + Math.random().toString(36).slice(2);
+      finalWebhookUrl = `${baseUrl}/webhook/instagram/${uniqueId}`;
+    }
+
+    const normalizedSelections = normalizeLatestOnlyInstructionSelections(
+      selectedInstructions || [],
+    );
+    const normalizedCollections = normalizeImageCollectionSelections(
+      selectedImageCollections || [],
+    );
+
+    const bot = {
+      name,
+      description: description || "",
+      instagramBusinessAccountId: resolvedInstagramUserId,
+      instagramUserId: resolvedInstagramUserId,
+      igUserId: resolvedInstagramUserId,
+      instagramUsername: instagramUsername || "",
+      accessToken,
+      webhookUrl: finalWebhookUrl,
+      verifyToken: verifyToken || "your_verify_token",
+      status: status || "active",
+      isDefault: isDefault || false,
+      aiModel: aiModel || "gpt-5",
+      aiConfig: normalizeAiConfig(req.body?.aiConfig || req.body || {}),
+      selectedInstructions: normalizedSelections,
+      selectedImageCollections: normalizedCollections,
+      openaiApiKeyId: openaiApiKeyId || null,
+      keywordSettings: {
+        enableAI: { keyword: "", response: "" },
+        disableAI: { keyword: "", response: "" },
+        disableFollowUp: { keyword: "", response: "" },
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const insert = await coll.insertOne(bot);
+    bot._id = insert.insertedId;
+    res.status(201).json(bot);
+  } catch (err) {
+    console.error("Error creating instagram bot:", err);
+    res.status(500).json({ error: "ไม่สามารถสร้าง Instagram Bot ได้" });
+  }
+});
+
+app.put("/api/instagram-bots/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
+    }
+
+    const {
+      name,
+      description,
+      instagramUserId,
+      igUserId,
+      instagramBusinessAccountId,
+      instagramUsername,
+      accessToken,
+      webhookUrl,
+      verifyToken,
+      status,
+      isDefault,
+      aiModel,
+      selectedImageCollections,
+    } = req.body || {};
+
+    const resolvedInstagramUserId =
+      instagramBusinessAccountId || instagramUserId || igUserId || "";
+    if (!name || !resolvedInstagramUserId || !accessToken) {
+      return res
+        .status(400)
+        .json({ error: "กรุณากรอก name, instagramUserId และ accessToken" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    if (!existing) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+
+    if (isDefault) {
+      await coll.updateMany(
+        { _id: { $ne: new ObjectId(id) } },
+        { $set: { isDefault: false } },
+      );
+    }
+
+    const updateData = {
+      name,
+      description: description || "",
+      instagramBusinessAccountId: resolvedInstagramUserId,
+      instagramUserId: resolvedInstagramUserId,
+      igUserId: resolvedInstagramUserId,
+      instagramUsername: instagramUsername || existing.instagramUsername || "",
+      accessToken,
+      webhookUrl: webhookUrl || "",
+      verifyToken: verifyToken || "your_verify_token",
+      status: status || "active",
+      isDefault: isDefault || false,
+      aiModel: aiModel || existing.aiModel || "gpt-5",
+      aiConfig: normalizeAiConfig(
+        req.body?.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
+      ),
+      openaiApiKeyId:
+        req.body?.openaiApiKeyId !== undefined
+          ? req.body.openaiApiKeyId || null
+          : existing.openaiApiKeyId,
+      updatedAt: new Date(),
+    };
+
+    if (Array.isArray(selectedImageCollections)) {
+      updateData.selectedImageCollections = normalizeImageCollectionSelections(
+        selectedImageCollections,
+      );
+    } else if (selectedImageCollections === null) {
+      updateData.selectedImageCollections = [];
+    }
+
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+    res.json({ message: "อัปเดต Instagram Bot เรียบร้อยแล้ว" });
+  } catch (err) {
+    console.error("Error updating instagram bot:", err);
+    res.status(500).json({ error: "ไม่สามารถอัปเดต Instagram Bot ได้" });
+  }
+});
+
+app.delete("/api/instagram-bots/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+    res.json({ message: "ลบ Instagram Bot เรียบร้อยแล้ว" });
+  } catch (err) {
+    console.error("Error deleting instagram bot:", err);
+    res.status(500).json({ error: "ไม่สามารถลบ Instagram Bot ได้" });
+  }
+});
+
+app.patch("/api/instagram-bots/:id/toggle-status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+    const newStatus = bot.status === "active" ? "inactive" : "active";
+    await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: newStatus, updatedAt: new Date() } },
+    );
+    res.json({
+      message: `เปลี่ยนสถานะ Instagram Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
+      status: newStatus,
+    });
+  } catch (err) {
+    console.error("Error toggling instagram bot status:", err);
+    res.status(500).json({ error: "ไม่สามารถเปลี่ยนสถานะ Instagram Bot ได้" });
+  }
+});
+
+app.post("/api/instagram-bots/:id/test", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+
+    const senderId = resolveInstagramSenderId(bot);
+    const accessToken = resolveMetaAccessToken(bot);
+    if (!senderId || !accessToken) {
+      return res.status(400).json({
+        error: "กรุณาระบุ instagramUserId/instagramBusinessAccountId และ accessToken",
+      });
+    }
+
+    const response = await axios.get(
+      `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${senderId}`,
+      {
+        params: {
+          access_token: accessToken,
+          fields: "id,username,name",
+        },
+      },
+    );
+
+    res.json({
+      message: `ทดสอบ Instagram Bot สำเร็จ: ${response.data?.username || response.data?.name || senderId}`,
+      profile: response.data,
+    });
+  } catch (err) {
+    console.error("Error testing instagram bot:", err);
+    res.status(400).json({
+      error: "ไม่สามารถเชื่อมต่อ Instagram Bot ได้: " + (err?.message || err),
+    });
+  }
+});
+
+app.put("/api/instagram-bots/:id/instructions", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { selectedInstructions } = req.body || {};
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
+    }
+    if (!Array.isArray(selectedInstructions)) {
+      return res.status(400).json({ error: "selectedInstructions ต้องเป็น array" });
+    }
+
+    const normalizedSelections =
+      normalizeLatestOnlyInstructionSelections(selectedInstructions);
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          selectedInstructions: normalizedSelections,
+          updatedAt: new Date(),
+        },
+      },
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+    res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
+  } catch (err) {
+    console.error("Error updating instagram bot instructions:", err);
+    res.status(500).json({ error: "ไม่สามารถอัปเดต instruction ได้" });
+  }
+});
+
+app.put("/api/instagram-bots/:id/image-collections", async (req, res) => {
+  try {
+    const { id } = req.params;
+    let { selectedImageCollections } = req.body || {};
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
+    }
+
+    if (selectedImageCollections === null) {
+      selectedImageCollections = [];
+    }
+    if (!Array.isArray(selectedImageCollections)) {
+      return res
+        .status(400)
+        .json({ error: "selectedImageCollections ต้องเป็น array หรือ null" });
+    }
+
+    const normalizedCollections = normalizeImageCollectionSelections(
+      selectedImageCollections,
+    );
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          selectedImageCollections: normalizedCollections,
+          updatedAt: new Date(),
+        },
+      },
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+
+    res.json({
+      message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
+      selectedImageCollections: normalizedCollections,
+    });
+  } catch (err) {
+    console.error("Error updating instagram bot image collections:", err);
+    res
+      .status(500)
+      .json({ error: "ไม่สามารถอัปเดตคลังรูปภาพของ Instagram Bot ได้" });
+  }
+});
+
+app.put("/api/instagram-bots/:id/keywords", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { keywordSettings } = req.body || {};
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
+    }
+    if (!keywordSettings || typeof keywordSettings !== "object") {
+      return res.status(400).json({ error: "keywordSettings ต้องเป็น object" });
+    }
+
+    const normalizeKeywordSetting = (setting) => {
+      if (!setting) return { keyword: "", response: "" };
+      if (typeof setting === "string") {
+        return { keyword: setting.trim(), response: "" };
+      }
+      return {
+        keyword: (setting.keyword || "").trim(),
+        response: (setting.response || "").trim(),
+      };
+    };
+
+    const normalizedSettings = {
+      enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
+      disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
+      disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
+    };
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("instagram_bots");
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          keywordSettings: normalizedSettings,
+          updatedAt: new Date(),
+        },
+      },
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
+    }
+    res.json({
+      message: "อัปเดต keyword settings เรียบร้อยแล้ว",
+      keywordSettings: normalizedSettings,
+    });
+  } catch (err) {
+    console.error("Error updating instagram bot keyword settings:", err);
+    res.status(500).json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
+  }
+});
+
+// ============================ WhatsApp Bot API Endpoints ============================
+
+app.get("/api/whatsapp-bots", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const bots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    res.json(bots);
+  } catch (err) {
+    console.error("Error fetching whatsapp bots:", err);
+    res.status(500).json({ error: "ไม่สามารถดึงข้อมูล WhatsApp Bot ได้" });
+  }
+});
+
+app.get("/api/whatsapp-bots/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+    res.json(bot);
+  } catch (err) {
+    console.error("Error fetching whatsapp bot:", err);
+    res.status(500).json({ error: "ไม่สามารถดึงข้อมูล WhatsApp Bot ได้" });
+  }
+});
+
+app.post("/api/whatsapp-bots", async (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      businessAccountId,
+      phoneNumberId,
+      whatsappPhoneNumberId,
+      phoneNumber,
+      accessToken,
+      webhookUrl,
+      verifyToken,
+      status,
+      isDefault,
+      aiModel,
+      selectedInstructions,
+      selectedImageCollections,
+      openaiApiKeyId,
+    } = req.body || {};
+
+    const resolvedPhoneNumberId = phoneNumberId || whatsappPhoneNumberId || "";
+    if (!name || !resolvedPhoneNumberId || !accessToken) {
+      return res
+        .status(400)
+        .json({ error: "กรุณากรอก name, phoneNumberId และ accessToken" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    if (isDefault) {
+      await coll.updateMany({}, { $set: { isDefault: false } });
+    }
+
+    let finalWebhookUrl = webhookUrl;
+    if (!finalWebhookUrl) {
+      const baseUrl = process.env.PUBLIC_BASE_URL || "https://" + req.get("host");
+      const uniqueId =
+        Date.now().toString(36) + Math.random().toString(36).slice(2);
+      finalWebhookUrl = `${baseUrl}/webhook/whatsapp/${uniqueId}`;
+    }
+
+    const normalizedSelections = normalizeLatestOnlyInstructionSelections(
+      selectedInstructions || [],
+    );
+    const normalizedCollections = normalizeImageCollectionSelections(
+      selectedImageCollections || [],
+    );
+
+    const bot = {
+      name,
+      description: description || "",
+      businessAccountId: businessAccountId || "",
+      phoneNumberId: resolvedPhoneNumberId,
+      whatsappPhoneNumberId: resolvedPhoneNumberId,
+      phoneNumber: phoneNumber || "",
+      accessToken,
+      webhookUrl: finalWebhookUrl,
+      verifyToken: verifyToken || "your_verify_token",
+      status: status || "active",
+      isDefault: isDefault || false,
+      aiModel: aiModel || "gpt-5",
+      aiConfig: normalizeAiConfig(req.body?.aiConfig || req.body || {}),
+      selectedInstructions: normalizedSelections,
+      selectedImageCollections: normalizedCollections,
+      openaiApiKeyId: openaiApiKeyId || null,
+      keywordSettings: {
+        enableAI: { keyword: "", response: "" },
+        disableAI: { keyword: "", response: "" },
+        disableFollowUp: { keyword: "", response: "" },
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const insert = await coll.insertOne(bot);
+    bot._id = insert.insertedId;
+    res.status(201).json(bot);
+  } catch (err) {
+    console.error("Error creating whatsapp bot:", err);
+    res.status(500).json({ error: "ไม่สามารถสร้าง WhatsApp Bot ได้" });
+  }
+});
+
+app.put("/api/whatsapp-bots/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
+    }
+
+    const {
+      name,
+      description,
+      businessAccountId,
+      phoneNumberId,
+      whatsappPhoneNumberId,
+      phoneNumber,
+      accessToken,
+      webhookUrl,
+      verifyToken,
+      status,
+      isDefault,
+      aiModel,
+      selectedImageCollections,
+    } = req.body || {};
+
+    const resolvedPhoneNumberId = phoneNumberId || whatsappPhoneNumberId || "";
+    if (!name || !resolvedPhoneNumberId || !accessToken) {
+      return res
+        .status(400)
+        .json({ error: "กรุณากรอก name, phoneNumberId และ accessToken" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    if (!existing) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+
+    if (isDefault) {
+      await coll.updateMany(
+        { _id: { $ne: new ObjectId(id) } },
+        { $set: { isDefault: false } },
+      );
+    }
+
+    const updateData = {
+      name,
+      description: description || "",
+      businessAccountId: businessAccountId || existing.businessAccountId || "",
+      phoneNumberId: resolvedPhoneNumberId,
+      whatsappPhoneNumberId: resolvedPhoneNumberId,
+      phoneNumber: phoneNumber || existing.phoneNumber || "",
+      accessToken,
+      webhookUrl: webhookUrl || "",
+      verifyToken: verifyToken || "your_verify_token",
+      status: status || "active",
+      isDefault: isDefault || false,
+      aiModel: aiModel || existing.aiModel || "gpt-5",
+      aiConfig: normalizeAiConfig(
+        req.body?.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
+      ),
+      openaiApiKeyId:
+        req.body?.openaiApiKeyId !== undefined
+          ? req.body.openaiApiKeyId || null
+          : existing.openaiApiKeyId,
+      updatedAt: new Date(),
+    };
+
+    if (Array.isArray(selectedImageCollections)) {
+      updateData.selectedImageCollections = normalizeImageCollectionSelections(
+        selectedImageCollections,
+      );
+    } else if (selectedImageCollections === null) {
+      updateData.selectedImageCollections = [];
+    }
+
+    await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+    res.json({ message: "อัปเดต WhatsApp Bot เรียบร้อยแล้ว" });
+  } catch (err) {
+    console.error("Error updating whatsapp bot:", err);
+    res.status(500).json({ error: "ไม่สามารถอัปเดต WhatsApp Bot ได้" });
+  }
+});
+
+app.delete("/api/whatsapp-bots/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+    res.json({ message: "ลบ WhatsApp Bot เรียบร้อยแล้ว" });
+  } catch (err) {
+    console.error("Error deleting whatsapp bot:", err);
+    res.status(500).json({ error: "ไม่สามารถลบ WhatsApp Bot ได้" });
+  }
+});
+
+app.patch("/api/whatsapp-bots/:id/toggle-status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+    const newStatus = bot.status === "active" ? "inactive" : "active";
+    await coll.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: newStatus, updatedAt: new Date() } },
+    );
+    res.json({
+      message: `เปลี่ยนสถานะ WhatsApp Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
+      status: newStatus,
+    });
+  } catch (err) {
+    console.error("Error toggling whatsapp bot status:", err);
+    res.status(500).json({ error: "ไม่สามารถเปลี่ยนสถานะ WhatsApp Bot ได้" });
+  }
+});
+
+app.post("/api/whatsapp-bots/:id/test", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    if (!bot) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+
+    const phoneNumberId = resolveWhatsAppPhoneNumberId(bot);
+    const accessToken = resolveMetaAccessToken(bot);
+    if (!phoneNumberId || !accessToken) {
+      return res.status(400).json({
+        error: "กรุณาระบุ phoneNumberId และ accessToken ให้ครบถ้วน",
+      });
+    }
+
+    const response = await axios.get(
+      `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        params: {
+          fields: "id,display_phone_number,verified_name",
+        },
+      },
+    );
+
+    res.json({
+      message: `ทดสอบ WhatsApp Bot สำเร็จ: ${response.data?.display_phone_number || phoneNumberId}`,
+      profile: response.data,
+    });
+  } catch (err) {
+    console.error("Error testing whatsapp bot:", err);
+    res.status(400).json({
+      error: "ไม่สามารถเชื่อมต่อ WhatsApp Bot ได้: " + (err?.message || err),
+    });
+  }
+});
+
+app.put("/api/whatsapp-bots/:id/instructions", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { selectedInstructions } = req.body || {};
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
+    }
+    if (!Array.isArray(selectedInstructions)) {
+      return res.status(400).json({ error: "selectedInstructions ต้องเป็น array" });
+    }
+
+    const normalizedSelections =
+      normalizeLatestOnlyInstructionSelections(selectedInstructions);
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          selectedInstructions: normalizedSelections,
+          updatedAt: new Date(),
+        },
+      },
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+    res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
+  } catch (err) {
+    console.error("Error updating whatsapp bot instructions:", err);
+    res.status(500).json({ error: "ไม่สามารถอัปเดต instruction ได้" });
+  }
+});
+
+app.put("/api/whatsapp-bots/:id/image-collections", async (req, res) => {
+  try {
+    const { id } = req.params;
+    let { selectedImageCollections } = req.body || {};
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
+    }
+
+    if (selectedImageCollections === null) {
+      selectedImageCollections = [];
+    }
+    if (!Array.isArray(selectedImageCollections)) {
+      return res
+        .status(400)
+        .json({ error: "selectedImageCollections ต้องเป็น array หรือ null" });
+    }
+
+    const normalizedCollections = normalizeImageCollectionSelections(
+      selectedImageCollections,
+    );
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          selectedImageCollections: normalizedCollections,
+          updatedAt: new Date(),
+        },
+      },
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+
+    res.json({
+      message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
+      selectedImageCollections: normalizedCollections,
+    });
+  } catch (err) {
+    console.error("Error updating whatsapp bot image collections:", err);
+    res
+      .status(500)
+      .json({ error: "ไม่สามารถอัปเดตคลังรูปภาพของ WhatsApp Bot ได้" });
+  }
+});
+
+app.put("/api/whatsapp-bots/:id/keywords", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { keywordSettings } = req.body || {};
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
+    }
+    if (!keywordSettings || typeof keywordSettings !== "object") {
+      return res.status(400).json({ error: "keywordSettings ต้องเป็น object" });
+    }
+
+    const normalizeKeywordSetting = (setting) => {
+      if (!setting) return { keyword: "", response: "" };
+      if (typeof setting === "string") {
+        return { keyword: setting.trim(), response: "" };
+      }
+      return {
+        keyword: (setting.keyword || "").trim(),
+        response: (setting.response || "").trim(),
+      };
+    };
+
+    const normalizedSettings = {
+      enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
+      disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
+      disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
+    };
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("whatsapp_bots");
+    const result = await coll.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          keywordSettings: normalizedSettings,
+          updatedAt: new Date(),
+        },
+      },
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
+    }
+    res.json({
+      message: "อัปเดต keyword settings เรียบร้อยแล้ว",
+      keywordSettings: normalizedSettings,
+    });
+  } catch (err) {
+    console.error("Error updating whatsapp bot keyword settings:", err);
     res.status(500).json({ error: "ไม่สามารถอัปเดต keyword settings ได้" });
   }
 });
@@ -18656,6 +20880,18 @@ app.delete("/admin/image-collections/:id", async (req, res) => {
         { selectedImageCollections: id },
         { $pull: { selectedImageCollections: id } },
       );
+    await db
+      .collection("instagram_bots")
+      .updateMany(
+        { selectedImageCollections: id },
+        { $pull: { selectedImageCollections: id } },
+      );
+    await db
+      .collection("whatsapp_bots")
+      .updateMany(
+        { selectedImageCollections: id },
+        { $pull: { selectedImageCollections: id } },
+      );
 
     // ลบ collection
     await coll.deleteOne({ _id: id });
@@ -18823,6 +21059,10 @@ class BroadcastQueue {
         bot = await db.collection("facebook_bots").findOne({ _id: new ObjectId(botId) });
       } else if (platform === 'line') {
         bot = await db.collection("line_bots").findOne({ _id: new ObjectId(botId) });
+      } else if (platform === "instagram") {
+        bot = await db.collection("instagram_bots").findOne({ _id: new ObjectId(botId) });
+      } else if (platform === "whatsapp") {
+        bot = await db.collection("whatsapp_bots").findOne({ _id: new ObjectId(botId) });
       }
 
       if (bot) {
@@ -18886,6 +21126,55 @@ class BroadcastQueue {
 
         if (lineMessages.length > 0) {
           await client.pushMessage(userId, lineMessages);
+        }
+      } else if (platform === "instagram") {
+        const accessToken = resolveMetaAccessToken(bot || {});
+        const senderId = resolveInstagramSenderId(bot || {});
+        if (!accessToken || !senderId) {
+          throw new Error("Instagram bot access token/sender id missing");
+        }
+        for (const msg of messages) {
+          if (msg.type === "text") {
+            await sendInstagramMessage(userId, msg.content, accessToken, senderId);
+          } else if (msg.type === "image" && msg.url) {
+            const label = msg.alt || msg.caption || "Broadcast image";
+            const assetsMap = buildAssetsLookup([
+              {
+                label,
+                url: msg.url,
+                thumbUrl: msg.url,
+                alt: msg.alt || "",
+                fileName: "",
+              },
+            ]);
+            await sendInstagramMessage(
+              userId,
+              `#[IMAGE:${label}]`,
+              accessToken,
+              senderId,
+              { selectedImageCollections: null },
+              assetsMap,
+            );
+          }
+        }
+      } else if (platform === "whatsapp") {
+        const accessToken = resolveMetaAccessToken(bot || {});
+        const phoneNumberId = resolveWhatsAppPhoneNumberId(bot || {});
+        if (!accessToken || !phoneNumberId) {
+          throw new Error("WhatsApp bot access token/phoneNumberId missing");
+        }
+        for (const msg of messages) {
+          if (msg.type === "text") {
+            await sendWhatsAppMessage(userId, msg.content, accessToken, phoneNumberId);
+          } else if (msg.type === "image" && msg.url) {
+            await sendWhatsAppImageByUrl(
+              userId,
+              msg.url,
+              accessToken,
+              phoneNumberId,
+              msg.alt || "",
+            );
+          }
         }
       }
       this.stats.sent++;
@@ -19028,17 +21317,26 @@ app.get("/admin/broadcast", async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    const lineBots = await db.collection("line_bots").find({}).toArray();
-    const facebookBots = await db
-      .collection("facebook_bots")
-      .find({})
-      .toArray();
-    res.render("admin-broadcast", { lineBots, facebookBots });
+    const [lineBots, facebookBots, instagramBots, whatsappBots] =
+      await Promise.all([
+      db.collection("line_bots").find({}).toArray(),
+      db.collection("facebook_bots").find({}).toArray(),
+      db.collection("instagram_bots").find({}).toArray(),
+      db.collection("whatsapp_bots").find({}).toArray(),
+      ]);
+    res.render("admin-broadcast", {
+      lineBots,
+      facebookBots,
+      instagramBots,
+      whatsappBots,
+    });
   } catch (err) {
     console.error("Error loading broadcast page:", err);
     res.render("admin-broadcast", {
       lineBots: [],
       facebookBots: [],
+      instagramBots: [],
+      whatsappBots: [],
       error: "ไม่สามารถโหลดข้อมูลบอทได้",
     });
   }
@@ -19056,11 +21354,19 @@ app.post("/admin/broadcast/preview", async (req, res) => {
 
     const lineCount = users.filter((u) => u.platform === "line").length;
     const fbCount = users.filter((u) => u.platform === "facebook").length;
+    const igCount = users.filter((u) => u.platform === "instagram").length;
+    const waCount = users.filter((u) => u.platform === "whatsapp").length;
 
     res.json({
       success: true,
       count: users.length,
-      counts: { total: users.length, line: lineCount, facebook: fbCount },
+      counts: {
+        total: users.length,
+        line: lineCount,
+        facebook: fbCount,
+        instagram: igCount,
+        whatsapp: waCount,
+      },
     });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
@@ -19380,7 +21686,9 @@ app.get("/admin/followup/page-settings", async (req, res) => {
 app.post("/admin/followup/page-settings", async (req, res) => {
   try {
     const { platform, botId, settings } = req.body || {};
-    if (!platform || !["line", "facebook"].includes(platform)) {
+    const normalizedPlatform =
+      typeof platform === "string" ? platform.trim().toLowerCase() : "";
+    if (!SUPPORTED_CHAT_PLATFORMS.has(normalizedPlatform)) {
       return res
         .status(400)
         .json({ success: false, error: "ระบุแพลตฟอร์มไม่ถูกต้อง" });
@@ -19435,10 +21743,10 @@ app.post("/admin/followup/page-settings", async (req, res) => {
     const coll = db.collection("follow_up_page_settings");
 
     await coll.updateOne(
-      { platform, botId: normalizedBotId },
+      { platform: normalizedPlatform, botId: normalizedBotId },
       {
         $set: {
-          platform,
+          platform: normalizedPlatform,
           botId: normalizedBotId,
           settings: sanitized,
           updatedAt: new Date(),
@@ -19459,7 +21767,9 @@ app.post("/admin/followup/page-settings", async (req, res) => {
 app.delete("/admin/followup/page-settings", async (req, res) => {
   try {
     const { platform, botId } = req.body || {};
-    if (!platform || !["line", "facebook"].includes(platform)) {
+    const normalizedPlatform =
+      typeof platform === "string" ? platform.trim().toLowerCase() : "";
+    if (!SUPPORTED_CHAT_PLATFORMS.has(normalizedPlatform)) {
       return res
         .status(400)
         .json({ success: false, error: "ระบุแพลตฟอร์มไม่ถูกต้อง" });
@@ -19469,7 +21779,7 @@ app.delete("/admin/followup/page-settings", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("follow_up_page_settings");
 
-    await coll.deleteOne({ platform, botId: normalizedBotId });
+    await coll.deleteOne({ platform: normalizedPlatform, botId: normalizedBotId });
     resetFollowUpConfigCache();
 
     res.json({ success: true });
@@ -22368,7 +24678,8 @@ app.get("/admin/orders/pages", async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const [lineBots, facebookBots, orderGroups] = await Promise.all([
+    const [lineBots, facebookBots, instagramBots, whatsappBots, orderGroups] =
+      await Promise.all([
       db
         .collection("line_bots")
         .find({})
@@ -22378,6 +24689,16 @@ app.get("/admin/orders/pages", async (req, res) => {
         .collection("facebook_bots")
         .find({})
         .project({ name: 1, pageName: 1 })
+        .toArray(),
+      db
+        .collection("instagram_bots")
+        .find({})
+        .project({ name: 1, instagramUsername: 1, instagramUserId: 1, igUserId: 1 })
+        .toArray(),
+      db
+        .collection("whatsapp_bots")
+        .find({})
+        .project({ name: 1, phoneNumber: 1, phoneNumberId: 1 })
         .toArray(),
       db
         .collection("orders")
@@ -22414,7 +24735,7 @@ app.get("/admin/orders/pages", async (req, res) => {
           },
         ])
         .toArray(),
-    ]);
+      ]);
 
     const pageMap = new Map();
 
@@ -22486,12 +24807,44 @@ app.get("/admin/orders/pages", async (req, res) => {
       });
     });
 
+    instagramBots.forEach((bot) => {
+      const botId = bot?._id?.toString?.() || null;
+      if (!botId) return;
+      const label =
+        bot.name ||
+        bot.instagramUsername ||
+        bot.instagramUserId ||
+        bot.igUserId ||
+        `Instagram (${botId.slice(-4)})`;
+      upsertPage({
+        platform: "instagram",
+        botId,
+        name: label,
+      });
+    });
+
+    whatsappBots.forEach((bot) => {
+      const botId = bot?._id?.toString?.() || null;
+      if (!botId) return;
+      const label =
+        bot.name ||
+        bot.phoneNumber ||
+        bot.phoneNumberId ||
+        `WhatsApp (${botId.slice(-4)})`;
+      upsertPage({
+        platform: "whatsapp",
+        botId,
+        name: label,
+      });
+    });
+
     orderGroups.forEach((entry) => {
       const platform = normalizeOrderPlatform(entry?._id?.platform || "line");
       const botId = normalizeOrderBotId(entry?._id?.botIdText || null);
+      const platformLabel = getPlatformLabel(platform);
       const fallbackName = botId
-        ? `${platform === "facebook" ? "Facebook Page" : "LINE Bot"} (${botId.slice(-4)})`
-        : `${platform === "facebook" ? "Facebook" : "LINE"} (default)`;
+        ? `${platformLabel} (${botId.slice(-4)})`
+        : `${platformLabel} (default)`;
       upsertPage({
         platform,
         botId,
@@ -22593,7 +24946,7 @@ app.post("/admin/chat/user-status", async (req, res) => {
       buildChatHistoryUserMatch(userId),
       { sort: { timestamp: -1 } },
     );
-    const platform = lastChat?.platform || "line";
+    const platform = normalizeChatPlatform(lastChat?.platform || "line");
     const botId = lastChat?.botId || null;
 
     const controlText = aiEnabled
@@ -22779,12 +25132,12 @@ app.post("/admin/chat/send", async (req, res) => {
 
     // ดึงข้อมูล bot เพื่อตรวจสอบ keyword settings
     let keywordSettings = {};
-    if (botId && ObjectId.isValid(botId)) {
-      const botColl =
-        platform === "facebook"
-          ? db.collection("facebook_bots")
-          : db.collection("line_bots");
-      const bot = await botColl.findOne({ _id: new ObjectId(botId) });
+    if (botId) {
+      const botColl = db.collection(getBotCollectionName(platform));
+      const botQuery = ObjectId.isValid(botId)
+        ? { _id: new ObjectId(botId) }
+        : { _id: botId };
+      const bot = await botColl.findOne(botQuery);
       if (bot && bot.keywordSettings) {
         keywordSettings = bot.keywordSettings;
       }
@@ -22887,13 +25240,35 @@ app.post("/admin/chat/send", async (req, res) => {
       });
     }
 
+    const createAdminMessageDoc = () => ({
+      senderId: userId,
+      role: "assistant",
+      content: message,
+      timestamp: new Date(),
+      source: "admin_chat",
+      platform,
+      botId,
+    });
+
+    const saveAndEmitAdminMessage = async (doc) => {
+      const insertResult = await coll.insertOne(doc);
+      if (insertResult?.insertedId) {
+        doc._id = insertResult.insertedId;
+      }
+      await resetUserUnreadCount(userId);
+      io.emit("newMessage", {
+        userId,
+        message: doc,
+        sender: "assistant",
+        timestamp: doc.timestamp,
+      });
+    };
+
     // ส่งต่อไปยังแพลตฟอร์มของผู้ใช้ (และหลีกเลี่ยงการบันทึกซ้ำในกรณี Facebook เพื่อกันแสดงซ้ำ)
     if (platform === "facebook") {
       try {
         if (botId) {
-          const fbBot = await db
-            .collection("facebook_bots")
-            .findOne({ _id: new ObjectId(botId) });
+          const fbBot = await findBotById(db, "facebook", botId);
           if (fbBot) {
             await sendFacebookMessage(userId, message, fbBot.accessToken, {
               metadata: "admin_manual",
@@ -22921,22 +25296,85 @@ app.post("/admin/chat/send", async (req, res) => {
       }
     }
 
-    // LINE หรือแพลตฟอร์มอื่น: insert และ emit ตามปกติ
-    const messageDoc = {
-      senderId: userId,
-      role: "assistant",
-      content: message,
-      timestamp: new Date(),
-      source: "admin_chat",
-      platform,
-      botId,
-    };
+    if (platform === "instagram") {
+      try {
+        if (!botId) {
+          return res.json({
+            success: false,
+            error: "ไม่พบ Instagram Bot สำหรับผู้ใช้นี้",
+          });
+        }
+        const igBot = await findBotById(db, "instagram", botId);
+        const accessToken = resolveMetaAccessToken(igBot || {});
+        const instagramSenderId = resolveInstagramSenderId(igBot || {});
+        if (!igBot || !accessToken || !instagramSenderId) {
+          return res.json({
+            success: false,
+            error: "ไม่พบข้อมูล Instagram Bot สำหรับผู้ใช้นี้",
+          });
+        }
 
-    const messageInsertResult = await coll.insertOne(messageDoc);
-    if (messageInsertResult?.insertedId) {
-      messageDoc._id = messageInsertResult.insertedId;
+        await sendInstagramMessage(
+          userId,
+          message,
+          accessToken,
+          instagramSenderId,
+          {
+            selectedImageCollections: igBot.selectedImageCollections || null,
+          },
+        );
+        const messageDoc = createAdminMessageDoc();
+        await saveAndEmitAdminMessage(messageDoc);
+        return res.json({ success: true, message: "ส่งข้อความเรียบร้อยแล้ว" });
+      } catch (igError) {
+        console.log(
+          `[Admin Chat] ไม่สามารถส่งไปยัง Instagram ได้: ${igError.message}`,
+        );
+        return res.json({
+          success: false,
+          error: "ไม่สามารถส่งไปยัง Instagram ได้",
+        });
+      }
     }
-    await resetUserUnreadCount(userId);
+
+    if (platform === "whatsapp") {
+      try {
+        if (!botId) {
+          return res.json({
+            success: false,
+            error: "ไม่พบ WhatsApp Bot สำหรับผู้ใช้นี้",
+          });
+        }
+        const waBot = await findBotById(db, "whatsapp", botId);
+        const accessToken = resolveMetaAccessToken(waBot || {});
+        const phoneNumberId = resolveWhatsAppPhoneNumberId(waBot || {});
+        if (!waBot || !accessToken || !phoneNumberId) {
+          return res.json({
+            success: false,
+            error: "ไม่พบข้อมูล WhatsApp Bot สำหรับผู้ใช้นี้",
+          });
+        }
+
+        await sendWhatsAppMessage(userId, message, accessToken, phoneNumberId, {
+          selectedImageCollections: waBot.selectedImageCollections || null,
+        });
+        const messageDoc = createAdminMessageDoc();
+        await saveAndEmitAdminMessage(messageDoc);
+        return res.json({ success: true, message: "ส่งข้อความเรียบร้อยแล้ว" });
+      } catch (waError) {
+        console.log(
+          `[Admin Chat] ไม่สามารถส่งไปยัง WhatsApp ได้: ${waError.message}`,
+        );
+        return res.json({
+          success: false,
+          error: "ไม่สามารถส่งไปยัง WhatsApp ได้",
+        });
+      }
+    }
+
+    // LINE หรือแพลตฟอร์มอื่น: insert และ emit ตามปกติ
+    const messageDoc = createAdminMessageDoc();
+    await saveAndEmitAdminMessage(messageDoc);
 
     try {
       const normalizedMessage = normalizeOutgoingText(message);
@@ -22953,13 +25391,6 @@ app.post("/admin/chat/send", async (req, res) => {
       );
       // ไม่ return error เพราะข้อความยังบันทึกลง database ได้
     }
-
-    io.emit("newMessage", {
-      userId,
-      message: messageDoc,
-      sender: "assistant",
-      timestamp: messageDoc.timestamp,
-    });
 
     res.json({ success: true, message: "ส่งข้อความเรียบร้อยแล้ว" });
   } catch (err) {
@@ -23352,10 +25783,30 @@ app.get("/admin/api/all-bots", requireAdmin, async (req, res) => {
 
     const lineBots = await db.collection("line_bots").find({}).project({ _id: 1, name: 1 }).toArray();
     const facebookBots = await db.collection("facebook_bots").find({}).project({ _id: 1, name: 1 }).toArray();
+    const instagramBots = await db
+      .collection("instagram_bots")
+      .find({})
+      .project({ _id: 1, name: 1, instagramUsername: 1 })
+      .toArray();
+    const whatsappBots = await db
+      .collection("whatsapp_bots")
+      .find({})
+      .project({ _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 })
+      .toArray();
 
     const bots = [
       ...lineBots.map(b => ({ id: b._id, name: b.name, platform: "line" })),
-      ...facebookBots.map(b => ({ id: b._id, name: b.name, platform: "facebook" }))
+      ...facebookBots.map(b => ({ id: b._id, name: b.name, platform: "facebook" })),
+      ...instagramBots.map((b) => ({
+        id: b._id,
+        name: b.name || b.instagramUsername || "Instagram Bot",
+        platform: "instagram",
+      })),
+      ...whatsappBots.map((b) => ({
+        id: b._id,
+        name: b.name || b.phoneNumber || b.phoneNumberId || "WhatsApp Bot",
+        platform: "whatsapp",
+      })),
     ];
 
     res.json({ success: true, bots });
@@ -25170,7 +27621,7 @@ async function getOpenAIApiKeyForBot(botId, platform) {
     // First, check if bot has a specific key assigned
     let bot = null;
     if (botId) {
-      const collection = platform === "facebook" ? "facebook_bots" : "line_bots";
+      const collection = getBotCollectionName(platform);
       bot = await db.collection(collection).findOne({
         _id: ObjectId.isValid(botId) ? new ObjectId(botId) : botId
       });
@@ -25445,6 +27896,14 @@ app.delete("/api/openai-keys/:id", async (req, res) => {
       { openaiApiKeyId: id },
       { $unset: { openaiApiKeyId: "" } }
     );
+    await db.collection("instagram_bots").updateMany(
+      { openaiApiKeyId: id },
+      { $unset: { openaiApiKeyId: "" } }
+    );
+    await db.collection("whatsapp_bots").updateMany(
+      { openaiApiKeyId: id },
+      { $unset: { openaiApiKeyId: "" } }
+    );
 
     res.json({ success: true, message: "ลบ API Key เรียบร้อยแล้ว" });
   } catch (err) {
@@ -25671,19 +28130,26 @@ app.get("/api/openai-usage/summary", async (req, res) => {
     // Enrich bot data with names
     const botIds = byBot.map(b => b._id.botId).filter(Boolean);
     const validBotIds = botIds.filter(id => ObjectId.isValid(id));
-    const [lineBots, facebookBots] = await Promise.all([
+    const [lineBots, facebookBots, instagramBots, whatsappBots] =
+      await Promise.all([
       validBotIds.length > 0
         ? db.collection("line_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
         : [],
       validBotIds.length > 0
         ? db.collection("facebook_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
         : [],
-    ]);
+      validBotIds.length > 0
+        ? db.collection("instagram_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
+        : [],
+      validBotIds.length > 0
+        ? db.collection("whatsapp_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
+        : [],
+      ]);
 
     const botNameMap = {
       'instruction-chat': 'Instruction Chat (Admin)',
     };
-    [...lineBots, ...facebookBots].forEach(b => {
+    [...lineBots, ...facebookBots, ...instagramBots, ...whatsappBots].forEach(b => {
       botNameMap[b._id.toString()] = b.name || b.pageName || b._id.toString();
     });
 
@@ -25988,9 +28454,21 @@ app.get("/api/openai-usage/by-model/:model", async (req, res) => {
 
     // Enrich bot names
     const botIds = byBot.map(b => b._id.botId).filter(id => id);
-    const lineBots = await db.collection("line_bots").find({ _id: { $in: botIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } }).toArray();
-    const fbBots = await db.collection("facebook_bots").find({ _id: { $in: botIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } }).toArray();
-    const botMap = Object.fromEntries([...lineBots, ...fbBots].map(b => [b._id.toString(), b.name]));
+    const validBotObjectIds = botIds
+      .filter(id => ObjectId.isValid(id))
+      .map(id => new ObjectId(id));
+    const [lineBots, fbBots, instagramBots, whatsappBots] = await Promise.all([
+      db.collection("line_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
+      db.collection("facebook_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
+      db.collection("instagram_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
+      db.collection("whatsapp_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
+    ]);
+    const botMap = Object.fromEntries(
+      [...lineBots, ...fbBots, ...instagramBots, ...whatsappBots].map((b) => [
+        b._id.toString(),
+        b.name || b.pageName || b.phoneNumber || b.instagramUsername || b._id.toString(),
+      ]),
+    );
 
     res.json({
       success: true,
@@ -26105,9 +28583,21 @@ app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
 
     // Enrich bot names
     const botIds = byBot.map(b => b._id.botId).filter(id => id);
-    const lineBots = await db.collection("line_bots").find({ _id: { $in: botIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } }).toArray();
-    const fbBots = await db.collection("facebook_bots").find({ _id: { $in: botIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id)) } }).toArray();
-    const botMap = Object.fromEntries([...lineBots, ...fbBots].map(b => [b._id.toString(), b.name]));
+    const validBotObjectIds = botIds
+      .filter(id => ObjectId.isValid(id))
+      .map(id => new ObjectId(id));
+    const [lineBots, fbBots, instagramBots, whatsappBots] = await Promise.all([
+      db.collection("line_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
+      db.collection("facebook_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
+      db.collection("instagram_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
+      db.collection("whatsapp_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
+    ]);
+    const botMap = Object.fromEntries(
+      [...lineBots, ...fbBots, ...instagramBots, ...whatsappBots].map((b) => [
+        b._id.toString(),
+        b.name || b.pageName || b.phoneNumber || b.instagramUsername || b._id.toString(),
+      ]),
+    );
 
     res.json({
       success: true,
@@ -26250,6 +28740,8 @@ app.get("/admin/orders/data", async (req, res) => {
     const botIdSets = {
       line: new Set(),
       facebook: new Set(),
+      instagram: new Set(),
+      whatsapp: new Set(),
     };
 
     orders.forEach((order) => {
@@ -26266,6 +28758,8 @@ app.get("/admin/orders/data", async (req, res) => {
 
     let lineBotDocs = [];
     let facebookBotDocs = [];
+    let instagramBotDocs = [];
+    let whatsappBotDocs = [];
 
     const lineBotIds = [...botIdSets.line].filter((id) => ObjectId.isValid(id));
     if (lineBotIds.length) {
@@ -26287,6 +28781,28 @@ app.get("/admin/orders/data", async (req, res) => {
         .toArray();
     }
 
+    const instagramBotIds = [...botIdSets.instagram].filter((id) =>
+      ObjectId.isValid(id),
+    );
+    if (instagramBotIds.length) {
+      instagramBotDocs = await db
+        .collection("instagram_bots")
+        .find({ _id: { $in: instagramBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, instagramUsername: 1, instagramUserId: 1, igUserId: 1 })
+        .toArray();
+    }
+
+    const whatsappBotIds = [...botIdSets.whatsapp].filter((id) =>
+      ObjectId.isValid(id),
+    );
+    if (whatsappBotIds.length) {
+      whatsappBotDocs = await db
+        .collection("whatsapp_bots")
+        .find({ _id: { $in: whatsappBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, phoneNumber: 1, phoneNumberId: 1 })
+        .toArray();
+    }
+
     const pageNameMap = new Map();
     lineBotDocs.forEach((bot) => {
       const key = buildOrderPageKey("line", bot._id.toString());
@@ -26303,6 +28819,25 @@ app.get("/admin/orders/data", async (req, res) => {
         bot.pageName ||
         bot.name ||
         `Facebook Page (${bot._id.toString().slice(-4)})`;
+      pageNameMap.set(key, label);
+    });
+    instagramBotDocs.forEach((bot) => {
+      const key = buildOrderPageKey("instagram", bot._id.toString());
+      const label =
+        bot.name ||
+        bot.instagramUsername ||
+        bot.instagramUserId ||
+        bot.igUserId ||
+        `Instagram (${bot._id.toString().slice(-4)})`;
+      pageNameMap.set(key, label);
+    });
+    whatsappBotDocs.forEach((bot) => {
+      const key = buildOrderPageKey("whatsapp", bot._id.toString());
+      const label =
+        bot.name ||
+        bot.phoneNumber ||
+        bot.phoneNumberId ||
+        `WhatsApp (${bot._id.toString().slice(-4)})`;
       pageNameMap.set(key, label);
     });
 
@@ -26326,9 +28861,7 @@ app.get("/admin/orders/data", async (req, res) => {
       const pageKey = buildOrderPageKey(platform, botId);
       const pageName =
         pageNameMap.get(pageKey) ||
-        (botId
-          ? `${platform === "facebook" ? "Facebook" : "LINE"} (${botId})`
-          : null);
+        (botId ? `${getPlatformLabel(platform)} (${botId})` : null);
       const recipientName =
         normalizeCustomerName(orderData.recipientName) ||
         customerName ||
@@ -26445,6 +28978,8 @@ app.get("/admin/orders/export", async (req, res) => {
     const botIdSets = {
       line: new Set(),
       facebook: new Set(),
+      instagram: new Set(),
+      whatsapp: new Set(),
     };
 
     orders.forEach((order) => {
@@ -26461,6 +28996,8 @@ app.get("/admin/orders/export", async (req, res) => {
 
     let lineBotDocs = [];
     let facebookBotDocs = [];
+    let instagramBotDocs = [];
+    let whatsappBotDocs = [];
 
     const lineBotIds = [...botIdSets.line].filter((id) => ObjectId.isValid(id));
     if (lineBotIds.length) {
@@ -26482,6 +29019,28 @@ app.get("/admin/orders/export", async (req, res) => {
         .toArray();
     }
 
+    const instagramBotIds = [...botIdSets.instagram].filter((id) =>
+      ObjectId.isValid(id),
+    );
+    if (instagramBotIds.length) {
+      instagramBotDocs = await db
+        .collection("instagram_bots")
+        .find({ _id: { $in: instagramBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, instagramUsername: 1, instagramUserId: 1, igUserId: 1 })
+        .toArray();
+    }
+
+    const whatsappBotIds = [...botIdSets.whatsapp].filter((id) =>
+      ObjectId.isValid(id),
+    );
+    if (whatsappBotIds.length) {
+      whatsappBotDocs = await db
+        .collection("whatsapp_bots")
+        .find({ _id: { $in: whatsappBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, phoneNumber: 1, phoneNumberId: 1 })
+        .toArray();
+    }
+
     const pageNameMap = new Map();
     lineBotDocs.forEach((bot) => {
       const key = buildOrderPageKey("line", bot._id.toString());
@@ -26498,6 +29057,25 @@ app.get("/admin/orders/export", async (req, res) => {
         bot.pageName ||
         bot.name ||
         `Facebook Page (${bot._id.toString().slice(-4)})`;
+      pageNameMap.set(key, label);
+    });
+    instagramBotDocs.forEach((bot) => {
+      const key = buildOrderPageKey("instagram", bot._id.toString());
+      const label =
+        bot.name ||
+        bot.instagramUsername ||
+        bot.instagramUserId ||
+        bot.igUserId ||
+        `Instagram (${bot._id.toString().slice(-4)})`;
+      pageNameMap.set(key, label);
+    });
+    whatsappBotDocs.forEach((bot) => {
+      const key = buildOrderPageKey("whatsapp", bot._id.toString());
+      const label =
+        bot.name ||
+        bot.phoneNumber ||
+        bot.phoneNumberId ||
+        `WhatsApp (${bot._id.toString().slice(-4)})`;
       pageNameMap.set(key, label);
     });
 
@@ -26686,10 +29264,8 @@ app.get("/admin/orders/export", async (req, res) => {
       const pageName =
         pageNameMap.get(pageKey) ||
         (botId
-          ? `${platform === "facebook" ? "Facebook" : "LINE"} (${botId})`
-          : platform === "facebook"
-            ? "Facebook (default)"
-            : "LINE (default)");
+          ? `${getPlatformLabel(platform)} (${botId})`
+          : `${getPlatformLabel(platform)} (default)`);
 
       const customerName = toText(
         normalizeCustomerName(orderData.customerName) || profileMap[order.userId],
@@ -28935,7 +31511,12 @@ async function getNormalizedChatUsers(options = {}) {
     }
 
     // Map botId -> bot display name for showing channel in chat user list
-    const botIdsByPlatform = { line: new Set(), facebook: new Set() };
+    const botIdsByPlatform = {
+      line: new Set(),
+      facebook: new Set(),
+      instagram: new Set(),
+      whatsapp: new Set(),
+    };
     users.forEach((user) => {
       const platform =
         typeof user.platform === "string" ? user.platform.toLowerCase() : "line";
@@ -28945,6 +31526,10 @@ async function getNormalizedChatUsers(options = {}) {
         botIdsByPlatform.facebook.add(botId);
       } else if (platform === "line") {
         botIdsByPlatform.line.add(botId);
+      } else if (platform === "instagram") {
+        botIdsByPlatform.instagram.add(botId);
+      } else if (platform === "whatsapp") {
+        botIdsByPlatform.whatsapp.add(botId);
       }
     });
 
@@ -28954,8 +31539,15 @@ async function getNormalizedChatUsers(options = {}) {
     const facebookBotObjectIds = [...botIdsByPlatform.facebook]
       .filter((id) => ObjectId.isValid(id))
       .map((id) => new ObjectId(id));
+    const instagramBotObjectIds = [...botIdsByPlatform.instagram]
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+    const whatsappBotObjectIds = [...botIdsByPlatform.whatsapp]
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
 
-    const [lineBotDocs, facebookBotDocs] = await Promise.all([
+    const [lineBotDocs, facebookBotDocs, instagramBotDocs, whatsappBotDocs] =
+      await Promise.all([
       lineBotObjectIds.length > 0
         ? db
           .collection("line_bots")
@@ -28970,11 +31562,33 @@ async function getNormalizedChatUsers(options = {}) {
           .project({ _id: 1, name: 1, pageName: 1, pageId: 1 })
           .toArray()
         : [],
-    ]);
+      instagramBotObjectIds.length > 0
+        ? db
+          .collection("instagram_bots")
+          .find({ _id: { $in: instagramBotObjectIds } })
+          .project({
+            _id: 1,
+            name: 1,
+            instagramUsername: 1,
+            instagramUserId: 1,
+            igUserId: 1,
+          })
+          .toArray()
+        : [],
+      whatsappBotObjectIds.length > 0
+        ? db
+          .collection("whatsapp_bots")
+          .find({ _id: { $in: whatsappBotObjectIds } })
+          .project({ _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 })
+          .toArray()
+        : [],
+      ]);
 
     const botNameMap = {
       line: new Map(),
       facebook: new Map(),
+      instagram: new Map(),
+      whatsapp: new Map(),
     };
     lineBotDocs.forEach((bot) => {
       const id = bot?._id?.toString?.() || "";
@@ -28995,22 +31609,44 @@ async function getNormalizedChatUsers(options = {}) {
         bot.pageName || bot.name || `Facebook Page (${id.slice(-4)})`,
       );
     });
+    instagramBotDocs.forEach((bot) => {
+      const id = bot?._id?.toString?.() || "";
+      if (!id) return;
+      botNameMap.instagram.set(
+        id,
+        bot.name ||
+        bot.instagramUsername ||
+        bot.instagramUserId ||
+        bot.igUserId ||
+        `Instagram (${id.slice(-4)})`,
+      );
+    });
+    whatsappBotDocs.forEach((bot) => {
+      const id = bot?._id?.toString?.() || "";
+      if (!id) return;
+      botNameMap.whatsapp.set(
+        id,
+        bot.name ||
+        bot.phoneNumber ||
+        bot.phoneNumberId ||
+        `WhatsApp (${id.slice(-4)})`,
+      );
+    });
 
     const buildChannelInfo = (platform, botId) => {
       const normalizedPlatform =
         typeof platform === "string" ? platform.toLowerCase() : "line";
       const normalizedBotId = normalizeFollowUpBotId(botId);
-      const platformLabel =
-        normalizedPlatform === "facebook"
-          ? "Facebook"
-          : normalizedPlatform === "line"
-            ? "LINE"
-            : String(platform || "");
+      const platformLabel = getPlatformLabel(normalizedPlatform);
       const resolvedName =
         normalizedPlatform === "facebook"
           ? botNameMap.facebook.get(normalizedBotId)
           : normalizedPlatform === "line"
             ? botNameMap.line.get(normalizedBotId)
+            : normalizedPlatform === "instagram"
+              ? botNameMap.instagram.get(normalizedBotId)
+              : normalizedPlatform === "whatsapp"
+                ? botNameMap.whatsapp.get(normalizedBotId)
             : null;
       return {
         platformLabel,

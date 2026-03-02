@@ -5,6 +5,8 @@
         assets: [],
         lineBots: [],
         facebookBots: [],
+        instagramBots: [],
+        whatsappBots: [],
         collectionFilter: '',
         assetFilter: '',
         collectionAssetFilter: '',
@@ -38,6 +40,8 @@
         uploadQueueList: null,
         lineAssignments: null,
         facebookAssignments: null,
+        instagramAssignments: null,
+        whatsappAssignments: null,
         collectionModal: null,
         collectionForm: null,
         collectionId: null,
@@ -121,7 +125,80 @@
             Array.isArray(bot.selectedImageCollections) &&
             bot.selectedImageCollections.includes(collectionId)
         ).length;
-        return { line: isUsedByLine, facebook: isUsedByFacebook };
+        const isUsedByInstagram = state.instagramBots.filter((bot) =>
+            Array.isArray(bot.selectedImageCollections) &&
+            bot.selectedImageCollections.includes(collectionId)
+        ).length;
+        const isUsedByWhatsApp = state.whatsappBots.filter((bot) =>
+            Array.isArray(bot.selectedImageCollections) &&
+            bot.selectedImageCollections.includes(collectionId)
+        ).length;
+        return {
+            line: isUsedByLine,
+            facebook: isUsedByFacebook,
+            instagram: isUsedByInstagram,
+            whatsapp: isUsedByWhatsApp
+        };
+    };
+
+    const getBotsByType = (type) => {
+        switch (type) {
+        case 'line':
+            return state.lineBots;
+        case 'facebook':
+            return state.facebookBots;
+        case 'instagram':
+            return state.instagramBots;
+        case 'whatsapp':
+            return state.whatsappBots;
+        default:
+            return [];
+        }
+    };
+
+    const getBotPlatformLabel = (type) => {
+        switch (type) {
+        case 'line':
+            return 'LINE Bot';
+        case 'facebook':
+            return 'Facebook Bot';
+        case 'instagram':
+            return 'Instagram Bot';
+        case 'whatsapp':
+            return 'WhatsApp Bot';
+        default:
+            return 'Bot';
+        }
+    };
+
+    const getAssignmentIconHtml = (type) => {
+        switch (type) {
+        case 'line':
+            return '<span class="assignment-icon line me-2"><i class="fab fa-line"></i></span>';
+        case 'facebook':
+            return '<span class="assignment-icon facebook me-2"><i class="fab fa-facebook-f"></i></span>';
+        case 'instagram':
+            return '<span class="assignment-icon instagram me-2"><i class="fab fa-instagram"></i></span>';
+        case 'whatsapp':
+            return '<span class="assignment-icon whatsapp me-2"><i class="fab fa-whatsapp"></i></span>';
+        default:
+            return '<span class="assignment-icon me-2"><i class="fas fa-robot"></i></span>';
+        }
+    };
+
+    const getBotCollectionsApiUrl = (type, botId) => {
+        switch (type) {
+        case 'line':
+            return `/api/line-bots/${botId}/image-collections`;
+        case 'facebook':
+            return `/api/facebook-bots/${botId}/image-collections`;
+        case 'instagram':
+            return `/api/instagram-bots/${botId}/image-collections`;
+        case 'whatsapp':
+            return `/api/whatsapp-bots/${botId}/image-collections`;
+        default:
+            return '';
+        }
     };
 
     const cacheElements = () => {
@@ -148,6 +225,8 @@
         elements.bulkDeleteAssetsBtn = document.getElementById('bulkDeleteAssetsBtn');
         elements.lineAssignments = document.getElementById('lineBotCollectionsList');
         elements.facebookAssignments = document.getElementById('facebookBotCollectionsList');
+        elements.instagramAssignments = document.getElementById('instagramBotCollectionsList');
+        elements.whatsappAssignments = document.getElementById('whatsappBotCollectionsList');
         elements.collectionModal = document.getElementById('imageCollectionModal');
         elements.collectionForm = document.getElementById('imageCollectionForm');
         elements.collectionId = document.getElementById('imageCollectionId');
@@ -315,6 +394,14 @@
 
         if (elements.facebookAssignments) {
             elements.facebookAssignments.addEventListener('click', handleAssignmentAction);
+        }
+
+        if (elements.instagramAssignments) {
+            elements.instagramAssignments.addEventListener('click', handleAssignmentAction);
+        }
+
+        if (elements.whatsappAssignments) {
+            elements.whatsappAssignments.addEventListener('click', handleAssignmentAction);
         }
 
         if (elements.botCollectionsSearch) {
@@ -1451,17 +1538,27 @@
 
     const fetchBots = async () => {
         try {
-            const [lineRes, fbRes] = await Promise.all([
+            const [lineRes, fbRes, igRes, waRes] = await Promise.all([
                 fetch('/api/line-bots'),
-                fetch('/api/facebook-bots')
+                fetch('/api/facebook-bots'),
+                fetch('/api/instagram-bots'),
+                fetch('/api/whatsapp-bots')
             ]);
             if (!lineRes.ok) throw new Error('ไม่สามารถดึงข้อมูล Line Bot ได้');
             if (!fbRes.ok) throw new Error('ไม่สามารถดึงข้อมูล Facebook Bot ได้');
+            if (!igRes.ok) throw new Error('ไม่สามารถดึงข้อมูล Instagram Bot ได้');
+            if (!waRes.ok) throw new Error('ไม่สามารถดึงข้อมูล WhatsApp Bot ได้');
             state.lineBots = await lineRes.json();
             state.facebookBots = await fbRes.json();
+            state.instagramBots = await igRes.json();
+            state.whatsappBots = await waRes.json();
         } catch (err) {
             console.error('fetchBots error:', err);
             showAlert('โหลดข้อมูลบอทไม่สำเร็จ', 'danger');
+            state.lineBots = [];
+            state.facebookBots = [];
+            state.instagramBots = [];
+            state.whatsappBots = [];
         }
     };
 
@@ -1520,7 +1617,7 @@
 
         const usageFiltered = filtered.filter((collection) => {
             const usage = computeCollectionUsage(collection._id);
-            const totalUsage = usage.line + usage.facebook;
+            const totalUsage = usage.line + usage.facebook + usage.instagram + usage.whatsapp;
             if (state.collectionUsageFilter === 'assigned') {
                 return totalUsage > 0;
             }
@@ -1552,6 +1649,8 @@
                 const usageBadges = `
                     <span class="collection-stat badge bg-light text-dark"><i class="fab fa-line me-1 text-success"></i>${usage.line}</span>
                     <span class="collection-stat badge bg-light text-dark"><i class="fab fa-facebook-f me-1 text-primary"></i>${usage.facebook}</span>
+                    <span class="collection-stat badge bg-light text-dark"><i class="fab fa-instagram me-1 text-danger"></i>${usage.instagram}</span>
+                    <span class="collection-stat badge bg-light text-dark"><i class="fab fa-whatsapp me-1 text-success"></i>${usage.whatsapp}</span>
                 `;
                 const previewImages = Array.isArray(collection.images) ? collection.images.slice(0, 3) : [];
                 const previewHtml = previewImages
@@ -1800,15 +1899,18 @@
     const renderAssignments = () => {
         renderBotAssignments('line', elements.lineAssignments, state.lineBots);
         renderBotAssignments('facebook', elements.facebookAssignments, state.facebookBots);
+        renderBotAssignments('instagram', elements.instagramAssignments, state.instagramBots);
+        renderBotAssignments('whatsapp', elements.whatsappAssignments, state.whatsappBots);
     };
 
     const renderBotAssignments = (type, container, bots) => {
         if (!container) return;
+        const platformLabel = getBotPlatformLabel(type);
         if (!Array.isArray(bots) || bots.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-robot mb-2"></i>
-                    <div>ยังไม่มี ${type === 'line' ? 'LINE Bot' : 'Facebook Bot'}</div>
+                    <div>ยังไม่มี ${platformLabel}</div>
                     <small class="text-muted">เพิ่มบอทก่อนเพื่อกำหนดคลังรูปภาพ</small>
                 </div>
             `;
@@ -1853,7 +1955,7 @@
 
     const openBotImageCollectionsModal = (botType, botId) => {
         if (!elements.botModal) return;
-        const list = botType === 'line' ? state.lineBots : state.facebookBots;
+        const list = getBotsByType(botType);
         const bot = list.find((item) => item._id === botId);
         if (!bot) {
             showAlert('ไม่พบบอทที่เลือก', 'warning');
@@ -1866,14 +1968,12 @@
         }
 
         if (elements.botModalLabel) {
-            const platformIcon = botType === 'line'
-                ? '<span class="assignment-icon line me-2"><i class="fab fa-line"></i></span>'
-                : '<span class="assignment-icon facebook me-2"><i class="fab fa-facebook-f"></i></span>';
+            const platformIcon = getAssignmentIconHtml(botType);
             elements.botModalLabel.innerHTML = `${platformIcon}เลือกคลังรูปภาพสำหรับ ${bot.name || 'ไม่ระบุชื่อ'}`;
         }
 
         if (elements.botModalSummary) {
-            const platformText = botType === 'line' ? 'LINE Bot' : 'Facebook Bot';
+            const platformText = getBotPlatformLabel(botType);
             const selected = Array.isArray(bot.selectedImageCollections)
                 ? bot.selectedImageCollections.length
                 : 0;
@@ -1902,7 +2002,7 @@
 
         const currentSelections = new Set();
         if (state.editingBot) {
-            const list = state.editingBot.botType === 'line' ? state.lineBots : state.facebookBots;
+            const list = getBotsByType(state.editingBot.botType);
             const bot = list.find((item) => item._id === state.editingBot.botId);
             if (bot && Array.isArray(bot.selectedImageCollections)) {
                 bot.selectedImageCollections.forEach((id) => currentSelections.add(id));
@@ -1956,10 +2056,11 @@
         ).map((input) => input.value);
 
         const payload = { selectedImageCollections: selected };
-        const url =
-            botType === 'line'
-                ? `/api/line-bots/${botId}/image-collections`
-                : `/api/facebook-bots/${botId}/image-collections`;
+        const url = getBotCollectionsApiUrl(botType, botId);
+        if (!url) {
+            showAlert('ประเภทบอทไม่รองรับ', 'warning');
+            return;
+        }
 
         try {
             elements.saveBotCollectionsBtn.disabled = true;
@@ -1984,11 +2085,8 @@
             await fetchBots();
             renderAssignments();
 
-            if (typeof loadLineBotSettings === 'function') {
-                loadLineBotSettings();
-            }
-            if (typeof loadFacebookBotSettings === 'function') {
-                loadFacebookBotSettings();
+            if (typeof loadBotSettings === 'function') {
+                loadBotSettings();
             }
         } catch (err) {
             console.error('saveBotImageCollections error:', err);

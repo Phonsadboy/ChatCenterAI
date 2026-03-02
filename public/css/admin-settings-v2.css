@@ -287,6 +287,14 @@ input:checked+.toggle-slider:before {
     background: linear-gradient(135deg, #1877f2, #0f5ecc);
 }
 
+.bot-channel.instagram {
+    background: linear-gradient(135deg, #f58529, #dd2a7b 55%, #8134af);
+}
+
+.bot-channel.whatsapp {
+    background: linear-gradient(135deg, #25d366, #128c7e);
+}
+
 .bot-channel.notification {
     background: linear-gradient(135deg, #f2994a, #eb5757);
 }
@@ -2449,6 +2457,42 @@ input:checked+.toggle-slider:before {
 
 .assignment-bot-icon.facebook {
     background: linear-gradient(135deg, #1877f2, #0f5ecc);
+}
+
+.assignment-bot-icon.instagram {
+    background: linear-gradient(135deg, #f58529, #dd2a7b 55%, #8134af);
+}
+
+.assignment-bot-icon.whatsapp {
+    background: linear-gradient(135deg, #25d366, #128c7e);
+}
+
+.assignment-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 0.9rem;
+    vertical-align: middle;
+}
+
+.assignment-icon.line {
+    background: linear-gradient(135deg, #06c755, #03ad49);
+}
+
+.assignment-icon.facebook {
+    background: linear-gradient(135deg, #1877f2, #0f5ecc);
+}
+
+.assignment-icon.instagram {
+    background: linear-gradient(135deg, #f58529, #dd2a7b 55%, #8134af);
+}
+
+.assignment-icon.whatsapp {
+    background: linear-gradient(135deg, #25d366, #128c7e);
 }
 
 /* Enhanced Empty State */

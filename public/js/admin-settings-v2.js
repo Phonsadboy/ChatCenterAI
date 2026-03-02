@@ -141,29 +141,41 @@ async function loadAllSettings() {
 async function loadBotSettings() {
     const lineContainer = document.getElementById('line-bots-list');
     const fbContainer = document.getElementById('facebook-bots-list');
+    const igContainer = document.getElementById('instagram-bots-list');
+    const waContainer = document.getElementById('whatsapp-bots-list');
 
     if (lineContainer) lineContainer.innerHTML = '<div class="text-center p-3 text-muted-v2">กำลังโหลด Line Bots...</div>';
     if (fbContainer) fbContainer.innerHTML = '<div class="text-center p-3 text-muted-v2">กำลังโหลด Facebook Bots...</div>';
+    if (igContainer) igContainer.innerHTML = '<div class="text-center p-3 text-muted-v2">กำลังโหลด Instagram Bots...</div>';
+    if (waContainer) waContainer.innerHTML = '<div class="text-center p-3 text-muted-v2">กำลังโหลด WhatsApp Bots...</div>';
 
     try {
         if (instructionLibraries.length === 0) {
             await loadInstructionLibraries();
         }
 
-        const [lineRes, fbRes] = await Promise.all([
+        const [lineRes, fbRes, igRes, waRes] = await Promise.all([
             fetch('/api/line-bots'),
-            fetch('/api/facebook-bots')
+            fetch('/api/facebook-bots'),
+            fetch('/api/instagram-bots'),
+            fetch('/api/whatsapp-bots')
         ]);
 
         const lineBots = await lineRes.json();
         const fbBots = await fbRes.json();
+        const igBots = await igRes.json();
+        const waBots = await waRes.json();
 
         renderLineBots(lineBots);
         renderFacebookBots(fbBots);
+        renderInstagramBots(igBots);
+        renderWhatsAppBots(waBots);
     } catch (error) {
         console.error('Error loading bots:', error);
         if (lineContainer) lineContainer.innerHTML = '<div class="text-danger p-3">โหลดข้อมูลไม่สำเร็จ</div>';
         if (fbContainer) fbContainer.innerHTML = '<div class="text-danger p-3">โหลดข้อมูลไม่สำเร็จ</div>';
+        if (igContainer) igContainer.innerHTML = '<div class="text-danger p-3">โหลดข้อมูลไม่สำเร็จ</div>';
+        if (waContainer) waContainer.innerHTML = '<div class="text-danger p-3">โหลดข้อมูลไม่สำเร็จ</div>';
     }
 }
 
@@ -260,8 +272,96 @@ function renderFacebookBots(bots) {
     `).join('');
 }
 
+function renderInstagramBots(bots) {
+    const container = document.getElementById('instagram-bots-list');
+    if (!container) return;
+
+    if (!Array.isArray(bots) || bots.length === 0) {
+        container.innerHTML = '<div class="text-center p-4 text-muted-v2">ยังไม่มีการตั้งค่า Instagram Bot</div>';
+        return;
+    }
+
+    container.innerHTML = bots.map(bot => `
+        <div class="bot-item-compact">
+            <div class="bot-channel instagram"><i class="fab fa-instagram"></i></div>
+            <div class="bot-main">
+                <div class="bot-header">
+                    <div class="bot-title">
+                        <span class="bot-name">${escapeHtml(bot.name || bot.instagramUsername || 'Instagram Bot')}</span>
+                        ${bot.isDefault ? '<span class="badge badge-default">ค่าเริ่มต้น</span>' : ''}
+                    </div>
+                </div>
+                <div class="bot-subtext">
+                    Model: ${escapeHtml(bot.aiModel || 'gpt-5')}
+                    • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
+                    • IG ID: ${escapeHtml(bot.instagramUserId || bot.igUserId || bot.instagramBusinessAccountId || 'N/A')}
+                </div>
+                ${buildBotInlineControls(bot, 'instagram')}
+            </div>
+            <div class="bot-actions-compact">
+                <label class="toggle-switch mb-0">
+                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('instagram', '${bot._id}', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+                <div class="actions-stack">
+                    <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditInstagramBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderWhatsAppBots(bots) {
+    const container = document.getElementById('whatsapp-bots-list');
+    if (!container) return;
+
+    if (!Array.isArray(bots) || bots.length === 0) {
+        container.innerHTML = '<div class="text-center p-4 text-muted-v2">ยังไม่มีการตั้งค่า WhatsApp Bot</div>';
+        return;
+    }
+
+    container.innerHTML = bots.map(bot => `
+        <div class="bot-item-compact">
+            <div class="bot-channel whatsapp"><i class="fab fa-whatsapp"></i></div>
+            <div class="bot-main">
+                <div class="bot-header">
+                    <div class="bot-title">
+                        <span class="bot-name">${escapeHtml(bot.name || bot.phoneNumber || 'WhatsApp Bot')}</span>
+                        ${bot.isDefault ? '<span class="badge badge-default">ค่าเริ่มต้น</span>' : ''}
+                    </div>
+                </div>
+                <div class="bot-subtext">
+                    Model: ${escapeHtml(bot.aiModel || 'gpt-5')}
+                    • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
+                    • Phone ID: ${escapeHtml(bot.phoneNumberId || bot.whatsappPhoneNumberId || 'N/A')}
+                </div>
+                ${buildBotInlineControls(bot, 'whatsapp')}
+            </div>
+            <div class="bot-actions-compact">
+                <label class="toggle-switch mb-0">
+                    <input type="checkbox" ${bot.status === 'active' ? 'checked' : ''} onchange="toggleBotStatus('whatsapp', '${bot._id}', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+                <div class="actions-stack">
+                    <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditWhatsAppBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
 async function toggleBotStatus(type, id, isActive) {
-    const endpoint = type === 'line' ? `/api/line-bots/${id}` : `/api/facebook-bots/${id}`;
+    const endpointMap = {
+        line: `/api/line-bots/${id}`,
+        facebook: `/api/facebook-bots/${id}`,
+        instagram: `/api/instagram-bots/${id}`,
+        whatsapp: `/api/whatsapp-bots/${id}`,
+    };
+    const endpoint = endpointMap[type];
+    if (!endpoint) {
+        showToast('ประเภทบอทไม่รองรับ', 'danger');
+        return;
+    }
 
     try {
         const getRes = await fetch(endpoint);
@@ -277,7 +377,13 @@ async function toggleBotStatus(type, id, isActive) {
         });
 
         if (updateRes.ok) {
-            showToast(`${type === 'line' ? 'Line' : 'Facebook'} Bot ${isActive ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว'}`, 'success');
+            const labelMap = {
+                line: 'Line',
+                facebook: 'Facebook',
+                instagram: 'Instagram',
+                whatsapp: 'WhatsApp',
+            };
+            showToast(`${labelMap[type] || 'Bot'} ${isActive ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว'}`, 'success');
             loadBotSettings();
         } else {
             throw new Error('Update failed');
@@ -664,6 +770,296 @@ async function autoFetchFacebookDataset() {
     }
 }
 
+// Instagram Bot
+window.openAddInstagramBotModal = async function () {
+    const form = document.getElementById('instagramBotForm');
+    if (form) form.reset();
+    const idInput = document.getElementById('instagramBotId');
+    if (idInput) idInput.value = '';
+
+    setAiConfigUI('instagram', defaultAiConfig);
+    const collapseEl = document.getElementById('instagramBotAiParams');
+    if (collapseEl && collapseEl.classList.contains('show')) {
+        const collapseInstance = bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+        collapseInstance.hide();
+    }
+
+    await populateApiKeyDropdowns('instagramBotApiKeyId');
+
+    const deleteBtn = document.getElementById('deleteInstagramBotBtn');
+    if (deleteBtn) deleteBtn.style.display = 'none';
+
+    const title = document.getElementById('addInstagramBotModalLabel');
+    if (title) title.innerHTML = '<i class="fab fa-instagram me-2"></i>เพิ่ม Instagram Bot ใหม่';
+
+    const modalEl = document.getElementById('addInstagramBotModal');
+    if (modalEl) {
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+    }
+};
+
+window.openEditInstagramBotModal = async function (id) {
+    await populateApiKeyDropdowns('instagramBotApiKeyId');
+    try {
+        const res = await fetch(`/api/instagram-bots/${id}`);
+        const bot = await res.json();
+
+        document.getElementById('instagramBotId').value = bot._id;
+        document.getElementById('instagramBotName').value = bot.name || '';
+        document.getElementById('instagramBotDescription').value = bot.description || '';
+        document.getElementById('instagramUserId').value =
+            bot.instagramBusinessAccountId || bot.instagramUserId || bot.igUserId || '';
+        document.getElementById('instagramUsername').value = bot.instagramUsername || '';
+        document.getElementById('instagramAccessToken').value = bot.accessToken || '';
+        document.getElementById('instagramVerifyToken').value = bot.verifyToken || '';
+        document.getElementById('instagramWebhookUrl').value = bot.webhookUrl || '';
+
+        const statusSelect = document.getElementById('instagramBotStatus');
+        if (statusSelect) statusSelect.value = bot.status || 'active';
+
+        const aiModelSelect = document.getElementById('instagramBotAiModel');
+        if (aiModelSelect) aiModelSelect.value = bot.aiModel || 'gpt-5';
+
+        const defaultCheck = document.getElementById('instagramBotDefault');
+        if (defaultCheck) defaultCheck.checked = !!bot.isDefault;
+
+        setAiConfigUI('instagram', bot.aiConfig || defaultAiConfig);
+
+        const apiKeySelect = document.getElementById('instagramBotApiKeyId');
+        if (apiKeySelect) apiKeySelect.value = bot.openaiApiKeyId || '';
+
+        const title = document.getElementById('addInstagramBotModalLabel');
+        if (title) title.innerHTML = '<i class="fab fa-instagram me-2"></i>แก้ไข Instagram Bot';
+
+        const deleteBtn = document.getElementById('deleteInstagramBotBtn');
+        if (deleteBtn) deleteBtn.style.display = 'inline-block';
+
+        const modalEl = document.getElementById('addInstagramBotModal');
+        if (modalEl) {
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
+    } catch (error) {
+        console.error('Error fetching instagram bot details:', error);
+        showToast('ไม่สามารถโหลดข้อมูลบอทได้', 'danger');
+    }
+};
+
+async function saveInstagramBot() {
+    const botId = document.getElementById('instagramBotId').value;
+    const botData = {
+        name: document.getElementById('instagramBotName').value,
+        description: document.getElementById('instagramBotDescription').value,
+        instagramUserId: document.getElementById('instagramUserId').value,
+        instagramUsername: document.getElementById('instagramUsername').value,
+        accessToken: document.getElementById('instagramAccessToken').value,
+        verifyToken: document.getElementById('instagramVerifyToken').value,
+        webhookUrl: document.getElementById('instagramWebhookUrl').value,
+        status: document.getElementById('instagramBotStatus').value,
+        aiModel: document.getElementById('instagramBotAiModel').value,
+        isDefault: document.getElementById('instagramBotDefault').checked,
+        aiConfig: readAiConfigFromUI('instagram'),
+        openaiApiKeyId: document.getElementById('instagramBotApiKeyId')?.value || ''
+    };
+
+    const url = botId ? `/api/instagram-bots/${botId}` : '/api/instagram-bots';
+    const method = botId ? 'PUT' : 'POST';
+
+    try {
+        const res = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(botData)
+        });
+        if (res.ok) {
+            showToast('บันทึกข้อมูล Instagram Bot เรียบร้อยแล้ว', 'success');
+            const modalEl = document.getElementById('addInstagramBotModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+            loadBotSettings();
+        } else {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data?.error || 'Save failed');
+        }
+    } catch (error) {
+        console.error('Error saving instagram bot:', error);
+        showToast(error.message || 'บันทึกข้อมูลไม่สำเร็จ', 'danger');
+    }
+}
+
+async function deleteInstagramBot(botId) {
+    if (!confirm('ต้องการลบ Instagram Bot นี้หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้')) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/instagram-bots/${botId}`, {
+            method: 'DELETE'
+        });
+
+        if (res.ok) {
+            showToast('ลบ Instagram Bot เรียบร้อยแล้ว', 'success');
+            const modalEl = document.getElementById('addInstagramBotModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+            loadBotSettings();
+        } else {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'ลบไม่สำเร็จ');
+        }
+    } catch (error) {
+        console.error('Error deleting Instagram Bot:', error);
+        showToast(error.message || 'ไม่สามารถลบ Instagram Bot ได้', 'danger');
+    }
+}
+
+// WhatsApp Bot
+window.openAddWhatsAppBotModal = async function () {
+    const form = document.getElementById('whatsappBotForm');
+    if (form) form.reset();
+    const idInput = document.getElementById('whatsappBotId');
+    if (idInput) idInput.value = '';
+
+    setAiConfigUI('whatsapp', defaultAiConfig);
+    const collapseEl = document.getElementById('whatsappBotAiParams');
+    if (collapseEl && collapseEl.classList.contains('show')) {
+        const collapseInstance = bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false });
+        collapseInstance.hide();
+    }
+
+    await populateApiKeyDropdowns('whatsappBotApiKeyId');
+
+    const deleteBtn = document.getElementById('deleteWhatsAppBotBtn');
+    if (deleteBtn) deleteBtn.style.display = 'none';
+
+    const title = document.getElementById('addWhatsAppBotModalLabel');
+    if (title) title.innerHTML = '<i class="fab fa-whatsapp me-2"></i>เพิ่ม WhatsApp Bot ใหม่';
+
+    const modalEl = document.getElementById('addWhatsAppBotModal');
+    if (modalEl) {
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+    }
+};
+
+window.openEditWhatsAppBotModal = async function (id) {
+    await populateApiKeyDropdowns('whatsappBotApiKeyId');
+    try {
+        const res = await fetch(`/api/whatsapp-bots/${id}`);
+        const bot = await res.json();
+
+        document.getElementById('whatsappBotId').value = bot._id;
+        document.getElementById('whatsappBotName').value = bot.name || '';
+        document.getElementById('whatsappBotDescription').value = bot.description || '';
+        document.getElementById('whatsappPhoneNumberId').value =
+            bot.phoneNumberId || bot.whatsappPhoneNumberId || '';
+        document.getElementById('whatsappPhoneNumber').value = bot.phoneNumber || '';
+        document.getElementById('whatsappBusinessAccountId').value = bot.businessAccountId || '';
+        document.getElementById('whatsappAccessToken').value = bot.accessToken || '';
+        document.getElementById('whatsappVerifyToken').value = bot.verifyToken || '';
+        document.getElementById('whatsappWebhookUrl').value = bot.webhookUrl || '';
+
+        const statusSelect = document.getElementById('whatsappBotStatus');
+        if (statusSelect) statusSelect.value = bot.status || 'active';
+
+        const aiModelSelect = document.getElementById('whatsappBotAiModel');
+        if (aiModelSelect) aiModelSelect.value = bot.aiModel || 'gpt-5';
+
+        const defaultCheck = document.getElementById('whatsappBotDefault');
+        if (defaultCheck) defaultCheck.checked = !!bot.isDefault;
+
+        setAiConfigUI('whatsapp', bot.aiConfig || defaultAiConfig);
+
+        const apiKeySelect = document.getElementById('whatsappBotApiKeyId');
+        if (apiKeySelect) apiKeySelect.value = bot.openaiApiKeyId || '';
+
+        const title = document.getElementById('addWhatsAppBotModalLabel');
+        if (title) title.innerHTML = '<i class="fab fa-whatsapp me-2"></i>แก้ไข WhatsApp Bot';
+
+        const deleteBtn = document.getElementById('deleteWhatsAppBotBtn');
+        if (deleteBtn) deleteBtn.style.display = 'inline-block';
+
+        const modalEl = document.getElementById('addWhatsAppBotModal');
+        if (modalEl) {
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
+    } catch (error) {
+        console.error('Error fetching whatsapp bot details:', error);
+        showToast('ไม่สามารถโหลดข้อมูลบอทได้', 'danger');
+    }
+};
+
+async function saveWhatsAppBot() {
+    const botId = document.getElementById('whatsappBotId').value;
+    const botData = {
+        name: document.getElementById('whatsappBotName').value,
+        description: document.getElementById('whatsappBotDescription').value,
+        phoneNumberId: document.getElementById('whatsappPhoneNumberId').value,
+        phoneNumber: document.getElementById('whatsappPhoneNumber').value,
+        businessAccountId: document.getElementById('whatsappBusinessAccountId').value,
+        accessToken: document.getElementById('whatsappAccessToken').value,
+        verifyToken: document.getElementById('whatsappVerifyToken').value,
+        webhookUrl: document.getElementById('whatsappWebhookUrl').value,
+        status: document.getElementById('whatsappBotStatus').value,
+        aiModel: document.getElementById('whatsappBotAiModel').value,
+        isDefault: document.getElementById('whatsappBotDefault').checked,
+        aiConfig: readAiConfigFromUI('whatsapp'),
+        openaiApiKeyId: document.getElementById('whatsappBotApiKeyId')?.value || ''
+    };
+
+    const url = botId ? `/api/whatsapp-bots/${botId}` : '/api/whatsapp-bots';
+    const method = botId ? 'PUT' : 'POST';
+
+    try {
+        const res = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(botData)
+        });
+        if (res.ok) {
+            showToast('บันทึกข้อมูล WhatsApp Bot เรียบร้อยแล้ว', 'success');
+            const modalEl = document.getElementById('addWhatsAppBotModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+            loadBotSettings();
+        } else {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data?.error || 'Save failed');
+        }
+    } catch (error) {
+        console.error('Error saving whatsapp bot:', error);
+        showToast(error.message || 'บันทึกข้อมูลไม่สำเร็จ', 'danger');
+    }
+}
+
+async function deleteWhatsAppBot(botId) {
+    if (!confirm('ต้องการลบ WhatsApp Bot นี้หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้')) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/whatsapp-bots/${botId}`, {
+            method: 'DELETE'
+        });
+
+        if (res.ok) {
+            showToast('ลบ WhatsApp Bot เรียบร้อยแล้ว', 'success');
+            const modalEl = document.getElementById('addWhatsAppBotModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+            loadBotSettings();
+        } else {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'ลบไม่สำเร็จ');
+        }
+    } catch (error) {
+        console.error('Error deleting WhatsApp Bot:', error);
+        showToast(error.message || 'ไม่สามารถลบ WhatsApp Bot ได้', 'danger');
+    }
+}
+
 // Delete Line Bot
 async function deleteLineBot(botId) {
     if (!confirm('ต้องการลบ Line Bot นี้หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้')) {
@@ -925,12 +1321,34 @@ function setupEventListeners() {
         });
     }
 
+    const instagramBotForm = document.getElementById('instagramBotForm');
+    if (instagramBotForm) {
+        instagramBotForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveInstagramBot();
+        });
+    }
+
+    const whatsappBotForm = document.getElementById('whatsappBotForm');
+    if (whatsappBotForm) {
+        whatsappBotForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            saveWhatsAppBot();
+        });
+    }
+
     // Modal Save Buttons
     const saveLineBtn = document.getElementById('saveLineBotBtn');
     if (saveLineBtn) saveLineBtn.addEventListener('click', saveLineBot);
 
     const saveFbBtn = document.getElementById('saveFacebookBotBtn');
     if (saveFbBtn) saveFbBtn.addEventListener('click', saveFacebookBot);
+
+    const saveIgBtn = document.getElementById('saveInstagramBotBtn');
+    if (saveIgBtn) saveIgBtn.addEventListener('click', saveInstagramBot);
+
+    const saveWaBtn = document.getElementById('saveWhatsAppBotBtn');
+    if (saveWaBtn) saveWaBtn.addEventListener('click', saveWhatsAppBot);
 
     const autoDatasetBtn = document.getElementById('facebookDatasetAutoBtn');
     if (autoDatasetBtn) autoDatasetBtn.addEventListener('click', autoFetchFacebookDataset);
@@ -949,6 +1367,22 @@ function setupEventListeners() {
         deleteFbBtn.addEventListener('click', () => {
             const botId = document.getElementById('facebookBotId').value;
             if (botId) deleteFacebookBot(botId);
+        });
+    }
+
+    const deleteIgBtn = document.getElementById('deleteInstagramBotBtn');
+    if (deleteIgBtn) {
+        deleteIgBtn.addEventListener('click', () => {
+            const botId = document.getElementById('instagramBotId').value;
+            if (botId) deleteInstagramBot(botId);
+        });
+    }
+
+    const deleteWaBtn = document.getElementById('deleteWhatsAppBotBtn');
+    if (deleteWaBtn) {
+        deleteWaBtn.addEventListener('click', () => {
+            const botId = document.getElementById('whatsappBotId').value;
+            if (botId) deleteWhatsAppBot(botId);
         });
     }
 
@@ -1108,7 +1542,7 @@ function readAiConfigFromUI(prefix) {
 }
 
 function initAiModeListeners() {
-    ['line', 'facebook'].forEach(prefix => {
+    ['line', 'facebook', 'instagram', 'whatsapp'].forEach(prefix => {
         const select = document.getElementById(`${prefix}BotApiMode`);
         if (select) {
             select.addEventListener('change', (e) => {
@@ -1351,10 +1785,19 @@ function buildInstructionPayloadFromKey(key) {
 
 async function saveInstructionSelection(botType, botId, key, select, previousValue) {
     const payload = buildInstructionPayloadFromKey(key);
-    const url =
-        botType === 'facebook'
-            ? `/api/facebook-bots/${botId}/instructions`
-            : `/api/line-bots/${botId}/instructions`;
+    const instructionUrlMap = {
+        line: `/api/line-bots/${botId}/instructions`,
+        facebook: `/api/facebook-bots/${botId}/instructions`,
+        instagram: `/api/instagram-bots/${botId}/instructions`,
+        whatsapp: `/api/whatsapp-bots/${botId}/instructions`
+    };
+    const url = instructionUrlMap[botType];
+    if (!url) {
+        showToast('ประเภทบอทไม่รองรับการตั้งค่า Instruction', 'danger');
+        select.value = previousValue;
+        updateInstructionChip(select, previousValue);
+        return;
+    }
 
     select.disabled = true;
     try {

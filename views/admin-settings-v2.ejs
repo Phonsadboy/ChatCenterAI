@@ -83,7 +83,7 @@
                         <div class="section-header">
                             <div>
                                 <h2 class="section-title">จัดการบอท (Bot Management)</h2>
-                                <p class="section-desc">จัดการ Line และ Facebook Bot ของคุณ สถานะการทำงาน และโมเดล AI
+                                <p class="section-desc">จัดการ LINE, Facebook, Instagram และ WhatsApp Bot ของคุณ สถานะการทำงาน และโมเดล AI
                                 </p>
                             </div>
                             <div class="d-flex gap-2">
@@ -93,8 +93,8 @@
                             </div>
                         </div>
 
-                        <div class="row">
-                            <div class="col-lg-6">
+                        <div class="row g-3">
+                            <div class="col-lg-6 col-xl-3">
                                 <div class="settings-card">
                                     <div class="card-header-v2">
                                         <h3 class="card-title-v2"><i class="fab fa-line text-success me-2"></i>Line Bots
@@ -110,7 +110,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-lg-6">
+                            <div class="col-lg-6 col-xl-3">
                                 <div class="settings-card">
                                     <div class="card-header-v2">
                                         <h3 class="card-title-v2"><i
@@ -123,6 +123,38 @@
                                     <div class="card-body-v2 p-0">
                                         <div id="facebook-bots-list" class="p-3">
                                             <!-- Facebook Bots Rendered Here -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-6 col-xl-3">
+                                <div class="settings-card">
+                                    <div class="card-header-v2">
+                                        <h3 class="card-title-v2"><i class="fab fa-instagram text-danger me-2"></i>Instagram Bots</h3>
+                                        <button class="btn-v2 btn-v2-primary btn-v2-sm"
+                                            onclick="openAddInstagramBotModal()">
+                                            <i class="fas fa-plus"></i> เพิ่มใหม่
+                                        </button>
+                                    </div>
+                                    <div class="card-body-v2 p-0">
+                                        <div id="instagram-bots-list" class="p-3">
+                                            <!-- Instagram Bots Rendered Here -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-6 col-xl-3">
+                                <div class="settings-card">
+                                    <div class="card-header-v2">
+                                        <h3 class="card-title-v2"><i class="fab fa-whatsapp text-success me-2"></i>WhatsApp Bots</h3>
+                                        <button class="btn-v2 btn-v2-primary btn-v2-sm"
+                                            onclick="openAddWhatsAppBotModal()">
+                                            <i class="fas fa-plus"></i> เพิ่มใหม่
+                                        </button>
+                                    </div>
+                                    <div class="card-body-v2 p-0">
+                                        <div id="whatsapp-bots-list" class="p-3">
+                                            <!-- WhatsApp Bots Rendered Here -->
                                         </div>
                                     </div>
                                 </div>
@@ -341,16 +373,28 @@
                                         <div class="card-body">
                                             <h6 class="mb-3">การกำหนดคลังรูปภาพให้บอท</h6>
                                             <div class="row g-3">
-                                                <div class="col-md-6">
+                                                <div class="col-md-6 col-xl-3">
                                                     <div class="assignment-list" id="lineBotCollectionsList">
                                                         <div class="text-muted small py-2 text-center">กำลังโหลด Line
                                                             Bots...</div>
                                                     </div>
                                                 </div>
-                                                <div class="col-md-6">
+                                                <div class="col-md-6 col-xl-3">
                                                     <div class="assignment-list" id="facebookBotCollectionsList">
                                                         <div class="text-muted small py-2 text-center">กำลังโหลด
                                                             Facebook Bots...</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6 col-xl-3">
+                                                    <div class="assignment-list" id="instagramBotCollectionsList">
+                                                        <div class="text-muted small py-2 text-center">กำลังโหลด
+                                                            Instagram Bots...</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6 col-xl-3">
+                                                    <div class="assignment-list" id="whatsappBotCollectionsList">
+                                                        <div class="text-muted small py-2 text-center">กำลังโหลด
+                                                            WhatsApp Bots...</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -941,9 +985,11 @@
 
             <!-- Modals -->
             <%- include('partials/modals/line-bot-modal') %>
-                <%- include('partials/modals/facebook-bot-modal') %>
-                    <%- include('partials/modals/api-key-modal') %>
-                        <%- include('partials/modals/notification-channel-modal') %>
+            <%- include('partials/modals/facebook-bot-modal') %>
+            <%- include('partials/modals/instagram-bot-modal') %>
+            <%- include('partials/modals/whatsapp-bot-modal') %>
+            <%- include('partials/modals/api-key-modal') %>
+            <%- include('partials/modals/notification-channel-modal') %>
 
                             <!-- Image Collection Modal -->
                             <div class="modal fade" id="imageCollectionModal" tabindex="-1"
