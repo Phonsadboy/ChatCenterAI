@@ -2019,7 +2019,7 @@ async function detectKeywordAction(
   // รองรับทั้งรูปแบบเก่า (string) และรูปแบบใหม่ (object)
   const normalizeKeywordSetting = (setting) => {
     if (!setting) {
-      return { keyword: "", keywords: [], response: "" };
+      return { keyword: "", keywords: [], response: "", sendResponse: false };
     }
     if (typeof setting === "string") {
       const keywords = parseKeywords(setting);
@@ -2027,6 +2027,7 @@ async function detectKeywordAction(
         keyword: keywords[0] || "",
         keywords,
         response: "",
+        sendResponse: false,
       };
     }
     if (Array.isArray(setting)) {
@@ -2035,12 +2036,21 @@ async function detectKeywordAction(
         keyword: keywords[0] || "",
         keywords,
         response: "",
+        sendResponse: false,
       };
     }
+    const response =
+      typeof setting.response === "string" ? setting.response.trim() : "";
+    const sendResponseValue = parseOptionalBoolean(setting.sendResponse);
     return {
       keyword: setting.keyword || "",
       keywords: parseKeywords(setting.keywords || setting.keyword || ""),
-      response: typeof setting.response === "string" ? setting.response : "",
+      response,
+      // Backward compatible: ถ้า schema เก่ายังไม่มี sendResponse แต่มีข้อความ ให้ถือว่าเปิดส่ง
+      sendResponse:
+        typeof sendResponseValue === "boolean"
+          ? sendResponseValue
+          : response.length > 0,
     };
   };
 
@@ -2057,7 +2067,7 @@ async function detectKeywordAction(
       `[Keyword] เปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
     );
     const responseMessage = enableAI.response.trim();
-    const sendResponse = responseMessage.length > 0;
+    const sendResponse = enableAI.sendResponse === true;
     return {
       action: "enableAI",
       message: responseMessage || `✅ เปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`,
@@ -2082,7 +2092,7 @@ async function detectKeywordAction(
       `[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
     );
     const responseMessage = disableAI.response.trim();
-    const sendResponse = responseMessage.length > 0;
+    const sendResponse = disableAI.sendResponse === true;
     return {
       action: "disableAI",
       message: responseMessage || `⏸️ ปิดระบบ AI สำหรับผู้ใช้นี้แล้ว`,
@@ -2099,7 +2109,7 @@ async function detectKeywordAction(
       `[Keyword] ปิดระบบติดตามสำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
     );
     const responseMessage = disableFollowUp.response.trim();
-    const sendResponse = responseMessage.length > 0;
+    const sendResponse = disableFollowUp.sendResponse === true;
     return {
       action: "disableFollowUp",
       message: responseMessage || `🔕 ปิดระบบติดตามสำหรับผู้ใช้นี้แล้ว`,
@@ -16207,9 +16217,9 @@ app.post("/api/line-bots", async (req, res) => {
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
       keywordSettings: {
-        enableAI: { keyword: "", response: "" },
-        disableAI: { keyword: "", response: "" },
-        disableFollowUp: { keyword: "", response: "" },
+        enableAI: { keyword: "", response: "", sendResponse: false },
+        disableAI: { keyword: "", response: "", sendResponse: false },
+        disableFollowUp: { keyword: "", response: "", sendResponse: false },
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -16549,15 +16559,21 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("line_bots");
 
-    // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response)
+    // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response, sendResponse)
     const normalizeKeywordSetting = (setting) => {
-      if (!setting) return { keyword: "", response: "" };
+      if (!setting) return { keyword: "", response: "", sendResponse: false };
       if (typeof setting === "string") {
-        return { keyword: setting.trim(), response: "" };
+        return { keyword: setting.trim(), response: "", sendResponse: false };
       }
+      const response = (setting.response || "").trim();
+      const sendResponseValue = parseOptionalBoolean(setting.sendResponse);
       return {
         keyword: (setting.keyword || "").trim(),
-        response: (setting.response || "").trim(),
+        response,
+        sendResponse:
+          typeof sendResponseValue === "boolean"
+            ? sendResponseValue
+            : response.length > 0,
       };
     };
 
@@ -16759,9 +16775,9 @@ app.post("/api/facebook-bots", async (req, res) => {
       openaiApiKeyId: openaiApiKeyId || null,
       datasetId: datasetId || null,
       keywordSettings: {
-        enableAI: { keyword: "", response: "" },
-        disableAI: { keyword: "", response: "" },
-        disableFollowUp: { keyword: "", response: "" },
+        enableAI: { keyword: "", response: "", sendResponse: false },
+        disableAI: { keyword: "", response: "", sendResponse: false },
+        disableFollowUp: { keyword: "", response: "", sendResponse: false },
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -17432,15 +17448,21 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("facebook_bots");
 
-    // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response)
+    // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response, sendResponse)
     const normalizeKeywordSetting = (setting) => {
-      if (!setting) return { keyword: "", response: "" };
+      if (!setting) return { keyword: "", response: "", sendResponse: false };
       if (typeof setting === "string") {
-        return { keyword: setting.trim(), response: "" };
+        return { keyword: setting.trim(), response: "", sendResponse: false };
       }
+      const response = (setting.response || "").trim();
+      const sendResponseValue = parseOptionalBoolean(setting.sendResponse);
       return {
         keyword: (setting.keyword || "").trim(),
-        response: (setting.response || "").trim(),
+        response,
+        sendResponse:
+          typeof sendResponseValue === "boolean"
+            ? sendResponseValue
+            : response.length > 0,
       };
     };
 
@@ -17579,9 +17601,9 @@ app.post("/api/instagram-bots", async (req, res) => {
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
       keywordSettings: {
-        enableAI: { keyword: "", response: "" },
-        disableAI: { keyword: "", response: "" },
-        disableFollowUp: { keyword: "", response: "" },
+        enableAI: { keyword: "", response: "", sendResponse: false },
+        disableAI: { keyword: "", response: "", sendResponse: false },
+        disableFollowUp: { keyword: "", response: "", sendResponse: false },
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -17871,13 +17893,19 @@ app.put("/api/instagram-bots/:id/keywords", async (req, res) => {
     }
 
     const normalizeKeywordSetting = (setting) => {
-      if (!setting) return { keyword: "", response: "" };
+      if (!setting) return { keyword: "", response: "", sendResponse: false };
       if (typeof setting === "string") {
-        return { keyword: setting.trim(), response: "" };
+        return { keyword: setting.trim(), response: "", sendResponse: false };
       }
+      const response = (setting.response || "").trim();
+      const sendResponseValue = parseOptionalBoolean(setting.sendResponse);
       return {
         keyword: (setting.keyword || "").trim(),
-        response: (setting.response || "").trim(),
+        response,
+        sendResponse:
+          typeof sendResponseValue === "boolean"
+            ? sendResponseValue
+            : response.length > 0,
       };
     };
 
@@ -18015,9 +18043,9 @@ app.post("/api/whatsapp-bots", async (req, res) => {
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
       keywordSettings: {
-        enableAI: { keyword: "", response: "" },
-        disableAI: { keyword: "", response: "" },
-        disableFollowUp: { keyword: "", response: "" },
+        enableAI: { keyword: "", response: "", sendResponse: false },
+        disableAI: { keyword: "", response: "", sendResponse: false },
+        disableFollowUp: { keyword: "", response: "", sendResponse: false },
       },
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -18308,13 +18336,19 @@ app.put("/api/whatsapp-bots/:id/keywords", async (req, res) => {
     }
 
     const normalizeKeywordSetting = (setting) => {
-      if (!setting) return { keyword: "", response: "" };
+      if (!setting) return { keyword: "", response: "", sendResponse: false };
       if (typeof setting === "string") {
-        return { keyword: setting.trim(), response: "" };
+        return { keyword: setting.trim(), response: "", sendResponse: false };
       }
+      const response = (setting.response || "").trim();
+      const sendResponseValue = parseOptionalBoolean(setting.sendResponse);
       return {
         keyword: (setting.keyword || "").trim(),
-        response: (setting.response || "").trim(),
+        response,
+        sendResponse:
+          typeof sendResponseValue === "boolean"
+            ? sendResponseValue
+            : response.length > 0,
       };
     };
 

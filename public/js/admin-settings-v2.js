@@ -7,6 +7,12 @@ const INSTRUCTION_SOURCE = { V2: 'v2', LEGACY: 'legacy' };
 let instructionLibraries = [];
 let imageCollections = [];
 const BOT_CHANNELS = ['line', 'facebook', 'instagram', 'whatsapp'];
+const BOT_LABELS = {
+    line: 'LINE',
+    facebook: 'Facebook',
+    instagram: 'Instagram',
+    whatsapp: 'WhatsApp'
+};
 const BOT_MODEL_PRESETS = [
     'gpt-5.2',
     'gpt-5.1',
@@ -21,6 +27,10 @@ const BOT_MODEL_PRESETS = [
     'gpt-4o-mini'
 ];
 let activeBotChannel = 'line';
+const botKeywordModalState = {
+    botType: '',
+    botId: ''
+};
 
 document.addEventListener('DOMContentLoaded', function () {
     initMobileMenu();
@@ -298,6 +308,7 @@ function renderLineBots(bots) {
                     </div>
                 </div>
                 <div class="actions-stack">
+                    <button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('line', '${bot._id}')"><i class="fas fa-key"></i></button>
                     <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditLineBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
                 </div>
             </div>
@@ -338,6 +349,7 @@ function renderFacebookBots(bots) {
                     <span class="toggle-slider"></span>
                 </label>
                 <div class="actions-stack">
+                    <button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('facebook', '${bot._id}')"><i class="fas fa-key"></i></button>
                     <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditFacebookBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
                 </div>
             </div>
@@ -377,6 +389,7 @@ function renderInstagramBots(bots) {
                     <span class="toggle-slider"></span>
                 </label>
                 <div class="actions-stack">
+                    <button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('instagram', '${bot._id}')"><i class="fas fa-key"></i></button>
                     <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditInstagramBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
                 </div>
             </div>
@@ -416,6 +429,7 @@ function renderWhatsAppBots(bots) {
                     <span class="toggle-slider"></span>
                 </label>
                 <div class="actions-stack">
+                    <button class="btn-ghost-sm" title="คีย์เวิร์ด" onclick="openBotKeywordModal('whatsapp', '${bot._id}')"><i class="fas fa-key"></i></button>
                     <button class="btn-ghost-sm" title="แก้ไข" onclick="openEditWhatsAppBotModal('${bot._id}')"><i class="fas fa-edit"></i></button>
                 </div>
             </div>
@@ -1427,6 +1441,18 @@ function setupEventListeners() {
     const saveWaBtn = document.getElementById('saveWhatsAppBotBtn');
     if (saveWaBtn) saveWaBtn.addEventListener('click', saveWhatsAppBot);
 
+    const saveBotKeywordBtn = document.getElementById('saveBotKeywordBtn');
+    if (saveBotKeywordBtn) saveBotKeywordBtn.addEventListener('click', saveBotKeywordSettings);
+    const botKeywordModal = document.getElementById('botKeywordModal');
+    if (botKeywordModal) {
+        botKeywordModal.addEventListener('hidden.bs.modal', () => {
+            botKeywordModalState.botType = '';
+            botKeywordModalState.botId = '';
+            setBotKeywordModalFormValues({});
+            setBotKeywordModalLoading(false);
+        });
+    }
+
     const autoDatasetBtn = document.getElementById('facebookDatasetAutoBtn');
     if (autoDatasetBtn) autoDatasetBtn.addEventListener('click', autoFetchFacebookDataset);
 
@@ -2054,6 +2080,174 @@ function getBotApiEndpoint(botType, botId) {
         whatsapp: `/api/whatsapp-bots/${botId}`
     };
     return endpointMap[botType] || '';
+}
+
+function getBotKeywordsEndpoint(botType, botId) {
+    const endpointMap = {
+        line: `/api/line-bots/${botId}/keywords`,
+        facebook: `/api/facebook-bots/${botId}/keywords`,
+        instagram: `/api/instagram-bots/${botId}/keywords`,
+        whatsapp: `/api/whatsapp-bots/${botId}/keywords`
+    };
+    return endpointMap[botType] || '';
+}
+
+function normalizeKeywordSetting(setting) {
+    if (!setting) return { keyword: '', response: '', sendResponse: false };
+    if (typeof setting === 'string') {
+        return {
+            keyword: setting.trim(),
+            response: '',
+            sendResponse: false
+        };
+    }
+    const response = String(setting.response || '').trim();
+    const sendResponseRaw = setting.sendResponse;
+    let sendResponse = undefined;
+    if (typeof sendResponseRaw === 'boolean') {
+        sendResponse = sendResponseRaw;
+    } else if (typeof sendResponseRaw === 'string') {
+        const normalized = sendResponseRaw.trim().toLowerCase();
+        if (normalized === 'true') sendResponse = true;
+        if (normalized === 'false') sendResponse = false;
+    }
+    return {
+        keyword: String(setting.keyword || '').trim(),
+        response,
+        // Backward compatible: ถ้า schema เก่ายังไม่มี sendResponse แต่มีข้อความ ให้ถือว่าเปิดส่ง
+        sendResponse: typeof sendResponse === 'boolean' ? sendResponse : response.length > 0
+    };
+}
+
+function setBotKeywordModalFormValues(keywordSettings = {}) {
+    const enableAI = normalizeKeywordSetting(keywordSettings.enableAI);
+    const disableAI = normalizeKeywordSetting(keywordSettings.disableAI);
+    const disableFollowUp = normalizeKeywordSetting(keywordSettings.disableFollowUp);
+
+    setInputValue('botKeywordEnableAI', enableAI.keyword);
+    setInputValue('botKeywordEnableAIResponse', enableAI.response);
+    setCheckboxValue('botKeywordEnableAISendResponse', enableAI.sendResponse === true);
+    setInputValue('botKeywordDisableAI', disableAI.keyword);
+    setInputValue('botKeywordDisableAIResponse', disableAI.response);
+    setCheckboxValue('botKeywordDisableAISendResponse', disableAI.sendResponse === true);
+    setInputValue('botKeywordDisableFollowUp', disableFollowUp.keyword);
+    setInputValue('botKeywordDisableFollowUpResponse', disableFollowUp.response);
+    setCheckboxValue('botKeywordDisableFollowUpSendResponse', disableFollowUp.sendResponse === true);
+}
+
+function readBotKeywordFormValues() {
+    return {
+        enableAI: {
+            keyword: getInputValue('botKeywordEnableAI').trim(),
+            response: getInputValue('botKeywordEnableAIResponse').trim(),
+            sendResponse: getCheckboxValue('botKeywordEnableAISendResponse')
+        },
+        disableAI: {
+            keyword: getInputValue('botKeywordDisableAI').trim(),
+            response: getInputValue('botKeywordDisableAIResponse').trim(),
+            sendResponse: getCheckboxValue('botKeywordDisableAISendResponse')
+        },
+        disableFollowUp: {
+            keyword: getInputValue('botKeywordDisableFollowUp').trim(),
+            response: getInputValue('botKeywordDisableFollowUpResponse').trim(),
+            sendResponse: getCheckboxValue('botKeywordDisableFollowUpSendResponse')
+        }
+    };
+}
+
+function setBotKeywordModalLoading(isLoading) {
+    const saveBtn = document.getElementById('saveBotKeywordBtn');
+    if (saveBtn) {
+        saveBtn.disabled = isLoading;
+        saveBtn.innerHTML = isLoading
+            ? '<i class="fas fa-spinner fa-spin me-1"></i>กำลังบันทึก...'
+            : '<i class="fas fa-save me-1"></i>บันทึกคีย์เวิร์ด';
+    }
+
+    const form = document.getElementById('botKeywordForm');
+    if (!form) return;
+    form.querySelectorAll('input, textarea').forEach((el) => {
+        if (el.id !== 'botKeywordType' && el.id !== 'botKeywordBotId') {
+            el.disabled = isLoading;
+        }
+    });
+}
+
+window.openBotKeywordModal = async function (botType, botId) {
+    const modalEl = document.getElementById('botKeywordModal');
+    if (!modalEl || !botType || !botId) return;
+
+    const endpoint = getBotApiEndpoint(botType, botId);
+    if (!endpoint) {
+        showToast('ประเภทบอทไม่รองรับการตั้งค่าคีย์เวิร์ด', 'danger');
+        return;
+    }
+
+    botKeywordModalState.botType = botType;
+    botKeywordModalState.botId = botId;
+    setInputValue('botKeywordType', botType);
+    setInputValue('botKeywordBotId', botId);
+
+    const label = BOT_LABELS[botType] || 'Bot';
+    const titleEl = document.getElementById('botKeywordModalLabel');
+    if (titleEl) {
+        titleEl.innerHTML = `<i class="fas fa-key me-2"></i>คีย์เวิร์ดควบคุม AI (${escapeHtml(label)})`;
+    }
+
+    setBotKeywordModalFormValues({});
+    setBotKeywordModalLoading(true);
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+
+    try {
+        const response = await fetch(endpoint);
+        const bot = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(bot?.error || 'โหลดข้อมูลบอทไม่สำเร็จ');
+        }
+        setBotKeywordModalFormValues(bot.keywordSettings || {});
+    } catch (error) {
+        console.error('Error loading keyword settings:', error);
+        showToast('ไม่สามารถโหลดคีย์เวิร์ดของบอทได้', 'danger');
+    } finally {
+        setBotKeywordModalLoading(false);
+    }
+};
+
+async function saveBotKeywordSettings() {
+    const botType = getInputValue('botKeywordType') || botKeywordModalState.botType;
+    const botId = getInputValue('botKeywordBotId') || botKeywordModalState.botId;
+    const endpoint = getBotKeywordsEndpoint(botType, botId);
+    if (!endpoint) {
+        showToast('ไม่สามารถบันทึกคีย์เวิร์ดได้', 'danger');
+        return;
+    }
+
+    setBotKeywordModalLoading(true);
+    try {
+        const response = await fetch(endpoint, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                keywordSettings: readBotKeywordFormValues()
+            })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload?.error || 'บันทึกไม่สำเร็จ');
+        }
+
+        showToast(`บันทึกคีย์เวิร์ด ${BOT_LABELS[botType] || 'Bot'} เรียบร้อยแล้ว`, 'success');
+        const modalEl = document.getElementById('botKeywordModal');
+        const modal = modalEl ? bootstrap.Modal.getInstance(modalEl) : null;
+        if (modal) modal.hide();
+    } catch (error) {
+        console.error('Error saving keyword settings:', error);
+        showToast('ไม่สามารถบันทึกคีย์เวิร์ดได้', 'danger');
+    } finally {
+        setBotKeywordModalLoading(false);
+    }
 }
 
 async function saveBotModelSelection(botType, botId, modelId, select, previousValue) {
