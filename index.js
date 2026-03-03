@@ -14091,7 +14091,37 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
             // จัดการข้อความที่ส่งจากเพจเอง (echo) – ถือว่าเป็นข้อความจากแอดมินเพจ
             if (messagingEvent.message?.is_echo) {
               try {
-                const targetUserId = messagingEvent.recipient?.id; // ผู้ใช้ปลายทางของข้อความจากเพจ
+                const senderId = String(messagingEvent.sender?.id || "").trim();
+                const recipientId = String(
+                  messagingEvent.recipient?.id || "",
+                ).trim();
+                const pageIdStr = String(pageId || "").trim();
+                let targetUserId = "";
+
+                // รองรับ payload ได้ทั้งกรณี sender=page,recipient=user และ sender=user,recipient=page
+                if (senderId && recipientId) {
+                  if (senderId === pageIdStr && recipientId !== pageIdStr) {
+                    targetUserId = recipientId;
+                  } else if (
+                    recipientId === pageIdStr &&
+                    senderId !== pageIdStr
+                  ) {
+                    targetUserId = senderId;
+                  } else {
+                    targetUserId = recipientId || senderId;
+                  }
+                } else {
+                  targetUserId = recipientId || senderId;
+                }
+
+                // ป้องกันกรณี fallback แล้วได้ pageId แทน userId
+                if (targetUserId === pageIdStr) {
+                  if (senderId && senderId !== pageIdStr) {
+                    targetUserId = senderId;
+                  } else if (recipientId && recipientId !== pageIdStr) {
+                    targetUserId = recipientId;
+                  }
+                }
                 const text = messagingEvent.message?.text?.trim();
                 const metadata =
                   typeof messagingEvent.message?.metadata === "string"
@@ -14100,7 +14130,11 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                 const isBroadcastMessage = metadata === "broadcast_auto";
 
                 // ข้ามข้อความที่ระบบส่งอัตโนมัติ (เช่น AI / follow-up) เพื่อหลีกเลี่ยงการบันทึกซ้ำ
-                const automatedMetadata = ["ai_generated", "follow_up_auto"];
+                const automatedMetadata = [
+                  "ai_generated",
+                  "follow_up_auto",
+                  "keyword_control_auto",
+                ];
                 if (metadata && automatedMetadata.includes(metadata)) {
                   console.log(
                     `[Facebook Bot: ${facebookBot.name}] Skip echo for automated message (${metadata}) to ${targetUserId}`,
@@ -14129,6 +14163,20 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                 if (keywordResult.action) {
                   // ถ้ามี keyword action และต้องการส่งข้อความตอบกลับ
                   if (keywordResult.sendResponse && keywordResult.message) {
+                    try {
+                      await sendFacebookMessage(
+                        targetUserId,
+                        keywordResult.message,
+                        facebookBot.accessToken,
+                        { metadata: "keyword_control_auto" },
+                      );
+                    } catch (controlReplyError) {
+                      console.error(
+                        `[Facebook Bot: ${facebookBot.name}] Error sending keyword control response:`,
+                        controlReplyError?.message || controlReplyError,
+                      );
+                    }
+
                     const controlDoc = {
                       senderId: targetUserId,
                       role: "assistant",
@@ -25808,6 +25856,35 @@ app.post("/admin/chat/send", async (req, res) => {
     if (keywordResult.action) {
       // ถ้ามี keyword action และต้องการส่งข้อความตอบกลับ
       if (keywordResult.sendResponse && keywordResult.message) {
+        if (platform === "facebook") {
+          try {
+            if (botId) {
+              const fbBot = await findBotById(db, "facebook", botId);
+              if (fbBot?.accessToken) {
+                await sendFacebookMessage(
+                  userId,
+                  keywordResult.message,
+                  fbBot.accessToken,
+                  { metadata: "keyword_control_auto" },
+                );
+              } else {
+                console.warn(
+                  `[Admin Chat] ไม่พบ accessToken สำหรับ Facebook bot ${botId} ขณะส่งข้อความยืนยัน keyword`,
+                );
+              }
+            } else {
+              console.warn(
+                `[Admin Chat] ไม่พบ botId สำหรับผู้ใช้ ${userId} ขณะส่งข้อความยืนยัน keyword`,
+              );
+            }
+          } catch (controlReplyErr) {
+            console.error(
+              `[Admin Chat] ส่งข้อความยืนยัน keyword ไป Facebook ไม่สำเร็จ:`,
+              controlReplyErr?.message || controlReplyErr,
+            );
+          }
+        }
+
         const controlDoc = {
           senderId: userId,
           role: "assistant",
