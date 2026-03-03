@@ -8320,37 +8320,10 @@ async function handleLineEvent(event, queueOptions = {}) {
         });
       }
     } else if (message.type === "audio") {
-      console.log(`[LOG] ได้รับไฟล์เสียงจากผู้ใช้: ${userId}`);
+      console.log(
+        `[LOG] ได้รับไฟล์เสียงจากผู้ใช้: ${userId} (ยังไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
+      );
       try {
-        const audioResponseSetting = await getSettingValue(
-          "audioAttachmentResponse",
-          DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
-        );
-        const replyText =
-          audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
-        const filteredReply = await filterMessage(replyText);
-
-        if (event.replyToken) {
-          try {
-            await sendMessage(
-              event.replyToken,
-              filteredReply,
-              userId,
-              true,
-              channelAccessToken,
-              channelSecret,
-            );
-            console.log(
-              `[LOG] ส่งข้อความตอบกลับสำหรับไฟล์เสียงให้ผู้ใช้ ${userId} แล้ว`,
-            );
-          } catch (error) {
-            console.error(
-              "[LOG] ไม่สามารถส่งข้อความตอบกลับไฟล์เสียงได้:",
-              error,
-            );
-          }
-        }
-
         const audioPayload = {
           type: "audio",
           messageId: message.id || null,
@@ -8362,7 +8335,7 @@ async function handleLineEvent(event, queueOptions = {}) {
           await saveChatHistory(
             userId,
             audioPayload,
-            filteredReply,
+            "",
             "line",
             botIdForHistory,
             lineRuntimeInstructionRefs,
@@ -8380,18 +8353,57 @@ async function handleLineEvent(event, queueOptions = {}) {
       }
       return;
     } else if (message.type === "video") {
-      console.log(`[LOG] ได้รับวิดีโอจากผู้ใช้: ${userId}`);
-      itemToQueue.data = {
-        type: "text",
-        text: "ผู้ใช้ส่งไฟล์แนบประเภท: video",
-      };
       console.log(
-        `[LOG] เพิ่มการแจ้งเตือนวิดีโอเข้าคิว สำหรับผู้ใช้: ${userId}`,
+        `[LOG] ได้รับวิดีโอจากผู้ใช้: ${userId} (ไฟล์ไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
       );
-      await addToQueue(userId, itemToQueue, {
-        ...queueOptions,
-        platform: "line",
-      });
+      try {
+        await saveChatHistory(
+          userId,
+          {
+            type: "unsupported",
+            messageType: "video",
+            messageId: message.id || null,
+          },
+          "",
+          "line",
+          botIdForHistory,
+          lineRuntimeInstructionRefs,
+          null,
+          { instructionMeta: lineRuntimeInstructionMeta },
+        );
+      } catch (historyError) {
+        console.error(
+          "[LOG] ไม่สามารถบันทึกประวัติวิดีโอที่ไม่รองรับได้:",
+          historyError,
+        );
+      }
+      return;
+    } else {
+      console.log(
+        `[LOG] ได้รับไฟล์แนบประเภทไม่รองรับจากผู้ใช้: ${userId} (${message.type || "unknown"})`,
+      );
+      try {
+        await saveChatHistory(
+          userId,
+          {
+            type: "unsupported",
+            messageType: message.type || "unknown",
+            messageId: message.id || null,
+          },
+          "",
+          "line",
+          botIdForHistory,
+          lineRuntimeInstructionRefs,
+          null,
+          { instructionMeta: lineRuntimeInstructionMeta },
+        );
+      } catch (historyError) {
+        console.error(
+          "[LOG] ไม่สามารถบันทึกประวัติไฟล์แนบที่ไม่รองรับได้:",
+          historyError,
+        );
+      }
+      return;
     }
   }
   console.log(`[LOG] จบการประมวลผล event: ${uniqueId}`);
@@ -14353,26 +14365,14 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
               if (audioAttachments.length > 0) {
                 try {
-                  const audioResponseSetting = await getSettingValue(
-                    "audioAttachmentResponse",
-                    DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+                  console.log(
+                    `[Facebook Bot: ${facebookBot.name}] ได้รับไฟล์เสียงจาก ${senderId} (ยังไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
                   );
-                  const replyText =
-                    audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
-                  const filteredReply = await filterMessage(replyText);
-                  if (!disableAiReply) {
-                    await sendFacebookMessage(
-                      senderId,
-                      filteredReply,
-                      facebookBot.accessToken,
-                      { metadata: "ai_generated" },
-                    );
-                  }
                   try {
                     await saveChatHistory(
                       senderId,
                       { type: "audio", attachments: audioAttachments },
-                      disableAiReply ? "" : filteredReply,
+                      "",
                       "facebook",
                       facebookBot._id ? facebookBot._id.toString() : null,
                       facebookRuntimeInstructionRefs,
@@ -14395,15 +14395,9 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
               if (itemsToQueue.length === 0) {
                 if (audioAttachments.length === 0) {
-                  const fallbackText = "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้";
-                  if (!disableAiReply) {
-                    await sendFacebookMessage(
-                      senderId,
-                      fallbackText,
-                      facebookBot.accessToken,
-                      { metadata: "ai_generated" },
-                    );
-                  }
+                  console.log(
+                    `[Facebook Bot: ${facebookBot.name}] ได้รับไฟล์แนบที่ไม่รองรับจาก ${senderId} (ไม่ตอบกลับอัตโนมัติ)`,
+                  );
                   try {
                     await saveChatHistory(
                       senderId,
@@ -14411,7 +14405,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                         type: "unsupported",
                         attachments: messagingEvent.message.attachments || [],
                       },
-                      disableAiReply ? "" : fallbackText,
+                      "",
                       "facebook",
                       facebookBot._id ? facebookBot._id.toString() : null,
                       facebookRuntimeInstructionRefs,
@@ -14616,31 +14610,14 @@ app.post("/webhook/instagram/:botId", async (req, res) => {
 
         if (audioAttachments.length > 0) {
           try {
-            const audioResponseSetting = await getSettingValue(
-              "audioAttachmentResponse",
-              DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+            console.log(
+              `[Instagram Bot: ${instagramBot.name || instagramBot._id}] ได้รับไฟล์เสียงจาก ${senderId} (ยังไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
             );
-            const replyText =
-              audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
-            const filteredReply = await filterMessage(replyText);
-
-            if (
-              !disableAiReply &&
-              queueOptions.instagramAccessToken &&
-              queueOptions.instagramBusinessAccountId
-            ) {
-              await sendInstagramMessage(
-                senderId,
-                filteredReply,
-                queueOptions.instagramAccessToken,
-                queueOptions.instagramBusinessAccountId,
-              );
-            }
 
             await saveChatHistory(
               senderId,
               { type: "audio", attachments: audioAttachments },
-              disableAiReply ? "" : filteredReply,
+              "",
               "instagram",
               queueOptions.botId || null,
               runtimeInstructionRefs,
@@ -14657,27 +14634,9 @@ app.post("/webhook/instagram/:botId", async (req, res) => {
 
         if (itemsToQueue.length === 0) {
           if (audioAttachments.length === 0) {
-            const fallbackText = "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้";
-            try {
-              if (
-                !disableAiReply &&
-                queueOptions.instagramAccessToken &&
-                queueOptions.instagramBusinessAccountId
-              ) {
-                await sendInstagramMessage(
-                  senderId,
-                  fallbackText,
-                  queueOptions.instagramAccessToken,
-                  queueOptions.instagramBusinessAccountId,
-                );
-              }
-            } catch (sendErr) {
-              console.warn(
-                "[Instagram] ไม่สามารถส่งข้อความ fallback ได้:",
-                sendErr?.message || sendErr,
-              );
-            }
-
+            console.log(
+              `[Instagram Bot: ${instagramBot.name || instagramBot._id}] ได้รับไฟล์แนบที่ไม่รองรับจาก ${senderId} (ไม่ตอบกลับอัตโนมัติ)`,
+            );
             try {
               await saveChatHistory(
                 senderId,
@@ -14685,7 +14644,7 @@ app.post("/webhook/instagram/:botId", async (req, res) => {
                   type: "unsupported",
                   attachments,
                 },
-                disableAiReply ? "" : fallbackText,
+                "",
                 "instagram",
                 queueOptions.botId || null,
                 runtimeInstructionRefs,
@@ -14926,31 +14885,14 @@ app.post("/webhook/whatsapp/:botId", async (req, res) => {
 
           if (audioAttachments.length > 0) {
             try {
-              const audioResponseSetting = await getSettingValue(
-                "audioAttachmentResponse",
-                DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
+              console.log(
+                `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] ได้รับไฟล์เสียงจาก ${senderId} (ยังไม่รองรับ, ไม่ตอบกลับอัตโนมัติ)`,
               );
-              const replyText =
-                audioResponseSetting || DEFAULT_AUDIO_ATTACHMENT_RESPONSE;
-              const filteredReply = await filterMessage(replyText);
-
-              if (
-                !disableAiReply &&
-                queueOptions.whatsappAccessToken &&
-                queueOptions.whatsappPhoneNumberId
-              ) {
-                await sendWhatsAppMessage(
-                  senderId,
-                  filteredReply,
-                  queueOptions.whatsappAccessToken,
-                  queueOptions.whatsappPhoneNumberId,
-                );
-              }
 
               await saveChatHistory(
                 senderId,
                 { type: "audio", attachments: audioAttachments },
-                disableAiReply ? "" : filteredReply,
+                "",
                 "whatsapp",
                 queueOptions.botId || null,
                 runtimeInstructionRefs,
@@ -14967,27 +14909,9 @@ app.post("/webhook/whatsapp/:botId", async (req, res) => {
 
           if (itemsToQueue.length === 0) {
             if (audioAttachments.length === 0) {
-              const fallbackText = "ขออภัย ระบบยังไม่รองรับไฟล์ประเภทนี้";
-              try {
-                if (
-                  !disableAiReply &&
-                  queueOptions.whatsappAccessToken &&
-                  queueOptions.whatsappPhoneNumberId
-                ) {
-                  await sendWhatsAppMessage(
-                    senderId,
-                    fallbackText,
-                    queueOptions.whatsappAccessToken,
-                    queueOptions.whatsappPhoneNumberId,
-                  );
-                }
-              } catch (sendErr) {
-                console.warn(
-                  "[WhatsApp] ไม่สามารถส่งข้อความ fallback ได้:",
-                  sendErr?.message || sendErr,
-                );
-              }
-
+              console.log(
+                `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] ได้รับไฟล์แนบที่ไม่รองรับจาก ${senderId} (ไม่ตอบกลับอัตโนมัติ)`,
+              );
               try {
                 await saveChatHistory(
                   senderId,
@@ -14995,7 +14919,7 @@ app.post("/webhook/whatsapp/:botId", async (req, res) => {
                     type: "unsupported",
                     attachments: [incomingMessage],
                   },
-                  disableAiReply ? "" : fallbackText,
+                  "",
                   "whatsapp",
                   queueOptions.botId || null,
                   runtimeInstructionRefs,
