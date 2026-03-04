@@ -1196,10 +1196,28 @@
     font-weight: 600;
     font-size: 1rem;
     flex-shrink: 0;
+    position: relative;
+    overflow: hidden;
 }
 
 .chat-avatar.purchased {
     background: var(--chat-success);
+}
+
+.chat-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+}
+
+.chat-avatar .avatar-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
 }
 
 .chat-user-details {
