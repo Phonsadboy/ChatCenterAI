@@ -446,7 +446,13 @@ async function ensureFacebookCommentIndexes(db) {
 }
 
 // ============================ CSP Helpers ============================
-const cspImgSrc = ["'self'", "data:", "blob:"];
+const cspImgSrc = [
+  "'self'",
+  "data:",
+  "blob:",
+  // LINE profile / media CDN
+  "https://*.line-scdn.net",
+];
 const registerCspOrigin = (value) => {
   if (!value || typeof value !== "string") return;
   const trimmed = value.trim();
@@ -1468,19 +1474,33 @@ async function getAIHistory(userId) {
 }
 
 // ฟังก์ชันสำหรับดึงข้อมูลโปรไฟล์จาก LINE API
+function buildLineProfileFallbackDisplayName(userId) {
+  if (typeof userId !== "string" || !userId.trim()) return "User";
+  return `${userId.substring(0, 8)}...`;
+}
+
+function isUsableLineProfile(profile, userId) {
+  if (!profile || typeof profile !== "object") return false;
+  const displayName =
+    typeof profile.displayName === "string" ? profile.displayName.trim() : "";
+  if (!displayName) return false;
+  return displayName !== buildLineProfileFallbackDisplayName(userId);
+}
+
 async function getLineUserProfile(userId, botId = null) {
   const client = await getLineClientForContext(botId);
   if (!client) {
-    return {
-      userId: userId,
-      displayName: userId.substring(0, 8) + "...",
-      pictureUrl: null,
-      statusMessage: null,
-    };
+    console.warn(
+      `[WARN] ไม่สามารถดึงโปรไฟล์ LINE: ไม่พบ LINE client สำหรับผู้ใช้ ${userId}`,
+    );
+    return null;
   }
 
   try {
     const profile = await client.getProfile(userId);
+    if (!profile || !profile.displayName) {
+      return null;
+    }
     return {
       userId: profile.userId,
       displayName: profile.displayName,
@@ -1494,13 +1514,17 @@ async function getLineUserProfile(userId, botId = null) {
     );
 
     // ถ้าเป็น error เกี่ยวกับ rate limit หรือ temporary error ให้ retry
-    if (error.status === 429 || error.status >= 500) {
+    const status = Number(error?.status || error?.statusCode || 0);
+    if (status === 429 || status >= 500) {
       console.log(
-        `[LOG] พยายาม retry สำหรับผู้ใช้ ${userId} ในอีก 5 วินาที...`,
+        `[LOG] พยายาม retry สำหรับผู้ใช้ ${userId} ในอีก 1.2 วินาที...`,
       );
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await new Promise((resolve) => setTimeout(resolve, 1200));
       try {
         const retryProfile = await client.getProfile(userId);
+        if (!retryProfile || !retryProfile.displayName) {
+          return null;
+        }
         return {
           userId: retryProfile.userId,
           displayName: retryProfile.displayName,
@@ -1515,12 +1539,7 @@ async function getLineUserProfile(userId, botId = null) {
       }
     }
 
-    return {
-      userId: userId,
-      displayName: userId.substring(0, 8) + "...",
-      pictureUrl: null,
-      statusMessage: null,
-    };
+    return null;
   }
 }
 
@@ -1528,22 +1547,47 @@ async function getLineUserProfile(userId, botId = null) {
 async function saveOrUpdateUserProfile(userId, botId = null) {
   try {
     const profile = await getLineUserProfile(userId, botId);
+    if (!isUsableLineProfile(profile, userId)) {
+      return null;
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("user_profiles");
+    const normalizedUserId = String(profile.userId || userId || "").trim();
+    if (!normalizedUserId) {
+      return null;
+    }
+    const now = new Date();
+    const updateDoc = {
+      userId: normalizedUserId,
+      platform: "line",
+      displayName: profile.displayName,
+      pictureUrl: profile.pictureUrl || null,
+      statusMessage: profile.statusMessage || null,
+      updatedAt: now,
+    };
 
-    await coll.updateOne(
-      { userId: profile.userId },
+    const legacyResult = await coll.updateOne(
       {
-        $set: {
-          ...profile,
-          updatedAt: new Date(),
-        },
+        userId: normalizedUserId,
+        $or: [{ platform: "line" }, { platform: { $exists: false } }, { platform: null }],
       },
-      { upsert: true },
+      { $set: updateDoc },
     );
 
-    return profile;
+    if (!legacyResult.matchedCount) {
+      await coll.updateOne(
+        { userId: normalizedUserId, platform: "line" },
+        {
+          $set: updateDoc,
+          $setOnInsert: { createdAt: now },
+        },
+        { upsert: true },
+      );
+    }
+
+    return updateDoc;
   } catch (error) {
     console.error(
       `[ERROR] ไม่สามารถบันทึกข้อมูลผู้ใช้ ${userId}:`,
@@ -32736,6 +32780,43 @@ async function getNormalizedChatUsers(options = {}) {
       profileMap.set(key, doc);
     });
 
+    const lineProfileRefreshTargets = [];
+    const seenLineProfileTarget = new Set();
+    users.forEach((user) => {
+      const userId =
+        typeof user._id === "string"
+          ? user._id
+          : user._id?.toString?.() || "";
+      if (!userId) return;
+
+      const platform =
+        typeof user.platform === "string" ? user.platform.toLowerCase() : "line";
+      if (platform !== "line") return;
+
+      const botId = normalizeFollowUpBotId(user.botId);
+      const existingProfile = profileMap.get(`${userId}:line`) || null;
+      if (isUsableLineProfile(existingProfile, userId)) return;
+
+      const targetKey = `${userId}:${botId || "default"}`;
+      if (seenLineProfileTarget.has(targetKey)) return;
+      seenLineProfileTarget.add(targetKey);
+      lineProfileRefreshTargets.push({ userId, botId });
+    });
+
+    const maxLineProfileRefreshPerRequest = 8;
+    for (const target of lineProfileRefreshTargets.slice(
+      0,
+      maxLineProfileRefreshPerRequest,
+    )) {
+      const refreshedProfile = await saveOrUpdateUserProfile(
+        target.userId,
+        target.botId,
+      );
+      if (refreshedProfile) {
+        profileMap.set(`${target.userId}:line`, refreshedProfile);
+      }
+    }
+
     // ดึงข้อมูลออเดอร์
     const ordersColl = db.collection("orders");
     const userOrders =
@@ -32840,16 +32921,8 @@ async function getNormalizedChatUsers(options = {}) {
           // ดึงข้อมูลโปรไฟล์
           const profileKey = `${userId}:${platform}`;
           let userProfile = profileMap.get(profileKey) || null;
-
-          if (platform === "line" && !userProfile) {
-            const freshProfile = await saveOrUpdateUserProfile(userId, botId);
-            if (freshProfile) {
-              userProfile = {
-                ...freshProfile,
-                platform: "line",
-              };
-              profileMap.set(profileKey, userProfile);
-            }
+          if (platform === "line" && !isUsableLineProfile(userProfile, userId)) {
+            userProfile = null;
           }
 
           // แปลงข้อความล่าสุด
@@ -32926,7 +32999,7 @@ async function getNormalizedChatUsers(options = {}) {
             userProfile && typeof userProfile.displayName === "string"
               ? userProfile.displayName.trim()
               : "";
-          const fallbackName = userId ? `${userId.substring(0, 8)}...` : "User";
+          const fallbackName = buildLineProfileFallbackDisplayName(userId);
 
           return {
             userId,
