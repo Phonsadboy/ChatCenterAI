@@ -7237,8 +7237,44 @@ async function processFlushedMessages(
     if (!normalizedMessage) {
       return false;
     }
+
+    const selectedImageCollections = Array.isArray(
+      queueContext.selectedImageCollections,
+    )
+      ? queueContext.selectedImageCollections
+      : null;
+
     try {
+      let client = null;
       if (channelAccessToken && channelSecret) {
+        client = createLineClient(channelAccessToken, channelSecret);
+      } else if (lineClientFromContext) {
+        client = lineClientFromContext;
+      } else {
+        client = await getLineClientForContext(botIdForHistory);
+      }
+
+      if (!client) {
+        console.log(
+          `[LOG] ไม่สามารถส่งข้อความได้ - ไม่มีข้อมูล Line Client หรือ Channel Credentials สำหรับผู้ใช้ ${userId}`,
+        );
+        return false;
+      }
+
+      const payloads = await buildLineMessagesFromTemplate(
+        normalizedMessage,
+        selectedImageCollections,
+      );
+
+      if (!payloads.length) {
+        return false;
+      }
+
+      await sendLineMessagesByChunks(client, userId, payloads, replyToken);
+      return true;
+    } catch (error) {
+      console.error("[LOG] ไม่สามารถส่งข้อความตอบกลับแบบ rich ได้:", error);
+      try {
         await sendMessage(
           replyToken,
           normalizedMessage,
@@ -7248,20 +7284,12 @@ async function processFlushedMessages(
           channelSecret,
         );
         return true;
+      } catch (fallbackError) {
+        console.error(
+          "[LOG] ไม่สามารถส่งข้อความ fallback ได้:",
+          fallbackError?.message || fallbackError,
+        );
       }
-      if (lineClientFromContext) {
-        await lineClientFromContext.replyMessage(replyToken, {
-          type: "text",
-          text: normalizedMessage,
-        });
-        return true;
-      }
-      console.log(
-        `[LOG] ไม่สามารถส่งข้อความได้ - ไม่มีข้อมูล Line Client หรือ Channel Credentials สำหรับผู้ใช้ ${userId}`,
-      );
-      return false;
-    } catch (error) {
-      console.error("[LOG] ไม่สามารถส่งข้อความตอบกลับได้:", error);
       return false;
     }
   }
@@ -14956,6 +14984,109 @@ app.post("/webhook/whatsapp/:botId", async (req, res) => {
     }
   }
 });
+
+function isHttpOrHttpsUrl(value) {
+  if (typeof value !== "string") return false;
+  return /^https?:\/\//i.test(value.trim());
+}
+
+async function buildLineMessagesFromTemplate(
+  message,
+  selectedImageCollections = null,
+  customAssetsMap = null,
+) {
+  const normalizedMessage = normalizeOutgoingText(message);
+  if (!normalizedMessage) return [];
+
+  const parts = String(normalizedMessage || "")
+    .split("[cut]")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (!parts.length) return [];
+
+  const hasImageToken = /#\[\s*IMAGE\s*:/i.test(normalizedMessage);
+  const assetsMap = hasImageToken
+    ? customAssetsMap || (await getAssetsMapForBot(selectedImageCollections))
+    : null;
+  const payloads = [];
+  const maxTextLength = 4000;
+
+  for (const part of parts) {
+    const segments = hasImageToken
+      ? parseMessageSegmentsByImageTokens(part, assetsMap)
+      : [{ type: "text", text: part }];
+    for (const seg of segments) {
+      if (seg.type === "text") {
+        const textChunks = chunkTextByLength(seg.text || "", maxTextLength);
+        textChunks.forEach((chunk) => {
+          payloads.push({ type: "text", text: chunk });
+        });
+        continue;
+      }
+
+      if (seg.type === "image" && seg.url) {
+        const originalContentUrl =
+          typeof seg.url === "string" ? seg.url.trim() : "";
+        if (!isHttpOrHttpsUrl(originalContentUrl)) {
+          const fallbackText = `[ไม่สามารถส่งรูป ${seg.label || "image"} ได้]`;
+          payloads.push({ type: "text", text: fallbackText });
+          continue;
+        }
+
+        const previewCandidate =
+          typeof seg.thumbUrl === "string" ? seg.thumbUrl.trim() : "";
+        const previewImageUrl = isHttpOrHttpsUrl(previewCandidate)
+          ? previewCandidate
+          : originalContentUrl;
+
+        payloads.push({
+          type: "image",
+          originalContentUrl,
+          previewImageUrl,
+        });
+      }
+    }
+  }
+
+  return payloads;
+}
+
+async function sendLineMessagesByChunks(
+  client,
+  recipientId,
+  payloads,
+  replyToken = null,
+) {
+  if (!client || !recipientId || !Array.isArray(payloads) || !payloads.length) {
+    return false;
+  }
+
+  const chunks = [];
+  for (let i = 0; i < payloads.length; i += 5) {
+    chunks.push(payloads.slice(i, i + 5));
+  }
+  if (!chunks.length) return false;
+
+  let startChunkIndex = 0;
+  if (replyToken) {
+    const firstChunk = chunks[0];
+    await client.replyMessage(
+      replyToken,
+      firstChunk.length === 1 ? firstChunk[0] : firstChunk,
+    );
+    startChunkIndex = 1;
+  }
+
+  for (let i = startChunkIndex; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    await client.pushMessage(
+      recipientId,
+      chunk.length === 1 ? chunk[0] : chunk,
+    );
+  }
+
+  return true;
+}
 
 // Helper function to send Facebook message
 async function sendFacebookMessage(
@@ -26030,11 +26161,41 @@ app.post("/admin/chat/send", async (req, res) => {
     await saveAndEmitAdminMessage(messageDoc);
 
     try {
-      const normalizedMessage = normalizeOutgoingText(message);
-      await lineClient.pushMessage(userId, {
-        type: "text",
-        text: normalizedMessage,
-      });
+      let lineClientForSend = null;
+      let selectedImageCollections = null;
+
+      if (botId) {
+        const lineBot = await findBotById(db, "line", botId);
+        if (lineBot) {
+          if (lineBot.channelAccessToken && lineBot.channelSecret) {
+            lineClientForSend = createLineClient(
+              lineBot.channelAccessToken,
+              lineBot.channelSecret,
+            );
+          }
+          if (Array.isArray(lineBot.selectedImageCollections)) {
+            selectedImageCollections = lineBot.selectedImageCollections;
+          }
+        }
+      }
+
+      if (!lineClientForSend) {
+        lineClientForSend = await getLineClientForContext(botId);
+      }
+
+      if (!lineClientForSend) {
+        throw new Error("ไม่พบ LINE client สำหรับผู้ใช้นี้");
+      }
+
+      const payloads = await buildLineMessagesFromTemplate(
+        message,
+        selectedImageCollections,
+      );
+      if (!payloads.length) {
+        throw new Error("ไม่มีเนื้อหาสำหรับส่งไปยัง LINE");
+      }
+
+      await sendLineMessagesByChunks(lineClientForSend, userId, payloads);
       console.log(
         `[Admin Chat] ส่งข้อความไปยัง LINE user ${userId}: ${message.substring(0, 50)}...`,
       );
