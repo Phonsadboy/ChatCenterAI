@@ -21800,7 +21800,7 @@ async function getBroadcastAudience(channels, audienceType) {
   let users = [];
   const getChatUserIdsForChannel = async (platform, botId) => {
     const pipeline = [
-      { $match: { platform, botId } },
+      { $match: { platform, botId, role: "user" } },
       {
         $addFields: {
           userKey: {
