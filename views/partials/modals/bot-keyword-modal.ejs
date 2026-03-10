@@ -50,9 +50,17 @@
                 <label for="botKeywordDisableAI" class="form-label">คีย์เวิร์ด</label>
                 <input type="text" class="form-control" id="botKeywordDisableAI" placeholder="เช่น: ปิด ai, [ปิด]">
               </div>
-              <div class="form-check form-switch mb-3">
+              <div class="form-check form-switch mb-2">
                 <input class="form-check-input" type="checkbox" role="switch" id="botKeywordDisableAISendResponse">
                 <label class="form-check-label" for="botKeywordDisableAISendResponse">ส่งข้อความยืนยันในแชท</label>
+              </div>
+              <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" role="switch" id="botKeywordDisableAIAlsoDisableFollowUp" checked>
+                <label class="form-check-label" for="botKeywordDisableAIAlsoDisableFollowUp">
+                  ปิดระบบติดตาม (Follow-up) ด้วย
+                  <span class="badge bg-secondary ms-1" style="font-size:0.7rem;">แนะนำ</span>
+                </label>
+                <div class="form-text">เมื่อปิด AI ด้วยคีย์เวิร์ดนี้ จะยกเลิกการนัดส่งข้อความติดตามของลูกค้ารายนั้นโดยอัตโนมัติด้วย</div>
               </div>
               <div class="mb-0">
                 <label for="botKeywordDisableAIResponse" class="form-label">ข้อความตอบกลับ (ถ้ามี)</label>

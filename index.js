@@ -2095,6 +2095,10 @@ async function detectKeywordAction(
         typeof sendResponseValue === "boolean"
           ? sendResponseValue
           : response.length > 0,
+      // Preserve alsoDisableFollowUp (relevant for disableAI only)
+      alsoDisableFollowUp: typeof setting.alsoDisableFollowUp === "boolean"
+        ? setting.alsoDisableFollowUp
+        : true,
     };
   };
 
@@ -2122,18 +2126,21 @@ async function detectKeywordAction(
   // ตรวจสอบ keyword สำหรับปิด AI
   if (matchesKeyword(trimmedMessage, disableAI)) {
     await setUserStatus(userId, false);
-    try {
-      await cancelFollowUpTasksForUser(userId, platform, botId, {
-        reason: "disable_ai_keyword",
-      });
-    } catch (followUpError) {
-      console.error(
-        `[Keyword] ไม่สามารถยกเลิกงานติดตามสำหรับผู้ใช้ ${userId} หลังจากปิด AI:`,
-        followUpError?.message || followUpError,
-      );
+    // ยกเลิก follow-up เฉพาะเมื่อ alsoDisableFollowUp เปิดอยู่ (default: true)
+    if (disableAI.alsoDisableFollowUp !== false) {
+      try {
+        await cancelFollowUpTasksForUser(userId, platform, botId, {
+          reason: "disable_ai_keyword",
+        });
+      } catch (followUpError) {
+        console.error(
+          `[Keyword] ไม่สามารถยกเลิกงานติดตามสำหรับผู้ใช้ ${userId} หลังจากปิด AI:`,
+          followUpError?.message || followUpError,
+        );
+      }
     }
     console.log(
-      `[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
+      `[Keyword] ปิด AI สำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}" (alsoDisableFollowUp=${disableAI.alsoDisableFollowUp !== false})`,
     );
     const responseMessage = disableAI.response.trim();
     const sendResponse = disableAI.sendResponse === true;
@@ -16724,9 +16731,15 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
       };
     };
 
+    const disableAINormalized = normalizeKeywordSetting(keywordSettings.disableAI);
+    const rawAlsoDisableFollowUp = keywordSettings.disableAI?.alsoDisableFollowUp;
+    disableAINormalized.alsoDisableFollowUp = typeof rawAlsoDisableFollowUp === "boolean"
+      ? rawAlsoDisableFollowUp
+      : true;
+
     const normalizedSettings = {
       enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
-      disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
+      disableAI: disableAINormalized,
       disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
@@ -17613,9 +17626,15 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
       };
     };
 
+    const disableAINormalized = normalizeKeywordSetting(keywordSettings.disableAI);
+    const rawAlsoDisableFollowUp = keywordSettings.disableAI?.alsoDisableFollowUp;
+    disableAINormalized.alsoDisableFollowUp = typeof rawAlsoDisableFollowUp === "boolean"
+      ? rawAlsoDisableFollowUp
+      : true;
+
     const normalizedSettings = {
       enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
-      disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
+      disableAI: disableAINormalized,
       disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
@@ -18056,9 +18075,15 @@ app.put("/api/instagram-bots/:id/keywords", async (req, res) => {
       };
     };
 
+    const disableAINormalized = normalizeKeywordSetting(keywordSettings.disableAI);
+    const rawAlsoDisableFollowUp = keywordSettings.disableAI?.alsoDisableFollowUp;
+    disableAINormalized.alsoDisableFollowUp = typeof rawAlsoDisableFollowUp === "boolean"
+      ? rawAlsoDisableFollowUp
+      : true;
+
     const normalizedSettings = {
       enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
-      disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
+      disableAI: disableAINormalized,
       disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
@@ -18499,9 +18524,15 @@ app.put("/api/whatsapp-bots/:id/keywords", async (req, res) => {
       };
     };
 
+    const disableAINormalized = normalizeKeywordSetting(keywordSettings.disableAI);
+    const rawAlsoDisableFollowUp = keywordSettings.disableAI?.alsoDisableFollowUp;
+    disableAINormalized.alsoDisableFollowUp = typeof rawAlsoDisableFollowUp === "boolean"
+      ? rawAlsoDisableFollowUp
+      : true;
+
     const normalizedSettings = {
       enableAI: normalizeKeywordSetting(keywordSettings.enableAI),
-      disableAI: normalizeKeywordSetting(keywordSettings.disableAI),
+      disableAI: disableAINormalized,
       disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
@@ -21867,7 +21898,14 @@ async function getBroadcastAudience(channels, audienceType) {
                     ],
                   },
                   null,
-                  { $toString: "$$raw" },
+                  {
+                    $convert: {
+                      input: "$$raw",
+                      to: "string",
+                      onError: null,
+                      onNull: null,
+                    },
+                  },
                 ],
               },
             },
@@ -21984,7 +22022,29 @@ app.post("/admin/broadcast/preview", async (req, res) => {
 });
 
 // Start Broadcast (with Queue & Image Upload)
-app.post("/admin/broadcast", upload.array("images"), async (req, res) => {
+const broadcastUpload = (req, res, next) => {
+  imageUpload.array("images", 5)(req, res, (err) => {
+    if (!err) return next();
+
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res
+          .status(400)
+          .json({ success: false, error: "ไฟล์รูปภาพมีขนาดใหญ่เกินไป (ไม่เกิน 10MB)" });
+      }
+      return res
+        .status(400)
+        .json({ success: false, error: "อัพโหลดรูปภาพไม่สำเร็จ กรุณาลองใหม่" });
+    }
+
+    return res.status(400).json({
+      success: false,
+      error: err.message || "อัพโหลดรูปภาพไม่สำเร็จ",
+    });
+  });
+};
+
+app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
   try {
     let { messages, audience, channels, settings } = req.body;
 

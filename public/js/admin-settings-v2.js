@@ -2130,6 +2130,9 @@ function setBotKeywordModalFormValues(keywordSettings = {}) {
     setInputValue('botKeywordDisableAI', disableAI.keyword);
     setInputValue('botKeywordDisableAIResponse', disableAI.response);
     setCheckboxValue('botKeywordDisableAISendResponse', disableAI.sendResponse === true);
+    // alsoDisableFollowUp: default true (backward compat)
+    const rawAlso = keywordSettings.disableAI?.alsoDisableFollowUp;
+    setCheckboxValue('botKeywordDisableAIAlsoDisableFollowUp', rawAlso !== false);
     setInputValue('botKeywordDisableFollowUp', disableFollowUp.keyword);
     setInputValue('botKeywordDisableFollowUpResponse', disableFollowUp.response);
     setCheckboxValue('botKeywordDisableFollowUpSendResponse', disableFollowUp.sendResponse === true);
@@ -2145,7 +2148,8 @@ function readBotKeywordFormValues() {
         disableAI: {
             keyword: getInputValue('botKeywordDisableAI').trim(),
             response: getInputValue('botKeywordDisableAIResponse').trim(),
-            sendResponse: getCheckboxValue('botKeywordDisableAISendResponse')
+            sendResponse: getCheckboxValue('botKeywordDisableAISendResponse'),
+            alsoDisableFollowUp: getCheckboxValue('botKeywordDisableAIAlsoDisableFollowUp')
         },
         disableFollowUp: {
             keyword: getInputValue('botKeywordDisableFollowUp').trim(),

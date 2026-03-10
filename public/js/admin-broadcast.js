@@ -282,7 +282,7 @@
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
         fileInput.className = 'form-control form-control-sm';
-        fileInput.accept = 'image/*';
+        fileInput.accept = 'image/jpeg,image/png,image/webp';
         fileInput.addEventListener('change', (e) => {
           if (e.target.files && e.target.files[0]) {
             item.file = e.target.files[0];
@@ -411,14 +411,17 @@
         method: 'POST',
         body: formData
       });
-      const result = await res.json();
+      const isJson = (res.headers.get('content-type') || '').includes('application/json');
+      const result = isJson
+        ? await res.json()
+        : { success: false, error: `HTTP ${res.status}` };
 
-      if (result.success) {
+      if (res.ok && result.success) {
         // Start Polling
         progressModal.show();
         startPolling(result.broadcastId);
       } else {
-        showToast(result.error || 'การส่งล้มเหลว', 'error');
+        showToast(result.error || `การส่งล้มเหลว (HTTP ${res.status})`, 'error');
         isSubmitting = false;
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i> ส่งข้อความ';
