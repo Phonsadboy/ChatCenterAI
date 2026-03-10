@@ -16,7 +16,8 @@
 
     <div class="app-content">
       <% const lineCount=(lineBots && lineBots.length) || 0; const fbCount=(facebookBots && facebookBots.length) || 0;
-        const totalBots=lineCount + fbCount; %>
+        const igCount=(instagramBots && instagramBots.length) || 0; const waCount=(whatsappBots && whatsappBots.length) || 0;
+        const totalBots=lineCount + fbCount + igCount + waCount; %>
         <div class="container-fluid p-0">
           <div class="broadcast-header">
             <div>
@@ -35,6 +36,16 @@
                 <span class="metric-chip"><i class="fab fa-facebook text-primary"></i> Facebook <strong>
                     <%= fbCount %>
                   </strong></span>
+                <% if (igCount > 0) { %>
+                <span class="metric-chip"><i class="fab fa-instagram text-danger"></i> Instagram <strong>
+                    <%= igCount %>
+                  </strong></span>
+                <% } %>
+                <% if (waCount > 0) { %>
+                <span class="metric-chip"><i class="fab fa-whatsapp text-success"></i> WhatsApp <strong>
+                    <%= waCount %>
+                  </strong></span>
+                <% } %>
                 <span class="metric-chip" id="audienceCount"><i class="fas fa-users"></i> เลือกกลุ่มเป้าหมาย</span>
               </div>
             </div>
@@ -212,11 +223,46 @@
                                             <% }) %>
                                         </div>
                                         <% } %>
+                                          <% if (instagramBots && instagramBots.length) { %>
+                                            <div class=”channel-header mt-3”><i class=”fab fa-instagram text-danger”></i>
+                                              Instagram Accounts</div>
+                                            <div class=”channel-list”>
+                                              <% instagramBots.forEach(bot=> { %>
+                                                <div class=”form-check”>
+                                                  <input class=”form-check-input” type=”checkbox” name=”channels”
+                                                    id=”ig-<%= bot._id %>” value=”instagram:<%= bot._id %>”>
+                                                  <label class=”form-check-label” for=”ig-<%= bot._id %>”>
+                                                    <span class=”channel-name”>
+                                                      <%= bot.name || bot.username %>
+                                                    </span>
+                                                  </label>
+                                                </div>
+                                                <% }) %>
+                                            </div>
+                                          <% } %>
+                                          <% if (whatsappBots && whatsappBots.length) { %>
+                                            <div class=”channel-header mt-3”><i class=”fab fa-whatsapp text-success”></i>
+                                              WhatsApp Bots</div>
+                                            <div class=”channel-list”>
+                                              <% whatsappBots.forEach(bot=> { %>
+                                                <div class=”form-check”>
+                                                  <input class=”form-check-input” type=”checkbox” name=”channels”
+                                                    id=”wa-<%= bot._id %>” value=”whatsapp:<%= bot._id %>”>
+                                                  <label class=”form-check-label” for=”wa-<%= bot._id %>”>
+                                                    <span class=”channel-name”>
+                                                      <%= bot.name %>
+                                                    </span>
+                                                    <% if (bot.phoneNumber) { %><span class=”text-muted small”>(<%= bot.phoneNumber %>)</span><% } %>
+                                                  </label>
+                                                </div>
+                                                <% }) %>
+                                            </div>
+                                          <% } %>
                                           <% } else { %>
-                                            <div class="app-empty">
-                                              <div class="app-empty__icon"><i class="fas fa-robot"></i></div>
-                                              <div class="app-empty__title">ยังไม่มีบอทที่เพิ่มไว้</div>
-                                              <div class="app-empty__desc">ไปที่หน้า “ตั้งค่า” เพื่อเพิ่ม LINE/Facebook
+                                            <div class=”app-empty”>
+                                              <div class=”app-empty__icon”><i class=”fas fa-robot”></i></div>
+                                              <div class=”app-empty__title”>ยังไม่มีบอทที่เพิ่มไว้</div>
+                                              <div class=”app-empty__desc”>ไปที่หน้า “ตั้งค่า” เพื่อเพิ่ม LINE/Facebook
                                                 Bot ก่อน</div>
                                               <a href="/admin/settings2" class="btn btn-primary btn-sm">
                                                 <i class="fas fa-plus me-1"></i> เพิ่มบอทใหม่

@@ -78,8 +78,10 @@
       const n = ch.count;
       if (n === 0) continue;
       const numBatches = Math.ceil(n / batchSize);
-      const chSeconds = (Math.min(n, batchSize) - 1) * messageDelay + (numBatches - 1) * (batchDelay + (Math.min(n, batchSize) - 1) * messageDelay);
-      // Simplified: last batch time + (numBatches-1) * (batchDelay + batchTime)
+      const lastBatchSize = (n % batchSize) || batchSize;
+      const lastBatchTime = (lastBatchSize - 1) * messageDelay;
+      const fullBatchTime = (batchSize - 1) * messageDelay;
+      const chSeconds = (numBatches - 1) * (fullBatchTime + batchDelay) + lastBatchTime;
       if (chSeconds > maxSeconds) maxSeconds = chSeconds;
     }
     return { overallSeconds: maxSeconds, formatted: formatDuration(maxSeconds) };
@@ -245,6 +247,7 @@
 
   // Recalculate estimate when rate settings change
   document.querySelectorAll('input[name="settings_batchSize"], input[name="settings_batchDelay"], input[name="settings_messageDelay"]').forEach(input => {
+    input.addEventListener('input', updateTimeEstimate);
     input.addEventListener('change', updateTimeEstimate);
   });
 
