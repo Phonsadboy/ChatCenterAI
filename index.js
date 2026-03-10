@@ -2510,17 +2510,54 @@ function cloneConversationStarterConfigForStorage(config = {}, now = new Date())
 
 function summarizeFollowUpRound(round) {
   if (!round) return "";
+  // Support new items format
+  if (Array.isArray(round.items) && round.items.length > 0) {
+    const texts = round.items.filter(i => i.type === "text").map(i => i.content).filter(Boolean);
+    const imageCount = round.items.filter(i => i.type === "image").length;
+    const message = texts[0] || "";
+    if (message && imageCount > 0) return `${message} • รูปภาพ ${imageCount} รูป`;
+    if (message) return message;
+    if (imageCount > 0) return `ส่งรูปภาพ ${imageCount} รูป`;
+    return "";
+  }
+  // Legacy format
   const message = typeof round.message === "string" ? round.message.trim() : "";
   const imageCount = Array.isArray(round.images) ? round.images.length : 0;
-
-  if (message && imageCount > 0) {
-    return `${message} • รูปภาพ ${imageCount} รูป`;
-  }
+  if (message && imageCount > 0) return `${message} • รูปภาพ ${imageCount} รูป`;
   if (message) return message;
-  if (imageCount > 0) {
-    return `ส่งรูปภาพ ${imageCount} รูป`;
-  }
+  if (imageCount > 0) return `ส่งรูปภาพ ${imageCount} รูป`;
   return "";
+}
+
+function normalizeFollowUpItem(item) {
+  if (!item || typeof item !== "object") return null;
+  const type = typeof item.type === "string" ? item.type.trim().toLowerCase() : "";
+  if (type === "text") {
+    const content = typeof item.content === "string" ? item.content.trim() : "";
+    if (!content) return null;
+    return { type: "text", content };
+  }
+  if (type === "image") {
+    const sanitized = sanitizeFollowUpImage(item);
+    if (!sanitized) return null;
+    return { type: "image", ...sanitized };
+  }
+  return null;
+}
+
+function normalizeFollowUpItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.map(normalizeFollowUpItem).filter(Boolean);
+}
+
+// Convert legacy { message, images } round to items array
+function roundLegacyToItems(round) {
+  const items = [];
+  const message = typeof round.message === "string" ? round.message.trim() : "";
+  const images = sanitizeFollowUpImages(round.images || round.media);
+  if (message) items.push({ type: "text", content: message });
+  images.forEach(img => items.push({ type: "image", ...img }));
+  return items;
 }
 
 function normalizeFollowUpRounds(rounds) {
@@ -2529,15 +2566,19 @@ function normalizeFollowUpRounds(rounds) {
   rounds.forEach((item, idx) => {
     if (!item) return;
     const delay = Number(item.delayMinutes);
-    const message = typeof item.message === "string" ? item.message.trim() : "";
-    const images = sanitizeFollowUpImages(item.images || item.media);
-
     if (!Number.isFinite(delay) || delay < 1) return;
-    if (!message && images.length === 0) return;
+
+    let items;
+    if (Array.isArray(item.items)) {
+      items = normalizeFollowUpItems(item.items);
+    } else {
+      items = roundLegacyToItems(item);
+    }
+
+    if (items.length === 0) return;
     normalized.push({
       delayMinutes: Math.round(delay),
-      message,
-      images,
+      items,
       order: idx,
     });
   });
@@ -3016,15 +3057,14 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       const baseMoment = getBangkokMoment(messageTimestamp);
       const rebuiltRounds = roundsConfig.map((round, index) => {
         const scheduledMoment = baseMoment.clone().add(round.delayMinutes, "minutes");
-        const sanitizedImages = sanitizeFollowUpImages(round.images);
         const wasSent = !shouldResetProgress && index < completedRounds;
         const existing = roundsFromDb[index] || {};
+        const items = Array.isArray(round.items) ? normalizeFollowUpItems(round.items) : roundLegacyToItems(round);
 
         return {
           index,
           delayMinutes: round.delayMinutes,
-          message: typeof round.message === "string" ? round.message : "",
-          images: sanitizedImages,
+          items,
           scheduledAt: scheduledMoment.toDate(),
           sentAt: wasSent ? existing.sentAt || existing.sent_at || null : null,
           status: wasSent ? "sent" : "pending",
@@ -3061,8 +3101,7 @@ async function scheduleFollowUpForUser(userId, options = {}) {
             configSnapshot: {
               rounds: roundsConfig.map((item) => ({
                 delayMinutes: item.delayMinutes,
-                message: typeof item.message === "string" ? item.message : "",
-                images: sanitizeFollowUpImages(item.images),
+                items: Array.isArray(item.items) ? normalizeFollowUpItems(item.items) : roundLegacyToItems(item),
               })),
               autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
             },
@@ -3086,13 +3125,12 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       const scheduledMoment = baseMoment
         .clone()
         .add(round.delayMinutes, "minutes");
-      const sanitizedImages = sanitizeFollowUpImages(round.images);
+      const items = Array.isArray(round.items) ? normalizeFollowUpItems(round.items) : roundLegacyToItems(round);
 
       return {
         index,
         delayMinutes: round.delayMinutes,
-        message: typeof round.message === "string" ? round.message : "",
-        images: sanitizedImages,
+        items,
         scheduledAt: scheduledMoment.toDate(),
         sentAt: null,
         status: "pending",
@@ -3122,8 +3160,7 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       configSnapshot: {
         rounds: roundsConfig.map((item) => ({
           delayMinutes: item.delayMinutes,
-          message: typeof item.message === "string" ? item.message : "",
-          images: sanitizeFollowUpImages(item.images),
+          items: Array.isArray(item.items) ? normalizeFollowUpItems(item.items) : roundLegacyToItems(item),
         })),
         autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
       },
@@ -3415,228 +3452,116 @@ async function handleFollowUpTask(task, db) {
 }
 
 async function sendFollowUpMessage(task, round, db) {
-  const message =
-    typeof round?.message === "string" ? round.message.trim() : "";
-  let images = sanitizeFollowUpImages(round?.images || []);
-
-  // ถ้า PUBLIC_BASE_URL ไม่ได้ตั้งค่า ให้เตือน
-  if (!PUBLIC_BASE_URL) {
-    console.warn(
-      "[FollowUp Warning] PUBLIC_BASE_URL is not set. Images with relative URLs may fail.",
-    );
+  // Support both new items format and legacy message/images
+  let items;
+  if (Array.isArray(round?.items) && round.items.length > 0) {
+    items = round.items;
+  } else {
+    items = roundLegacyToItems(round || {});
   }
 
-  // แปลง relative URLs เป็น absolute URLs ถ้า PUBLIC_BASE_URL มี
+  if (!PUBLIC_BASE_URL) {
+    console.warn("[FollowUp Warning] PUBLIC_BASE_URL is not set. Images with relative URLs may fail.");
+  }
+
+  // Fix relative URLs in image items
   if (PUBLIC_BASE_URL) {
-    images = images.map((img) => {
-      const fixed = { ...img };
-      if (img.url && img.url.startsWith("/")) {
-        fixed.url = PUBLIC_BASE_URL.replace(/\/$/, "") + img.url;
-      }
-      if (img.previewUrl && img.previewUrl.startsWith("/")) {
-        fixed.previewUrl = PUBLIC_BASE_URL.replace(/\/$/, "") + img.previewUrl;
-      }
-      if (img.thumbUrl && img.thumbUrl.startsWith("/")) {
-        fixed.thumbUrl = PUBLIC_BASE_URL.replace(/\/$/, "") + img.thumbUrl;
-      }
-      return fixed;
+    const base = PUBLIC_BASE_URL.replace(/\/$/, "");
+    const fixUrl = (u) => (u && u.startsWith("/") ? base + u : u);
+    items = items.map((item) => {
+      if (item.type !== "image") return item;
+      return {
+        ...item,
+        url: fixUrl(item.url),
+        previewUrl: fixUrl(item.previewUrl),
+        thumbUrl: fixUrl(item.thumbUrl),
+      };
     });
   }
 
-
-  if (!message && images.length === 0) {
+  if (items.length === 0) {
     throw new Error("ไม่มีเนื้อหาสำหรับการติดตาม");
   }
 
-  if (task.platform === "facebook") {
-    console.log(`[FollowUp] FB: ${task.userId}, msg:${!!message}, imgs:${images.length}`);
-
-    if (!task.botId) {
-      throw new Error("ไม่พบ Facebook Bot สำหรับการส่งข้อความ");
+  // Build combinedMessage + assetsMap for Meta platforms (FB/IG/WA)
+  const buildMetaPayload = (items) => {
+    let combinedMessage = "";
+    const followUpAssets = [];
+    let imgCounter = 0;
+    for (const item of items) {
+      if (item.type === "text") {
+        if (combinedMessage) combinedMessage += "[cut]";
+        combinedMessage += item.content || "";
+      } else if (item.type === "image") {
+        imgCounter++;
+        if (combinedMessage) combinedMessage += "[cut]";
+        const label =
+          typeof item.label === "string" && item.label.trim()
+            ? item.label.trim()
+            : item.fileName || item.alt || `รูปที่ ${imgCounter}`;
+        combinedMessage += `#[IMAGE:${label}]`;
+        followUpAssets.push({ ...item, label });
+      }
     }
+    const assetsMap = buildAssetsLookup(
+      followUpAssets.map((asset) => ({
+        ...asset,
+        thumbUrl: asset.previewUrl || asset.thumbUrl || asset.url,
+        fileName: asset.fileName || "",
+      }))
+    );
+    return { combinedMessage, assetsMap };
+  };
+
+  if (task.platform === "facebook") {
+    console.log(`[FollowUp] FB: ${task.userId}, items:${items.length}`);
+    if (!task.botId) throw new Error("ไม่พบ Facebook Bot สำหรับการส่งข้อความ");
     const query = ObjectId.isValid(task.botId)
       ? { _id: new ObjectId(task.botId) }
       : { _id: task.botId };
     const fbBot = await db.collection("facebook_bots").findOne(query);
-    if (!fbBot || !fbBot.accessToken) {
-      throw new Error("ไม่พบข้อมูล Facebook Bot");
-    }
-    const metadata = "follow_up_auto";
-
-    // สร้างข้อความรวม text และรูปภาพ ในรูปแบบที่ sendFacebookMessage รองรับ
-    let combinedMessage = message || "";
-
-    // เพิ่ม [cut] เพื่อแยกข้อความถ้ามีทั้ง text และรูป
-    if (message && images.length > 0) {
-      combinedMessage += "[cut]";
-    }
-
-    const followUpAssets = [];
-    const followUpLabels = [];
-    // เพิ่ม #[IMAGE:...] token สำหรับแต่ละรูป
-    for (let i = 0; i < images.length; i++) {
-      const image = images[i];
-      const labelSource =
-        typeof image.label === "string" && image.label.trim()
-          ? image.label.trim()
-          : image.fileName || image.alt || `รูปที่ ${i + 1}`;
-      combinedMessage += `#[IMAGE:${labelSource}]`;
-      if (i < images.length - 1) {
-        combinedMessage += "[cut]";
-      }
-      followUpLabels.push(labelSource);
-      followUpAssets.push({
-        ...image,
-        label: labelSource,
-      });
-    }
-
-
-    // สร้าง assetsMap จากรูปภาพที่มี
-    const assetsMap = buildAssetsLookup(
-      followUpAssets.map((asset) => ({
-        ...asset,
-        thumbUrl: asset.previewUrl || asset.thumbUrl || asset.url,
-        fileName: asset.fileName || "",
-      })),
-    );
-
-
-    // ใช้ sendFacebookMessage ที่มี upload/url mode และ fallback
+    if (!fbBot || !fbBot.accessToken) throw new Error("ไม่พบข้อมูล Facebook Bot");
+    const { combinedMessage, assetsMap } = buildMetaPayload(items);
     await sendFacebookMessage(
       task.userId,
       combinedMessage,
       fbBot.accessToken,
-      {
-        metadata,
-        selectedImageCollections: null, // ไม่ใช้ collections แต่ใช้ assetsMap ที่สร้างเอง
-      },
+      { metadata: "follow_up_auto", selectedImageCollections: null },
       assetsMap,
     );
   } else if (task.platform === "instagram") {
-    if (!task.botId) {
-      throw new Error("ไม่พบ Instagram Bot สำหรับการส่งข้อความ");
-    }
+    if (!task.botId) throw new Error("ไม่พบ Instagram Bot สำหรับการส่งข้อความ");
     const igBot = await findBotById(db, "instagram", task.botId);
-    if (!igBot) {
-      throw new Error("ไม่พบข้อมูล Instagram Bot");
-    }
+    if (!igBot) throw new Error("ไม่พบข้อมูล Instagram Bot");
     const accessToken = resolveMetaAccessToken(igBot);
     const instagramSenderId = resolveInstagramSenderId(igBot);
-    if (!accessToken || !instagramSenderId) {
-      throw new Error("ไม่พบ access token หรือ instagram sender id");
-    }
-
-    let combinedMessage = message || "";
-    if (message && images.length > 0) {
-      combinedMessage += "[cut]";
-    }
-
-    const followUpAssets = [];
-    for (let i = 0; i < images.length; i++) {
-      const image = images[i];
-      const labelSource =
-        typeof image.label === "string" && image.label.trim()
-          ? image.label.trim()
-          : image.fileName || image.alt || `รูปที่ ${i + 1}`;
-      combinedMessage += `#[IMAGE:${labelSource}]`;
-      if (i < images.length - 1) {
-        combinedMessage += "[cut]";
-      }
-      followUpAssets.push({
-        ...image,
-        label: labelSource,
-      });
-    }
-
-    const assetsMap = buildAssetsLookup(
-      followUpAssets.map((asset) => ({
-        ...asset,
-        thumbUrl: asset.previewUrl || asset.thumbUrl || asset.url,
-        fileName: asset.fileName || "",
-      })),
-    );
-
-    await sendInstagramMessage(
-      task.userId,
-      combinedMessage,
-      accessToken,
-      instagramSenderId,
-      {
-        selectedImageCollections: null,
-      },
-      assetsMap,
-    );
+    if (!accessToken || !instagramSenderId) throw new Error("ไม่พบ access token หรือ instagram sender id");
+    const { combinedMessage, assetsMap } = buildMetaPayload(items);
+    await sendInstagramMessage(task.userId, combinedMessage, accessToken, instagramSenderId, { selectedImageCollections: null }, assetsMap);
   } else if (task.platform === "whatsapp") {
-    if (!task.botId) {
-      throw new Error("ไม่พบ WhatsApp Bot สำหรับการส่งข้อความ");
-    }
+    if (!task.botId) throw new Error("ไม่พบ WhatsApp Bot สำหรับการส่งข้อความ");
     const waBot = await findBotById(db, "whatsapp", task.botId);
-    if (!waBot) {
-      throw new Error("ไม่พบข้อมูล WhatsApp Bot");
-    }
+    if (!waBot) throw new Error("ไม่พบข้อมูล WhatsApp Bot");
     const accessToken = resolveMetaAccessToken(waBot);
     const phoneNumberId = resolveWhatsAppPhoneNumberId(waBot);
-    if (!accessToken || !phoneNumberId) {
-      throw new Error("ไม่พบ access token หรือ phoneNumberId");
-    }
-
-    let combinedMessage = message || "";
-    if (message && images.length > 0) {
-      combinedMessage += "[cut]";
-    }
-
-    const followUpAssets = [];
-    for (let i = 0; i < images.length; i++) {
-      const image = images[i];
-      const labelSource =
-        typeof image.label === "string" && image.label.trim()
-          ? image.label.trim()
-          : image.fileName || image.alt || `รูปที่ ${i + 1}`;
-      combinedMessage += `#[IMAGE:${labelSource}]`;
-      if (i < images.length - 1) {
-        combinedMessage += "[cut]";
-      }
-      followUpAssets.push({
-        ...image,
-        label: labelSource,
-      });
-    }
-
-    const assetsMap = buildAssetsLookup(
-      followUpAssets.map((asset) => ({
-        ...asset,
-        thumbUrl: asset.previewUrl || asset.thumbUrl || asset.url,
-        fileName: asset.fileName || "",
-      })),
-    );
-
-    await sendWhatsAppMessage(
-      task.userId,
-      combinedMessage,
-      accessToken,
-      phoneNumberId,
-      { selectedImageCollections: null },
-      assetsMap,
-    );
+    if (!accessToken || !phoneNumberId) throw new Error("ไม่พบ access token หรือ phoneNumberId");
+    const { combinedMessage, assetsMap } = buildMetaPayload(items);
+    await sendWhatsAppMessage(task.userId, combinedMessage, accessToken, phoneNumberId, { selectedImageCollections: null }, assetsMap);
   } else {
-    await sendLineFollowUpMessage(task.userId, message, task.botId, db, images);
+    await sendLineFollowUpMessageWithItems(task.userId, items, task.botId, db);
   }
 
   const historyColl = db.collection("chat_history");
   const timestamp = new Date();
-  const historyParts = [];
-  if (message) {
-    historyParts.push({ type: "text", text: message });
-  }
-  images.forEach((image) => {
-    historyParts.push({
+  const historyParts = items.map((item) => {
+    if (item.type === "text") return { type: "text", text: item.content || "" };
+    return {
       type: "image",
-      url: image.url,
-      previewUrl: image.previewUrl || image.thumbUrl || image.url,
-      alt: image.alt || "",
-      caption: image.caption || "",
-    });
+      url: item.url,
+      previewUrl: item.previewUrl || item.thumbUrl || item.url,
+      alt: item.alt || "",
+      caption: item.caption || "",
+    };
   });
 
   let storedContent = "";
@@ -3672,37 +3597,28 @@ async function sendFollowUpMessage(task, round, db) {
   } catch (_) { }
 }
 
-async function sendLineFollowUpMessage(
-  userId,
-  message,
-  botId,
-  db,
-  images = [],
-) {
+async function sendLineFollowUpMessageWithItems(userId, items, botId, db) {
   try {
-    console.log(`[FollowUp] LINE: ${userId}, msg:${!!message}, imgs:${Array.isArray(images) ? images.length : 0}`);
+    console.log(`[FollowUp] LINE: ${userId}, items:${items.length}`);
 
     const payloads = [];
-    const normalizedMessage = normalizeOutgoingText(message);
-    const trimmed =
-      typeof normalizedMessage === "string" ? normalizedMessage.trim() : "";
-    if (trimmed) {
-      payloads.push({ type: "text", text: trimmed });
+    for (const item of items) {
+      if (item.type === "text") {
+        const normalized = normalizeOutgoingText(item.content || "");
+        const trimmed = typeof normalized === "string" ? normalized.trim() : "";
+        if (trimmed) payloads.push({ type: "text", text: trimmed });
+      } else if (item.type === "image") {
+        payloads.push({
+          type: "image",
+          originalContentUrl: item.url,
+          previewImageUrl: item.previewUrl || item.thumbUrl || item.url,
+        });
+      }
     }
-    const media = sanitizeFollowUpImages(images);
-
-    media.forEach((image) => {
-      payloads.push({
-        type: "image",
-        originalContentUrl: image.url,
-        previewImageUrl: image.previewUrl || image.thumbUrl || image.url,
-      });
-    });
 
     if (!payloads.length) {
       throw new Error("ไม่มีเนื้อหาสำหรับการติดตาม");
     }
-
 
     const chunks = [];
     for (let i = 0; i < payloads.length; i += 5) {
@@ -3710,8 +3626,7 @@ async function sendLineFollowUpMessage(
     }
 
     const sendChunks = async (client) => {
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
+      for (const chunk of chunks) {
         await client.pushMessage(userId, chunk.length === 1 ? chunk[0] : chunk);
       }
     };
@@ -3724,10 +3639,7 @@ async function sendLineFollowUpMessage(
       if (!botDoc || !botDoc.channelAccessToken || !botDoc.channelSecret) {
         throw new Error("ไม่พบข้อมูล Line Bot สำหรับการส่งข้อความ");
       }
-      const client = createLineClient(
-        botDoc.channelAccessToken,
-        botDoc.channelSecret,
-      );
+      const client = createLineClient(botDoc.channelAccessToken, botDoc.channelSecret);
       await sendChunks(client);
       return;
     }
@@ -3736,13 +3648,18 @@ async function sendLineFollowUpMessage(
     }
     await sendChunks(lineClient);
   } catch (error) {
-    console.error("[FollowUp Error] Failed to send LINE message:", {
-      error: error.message,
-      userId,
-      botId,
-    });
+    console.error("[FollowUp Error] Failed to send LINE message:", { error: error.message, userId, botId });
     throw new Error(error.message || "ไม่สามารถส่งข้อความผ่าน LINE ได้");
   }
+}
+
+// Legacy wrapper kept for any remaining call sites
+async function sendLineFollowUpMessage(userId, message, botId, db, images = []) {
+  const items = [];
+  const trimmed = typeof message === "string" ? message.trim() : "";
+  if (trimmed) items.push({ type: "text", content: trimmed });
+  sanitizeFollowUpImages(images).forEach(img => items.push({ type: "image", ...img }));
+  return sendLineFollowUpMessageWithItems(userId, items, botId, db);
 }
 
 function startFollowUpTaskWorker() {
@@ -21609,61 +21526,64 @@ app.get("/admin/instructions/:id/json", async (req, res) => {
 const activeBroadcasts = new Map();
 
 class BroadcastQueue {
-  constructor(jobId, data, options = {}) {
+  constructor(jobId, data, options = {}, channelInfo = {}) {
     this.jobId = jobId;
     this.data = data; // { messages, targets, channels }
     this.options = options; // { batchSize, batchDelay, messageDelay }
+    this.isCancelled = false;
+    this.botsCache = new Map();
+
+    // Group targets by platform:botId for parallel processing
+    const grouped = {};
+    for (const t of data.targets) {
+      const key = `${t.platform}:${t.botId}`;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(t);
+    }
+    this.channelGroups = grouped;
+
+    // Build per-channel stats
+    const channels = {};
+    for (const [key, targets] of Object.entries(grouped)) {
+      const info = channelInfo[key] || {};
+      channels[key] = {
+        name: info.name || key,
+        platform: info.platform || key.split(":")[0],
+        total: targets.length,
+        sent: 0,
+        failed: 0,
+        status: "pending",
+      };
+    }
+
     this.stats = {
       total: data.targets.length,
       sent: 0,
       failed: 0,
-      status: "pending", // pending, running, completed, cancelled, failed
+      status: "pending",
       startTime: null,
       endTime: null,
       errors: [],
+      channels,
     };
-    this.isCancelled = false;
-    this.botsCache = new Map(); // Cache bot data
   }
 
+  // --- Parallel start: each channel runs its own batch loop concurrently ---
   async start() {
     this.stats.status = "running";
     this.stats.startTime = new Date();
     await this.saveHistory();
 
-    const { targets } = this.data;
-    const { batchSize = 10, batchDelay = 60, messageDelay = 1 } = this.options;
-
     try {
-      // Pre-fetch bot data
       await this.loadBots();
 
-      for (let i = 0; i < targets.length; i += batchSize) {
-        if (this.isCancelled) break;
+      const channelPromises = Object.entries(this.channelGroups).map(
+        ([channelKey, targets]) => this.processChannel(channelKey, targets)
+      );
 
-        const batch = targets.slice(i, i + batchSize);
+      await Promise.allSettled(channelPromises);
 
-        // Process batch safely
-        const batchPromises = batch.map(async (target, index) => {
-          if (this.isCancelled) return;
-          // Add delay between messages in the same batch
-          if (messageDelay > 0 && index > 0) {
-            await new Promise((r) => setTimeout(r, index * messageDelay * 1000));
-          }
-          if (this.isCancelled) return;
-          await this.sendToTarget(target);
-        });
-
-        await Promise.allSettled(batchPromises);
-
-        await this.updateProgress();
-
-        // Wait for batch delay if not the last batch
-        if (i + batchSize < targets.length && !this.isCancelled) {
-          await new Promise((r) => setTimeout(r, batchDelay * 1000));
-        }
-      }
-
+      this.recomputeOverallStats();
       this.stats.status = this.isCancelled ? "cancelled" : "completed";
     } catch (error) {
       console.error(`[Broadcast] Job ${this.jobId} failed:`, error);
@@ -21672,16 +21592,159 @@ class BroadcastQueue {
     } finally {
       this.stats.endTime = new Date();
       await this.saveHistory();
-      // Clean up memory after a delay so status polling can still read the final state
       setTimeout(() => activeBroadcasts.delete(this.jobId), 5 * 60 * 1000);
     }
+  }
+
+  // --- Process one channel's targets in batches ---
+  async processChannel(channelKey, channelTargets) {
+    const channelStats = this.stats.channels[channelKey];
+    channelStats.status = "running";
+
+    const { batchSize = 10, batchDelay = 60, messageDelay = 1 } = this.options;
+
+    try {
+      for (let i = 0; i < channelTargets.length; i += batchSize) {
+        if (this.isCancelled) break;
+
+        const batch = channelTargets.slice(i, i + batchSize);
+
+        const batchPromises = batch.map(async (target, index) => {
+          if (this.isCancelled) return;
+          if (messageDelay > 0 && index > 0) {
+            await new Promise((r) => setTimeout(r, index * messageDelay * 1000));
+          }
+          if (this.isCancelled) return;
+
+          try {
+            await this._deliverToTarget(target);
+            channelStats.sent++;
+          } catch (e) {
+            console.error(`[Broadcast] Failed to send to ${target.userId}: ${e.message}`);
+            channelStats.failed++;
+            if (this.stats.errors.length < 100) {
+              this.stats.errors.push({ userId: target.userId, error: e.message, channel: channelKey });
+            }
+          }
+        });
+
+        await Promise.allSettled(batchPromises);
+        this.recomputeOverallStats();
+        await this.updateProgress();
+
+        if (i + batchSize < channelTargets.length && !this.isCancelled) {
+          await new Promise((r) => setTimeout(r, batchDelay * 1000));
+        }
+      }
+
+      channelStats.status = this.isCancelled ? "cancelled" : "completed";
+    } catch (error) {
+      channelStats.status = "failed";
+      console.error(`[Broadcast] Channel ${channelKey} failed:`, error);
+    }
+  }
+
+  // --- Pure delivery — throws on error, no stat tracking ---
+  async _deliverToTarget(target) {
+    const { userId, platform, botId } = target;
+    const { messages } = this.data;
+    const bot = this.botsCache.get(`${platform}:${botId}`);
+
+    if (!bot) {
+      throw new Error("Bot not found");
+    }
+
+    if (platform === "facebook") {
+      for (const msg of messages) {
+        if (msg.type === 'text') {
+          await sendFacebookMessage(userId, msg.content, bot.accessToken, { metadata: "broadcast_auto" });
+        } else if (msg.type === 'image') {
+          await axios.post(
+            `https://graph.facebook.com/v18.0/me/messages`,
+            {
+              recipient: { id: userId },
+              message: {
+                attachment: {
+                  type: "image",
+                  payload: { url: msg.url, is_reusable: true }
+                },
+                metadata: "broadcast_auto"
+              }
+            },
+            {
+              params: { access_token: bot.accessToken },
+              headers: { "Content-Type": "application/json" }
+            }
+          );
+        }
+      }
+    } else if (platform === "line") {
+      const client = createLineClient(bot.channelAccessToken, bot.channelSecret);
+      const lineMessages = messages.map(msg => {
+        if (msg.type === 'text') {
+          return { type: 'text', text: normalizeOutgoingText(msg.content) };
+        }
+        if (msg.type === 'image') return { type: 'image', originalContentUrl: msg.url, previewImageUrl: msg.url };
+        return null;
+      }).filter(Boolean);
+
+      if (lineMessages.length > 0) {
+        await client.pushMessage(userId, lineMessages);
+      }
+    } else if (platform === "instagram") {
+      const accessToken = resolveMetaAccessToken(bot || {});
+      const senderId = resolveInstagramSenderId(bot || {});
+      if (!accessToken || !senderId) {
+        throw new Error("Instagram bot access token/sender id missing");
+      }
+      for (const msg of messages) {
+        if (msg.type === "text") {
+          await sendInstagramMessage(userId, msg.content, accessToken, senderId);
+        } else if (msg.type === "image" && msg.url) {
+          const label = msg.alt || msg.caption || "Broadcast image";
+          const assetsMap = buildAssetsLookup([
+            { label, url: msg.url, thumbUrl: msg.url, alt: msg.alt || "", fileName: "" },
+          ]);
+          await sendInstagramMessage(
+            userId, `#[IMAGE:${label}]`, accessToken, senderId,
+            { selectedImageCollections: null }, assetsMap,
+          );
+        }
+      }
+    } else if (platform === "whatsapp") {
+      const accessToken = resolveMetaAccessToken(bot || {});
+      const phoneNumberId = resolveWhatsAppPhoneNumberId(bot || {});
+      if (!accessToken || !phoneNumberId) {
+        throw new Error("WhatsApp bot access token/phoneNumberId missing");
+      }
+      for (const msg of messages) {
+        if (msg.type === "text") {
+          await sendWhatsAppMessage(userId, msg.content, accessToken, phoneNumberId);
+        } else if (msg.type === "image" && msg.url) {
+          await sendWhatsAppImageByUrl(userId, msg.url, accessToken, phoneNumberId, msg.alt || "");
+        }
+      }
+    }
+  }
+
+  // --- Sum per-channel stats into top-level for backward compat ---
+  recomputeOverallStats() {
+    let sent = 0, failed = 0;
+    for (const ch of Object.values(this.stats.channels)) {
+      sent += ch.sent;
+      failed += ch.failed;
+    }
+    this.stats.sent = sent;
+    this.stats.failed = failed;
+  }
+
+  cancel() {
+    this.isCancelled = true;
   }
 
   async loadBots() {
     const client = await connectDB();
     const db = client.db("chatbot");
-
-    // Unique bots needed
     const botKeys = new Set(this.data.targets.map(t => `${t.platform}:${t.botId}`));
 
     for (const key of botKeys) {
@@ -21705,141 +21768,14 @@ class BroadcastQueue {
     }
   }
 
-  async sendToTarget(target) {
-    const { userId, platform, botId } = target;
-    const { messages } = this.data;
-    const bot = this.botsCache.get(`${platform}:${botId}`);
-
-    if (!bot) {
-      this.stats.failed++;
-      this.stats.errors.push({ userId, error: "Bot not found" });
-      return;
-    }
-
-    try {
-      if (platform === "facebook") {
-        for (const msg of messages) {
-          // Send each message sequentially
-          if (msg.type === 'text') {
-            await sendFacebookMessage(userId, msg.content, bot.accessToken, { metadata: "broadcast_auto" });
-          } else if (msg.type === 'image') {
-            // For image, we accept URL or fileId. 
-            // Assuming msg.url is a public URL (e.g. from our upload)
-            // Re-using sendFacebookMessage or direct axios if needed.
-            // The sendFacebookMessage logic handles simple text. 
-            // Let's try to construct a payload that sendFacebookMessage might prefer or just call axios directly.
-            // Since sendFacebookMessage is complex, let's call axios directly for image to be safe.
-            await axios.post(
-              `https://graph.facebook.com/v18.0/me/messages`,
-              {
-                recipient: { id: userId },
-                message: {
-                  attachment: {
-                    type: "image",
-                    payload: { url: msg.url, is_reusable: true }
-                  },
-                  metadata: "broadcast_auto"
-                }
-              },
-              {
-                params: { access_token: bot.accessToken },
-                headers: { "Content-Type": "application/json" }
-              }
-            );
-          }
-        }
-      } else if (platform === "line") {
-        const client = createLineClient(bot.channelAccessToken, bot.channelSecret);
-        const lineMessages = messages.map(msg => {
-          if (msg.type === 'text') {
-            return { type: 'text', text: normalizeOutgoingText(msg.content) };
-          }
-          if (msg.type === 'image') return { type: 'image', originalContentUrl: msg.url, previewImageUrl: msg.url };
-          return null;
-        }).filter(Boolean);
-
-        if (lineMessages.length > 0) {
-          await client.pushMessage(userId, lineMessages);
-        }
-      } else if (platform === "instagram") {
-        const accessToken = resolveMetaAccessToken(bot || {});
-        const senderId = resolveInstagramSenderId(bot || {});
-        if (!accessToken || !senderId) {
-          throw new Error("Instagram bot access token/sender id missing");
-        }
-        for (const msg of messages) {
-          if (msg.type === "text") {
-            await sendInstagramMessage(userId, msg.content, accessToken, senderId);
-          } else if (msg.type === "image" && msg.url) {
-            const label = msg.alt || msg.caption || "Broadcast image";
-            const assetsMap = buildAssetsLookup([
-              {
-                label,
-                url: msg.url,
-                thumbUrl: msg.url,
-                alt: msg.alt || "",
-                fileName: "",
-              },
-            ]);
-            await sendInstagramMessage(
-              userId,
-              `#[IMAGE:${label}]`,
-              accessToken,
-              senderId,
-              { selectedImageCollections: null },
-              assetsMap,
-            );
-          }
-        }
-      } else if (platform === "whatsapp") {
-        const accessToken = resolveMetaAccessToken(bot || {});
-        const phoneNumberId = resolveWhatsAppPhoneNumberId(bot || {});
-        if (!accessToken || !phoneNumberId) {
-          throw new Error("WhatsApp bot access token/phoneNumberId missing");
-        }
-        for (const msg of messages) {
-          if (msg.type === "text") {
-            await sendWhatsAppMessage(userId, msg.content, accessToken, phoneNumberId);
-          } else if (msg.type === "image" && msg.url) {
-            await sendWhatsAppImageByUrl(
-              userId,
-              msg.url,
-              accessToken,
-              phoneNumberId,
-              msg.alt || "",
-            );
-          }
-        }
-      }
-      this.stats.sent++;
-    } catch (e) {
-      console.error(`[Broadcast] Failed to send to ${userId}: ${e.message}`);
-      this.stats.failed++;
-      // Limit error size
-      if (this.stats.errors.length < 100) {
-        this.stats.errors.push({ userId, error: e.message });
-      }
-    }
-  }
-
-  cancel() {
-    this.isCancelled = true;
-  }
-
   async saveHistory() {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
       const coll = db.collection("broadcast_history");
-
       await coll.updateOne(
         { _id: new ObjectId(this.jobId) },
-        {
-          $set: {
-            stats: this.stats,
-            updatedAt: new Date()
-          }
-        },
+        { $set: { stats: this.stats, updatedAt: new Date() } },
         { upsert: true }
       );
     } catch (e) {
@@ -21848,15 +21784,9 @@ class BroadcastQueue {
   }
 
   async updateProgress() {
-    // In-memory update is instant, but we might want to emit socket event here
     if (typeof io !== 'undefined') {
-      io.emit('broadcastProgress', {
-        jobId: this.jobId,
-        stats: this.stats
-      });
+      io.emit('broadcastProgress', { jobId: this.jobId, stats: this.stats });
     }
-    // Periodically save to DB? `saveHistory` handles that.
-    // Maybe save every N updates.
     await this.saveHistory();
   }
 }
@@ -21996,7 +21926,7 @@ app.post("/admin/broadcast/preview", async (req, res) => {
   try {
     const { channels = [], audience = "all" } = req.body;
     if (!channels.length) {
-      return res.json({ success: true, count: 0, users: [] });
+      return res.json({ success: true, count: 0, counts: { total: 0, line: 0, facebook: 0, instagram: 0, whatsapp: 0 }, perChannel: [] });
     }
     const users = await getBroadcastAudience(channels, audience);
 
@@ -22005,16 +21935,34 @@ app.post("/admin/broadcast/preview", async (req, res) => {
     const igCount = users.filter((u) => u.platform === "instagram").length;
     const waCount = users.filter((u) => u.platform === "whatsapp").length;
 
+    // Per-channel breakdown with bot names
+    const channelMap = {};
+    for (const u of users) {
+      const key = `${u.platform}:${u.botId}`;
+      if (!channelMap[key]) channelMap[key] = { channel: key, platform: u.platform, botId: u.botId, count: 0 };
+      channelMap[key].count++;
+    }
+
+    const client2 = await connectDB();
+    const db2 = client2.db("chatbot");
+    const collMap = { line: "line_bots", facebook: "facebook_bots", instagram: "instagram_bots", whatsapp: "whatsapp_bots" };
+
+    const perChannel = [];
+    for (const entry of Object.values(channelMap)) {
+      const collName = collMap[entry.platform];
+      let name = entry.channel;
+      if (collName && ObjectId.isValid(entry.botId)) {
+        const bot = await db2.collection(collName).findOne({ _id: new ObjectId(entry.botId) });
+        if (bot) name = bot.name || bot.pageName || entry.channel;
+      }
+      perChannel.push({ channel: entry.channel, name, platform: entry.platform, count: entry.count });
+    }
+
     res.json({
       success: true,
       count: users.length,
-      counts: {
-        total: users.length,
-        line: lineCount,
-        facebook: fbCount,
-        instagram: igCount,
-        whatsapp: waCount,
-      },
+      counts: { total: users.length, line: lineCount, facebook: fbCount, instagram: igCount, whatsapp: waCount },
+      perChannel,
     });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
@@ -22127,16 +22075,29 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
       return res.json({ success: false, error: "ไม่พบกลุ่มเป้าหมายตามเงื่อนไขที่เลือก" });
     }
 
+    // Build channelInfo (bot names for per-channel progress display)
+    const channelInfoMap = {};
+    const collMap2 = { line: "line_bots", facebook: "facebook_bots", instagram: "instagram_bots", whatsapp: "whatsapp_bots" };
+    const dbForInfo = (await connectDB()).db("chatbot");
+    const uniqueChannels = new Set(users.map(u => `${u.platform}:${u.botId}`));
+    for (const chKey of uniqueChannels) {
+      const [plat, bId] = chKey.split(":");
+      const collName = collMap2[plat];
+      let name = chKey;
+      if (collName && ObjectId.isValid(bId)) {
+        const b = await dbForInfo.collection(collName).findOne({ _id: new ObjectId(bId) });
+        if (b) name = b.name || b.pageName || chKey;
+      }
+      channelInfoMap[chKey] = { name, platform: plat };
+    }
+
     // Create Job
     const jobId = new ObjectId().toString();
     const job = new BroadcastQueue(
       jobId,
-      {
-        messages,
-        targets: users,
-        channels,
-      },
+      { messages, targets: users, channels },
       settings,
+      channelInfoMap,
     );
 
     activeBroadcasts.set(jobId, job);

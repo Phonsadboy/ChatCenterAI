@@ -960,12 +960,15 @@ class InstructionChatService {
             autoFollowUpEnabled: typeof map.followUpAutoEnabled === "boolean" ? map.followUpAutoEnabled : false,
             orderPromptInstructions: typeof map.followUpOrderPromptInstructions === "string" ? map.followUpOrderPromptInstructions : "",
             totalRounds: globalRounds.length,
-            rounds: globalRounds.map((r, i) => ({
-                roundIndex: i,
-                delayMinutes: r.delayMinutes || 0,
-                messagePreview: (r.message || "").substring(0, 100) + ((r.message || "").length > 100 ? "..." : ""),
-                imageCount: Array.isArray(r.images) ? r.images.length : 0,
-            })),
+            rounds: globalRounds.map((r, i) => {
+                const { message, images } = this._getRoundContent(r);
+                return {
+                    roundIndex: i,
+                    delayMinutes: r.delayMinutes || 0,
+                    messagePreview: message.substring(0, 100) + (message.length > 100 ? "..." : ""),
+                    imageCount: images.length,
+                };
+            }),
         };
 
         // If no pageKeys, return global config only (backward compatible)
@@ -989,17 +992,78 @@ class InstructionChatService {
                 autoFollowUpEnabled: typeof settings.autoFollowUpEnabled === "boolean" ? settings.autoFollowUpEnabled : globalConfig.autoFollowUpEnabled,
                 orderPromptInstructions: typeof settings.orderPromptInstructions === "string" ? settings.orderPromptInstructions : globalConfig.orderPromptInstructions,
                 totalRounds: effectiveRounds.length,
-                rounds: effectiveRounds.map((r, i) => ({
-                    roundIndex: i,
-                    delayMinutes: r.delayMinutes || 0,
-                    messagePreview: (r.message || "").substring(0, 100) + ((r.message || "").length > 100 ? "..." : ""),
-                    imageCount: Array.isArray(r.images) ? r.images.length : 0,
-                })),
+                rounds: effectiveRounds.map((r, i) => {
+                    const { message, images } = this._getRoundContent(r);
+                    return {
+                        roundIndex: i,
+                        delayMinutes: r.delayMinutes || 0,
+                        messagePreview: message.substring(0, 100) + (message.length > 100 ? "..." : ""),
+                        imageCount: images.length,
+                    };
+                }),
                 source: doc ? "page-specific" : "inherited from global",
             });
         }
 
         return { globalConfig, pageConfigs };
+    }
+
+    // Helper: extract message and images from round (supports new items format and legacy format)
+    _getRoundContent(round) {
+        if (Array.isArray(round.items)) {
+            const textItems = round.items.filter(i => i.type === 'text');
+            const imageItems = round.items.filter(i => i.type === 'image');
+            return { message: textItems[0]?.content || '', images: imageItems };
+        }
+        return {
+            message: typeof round.message === 'string' ? round.message : '',
+            images: Array.isArray(round.images) ? round.images : []
+        };
+    }
+
+    _setRoundMessage(round, message) {
+        if (Array.isArray(round.items)) {
+            const idx = round.items.findIndex(i => i.type === 'text');
+            if (idx >= 0) { round.items[idx].content = message; }
+            else { round.items.unshift({ type: 'text', content: message }); }
+        } else {
+            round.message = message;
+        }
+    }
+
+    _addRoundImage(round, imgObj) {
+        if (Array.isArray(round.items)) {
+            round.items.push({ type: 'image', ...imgObj });
+        } else {
+            if (!Array.isArray(round.images)) round.images = [];
+            round.images.push(imgObj);
+        }
+    }
+
+    _removeRoundImage(round, assetId, imageUrl) {
+        if (Array.isArray(round.items)) {
+            const before = round.items.length;
+            round.items = round.items.filter(item => {
+                if (item.type !== 'image') return true;
+                if (assetId && (item.assetId === assetId || item.id === assetId)) return false;
+                if (imageUrl && item.url === imageUrl) return false;
+                return true;
+            });
+            return round.items.length !== before;
+        }
+        if (!Array.isArray(round.images)) round.images = [];
+        const before = round.images.length;
+        round.images = round.images.filter(img => {
+            if (assetId && (img.assetId === assetId || img.id === assetId)) return false;
+            if (imageUrl && img.url === imageUrl) return false;
+            return true;
+        });
+        return round.images.length !== before;
+    }
+
+    _countRoundImages(round) {
+        if (Array.isArray(round.items)) return round.items.filter(i => i.type === 'image').length;
+        return Array.isArray(round.images) ? round.images.length : 0;
     }
 
     async get_followup_round_detail({ roundIndex, pageKey }) {
@@ -1021,18 +1085,19 @@ class InstructionChatService {
         if (roundIndex < 0 || roundIndex >= rounds.length) return { error: `Round ${roundIndex} ไม่มีอยู่ (มี ${rounds.length} rounds)` };
 
         const round = rounds[roundIndex];
+        const { message, images: rawImages } = this._getRoundContent(round);
         const result = {
             roundIndex,
             source,
             delayMinutes: round.delayMinutes || 0,
-            message: round.message || "",
+            message,
             images: [],
         };
 
         // Resolve image details
-        if (Array.isArray(round.images) && round.images.length > 0) {
+        if (rawImages.length > 0) {
             const assetsColl = this.db.collection("follow_up_assets");
-            for (const img of round.images) {
+            for (const img of rawImages) {
                 const assetId = img.assetId || img.id;
                 if (assetId) {
                     try {
@@ -1128,8 +1193,9 @@ class InstructionChatService {
                     results.push({ pageKey: pk, error: `Round ${roundIndex} ไม่มีอยู่ (มี ${rounds.length} rounds)` }); continue;
                 }
 
-                const before = { message: rounds[roundIndex].message, delayMinutes: rounds[roundIndex].delayMinutes };
-                if (typeof message === "string") rounds[roundIndex].message = message;
+                const { message: beforeMsg } = this._getRoundContent(rounds[roundIndex]);
+                const before = { message: beforeMsg, delayMinutes: rounds[roundIndex].delayMinutes };
+                if (typeof message === "string") this._setRoundMessage(rounds[roundIndex], message);
                 if (typeof delayMinutes === "number" && delayMinutes >= 1) rounds[roundIndex].delayMinutes = Math.round(delayMinutes);
 
                 await pageColl.updateOne(
@@ -1137,9 +1203,10 @@ class InstructionChatService {
                     { $set: { platform: parsed.platform, botId: parsed.botId, "settings.rounds": rounds, updatedAt: new Date() } },
                     { upsert: true }
                 );
+                const { message: afterMsg } = this._getRoundContent(rounds[roundIndex]);
                 results.push({
                     pageKey: pk, success: true, roundIndex,
-                    before, after: { message: rounds[roundIndex].message, delayMinutes: rounds[roundIndex].delayMinutes },
+                    before, after: { message: afterMsg, delayMinutes: rounds[roundIndex].delayMinutes },
                 });
             }
             if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
@@ -1153,17 +1220,19 @@ class InstructionChatService {
 
         if (roundIndex < 0 || roundIndex >= rounds.length) return { error: `Round ${roundIndex} ไม่มีอยู่ (มี ${rounds.length} rounds)` };
 
-        const before = { message: rounds[roundIndex].message, delayMinutes: rounds[roundIndex].delayMinutes };
+        const { message: beforeMsg } = this._getRoundContent(rounds[roundIndex]);
+        const before = { message: beforeMsg, delayMinutes: rounds[roundIndex].delayMinutes };
 
-        if (typeof message === "string") rounds[roundIndex].message = message;
+        if (typeof message === "string") this._setRoundMessage(rounds[roundIndex], message);
         if (typeof delayMinutes === "number" && delayMinutes >= 1) rounds[roundIndex].delayMinutes = Math.round(delayMinutes);
 
         await settingsColl.updateOne({ key: "followUpRounds" }, { $set: { value: rounds } });
 
         if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
+        const { message: afterMsg } = this._getRoundContent(rounds[roundIndex]);
         return {
             success: true, scope: "global", roundIndex,
-            before, after: { message: rounds[roundIndex].message, delayMinutes: rounds[roundIndex].delayMinutes },
+            before, after: { message: afterMsg, delayMinutes: rounds[roundIndex].delayMinutes },
         };
     }
 
@@ -1204,19 +1273,11 @@ class InstructionChatService {
                     results.push({ pageKey: pk, error: `Round ${roundIndex} ไม่มีอยู่` }); continue;
                 }
 
-                if (!Array.isArray(rounds[roundIndex].images)) rounds[roundIndex].images = [];
-
                 if (action === "add") {
-                    rounds[roundIndex].images.push({ ...resolvedImgObj });
+                    this._addRoundImage(rounds[roundIndex], { ...resolvedImgObj });
                 } else if (action === "remove") {
                     if (!assetId && !imageUrl) { results.push({ pageKey: pk, error: "ต้องระบุ assetId หรือ imageUrl เพื่อลบ" }); continue; }
-                    const before = rounds[roundIndex].images.length;
-                    rounds[roundIndex].images = rounds[roundIndex].images.filter(img => {
-                        if (assetId && (img.assetId === assetId || img.id === assetId)) return false;
-                        if (imageUrl && img.url === imageUrl) return false;
-                        return true;
-                    });
-                    if (rounds[roundIndex].images.length === before) { results.push({ pageKey: pk, error: "ไม่พบรูปที่ต้องการลบ" }); continue; }
+                    if (!this._removeRoundImage(rounds[roundIndex], assetId, imageUrl)) { results.push({ pageKey: pk, error: "ไม่พบรูปที่ต้องการลบ" }); continue; }
                 } else {
                     results.push({ pageKey: pk, error: "action ต้องเป็น 'add' หรือ 'remove'" }); continue;
                 }
@@ -1226,7 +1287,7 @@ class InstructionChatService {
                     { $set: { platform: parsed.platform, botId: parsed.botId, "settings.rounds": rounds, updatedAt: new Date() } },
                     { upsert: true }
                 );
-                results.push({ pageKey: pk, success: true, roundIndex, action, currentImageCount: rounds[roundIndex].images.length });
+                results.push({ pageKey: pk, success: true, roundIndex, action, currentImageCount: this._countRoundImages(rounds[roundIndex]) });
             }
             if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
             return { success: true, scope: "per-page", results };
@@ -1239,19 +1300,11 @@ class InstructionChatService {
 
         if (roundIndex < 0 || roundIndex >= rounds.length) return { error: `Round ${roundIndex} ไม่มีอยู่` };
 
-        if (!Array.isArray(rounds[roundIndex].images)) rounds[roundIndex].images = [];
-
         if (action === "add") {
-            rounds[roundIndex].images.push({ ...resolvedImgObj });
+            this._addRoundImage(rounds[roundIndex], { ...resolvedImgObj });
         } else if (action === "remove") {
             if (!assetId && !imageUrl) return { error: "ต้องระบุ assetId หรือ imageUrl เพื่อลบ" };
-            const before = rounds[roundIndex].images.length;
-            rounds[roundIndex].images = rounds[roundIndex].images.filter(img => {
-                if (assetId && (img.assetId === assetId || img.id === assetId)) return false;
-                if (imageUrl && img.url === imageUrl) return false;
-                return true;
-            });
-            if (rounds[roundIndex].images.length === before) return { error: "ไม่พบรูปที่ต้องการลบ" };
+            if (!this._removeRoundImage(rounds[roundIndex], assetId, imageUrl)) return { error: "ไม่พบรูปที่ต้องการลบ" };
         } else {
             return { error: "action ต้องเป็น 'add' หรือ 'remove'" };
         }
@@ -1261,7 +1314,7 @@ class InstructionChatService {
 
         return {
             success: true, scope: "global", roundIndex, action,
-            currentImageCount: rounds[roundIndex].images.length,
+            currentImageCount: this._countRoundImages(rounds[roundIndex]),
         };
     }
 
