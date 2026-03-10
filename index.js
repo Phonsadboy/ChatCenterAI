@@ -21641,6 +21641,8 @@ class BroadcastQueue {
     } finally {
       this.stats.endTime = new Date();
       await this.saveHistory();
+      // Clean up memory after a delay so status polling can still read the final state
+      setTimeout(() => activeBroadcasts.delete(this.jobId), 5 * 60 * 1000);
     }
   }
 
@@ -21910,7 +21912,14 @@ async function getBroadcastAudience(channels, audienceType) {
     users.push(...userIds.map(id => ({ userId: id, platform, botId })));
   }
 
-  return users;
+  // Deduplicate: same userId+platform can appear if selected multiple bots
+  const seen = new Set();
+  return users.filter(u => {
+    const key = `${u.platform}:${u.userId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // Broadcast page
@@ -22027,7 +22036,8 @@ app.post("/admin/broadcast", upload.array("images"), async (req, res) => {
           fileIndex < req.files.length
         ) {
           const file = req.files[fileIndex++];
-          const filename = `broadcast-${Date.now()}-${file.originalname}`;
+          const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const filename = `broadcast-${Date.now()}-${safeName}`;
 
           // Upload to GridFS
           await new Promise((resolve, reject) => {
@@ -22044,8 +22054,9 @@ app.post("/admin/broadcast", upload.array("images"), async (req, res) => {
               .on("finish", () => resolve());
           });
 
-          // Set URL
-          messages[i].url = `/broadcast/assets/${filename}`;
+          // Set URL (must be absolute for LINE/Facebook)
+          const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
+          messages[i].url = `${urlBase}/broadcast/assets/${filename}`;
         }
       }
     }

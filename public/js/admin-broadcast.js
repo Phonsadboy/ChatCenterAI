@@ -13,6 +13,7 @@
   const audienceTotal = document.getElementById('audienceTotal');
   const audienceLine = document.getElementById('audienceLine');
   const audienceFb = document.getElementById('audienceFb');
+  const audienceCountChip = document.getElementById('audienceCount');
   const progressModal = new bootstrap.Modal(document.getElementById('progressModal'));
   const toastContainer = document.getElementById('broadcastToastContainer');
   const broadcastForm = document.getElementById('broadcastForm');
@@ -143,6 +144,9 @@
 
     if (channels.length === 0) {
       audienceStats.style.display = 'none';
+      if (audienceCountChip) {
+        audienceCountChip.innerHTML = '<i class="fas fa-users"></i> เลือกกลุ่มเป้าหมาย';
+      }
       updatePreview();
       return;
     }
@@ -162,8 +166,14 @@
         audienceTotal.textContent = data.counts.total.toLocaleString();
         audienceLine.textContent = data.counts.line.toLocaleString();
         audienceFb.textContent = data.counts.facebook.toLocaleString();
+        if (audienceCountChip) {
+          audienceCountChip.innerHTML = `<i class="fas fa-users text-primary"></i> กลุ่มเป้าหมาย <strong>${data.counts.total.toLocaleString()}</strong> คน`;
+        }
       } else {
         audienceTotal.textContent = '-';
+        if (audienceCountChip) {
+          audienceCountChip.innerHTML = '<i class="fas fa-users"></i> เลือกกลุ่มเป้าหมาย';
+        }
       }
     } catch (e) {
       console.error("Preview error", e);
@@ -197,6 +207,14 @@
 
 
   // --- Message Editor ---
+  const moveItem = (index, direction) => {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= messageItems.length) return;
+    [messageItems[index], messageItems[newIndex]] = [messageItems[newIndex], messageItems[index]];
+    renderMessageList();
+    updatePreview();
+  };
+
   const renderMessageList = () => {
     messageList.innerHTML = '';
 
@@ -213,9 +231,35 @@
       const body = document.createElement('div');
       body.className = 'card-body p-2 d-flex align-items-center gap-2';
 
+      // Order badge
       const indexBadge = document.createElement('div');
       indexBadge.className = 'badge bg-secondary';
       indexBadge.textContent = String(index + 1);
+
+      // Up/Down buttons
+      const orderBtns = document.createElement('div');
+      orderBtns.className = 'd-flex flex-column gap-1';
+
+      const upBtn = document.createElement('button');
+      upBtn.type = 'button';
+      upBtn.className = 'btn btn-outline-secondary btn-sm p-0 px-1';
+      upBtn.style.lineHeight = '1.2';
+      upBtn.innerHTML = '<i class="fas fa-chevron-up" style="font-size:0.65rem"></i>';
+      upBtn.disabled = index === 0;
+      upBtn.setAttribute('aria-label', 'เลื่อนขึ้น');
+      upBtn.addEventListener('click', () => moveItem(index, -1));
+
+      const downBtn = document.createElement('button');
+      downBtn.type = 'button';
+      downBtn.className = 'btn btn-outline-secondary btn-sm p-0 px-1';
+      downBtn.style.lineHeight = '1.2';
+      downBtn.innerHTML = '<i class="fas fa-chevron-down" style="font-size:0.65rem"></i>';
+      downBtn.disabled = index === messageItems.length - 1;
+      downBtn.setAttribute('aria-label', 'เลื่อนลง');
+      downBtn.addEventListener('click', () => moveItem(index, 1));
+
+      orderBtns.appendChild(upBtn);
+      orderBtns.appendChild(downBtn);
 
       const contentWrap = document.createElement('div');
       contentWrap.className = 'flex-grow-1';
@@ -233,15 +277,18 @@
         contentWrap.appendChild(textarea);
       } else {
         const group = document.createElement('div');
-        group.className = 'input-group';
+        group.className = 'd-flex flex-column gap-1';
 
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
-        fileInput.className = 'form-control';
+        fileInput.className = 'form-control form-control-sm';
         fileInput.accept = 'image/*';
         fileInput.addEventListener('change', (e) => {
           if (e.target.files && e.target.files[0]) {
             item.file = e.target.files[0];
+            // Generate preview URL
+            if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+            item.previewUrl = URL.createObjectURL(item.file);
             renderMessageList();
             updatePreview();
           }
@@ -249,11 +296,23 @@
 
         group.appendChild(fileInput);
 
-        if (item.file) {
-          const ok = document.createElement('span');
-          ok.className = 'input-group-text bg-success text-white';
-          ok.innerHTML = '<i class="fas fa-check"></i>';
-          group.appendChild(ok);
+        // Image preview thumbnail
+        if (item.file && item.previewUrl) {
+          const imgWrap = document.createElement('div');
+          imgWrap.className = 'd-flex align-items-center gap-2 mt-1';
+
+          const img = document.createElement('img');
+          img.src = item.previewUrl;
+          img.style.cssText = 'height:56px;width:80px;object-fit:cover;border-radius:4px;border:1px solid #dee2e6';
+          img.alt = 'preview';
+
+          const info = document.createElement('small');
+          info.className = 'text-muted';
+          info.textContent = item.file.name;
+
+          imgWrap.appendChild(img);
+          imgWrap.appendChild(info);
+          group.appendChild(imgWrap);
         }
 
         contentWrap.appendChild(group);
@@ -265,12 +324,15 @@
       removeBtn.setAttribute('aria-label', 'ลบข้อความ');
       removeBtn.innerHTML = '<i class="fas fa-trash"></i>';
       removeBtn.addEventListener('click', () => {
+        // Revoke object URL if image
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
         messageItems.splice(index, 1);
         renderMessageList();
         updatePreview();
       });
 
       body.appendChild(indexBadge);
+      body.appendChild(orderBtns);
       body.appendChild(contentWrap);
       body.appendChild(removeBtn);
       div.appendChild(body);
@@ -289,7 +351,7 @@
 
   addImageBtn.addEventListener('click', () => {
     if (messageItems.length >= 5) return showToast('ส่งได้สูงสุด 5 ข้อความ', 'warning');
-    messageItems.push({ type: 'image', file: null });
+    messageItems.push({ type: 'image', file: null, previewUrl: null });
     renderMessageList();
     updatePreview();
   });
@@ -331,7 +393,6 @@
     });
     formData.set('messages', JSON.stringify(messagesPayload));
 
-    // JSON-ify other fields just to be safe if backend expects parsing
     const channelsArr = Array.from(channels).map(c => c.value);
     formData.set('channels', JSON.stringify(channelsArr));
 
@@ -421,9 +482,6 @@
     isSubmitting = false;
     submitBtn.disabled = false;
     submitBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i> ส่งข้อความ';
-    // Optional: Clear form
-    // messageItems = [];
-    // renderMessageList();
     updatePreview();
   };
 
