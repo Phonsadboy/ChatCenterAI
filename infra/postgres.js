@@ -41,6 +41,10 @@ function getPgPool() {
     if (!config.postgresConnectionString) {
       throw new Error("DATABASE_URL is not configured");
     }
+    const startupOptions = (
+      process.env.CCAI_PG_OPTIONS ||
+      "-c max_parallel_workers_per_gather=0"
+    ).trim();
 
     pool = new Pool({
       connectionString: config.postgresConnectionString,
@@ -55,6 +59,7 @@ function getPgPool() {
           : process.env.CCAI_PG_SSL_REJECT_UNAUTHORIZED === "false"
             ? { rejectUnauthorized: false }
             : undefined,
+      ...(startupOptions ? { options: startupOptions } : {}),
     });
 
     pool.on("error", (error) => {
