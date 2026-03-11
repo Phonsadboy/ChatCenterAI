@@ -379,7 +379,7 @@ function createChatRepository({
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13
         )
-        ON CONFLICT (legacy_message_id) DO NOTHING
+        ON CONFLICT (legacy_message_id, created_at) DO NOTHING
       `,
       [
         context.threadId,

@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS messages (
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (id, created_at),
-  UNIQUE (legacy_message_id)
+  UNIQUE (legacy_message_id, created_at)
 ) PARTITION BY RANGE (created_at);
 
 CREATE TABLE IF NOT EXISTS messages_default PARTITION OF messages DEFAULT;
@@ -278,11 +278,16 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   status TEXT NOT NULL DEFAULT 'received',
   received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   processed_at TIMESTAMPTZ,
-  PRIMARY KEY (id, received_at),
-  UNIQUE (idempotency_key)
+  PRIMARY KEY (id, received_at)
 ) PARTITION BY RANGE (received_at);
 
 CREATE TABLE IF NOT EXISTS webhook_events_default PARTITION OF webhook_events DEFAULT;
+
+CREATE TABLE IF NOT EXISTS webhook_event_idempotency (
+  idempotency_key TEXT PRIMARY KEY,
+  first_received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 DO $$
 DECLARE
@@ -338,3 +343,4 @@ CREATE INDEX IF NOT EXISTS idx_messages_thread_time ON messages(thread_id, creat
 CREATE INDEX IF NOT EXISTS idx_orders_platform_time ON orders(platform, extracted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_logs_bot_time ON usage_logs(bot_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_webhook_events_platform_time ON webhook_events(platform, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_idempotency_key ON webhook_events(idempotency_key);

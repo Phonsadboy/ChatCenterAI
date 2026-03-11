@@ -215,7 +215,26 @@ async function ensureRuntimeReady(runtimeLabel = "runtime") {
     );
   }
 
-  await ensureAutoDeployMigration(runtimeLabel, runtimeConfig);
+  const runAutoDeployMigrationAsync = parseBoolean(
+    process.env.CCAI_MIGRATION_AUTO_RUN_ASYNC,
+    true,
+  );
+
+  if (runAutoDeployMigrationAsync) {
+    setImmediate(() => {
+      ensureAutoDeployMigration(runtimeLabel, runtimeConfig).catch((error) => {
+        console.error(
+          `[${runtimeLabel}] Auto deploy migration failed:`,
+          error?.message || error,
+        );
+      });
+    });
+    console.log(
+      `[${runtimeLabel}] Auto deploy migration scheduled in background (CCAI_MIGRATION_AUTO_RUN_ASYNC=true)`,
+    );
+  } else {
+    await ensureAutoDeployMigration(runtimeLabel, runtimeConfig);
+  }
 
   return applied;
 }

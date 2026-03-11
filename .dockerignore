@@ -12,6 +12,5 @@ Thumbs.db
 .railwayignore
 railway.json
 .cursor
-scripts
 nixpacks.toml
 Procfile

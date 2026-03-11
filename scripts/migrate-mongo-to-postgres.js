@@ -4,9 +4,9 @@ require("dotenv").config();
 const { MongoClient } = require("mongodb");
 const {
   closePgPool,
+  getPgPool,
   query,
   runSqlMigrationsWithLock,
-  withTransaction,
 } = require("../infra/postgres");
 const { resolvePostgresConnectionString } = require("../infra/runtimeConfig");
 
@@ -201,9 +201,10 @@ async function migrateMongoToPostgres(options = {}) {
   const mongo = new MongoClient(MONGO_URI);
   await mongo.connect();
   const db = mongo.db(MONGO_DB_NAME);
+  const pgClient = await getPgPool().connect();
 
   try {
-    await withTransaction(async (client) => {
+    const client = pgClient;
       const settings = await db.collection("settings").find({}).toArray();
       for (const setting of settings) {
         await client.query(
@@ -913,7 +914,7 @@ async function migrateMongoToPostgres(options = {}) {
             ) VALUES (
               $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13
             )
-            ON CONFLICT (legacy_message_id) DO NOTHING
+            ON CONFLICT (legacy_message_id, created_at) DO NOTHING
           `,
           [
             threadId,
@@ -967,8 +968,8 @@ async function migrateMongoToPostgres(options = {}) {
         );
       }
       await writeCheckpoint("short_links", shortLinks.length);
-    });
   } finally {
+    pgClient.release();
     await mongo.close();
   }
 
