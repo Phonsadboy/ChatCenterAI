@@ -2308,8 +2308,6 @@ async function saveChatHistory(
     await saveOrUpdateUserProfile(userId, botId);
   }
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
   const chatRepo = getChatRepository();
   const normalizedOptions =
     options && typeof options === "object" ? options : {};
@@ -2484,30 +2482,7 @@ async function saveChatHistory(
     });
   }
 
-  // Update conversation thread (background, non-blocking)
-  if (db) {
-    try {
-      const threadService = new ConversationThreadService(db, {
-        chatRepository: getChatRepository(),
-        orderRepository: getOrderRepository(),
-        botRepository: getBotRepository(),
-      });
-      threadService
-        .upsertThread(
-          userId,
-          platform,
-          botId,
-          normalizedInstructionRefs,
-          botName,
-          normalizedInstructionMeta,
-        )
-        .catch((err) => {
-          console.warn("[ConversationThread] upsert error:", err.message);
-        });
-    } catch (threadErr) {
-      console.warn("[ConversationThread] init error:", threadErr.message);
-    }
-  }
+  // Thread summary is maintained inside ChatRepository (Postgres-first when Mongo is off).
 }
 
 /**
@@ -11564,6 +11539,9 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
     : null;
 
   const ensureDb = async () => {
+    if (!isMongoRuntimeEnabled()) {
+      return null;
+    }
     if (!db) {
       const client = await connectDB();
       db = client.db("chatbot");
@@ -29557,11 +29535,128 @@ async function getOpenAIApiKeyForBot(botId, platform) {
     name: keyName || null, // backward compatibility for legacy call sites
     provider: normalizeProvider(provider),
   });
+  const extractApiKeyFromMetadata = (metadata) => {
+    if (!metadata || typeof metadata !== "object") return "";
+    const directApiKey =
+      typeof metadata.apiKey === "string" ? metadata.apiKey.trim() : "";
+    if (directApiKey) return directApiKey;
+
+    const fallbackKey =
+      typeof metadata.key === "string" ? metadata.key.trim() : "";
+    if (fallbackKey) return fallbackKey;
+
+    const nestedApiKey =
+      typeof metadata.openaiApiKey === "string"
+        ? metadata.openaiApiKey.trim()
+        : "";
+    if (nestedApiKey) return nestedApiKey;
+
+    return "";
+  };
+  const buildPayloadFromPgRow = (row = {}) => {
+    const metadata =
+      row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+    const apiKey = extractApiKeyFromMetadata(metadata);
+    const resolvedKeyId = row?.legacy_key_id || row?.id || null;
+    return normalizeKeyPayload(
+      apiKey || null,
+      resolvedKeyId,
+      row?.name || null,
+      row?.provider || metadata?.provider || LLM_PROVIDER_OPENAI,
+    );
+  };
 
   try {
     const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
     if (runtimeOpenAIKeyCache.has(runtimeKey)) {
       return runtimeOpenAIKeyCache.get(runtimeKey);
+    }
+
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      const readPgKeyByIdentifier = async (identifier) => {
+        const normalized = typeof identifier === "string" ? identifier.trim() : "";
+        if (!normalized) return null;
+        const result = await pgQuery(
+          `
+            SELECT
+              id::text AS id,
+              legacy_key_id,
+              provider,
+              name,
+              is_active,
+              is_default,
+              metadata
+            FROM api_keys
+            WHERE is_active = TRUE
+              AND (id::text = $1 OR legacy_key_id = $1)
+            ORDER BY
+              CASE WHEN id::text = $1 THEN 0 ELSE 1 END,
+              is_default DESC,
+              updated_at DESC
+            LIMIT 1
+          `,
+          [normalized],
+        );
+        return result.rows[0] || null;
+      };
+      const readPgDefaultKey = async () => {
+        const result = await pgQuery(
+          `
+            SELECT
+              id::text AS id,
+              legacy_key_id,
+              provider,
+              name,
+              is_active,
+              is_default,
+              metadata
+            FROM api_keys
+            WHERE is_active = TRUE
+            ORDER BY is_default DESC, updated_at DESC, created_at DESC
+            LIMIT 1
+          `,
+        );
+        return result.rows[0] || null;
+      };
+
+      const botSnapshot = botId
+        ? await getBotRuntimeSnapshot(botId, platform)
+        : null;
+      const assignedKeyIdentifier =
+        typeof botSnapshot?.openaiApiKeyId === "string"
+          ? botSnapshot.openaiApiKeyId.trim()
+          : "";
+
+      let pgKeyRow = null;
+      if (assignedKeyIdentifier) {
+        pgKeyRow = await readPgKeyByIdentifier(assignedKeyIdentifier);
+      }
+      if (!pgKeyRow) {
+        pgKeyRow = await readPgDefaultKey();
+      }
+
+      if (pgKeyRow) {
+        const payload = buildPayloadFromPgRow(pgKeyRow);
+        if (payload.apiKey) {
+          runtimeOpenAIKeyCache.set(runtimeKey, payload);
+          return payload;
+        }
+      }
+
+      if (OPENAI_API_KEY) {
+        const payload = normalizeKeyPayload(
+          OPENAI_API_KEY,
+          null,
+          "Environment Variable",
+          LLM_PROVIDER_OPENAI,
+        );
+        runtimeOpenAIKeyCache.set(runtimeKey, payload);
+        return payload;
+      }
+
+      const emptyPayload = normalizeKeyPayload(null, null, null);
+      runtimeOpenAIKeyCache.set(runtimeKey, emptyPayload);
+      return emptyPayload;
     }
 
     const client = await connectDB();
@@ -29573,19 +29668,22 @@ async function getOpenAIApiKeyForBot(botId, platform) {
       : null;
 
     if (botSnapshot?.openaiApiKeyId) {
-      const keyDoc = await db.collection("openai_api_keys").findOne({
-        _id: new ObjectId(botSnapshot.openaiApiKeyId),
-        isActive: true,
-      });
-      if (keyDoc && keyDoc.apiKey) {
-        const payload = normalizeKeyPayload(
-          keyDoc.apiKey,
-          keyDoc._id.toString(),
-          keyDoc.name,
-          keyDoc.provider,
-        );
-        runtimeOpenAIKeyCache.set(runtimeKey, payload);
-        return payload;
+      const keyObjectId = toObjectId(botSnapshot.openaiApiKeyId);
+      if (keyObjectId) {
+        const keyDoc = await db.collection("openai_api_keys").findOne({
+          _id: keyObjectId,
+          isActive: true,
+        });
+        if (keyDoc && keyDoc.apiKey) {
+          const payload = normalizeKeyPayload(
+            keyDoc.apiKey,
+            keyDoc._id.toString(),
+            keyDoc.name,
+            keyDoc.provider,
+          );
+          runtimeOpenAIKeyCache.set(runtimeKey, payload);
+          return payload;
+        }
       }
     }
 
@@ -29655,33 +29753,122 @@ async function logOpenAIUsage(data) {
       functionName
     } = data;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     const normalizedProvider = normalizeProvider(provider);
+    const promptCount = Number(promptTokens) || 0;
+    const completionCount = Number(completionTokens) || 0;
+    const totalCount = Number(totalTokens) || 0;
     const estimatedCost =
       normalizedProvider === LLM_PROVIDER_OPENROUTER
         ? null
-        : calculateOpenAICost(model, promptTokens || 0, completionTokens || 0);
+        : calculateOpenAICost(model, promptCount, completionCount);
+
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      let resolvedPgApiKeyId = null;
+      let resolvedPgBotId = null;
+      const normalizedApiKeyId =
+        typeof apiKeyId === "string" ? apiKeyId.trim() : "";
+      const normalizedBotId =
+        typeof botId === "string" ? botId.trim() : "";
+      const normalizedPlatform =
+        typeof platform === "string" && platform.trim()
+          ? normalizeChatPlatform(platform)
+          : null;
+
+      if (normalizedApiKeyId) {
+        const keyResult = await pgQuery(
+          `
+            SELECT id::text AS id
+            FROM api_keys
+            WHERE id::text = $1 OR legacy_key_id = $1
+            ORDER BY CASE WHEN id::text = $1 THEN 0 ELSE 1 END
+            LIMIT 1
+          `,
+          [normalizedApiKeyId],
+        );
+        resolvedPgApiKeyId = keyResult.rows[0]?.id || null;
+      }
+
+      if (normalizedBotId) {
+        const botResult = normalizedPlatform
+          ? await pgQuery(
+            `
+              SELECT id::text AS id
+              FROM bots
+              WHERE platform = $1
+                AND legacy_bot_id = $2
+              LIMIT 1
+            `,
+            [normalizedPlatform, normalizedBotId],
+          )
+          : await pgQuery(
+            `
+              SELECT id::text AS id
+              FROM bots
+              WHERE legacy_bot_id = $1
+              ORDER BY updated_at DESC
+              LIMIT 1
+            `,
+            [normalizedBotId],
+          );
+        resolvedPgBotId = botResult.rows[0]?.id || null;
+      }
+
+      await pgQuery(
+        `
+          INSERT INTO usage_logs (
+            api_key_id,
+            bot_id,
+            platform,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            metadata,
+            created_at
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,NOW())
+        `,
+        [
+          resolvedPgApiKeyId,
+          resolvedPgBotId,
+          normalizedPlatform,
+          model || "unknown",
+          promptCount,
+          completionCount,
+          totalCount,
+          JSON.stringify({
+            provider: normalizedProvider,
+            functionName: functionName || null,
+            estimatedCost,
+            legacyApiKeyId: normalizedApiKeyId || null,
+            legacyBotId: normalizedBotId || null,
+          }),
+        ],
+      );
+      return;
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const apiKeyObjectId = toObjectId(apiKeyId);
 
     await db.collection("openai_usage_logs").insertOne({
-      apiKeyId: apiKeyId ? new ObjectId(apiKeyId) : null,
+      apiKeyId: apiKeyObjectId || null,
       botId: botId || null,
       platform: platform || null,
       provider: normalizedProvider,
       model: model || "unknown",
-      promptTokens: promptTokens || 0,
-      completionTokens: completionTokens || 0,
-      totalTokens: totalTokens || 0,
+      promptTokens: promptCount,
+      completionTokens: completionCount,
+      totalTokens: totalCount,
       estimatedCost,
       functionName: functionName || null,
       timestamp: new Date(),
     });
 
     // Update usage count on API key
-    if (apiKeyId) {
+    if (apiKeyObjectId) {
       await db.collection("openai_api_keys").updateOne(
-        { _id: new ObjectId(apiKeyId) },
+        { _id: apiKeyObjectId },
         {
           $inc: { usageCount: 1 },
           $set: { lastUsedAt: new Date() }
