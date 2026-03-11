@@ -435,7 +435,15 @@ async function ensureFacebookCommentIndexes(db) {
     await db.collection("facebook_comment_events").createIndexes([
       { key: { commentId: 1 }, unique: true },
       { key: { postId: 1, createdAt: -1 } },
+      {
+        key: { createdAt: 1 },
+        expireAfterSeconds: FB_COMMENT_TTL_DAYS * 24 * 60 * 60,
+      },
     ]);
+    await db.collection("facebook_page_posts").createIndex(
+      { lastCommentAt: 1 },
+      { expireAfterSeconds: FB_PAGE_POST_TTL_DAYS * 24 * 60 * 60 },
+    );
     commentIndexesEnsured = true;
   } catch (err) {
     console.warn(
@@ -1025,6 +1033,10 @@ async function ensureNotificationIndexes(db) {
     await db.collection("notification_logs").createIndexes([
       { key: { channelId: 1, createdAt: -1 } },
       { key: { createdAt: -1 } },
+      {
+        key: { createdAt: 1 },
+        expireAfterSeconds: NOTIFICATION_LOGS_TTL_DAYS * 24 * 60 * 60,
+      },
     ]);
 
     console.log("[DB] Notification indexes ensured");
@@ -1051,19 +1063,42 @@ async function ensureShortLinkIndexes(db) {
   }
 }
 
+const CHAT_HISTORY_TTL_DAYS = Number(process.env.CHAT_HISTORY_TTL_DAYS || 90);
+
 async function ensureChatHistoryIndexes(db) {
   try {
     const coll = db.collection("chat_history");
     await coll.createIndexes([
       { key: { senderId: 1, timestamp: 1 } },
       { key: { userId: 1, timestamp: 1 } },
+      {
+        key: { timestamp: 1 },
+        expireAfterSeconds: CHAT_HISTORY_TTL_DAYS * 24 * 60 * 60,
+      },
     ]);
-    console.log("[DB] Chat history indexes ensured");
+    console.log(`[DB] Chat history indexes ensured (TTL: ${CHAT_HISTORY_TTL_DAYS} days)`);
   } catch (err) {
     console.warn(
       "[DB] ไม่สามารถตั้งค่า index สำหรับ chat_history ได้:",
       err?.message || err,
     );
+  }
+}
+
+const USAGE_LOGS_TTL_DAYS = Number(process.env.USAGE_LOGS_TTL_DAYS || 90);
+const NOTIFICATION_LOGS_TTL_DAYS = Number(process.env.NOTIFICATION_LOGS_TTL_DAYS || 30);
+const FB_COMMENT_TTL_DAYS = Number(process.env.FB_COMMENT_TTL_DAYS || 30);
+const FB_PAGE_POST_TTL_DAYS = Number(process.env.FB_PAGE_POST_TTL_DAYS || 90);
+
+async function ensureUsageLogsTTL(db) {
+  try {
+    await db.collection("openai_usage_logs").createIndex(
+      { timestamp: 1 },
+      { expireAfterSeconds: USAGE_LOGS_TTL_DAYS * 24 * 60 * 60 },
+    );
+    console.log(`[DB] openai_usage_logs TTL ensured (${USAGE_LOGS_TTL_DAYS} days)`);
+  } catch (err) {
+    console.warn("[DB] openai_usage_logs TTL index:", err?.message || err);
   }
 }
 
@@ -1084,6 +1119,7 @@ async function connectDB() {
       await ensureNotificationIndexes(db);
       await ensureShortLinkIndexes(db);
       await ensureChatHistoryIndexes(db);
+      await ensureUsageLogsTTL(db);
     } catch (err) {
       console.warn(
         "[DB] ไม่สามารถตั้งค่า index ได้:",
