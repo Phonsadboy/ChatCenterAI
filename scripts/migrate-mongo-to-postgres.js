@@ -868,20 +868,22 @@ async function migrateMongoToPostgres(options = {}) {
       }
       await writeCheckpoint("chat_feedback", feedbackDocs.length);
 
-      const profiles = await db.collection("user_profiles").find({}).toArray();
+      const profilesCursor = db.collection("user_profiles").find({});
       const profileMap = new Map();
-      for (const profile of profiles) {
+      let migratedProfiles = 0;
+      for await (const profile of profilesCursor) {
         const platform = profile?.platform || "line";
         const userId = profile?.userId || "";
         profileMap.set(`${platform}:${userId}`, profile);
         if (!userId) continue;
         await upsertContact(client, userId, platform, profile);
+        migratedProfiles += 1;
       }
-      await writeCheckpoint("user_profiles", profiles.length);
+      await writeCheckpoint("user_profiles", migratedProfiles);
 
-      const messages = await db.collection("chat_history").find({}).sort({ timestamp: 1 }).toArray();
+      const messagesCursor = db.collection("chat_history").find({}).sort({ timestamp: 1 });
       let migratedMessages = 0;
-      for (const doc of messages) {
+      for await (const doc of messagesCursor) {
         const platform = doc?.platform || "line";
         const legacyUserId = String(doc?.senderId || doc?.userId || "").trim();
         if (!legacyUserId) continue;
@@ -944,6 +946,9 @@ async function migrateMongoToPostgres(options = {}) {
           ],
         );
         migratedMessages += 1;
+        if (migratedMessages % 5000 === 0) {
+          console.log(`[Migration] chat_history processed: ${migratedMessages}`);
+        }
       }
       await writeCheckpoint("chat_history", migratedMessages);
 
