@@ -48,10 +48,19 @@ function resolvePostgresConnectionString() {
   ).trim();
 }
 
+function resolveMongoConnectionString() {
+  return (
+    process.env.MONGO_URI ||
+    process.env.MONGODB_URI ||
+    ""
+  ).trim();
+}
+
 function getRuntimeConfig() {
   const runtimeMode = resolveRuntimeMode();
   const redisUrl = resolveRedisUrl();
   const postgresConnectionString = resolvePostgresConnectionString();
+  const mongoConnectionString = resolveMongoConnectionString();
   const runtimeId =
     process.env.CCAI_RUNTIME_ID ||
     process.env.RAILWAY_DEPLOYMENT_ID ||
@@ -61,9 +70,14 @@ function getRuntimeConfig() {
     runtimeMode,
     runtimeId,
     mongoDatabaseName: (process.env.MONGO_DB_NAME || "chatbot").trim() || "chatbot",
+    mongoConnectionString,
     redisUrl,
     postgresConnectionString,
     features: {
+      mongoEnabled: parseBoolean(
+        process.env.CCAI_MONGO_ENABLED,
+        Boolean(mongoConnectionString),
+      ),
       redisInfra: parseBoolean(
         process.env.CCAI_USE_REDIS_INFRA,
         Boolean(redisUrl),
@@ -198,6 +212,7 @@ module.exports = {
   getRuntimeConfig,
   parseBoolean,
   parseInteger,
+  resolveMongoConnectionString,
   resolveRedisUrl,
   resolvePostgresConnectionString,
 };

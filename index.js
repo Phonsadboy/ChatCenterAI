@@ -66,6 +66,10 @@ const { createRuntimeRouteGuard } = require("./infra/runtimeRouteGuard");
 const { getRuntimeConfig } = require("./infra/runtimeConfig");
 const { createSessionStore } = require("./infra/sessionStore");
 const {
+  isPostgresConfigured,
+  query: pgQuery,
+} = require("./infra/postgres");
+const {
   deleteObject: deleteBucketObject,
   getObjectStream: getBucketObjectStream,
   headObject: headBucketObject,
@@ -323,8 +327,9 @@ async function getLineBotCredentials(botId) {
     return cached.credentials;
   }
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
+  const db = isMongoRuntimeEnabled()
+    ? (await connectDB()).db("chatbot")
+    : null;
   const bot = await db.collection("line_bots").findOne(
     { _id: new ObjectId(id) },
     { projection: { channelAccessToken: 1, channelSecret: 1 } },
@@ -1324,9 +1329,25 @@ let feedbackRepository = null;
 let profileRepository = null;
 let notificationRepository = null;
 
+function isMongoRuntimeEnabled() {
+  return runtimeConfig?.features?.mongoEnabled !== false;
+}
+
 async function connectDB() {
+  if (!isMongoRuntimeEnabled()) {
+    throw new Error("MongoDB runtime is disabled");
+  }
+
+  const mongoUri =
+    runtimeConfig?.mongoConnectionString ||
+    MONGO_URI ||
+    "";
+  if (!mongoUri) {
+    throw new Error("MongoDB runtime is enabled but MONGO_URI is missing");
+  }
+
   if (!mongoClient) {
-    mongoClient = new MongoClient(MONGO_URI, {
+    mongoClient = new MongoClient(mongoUri, {
       maxPoolSize: 20,
       minPoolSize: 5,
       serverSelectionTimeoutMS: 5000,
@@ -2451,26 +2472,28 @@ async function saveChatHistory(
   }
 
   // Update conversation thread (background, non-blocking)
-  try {
-    const threadService = new ConversationThreadService(db, {
-      chatRepository: getChatRepository(),
-      orderRepository: getOrderRepository(),
-      botRepository: getBotRepository(),
-    });
-    threadService
-      .upsertThread(
-        userId,
-        platform,
-        botId,
-        normalizedInstructionRefs,
-        botName,
-        normalizedInstructionMeta,
-      )
-      .catch((err) => {
-        console.warn("[ConversationThread] upsert error:", err.message);
+  if (db) {
+    try {
+      const threadService = new ConversationThreadService(db, {
+        chatRepository: getChatRepository(),
+        orderRepository: getOrderRepository(),
+        botRepository: getBotRepository(),
       });
-  } catch (threadErr) {
-    console.warn("[ConversationThread] init error:", threadErr.message);
+      threadService
+        .upsertThread(
+          userId,
+          platform,
+          botId,
+          normalizedInstructionRefs,
+          botName,
+          normalizedInstructionMeta,
+        )
+        .catch((err) => {
+          console.warn("[ConversationThread] upsert error:", err.message);
+        });
+    } catch (threadErr) {
+      console.warn("[ConversationThread] init error:", threadErr.message);
+    }
   }
 }
 
@@ -3789,6 +3812,9 @@ async function cancelFollowUpTasksForUser(
 }
 
 async function ensureFollowUpIndexes() {
+  if (!isMongoRuntimeEnabled()) {
+    return;
+  }
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -3804,8 +3830,9 @@ async function processDueFollowUpTasks(limit = 10) {
   if (followUpProcessing) return;
   followUpProcessing = true;
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
     const tasks = await getFollowUpRepository().getDueTasks(limit);
 
     for (const task of tasks) {
@@ -4032,10 +4059,7 @@ async function sendFollowUpMessage(task, round, db) {
   if (task.platform === "facebook") {
     console.log(`[FollowUp] FB: ${task.userId}, items:${items.length}`);
     if (!task.botId) throw new Error("ไม่พบ Facebook Bot สำหรับการส่งข้อความ");
-    const query = ObjectId.isValid(task.botId)
-      ? { _id: new ObjectId(task.botId) }
-      : { _id: task.botId };
-    const fbBot = await db.collection("facebook_bots").findOne(query);
+    const fbBot = await findBotById(db, "facebook", task.botId);
     if (!fbBot || !fbBot.accessToken) throw new Error("ไม่พบข้อมูล Facebook Bot");
     const { combinedMessage, assetsMap } = buildMetaPayload(items);
     await sendFacebookMessage(
@@ -4165,10 +4189,7 @@ async function sendLineFollowUpMessageWithItems(userId, items, botId, db) {
     };
 
     if (botId) {
-      const query = ObjectId.isValid(botId)
-        ? { _id: new ObjectId(botId) }
-        : { _id: botId };
-      const botDoc = await db.collection("line_bots").findOne(query);
+      const botDoc = await findBotById(db, "line", botId);
       if (!botDoc || !botDoc.channelAccessToken || !botDoc.channelSecret) {
         throw new Error("ไม่พบข้อมูล Line Bot สำหรับการส่งข้อความ");
       }
@@ -7118,8 +7139,9 @@ async function resolveConversationStarterForQueue(queueContext = {}) {
   );
   if (!objectSelections.length) return null;
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
+  const db = isMongoRuntimeEnabled()
+    ? (await connectDB()).db("chatbot")
+    : null;
   const docs = await resolveInstructionSelectionsV2(objectSelections, db);
   if (!Array.isArray(docs) || docs.length === 0) return null;
 
@@ -10997,6 +11019,16 @@ async function initializeMongoRuntime(options = {}) {
   }
 
   runtimeInitializationPromise = (async () => {
+    if (!isMongoRuntimeEnabled()) {
+      console.log("[LOG] MongoDB disabled: skip legacy Mongo runtime initialization");
+      try {
+        await ensureSettings();
+      } catch (settingsError) {
+        console.error("[ERROR] ensureSettings ล้มเหลว (mongo disabled):", settingsError);
+      }
+      return { client: null, db: null, skipped: true };
+    }
+
     console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
     const client = await connectDB();
     console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
@@ -11948,6 +11980,17 @@ async function getAssistantResponseTextOnly(
       }
     ];
 
+    const enabledTools = isMongoRuntimeEnabled()
+      ? tools
+      : tools.filter(
+        (toolDef) =>
+          ![
+            "get_categories",
+            "search_item_by_category",
+            "search_item_broad",
+          ].includes(toolDef?.function?.name),
+      );
+
     // Tool Loop
     let finalResponse = null;
     let toolLoopCount = 0;
@@ -11957,7 +12000,7 @@ async function getAssistantResponseTextOnly(
       const payload = {
         model: resolvedTextModel.model,
         messages,
-        tools,
+        tools: enabledTools,
         tool_choice: "auto",
       };
 
@@ -11994,8 +12037,13 @@ async function getAssistantResponseTextOnly(
           `[LOG] AI ต้องการใช้ Tool: ${responseMessage.tool_calls.length} calls`,
         );
 
-        const client = await connectDB();
-        const db = client.db("chatbot");
+        let db = null;
+        const ensureMongoDb = async () => {
+          if (db) return db;
+          const client = await connectDB();
+          db = client.db("chatbot");
+          return db;
+        };
 
         let isFirstToolCall = true;
 
@@ -12008,10 +12056,10 @@ async function getAssistantResponseTextOnly(
           let toolResult = { error: "Unknown tool" };
 
           if (functionName === "get_categories") {
-            toolResult = await getCategories(db, botId, platform);
+            toolResult = await getCategories(await ensureMongoDb(), botId, platform);
           } else if (functionName === "search_item_by_category") {
             toolResult = await searchItemByCategory(
-              db,
+              await ensureMongoDb(),
               functionArgs.category,
               functionArgs.keyword,
               botId,
@@ -12019,7 +12067,7 @@ async function getAssistantResponseTextOnly(
             );
           } else if (functionName === "search_item_broad") {
             toolResult = await searchItemBroad(
-              db,
+              await ensureMongoDb(),
               functionArgs.category,
               functionArgs.keyword,
               botId,
@@ -12677,6 +12725,9 @@ async function setAiEnabled(state) {
 }
 
 async function getInstructions() {
+  if (!isMongoRuntimeEnabled()) {
+    return [];
+  }
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection("instructions");
@@ -13033,6 +13084,52 @@ async function resolveInstructionSelectionsV2(
 
   if (instructionIds.length === 0) return [];
 
+  if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+    try {
+      const result = await pgQuery(
+        `
+          SELECT
+            id::text,
+            legacy_instruction_id,
+            name,
+            description,
+            data,
+            conversation_starter,
+            current_version,
+            created_at,
+            updated_at
+          FROM instructions
+          WHERE source_kind = 'instructions_v2'
+            AND legacy_instruction_id = ANY($1::text[])
+        `,
+        [instructionIds],
+      );
+      return result.rows.map((row) => ({
+        _id: row.id,
+        instructionId: row.legacy_instruction_id,
+        name: row.name || "",
+        description: row.description || "",
+        dataItems: Array.isArray(row.data) ? row.data : [],
+        conversationStarter:
+          row.conversation_starter && typeof row.conversation_starter === "object"
+            ? row.conversation_starter
+            : {},
+        version:
+          Number.isInteger(row.current_version) && row.current_version > 0
+            ? row.current_version
+            : 1,
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || null,
+      }));
+    } catch (error) {
+      console.warn(
+        "[InstructionsV2] PostgreSQL read failed:",
+        error?.message || error,
+      );
+      return [];
+    }
+  }
+
   let db = dbInstance;
   let client = null;
   if (!db) {
@@ -13139,16 +13236,18 @@ async function buildSystemPromptFromSelections(
 
   let db = dbInstance;
   let client = null;
-  if (!db && hasObjectSelections) {
+  if (!db && hasObjectSelections && isMongoRuntimeEnabled()) {
     client = await connectDB();
     db = client.db("chatbot");
   }
 
   if (hasObjectSelections) {
-    const [legacyDocs, v2Docs] = await Promise.all([
-      resolveInstructionSelections(selectedInstructions, db),
-      resolveInstructionSelectionsV2(selectedInstructions, db),
-    ]);
+    const [legacyDocs, v2Docs] = isMongoRuntimeEnabled()
+      ? await Promise.all([
+        resolveInstructionSelections(selectedInstructions, db),
+        resolveInstructionSelectionsV2(selectedInstructions, db),
+      ])
+      : [[], await resolveInstructionSelectionsV2(selectedInstructions, null)];
     const promptSegments = [
       buildSystemPromptFromInstructionDocs(legacyDocs),
       buildSystemPromptFromInstructionV2Docs(v2Docs),
@@ -13157,6 +13256,10 @@ async function buildSystemPromptFromSelections(
     if (promptSegments.length > 0) {
       return promptSegments.join("\n\n");
     }
+  }
+
+  if (!isMongoRuntimeEnabled()) {
+    return "";
   }
 
   let localDb = db;
@@ -13537,7 +13640,7 @@ async function resolveInstructionMetaForRuntime(
   if (objectSelections.length > 0) {
     let db = dbInstance;
     let client = null;
-    if (!db) {
+    if (!db && isMongoRuntimeEnabled()) {
       client = await connectDB();
       db = client.db("chatbot");
     }
@@ -13551,13 +13654,18 @@ async function resolveInstructionMetaForRuntime(
     ];
 
     if (instructionIds.length > 0) {
-      const docs = await db
-        .collection("instructions_v2")
-        .find(
-          { instructionId: { $in: instructionIds } },
-          { projection: { instructionId: 1, version: 1 } },
-        )
-        .toArray();
+      const docs = isMongoRuntimeEnabled()
+        ? await db
+          .collection("instructions_v2")
+          .find(
+            { instructionId: { $in: instructionIds } },
+            { projection: { instructionId: 1, version: 1 } },
+          )
+          .toArray()
+        : await resolveInstructionSelectionsV2(
+          instructionIds.map((instructionId) => ({ instructionId })),
+          null,
+        );
       const docMap = new Map();
       docs.forEach((doc) => {
         if (!doc || !doc.instructionId) return;
@@ -13945,6 +14053,9 @@ async function deleteGridFsEntries(bucket, entries = []) {
 // ============================ Instruction Assets Helpers ============================
 async function getInstructionAssets() {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return [];
+    }
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instruction_assets");
@@ -21934,6 +22045,9 @@ async function checkGridFsFileExists(bucket, fileId) {
 // Helper: ดึง Image Collections ทั้งหมด
 async function getImageCollections() {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return [];
+    }
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("image_collections");
@@ -21948,6 +22062,9 @@ async function getImageCollections() {
 // Helper: ดึงรูปภาพจาก collections ที่เลือก (สำหรับ bot)
 async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return [];
+    }
     if (
       !Array.isArray(selectedCollectionIds) ||
       selectedCollectionIds.length === 0
@@ -33316,11 +33433,13 @@ async function getNormalizedChatHistory(userId, options = {}) {
 async function getNormalizedChatUsers(options = {}) {
   try {
     const { applyFilter = false, focusUserId = "" } = options || {};
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const mongoDb = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
     const followUpRepo = getFollowUpRepository();
     const userStateRepo = getUserStateRepository();
     const profileRepo = getProfileRepository();
+    const botRepo = getBotRepository();
     const users = await getChatRepository().listUsers({
       limit: 50,
       focusUserId,
@@ -33349,56 +33468,92 @@ async function getNormalizedChatUsers(options = {}) {
       }
     });
 
-    const lineBotObjectIds = [...botIdsByPlatform.line]
-      .filter((id) => ObjectId.isValid(id))
-      .map((id) => new ObjectId(id));
-    const facebookBotObjectIds = [...botIdsByPlatform.facebook]
-      .filter((id) => ObjectId.isValid(id))
-      .map((id) => new ObjectId(id));
-    const instagramBotObjectIds = [...botIdsByPlatform.instagram]
-      .filter((id) => ObjectId.isValid(id))
-      .map((id) => new ObjectId(id));
-    const whatsappBotObjectIds = [...botIdsByPlatform.whatsapp]
-      .filter((id) => ObjectId.isValid(id))
-      .map((id) => new ObjectId(id));
-
     const [lineBotDocs, facebookBotDocs, instagramBotDocs, whatsappBotDocs] =
-      await Promise.all([
-      lineBotObjectIds.length > 0
-        ? db
-          .collection("line_bots")
-          .find({ _id: { $in: lineBotObjectIds } })
-          .project({ _id: 1, name: 1, displayName: 1, botName: 1 })
-          .toArray()
-        : [],
-      facebookBotObjectIds.length > 0
-        ? db
-          .collection("facebook_bots")
-          .find({ _id: { $in: facebookBotObjectIds } })
-          .project({ _id: 1, name: 1, pageName: 1, pageId: 1 })
-          .toArray()
-        : [],
-      instagramBotObjectIds.length > 0
-        ? db
-          .collection("instagram_bots")
-          .find({ _id: { $in: instagramBotObjectIds } })
-          .project({
-            _id: 1,
-            name: 1,
-            instagramUsername: 1,
-            instagramUserId: 1,
-            igUserId: 1,
-          })
-          .toArray()
-        : [],
-      whatsappBotObjectIds.length > 0
-        ? db
-          .collection("whatsapp_bots")
-          .find({ _id: { $in: whatsappBotObjectIds } })
-          .project({ _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 })
-          .toArray()
-        : [],
-      ]);
+      await Promise.all(
+        mongoDb
+          ? (() => {
+            const lineBotObjectIds = [...botIdsByPlatform.line]
+              .filter((id) => ObjectId.isValid(id))
+              .map((id) => new ObjectId(id));
+            const facebookBotObjectIds = [...botIdsByPlatform.facebook]
+              .filter((id) => ObjectId.isValid(id))
+              .map((id) => new ObjectId(id));
+            const instagramBotObjectIds = [...botIdsByPlatform.instagram]
+              .filter((id) => ObjectId.isValid(id))
+              .map((id) => new ObjectId(id));
+            const whatsappBotObjectIds = [...botIdsByPlatform.whatsapp]
+              .filter((id) => ObjectId.isValid(id))
+              .map((id) => new ObjectId(id));
+            return [
+              lineBotObjectIds.length > 0
+                ? mongoDb
+                  .collection("line_bots")
+                  .find({ _id: { $in: lineBotObjectIds } })
+                  .project({ _id: 1, name: 1, displayName: 1, botName: 1 })
+                  .toArray()
+                : [],
+              facebookBotObjectIds.length > 0
+                ? mongoDb
+                  .collection("facebook_bots")
+                  .find({ _id: { $in: facebookBotObjectIds } })
+                  .project({ _id: 1, name: 1, pageName: 1, pageId: 1 })
+                  .toArray()
+                : [],
+              instagramBotObjectIds.length > 0
+                ? mongoDb
+                  .collection("instagram_bots")
+                  .find({ _id: { $in: instagramBotObjectIds } })
+                  .project({
+                    _id: 1,
+                    name: 1,
+                    instagramUsername: 1,
+                    instagramUserId: 1,
+                    igUserId: 1,
+                  })
+                  .toArray()
+                : [],
+              whatsappBotObjectIds.length > 0
+                ? mongoDb
+                  .collection("whatsapp_bots")
+                  .find({ _id: { $in: whatsappBotObjectIds } })
+                  .project({ _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 })
+                  .toArray()
+                : [],
+            ];
+          })()
+          : [
+            botIdsByPlatform.line.size > 0
+              ? botRepo.list("line", {
+                filter: { _id: { $in: [...botIdsByPlatform.line] } },
+                projection: { _id: 1, name: 1, displayName: 1, botName: 1 },
+              })
+              : [],
+            botIdsByPlatform.facebook.size > 0
+              ? botRepo.list("facebook", {
+                filter: { _id: { $in: [...botIdsByPlatform.facebook] } },
+                projection: { _id: 1, name: 1, pageName: 1, pageId: 1 },
+              })
+              : [],
+            botIdsByPlatform.instagram.size > 0
+              ? botRepo.list("instagram", {
+                filter: { _id: { $in: [...botIdsByPlatform.instagram] } },
+                projection: {
+                  _id: 1,
+                  name: 1,
+                  instagramUsername: 1,
+                  instagramUserId: 1,
+                  igUserId: 1,
+                },
+              })
+              : [],
+            botIdsByPlatform.whatsapp.size > 0
+              ? botRepo.list("whatsapp", {
+                filter: { _id: { $in: [...botIdsByPlatform.whatsapp] } },
+                projection: { _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 },
+              })
+              : [],
+          ],
+      );
 
     const botNameMap = {
       line: new Map(),

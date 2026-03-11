@@ -1,4 +1,5 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
+const { ObjectId } = require("mongodb");
 const {
   applyProjection,
   buildMongoIdQuery,
@@ -192,6 +193,10 @@ function createNotificationRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -206,11 +211,15 @@ function createNotificationRepository({
 
   function shouldReadPrimary() {
     return Boolean(
-      runtimeConfig?.features?.postgresReadPrimaryNotifications && canUsePostgres(),
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryNotifications || !canUseMongo()),
     );
   }
 
   async function getDb() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName);
   }
@@ -531,6 +540,10 @@ function createNotificationRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return [];
+    }
+
     const db = await getDb();
     const coll = db.collection("notification_channels");
     let cursor = coll.find(buildMongoChannelFilter(filter));
@@ -568,13 +581,19 @@ function createNotificationRepository({
       try {
         const pgDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
         const pgDoc = pgDocs[0] || null;
-        return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
+        if (pgDoc || !canUseMongo()) {
+          return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
+        }
       } catch (error) {
         console.warn(
           `[NotificationRepository] Primary channel read failed for ${normalizedId}, falling back to Mongo:`,
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return null;
     }
 
     const db = await getDb();
@@ -610,16 +629,20 @@ function createNotificationRepository({
   }
 
   async function insertChannel(doc = {}) {
-    const db = await getDb();
     const payload = {
       ...doc,
+      _id: toLegacyId(doc?._id) || new ObjectId().toString(),
       createdAt: doc.createdAt || new Date(),
       updatedAt: doc.updatedAt || doc.createdAt || new Date(),
     };
-    const result = await db.collection("notification_channels").insertOne(payload);
-    payload._id = result.insertedId;
 
-    if (shouldDualWrite()) {
+    if (canUseMongo()) {
+      const db = await getDb();
+      const result = await db.collection("notification_channels").insertOne(payload);
+      payload._id = result.insertedId;
+    }
+
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await upsertPostgresChannel(payload).catch((error) => {
         console.warn(
           `[NotificationRepository] Channel dual-write insert failed for ${toLegacyId(payload._id)}:`,
@@ -634,6 +657,26 @@ function createNotificationRepository({
   async function updateChannelById(channelId, setDoc = {}) {
     const normalizedId = toLegacyId(channelId);
     if (!normalizedId) return null;
+
+    if (!canUseMongo()) {
+      const existingDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
+      const existing = existingDocs[0] || null;
+      if (!existing) return null;
+      const updatedDoc = {
+        ...existing,
+        ...setDoc,
+        _id: normalizedId,
+        updatedAt: setDoc.updatedAt || new Date(),
+      };
+      await upsertPostgresChannel(updatedDoc).catch((error) => {
+        console.warn(
+          `[NotificationRepository] Channel update failed for ${normalizedId}:`,
+          error?.message || error,
+        );
+      });
+      const refreshed = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
+      return refreshed[0] || updatedDoc;
+    }
 
     const db = await getDb();
     await db.collection("notification_channels").updateOne(
@@ -675,6 +718,23 @@ function createNotificationRepository({
       return { deletedCount: 0 };
     }
 
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        return { deletedCount: 0 };
+      }
+      const existingDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
+      if (existingDocs.length === 0) {
+        return { deletedCount: 0 };
+      }
+      await deletePostgresChannel(normalizedId).catch((error) => {
+        console.warn(
+          `[NotificationRepository] Channel delete failed for ${normalizedId}:`,
+          error?.message || error,
+        );
+      });
+      return { deletedCount: 1 };
+    }
+
     const db = await getDb();
     const coll = db.collection("notification_channels");
     const existing = await coll.findOne(buildMongoIdQuery(normalizedId));
@@ -691,9 +751,9 @@ function createNotificationRepository({
   }
 
   async function insertLog(payload = {}) {
-    const db = await getDb();
     const now = payload.createdAt || new Date();
     const doc = {
+      _id: toLegacyId(payload._id) || new ObjectId().toString(),
       channelId: payload.channelId || null,
       orderId: payload.orderId || null,
       eventType: payload.eventType || null,
@@ -702,10 +762,13 @@ function createNotificationRepository({
       response: payload.response || null,
       createdAt: now,
     };
-    const result = await db.collection("notification_logs").insertOne(doc);
-    doc._id = result.insertedId;
+    if (canUseMongo()) {
+      const db = await getDb();
+      const result = await db.collection("notification_logs").insertOne(doc);
+      doc._id = result.insertedId;
+    }
 
-    if (shouldDualWrite()) {
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await upsertPostgresLog(doc).catch((error) => {
         console.warn(
           `[NotificationRepository] Log dual-write failed for ${toLegacyId(doc._id)}:`,
@@ -727,6 +790,10 @@ function createNotificationRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const db = await getDb();

@@ -1,4 +1,5 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
+const { ObjectId } = require("mongodb");
 const { resolvePgBotId } = require("./postgresRefs");
 const {
   buildMongoIdQuery,
@@ -14,6 +15,10 @@ function createFollowUpRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -28,11 +33,15 @@ function createFollowUpRepository({
 
   function shouldReadPrimary() {
     return Boolean(
-      runtimeConfig?.features?.postgresReadPrimaryFollowUp && canUsePostgres(),
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryFollowUp || !canUseMongo()),
     );
   }
 
   async function getDb() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName);
   }
@@ -102,8 +111,9 @@ function createFollowUpRepository({
     }
   }
 
-  async function syncStatusDoc(doc = {}) {
-    if (!doc || !shouldDualWrite()) return null;
+  async function syncStatusDoc(doc = {}, options = {}) {
+    if (!doc) return null;
+    if (!options.force && !shouldDualWrite()) return null;
     const platform =
       typeof doc?.platform === "string" && doc.platform.trim()
         ? normalizePlatform(doc.platform)
@@ -133,8 +143,9 @@ function createFollowUpRepository({
     return true;
   }
 
-  async function syncTaskDoc(doc = {}) {
-    if (!doc || !shouldDualWrite()) return null;
+  async function syncTaskDoc(doc = {}, options = {}) {
+    if (!doc) return null;
+    if (!options.force && !shouldDualWrite()) return null;
     const platform =
       typeof doc?.platform === "string" && doc.platform.trim()
         ? normalizePlatform(doc.platform)
@@ -300,6 +311,7 @@ function createFollowUpRepository({
   }
 
   async function readMongoStatuses(filter = {}, options = {}) {
+    if (!canUseMongo()) return [];
     const db = await getDb();
     let cursor = db.collection("follow_up_status")
       .find(buildMongoStatusFilter(filter))
@@ -313,6 +325,7 @@ function createFollowUpRepository({
   }
 
   async function readMongoTasks(filter = {}, options = {}) {
+    if (!canUseMongo()) return [];
     const db = await getDb();
     let cursor = db.collection("follow_up_tasks")
       .find(buildMongoTaskFilter(filter))
@@ -555,6 +568,36 @@ function createFollowUpRepository({
     return result.rows.map((row) => hydratePostgresTask(row));
   }
 
+  async function readPostgresTaskById(taskId) {
+    const normalizedTaskId = toLegacyId(taskId);
+    if (!normalizedTaskId) return null;
+    const result = await query(
+      `
+        SELECT
+          t.id::text,
+          t.legacy_task_id,
+          t.platform,
+          t.legacy_contact_id,
+          t.status,
+          t.payload,
+          t.next_scheduled_at,
+          t.created_at,
+          t.updated_at,
+          b.legacy_bot_id
+        FROM follow_up_tasks t
+        LEFT JOIN bots b ON b.id = t.bot_id
+        WHERE t.legacy_task_id = $1 OR t.id::text = $1
+        ORDER BY
+          CASE WHEN t.legacy_task_id = $1 THEN 0 ELSE 1 END,
+          t.updated_at DESC,
+          t.id DESC
+        LIMIT 1
+      `,
+      [normalizedTaskId],
+    );
+    return result.rows[0] ? hydratePostgresTask(result.rows[0]) : null;
+  }
+
   async function getStatus(userId) {
     const normalizedUserId = toLegacyId(userId);
     if (!normalizedUserId) return null;
@@ -562,13 +605,17 @@ function createFollowUpRepository({
     if (shouldReadPrimary()) {
       try {
         const docs = await readPostgresStatuses({ userId: normalizedUserId }, { limit: 1 });
-        if (docs.length > 0) return docs[0];
+        if (docs.length > 0 || !canUseMongo()) return docs[0] || null;
       } catch (error) {
         console.warn(
           `[FollowUpRepository] Primary status read failed for ${normalizedUserId}, falling back to Mongo:`,
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return null;
     }
 
     const db = await getDb();
@@ -599,7 +646,7 @@ function createFollowUpRepository({
     if (shouldReadPrimary()) {
       try {
         const docs = await readPostgresStatuses(filter, options);
-        if (docs.length > 0) {
+        if (docs.length > 0 || !canUseMongo()) {
           return docs;
         }
       } catch (error) {
@@ -634,6 +681,24 @@ function createFollowUpRepository({
   }
 
   async function upsertStatus(userId, setFields = {}) {
+    if (!canUseMongo()) {
+      const existing =
+        (await readPostgresStatuses({ userId: toLegacyId(userId) }, { limit: 1 }))[0]
+        || {};
+      const now = new Date();
+      const doc = {
+        ...existing,
+        senderId: toLegacyId(userId),
+        ...setFields,
+        updatedAt: setFields.updatedAt || now,
+      };
+      await syncStatusDoc(doc, { force: true }).catch((error) => {
+        console.warn("[FollowUpRepository] Status write failed:", error?.message || error);
+      });
+      const refreshed = await readPostgresStatuses({ userId: toLegacyId(userId) }, { limit: 1 });
+      return refreshed[0] || doc;
+    }
+
     const db = await getDb();
     const coll = db.collection("follow_up_status");
     const result = await coll.findOneAndUpdate(
@@ -669,7 +734,7 @@ function createFollowUpRepository({
             limit: 1,
           },
         );
-        if (docs.length > 0) return docs[0];
+        if (docs.length > 0 || !canUseMongo()) return docs[0] || null;
       } catch (error) {
         console.warn(
           `[FollowUpRepository] Primary task-by-date read failed for ${normalizedUserId}, falling back to Mongo:`,
@@ -678,6 +743,9 @@ function createFollowUpRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return null;
+    }
     const db = await getDb();
     const mongoDoc = await db.collection("follow_up_tasks").findOne(
       {
@@ -737,7 +805,7 @@ function createFollowUpRepository({
     if (shouldReadPrimary()) {
       try {
         const docs = await readPostgresTasks(filter, options);
-        if (docs.length > 0) {
+        if (docs.length > 0 || !canUseMongo()) {
           return docs;
         }
       } catch (error) {
@@ -772,6 +840,19 @@ function createFollowUpRepository({
   }
 
   async function insertTask(taskDoc) {
+    if (!canUseMongo()) {
+      const preparedDoc = {
+        ...taskDoc,
+        _id: toLegacyId(taskDoc?._id) || new ObjectId().toString(),
+        createdAt: taskDoc?.createdAt || new Date(),
+        updatedAt: taskDoc?.updatedAt || new Date(),
+      };
+      await syncTaskDoc(preparedDoc, { force: true }).catch((error) => {
+        console.warn("[FollowUpRepository] Task write failed:", error?.message || error);
+      });
+      return (await readPostgresTaskById(preparedDoc._id)) || preparedDoc;
+    }
+
     const db = await getDb();
     const coll = db.collection("follow_up_tasks");
     const result = await coll.insertOne(taskDoc);
@@ -783,6 +864,37 @@ function createFollowUpRepository({
   }
 
   async function updateTaskById(taskId, update, options = {}) {
+    if (!canUseMongo()) {
+      const existingDoc = await readPostgresTaskById(taskId);
+      if (!existingDoc) {
+        return { matchedCount: 0, modifiedCount: 0, document: null };
+      }
+      const normalizedUpdate =
+        update && typeof update === "object" && !Array.isArray(update)
+          ? Object.keys(update).some((key) => key.startsWith("$"))
+            ? update
+            : { $set: update }
+          : { $set: {} };
+      const nextDoc = { ...existingDoc };
+      if (normalizedUpdate.$set && typeof normalizedUpdate.$set === "object") {
+        Object.assign(nextDoc, normalizedUpdate.$set);
+      }
+      if (normalizedUpdate.$unset && typeof normalizedUpdate.$unset === "object") {
+        Object.keys(normalizedUpdate.$unset).forEach((key) => delete nextDoc[key]);
+      }
+      nextDoc._id = toLegacyId(existingDoc._id) || toLegacyId(taskId);
+      nextDoc.updatedAt = new Date();
+      await syncTaskDoc(nextDoc, { force: true }).catch((error) => {
+        console.warn("[FollowUpRepository] Task update write failed:", error?.message || error);
+      });
+      const refreshedDoc = await readPostgresTaskById(nextDoc._id);
+      return {
+        matchedCount: 1,
+        modifiedCount: 1,
+        document: refreshedDoc || nextDoc,
+      };
+    }
+
     const db = await getDb();
     const coll = db.collection("follow_up_tasks");
     const filter = buildMongoIdQuery(taskId);
@@ -802,6 +914,37 @@ function createFollowUpRepository({
   }
 
   async function cancelActiveTasks(queryFilter = {}, setFields = {}) {
+    if (!canUseMongo()) {
+      const normalizedFilter = {
+        userId: queryFilter?.userId,
+        platform: queryFilter?.platform,
+        botId: queryFilter?.botId,
+        dateKey: queryFilter?.dateKey,
+        activeOnly: true,
+      };
+      const docs = await listTasks(normalizedFilter, { limit: 5000 });
+      if (docs.length === 0) {
+        return { matchedCount: 0, modifiedCount: 0 };
+      }
+      let modifiedCount = 0;
+      for (const doc of docs) {
+        const nextDoc = {
+          ...doc,
+          ...setFields,
+          _id: toLegacyId(doc._id),
+          updatedAt: setFields.updatedAt || new Date(),
+        };
+        await syncTaskDoc(nextDoc, { force: true }).catch((error) => {
+          console.warn(
+            "[FollowUpRepository] Task cancel write failed:",
+            error?.message || error,
+          );
+        });
+        modifiedCount += 1;
+      }
+      return { matchedCount: docs.length, modifiedCount };
+    }
+
     const db = await getDb();
     const coll = db.collection("follow_up_tasks");
     const filter = {

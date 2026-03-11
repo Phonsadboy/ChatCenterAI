@@ -63,15 +63,22 @@ async function registerBatchSchedulers() {
 }
 
 async function startBatchWorkers() {
-  await connectDB();
-  await initializeMongoRuntime({
-    runMigrations: false,
-    loadLegacyContent: false,
-  });
+  const runtimeConfig = getRuntimeConfig();
+  if (runtimeConfig.features.mongoEnabled) {
+    await connectDB();
+    await initializeMongoRuntime({
+      runMigrations: false,
+      loadLegacyContent: false,
+    });
+  } else {
+    await initializeMongoRuntime({
+      runMigrations: false,
+      loadLegacyContent: false,
+    });
+  }
 
   await registerBatchSchedulers();
 
-  const runtimeConfig = getRuntimeConfig();
   const followUpWorker = createQueueWorker(
     QUEUE_NAMES.FOLLOWUP,
     async (job) => {

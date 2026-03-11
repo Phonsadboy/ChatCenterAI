@@ -6,6 +6,10 @@ function createUserStateRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -19,10 +23,16 @@ function createUserStateRepository({
   }
 
   function shouldReadPrimary() {
-    return Boolean(runtimeConfig?.features?.postgresReadPrimaryChat && canUsePostgres());
+    return Boolean(
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryChat || !canUseMongo()),
+    );
   }
 
   async function getDb() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName);
   }
@@ -245,7 +255,13 @@ function createUserStateRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDoc = await readPgAiStatus(normalizedUserId);
-        if (pgDoc) return pgDoc;
+        if (pgDoc || !canUseMongo()) {
+          return pgDoc || {
+            senderId: normalizedUserId,
+            aiEnabled: true,
+            updatedAt: new Date(),
+          };
+        }
       } catch (error) {
         console.warn(
           `[UserStateRepository] Primary AI status read failed for ${normalizedUserId}, falling back to Mongo:`,
@@ -254,13 +270,17 @@ function createUserStateRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return { senderId: normalizedUserId, aiEnabled: true, updatedAt: new Date() };
+    }
+
     const db = await getDb();
     const coll = db.collection("active_user_status");
     let mongoDoc = await coll.findOne({ senderId: normalizedUserId });
     if (!mongoDoc) {
       mongoDoc = { senderId: normalizedUserId, aiEnabled: true, updatedAt: new Date() };
       await coll.insertOne(mongoDoc);
-      if (shouldDualWrite()) {
+      if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
         await writePgAiStatus(normalizedUserId, true, mongoDoc.updatedAt).catch((error) => {
           console.warn(
             `[UserStateRepository] AI status dual-write failed for ${normalizedUserId}:`,
@@ -292,7 +312,7 @@ function createUserStateRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPgAiStatuses(userIds);
-        if (pgDocs.length > 0) return pgDocs;
+        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
         console.warn(
           "[UserStateRepository] Primary AI status list failed, falling back to Mongo:",
@@ -305,6 +325,7 @@ function createUserStateRepository({
       ? userIds.map((userId) => toLegacyId(userId)).filter(Boolean)
       : [];
     if (normalizedIds.length === 0) return [];
+    if (!canUseMongo()) return [];
     const db = await getDb();
     const mongoDocs = await db.collection("active_user_status")
       .find({ senderId: { $in: normalizedIds } })
@@ -333,14 +354,16 @@ function createUserStateRepository({
   async function setAiStatus(userId, aiEnabled) {
     const normalizedUserId = toLegacyId(userId);
     const updatedAt = new Date();
-    const db = await getDb();
-    await db.collection("active_user_status").updateOne(
-      { senderId: normalizedUserId },
-      { $set: { aiEnabled: Boolean(aiEnabled), updatedAt } },
-      { upsert: true },
-    );
+    if (canUseMongo()) {
+      const db = await getDb();
+      await db.collection("active_user_status").updateOne(
+        { senderId: normalizedUserId },
+        { $set: { aiEnabled: Boolean(aiEnabled), updatedAt } },
+        { upsert: true },
+      );
+    }
 
-    if (shouldDualWrite()) {
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await writePgAiStatus(normalizedUserId, aiEnabled, updatedAt).catch((error) => {
         console.warn(
           `[UserStateRepository] AI status dual-write failed for ${normalizedUserId}:`,
@@ -361,7 +384,9 @@ function createUserStateRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDoc = await readPgTags(normalizedUserId);
-        if (pgDoc) return pgDoc;
+        if (pgDoc || !canUseMongo()) {
+          return pgDoc || { userId: normalizedUserId, tags: [], updatedAt: null };
+        }
       } catch (error) {
         console.warn(
           `[UserStateRepository] Primary tags read failed for ${normalizedUserId}, falling back to Mongo:`,
@@ -370,6 +395,9 @@ function createUserStateRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return { userId: normalizedUserId, tags: [] };
+    }
     const db = await getDb();
     const mongoDoc = await db.collection("user_tags").findOne({ userId: normalizedUserId });
     if (shouldShadowRead()) {
@@ -395,7 +423,7 @@ function createUserStateRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPgTagsByUsers(userIds);
-        if (pgDocs.length > 0) return pgDocs;
+        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
         console.warn(
           "[UserStateRepository] Primary tags list failed, falling back to Mongo:",
@@ -408,6 +436,7 @@ function createUserStateRepository({
       ? userIds.map((userId) => toLegacyId(userId)).filter(Boolean)
       : [];
     if (normalizedIds.length === 0) return [];
+    if (!canUseMongo()) return [];
     const db = await getDb();
     const mongoDocs = await db.collection("user_tags")
       .find({ userId: { $in: normalizedIds } })
@@ -437,19 +466,21 @@ function createUserStateRepository({
     const normalizedUserId = toLegacyId(userId);
     const updatedAt = new Date();
     const cleanTags = Array.isArray(tags) ? tags : [];
-    const db = await getDb();
-    await db.collection("user_tags").updateOne(
-      { userId: normalizedUserId },
-      {
-        $set: {
-          tags: cleanTags,
-          updatedAt,
+    if (canUseMongo()) {
+      const db = await getDb();
+      await db.collection("user_tags").updateOne(
+        { userId: normalizedUserId },
+        {
+          $set: {
+            tags: cleanTags,
+            updatedAt,
+          },
         },
-      },
-      { upsert: true },
-    );
+        { upsert: true },
+      );
+    }
 
-    if (shouldDualWrite()) {
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await writePgTags(normalizedUserId, cleanTags, updatedAt).catch((error) => {
         console.warn(
           `[UserStateRepository] Tags dual-write failed for ${normalizedUserId}:`,
@@ -465,7 +496,7 @@ function createUserStateRepository({
     if (shouldReadPrimary()) {
       try {
         const pgTags = await readPgAvailableTags(limit);
-        if (pgTags.length > 0) return pgTags;
+        if (pgTags.length > 0 || !canUseMongo()) return pgTags;
       } catch (error) {
         console.warn(
           "[UserStateRepository] Primary available-tags read failed, falling back to Mongo:",
@@ -474,6 +505,9 @@ function createUserStateRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return [];
+    }
     const db = await getDb();
     const allUserTags = await db.collection("user_tags").find({}).toArray();
     const tagCount = {};
@@ -512,7 +546,14 @@ function createUserStateRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDoc = await readPgPurchaseStatus(normalizedUserId);
-        if (pgDoc) return pgDoc;
+        if (pgDoc || !canUseMongo()) {
+          return pgDoc || {
+            userId: normalizedUserId,
+            hasPurchased: false,
+            updatedAt: null,
+            updatedBy: null,
+          };
+        }
       } catch (error) {
         console.warn(
           `[UserStateRepository] Primary purchase-status read failed for ${normalizedUserId}, falling back to Mongo:`,
@@ -521,6 +562,9 @@ function createUserStateRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return { userId: normalizedUserId, hasPurchased: false };
+    }
     const db = await getDb();
     const mongoDoc = await db.collection("user_purchase_status").findOne({ userId: normalizedUserId });
 
@@ -548,7 +592,7 @@ function createUserStateRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPgPurchaseStatuses(userIds);
-        if (pgDocs.length > 0) return pgDocs;
+        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
         console.warn(
           "[UserStateRepository] Primary purchase-status list failed, falling back to Mongo:",
@@ -561,6 +605,7 @@ function createUserStateRepository({
       ? userIds.map((userId) => toLegacyId(userId)).filter(Boolean)
       : [];
     if (normalizedIds.length === 0) return [];
+    if (!canUseMongo()) return [];
     const db = await getDb();
     const mongoDocs = await db.collection("user_purchase_status")
       .find({ userId: { $in: normalizedIds } })
@@ -589,20 +634,22 @@ function createUserStateRepository({
   async function setPurchaseStatus(userId, hasPurchased, updatedBy = "admin") {
     const normalizedUserId = toLegacyId(userId);
     const updatedAt = new Date();
-    const db = await getDb();
-    await db.collection("user_purchase_status").updateOne(
-      { userId: normalizedUserId },
-      {
-        $set: {
-          hasPurchased: Boolean(hasPurchased),
-          updatedAt,
-          updatedBy: updatedBy || null,
+    if (canUseMongo()) {
+      const db = await getDb();
+      await db.collection("user_purchase_status").updateOne(
+        { userId: normalizedUserId },
+        {
+          $set: {
+            hasPurchased: Boolean(hasPurchased),
+            updatedAt,
+            updatedBy: updatedBy || null,
+          },
         },
-      },
-      { upsert: true },
-    );
+        { upsert: true },
+      );
+    }
 
-    if (shouldDualWrite()) {
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await writePgPurchaseStatus(
         normalizedUserId,
         hasPurchased,

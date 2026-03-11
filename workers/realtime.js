@@ -11,9 +11,11 @@ const { getRuntimeConfig } = require("../infra/runtimeConfig");
 const { connectDB, processFlushedMessages } = require("../index");
 
 async function startRealtimeWorkers() {
-  await connectDB();
-
   const runtimeConfig = getRuntimeConfig();
+  if (runtimeConfig.features.mongoEnabled) {
+    await connectDB();
+  }
+
   const lockOptions = {
     ttlMs: runtimeConfig.queues.conversationLockTtlMs,
     waitTimeoutMs: runtimeConfig.queues.conversationLockWaitTimeoutMs,

@@ -122,6 +122,12 @@ function createChatRepository({
   runtimeConfig,
 }) {
   const pgBotIdCache = new Map();
+  const createGeneratedId = () =>
+    `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
 
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
@@ -137,11 +143,15 @@ function createChatRepository({
 
   function shouldReadPrimary() {
     return Boolean(
-      runtimeConfig?.features?.postgresReadPrimaryChat && canUsePostgres(),
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryChat || !canUseMongo()),
     );
   }
 
   async function getMongoDb() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName);
   }
@@ -164,7 +174,7 @@ function createChatRepository({
     }
   }
 
-  async function resolvePgBotId(platform, botId, mongoDb) {
+  async function resolvePgBotId(platform, botId, mongoDb = null) {
     const normalizedPlatform = normalizePlatform(platform);
     const legacyBotId = toLegacyId(botId);
     if (!legacyBotId) return null;
@@ -182,6 +192,10 @@ function createChatRepository({
     if (result.rows[0]?.id) {
       pgBotIdCache.set(cacheKey, result.rows[0].id);
       return result.rows[0].id;
+    }
+
+    if (!mongoDb) {
+      return null;
     }
 
     const botCollection = mongoDb.collection(
@@ -250,6 +264,10 @@ function createChatRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!mongoDb) {
+      return {};
     }
 
     const mongoDoc = (
@@ -417,7 +435,7 @@ function createChatRepository({
     if (!userId) return;
 
     const platform = normalizePlatform(primary?.platform);
-    const mongoDb = await getMongoDb();
+    const mongoDb = canUseMongo() ? await getMongoDb() : null;
     const profile = await loadProfile(mongoDb, userId, platform);
     const pgBotId = await resolvePgBotId(platform, primary?.botId, mongoDb);
     const legacyThreadKey = buildThreadKey(platform, primary?.botId, userId);
@@ -448,6 +466,7 @@ function createChatRepository({
   }
 
   async function readMongoHistoryDocs(userId, options = {}) {
+    if (!canUseMongo()) return [];
     const mongoDb = await getMongoDb();
     const coll = mongoDb.collection("chat_history");
     const sortDirection = normalizeSortDirection(options.sort, 1);
@@ -623,6 +642,7 @@ function createChatRepository({
   }
 
   async function readMongoLatestContext(userId) {
+    if (!canUseMongo()) return null;
     const mongoDb = await getMongoDb();
     const coll = mongoDb.collection("chat_history");
     const doc = await coll.findOne(
@@ -671,6 +691,7 @@ function createChatRepository({
   }
 
   async function readMongoUserSummaries(options = {}) {
+    if (!canUseMongo()) return [];
     const mongoDb = await getMongoDb();
     const coll = mongoDb.collection("chat_history");
     const limit =
@@ -904,6 +925,7 @@ function createChatRepository({
   }
 
   async function readMongoActivityDocs(filter = {}, options = {}) {
+    if (!canUseMongo()) return [];
     const mongoDb = await getMongoDb();
     const coll = mongoDb.collection("chat_history");
     const projection =
@@ -934,6 +956,7 @@ function createChatRepository({
   }
 
   async function readMongoActivityCount(filter = {}) {
+    if (!canUseMongo()) return 0;
     const mongoDb = await getMongoDb();
     const coll = mongoDb.collection("chat_history");
     return coll.countDocuments(buildMongoMessageFilter(filter));
@@ -1015,6 +1038,7 @@ function createChatRepository({
   }
 
   async function readMongoDistinctUserIds(filter = {}) {
+    if (!canUseMongo()) return [];
     const mongoDb = await getMongoDb();
     const coll = mongoDb.collection("chat_history");
     const result = await coll.aggregate([
@@ -1125,11 +1149,50 @@ function createChatRepository({
       : [];
     if (docs.length === 0) return [];
 
+    const preparedDocs = docs.map((doc) => ({
+      ...doc,
+      _id: toLegacyId(doc?._id) || createGeneratedId(),
+    }));
+
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
+      }
+      await withTransaction(async (client) => {
+        const primary = preparedDocs[0];
+        const userId = toLegacyId(primary?.senderId || primary?.userId);
+        if (!userId) return;
+        const platform = normalizePlatform(primary?.platform);
+        const profile = await loadProfile(null, userId, platform);
+        const pgBotId = await resolvePgBotId(platform, primary?.botId, null);
+        const legacyThreadKey = buildThreadKey(platform, primary?.botId, userId);
+        const stats = buildThreadStats(preparedDocs);
+        const updatedAt =
+          preparedDocs[preparedDocs.length - 1]?.timestamp || new Date();
+
+        const contactId = await upsertPgContact(client, userId, platform, profile);
+        const threadId = await upsertPgThread(
+          client,
+          platform,
+          pgBotId,
+          contactId,
+          legacyThreadKey,
+          stats,
+          updatedAt,
+        );
+
+        for (const messageDoc of preparedDocs) {
+          await insertPgMessage(client, { contactId, pgBotId, threadId }, messageDoc);
+        }
+      });
+      return preparedDocs;
+    }
+
     const mongoDb = await getMongoDb();
     const coll = mongoDb.collection("chat_history");
-    const result = await coll.insertMany(docs, { ordered: true });
+    const result = await coll.insertMany(preparedDocs, { ordered: true });
 
-    const savedDocs = docs.map((doc, index) => ({
+    const savedDocs = preparedDocs.map((doc, index) => ({
       ...doc,
       _id: result.insertedIds[index] || doc._id,
     }));
@@ -1162,6 +1225,10 @@ function createChatRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return null;
     }
 
     const mongoDb = await getMongoDb();
@@ -1202,6 +1269,10 @@ function createChatRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return false;
+    }
+
     const mongoDb = await getMongoDb();
     const coll = mongoDb.collection("chat_history");
     const mongoDoc = await coll.findOne(buildMongoMessageFilter(filter), {
@@ -1234,9 +1305,11 @@ function createChatRepository({
     const normalizedUserId = toLegacyId(userId);
     if (!normalizedUserId) return;
 
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    await coll.deleteMany(buildMongoUserMatch(normalizedUserId));
+    if (canUseMongo()) {
+      const mongoDb = await getMongoDb();
+      const coll = mongoDb.collection("chat_history");
+      await coll.deleteMany(buildMongoUserMatch(normalizedUserId));
+    }
 
     if (canUsePostgres()) {
       await query(
@@ -1368,19 +1441,6 @@ function createChatRepository({
       return;
     }
 
-    const objectIds = normalizedMessageIds
-      .map((messageId) => toObjectId(messageId))
-      .filter(Boolean);
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const mongoMatchConditions = [buildMongoUserMatch(normalizedUserId)];
-
-    if (objectIds.length > 0) {
-      mongoMatchConditions.push({ _id: { $in: objectIds } });
-    } else {
-      mongoMatchConditions.push({ _id: { $in: normalizedMessageIds } });
-    }
-
     const updateDoc = {
       orderExtractionRoundId: extractionRoundId,
       orderExtractionMarkedAt: new Date(),
@@ -1391,12 +1451,27 @@ function createChatRepository({
       updateDoc.orderId = objectId || normalizedOrderId;
     }
 
-    await coll.updateMany(
-      mongoMatchConditions.length === 1
-        ? mongoMatchConditions[0]
-        : { $and: mongoMatchConditions },
-      { $set: updateDoc },
-    );
+    if (canUseMongo()) {
+      const objectIds = normalizedMessageIds
+        .map((messageId) => toObjectId(messageId))
+        .filter(Boolean);
+      const mongoDb = await getMongoDb();
+      const coll = mongoDb.collection("chat_history");
+      const mongoMatchConditions = [buildMongoUserMatch(normalizedUserId)];
+
+      if (objectIds.length > 0) {
+        mongoMatchConditions.push({ _id: { $in: objectIds } });
+      } else {
+        mongoMatchConditions.push({ _id: { $in: normalizedMessageIds } });
+      }
+
+      await coll.updateMany(
+        mongoMatchConditions.length === 1
+          ? mongoMatchConditions[0]
+          : { $and: mongoMatchConditions },
+        { $set: updateDoc },
+      );
+    }
 
     if (!canUsePostgres()) return;
 

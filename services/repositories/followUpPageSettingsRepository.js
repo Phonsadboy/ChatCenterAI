@@ -63,6 +63,10 @@ function createFollowUpPageSettingsRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -76,10 +80,16 @@ function createFollowUpPageSettingsRepository({
   }
 
   function shouldReadPrimary() {
-    return Boolean(runtimeConfig?.features?.postgresReadPrimaryFollowUp && canUsePostgres());
+    return Boolean(
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryFollowUp || !canUseMongo()),
+    );
   }
 
   async function getDb() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName);
   }
@@ -108,10 +118,10 @@ function createFollowUpPageSettingsRepository({
           updated_at
         FROM follow_up_page_settings
         WHERE platform = $1
-          AND legacy_bot_id = $2
+          AND COALESCE(legacy_bot_id, '') = COALESCE($2, '')
         LIMIT 1
       `,
-      [normalizedPlatform, legacyBotId],
+      [normalizedPlatform, legacyBotId || ""],
     );
     return result.rows[0] ? normalizeFollowUpPageSettingsDoc(result.rows[0]) : null;
   }
@@ -184,13 +194,17 @@ function createFollowUpPageSettingsRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPgListAll();
-        if (pgDocs.length > 0) return pgDocs;
+        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
         console.warn(
           "[FollowUpPageSettingsRepository] Primary listAll read failed, falling back to Mongo:",
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const db = await getDb();
@@ -233,13 +247,17 @@ function createFollowUpPageSettingsRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPgByPlatform(normalizedPlatform);
-        if (pgDocs.length > 0) return pgDocs;
+        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
         console.warn(
           `[FollowUpPageSettingsRepository] Primary platform read failed for ${normalizedPlatform}, falling back to Mongo:`,
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const db = await getDb();
@@ -273,13 +291,17 @@ function createFollowUpPageSettingsRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDoc = await readPgExact(normalizedPlatform, normalizedBotId);
-        if (pgDoc) return pgDoc;
+        if (pgDoc || !canUseMongo()) return pgDoc;
       } catch (error) {
         console.warn(
           `[FollowUpPageSettingsRepository] Primary exact read failed for ${buildSettingsKey(normalizedPlatform, normalizedBotId)}, falling back to Mongo:`,
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return null;
     }
 
     const db = await getDb();
@@ -312,29 +334,32 @@ function createFollowUpPageSettingsRepository({
     const normalizedSettings = normalizeSettingsPayload(settings);
     const now = new Date();
 
-    const db = await getDb();
-    await db.collection("follow_up_page_settings").updateOne(
-      { platform: normalizedPlatform, botId: normalizedBotId },
-      {
-        $set: {
-          platform: normalizedPlatform,
-          botId: normalizedBotId,
-          settings: normalizedSettings,
-          updatedAt: now,
+    let savedDoc = null;
+    if (canUseMongo()) {
+      const db = await getDb();
+      await db.collection("follow_up_page_settings").updateOne(
+        { platform: normalizedPlatform, botId: normalizedBotId },
+        {
+          $set: {
+            platform: normalizedPlatform,
+            botId: normalizedBotId,
+            settings: normalizedSettings,
+            updatedAt: now,
+          },
+          $setOnInsert: {
+            createdAt: now,
+          },
         },
-        $setOnInsert: {
-          createdAt: now,
-        },
-      },
-      { upsert: true },
-    );
+        { upsert: true },
+      );
 
-    const savedDoc = await db.collection("follow_up_page_settings").findOne({
-      platform: normalizedPlatform,
-      botId: normalizedBotId,
-    });
+      savedDoc = await db.collection("follow_up_page_settings").findOne({
+        platform: normalizedPlatform,
+        botId: normalizedBotId,
+      });
+    }
 
-    if (shouldDualWrite()) {
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await writePgDoc(savedDoc || {
         platform: normalizedPlatform,
         botId: normalizedBotId,
@@ -349,6 +374,10 @@ function createFollowUpPageSettingsRepository({
       });
     }
 
+    if (!savedDoc && canUsePostgres()) {
+      savedDoc = await readPgExact(normalizedPlatform, normalizedBotId);
+    }
+
     return savedDoc || {
       platform: normalizedPlatform,
       botId: normalizedBotId,
@@ -361,18 +390,20 @@ function createFollowUpPageSettingsRepository({
   async function deleteOne(platform, botId = null) {
     const normalizedPlatform = normalizePlatform(platform);
     const normalizedBotId = toLegacyId(botId) || null;
-    const db = await getDb();
-    await db.collection("follow_up_page_settings").deleteOne({
-      platform: normalizedPlatform,
-      botId: normalizedBotId,
-    });
+    if (canUseMongo()) {
+      const db = await getDb();
+      await db.collection("follow_up_page_settings").deleteOne({
+        platform: normalizedPlatform,
+        botId: normalizedBotId,
+      });
+    }
 
     if (canUsePostgres()) {
       await query(
         `
           DELETE FROM follow_up_page_settings
           WHERE platform = $1
-            AND legacy_bot_id = $2
+            AND COALESCE(legacy_bot_id, '') = COALESCE($2, '')
         `,
         [normalizedPlatform, normalizedBotId || ""],
       ).catch((error) => {

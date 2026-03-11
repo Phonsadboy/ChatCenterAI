@@ -1,4 +1,5 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
+const { ObjectId } = require("mongodb");
 const {
   deletePostgresOrderByLegacyId,
   upsertPostgresOrderDocument,
@@ -17,6 +18,10 @@ function createOrderRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -31,11 +36,15 @@ function createOrderRepository({
 
   function shouldReadPrimary() {
     return Boolean(
-      runtimeConfig?.features?.postgresReadPrimaryOrders && canUsePostgres(),
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryOrders || !canUseMongo()),
     );
   }
 
   async function getCollection() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName).collection("orders");
   }
@@ -438,6 +447,47 @@ function createOrderRepository({
     return hasOperator ? update : { $set: update };
   }
 
+  function applyMongoStyleUpdate(target = {}, normalizedUpdate = {}) {
+    const next = target && typeof target === "object" ? { ...target } : {};
+    const applyPath = (object, path, value, remove = false) => {
+      const parts = String(path || "")
+        .split(".")
+        .filter(Boolean);
+      if (parts.length === 0) return;
+      let cursor = object;
+      for (let index = 0; index < parts.length - 1; index += 1) {
+        const part = parts[index];
+        if (!cursor[part] || typeof cursor[part] !== "object" || Array.isArray(cursor[part])) {
+          cursor[part] = {};
+        }
+        cursor = cursor[part];
+      }
+      const leaf = parts[parts.length - 1];
+      if (remove) {
+        delete cursor[leaf];
+      } else {
+        cursor[leaf] = value;
+      }
+    };
+
+    if (normalizedUpdate.$set && typeof normalizedUpdate.$set === "object") {
+      Object.entries(normalizedUpdate.$set).forEach(([key, value]) =>
+        applyPath(next, key, value));
+    }
+    if (normalizedUpdate.$unset && typeof normalizedUpdate.$unset === "object") {
+      Object.keys(normalizedUpdate.$unset).forEach((key) =>
+        applyPath(next, key, undefined, true));
+    }
+    if (normalizedUpdate.$inc && typeof normalizedUpdate.$inc === "object") {
+      Object.entries(normalizedUpdate.$inc).forEach(([key, value]) => {
+        const current = Number(getValueByPath(next, key) || 0);
+        const delta = Number(value || 0);
+        applyPath(next, key, current + delta);
+      });
+    }
+    return next;
+  }
+
   function buildIdsFilter(orderIds = []) {
     const normalizedIds = Array.isArray(orderIds)
       ? orderIds
@@ -455,12 +505,28 @@ function createOrderRepository({
     return { _id: { $in: normalizedIds } };
   }
 
-  async function syncDoc(doc) {
-    if (!doc || !shouldDualWrite()) return null;
+  async function syncDoc(doc, options = {}) {
+    if (!doc) return null;
+    const force = options.force === true;
+    if (!force && !shouldDualWrite()) return null;
     return upsertPostgresOrderDocument({ query }, doc);
   }
 
   async function create(doc) {
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
+      }
+      const prepared = {
+        ...doc,
+        _id: toLegacyId(doc?._id) || new ObjectId().toString(),
+        createdAt: doc?.createdAt || doc?.extractedAt || new Date(),
+        updatedAt: doc?.updatedAt || new Date(),
+      };
+      await syncDoc(prepared, { force: true });
+      return (await findById(prepared._id)) || prepared;
+    }
+
     const coll = await getCollection();
     const result = await coll.insertOne(doc);
     const savedDoc = { ...doc, _id: result.insertedId };
@@ -474,13 +540,17 @@ function createOrderRepository({
     if (shouldReadPrimary()) {
       try {
         const docs = await readPostgresDocs({ _id: orderId });
-        if (docs.length > 0) return docs[0];
+        if (docs.length > 0 || !canUseMongo()) return docs[0] || null;
       } catch (error) {
         console.warn(
           `[OrderRepository] Primary read failed for ${orderId}, falling back to Mongo:`,
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return null;
     }
 
     const coll = await getCollection();
@@ -504,13 +574,19 @@ function createOrderRepository({
     if (shouldReadPrimary()) {
       try {
         const docs = await readPostgresDocs({ userId });
-        return docs[0] || null;
+        if (docs.length > 0 || !canUseMongo()) {
+          return docs[0] || null;
+        }
       } catch (error) {
         console.warn(
           `[OrderRepository] Primary latest read failed for user ${userId}, falling back to Mongo:`,
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return null;
     }
 
     const coll = await getCollection();
@@ -567,6 +643,10 @@ function createOrderRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return [];
+    }
+
     const coll = await getCollection();
     const findOptions = {};
     if (options.projection && typeof options.projection === "object") {
@@ -615,6 +695,10 @@ function createOrderRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return 0;
+    }
+
     const coll = await getCollection();
     const mongoCount = await coll.countDocuments(filter);
 
@@ -649,6 +733,10 @@ function createOrderRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const coll = await getCollection();
@@ -694,6 +782,10 @@ function createOrderRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [{ _id: null, totalAmount: 0, totalAmountConfirmed: 0, totalShipping: 0, confirmedOrders: 0 }];
     }
 
     const coll = await getCollection();
@@ -795,6 +887,10 @@ function createOrderRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return [];
+    }
+
     const coll = await getCollection();
     const pipeline = [];
     if (filter && Object.keys(filter).length > 0) {
@@ -870,6 +966,10 @@ function createOrderRepository({
       }
     }
 
+    if (!canUseMongo()) {
+      return [];
+    }
+
     const coll = await getCollection();
     return coll
       .aggregate([
@@ -910,9 +1010,30 @@ function createOrderRepository({
   }
 
   async function updateById(orderId, update, options = {}) {
-    const coll = await getCollection();
-    const filter = buildMongoIdQuery(orderId);
     const normalizedUpdate = normalizeUpdateDocument(update);
+    const filter = buildMongoIdQuery(orderId);
+
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
+      }
+      const existing = await findById(orderId);
+      if (!existing) {
+        return { matchedCount: 0, modifiedCount: 0, document: null };
+      }
+      const updatedDoc = applyMongoStyleUpdate(existing, normalizedUpdate);
+      updatedDoc._id = toLegacyId(existing._id) || toLegacyId(orderId);
+      updatedDoc.updatedAt = new Date();
+      await syncDoc(updatedDoc, { force: true });
+      const saved = await findById(updatedDoc._id);
+      return {
+        matchedCount: 1,
+        modifiedCount: 1,
+        document: saved || updatedDoc,
+      };
+    }
+
+    const coll = await getCollection();
     const result = await coll.updateOne(filter, normalizedUpdate, options);
     if (result.matchedCount === 0) {
       return { matchedCount: 0, modifiedCount: 0, document: null };
@@ -929,13 +1050,36 @@ function createOrderRepository({
   }
 
   async function updateManyByIds(orderIds = [], update, options = {}) {
-    const coll = await getCollection();
     const filter = buildIdsFilter(orderIds);
     if (!filter) {
       return { matchedCount: 0, modifiedCount: 0, documents: [] };
     }
 
     const normalizedUpdate = normalizeUpdateDocument(update);
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
+      }
+      const docs = await findByIds(orderIds);
+      if (docs.length === 0) {
+        return { matchedCount: 0, modifiedCount: 0, documents: [] };
+      }
+      const updatedDocs = [];
+      for (const doc of docs) {
+        const updatedDoc = applyMongoStyleUpdate(doc, normalizedUpdate);
+        updatedDoc._id = toLegacyId(doc._id);
+        updatedDoc.updatedAt = new Date();
+        await syncDoc(updatedDoc, { force: true });
+        updatedDocs.push((await findById(updatedDoc._id)) || updatedDoc);
+      }
+      return {
+        matchedCount: docs.length,
+        modifiedCount: updatedDocs.length,
+        documents: updatedDocs,
+      };
+    }
+
+    const coll = await getCollection();
     const matchedDocs = await coll
       .find(filter, { projection: { _id: 1 } })
       .toArray();
@@ -965,6 +1109,20 @@ function createOrderRepository({
   }
 
   async function deleteById(orderId) {
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        return { deletedCount: 0 };
+      }
+      const existing = await findById(orderId);
+      if (!existing) {
+        return { deletedCount: 0 };
+      }
+      await deletePostgresOrderByLegacyId({ query }, orderId).catch((error) => {
+        console.warn("[OrderRepository] Delete failed:", error?.message || error);
+      });
+      return { deletedCount: 1 };
+    }
+
     const coll = await getCollection();
     const result = await coll.deleteOne(buildMongoIdQuery(orderId));
     if (result.deletedCount > 0 && shouldDualWrite()) {
@@ -976,12 +1134,33 @@ function createOrderRepository({
   }
 
   async function deleteManyByIds(orderIds = []) {
-    const coll = await getCollection();
     const filter = buildIdsFilter(orderIds);
     if (!filter) {
       return { deletedCount: 0, documents: [] };
     }
 
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        return { deletedCount: 0, documents: [] };
+      }
+      const docs = await findByIds(orderIds);
+      if (docs.length === 0) {
+        return { deletedCount: 0, documents: [] };
+      }
+      await Promise.all(
+        docs.map((doc) =>
+          deletePostgresOrderByLegacyId({ query }, doc?._id).catch((error) => {
+            console.warn("[OrderRepository] Bulk delete failed:", error?.message || error);
+          }),
+        ),
+      );
+      return {
+        deletedCount: docs.length,
+        documents: docs,
+      };
+    }
+
+    const coll = await getCollection();
     const docs = await coll.find(filter).toArray();
     if (docs.length === 0) {
       return { deletedCount: 0, documents: [] };

@@ -9,6 +9,10 @@ function createSettingsRepository({
 }) {
   const cache = new Map();
 
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -23,11 +27,15 @@ function createSettingsRepository({
 
   function shouldReadPrimary() {
     return Boolean(
-      runtimeConfig?.features?.postgresReadPrimarySettings && canUsePostgres(),
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimarySettings || !canUseMongo()),
     );
   }
 
   async function getCollection() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName).collection("settings");
   }
@@ -81,6 +89,17 @@ function createSettingsRepository({
   }
 
   async function ensureDefaults(defaultSettings = []) {
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) return;
+      for (const setting of defaultSettings) {
+        if (!setting || typeof setting.key !== "string") continue;
+        const existing = await readPostgresValue(setting.key);
+        if (typeof existing !== "undefined") continue;
+        await writePostgresValue(setting.key, setting.value, new Date());
+      }
+      return;
+    }
+
     const coll = await getCollection();
     for (const setting of defaultSettings) {
       if (!setting || typeof setting.key !== "string") continue;
@@ -123,7 +142,7 @@ function createSettingsRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPostgresAll();
-        if (pgDocs.length > 0) {
+        if (pgDocs.length > 0 || !canUseMongo()) {
           return pgDocs;
         }
       } catch (error) {
@@ -132,6 +151,10 @@ function createSettingsRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const coll = await getCollection();
@@ -147,9 +170,11 @@ function createSettingsRepository({
     if (shouldReadPrimary()) {
       try {
         const pgValue = await readPostgresValue(key);
-        if (typeof pgValue !== "undefined") {
-          cache.set(key, { value: pgValue, expireAt: Date.now() + cacheTtlMs });
-          return pgValue;
+        if (typeof pgValue !== "undefined" || !canUseMongo()) {
+          const value =
+            typeof pgValue === "undefined" ? defaultValue : pgValue;
+          cache.set(key, { value, expireAt: Date.now() + cacheTtlMs });
+          return value;
         }
       } catch (error) {
         console.warn(
@@ -157,6 +182,11 @@ function createSettingsRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      cache.set(key, { value: defaultValue, expireAt: Date.now() + cacheTtlMs });
+      return defaultValue;
     }
 
     const coll = await getCollection();
@@ -169,16 +199,18 @@ function createSettingsRepository({
   }
 
   async function setValue(key, value) {
-    const coll = await getCollection();
     const updatedAt = new Date();
-    await coll.updateOne(
-      { key },
-      { $set: { value, updatedAt } },
-      { upsert: true },
-    );
+    if (canUseMongo()) {
+      const coll = await getCollection();
+      await coll.updateOne(
+        { key },
+        { $set: { value, updatedAt } },
+        { upsert: true },
+      );
+    }
     cache.delete(key);
 
-    if (shouldDualWrite()) {
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await writePostgresValue(key, value, updatedAt).catch((error) => {
         console.warn(
           `[SettingsRepository] Dual-write failed for "${key}":`,
@@ -196,24 +228,26 @@ function createSettingsRepository({
     );
     if (updates.length === 0) return true;
 
-    const coll = await getCollection();
     const updatedAt = new Date();
-    await coll.bulkWrite(
-      updates.map((entry) => ({
-        updateOne: {
-          filter: { key: entry.key },
-          update: { $set: { value: entry.value, updatedAt } },
-          upsert: true,
-        },
-      })),
-      { ordered: true },
-    );
+    if (canUseMongo()) {
+      const coll = await getCollection();
+      await coll.bulkWrite(
+        updates.map((entry) => ({
+          updateOne: {
+            filter: { key: entry.key },
+            update: { $set: { value: entry.value, updatedAt } },
+            upsert: true,
+          },
+        })),
+        { ordered: true },
+      );
+    }
 
     for (const entry of updates) {
       cache.delete(entry.key);
     }
 
-    if (shouldDualWrite()) {
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await Promise.all(
         updates.map((entry) =>
           writePostgresValue(entry.key, entry.value, updatedAt).catch((error) => {

@@ -7,6 +7,10 @@ function createFeedbackRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -20,10 +24,16 @@ function createFeedbackRepository({
   }
 
   function shouldReadPrimary() {
-    return Boolean(runtimeConfig?.features?.postgresReadPrimaryChat && canUsePostgres());
+    return Boolean(
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryChat || !canUseMongo()),
+    );
   }
 
   async function getDb() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName);
   }
@@ -134,13 +144,17 @@ function createFeedbackRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPgByMessageIds(normalizedIds);
-        if (pgDocs.length > 0) return pgDocs;
+        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
         console.warn(
           "[FeedbackRepository] Primary feedback read failed, falling back to Mongo:",
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const objectIds = normalizedIds
@@ -191,7 +205,6 @@ function createFeedbackRepository({
     }
 
     const messageObjectId = doc.messageId || toObjectId(messageIdString);
-    const db = await getDb();
     const filter = messageObjectId
       ? {
         $or: [
@@ -202,27 +215,30 @@ function createFeedbackRepository({
       : { messageIdString };
 
     const now = doc.updatedAt || new Date();
-    await db.collection("chat_feedback").updateOne(
-      filter,
-      {
-        $set: {
-          messageId: messageObjectId || null,
-          messageIdString,
-          userId: toLegacyId(doc.userId),
-          senderId: toLegacyId(doc.senderId),
-          senderRole: doc.senderRole || null,
-          platform: doc.platform || null,
-          botId: doc.botId || null,
-          feedback: doc.feedback || null,
-          notes: doc.notes || "",
-          updatedAt: now,
+    if (canUseMongo()) {
+      const db = await getDb();
+      await db.collection("chat_feedback").updateOne(
+        filter,
+        {
+          $set: {
+            messageId: messageObjectId || null,
+            messageIdString,
+            userId: toLegacyId(doc.userId),
+            senderId: toLegacyId(doc.senderId),
+            senderRole: doc.senderRole || null,
+            platform: doc.platform || null,
+            botId: doc.botId || null,
+            feedback: doc.feedback || null,
+            notes: doc.notes || "",
+            updatedAt: now,
+          },
+          $setOnInsert: {
+            createdAt: doc.createdAt || now,
+          },
         },
-        $setOnInsert: {
-          createdAt: doc.createdAt || now,
-        },
-      },
-      { upsert: true },
-    );
+        { upsert: true },
+      );
+    }
 
     const savedDoc = {
       messageId: messageObjectId || null,
@@ -238,7 +254,7 @@ function createFeedbackRepository({
       updatedAt: now,
     };
 
-    if (shouldDualWrite()) {
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
       await writePgFeedback(savedDoc).catch((error) => {
         console.warn(
           `[FeedbackRepository] Dual-write failed for ${messageIdString}:`,
@@ -253,7 +269,6 @@ function createFeedbackRepository({
   async function clearFeedback(messageId) {
     const messageIdString = toLegacyId(messageId);
     const messageObjectId = toObjectId(messageIdString);
-    const db = await getDb();
     const filter = messageObjectId
       ? {
         $or: [
@@ -262,7 +277,10 @@ function createFeedbackRepository({
         ],
       }
       : { messageIdString };
-    await db.collection("chat_feedback").deleteOne(filter);
+    if (canUseMongo()) {
+      const db = await getDb();
+      await db.collection("chat_feedback").deleteOne(filter);
+    }
 
     if (canUsePostgres()) {
       await query(

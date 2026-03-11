@@ -105,6 +105,10 @@ function createProfileRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -118,10 +122,16 @@ function createProfileRepository({
   }
 
   function shouldReadPrimary() {
-    return Boolean(runtimeConfig?.features?.postgresReadPrimaryChat && canUsePostgres());
+    return Boolean(
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryChat || !canUseMongo()),
+    );
   }
 
   async function getDb() {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName);
   }
@@ -283,7 +293,7 @@ function createProfileRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDoc = await readPgProfile(normalizedUserId, normalizedPlatform);
-        if (pgDoc) {
+        if (pgDoc || !canUseMongo()) {
           return applyProjection(pgDoc, projection);
         }
       } catch (error) {
@@ -292,6 +302,10 @@ function createProfileRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return null;
     }
 
     const db = await getDb();
@@ -333,11 +347,11 @@ function createProfileRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPgProfilesByPairs(normalizedPairs);
-        if (pgDocs.length > 0) {
+        if (pgDocs.length > 0 || !canUseMongo()) {
           const pgMap = new Map(
             pgDocs.map((doc) => [buildPairKey(doc.platform, doc.userId), doc]),
           );
-          if (pgMap.size === normalizedPairs.length) {
+          if (pgMap.size === normalizedPairs.length || !canUseMongo()) {
             return projection
               ? pgDocs.map((doc) => applyProjection(doc, projection))
               : pgDocs;
@@ -349,6 +363,10 @@ function createProfileRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const db = await getDb();
@@ -398,11 +416,11 @@ function createProfileRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPgProfilesByUserIds(normalizedIds);
-        if (pgDocs.length > 0) {
+        if (pgDocs.length > 0 || !canUseMongo()) {
           const pgUserIds = new Set(
             pgDocs.map((doc) => toLegacyId(doc.userId)).filter(Boolean),
           );
-          if (pgUserIds.size === new Set(normalizedIds).size) {
+          if (pgUserIds.size === new Set(normalizedIds).size || !canUseMongo()) {
             return projection
               ? pgDocs.map((doc) => applyProjection(doc, projection))
               : pgDocs;
@@ -414,6 +432,10 @@ function createProfileRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const db = await getDb();
@@ -472,7 +494,6 @@ function createProfileRepository({
     delete updateFields.createdAt;
 
     const now = normalized.updatedAt || new Date();
-    const db = await getDb();
     const filter = buildMongoProfileFilter(normalized.userId, normalized.platform);
     const setDoc = {
       userId: normalized.userId,
@@ -491,30 +512,36 @@ function createProfileRepository({
       unsetDoc[field] = "";
     });
 
-    await db.collection("user_profiles").updateOne(
-      filter,
-      {
-        $set: setDoc,
-        ...(unsetFields.length > 0 ? { $unset: unsetDoc } : {}),
-        $setOnInsert: {
-          createdAt: normalized.createdAt || now,
+    let savedDoc = null;
+    if (canUseMongo()) {
+      const db = await getDb();
+      await db.collection("user_profiles").updateOne(
+        filter,
+        {
+          $set: setDoc,
+          ...(unsetFields.length > 0 ? { $unset: unsetDoc } : {}),
+          $setOnInsert: {
+            createdAt: normalized.createdAt || now,
+          },
         },
-      },
-      { upsert: true },
-    );
+        { upsert: true },
+      );
 
-    const savedDoc = await db.collection("user_profiles").findOne(
-      { userId: normalized.userId, platform: normalized.platform },
-    );
+      savedDoc = await db.collection("user_profiles").findOne(
+        { userId: normalized.userId, platform: normalized.platform },
+      );
+    }
 
-    if (shouldDualWrite()) {
-      await writePgProfile(savedDoc || {
-        ...profile,
-        userId: normalized.userId,
-        platform: normalized.platform,
-        updatedAt: now,
-        createdAt: normalized.createdAt || now,
-      }).catch((error) => {
+    const fallbackDoc = {
+      ...profile,
+      userId: normalized.userId,
+      platform: normalized.platform,
+      updatedAt: now,
+      createdAt: normalized.createdAt || now,
+    };
+
+    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
+      await writePgProfile(savedDoc || fallbackDoc).catch((error) => {
         console.warn(
           `[ProfileRepository] Dual-write failed for ${normalized.platform}:${normalized.userId}:`,
           error?.message || error,
@@ -522,13 +549,11 @@ function createProfileRepository({
       });
     }
 
-    return savedDoc || {
-      ...profile,
-      userId: normalized.userId,
-      platform: normalized.platform,
-      updatedAt: now,
-      createdAt: normalized.createdAt || now,
-    };
+    if (!savedDoc && canUsePostgres()) {
+      savedDoc = await readPgProfile(normalized.userId, normalized.platform);
+    }
+
+    return savedDoc || fallbackDoc;
   }
 
   return {

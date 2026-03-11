@@ -1,5 +1,6 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
 const { deletePostgresBotByLegacyId, upsertPostgresBotDocument } = require("./postgresBotSync");
+const { ObjectId } = require("mongodb");
 const {
   applyProjection,
   buildMongoIdQuery,
@@ -16,6 +17,10 @@ function createBotRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  function canUseMongo() {
+    return runtimeConfig?.features?.mongoEnabled !== false;
+  }
+
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
@@ -30,11 +35,15 @@ function createBotRepository({
 
   function shouldReadPrimary() {
     return Boolean(
-      runtimeConfig?.features?.postgresReadPrimaryBots && canUsePostgres(),
+      canUsePostgres()
+        && (runtimeConfig?.features?.postgresReadPrimaryBots || !canUseMongo()),
     );
   }
 
   async function getCollection(platform) {
+    if (!canUseMongo()) {
+      throw new Error("MongoDB is disabled");
+    }
     const client = await connectDB();
     return client.db(dbName).collection(getBotCollectionName(platform));
   }
@@ -362,6 +371,9 @@ function createBotRepository({
   }
 
   async function syncDocumentById(platform, botId) {
+    if (!canUseMongo()) {
+      return readPostgresByLegacyId(platform, botId);
+    }
     const coll = await getCollection(platform);
     const mongoDoc = await coll.findOne(buildMongoIdQuery(botId));
     if (!mongoDoc) return null;
@@ -378,7 +390,7 @@ function createBotRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPostgresAll(platform);
-        if (pgDocs.length > 0) {
+        if (pgDocs.length > 0 || !canUseMongo()) {
           return applyListOptions(pgDocs, options);
         }
       } catch (error) {
@@ -387,6 +399,10 @@ function createBotRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return [];
     }
 
     const coll = await getCollection(platform);
@@ -422,6 +438,28 @@ function createBotRepository({
   }
 
   async function insertOne(platform, document) {
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
+      }
+      const legacyId =
+        toLegacyId(document?._id)
+        || toLegacyId(document?.pageId)
+        || toLegacyId(document?.phoneNumberId)
+        || toLegacyId(document?.instagramBusinessAccountId)
+        || new ObjectId().toString();
+      const now = new Date();
+      const pgDoc = {
+        ...document,
+        _id: legacyId,
+        createdAt: document?.createdAt || now,
+        updatedAt: document?.updatedAt || now,
+      };
+      await upsertPostgresBotDocument({ query }, platform, pgDoc);
+      const saved = await readPostgresByLegacyId(platform, legacyId);
+      return saved || pgDoc;
+    }
+
     const coll = await getCollection(platform);
     const result = await coll.insertOne(document);
     const savedDoc = { ...document, _id: result.insertedId };
@@ -444,10 +482,84 @@ function createBotRepository({
     return hasOperator ? update : { $set: update };
   }
 
+  function applyMongoStyleUpdate(target, normalizedUpdate) {
+    const next = target && typeof target === "object" ? { ...target } : {};
+    const applyPath = (object, path, value, remove = false) => {
+      const parts = String(path || "")
+        .split(".")
+        .filter(Boolean);
+      if (parts.length === 0) return;
+      let cursor = object;
+      for (let index = 0; index < parts.length - 1; index += 1) {
+        const part = parts[index];
+        if (!cursor[part] || typeof cursor[part] !== "object" || Array.isArray(cursor[part])) {
+          cursor[part] = {};
+        }
+        cursor = cursor[part];
+      }
+      const leaf = parts[parts.length - 1];
+      if (remove) {
+        delete cursor[leaf];
+      } else {
+        cursor[leaf] = value;
+      }
+    };
+
+    if (normalizedUpdate.$set && typeof normalizedUpdate.$set === "object") {
+      Object.entries(normalizedUpdate.$set).forEach(([key, value]) =>
+        applyPath(next, key, value));
+    }
+    if (normalizedUpdate.$unset && typeof normalizedUpdate.$unset === "object") {
+      Object.keys(normalizedUpdate.$unset).forEach((key) =>
+        applyPath(next, key, undefined, true));
+    }
+    if (normalizedUpdate.$inc && typeof normalizedUpdate.$inc === "object") {
+      Object.entries(normalizedUpdate.$inc).forEach(([key, value]) => {
+        const current = Number(getValueByPath(next, key) || 0);
+        const delta = Number(value || 0);
+        applyPath(next, key, current + delta);
+      });
+    }
+    if (normalizedUpdate.$push && typeof normalizedUpdate.$push === "object") {
+      Object.entries(normalizedUpdate.$push).forEach(([key, value]) => {
+        const current = getValueByPath(next, key);
+        const currentArray = Array.isArray(current) ? [...current] : [];
+        if (value && typeof value === "object" && Array.isArray(value.$each)) {
+          currentArray.push(...value.$each);
+        } else {
+          currentArray.push(value);
+        }
+        applyPath(next, key, currentArray);
+      });
+    }
+    return next;
+  }
+
   async function updateById(platform, botId, update, options = {}) {
-    const coll = await getCollection(platform);
     const normalizedUpdate = normalizeUpdateDocument(update);
     const filter = buildMongoIdQuery(botId);
+
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
+      }
+      const existingDoc = await readPostgresByLegacyId(platform, botId);
+      if (!existingDoc) {
+        return { matchedCount: 0, modifiedCount: 0, document: null };
+      }
+      const updatedDoc = applyMongoStyleUpdate(existingDoc, normalizedUpdate);
+      updatedDoc._id = toLegacyId(existingDoc._id) || toLegacyId(botId);
+      updatedDoc.updatedAt = new Date();
+      await upsertPostgresBotDocument({ query }, platform, updatedDoc);
+      const savedDoc = await readPostgresByLegacyId(platform, updatedDoc._id);
+      return {
+        matchedCount: 1,
+        modifiedCount: 1,
+        document: savedDoc || updatedDoc,
+      };
+    }
+
+    const coll = await getCollection(platform);
     const result = await coll.updateOne(filter, normalizedUpdate, options);
     if (result.matchedCount === 0) {
       return { matchedCount: 0, modifiedCount: 0, document: null };
@@ -471,6 +583,36 @@ function createBotRepository({
   }
 
   async function clearDefaultFlag(platform, excludeBotId = null) {
+    if (!canUseMongo()) {
+      if (!canUsePostgres()) {
+        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
+      }
+      const docs = await readPostgresAll(platform);
+      const excluded = toLegacyId(excludeBotId);
+      let modifiedCount = 0;
+      for (const doc of docs) {
+        const legacyId = toLegacyId(doc?._id);
+        if (!legacyId || (excluded && legacyId === excluded)) continue;
+        if (!doc.isDefault) continue;
+        await upsertPostgresBotDocument(
+          { query },
+          platform,
+          {
+            ...doc,
+            _id: legacyId,
+            isDefault: false,
+            updatedAt: new Date(),
+          },
+        );
+        modifiedCount += 1;
+      }
+      return {
+        acknowledged: true,
+        matchedCount: modifiedCount,
+        modifiedCount,
+      };
+    }
+
     const coll = await getCollection(platform);
     const filter = { isDefault: true };
     const objectId = toObjectId(excludeBotId);
@@ -512,7 +654,7 @@ function createBotRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDoc = await readPostgresByLegacyId(platform, botId);
-        if (pgDoc) {
+        if (pgDoc || !canUseMongo()) {
           return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
         }
       } catch (error) {
@@ -521,6 +663,10 @@ function createBotRepository({
           error?.message || error,
         );
       }
+    }
+
+    if (!canUseMongo()) {
+      return null;
     }
 
     const coll = await getCollection(platform);
@@ -552,7 +698,7 @@ function createBotRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDoc = await readPostgresByIdentifier(platform, identifier);
-        if (pgDoc) {
+        if (pgDoc || !canUseMongo()) {
           return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
         }
       } catch (error) {
@@ -565,6 +711,10 @@ function createBotRepository({
 
     const queryObject = buildLookupQuery(platform, identifier);
     if (!queryObject) return null;
+
+    if (!canUseMongo()) {
+      return null;
+    }
 
     const coll = await getCollection(platform);
     const mongoDoc = await coll.findOne(queryObject, options);
@@ -615,6 +765,23 @@ function createBotRepository({
   }
 
   async function deleteById(platform, botId) {
+    if (!canUseMongo()) {
+      if (canUsePostgres()) {
+        const existingDoc = await readPostgresByLegacyId(platform, botId).catch(() => null);
+        if (!existingDoc) {
+          return { deletedCount: 0 };
+        }
+        await deletePostgresBotByLegacyId({ query }, platform, botId).catch((error) => {
+          console.warn(
+            `[BotRepository] Delete failed for ${platform}:${botId}:`,
+            error?.message || error,
+          );
+        });
+        return { deletedCount: 1 };
+      }
+      return { deletedCount: 0 };
+    }
+
     const coll = await getCollection(platform);
     const result = await coll.deleteOne(buildMongoIdQuery(botId));
     if (result.deletedCount > 0 && shouldDualWrite()) {
