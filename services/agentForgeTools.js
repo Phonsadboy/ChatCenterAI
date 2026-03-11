@@ -32,6 +32,48 @@ function buildPageFilters(pageKeys = []) {
   }));
 }
 
+function buildMongoPageFilter(filters = []) {
+  if (!Array.isArray(filters) || filters.length === 0) {
+    return null;
+  }
+
+  const conditions = filters.map((item) => {
+    const condition = { platform: item.platform };
+    if (item.botId) {
+      const candidates = [String(item.botId)];
+      const objectId = toObjectId(item.botId);
+      if (objectId) {
+        candidates.push(objectId);
+      }
+      condition.botId = { $in: candidates };
+    }
+    return condition;
+  });
+
+  return conditions.length === 1 ? conditions[0] : { $or: conditions };
+}
+
+function matchesPageFilters(doc = {}, filters = []) {
+  if (!Array.isArray(filters) || filters.length === 0) return true;
+  const platform = String(doc.platform || "line").toLowerCase();
+  const botId = doc.botId ? String(doc.botId) : null;
+  return filters.some((filter) => {
+    if (String(filter.platform || "line").toLowerCase() !== platform) {
+      return false;
+    }
+    if (!filter.botId) return true;
+    return String(filter.botId) === String(botId || "");
+  });
+}
+
+function applySinglePageFilter(filter = {}, pageFilters = []) {
+  if (!Array.isArray(pageFilters) || pageFilters.length !== 1) return filter;
+  const page = pageFilters[0];
+  if (page.platform) filter.platform = page.platform;
+  if (page.botId) filter.botId = page.botId;
+  return filter;
+}
+
 function encodeCursor(payload) {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -105,9 +147,12 @@ function extractImageUrls(content) {
 }
 
 class AgentForgeTools {
-  constructor(db) {
+  constructor(db, options = {}) {
     this.db = db;
-    this.chatColl = db.collection("chat_history");
+    this.chatRepository = options.chatRepository || null;
+    if (!this.chatRepository) {
+      throw new Error("AgentForgeTools requires chatRepository");
+    }
     this.threadsColl = db.collection("conversation_threads");
     this.assetsColl = db.collection("instruction_assets");
     this.collectionsColl = db.collection("image_collections");
@@ -129,81 +174,69 @@ class AgentForgeTools {
     const parsedCursor = decodeCursor(cursor) || { offset: 0 };
     const offset = Math.max(0, Number(parsedCursor.offset) || 0);
 
-    const match = {
-      role: "user",
+    const query = {
+      "stats.userMessages": { $gt: 0 },
     };
-
-    if (filters.length > 0) {
-      match.$or = filters;
+    const pageFilter = buildMongoPageFilter(filters);
+    if (pageFilter) {
+      Object.assign(query, pageFilter);
     }
 
     if (since || until) {
-      match.timestamp = {};
-      if (since) match.timestamp.$gte = new Date(since);
-      if (until) match.timestamp.$lte = new Date(until);
+      const dateQuery = {};
+      if (since) {
+        const sinceDate = new Date(since);
+        if (!Number.isNaN(sinceDate.getTime())) {
+          dateQuery.$gte = sinceDate;
+        }
+      }
+      if (until) {
+        const untilDate = new Date(until);
+        if (!Number.isNaN(untilDate.getTime())) {
+          dateQuery.$lte = untilDate;
+        }
+      }
+      if (Object.keys(dateQuery).length > 0) {
+        query["stats.lastMessageAt"] = dateQuery;
+      }
     }
 
-    const pipeline = [
-      { $match: match },
-      {
-        $group: {
-          _id: {
-            senderId: "$senderId",
-            platform: "$platform",
-            botId: "$botId",
+    const [rows, total] = await Promise.all([
+      this.threadsColl
+        .find(query, {
+          projection: {
+            senderId: 1,
+            platform: 1,
+            botId: 1,
+            "stats.firstMessageAt": 1,
+            "stats.lastMessageAt": 1,
+            "stats.userMessages": 1,
           },
-          lastMessageAt: { $max: "$timestamp" },
-          firstMessageAt: { $min: "$timestamp" },
-          userMessageCount: { $sum: 1 },
-        },
-      },
-      {
-        $project: {
-          _id: 0,
-          senderId: "$_id.senderId",
-          platform: "$_id.platform",
-          botId: "$_id.botId",
-          pageKey: {
-            $concat: [
-              { $ifNull: ["$_id.platform", "line"] },
-              ":",
-              {
-                $ifNull: [
-                  {
-                    $cond: [
-                      { $eq: [{ $type: "$_id.botId" }, "objectId"] },
-                      { $toString: "$_id.botId" },
-                      "$_id.botId",
-                    ],
-                  },
-                  "default",
-                ],
-              },
-            ],
-          },
-          lastMessageAt: 1,
-          firstMessageAt: 1,
-          userMessageCount: 1,
-        },
-      },
-      {
-        $sort: {
-          lastMessageAt: 1,
-          senderId: 1,
-        },
-      },
-    ];
-
-    const [rows, totalAgg] = await Promise.all([
-      this.chatColl.aggregate([...pipeline, { $skip: offset }, { $limit: safeLimit }]).toArray(),
-      this.chatColl.aggregate([...pipeline, { $count: "total" }]).toArray(),
+        })
+        .sort({ "stats.lastMessageAt": 1, senderId: 1, _id: 1 })
+        .skip(offset)
+        .limit(safeLimit)
+        .toArray(),
+      this.threadsColl.countDocuments(query),
     ]);
 
-    const total = totalAgg[0]?.total || 0;
-    const nextOffset = offset + rows.length;
+    const customers = rows.map((row) => {
+      const platform = row.platform || "line";
+      const botId = row.botId ? String(row.botId) : null;
+      return {
+        senderId: row.senderId || null,
+        platform,
+        botId,
+        pageKey: `${platform}:${botId || "default"}`,
+        lastMessageAt: row?.stats?.lastMessageAt || null,
+        firstMessageAt: row?.stats?.firstMessageAt || null,
+        userMessageCount: Number(row?.stats?.userMessages || 0),
+      };
+    });
+    const nextOffset = offset + customers.length;
 
     return {
-      customers: rows,
+      customers,
       total,
       limit: safeLimit,
       offset,
@@ -211,7 +244,7 @@ class AgentForgeTools {
       nextCursor: nextOffset < total ? encodeCursor({ offset: nextOffset }) : null,
       toolStatus: "ok",
       latencyMs: 0,
-      dataSizeBytes: Buffer.byteLength(JSON.stringify(rows), "utf8"),
+      dataSizeBytes: Buffer.byteLength(JSON.stringify(customers), "utf8"),
       truncated: false,
     };
   }
@@ -244,27 +277,43 @@ class AgentForgeTools {
       }
     }
 
-    const query = {
-      senderId,
+    const activityFilter = {
+      userId: senderId,
     };
-    if (finalPlatform) query.platform = finalPlatform;
-    if (finalBotId) query.botId = finalBotId;
-    if (before || after) {
-      query.timestamp = {};
-      if (before) query.timestamp.$lt = new Date(before);
-      if (after) query.timestamp.$gt = new Date(after);
+    if (finalPlatform) activityFilter.platform = finalPlatform;
+    if (finalBotId) activityFilter.botId = finalBotId;
+    if (before) {
+      const parsedBefore = new Date(before);
+      if (!Number.isNaN(parsedBefore.getTime())) {
+        activityFilter.before = parsedBefore;
+      }
+    }
+    if (after) {
+      const parsedAfter = new Date(after);
+      if (!Number.isNaN(parsedAfter.getTime())) {
+        activityFilter.start = parsedAfter;
+      }
     }
 
-    const rawMessages = await this.chatColl
-      .find(query)
-      .sort({ timestamp: -1 })
-      .limit(safeMaxMessages)
-      .toArray();
+    const rawMessages = await this.chatRepository.listActivityMessages(activityFilter, {
+      projection: {
+        _id: 1,
+        senderId: 1,
+        role: 1,
+        content: 1,
+        timestamp: 1,
+        platform: 1,
+        botId: 1,
+        source: 1,
+      },
+      sort: { timestamp: -1 },
+      limit: safeMaxMessages,
+    });
 
     const messages = rawMessages
       .reverse()
       .map((msg) => ({
-        id: msg._id.toString(),
+        id: String(msg?._id || ""),
         senderId: msg.senderId,
         role: msg.role || "user",
         content: parseMessageContent(msg.content),
@@ -305,20 +354,32 @@ class AgentForgeTools {
     const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
     const filters = buildPageFilters(pageKeys);
 
-    const query = {
-      content: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" },
+    const activityFilter = {
+      contentRegex: q,
     };
-    if (senderId) query.senderId = senderId;
-    if (filters.length > 0) query.$or = filters;
+    if (senderId) activityFilter.userId = senderId;
+    applySinglePageFilter(activityFilter, filters);
 
-    const rows = await this.chatColl
-      .find(query)
-      .sort({ timestamp: -1 })
-      .limit(safeLimit)
-      .toArray();
+    const fetchLimit = Math.max(safeLimit, Math.min(2000, safeLimit * 6));
+    const rows = await this.chatRepository.listActivityMessages(activityFilter, {
+      projection: {
+        _id: 1,
+        senderId: 1,
+        role: 1,
+        content: 1,
+        timestamp: 1,
+        platform: 1,
+        botId: 1,
+      },
+      sort: { timestamp: -1 },
+      limit: fetchLimit,
+    });
+    const filteredRows = (Array.isArray(rows) ? rows : [])
+      .filter((row) => matchesPageFilters(row, filters))
+      .slice(0, safeLimit);
 
-    const results = rows.map((row) => ({
-      id: row._id.toString(),
+    const results = filteredRows.map((row) => ({
+      id: String(row?._id || ""),
       senderId: row.senderId,
       role: row.role,
       content: row.content,
@@ -335,7 +396,7 @@ class AgentForgeTools {
       toolStatus: "ok",
       latencyMs: 0,
       dataSizeBytes: Buffer.byteLength(JSON.stringify(results), "utf8"),
-      truncated: rows.length >= safeLimit,
+      truncated: filteredRows.length >= safeLimit,
     };
   }
 
@@ -365,36 +426,43 @@ class AgentForgeTools {
       };
     }
 
-    const regex = tokens.map((token) => `(?=.*${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`).join("");
     const filters = buildPageFilters(pageKeys);
-
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 30));
-    const match = {
+    const anchorToken = [...tokens].sort((left, right) => right.length - left.length)[0] || q;
+    const activityFilter = {
       role: "user",
-      content: { $regex: regex, $options: "i" },
+      contentRegex: anchorToken,
     };
+    applySinglePageFilter(activityFilter, filters);
 
-    if (filters.length > 0) {
-      match.$or = filters;
-    }
+    const fetchLimit = Math.max(safeLimit, Math.min(2000, safeLimit * 8));
+    const rows = await this.chatRepository.listActivityMessages(activityFilter, {
+      projection: {
+        _id: 1,
+        senderId: 1,
+        content: 1,
+        timestamp: 1,
+        platform: 1,
+        botId: 1,
+      },
+      sort: { timestamp: -1 },
+      limit: fetchLimit,
+    });
 
-    const rows = await this.chatColl
-      .find(match)
-      .sort({ timestamp: -1 })
-      .limit(safeLimit)
-      .toArray();
-
-    const results = rows.map((row) => {
+    const results = (Array.isArray(rows) ? rows : [])
+      .filter((row) => matchesPageFilters(row, filters))
+      .map((row) => {
       const content = typeof row.content === "string" ? row.content : JSON.stringify(row.content);
       const lc = content.toLowerCase();
       let score = 0;
       for (const token of tokens) {
         if (lc.includes(token)) score += 1;
       }
+      if (score <= 0) return null;
       const normalizedScore = Number((score / tokens.length).toFixed(2));
 
       return {
-        id: row._id.toString(),
+        id: String(row?._id || ""),
         senderId: row.senderId,
         content,
         timestamp: row.timestamp,
@@ -403,44 +471,57 @@ class AgentForgeTools {
         pageKey: `${row.platform || "line"}:${row.botId || "default"}`,
         score: normalizedScore,
       };
-    });
+    })
+      .filter(Boolean);
 
     results.sort((a, b) => b.score - a.score || new Date(b.timestamp) - new Date(a.timestamp));
+    const limitedResults = results.slice(0, safeLimit);
 
     return {
       query: q,
-      results,
-      count: results.length,
+      results: limitedResults,
+      count: limitedResults.length,
       toolStatus: "ok",
       latencyMs: 0,
-      dataSizeBytes: Buffer.byteLength(JSON.stringify(results), "utf8"),
-      truncated: rows.length >= safeLimit,
+      dataSizeBytes: Buffer.byteLength(JSON.stringify(limitedResults), "utf8"),
+      truncated: results.length > safeLimit,
     };
   }
 
   async listAdminEchoImages({ pageKeys = [], limit = 100 } = {}) {
     const filters = buildPageFilters(pageKeys);
-    const query = {
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+    const activityFilter = {
       role: "assistant",
-      source: { $in: ["admin_chat", "system", "ai", "follow_up"] },
+      sourceIn: ["admin_chat", "system", "ai", "follow_up"],
     };
-    if (filters.length > 0) query.$or = filters;
+    applySinglePageFilter(activityFilter, filters);
 
-    const rows = await this.chatColl
-      .find(query)
-      .sort({ timestamp: -1 })
-      .limit(Math.max(1, Math.min(500, Number(limit) || 100)))
-      .toArray();
+    const fetchLimit = Math.max(safeLimit, Math.min(3000, safeLimit * 10));
+    const rows = await this.chatRepository.listActivityMessages(activityFilter, {
+      projection: {
+        _id: 1,
+        senderId: 1,
+        platform: 1,
+        botId: 1,
+        timestamp: 1,
+        content: 1,
+        source: 1,
+      },
+      sort: { timestamp: -1 },
+      limit: fetchLimit,
+    });
 
     const results = [];
-    for (const row of rows) {
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (!matchesPageFilters(row, filters)) continue;
       const parsed = parseMessageContent(row.content);
       const urls = extractImageUrls(parsed);
       if (!urls.length) continue;
 
       for (const url of urls.slice(0, 3)) {
         results.push({
-          messageId: row._id.toString(),
+          messageId: String(row?._id || ""),
           senderId: row.senderId,
           platform: row.platform,
           botId: row.botId || null,
@@ -451,16 +532,16 @@ class AgentForgeTools {
         });
       }
 
-      if (results.length >= limit) break;
+      if (results.length >= safeLimit) break;
     }
 
     return {
-      results: results.slice(0, limit),
+      results: results.slice(0, safeLimit),
       count: results.length,
       toolStatus: "ok",
       latencyMs: 0,
       dataSizeBytes: Buffer.byteLength(JSON.stringify(results), "utf8"),
-      truncated: results.length >= limit,
+      truncated: results.length >= safeLimit,
     };
   }
 
@@ -634,11 +715,17 @@ class AgentForgeTools {
   } = {}) {
     const contract = enforceWriteContract({ reason, dryRun });
 
-    const msgId = toObjectId(messageId);
-    if (!msgId) throw new Error("invalid_message_id");
+    const normalizedMessageId =
+      typeof messageId === "string" && messageId.trim()
+        ? messageId.trim()
+        : messageId != null
+          ? String(messageId)
+          : "";
+    if (!normalizedMessageId) throw new Error("invalid_message_id");
 
-    const message = await this.chatColl.findOne({ _id: msgId });
+    const message = await this.chatRepository.findMessageById(normalizedMessageId);
     if (!message) throw new Error("message_not_found");
+    const sourceMessageId = String(message._id || normalizedMessageId);
 
     const parsedContent = parseMessageContent(message.content);
     const urls = extractImageUrls(parsedContent);
@@ -656,7 +743,7 @@ class AgentForgeTools {
       importedAt: new Date(),
       importedBy: "agent_forge",
       source: "admin_echo",
-      sourceMessageId: msgId.toString(),
+      sourceMessageId,
       createdAt: new Date(),
       updatedAt: new Date(),
       deleteStatus: null,
@@ -673,7 +760,7 @@ class AgentForgeTools {
 
     const existing = await this.agentImageImportColl.findOne({
       pageKey: normalizePageKey(pageKey) || null,
-      messageId: msgId.toString(),
+      messageId: sourceMessageId,
     });
 
     if (existing) {
@@ -690,7 +777,7 @@ class AgentForgeTools {
     await this.agentImageImportColl.insertOne({
       agentId: null,
       pageKey: normalizePageKey(pageKey) || null,
-      messageId: msgId.toString(),
+      messageId: sourceMessageId,
       assetId: insertResult.insertedId.toString(),
       status: "imported",
       createdAt: new Date(),

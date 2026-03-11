@@ -16,6 +16,9 @@
 require("dotenv").config();
 const { MongoClient } = require("mongodb");
 const ConversationThreadService = require("../services/conversationThreadService");
+const { createBotRepository } = require("../services/repositories/botRepository");
+const { createChatRepository } = require("../services/repositories/chatRepository");
+const { createOrderRepository } = require("../services/repositories/orderRepository");
 
 const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017";
 const DB_NAME = "chatbot";
@@ -31,8 +34,28 @@ async function main() {
     const client = new MongoClient(MONGO_URI);
     await client.connect();
     const db = client.db(DB_NAME);
-
-    const threadService = new ConversationThreadService(db);
+    const connectDB = async () => client;
+    const runtimeConfig = { features: {} };
+    const chatRepository = createChatRepository({
+        connectDB,
+        dbName: DB_NAME,
+        runtimeConfig,
+    });
+    const orderRepository = createOrderRepository({
+        connectDB,
+        dbName: DB_NAME,
+        runtimeConfig,
+    });
+    const botRepository = createBotRepository({
+        connectDB,
+        dbName: DB_NAME,
+        runtimeConfig,
+    });
+    const threadService = new ConversationThreadService(db, {
+        chatRepository,
+        orderRepository,
+        botRepository,
+    });
 
     // Step 1: Ensure indexes
     console.log("[1/3] Creating indexes...");

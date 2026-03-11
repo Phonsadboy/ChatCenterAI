@@ -1,21 +1,26 @@
 version: '3.8'
 
 services:
-  chatcenter-ai:
-    image: xianta456/chatcenter-ai:latest
-    container_name: chatcenter-ai
+  admin-app:
+    build: .
+    container_name: chatcenter-admin-app
     ports:
       - "3000:3000"
     environment:
       # Server Configuration
       - NODE_ENV=production
       - PORT=3000
+      - CCAI_RUNTIME_MODE=admin-app
+      - CCAI_ENABLE_LEGACY_BACKGROUND_JOBS=false
       
       # Database
-      - MONGODB_URI=${MONGODB_URI}
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
       
       # Session
-      - SESSION_SECRET=${SESSION_SECRET}
+      - ADMIN_SESSION_SECRET=${ADMIN_SESSION_SECRET}
       
       # AI API Keys
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -29,20 +34,135 @@ services:
       # Facebook Bot Configuration
       - FACEBOOK_VERIFY_TOKEN=${FACEBOOK_VERIFY_TOKEN}
       - FACEBOOK_PAGE_ACCESS_TOKEN=${FACEBOOK_PAGE_ACCESS_TOKEN}
-    
+      - STORAGE_BUCKET_NAME=${STORAGE_BUCKET_NAME}
+      - STORAGE_S3_ENDPOINT=${STORAGE_S3_ENDPOINT}
+      - STORAGE_REGION=${STORAGE_REGION}
+      - STORAGE_ACCESS_KEY_ID=${STORAGE_ACCESS_KEY_ID}
+      - STORAGE_SECRET_ACCESS_KEY=${STORAGE_SECRET_ACCESS_KEY}
+      - CCAI_MIGRATION_AUTO_RUN_ON_DEPLOY=${CCAI_MIGRATION_AUTO_RUN_ON_DEPLOY:-false}
+      - CCAI_MIGRATION_AUTO_RUN_MODES=${CCAI_MIGRATION_AUTO_RUN_MODES:-admin-app}
+      - CCAI_MIGRATION_DEPLOY_LOCK_ID=${CCAI_MIGRATION_DEPLOY_LOCK_ID:-7482302}
+      - CCAI_MIGRATION_DEPLOY_ID=${CCAI_MIGRATION_DEPLOY_ID:-}
+    command: npm run start:admin
     restart: unless-stopped
-    
+    depends_on:
+      - postgres
+      - redis
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 5s
-    
-    # Optional: Mount volume for logs
-    # volumes:
-    #   - ./logs:/app/logs
-    
+    networks:
+      - chatcenter-network
+
+  public-ingest:
+    build: .
+    container_name: chatcenter-public-ingest
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - CCAI_RUNTIME_MODE=public-ingest
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+    command: npm run start:public-ingest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - chatcenter-network
+
+  worker-realtime:
+    build: .
+    container_name: chatcenter-worker-realtime
+    environment:
+      - NODE_ENV=production
+      - CCAI_RUNTIME_MODE=worker-realtime
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CCAI_WORKER_REALTIME_CONCURRENCY=${CCAI_WORKER_REALTIME_CONCURRENCY:-10}
+    command: npm run start:worker-realtime
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - chatcenter-network
+
+  worker-batch:
+    build: .
+    container_name: chatcenter-worker-batch
+    environment:
+      - NODE_ENV=production
+      - CCAI_RUNTIME_MODE=worker-batch
+      - CCAI_ENABLE_LEGACY_BACKGROUND_JOBS=true
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    command: npm run start:worker-batch
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - chatcenter-network
+
+  migration-runner:
+    build: .
+    container_name: chatcenter-migration-runner
+    profiles: ["migration"]
+    environment:
+      - NODE_ENV=production
+      - CCAI_RUNTIME_MODE=migration-runner
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CCAI_MIGRATION_RUN_SQL_MIGRATIONS=${CCAI_MIGRATION_RUN_SQL_MIGRATIONS:-true}
+      - CCAI_MIGRATION_RUN_MONGO_TO_PG=${CCAI_MIGRATION_RUN_MONGO_TO_PG:-true}
+      - CCAI_MIGRATION_RUN_GRIDFS_TO_BUCKET=${CCAI_MIGRATION_RUN_GRIDFS_TO_BUCKET:-true}
+      - CCAI_MIGRATION_VERIFY_PARITY=${CCAI_MIGRATION_VERIFY_PARITY:-false}
+      - CCAI_MIGRATION_VERIFY_BUCKET=${CCAI_MIGRATION_VERIFY_BUCKET:-false}
+      - CCAI_MIGRATION_FAIL_ON_VERIFY_MISMATCH=${CCAI_MIGRATION_FAIL_ON_VERIFY_MISMATCH:-true}
+    command: npm run start:migration-runner
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - chatcenter-network
+
+  postgres:
+    image: postgres:17
+    container_name: chatcenter-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-chatcenter}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chatcenter}
+      - POSTGRES_DB=${POSTGRES_DB:-chatcenter}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chatcenter-network
+
+  redis:
+    image: redis:7
+    container_name: chatcenter-redis
+    ports:
+      - "6379:6379"
     networks:
       - chatcenter-network
 
@@ -50,20 +170,5 @@ networks:
   chatcenter-network:
     driver: bridge
 
-# Optional: Add MongoDB service
-# services:
-#   mongodb:
-#     image: mongo:7
-#     container_name: chatcenter-mongodb
-#     ports:
-#       - "27017:27017"
-#     environment:
-#       - MONGO_INITDB_ROOT_USERNAME=admin
-#       - MONGO_INITDB_ROOT_PASSWORD=password
-#     volumes:
-#       - mongodb_data:/data/db
-#     networks:
-#       - chatcenter-network
-#
-# volumes:
-#   mongodb_data:
+volumes:
+  postgres_data:

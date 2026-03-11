@@ -39,19 +39,23 @@ function createAgentForgeRouter(options = {}) {
     agentForgeService,
     agentForgeRunner,
     agentForgeScheduler,
+    getChatRepository,
   } = options;
 
   if (!connectDB) throw new Error("connectDB_required");
   if (!requireAdmin) throw new Error("requireAdmin_required");
   if (!agentForgeService) throw new Error("agentForgeService_required");
   if (!agentForgeRunner) throw new Error("agentForgeRunner_required");
+  if (!getChatRepository) throw new Error("getChatRepository_required");
 
   const router = express.Router();
   router.use(requireAdmin);
 
   async function loadTools() {
     const db = (await connectDB()).db("chatbot");
-    return new AgentForgeTools(db);
+    return new AgentForgeTools(db, {
+      chatRepository: getChatRepository(),
+    });
   }
 
   function handleError(res, error) {

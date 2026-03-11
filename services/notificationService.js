@@ -56,7 +56,20 @@ function appendLineToTextMessage(message, line) {
   return message;
 }
 
-async function fetchOrderImageRefs(db, order) {
+function normalizeMessageOrderId(message = {}) {
+  const direct = normalizeIdString(message?.orderId);
+  if (direct) return direct;
+  const metadata =
+    message?.metadata && typeof message.metadata === "object"
+      ? message.metadata
+      : {};
+  return normalizeIdString(metadata.orderId);
+}
+
+async function fetchOrderImageRefs(chatRepository, order) {
+  if (!chatRepository || typeof chatRepository.getHistory !== "function") {
+    return [];
+  }
   const orderId = normalizeIdString(order?._id);
   const senderId = normalizeIdString(order?.userId);
   const orderCreatedAt = order?.extractedAt || order?.createdAt;
@@ -64,51 +77,47 @@ async function fetchOrderImageRefs(db, order) {
   // ถ้าไม่มี senderId ไม่สามารถดึงรูปได้
   if (!senderId) return [];
 
-  // สร้าง query สำหรับดึงรูปภาพ
-  const query = {
-    senderId,
-    role: "user",
-  };
+  const history = await chatRepository.getHistory(senderId, {
+    sort: { timestamp: 1 },
+    limit: 2000,
+  });
+  const userMessages = Array.isArray(history)
+    ? history.filter((msg) => msg?.role === "user")
+    : [];
 
-  // กรณีที่ 1: มี orderId ที่ valid - ดึงรูปที่ผูกกับ orderId
-  // กรณีที่ 2: ไม่มี orderId แต่มีวันที่สร้าง - ดึงรูปจากวันเดียวกัน
+  let dayStart = null;
+  let dayEnd = null;
   if (ObjectId.isValid(orderId)) {
-    // ดึงทั้งรูปที่มี orderId และรูปในวันเดียวกัน
-    const dayStart = new Date(orderCreatedAt || new Date());
+    dayStart = new Date(orderCreatedAt || new Date());
     dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart);
+    dayEnd = new Date(dayStart);
     dayEnd.setDate(dayEnd.getDate() + 1);
-
-    query.$or = [
-      { orderId: new ObjectId(orderId) },
-      {
-        timestamp: { $gte: dayStart, $lt: dayEnd },
-        orderId: { $exists: false } // รูปที่ยังไม่ผูกกับ order
-      }
-    ];
   } else if (orderCreatedAt) {
-    // ดึงรูปจากวันที่สร้างออเดอร์
-    const dayStart = new Date(orderCreatedAt);
+    dayStart = new Date(orderCreatedAt);
     dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart);
+    dayEnd = new Date(dayStart);
     dayEnd.setDate(dayEnd.getDate() + 1);
-
-    query.timestamp = { $gte: dayStart, $lt: dayEnd };
   } else {
-    // ไม่มี orderId และไม่มีวันที่ - ไม่สามารถดึงรูปได้
     return [];
   }
-
-  const cursor = db
-    .collection("chat_history")
-    .find(query)
-    .sort({ timestamp: 1 })
-    .project({ content: 1 });
 
   const imageRefs = [];
   const seen = new Set();
 
-  for await (const msg of cursor) {
+  for (const msg of userMessages) {
+    const timestamp = msg?.timestamp ? new Date(msg.timestamp) : null;
+    if (!timestamp || Number.isNaN(timestamp.getTime())) continue;
+    if (dayStart && dayEnd) {
+      if (timestamp < dayStart || timestamp >= dayEnd) continue;
+    }
+
+    if (ObjectId.isValid(orderId)) {
+      const messageOrderId = normalizeMessageOrderId(msg);
+      if (messageOrderId && messageOrderId !== orderId) {
+        continue;
+      }
+    }
+
     const images = extractBase64ImagesFromContent(msg.content);
     if (!images.length) continue;
     const messageId = normalizeIdString(msg?._id);
@@ -148,7 +157,7 @@ function buildLineImageMessages(baseUrl, imageRefs) {
 }
 
 async function buildOrderImageMessagesForSummary(
-  db,
+  chatRepository,
   orders,
   baseUrl,
   timezone,
@@ -176,7 +185,7 @@ async function buildOrderImageMessagesForSummary(
     if (sentKeys.has(key)) continue;
     sentKeys.add(key);
 
-    const imageRefs = await fetchOrderImageRefs(db, order);
+    const imageRefs = await fetchOrderImageRefs(chatRepository, order);
     if (!imageRefs.length) continue;
 
     const orderId = normalizeIdString(order?._id);
@@ -817,17 +826,19 @@ function formatNewOrderMessage(order, settings, publicBaseUrl, options = {}) {
   return { type: "text", text: text.length > MAX_TEXT_LENGTH ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…` : text };
 }
 
-async function insertNotificationLog(db, payload) {
+async function insertNotificationLog(notificationRepository, payload) {
+  if (!notificationRepository || typeof notificationRepository.insertLog !== "function") {
+    return;
+  }
   try {
-    const logs = db.collection("notification_logs");
-    await logs.insertOne({
+    await notificationRepository.insertLog({
       channelId: payload.channelId || null,
       orderId: payload.orderId || null,
       eventType: payload.eventType || null,
       status: payload.status || "failed",
       errorMessage: payload.errorMessage || null,
       response: payload.response || null,
-      createdAt: new Date(),
+      createdAt: payload.createdAt || new Date(),
     });
   } catch (err) {
     console.warn(
@@ -837,7 +848,14 @@ async function insertNotificationLog(db, payload) {
   }
 }
 
-function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
+function createNotificationService({
+  connectDB,
+  publicBaseUrl = "",
+  getBotById = null,
+  getOrderRepository = null,
+  getChatRepository = null,
+  getNotificationRepository = null,
+} = {}) {
   if (typeof connectDB !== "function") {
     throw new Error("createNotificationService requires connectDB()");
   }
@@ -849,19 +867,10 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     if (!ObjectId.isValid(senderBotId)) {
       throw new Error("Invalid senderBotId");
     }
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const bot = await db.collection("line_bots").findOne(
-      { _id: new ObjectId(senderBotId) },
-      {
-        projection: {
-          channelAccessToken: 1,
-          channelSecret: 1,
-          name: 1,
-          notificationEnabled: 1,
-        },
-      },
-    );
+    if (typeof getBotById !== "function") {
+      throw new Error("notification_bot_resolver_not_configured");
+    }
+    const bot = await getBotById(senderBotId);
     if (!bot?.channelAccessToken || !bot?.channelSecret) {
       throw new Error("Sender bot credentials missing");
     }
@@ -899,28 +908,34 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
 
     const client = await connectDB();
     const db = client.db("chatbot");
+    const orderRepository =
+      typeof getOrderRepository === "function" ? getOrderRepository() : null;
+    const chatRepository =
+      typeof getChatRepository === "function" ? getChatRepository() : null;
+    const notificationRepository =
+      typeof getNotificationRepository === "function"
+        ? getNotificationRepository()
+        : null;
+    if (!orderRepository || !chatRepository || !notificationRepository) {
+      throw new Error("notification_repository_not_configured");
+    }
 
-    const order = await db
-      .collection("orders")
-      .findOne({ _id: new ObjectId(orderIdString) });
+    const order = await orderRepository.findById(orderIdString);
     if (!order) {
       return { success: false, error: "ORDER_NOT_FOUND" };
     }
 
-    const channels = await db
-      .collection("notification_channels")
-      .find({
-        isActive: true,
-        type: "line_group",
-        eventTypes: "new_order",
-      })
-      .toArray();
+    const channels = await notificationRepository.listChannels({
+      isActive: true,
+      type: "line_group",
+      eventType: "new_order",
+    });
 
     const normalizedBaseUrl = normalizePublicBaseUrl(baseUrl);
     const canAttachImages = isHttpUrl(normalizedBaseUrl);
     const canBuildLinks = isHttpUrl(normalizedBaseUrl);
     const orderImageRefs = canAttachImages
-      ? await fetchOrderImageRefs(db, order)
+      ? await fetchOrderImageRefs(chatRepository, order)
       : [];
     const orderImageMessages = canAttachImages
       ? buildLineImageMessages(normalizedBaseUrl, orderImageRefs)
@@ -974,7 +989,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
           payloads,
         );
         sentCount += 1;
-        await insertNotificationLog(db, {
+        await insertNotificationLog(notificationRepository, {
           channelId,
           orderId: orderIdString,
           eventType: "new_order",
@@ -982,7 +997,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
           response: response || null,
         });
       } catch (err) {
-        await insertNotificationLog(db, {
+        await insertNotificationLog(notificationRepository, {
           channelId,
           orderId: orderIdString,
           eventType: "new_order",
@@ -1016,6 +1031,17 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
 
     const client = await connectDB();
     const db = client.db("chatbot");
+    const orderRepository =
+      typeof getOrderRepository === "function" ? getOrderRepository() : null;
+    const chatRepository =
+      typeof getChatRepository === "function" ? getChatRepository() : null;
+    const notificationRepository =
+      typeof getNotificationRepository === "function"
+        ? getNotificationRepository()
+        : null;
+    if (!orderRepository || !chatRepository || !notificationRepository) {
+      throw new Error("notification_repository_not_configured");
+    }
 
     const query = {
       extractedAt: {
@@ -1030,24 +1056,22 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
         return { success: false, error: "NO_SOURCES" };
       }
 
-      query.$or = sources
-        .map((source) => {
-          const platform = normalizePlatform(source?.platform);
-          const botId = normalizeIdString(source?.botId);
-          if (!botId) return null;
-          const botIdQuery = ObjectId.isValid(botId)
-            ? { $in: [botId, new ObjectId(botId)] }
-            : botId;
-          return { platform, botId: botIdQuery };
-        })
-        .filter(Boolean);
+        query.$or = sources
+          .map((source) => {
+            const platform = normalizePlatform(source?.platform);
+            const botId = normalizeIdString(source?.botId);
+            if (!botId) return null;
+            return {
+              platform,
+              botId: ObjectId.isValid(botId)
+                ? { $in: [botId, new ObjectId(botId)] }
+                : botId,
+            };
+          })
+          .filter(Boolean);
     }
 
-    const orders = await db
-      .collection("orders")
-      .find(query)
-      .sort({ extractedAt: 1 })
-      .toArray();
+    const orders = await orderRepository.list(query, { sort: { extractedAt: 1 } });
 
     const dedupedOrders = dedupeOrdersByUserAndTotal(orders);
 
@@ -1086,7 +1110,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
 
     try {
       const imageMessages = await buildOrderImageMessagesForSummary(
-        db,
+        chatRepository,
         dedupedOrders,
         baseUrl,
         channelDoc.summaryTimezone || "Asia/Bangkok",
@@ -1098,7 +1122,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
         targetId,
         payloads,
       );
-      await insertNotificationLog(db, {
+      await insertNotificationLog(notificationRepository, {
         channelId,
         orderId: null,
         eventType: "order_summary",
@@ -1107,7 +1131,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       });
       return { success: true, sentCount: messages.length, orderCount: orders.length };
     } catch (err) {
-      await insertNotificationLog(db, {
+      await insertNotificationLog(notificationRepository, {
         channelId,
         orderId: null,
         eventType: "order_summary",
@@ -1129,12 +1153,15 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
         ? options.text.trim()
         : `✅ ทดสอบการแจ้งเตือนสำเร็จ (${new Date().toLocaleString("th-TH")})`;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const notificationRepository =
+      typeof getNotificationRepository === "function"
+        ? getNotificationRepository()
+        : null;
+    if (!notificationRepository) {
+      throw new Error("notification_repository_not_configured");
+    }
 
-    const channel = await db
-      .collection("notification_channels")
-      .findOne({ _id: new ObjectId(channelIdString) });
+    const channel = await notificationRepository.findChannelById(channelIdString);
     if (!channel) {
       return { success: false, error: "CHANNEL_NOT_FOUND" };
     }
@@ -1151,7 +1178,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
         type: "text",
         text,
       });
-      await insertNotificationLog(db, {
+      await insertNotificationLog(notificationRepository, {
         channelId: channelIdString,
         orderId: null,
         eventType: "test",
@@ -1160,7 +1187,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       });
       return { success: true };
     } catch (err) {
-      await insertNotificationLog(db, {
+      await insertNotificationLog(notificationRepository, {
         channelId: channelIdString,
         orderId: null,
         eventType: "test",

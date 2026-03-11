@@ -20,6 +20,28 @@ const InstructionChatService = require("./services/instructionChatService");
 const ConversationThreadService = require("./services/conversationThreadService");
 const createNotificationService = require("./services/notificationService");
 const slipOkService = require("./services/slipOkService");
+const { createBotRepository } = require("./services/repositories/botRepository");
+const { createChatRepository } = require("./services/repositories/chatRepository");
+const { createFeedbackRepository } = require("./services/repositories/feedbackRepository");
+const { createFollowUpRepository } = require("./services/repositories/followUpRepository");
+const {
+  createFollowUpPageSettingsRepository,
+} = require("./services/repositories/followUpPageSettingsRepository");
+const { createOrderRepository } = require("./services/repositories/orderRepository");
+const { createProfileRepository } = require("./services/repositories/profileRepository");
+const {
+  createNotificationRepository,
+} = require("./services/repositories/notificationRepository");
+const {
+  createOutboundMessageRepository,
+} = require("./services/repositories/outboundMessageRepository");
+const {
+  createSettingsRepository,
+} = require("./services/repositories/settingsRepository");
+const {
+  createWebhookEventRepository,
+} = require("./services/repositories/webhookEventRepository");
+const { createUserStateRepository } = require("./services/repositories/userStateRepository");
 const { AgentForgeService } = require("./services/agentForgeService");
 const { AgentForgeRunner } = require("./services/agentForgeRunner");
 const { AgentForgeScheduler } = require("./services/agentForgeScheduler");
@@ -35,8 +57,21 @@ const crypto = require("crypto");
 const XLSX = require("xlsx");
 const multer = require("multer");
 const session = require("express-session");
-const MongoStore = require("connect-mongo");
 const rateLimit = require("express-rate-limit");
+const { emitAdminRoomEvent, attachAdminRealtimeBridge } = require("./infra/adminRealtime");
+const { appendConversationBuffer } = require("./infra/conversationBuffer");
+const { claimProcessedEvent } = require("./infra/dedupe");
+const { isRedisConfigured } = require("./infra/redis");
+const { createRuntimeRouteGuard } = require("./infra/runtimeRouteGuard");
+const { getRuntimeConfig } = require("./infra/runtimeConfig");
+const { createSessionStore } = require("./infra/sessionStore");
+const {
+  deleteObject: deleteBucketObject,
+  getObjectStream: getBucketObjectStream,
+  headObject: headBucketObject,
+  isBucketConfigured,
+  putObject: putBucketObject,
+} = require("./infra/storage/bucketStorage");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
 const ASSETS_DIR =
   process.env.ASSETS_DIR ||
@@ -89,6 +124,7 @@ const BOT_COLLECTION_BY_PLATFORM = {
 
 const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
+const runtimeConfig = getRuntimeConfig();
 
 function normalizeProvider(provider) {
   if (typeof provider !== "string") return LLM_PROVIDER_OPENAI;
@@ -453,22 +489,7 @@ async function getBotRuntimeSnapshot(botId, platform) {
   }
 
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection(getBotCollectionName(platform));
-    const normalizedBotId = normalizeRuntimeCacheId(botId, "");
-    const query = ObjectId.isValid(normalizedBotId)
-      ? { _id: new ObjectId(normalizedBotId) }
-      : { _id: normalizedBotId };
-
-    const bot = await coll.findOne(query, {
-      projection: {
-        selectedInstructions: 1,
-        selectedImageCollections: 1,
-        aiConfig: 1,
-        openaiApiKeyId: 1,
-      },
-    });
+    const bot = await getBotRepository().getRuntimeSnapshot(platform, botId);
 
     const snapshot = bot
       ? {
@@ -560,19 +581,23 @@ function chunkTextByLength(value, maxLength) {
 }
 
 async function findBotById(db, platform, botId) {
-  if (!db || !botId) return null;
-  const collection = getBotCollectionName(platform);
-  const coll = db.collection(collection);
-  if (ObjectId.isValid(botId)) {
-    return coll.findOne({ _id: new ObjectId(botId) });
-  }
-  return coll.findOne({ _id: botId });
+  if (!botId) return null;
+  return getBotRepository().findById(platform, botId);
 }
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 let commentIndexesEnsured = false;
+
+function emitAdminEvent(eventName, payload) {
+  emitAdminRoomEvent(eventName, payload).catch((error) => {
+    console.error(
+      `[AdminRealtime] emit failed for event "${eventName}":`,
+      error?.message || error,
+    );
+  });
+}
 
 async function ensureFacebookCommentIndexes(db) {
   if (commentIndexesEnsured) return;
@@ -671,6 +696,7 @@ app.use(
   }),
 );
 app.use(cors());
+app.use(createRuntimeRouteGuard(runtimeConfig));
 
 // Static assets (CSS/JS/img)
 app.use(express.static(path.join(__dirname, "public")));
@@ -847,6 +873,28 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
       : doc.fileName;
     const targetId = isThumb ? doc.thumbFileId || null : doc.fileId || null;
     if (!targetName) return next();
+
+    const bucketStreamResult = await getFirstBucketObjectStream(
+      isThumb
+        ? buildBucketKeyCandidates("followup", doc.thumbStorageKey, targetName)
+        : buildBucketKeyCandidates("followup", doc.storageKey, targetName),
+    );
+    if (bucketStreamResult?.stream) {
+      res.set("Content-Type", doc.mime || "image/jpeg");
+      res.set("Cache-Control", "public, max-age=604800, immutable");
+      bucketStreamResult.stream.on("error", (err) => {
+        console.error(`[Asset Error] Failed to stream followup bucket asset: ${fileName}`, {
+          error: err.message,
+          code: err.code,
+          fileName,
+          storageKey: bucketStreamResult.key,
+        });
+        next(err);
+      });
+      bucketStreamResult.stream.pipe(res);
+      return;
+    }
+
     let fileObjectId = toObjectId(targetId);
 
     if (!fileObjectId) {
@@ -889,21 +937,12 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
 app.get("/assets/chat-images/:messageId/:imageIndex", async (req, res) => {
   try {
     const { messageId, imageIndex } = req.params;
-    if (!ObjectId.isValid(messageId)) {
-      return res.sendStatus(404);
-    }
-
     const index = Number.parseInt(imageIndex, 10);
     if (!Number.isFinite(index) || index < 0) {
       return res.sendStatus(404);
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const doc = await db.collection("chat_history").findOne(
-      { _id: new ObjectId(messageId) },
-      { projection: { content: 1 } },
-    );
+    const doc = await getChatRepository().findMessageById(messageId);
 
     if (!doc) {
       return res.sendStatus(404);
@@ -1272,6 +1311,19 @@ async function ensureUsageLogsTTL(db) {
 }
 
 let mongoClient = null;
+let settingsRepository = null;
+let botRepository = null;
+let chatRepository = null;
+let webhookEventRepository = null;
+let orderRepository = null;
+let followUpRepository = null;
+let followUpPageSettingsRepository = null;
+let outboundMessageRepository = null;
+let userStateRepository = null;
+let feedbackRepository = null;
+let profileRepository = null;
+let notificationRepository = null;
+
 async function connectDB() {
   if (!mongoClient) {
     mongoClient = new MongoClient(MONGO_URI, {
@@ -1300,9 +1352,236 @@ async function connectDB() {
   return mongoClient;
 }
 
+function getSettingsRepository() {
+  if (!settingsRepository) {
+    settingsRepository = createSettingsRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return settingsRepository;
+}
+
+function getBotRepository() {
+  if (!botRepository) {
+    botRepository = createBotRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return botRepository;
+}
+
+function getChatRepository() {
+  if (!chatRepository) {
+    chatRepository = createChatRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return chatRepository;
+}
+
+function getWebhookEventRepository() {
+  if (!webhookEventRepository) {
+    webhookEventRepository = createWebhookEventRepository({ runtimeConfig });
+  }
+  return webhookEventRepository;
+}
+
+function getOrderRepository() {
+  if (!orderRepository) {
+    orderRepository = createOrderRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return orderRepository;
+}
+
+function getFollowUpRepository() {
+  if (!followUpRepository) {
+    followUpRepository = createFollowUpRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return followUpRepository;
+}
+
+function getFollowUpPageSettingsRepository() {
+  if (!followUpPageSettingsRepository) {
+    followUpPageSettingsRepository = createFollowUpPageSettingsRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return followUpPageSettingsRepository;
+}
+
+function getOutboundMessageRepository() {
+  if (!outboundMessageRepository) {
+    outboundMessageRepository = createOutboundMessageRepository({
+      runtimeConfig,
+    });
+  }
+  return outboundMessageRepository;
+}
+
+function getUserStateRepository() {
+  if (!userStateRepository) {
+    userStateRepository = createUserStateRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return userStateRepository;
+}
+
+function getFeedbackRepository() {
+  if (!feedbackRepository) {
+    feedbackRepository = createFeedbackRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return feedbackRepository;
+}
+
+function getProfileRepository() {
+  if (!profileRepository) {
+    profileRepository = createProfileRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return profileRepository;
+}
+
+function getNotificationRepository() {
+  if (!notificationRepository) {
+    notificationRepository = createNotificationRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return notificationRepository;
+}
+
+function invalidateBotMutationCaches(platform, botId = null) {
+  if (normalizeChatPlatform(platform) === "line" && botId) {
+    lineBotCredentialCache.delete(normalizeRuntimeCacheId(botId, ""));
+  }
+  invalidateBotRuntimeCaches(platform, botId);
+}
+
+async function clearPlatformDefaultBots(platform, excludeBotId = null) {
+  await getBotRepository().clearDefaultFlag(platform, excludeBotId);
+}
+
+function buildWebhookEventIdempotencyKey(platform, botId, eventType, payload) {
+  const hash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(payload || {}))
+    .digest("hex");
+  return [
+    "webhook",
+    normalizeChatPlatform(platform),
+    normalizeRuntimeCacheId(botId, "default"),
+    eventType || "webhook",
+    hash,
+  ].join(":");
+}
+
+async function recordInboundWebhookEvent(platform, botId, eventType, payload) {
+  const idempotencyKey = buildWebhookEventIdempotencyKey(
+    platform,
+    botId,
+    eventType,
+    payload,
+  );
+  await getWebhookEventRepository()
+    .recordReceived({
+      platform,
+      botId,
+      eventType,
+      payload,
+      idempotencyKey,
+    })
+    .catch((error) => {
+      console.warn(
+        `[WebhookEvent] Failed to record ${platform}:${eventType}:`,
+        error?.message || error,
+      );
+    });
+  return idempotencyKey;
+}
+
+async function runOutboundDelivery(meta = {}, operation) {
+  const repo = getOutboundMessageRepository();
+  const queued = await repo
+    .enqueue({
+      platform: meta.platform,
+      botId: meta.botId || null,
+      userId: meta.userId || meta.recipientId || null,
+      transport: meta.transport || "platform-api",
+      messageText: meta.messageText || null,
+      payload: meta.payload || {},
+    })
+    .catch(() => null);
+
+  try {
+    const result = await operation();
+    if (queued?.id) {
+      const providerMessageId =
+        result?.providerMessageId ||
+        result?.messageId ||
+        result?.messages?.[0]?.id ||
+        null;
+      await repo.markSent(queued.id, {
+        providerMessageId,
+        payload: meta.successPayload || null,
+      }).catch(() => null);
+    }
+    return result;
+  } catch (error) {
+    if (queued?.id) {
+      await repo.markFailed(queued.id, {
+        error:
+          error?.response?.data?.error?.message ||
+          error?.message ||
+          "outbound_send_failed",
+      }).catch(() => null);
+    }
+    throw error;
+  }
+}
+
 const notificationService = createNotificationService({
   connectDB,
   publicBaseUrl: PUBLIC_BASE_URL,
+  getBotById: async (botId) =>
+    getBotRepository().findById("line", botId, {
+      projection: {
+        channelAccessToken: 1,
+        channelSecret: 1,
+        name: 1,
+        notificationEnabled: 1,
+      },
+    }),
+  getOrderRepository,
+  getChatRepository,
+  getNotificationRepository,
 });
 
 /**
@@ -1317,11 +1596,10 @@ function normalizeRoleContent(role, content) {
   }
 }
 
-const sessionStore = MongoStore.create({
-  clientPromise: connectDB(),
+const sessionStore = createSessionStore({
+  connectDB,
   dbName: "chatbot",
   collectionName: "admin_sessions",
-  stringify: false,
   ttl: ADMIN_SESSION_TTL_SECONDS,
 });
 
@@ -1478,6 +1756,7 @@ const agentForgeRunner = new AgentForgeRunner({
       provider: apiKeyToUse.provider,
     };
   },
+  getChatRepository,
   normalizeProvider,
   resolveModelForProvider,
   timezone: "Asia/Bangkok",
@@ -1541,13 +1820,9 @@ async function getChatHistory(userId) {
     return [];
   }
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("chat_history");
-  const chats = await coll
-    .find(buildChatHistoryUserMatch(userId))
-    .sort({ timestamp: 1 })
-    .toArray();
+  const chats = await getChatRepository().getHistory(userId, {
+    sort: { timestamp: 1 },
+  });
   return chats.map((ch) => {
     try {
       const parsed = JSON.parse(ch.content);
@@ -1576,16 +1851,11 @@ async function getAIHistory(userId) {
       ? Math.min(Math.floor(historyLimitRaw), 100)
       : 20;
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("chat_history");
-
   // ดึงเฉพาะข้อความล่าสุดตามจำนวนที่กำหนด แล้วกลับลำดับเป็นเก่าสุด -> ใหม่สุด
-  const raw = await coll
-    .find(buildChatHistoryUserMatch(userId))
-    .sort({ timestamp: -1 })
-    .limit(historyLimit)
-    .toArray();
+  const raw = await getChatRepository().getHistory(userId, {
+    sort: { timestamp: -1 },
+    limit: historyLimit,
+  });
 
   const items = raw.reverse();
 
@@ -1778,9 +2048,6 @@ async function saveOrUpdateUserProfile(userId, botId = null) {
       return null;
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_profiles");
     const normalizedUserId = String(profile.userId || userId || "").trim();
     if (!normalizedUserId) {
       return null;
@@ -1792,29 +2059,18 @@ async function saveOrUpdateUserProfile(userId, botId = null) {
       displayName: profile.displayName,
       pictureUrl: profile.pictureUrl || null,
       statusMessage: profile.statusMessage || null,
+      profileFetchDisabled: false,
       updatedAt: now,
+      createdAt: now,
     };
 
-    const legacyResult = await coll.updateOne(
-      {
-        userId: normalizedUserId,
-        $or: [{ platform: "line" }, { platform: { $exists: false } }, { platform: null }],
-      },
-      { $set: updateDoc },
-    );
-
-    if (!legacyResult.matchedCount) {
-      await coll.updateOne(
-        { userId: normalizedUserId, platform: "line" },
-        {
-          $set: updateDoc,
-          $setOnInsert: { createdAt: now },
-        },
-        { upsert: true },
-      );
-    }
-
-    return updateDoc;
+    return await getProfileRepository().upsertProfile(updateDoc, {
+      unsetFields: [
+        "profileFetchDisabledReason",
+        "profileFetchFailedAt",
+        "profileFetchLastError",
+      ],
+    });
   } catch (error) {
     console.error(
       `[ERROR] ไม่สามารถบันทึกข้อมูลผู้ใช้ ${userId}:`,
@@ -1929,24 +2185,19 @@ async function ensureFacebookProfileDisplayName(
   }
 
   const forceRefresh = options?.forceRefresh === true;
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("user_profiles");
-
-  const existing = await coll.findOne(
-    { userId: psid, platform: "facebook" },
-    {
-      projection: {
-        displayName: 1,
-        pictureUrl: 1,
-        profileFetchDisabled: 1,
-        profileFetchDisabledReason: 1,
-        profileFetchFailedAt: 1,
-        profileFetchLastError: 1,
-      },
+  const profileRepo = getProfileRepository();
+  const existing = await profileRepo.getProfile(psid, "facebook", {
+    projection: {
+      displayName: 1,
+      pictureUrl: 1,
+      profileFetchDisabled: 1,
+      profileFetchDisabledReason: 1,
+      profileFetchFailedAt: 1,
+      profileFetchLastError: 1,
+      createdAt: 1,
+      updatedAt: 1,
     },
-  );
+  });
 
   if (!forceRefresh && existing?.displayName && existing.displayName.trim()) {
     return existing;
@@ -1961,55 +2212,43 @@ async function ensureFacebookProfileDisplayName(
   if (!profile?.displayName) {
     if (!fetchResult?.retryable) {
       const now = new Date();
-      await coll.updateOne(
-        { userId: psid, platform: "facebook" },
-        {
-          $set: {
-            userId: psid,
-            platform: "facebook",
-            profileFetchDisabled: true,
-            profileFetchDisabledReason:
-              fetchResult?.reason || "facebook_profile_fetch_blocked",
-            profileFetchFailedAt: now,
-            profileFetchLastError:
-              fetchResult?.message || "facebook profile unavailable",
-            updatedAt: now,
-          },
-          $setOnInsert: {
-            createdAt: now,
-          },
-        },
-        { upsert: true },
-      );
+      await profileRepo.upsertProfile({
+        userId: psid,
+        platform: "facebook",
+        displayName: existing?.displayName || null,
+        pictureUrl: existing?.pictureUrl || null,
+        profileFetchDisabled: true,
+        profileFetchDisabledReason:
+          fetchResult?.reason || "facebook_profile_fetch_blocked",
+        profileFetchFailedAt: now,
+        profileFetchLastError:
+          fetchResult?.message || "facebook profile unavailable",
+        updatedAt: now,
+        createdAt: existing?.createdAt || now,
+      });
     }
     return existing;
   }
 
   const now = new Date();
-  await coll.updateOne(
-    { userId: psid, platform: "facebook" },
+  return profileRepo.upsertProfile(
     {
-      $set: {
-        displayName: profile.displayName,
-        pictureUrl: profile.pictureUrl || null,
-        updatedAt: now,
-        profileFetchDisabled: false,
-      },
-      $unset: {
-        profileFetchDisabledReason: "",
-        profileFetchFailedAt: "",
-        profileFetchLastError: "",
-      },
-      $setOnInsert: {
-        userId: psid,
-        platform: "facebook",
-        createdAt: now,
-      },
+      userId: psid,
+      platform: "facebook",
+      displayName: profile.displayName,
+      pictureUrl: profile.pictureUrl || null,
+      profileFetchDisabled: false,
+      updatedAt: now,
+      createdAt: existing?.createdAt || now,
     },
-    { upsert: true },
+    {
+      unsetFields: [
+        "profileFetchDisabledReason",
+        "profileFetchFailedAt",
+        "profileFetchLastError",
+      ],
+    },
   );
-
-  return await coll.findOne({ userId: psid, platform: "facebook" });
 }
 
 async function saveChatHistory(
@@ -2037,7 +2276,7 @@ async function saveChatHistory(
 
   const client = await connectDB();
   const db = client.db("chatbot");
-  const coll = db.collection("chat_history");
+  const chatRepo = getChatRepository();
   const normalizedOptions =
     options && typeof options === "object" ? options : {};
   const normalizedInstructionRefs = [];
@@ -2094,9 +2333,9 @@ async function saveChatHistory(
       : {}),
     ...(botName ? { botName } : {}),
   };
-  const userInsertResult = await coll.insertOne(userMessageDoc);
-  if (userInsertResult?.insertedId) {
-    userMessageDoc._id = userInsertResult.insertedId;
+  const savedUserMessage = await chatRepo.insertMessage(userMessageDoc);
+  if (savedUserMessage?._id) {
+    userMessageDoc._id = savedUserMessage._id;
   }
 
   let emittedUserMessage = userMessageDoc;
@@ -2129,7 +2368,7 @@ async function saveChatHistory(
         emittedUserMessage = { ...userMessageDoc };
       }
 
-      io.to("admin").emit("newMessage", {
+      await emitAdminRoomEvent("newMessage", {
         userId: userId,
         message: emittedUserMessage,
         sender: "user",
@@ -2183,14 +2422,14 @@ async function saveChatHistory(
         : {}),
       ...(botName ? { botName } : {}),
     };
-    const assistantInsertResult = await coll.insertOne(assistantMessageDoc);
-    if (assistantInsertResult?.insertedId) {
-      assistantMessageDoc._id = assistantInsertResult.insertedId;
+    const savedAssistantMessage = await chatRepo.insertMessage(assistantMessageDoc);
+    if (savedAssistantMessage?._id) {
+      assistantMessageDoc._id = savedAssistantMessage._id;
     }
 
     try {
       if (typeof io !== "undefined" && io) {
-        io.to("admin").emit("newMessage", {
+        await emitAdminRoomEvent("newMessage", {
           userId,
           message: assistantMessageDoc,
           sender: "assistant",
@@ -2213,7 +2452,11 @@ async function saveChatHistory(
 
   // Update conversation thread (background, non-blocking)
   try {
-    const threadService = new ConversationThreadService(db);
+    const threadService = new ConversationThreadService(db, {
+      chatRepository: getChatRepository(),
+      orderRepository: getOrderRepository(),
+      botRepository: getBotRepository(),
+    });
     threadService
       .upsertThread(
         userId,
@@ -2246,10 +2489,8 @@ async function saveToolInteraction(
   const enableChatHistory = await getSettingValue("enableChatHistory", true);
   if (!enableChatHistory) return;
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("chat_history");
   const timestamp = new Date();
+  const chatRepo = getChatRepository();
 
   // 1. บันทึก Assistant Message ที่มีการเรียก Tool (tool_calls)
   // เพื่อให้ AI รู้ว่ามันเป็นคนเรียกฟังก์ชันนี้เอง
@@ -2267,7 +2508,8 @@ async function saveToolInteraction(
       isToolCall: true, // flag ช่วยในการกรองถ้าต้องการ
     };
 
-    assistantRes = await coll.insertOne(assistantDoc);
+    const savedAssistantDoc = await chatRepo.insertMessage(assistantDoc);
+    assistantRes.insertedId = savedAssistantDoc?._id || null;
   }
 
   // 2. บันทึก Tool Message (ผลลัพธ์จาก Tool)
@@ -2286,33 +2528,20 @@ async function saveToolInteraction(
     isToolResult: true,
   };
 
-  const toolRes = await coll.insertOne(toolDoc);
+  const savedToolDoc = await chatRepo.insertMessage(toolDoc);
 
-  return { assistantId: assistantRes.insertedId, toolId: toolRes.insertedId };
+  return {
+    assistantId: assistantRes.insertedId,
+    toolId: savedToolDoc?._id || null,
+  };
 }
 
 async function getUserStatus(userId) {
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("active_user_status");
-  let userStatus = await coll.findOne({ senderId: userId });
-  if (!userStatus) {
-    userStatus = { senderId: userId, aiEnabled: true, updatedAt: new Date() };
-    await coll.insertOne(userStatus);
-  }
-  return userStatus;
+  return getUserStateRepository().getAiStatus(userId);
 }
 
 async function setUserStatus(userId, aiEnabled) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("active_user_status");
-  await coll.updateOne(
-    { senderId: userId },
-    { $set: { aiEnabled, updatedAt: new Date() } },
-    { upsert: true },
-  );
+  await getUserStateRepository().setAiStatus(userId, aiEnabled);
 }
 
 /**
@@ -2512,10 +2741,7 @@ async function detectKeywordAction(
  * ฟังก์ชันสำหรับลบประวัติการสนทนาทั้งหมดของ user
  */
 async function clearUserChatHistory(userId) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("chat_history");
-  await coll.deleteMany(buildChatHistoryUserMatch(userId));
+  await getChatRepository().clearHistory(userId);
 }
 
 const BANGKOK_TZ = "Asia/Bangkok";
@@ -3002,26 +3228,19 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
   }
 
   const baseConfig = await getFollowUpBaseConfig();
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("follow_up_page_settings");
-
-  let query = { platform: normalizedPlatform };
-  if (normalizedBotId === null) {
-    query.botId = null;
-  } else {
-    query.botId = { $in: [null, normalizedBotId] };
-  }
-
-  const overrides = await coll.find(query).toArray();
+  const overrides = await getFollowUpPageSettingsRepository().listByPlatform(
+    normalizedPlatform,
+  );
   let platformDefaults = {};
   let specificOverrides = {};
   overrides.forEach((doc) => {
+    const normalizedDoc =
+      getFollowUpPageSettingsRepository().normalizeFollowUpPageSettingsDoc(doc);
     if (!doc) return;
-    const settings = doc.settings || {};
-    if (doc.botId === null) {
+    const settings = normalizedDoc.settings || {};
+    if (normalizedDoc.botId === null) {
       platformDefaults = { ...platformDefaults, ...settings };
-    } else if (doc.botId === normalizedBotId) {
+    } else if (normalizedDoc.botId === normalizedBotId) {
       specificOverrides = { ...specificOverrides, ...settings };
     }
   });
@@ -3096,16 +3315,15 @@ async function listFollowUpPageSettings() {
     .find({})
     .sort({ createdAt: -1 })
     .toArray();
-  const settingsDocs = await db
-    .collection("follow_up_page_settings")
-    .find({})
-    .toArray();
+  const settingsDocs = await getFollowUpPageSettingsRepository().listAll();
 
   const settingsMap = {};
   settingsDocs.forEach((doc) => {
-    if (!doc || !doc.platform) return;
-    const key = `${doc.platform}:${doc.botId || "default"}`;
-    settingsMap[key] = doc;
+    const normalizedDoc =
+      getFollowUpPageSettingsRepository().normalizeFollowUpPageSettingsDoc(doc);
+    if (!normalizedDoc || !normalizedDoc.platform) return;
+    const key = `${normalizedDoc.platform}:${normalizedDoc.botId || "default"}`;
+    settingsMap[key] = normalizedDoc;
   });
 
   const buildConfig = (platform, botId = null) => {
@@ -3268,7 +3486,7 @@ function emitFollowUpScheduleUpdate(payload) {
           delete sanitized[key];
         }
       });
-      io.to("admin").emit("followUpScheduleUpdated", sanitized);
+      emitAdminEvent("followUpScheduleUpdated", sanitized);
     }
   } catch (_) { }
 }
@@ -3337,14 +3555,14 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       return null;
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_tasks");
+    const followUpRepo = getFollowUpRepository();
 
     const dateKey = getDateKey(messageTimestamp);
-    const existingTask = await coll.findOne(
-      { userId, platform: normalizedPlatform, botId: normalizedBotId, dateKey },
-      { sort: { createdAt: -1 } },
+    const existingTask = await followUpRepo.findTaskByDate(
+      userId,
+      normalizedPlatform,
+      normalizedBotId,
+      dateKey,
     );
     const now = new Date();
     const previewText =
@@ -3413,38 +3631,35 @@ async function scheduleFollowUpForUser(userId, options = {}) {
         : Math.min(completedRounds, rebuiltRounds.length);
       const nextScheduledAt = rebuiltRounds[nextRoundIndex]?.scheduledAt || null;
 
-      await coll.updateOne(
-        { _id: existingTask._id },
-        {
-          $set: {
-            rounds: rebuiltRounds,
-            nextRoundIndex,
-            nextScheduledAt,
-            lastUserMessageAt: messageTimestamp,
-            lastUserMessagePreview:
-              previewText || existingTask.lastUserMessagePreview || "",
-            updatedAt: now,
-            contextKey,
-            canceled: false,
-            completed: false,
-            cancelReason: null,
-            canceledAt: null,
-            ...(shouldResetProgress
-              ? {
-                sentRounds: [],
-                lastSentAt: null,
-              }
-              : {}),
-            configSnapshot: {
-              rounds: roundsConfig.map((item) => ({
-                delayMinutes: item.delayMinutes,
-                items: Array.isArray(item.items) ? normalizeFollowUpItems(item.items) : roundLegacyToItems(item),
-              })),
-              autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
-            },
+      await followUpRepo.updateTaskById(existingTask._id, {
+        $set: {
+          rounds: rebuiltRounds,
+          nextRoundIndex,
+          nextScheduledAt,
+          lastUserMessageAt: messageTimestamp,
+          lastUserMessagePreview:
+            previewText || existingTask.lastUserMessagePreview || "",
+          updatedAt: now,
+          contextKey,
+          canceled: false,
+          completed: false,
+          cancelReason: null,
+          canceledAt: null,
+          ...(shouldResetProgress
+            ? {
+              sentRounds: [],
+              lastSentAt: null,
+            }
+            : {}),
+          configSnapshot: {
+            rounds: roundsConfig.map((item) => ({
+              delayMinutes: item.delayMinutes,
+              items: Array.isArray(item.items) ? normalizeFollowUpItems(item.items) : roundLegacyToItems(item),
+            })),
+            autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
           },
         },
-      );
+      });
 
       emitFollowUpScheduleUpdate({
         userId,
@@ -3503,16 +3718,16 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       },
     };
 
-    await coll.insertOne(taskDoc);
+    const savedTask = await followUpRepo.insertTask(taskDoc);
     emitFollowUpScheduleUpdate({
       userId,
       platform: normalizedPlatform,
       botId: normalizedBotId,
       contextKey,
       status: "scheduled",
-      nextScheduledAt: taskDoc.nextScheduledAt,
+      nextScheduledAt: savedTask?.nextScheduledAt || taskDoc.nextScheduledAt,
     });
-    return taskDoc;
+    return savedTask || taskDoc;
   } catch (error) {
     console.error(
       "[FollowUp] ไม่สามารถตั้งเวลาส่งข้อความติดตามได้:",
@@ -3537,9 +3752,7 @@ async function cancelFollowUpTasksForUser(
       normalizedPlatform && normalizedBotId !== undefined
         ? `${normalizedPlatform}:${normalizedBotId || "default"}`
         : null;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_tasks");
+    const followUpRepo = getFollowUpRepository();
     const now = new Date();
     const query = { userId };
 
@@ -3553,21 +3766,12 @@ async function cancelFollowUpTasksForUser(
       query.dateKey = dateKey;
     }
 
-    const result = await coll.updateMany(
-      {
-        ...query,
-        canceled: { $ne: true },
-        completed: { $ne: true },
-      },
-      {
-        $set: {
-          canceled: true,
-          cancelReason: reason,
-          canceledAt: now,
-          updatedAt: now,
-        },
-      },
-    );
+    const result = await followUpRepo.cancelActiveTasks(query, {
+      canceled: true,
+      cancelReason: reason,
+      canceledAt: now,
+      updatedAt: now,
+    });
 
     if (result.modifiedCount > 0) {
       emitFollowUpScheduleUpdate({
@@ -3602,17 +3806,7 @@ async function processDueFollowUpTasks(limit = 10) {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    const coll = db.collection("follow_up_tasks");
-    const now = new Date();
-    const tasks = await coll
-      .find({
-        canceled: { $ne: true },
-        completed: { $ne: true },
-        nextScheduledAt: { $lte: now },
-      })
-      .sort({ nextScheduledAt: 1 })
-      .limit(limit)
-      .toArray();
+    const tasks = await getFollowUpRepository().getDueTasks(limit);
 
     for (const task of tasks) {
       await handleFollowUpTask(task, db);
@@ -3629,7 +3823,7 @@ async function handleFollowUpTask(task, db) {
   const currentIndex =
     typeof task.nextRoundIndex === "number" ? task.nextRoundIndex : 0;
   const round = rounds[currentIndex];
-  const coll = db.collection("follow_up_tasks");
+  const followUpRepo = getFollowUpRepository();
   const now = new Date();
   const derivedContextKey =
     task.contextKey ||
@@ -3637,16 +3831,13 @@ async function handleFollowUpTask(task, db) {
 
 
   if (!round) {
-    await coll.updateOne(
-      { _id: task._id },
-      {
-        $set: {
-          completed: true,
-          nextScheduledAt: null,
-          updatedAt: now,
-        },
+    await followUpRepo.updateTaskById(task._id, {
+      $set: {
+        completed: true,
+        nextScheduledAt: null,
+        updatedAt: now,
       },
-    );
+    });
     emitFollowUpScheduleUpdate({
       userId: task.userId,
       platform: task.platform,
@@ -3663,17 +3854,14 @@ async function handleFollowUpTask(task, db) {
     console.log(
       `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - ถูก mark ว่าซื้อแล้ว`,
     );
-    await coll.updateOne(
-      { _id: task._id },
-      {
-        $set: {
-          canceled: true,
-          cancelReason: "already_purchased",
-          canceledAt: now,
-          updatedAt: now,
-        },
+    await followUpRepo.updateTaskById(task._id, {
+      $set: {
+        canceled: true,
+        cancelReason: "already_purchased",
+        canceledAt: now,
+        updatedAt: now,
       },
-    );
+    });
     emitFollowUpScheduleUpdate({
       userId: task.userId,
       platform: task.platform,
@@ -3699,17 +3887,14 @@ async function handleFollowUpTask(task, db) {
     console.log(
       `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - พบออเดอร์แล้ว`,
     );
-    await coll.updateOne(
-      { _id: task._id },
-      {
-        $set: {
-          canceled: true,
-          cancelReason: "order_exists",
-          canceledAt: now,
-          updatedAt: now,
-        },
+    await followUpRepo.updateTaskById(task._id, {
+      $set: {
+        canceled: true,
+        cancelReason: "order_exists",
+        canceledAt: now,
+        updatedAt: now,
       },
-    );
+    });
     await updateFollowUpStatus(task.userId, {
       hasFollowUp: true,
       followUpReason,
@@ -3744,13 +3929,10 @@ async function handleFollowUpTask(task, db) {
       contextKey: derivedContextKey,
     };
 
-    await coll.updateOne(
-      { _id: task._id },
-      {
-        $set: updateSet,
-        $addToSet: { sentRounds: currentIndex },
-      },
-    );
+    await followUpRepo.updateTaskById(task._id, {
+      $set: updateSet,
+      $addToSet: { sentRounds: currentIndex },
+    });
 
     emitFollowUpScheduleUpdate({
       userId: task.userId,
@@ -3764,19 +3946,16 @@ async function handleFollowUpTask(task, db) {
     });
   } catch (error) {
     console.error("[FollowUp] ส่งข้อความติดตามไม่สำเร็จ:", error.message);
-    await coll.updateOne(
-      { _id: task._id },
-      {
-        $set: {
-          [`rounds.${currentIndex}.status`]: "failed",
-          [`rounds.${currentIndex}.error`]: error.message,
-          canceled: true,
-          cancelReason: "send_failed",
-          canceledAt: now,
-          updatedAt: now,
-        },
+    await followUpRepo.updateTaskById(task._id, {
+      $set: {
+        [`rounds.${currentIndex}.status`]: "failed",
+        [`rounds.${currentIndex}.error`]: error.message,
+        canceled: true,
+        cancelReason: "send_failed",
+        canceledAt: now,
+        updatedAt: now,
       },
-    );
+    });
     emitFollowUpScheduleUpdate({
       userId: task.userId,
       platform: task.platform,
@@ -3863,7 +4042,11 @@ async function sendFollowUpMessage(task, round, db) {
       task.userId,
       combinedMessage,
       fbBot.accessToken,
-      { metadata: "follow_up_auto", selectedImageCollections: null },
+      {
+        botId: task.botId || null,
+        metadata: "follow_up_auto",
+        selectedImageCollections: null,
+      },
       assetsMap,
     );
   } else if (task.platform === "instagram") {
@@ -3874,7 +4057,14 @@ async function sendFollowUpMessage(task, round, db) {
     const instagramSenderId = resolveInstagramSenderId(igBot);
     if (!accessToken || !instagramSenderId) throw new Error("ไม่พบ access token หรือ instagram sender id");
     const { combinedMessage, assetsMap } = buildMetaPayload(items);
-    await sendInstagramMessage(task.userId, combinedMessage, accessToken, instagramSenderId, { selectedImageCollections: null }, assetsMap);
+    await sendInstagramMessage(
+      task.userId,
+      combinedMessage,
+      accessToken,
+      instagramSenderId,
+      { botId: task.botId || null, selectedImageCollections: null },
+      assetsMap,
+    );
   } else if (task.platform === "whatsapp") {
     if (!task.botId) throw new Error("ไม่พบ WhatsApp Bot สำหรับการส่งข้อความ");
     const waBot = await findBotById(db, "whatsapp", task.botId);
@@ -3883,12 +4073,18 @@ async function sendFollowUpMessage(task, round, db) {
     const phoneNumberId = resolveWhatsAppPhoneNumberId(waBot);
     if (!accessToken || !phoneNumberId) throw new Error("ไม่พบ access token หรือ phoneNumberId");
     const { combinedMessage, assetsMap } = buildMetaPayload(items);
-    await sendWhatsAppMessage(task.userId, combinedMessage, accessToken, phoneNumberId, { selectedImageCollections: null }, assetsMap);
+    await sendWhatsAppMessage(
+      task.userId,
+      combinedMessage,
+      accessToken,
+      phoneNumberId,
+      { botId: task.botId || null, selectedImageCollections: null },
+      assetsMap,
+    );
   } else {
     await sendLineFollowUpMessageWithItems(task.userId, items, task.botId, db);
   }
 
-  const historyColl = db.collection("chat_history");
   const timestamp = new Date();
   const historyParts = items.map((item) => {
     if (item.type === "text") return { type: "text", text: item.content || "" };
@@ -3917,14 +4113,14 @@ async function sendFollowUpMessage(task, round, db) {
     botId: task.botId || null,
     source: "follow_up",
   };
-  const historyInsertResult = await historyColl.insertOne(messageDoc);
-  if (historyInsertResult?.insertedId) {
-    messageDoc._id = historyInsertResult.insertedId;
+  const savedMessageDoc = await getChatRepository().insertMessage(messageDoc);
+  if (savedMessageDoc?._id) {
+    messageDoc._id = savedMessageDoc._id;
   }
 
   try {
     if (io) {
-      io.to("admin").emit("newMessage", {
+      emitAdminEvent("newMessage", {
         userId: task.userId,
         message: messageDoc,
         sender: "assistant",
@@ -3977,13 +4173,45 @@ async function sendLineFollowUpMessageWithItems(userId, items, botId, db) {
         throw new Error("ไม่พบข้อมูล Line Bot สำหรับการส่งข้อความ");
       }
       const client = createLineClient(botDoc.channelAccessToken, botDoc.channelSecret);
-      await sendChunks(client);
+      await runOutboundDelivery(
+        {
+          platform: "line",
+          botId,
+          userId,
+          transport: "line-push-api",
+          messageText: items
+            .filter((item) => item.type === "text")
+            .map((item) => item.content || "")
+            .join("\n"),
+          payload: { itemCount: items.length },
+        },
+        async () => {
+          await sendChunks(client);
+          return { payload: { chunkCount: chunks.length } };
+        },
+      );
       return;
     }
     if (!lineClient) {
       throw new Error("Line Client ยังไม่ถูกตั้งค่า");
     }
-    await sendChunks(lineClient);
+    await runOutboundDelivery(
+      {
+        platform: "line",
+        botId,
+        userId,
+        transport: "line-push-api",
+        messageText: items
+          .filter((item) => item.type === "text")
+          .map((item) => item.content || "")
+          .join("\n"),
+        payload: { itemCount: items.length },
+      },
+      async () => {
+        await sendChunks(lineClient);
+        return { payload: { chunkCount: chunks.length } };
+      },
+    );
   } catch (error) {
     console.error("[FollowUp Error] Failed to send LINE message:", { error: error.message, userId, botId });
     throw new Error(error.message || "ไม่สามารถส่งข้อความผ่าน LINE ได้");
@@ -4085,16 +4313,10 @@ function sanitizeContentForFollowUp(rawContent) {
 }
 
 async function getFollowUpStatus(userId) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("follow_up_status");
-  return coll.findOne({ senderId: userId });
+  return getFollowUpRepository().getStatus(userId);
 }
 
 async function updateFollowUpStatus(userId, fields) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("follow_up_status");
   const now = new Date();
   const sanitizedFields = { ...(fields || {}) };
   const normalizedPlatform = sanitizedFields.platform || null;
@@ -4103,14 +4325,10 @@ async function updateFollowUpStatus(userId, fields) {
   sanitizedFields.platform = normalizedPlatform;
   sanitizedFields.botId = normalizedBotId;
 
-  const updateDoc = {
-    $set: {
-      senderId: userId,
-      lastAnalyzedAt: now,
-      ...sanitizedFields,
-    },
-  };
-  await coll.updateOne({ senderId: userId }, updateDoc, { upsert: true });
+  await getFollowUpRepository().upsertStatus(userId, {
+    lastAnalyzedAt: now,
+    ...sanitizedFields,
+  });
 }
 
 async function maybeAnalyzeFollowUp(
@@ -4204,7 +4422,7 @@ async function maybeAnalyzeFollowUp(
 
     try {
       if (io) {
-        io.to("admin").emit("followUpTagged", {
+        emitAdminEvent("followUpTagged", {
           userId,
           hasFollowUp: true,
           followUpReason: reason,
@@ -4874,48 +5092,13 @@ async function markMessagesAsOrderExtracted(
   extractionRoundId,
   orderId = null,
 ) {
-  if (!Array.isArray(messageIds) || messageIds.length === 0) {
-    return;
-  }
-
-  const objectIds = messageIds
-    .map((id) => {
-      if (!id) return null;
-      try {
-        return new ObjectId(id);
-      } catch (error) {
-        return null;
-      }
-    })
-    .filter(Boolean);
-
-  if (!objectIds.length) {
-    return;
-  }
-
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("chat_history");
-
-    const updateDoc = {
-      orderExtractionRoundId: extractionRoundId,
-      orderExtractionMarkedAt: new Date(),
-    };
-
-    if (orderId) {
-      try {
-        updateDoc.orderId =
-          typeof orderId === "string" ? new ObjectId(orderId) : orderId;
-      } catch (error) {
-        updateDoc.orderId = orderId;
-      }
-    }
-
-    const match = buildChatHistoryUserQuery(userId, {
-      _id: { $in: objectIds },
-    });
-    await coll.updateMany(match, { $set: updateDoc });
+    await getChatRepository().markMessagesAsOrderExtracted(
+      userId,
+      messageIds,
+      extractionRoundId,
+      orderId,
+    );
   } catch (error) {
     console.error(
       "[Order] ไม่สามารถมาร์กข้อความที่สกัดแล้วได้:",
@@ -5062,31 +5245,15 @@ async function getExistingProductNames(options = {}) {
   const { platform = null, botId = null, limit = 50 } = options || {};
 
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     // Build query based on platform/botId
     const matchQuery = {};
     if (platform) matchQuery.platform = platform;
     if (botId) matchQuery.botId = botId;
 
-    // Aggregate to get unique product names with count
-    const pipeline = [
-      { $match: matchQuery },
-      { $unwind: { path: "$orderData.items", preserveNullAndEmptyArrays: false } },
-      {
-        $group: {
-          _id: "$orderData.items.product",
-          count: { $sum: 1 },
-          lastUsed: { $max: "$extractedAt" }
-        }
-      },
-      { $match: { _id: { $ne: null, $ne: "", $type: "string" } } },
-      { $sort: { count: -1, lastUsed: -1 } },
-      { $limit: limit }
-    ];
-
-    const results = await db.collection("orders").aggregate(pipeline).toArray();
+    const results = await getOrderRepository().getFrequentProductNames(
+      matchQuery,
+      limit,
+    );
 
     // Return array of product names
     return results.map(r => r._id).filter(Boolean);
@@ -5108,24 +5275,31 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
   // Get page settings
   let pageSettings = null;
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    pageSettings = await db.collection("follow_up_page_settings").findOne({
-      platform: platform || "line",
-      botId: botId || null,
-    });
+    pageSettings = await getFollowUpPageSettingsRepository().getExact(
+      platform || "line",
+      botId || null,
+    );
   } catch (e) {
     console.warn("[Order] ไม่สามารถโหลด page settings:", e.message);
   }
 
+  const pageSettingsData =
+    pageSettings?.settings && typeof pageSettings.settings === "object"
+      ? pageSettings.settings
+      : pageSettings || {};
+
   // Check if order extraction is enabled for this page
-  if (pageSettings && pageSettings.orderExtractionEnabled === false) {
+  if (pageSettingsData.orderExtractionEnabled === false) {
     console.log(`[Order] การสกัดออเดอร์ถูกปิดสำหรับ ${platform}/${botId}`);
     return null;
   }
 
   // Get orderModel from page settings if not overridden
-  const orderModel = modelOverride || pageSettings?.orderModel || (await getSettingValue("orderModel", "gpt-4.1-nano"));
+  const orderModel =
+    modelOverride ||
+    pageSettingsData.orderModel ||
+    pageSettingsData.model ||
+    (await getSettingValue("orderModel", "gpt-4.1-nano"));
 
   const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
   if (!apiKeyToUse.apiKey) {
@@ -5433,9 +5607,7 @@ async function saveOrderToDatabase(
   options = {},
 ) {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
+    const orderRepo = getOrderRepository();
 
     const safeOptions =
       options && typeof options === "object" ? options : {};
@@ -5464,12 +5636,13 @@ async function saveOrderToDatabase(
       updatedAt: new Date(),
       notes,
       notificationStatus: safeOptions.notificationStatus || "pending",
+      createdAt: extractedAt,
     };
 
-    const result = await coll.insertOne(orderDoc);
-    console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
+    const savedOrder = await orderRepo.create(orderDoc);
+    console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${savedOrder?._id}`);
 
-    return result.insertedId;
+    return savedOrder?._id || null;
   } catch (error) {
     console.error("[Order] บันทึกออเดอร์ไม่สำเร็จ:", error.message);
     return null;
@@ -5653,7 +5826,7 @@ async function createOrderFromTool(args = {}, context = {}) {
 
   try {
     if (io) {
-      io.to("admin").emit("orderExtracted", {
+      emitAdminEvent("orderExtracted", {
         userId,
         orderId: orderIdString,
         orderData: normalized.orderData,
@@ -5682,9 +5855,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
   const platform = normalizeOrderPlatform(context.platform);
   const botId = normalizeOrderBotId(context.botId);
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("orders");
+  const orderRepo = getOrderRepository();
 
   let order = null;
   let orderIdString = null;
@@ -5696,24 +5867,25 @@ async function updateOrderFromTool(args = {}, context = {}) {
       return { success: false, error: "orderId ไม่ถูกต้อง" };
     }
     orderIdString = orderIdRaw;
-    const query = {
-      _id: new ObjectId(orderIdRaw),
-      userId,
-      platform,
-    };
-    if (botId !== null) {
-      query.botId = botId;
+    order = await orderRepo.findById(orderIdRaw);
+    if (
+      order &&
+      (order.userId !== userId ||
+        order.platform !== platform ||
+        (botId !== null && order.botId !== botId))
+    ) {
+      order = null;
     }
-    order = await coll.findOne(query);
   } else {
-    const query = {
-      userId,
-      platform,
-    };
-    if (botId !== null) {
-      query.botId = botId;
-    }
-    order = await coll.findOne(query, { sort: { extractedAt: -1 } });
+    const userOrders = await orderRepo.findByUser(userId, {
+      sort: { extractedAt: -1 },
+    });
+    order =
+      userOrders.find((entry) => {
+        if (entry.platform !== platform) return false;
+        if (botId !== null && entry.botId !== botId) return false;
+        return true;
+      }) || null;
     if (order?._id) {
       orderIdString = order._id.toString();
     }
@@ -5777,12 +5949,12 @@ async function updateOrderFromTool(args = {}, context = {}) {
     return { success: false, error: "ไม่มีข้อมูลสำหรับอัปเดต" };
   }
 
-  await coll.updateOne({ _id: order._id }, { $set: updateDoc });
-  const updatedOrder = await coll.findOne({ _id: order._id });
+  const updateResult = await orderRepo.updateById(order._id, { $set: updateDoc });
+  const updatedOrder = updateResult.document;
 
   try {
     if (io) {
-      io.to("admin").emit("orderUpdated", {
+      emitAdminEvent("orderUpdated", {
         orderId: orderIdString,
         userId,
         orderData: updatedOrder?.orderData || null,
@@ -5808,10 +5980,8 @@ async function updateOrderFromTool(args = {}, context = {}) {
 async function triggerOrderNotification(orderId) {
   if (!orderId) return;
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const orders = db.collection("orders");
-    const order = await orders.findOne({ _id: new ObjectId(orderId) });
+    const orderRepo = getOrderRepository();
+    const order = await orderRepo.findById(orderId);
 
     if (!order) return;
     // Check if already sent
@@ -5824,10 +5994,9 @@ async function triggerOrderNotification(orderId) {
 
     // Update status based on result
     const status = result.success ? "sent" : "failed";
-    await orders.updateOne(
-      { _id: new ObjectId(orderId) },
-      { $set: { notificationStatus: status, notificationSentAt: new Date() } }
-    );
+    await orderRepo.updateById(orderId, {
+      $set: { notificationStatus: status, notificationSentAt: new Date() },
+    });
     console.log(`[Notification] Order ${orderId} notification: ${status}`);
 
   } catch (err) {
@@ -5837,10 +6006,7 @@ async function triggerOrderNotification(orderId) {
 
 async function getLatestOrderForUser(userId) {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-    return await coll.findOne({ userId }, { sort: { extractedAt: -1 } });
+    return await getOrderRepository().findLatestByUser(userId);
   } catch (error) {
     console.error("[Order] ดึงออเดอร์ล่าสุดไม่สำเร็จ:", error.message);
     return null;
@@ -5849,16 +6015,9 @@ async function getLatestOrderForUser(userId) {
 
 async function getUserOrders(userId) {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
-    const orders = await coll
-      .find({ userId })
-      .sort({ extractedAt: -1 })
-      .toArray();
-
-    return orders;
+    return await getOrderRepository().findByUser(userId, {
+      sort: { extractedAt: -1 },
+    });
   } catch (error) {
     console.error("[Order] ดึงออเดอร์ไม่สำเร็จ:", error.message);
     return [];
@@ -5881,10 +6040,8 @@ async function startOrderCutoffScheduler() {
 }
 
 async function getFollowUpUsers(filter = {}) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const taskColl = db.collection("follow_up_tasks");
-  const profileColl = db.collection("user_profiles");
+  const followUpRepo = getFollowUpRepository();
+  const profileRepo = getProfileRepository();
 
   const normalizedPlatform = filter.platform || null;
   const normalizedBotId = filter.botId
@@ -5900,11 +6057,18 @@ async function getFollowUpUsers(filter = {}) {
     query.botId = normalizedBotId;
   }
 
-  const tasks = await taskColl
-    .find(query)
-    .sort({ nextScheduledAt: 1, createdAt: -1 })
-    .limit(200)
-    .toArray();
+  const tasks = await followUpRepo.listTasks(
+    {
+      dateKey,
+      platform: normalizedPlatform || undefined,
+      botId: normalizedBotId || undefined,
+      defaultBotOnly: !normalizedBotId && Boolean(filter.botId === null),
+    },
+    {
+      sort: { nextScheduledAt: 1, createdAt: -1 },
+      limit: 200,
+    },
+  );
   if (!tasks.length) {
     return {
       users: [],
@@ -5945,20 +6109,28 @@ async function getFollowUpUsers(filter = {}) {
     contextConfigMap.set(entry.key, entry.config || {});
   });
 
-  const userIds = [...new Set(tasks.map((task) => task.userId))];
+  const profilePairs = tasks.map((task) => ({
+    userId: task.userId,
+    platform: task.platform || "line",
+  }));
   const profiles =
-    userIds.length > 0
-      ? await profileColl.find({ userId: { $in: userIds } }).toArray()
+    profilePairs.length > 0
+      ? await profileRepo.listProfilesByPairs(profilePairs)
       : [];
   const profileMap = new Map();
   profiles.forEach((profile) => {
-    profileMap.set(profile.userId, profile);
+    profileMap.set(
+      `${profile.userId}:${normalizeChatPlatform(profile.platform || "line")}`,
+      profile,
+    );
   });
 
   const users = tasks
     .map((task) => {
-      const profile = profileMap.get(task.userId);
       const contextPlatform = task.platform || "line";
+      const profile = profileMap.get(
+        `${task.userId}:${normalizeChatPlatform(contextPlatform)}`,
+      );
       const contextBotId = normalizeFollowUpBotId(task.botId);
       const configKey = `${contextPlatform}:${contextBotId || "default"}`;
       const config = contextConfigMap.get(configKey) || {};
@@ -6114,26 +6286,17 @@ async function buildFollowUpOverview() {
 }
 
 async function clearFollowUpStatus(userId) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("follow_up_status");
   const now = new Date();
-  const existing = (await coll.findOne({ senderId: userId })) || {};
-  await coll.updateOne(
-    { senderId: userId },
-    {
-      $set: {
-        senderId: userId,
-        hasFollowUp: false,
-        followUpReason: "",
-        followUpUpdatedAt: now,
-        lastAnalyzedAt: now,
-        platform: existing.platform || null,
-        botId: normalizeFollowUpBotId(existing.botId),
-      },
-    },
-    { upsert: true },
-  );
+  const followUpRepo = getFollowUpRepository();
+  const existing = (await followUpRepo.getStatus(userId)) || {};
+  await followUpRepo.upsertStatus(userId, {
+    hasFollowUp: false,
+    followUpReason: "",
+    followUpUpdatedAt: now,
+    lastAnalyzedAt: now,
+    platform: existing.platform || null,
+    botId: normalizeFollowUpBotId(existing.botId),
+  });
 }
 
 // ตัวแปรเก็บ instructions จาก Google Doc
@@ -6265,7 +6428,6 @@ async function fetchAllSheetsData(spreadsheetId) {
 // ------------------------
 // ระบบคิวข้อความ (ประมวลผลแบบต่อคิวทีละรอบต่อผู้ใช้/เพจ)
 // ------------------------
-const processedIds = new Set();
 const userQueues = {}; // { queueKey: { userId, messages: [], timer: null, context: {}, isProcessing: false, flushRequested: false, flushDelayMs: null } }
 const USER_QUEUE_IDLE_CLEANUP_MS = 5 * 60 * 1000;
 const USER_QUEUE_SWEEP_INTERVAL_MS = 60 * 1000;
@@ -6392,6 +6554,48 @@ function requestQueueFlush(queueKey, delayMs = 0) {
   }
 
   scheduleQueueFlush(queueKey, queue.flushDelayMs ?? 0);
+}
+
+function requiresDistributedConversationQueue() {
+  return (
+    runtimeConfig.runtimeMode === "public-ingest" ||
+    runtimeConfig.runtimeMode === "worker-realtime"
+  );
+}
+
+function requiresDistributedEventDedupe() {
+  return runtimeConfig.runtimeMode === "public-ingest";
+}
+
+function shouldUseDistributedConversationQueue() {
+  if (requiresDistributedConversationQueue()) {
+    return true;
+  }
+  return Boolean(runtimeConfig.features.redisQueue && isRedisConfigured());
+}
+
+function shouldAllowLegacyInMemoryConversationQueue() {
+  return !requiresDistributedConversationQueue();
+}
+
+function assertDistributedRealtimeInfrastructureReady() {
+  if (
+    requiresDistributedConversationQueue() &&
+    (!runtimeConfig.features.redisQueue || !isRedisConfigured())
+  ) {
+    throw new Error(
+      `[Runtime] Redis/BullMQ queue backend is required for runtime mode "${runtimeConfig.runtimeMode}"`,
+    );
+  }
+
+  if (
+    requiresDistributedEventDedupe() &&
+    (!runtimeConfig.features.redisDedupe || !isRedisConfigured())
+  ) {
+    throw new Error(
+      `[Runtime] Redis dedupe store is required for runtime mode "${runtimeConfig.runtimeMode}"`,
+    );
+  }
 }
 
 // ฟังก์ชันสำหรับวิเคราะห์ประเภทเนื้อหาในคิว
@@ -6660,6 +6864,113 @@ function buildContentSequenceFromMessages(messages, enableMessageMerging = true)
   };
 }
 
+async function materializeQueuedMessagesForProcessing(
+  messages = [],
+  queueContext = {},
+) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return [];
+  }
+
+  const materialized = [];
+  const botId = queueContext.botId || queueContext.lineBotId || null;
+
+  for (const original of messages) {
+    const cloned = cloneQueueMessage(original);
+    if (!cloned) continue;
+
+    const data =
+      (cloned.data && typeof cloned.data === "object" && cloned.data) ||
+      (typeof cloned === "object" ? cloned : null);
+    if (!data || typeof data !== "object") continue;
+
+    if (data.type === "facebook-image-url" || data.type === "instagram-image-url") {
+      if (!data.url) {
+        continue;
+      }
+      try {
+        const base64 = await fetchFacebookImageAsBase64(data.url);
+        cloned.data = {
+          ...data,
+          type: "image",
+          base64,
+          text: data.text || "ผู้ใช้ส่งรูปภาพมา",
+        };
+      } catch (error) {
+        console.error(
+          "[Queue] ไม่สามารถดึงรูปภาพจาก URL สำหรับประมวลผลได้:",
+          error?.message || error,
+        );
+        continue;
+      }
+    } else if (data.type === "whatsapp-image-media") {
+      if (!data.mediaId || !queueContext.whatsappAccessToken) {
+        continue;
+      }
+      try {
+        const media = await fetchWhatsAppMediaAsBase64(
+          data.mediaId,
+          queueContext.whatsappAccessToken,
+        );
+        cloned.data = {
+          ...data,
+          type: "image",
+          base64: media.base64,
+          mime: media.mimeType || null,
+          text: data.text || "ผู้ใช้ส่งรูปภาพมา",
+        };
+      } catch (error) {
+        console.error(
+          "[Queue] ไม่สามารถดึงรูปภาพ WhatsApp สำหรับประมวลผลได้:",
+          error?.message || error,
+        );
+        continue;
+      }
+    } else if (data.type === "line-image-message") {
+      if (!data.messageId) {
+        continue;
+      }
+      try {
+        const client =
+          queueContext.lineClient || (await getLineClientForContext(botId));
+        if (!client) {
+          throw new Error("ไม่พบ LINE client");
+        }
+
+        const stream = await client.getMessageContent(data.messageId);
+        const buffers = [];
+        for await (const chunk of stream) {
+          buffers.push(chunk);
+        }
+        const optimizedBuffer = await optimizeImageBufferForVision(
+          Buffer.concat(buffers),
+        );
+        cloned.data = {
+          ...data,
+          type: "image",
+          base64: optimizedBuffer.toString("base64"),
+          text:
+            data.text ||
+            "ผู้ใช้ส่งรูปภาพมา โปรดดูรูปภาพและให้คำตอบที่เหมาะสม",
+        };
+      } catch (error) {
+        console.error(
+          "[Queue] ไม่สามารถดึงรูปภาพ LINE สำหรับประมวลผลได้:",
+          error?.message || error,
+        );
+        cloned.data = {
+          type: "text",
+          text: "เกิดข้อผิดพลาดในการประมวลผลรูปภาพ กรุณาลองส่งรูปภาพใหม่อีกครั้ง",
+        };
+      }
+    }
+
+    materialized.push(cloned);
+  }
+
+  return materialized;
+}
+
 function cloneContentSequenceEntry(entry) {
   if (!entry || typeof entry !== "object") {
     return null;
@@ -6784,12 +7095,13 @@ function buildStarterThreadQuery(userId, platform = "line", botId = null) {
 }
 
 async function hasStarterUserHistory(userId, platform = "line", botId = null) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("chat_history");
-  const query = buildStarterThreadQuery(userId, platform, botId);
-  const existing = await coll.findOne(query, { projection: { _id: 1 } });
-  return !!existing;
+  return getChatRepository().hasMessages({
+    userId,
+    platform,
+    botId,
+    defaultBotOnly: botId === null || typeof botId === "undefined" || botId === "",
+    role: "user",
+  });
 }
 
 async function resolveConversationStarterForQueue(queueContext = {}) {
@@ -7383,6 +7695,42 @@ async function sendConversationStarterSequence(
 async function addToQueue(userId, incomingItem, options = {}) {
   logHotPathDebug(`[LOG] เพิ่มข้อมูลเข้าคิวสำหรับผู้ใช้: ${userId}`);
   const queueKey = buildQueueKey(userId, options);
+  const mergedContext = mergeQueueContext({}, options);
+
+  // ตรวจสอบจำนวนข้อความสูงสุดในคิว
+  const maxQueueSetting = await getSettingValue("maxQueueMessages", 10);
+  const maxQueueMessages = Number(maxQueueSetting);
+  const normalizedMax =
+    Number.isFinite(maxQueueMessages) && maxQueueMessages > 0
+      ? Math.floor(maxQueueMessages)
+      : 10;
+
+  // ใช้ค่าที่ตั้งไว้ในฐานข้อมูล
+  const chatDelaySetting = await getSettingValue("chatDelaySeconds", 0);
+  const chatDelay = Number(chatDelaySetting);
+  const normalizedDelay =
+    Number.isFinite(chatDelay) && chatDelay >= 0 ? chatDelay : 5;
+  const normalizedDelayMs = Math.floor(normalizedDelay * 1000);
+
+  if (shouldUseDistributedConversationQueue()) {
+    await appendConversationBuffer(
+      queueKey,
+      userId,
+      incomingItem,
+      mergedContext,
+      {
+        delayMs: normalizedDelayMs,
+        maxMessages: normalizedMax,
+      },
+    );
+    return;
+  }
+
+  if (!shouldAllowLegacyInMemoryConversationQueue()) {
+    throw new Error(
+      `[Queue] In-memory conversation queue is disabled for runtime mode "${runtimeConfig.runtimeMode}"`,
+    );
+  }
 
   if (!userQueues[queueKey]) {
     logHotPathDebug(
@@ -7406,26 +7754,12 @@ async function addToQueue(userId, incomingItem, options = {}) {
   );
 
   const queue = userQueues[queueKey];
-  // ตรวจสอบจำนวนข้อความสูงสุดในคิว
-  const maxQueueSetting = await getSettingValue("maxQueueMessages", 10);
-  const maxQueueMessages = Number(maxQueueSetting);
-  const normalizedMax =
-    Number.isFinite(maxQueueMessages) && maxQueueMessages > 0
-      ? Math.floor(maxQueueMessages)
-      : 10;
 
   queue.messages.push(incomingItem);
   touchQueue(queue);
   logHotPathDebug(
     `[LOG] คิวของผู้ใช้ ${userId} (queueKey: ${queueKey}) มีข้อความ ${queue.messages.length} ข้อความ`,
   );
-
-  // ใช้ค่าที่ตั้งไว้ในฐานข้อมูล
-  const chatDelaySetting = await getSettingValue("chatDelaySeconds", 0);
-  const chatDelay = Number(chatDelaySetting);
-  const normalizedDelay =
-    Number.isFinite(chatDelay) && chatDelay >= 0 ? chatDelay : 5;
-  const normalizedDelayMs = Math.floor(normalizedDelay * 1000);
 
   if (queue.messages.length >= normalizedMax) {
     logHotPathDebug(
@@ -7571,6 +7905,10 @@ async function processFlushedMessages(
     ...queueContext,
     selectedInstructions: runtimeInstructionContext.promptSelections,
   };
+  const normalizedMergedContent = await materializeQueuedMessagesForProcessing(
+    mergedContent,
+    runtimeQueueContext,
+  );
   const buildHistoryOptions = (baseOptions = {}) => ({
     ...(baseOptions && typeof baseOptions === "object" ? baseOptions : {}),
     instructionMeta: runtimeInstructionMeta,
@@ -7635,6 +7973,7 @@ async function processFlushedMessages(
           true,
           channelAccessToken,
           channelSecret,
+          botIdForHistory,
         );
         return true;
       } catch (fallbackError) {
@@ -7652,7 +7991,7 @@ async function processFlushedMessages(
     logHotPathDebug("[LOG] Agent emergency stop เปิดใช้งาน - ข้ามการตอบ AI");
     await saveChatHistory(
       userId,
-      mergedContent,
+      normalizedMergedContent,
       "",
       platform,
       botIdForHistory,
@@ -7682,7 +8021,7 @@ async function processFlushedMessages(
     );
     await saveChatHistory(
       userId,
-      mergedContent,
+      normalizedMergedContent,
       "",
       platform,
       botIdForHistory,
@@ -7700,7 +8039,7 @@ async function processFlushedMessages(
     );
     await saveChatHistory(
       userId,
-      mergedContent,
+      normalizedMergedContent,
       "",
       platform,
       botIdForHistory,
@@ -7723,7 +8062,7 @@ async function processFlushedMessages(
     logHotPathDebug(`[LOG] AI ถูกปิดใช้งานในระดับระบบ`);
     await saveChatHistory(
       userId,
-      mergedContent,
+      normalizedMergedContent,
       "",
       platform,
       botIdForHistory,
@@ -7761,7 +8100,7 @@ async function processFlushedMessages(
       Array.isArray(starterConfig.starter.messages) &&
       starterConfig.starter.messages.length > 0
     ) {
-      const hasUserHistory = await hasStarterUserHistory(
+        const hasUserHistory = await hasStarterUserHistory(
         userId,
         platform,
         botIdForHistory,
@@ -7784,7 +8123,7 @@ async function processFlushedMessages(
           );
           await saveChatHistory(
             userId,
-            mergedContent,
+            normalizedMergedContent,
             assistantPayload,
             platform,
             botIdForHistory,
@@ -7800,7 +8139,7 @@ async function processFlushedMessages(
         );
         await saveChatHistory(
           userId,
-          mergedContent,
+          normalizedMergedContent,
           "",
           platform,
           botIdForHistory,
@@ -7830,7 +8169,7 @@ async function processFlushedMessages(
   );
 
   // บันทึกสถานะเนื้อหาต้นฉบับเพื่อช่วยดีบัก
-  analyzeQueueContent(mergedContent);
+  analyzeQueueContent(normalizedMergedContent);
 
   let assistantMsg = "";
   const recoveryStrategies = [
@@ -7846,7 +8185,7 @@ async function processFlushedMessages(
   ) {
     const strategy = recoveryStrategies[attemptIndex];
     const { messages: sanitizedMessages, meta } = filterMessagesForStrategy(
-      mergedContent,
+      normalizedMergedContent,
       strategy.key,
     );
 
@@ -7955,7 +8294,7 @@ async function processFlushedMessages(
   logHotPathDebug(`[LOG] บันทึกประวัติการสนทนาสำหรับผู้ใช้: ${userId}`);
   await saveChatHistory(
     userId,
-    mergedContent,
+    normalizedMergedContent,
     assistantMsg,
     platform,
     botIdForHistory,
@@ -7993,6 +8332,7 @@ async function processFlushedMessages(
           filteredMessage,
           facebookAccessToken,
           {
+            botId: botIdForHistory,
             metadata: "ai_generated",
             selectedImageCollections:
               queueContext.selectedImageCollections || null,
@@ -8022,6 +8362,7 @@ async function processFlushedMessages(
           instagramAccessToken,
           instagramSenderId,
           {
+            botId: botIdForHistory,
             selectedImageCollections:
               queueContext.selectedImageCollections || null,
           },
@@ -8050,6 +8391,7 @@ async function processFlushedMessages(
           whatsappAccessToken,
           whatsappPhoneNumberId,
           {
+            botId: botIdForHistory,
             selectedImageCollections:
               queueContext.selectedImageCollections || null,
           },
@@ -8309,14 +8651,12 @@ async function handleLineGroupSlipOkImage(event, queueOptions = {}) {
     sourceType === "group" ? event?.source?.groupId : event?.source?.roomId;
   if (!groupId) return;
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const channel = await db.collection("notification_channels").findOne({
+  const channel = await getNotificationRepository().findChannel({
     isActive: true,
     type: "line_group",
     senderBotId: botId,
     groupId,
-    "settings.slipOkEnabled": true,
+    slipOkEnabled: true,
   });
 
   if (!channel) return;
@@ -8427,11 +8767,11 @@ async function handleLineEvent(event, queueOptions = {}) {
 
   console.log(`[LOG] เริ่มประมวลผล event: ${uniqueId}`);
 
-  if (processedIds.has(uniqueId)) {
+  const claimedEvent = await claimProcessedEvent(uniqueId);
+  if (!claimedEvent) {
     console.log(`[LOG] ข้าม event ที่ประมวลผลแล้ว: ${uniqueId}`);
     return;
   }
-  processedIds.add(uniqueId);
 
   const eventSourceType = event?.source?.type || null;
   if (eventSourceType === "group" || eventSourceType === "room") {
@@ -8584,6 +8924,19 @@ async function handleLineEvent(event, queueOptions = {}) {
       console.log(`[LOG] ได้รับรูปภาพจากผู้ใช้: ${userId}, กำลังประมวลผล...`);
 
       try {
+        if (shouldUseDistributedConversationQueue()) {
+          itemToQueue.data = {
+            type: "line-image-message",
+            messageId: message.id || null,
+            text: "ผู้ใช้ส่งรูปภาพมา โปรดดูรูปภาพและให้คำตอบที่เหมาะสม",
+          };
+          await addToQueue(userId, itemToQueue, {
+            ...queueOptions,
+            platform: "line",
+          });
+          return;
+        }
+
         const lineClientFromContext =
           queueOptions.lineClient ||
           (await getLineClientForContext(botIdForHistory));
@@ -8611,31 +8964,10 @@ async function handleLineEvent(event, queueOptions = {}) {
         const originalBuffer = Buffer.concat(buffers);
         console.log(`[LOG] ขนาดรูปภาพต้นฉบับ: ${originalBuffer.length} bytes`);
 
-        let resizedBuffer;
-        try {
-          console.log(`[LOG] กำลังปรับขนาดและเพิ่มประสิทธิภาพรูปภาพ...`);
-
-          // ปรับขนาดให้เหมาะสมกับ OpenAI Vision API (ลด token cost)
-          resizedBuffer = await sharp(originalBuffer)
-            .resize({
-              width: 1024, // ขนาดที่เหมาะสมสำหรับ Vision API
-              height: 1024, // จำกัดขนาดสูงสุด
-              fit: "inside", // รักษาอัตราส่วน
-              withoutEnlargement: true, // ไม่ขยายรูปเล็ก
-            })
-            .jpeg({
-              quality: 85, // คุณภาพดีแต่ไฟล์ไม่ใหญ่เกินไป
-              progressive: true,
-            })
-            .toBuffer();
-          console.log(
-            `[LOG] ปรับขนาดรูปภาพเรียบร้อย: ${resizedBuffer.length} bytes (ลดลง ${((1 - resizedBuffer.length / originalBuffer.length) * 100).toFixed(1)}%)`,
-          );
-        } catch (err) {
-          console.error("[ERROR] ไม่สามารถปรับขนาดรูปภาพได้:", err.message);
-          resizedBuffer = originalBuffer;
-          console.log(`[LOG] ใช้รูปภาพต้นฉบับแทน`);
-        }
+        let resizedBuffer = await optimizeImageBufferForVision(originalBuffer);
+        console.log(
+          `[LOG] ปรับขนาดรูปภาพเรียบร้อย: ${resizedBuffer.length} bytes (ลดลง ${((1 - resizedBuffer.length / originalBuffer.length) * 100).toFixed(1)}%)`,
+        );
 
         // ตรวจสอบขนาดไฟล์หลังการปรับขนาด
         const maxSize = 20 * 1024 * 1024; // 20MB limit
@@ -9312,13 +9644,11 @@ async function handleFacebookComment(
 
     if (policy.pullToChat && commenterId) {
       try {
-        const chatColl = db.collection("chat_history");
-        const existingChat = await chatColl.findOne(
-          buildChatHistoryUserQuery(commenterId, {
-            platform: "facebook",
-            botId: botId,
-          }),
-        );
+        const existingChat = await getChatRepository().hasMessages({
+          userId: commenterId,
+          platform: "facebook",
+          botId,
+        });
 
         if (!existingChat) {
           const welcomeDoc = {
@@ -9330,9 +9660,9 @@ async function handleFacebookComment(
             platform: "facebook",
             botId: botId,
           };
-          const welcomeInsert = await chatColl.insertOne(welcomeDoc);
-          if (welcomeInsert?.insertedId) {
-            welcomeDoc._id = welcomeInsert.insertedId;
+          const welcomeInsert = await getChatRepository().insertMessage(welcomeDoc);
+          if (welcomeInsert?._id) {
+            welcomeDoc._id = welcomeInsert._id;
           }
         }
       } catch (pullErr) {
@@ -9680,7 +10010,6 @@ app.post(
       const client = await connectDB();
       const db = client.db("chatbot");
       const coll = db.collection("follow_up_assets");
-      const bucket = new GridFSBucket(db, { bucketName: "followupAssets" });
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -9731,8 +10060,13 @@ app.post(
         const baseName = `starter_${timestamp}_${uniqueId}`;
         const fileName = `${baseName}.jpg`;
         const thumbName = `${baseName}_thumb.jpg`;
-        const [fileId, thumbFileId] = await Promise.all([
-          uploadBufferToGridFS(bucket, fileName, optimized, {
+        const [mainUpload, thumbUpload] = await Promise.all([
+          uploadBufferToAssetStorage({
+            db,
+            gridFsBucketName: "followupAssets",
+            storagePrefix: "followup",
+            filename: fileName,
+            buffer: optimized,
             contentType: "image/jpeg",
             metadata: {
               type: "original",
@@ -9740,7 +10074,12 @@ app.post(
               height: metadata.height || null,
             },
           }),
-          uploadBufferToGridFS(bucket, thumbName, thumb, {
+          uploadBufferToAssetStorage({
+            db,
+            gridFsBucketName: "followupAssets",
+            storagePrefix: "followup",
+            filename: thumbName,
+            buffer: thumb,
             contentType: "image/jpeg",
             metadata: { type: "thumb" },
           }),
@@ -9750,9 +10089,11 @@ app.post(
           fileName,
           thumbName,
           thumbFileName: thumbName,
-          fileId,
-          thumbFileId,
-          storage: "mongo",
+          fileId: mainUpload.fileId,
+          thumbFileId: thumbUpload.fileId,
+          storage: mainUpload.storage,
+          storageKey: mainUpload.storageKey || null,
+          thumbStorageKey: thumbUpload.storageKey || null,
           sha256,
           mime: "image/jpeg",
           size: optimized.length,
@@ -10647,95 +10988,110 @@ app.use((err, req, res, next) => {
   });
 });
 
-server.listen(PORT, async () => {
-  console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
-  let dbReady = false;
-  let client = null;
-  try {
-    console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
-    client = await connectDB();
-    dbReady = true;
-    console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
-  } catch (err) {
-    console.error(`[ERROR] ไม่สามารถเชื่อมต่อฐานข้อมูล MongoDB ได้:`, err);
+let runtimeInitializationPromise = null;
+let legacyBackgroundJobsStarted = false;
+
+async function initializeMongoRuntime(options = {}) {
+  if (runtimeInitializationPromise) {
+    return runtimeInitializationPromise;
   }
 
-  if (!dbReady) {
-    console.error(
-      `[ERROR] ข้ามการเริ่มระบบพื้นหลัง เนื่องจากเชื่อมต่อฐานข้อมูลไม่สำเร็จ`,
-    );
+  runtimeInitializationPromise = (async () => {
+    console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
+    const client = await connectDB();
+    console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
+    const db = client.db("chatbot");
+
+    if (options.runMigrations !== false) {
+      try {
+        console.log(`[LOG] กำลังตรวจสอบและ migrate ข้อมูล...`);
+        await migrateChatHistorySenderId(db);
+        await migrateInstructionAssetsAddSlug();
+        await migrateAssetsToCollections();
+        await migrateToInstructionsV2();
+        console.log(`[LOG] Migration เสร็จสิ้น`);
+      } catch (migrationError) {
+        console.error(`[ERROR] Migration ล้มเหลว:`, migrationError);
+      }
+    }
+
+    if (options.loadLegacyContent !== false) {
+      try {
+        console.log(`[LOG] กำลังดึงข้อมูล instructions จาก Google Doc...`);
+        await fetchGoogleDocInstructions();
+        console.log(
+          `[LOG] ดึงข้อมูล instructions สำเร็จ (${googleDocInstructions.length} อักขระ)`,
+        );
+      } catch (docError) {
+        console.error(`[ERROR] ดึงข้อมูล instructions จาก Google Doc ไม่สำเร็จ:`, docError);
+      }
+
+      try {
+        console.log(`[LOG] เริ่มดึงข้อมูลทุกแท็บจาก Google Sheets...`);
+        sheetJSON = await fetchAllSheetsDataNew(SPREADSHEET_ID);
+        console.log(
+          `[LOG] ดึงข้อมูลจาก Google Sheets เสร็จสิ้น ได้ข้อมูลจาก ${Object.keys(sheetJSON).length} แท็บ`,
+        );
+      } catch (sheetError) {
+        console.error(`[ERROR] ดึงข้อมูลจาก Google Sheets ไม่สำเร็จ:`, sheetError);
+      }
+    }
+
+    try {
+      await ensureInstructionIdentifiers();
+    } catch (settingsError) {
+      console.error(`[ERROR] ensureInstructionIdentifiers ล้มเหลว:`, settingsError);
+    }
+
+    try {
+      await ensureSettings();
+    } catch (settingsError) {
+      console.error(`[ERROR] ensureSettings ล้มเหลว:`, settingsError);
+    }
+
+    try {
+      await agentForgeService.ensureIndexes();
+    } catch (agentForgeIndexError) {
+      console.error(
+        `[ERROR] agentForgeService.ensureIndexes ล้มเหลว:`,
+        agentForgeIndexError,
+      );
+    }
+
+    try {
+      await ensureFollowUpIndexes();
+    } catch (followUpIndexError) {
+      console.error(`[ERROR] ensureFollowUpIndexes ล้มเหลว:`, followUpIndexError);
+    }
+
+    try {
+      initTelemetry(db);
+    } catch (telemetryError) {
+      console.log(`[Telemetry] Init failed (non-critical):`, telemetryError.message);
+    }
+
+    return { client, db };
+  })().catch((error) => {
+    runtimeInitializationPromise = null;
+    throw error;
+  });
+
+  return runtimeInitializationPromise;
+}
+
+async function startLegacyBackgroundJobs(options = {}) {
+  if (legacyBackgroundJobsStarted) {
     return;
   }
-  const db = client.db("chatbot");
 
-  // รัน migration อัตโนมัติ (ไม่ให้บล็อกระบบพื้นหลังหากล้มเหลว)
-  try {
-    console.log(`[LOG] กำลังตรวจสอบและ migrate ข้อมูล...`);
-    await migrateChatHistorySenderId(db);
-    await migrateInstructionAssetsAddSlug();
-    await migrateAssetsToCollections();
-    await migrateToInstructionsV2(); // Auto-migrate to new instruction system
-    console.log(`[LOG] Migration เสร็จสิ้น`);
-  } catch (migrationError) {
-    console.error(`[ERROR] Migration ล้มเหลว:`, migrationError);
-  }
-
-  // โหลด instructions จาก Google Doc (ไม่บล็อกการเริ่มระบบ)
-  try {
-    console.log(`[LOG] กำลังดึงข้อมูล instructions จาก Google Doc...`);
-    await fetchGoogleDocInstructions();
-    console.log(
-      `[LOG] ดึงข้อมูล instructions สำเร็จ (${googleDocInstructions.length} อักขระ)`,
-    );
-  } catch (docError) {
-    console.error(`[ERROR] ดึงข้อมูล instructions จาก Google Doc ไม่สำเร็จ:`, docError);
-  }
-
-  // ดึงข้อมูลทุกแท็บจาก Google Sheets (ไม่บล็อกระบบติดตาม/งานพื้นหลัง)
-  try {
-    console.log(`[LOG] เริ่มดึงข้อมูลทุกแท็บจาก Google Sheets...`);
-    sheetJSON = await fetchAllSheetsDataNew(SPREADSHEET_ID);
-    console.log(
-      `[LOG] ดึงข้อมูลจาก Google Sheets เสร็จสิ้น ได้ข้อมูลจาก ${Object.keys(sheetJSON).length} แท็บ`,
-    );
-  } catch (sheetError) {
-    console.error(`[ERROR] ดึงข้อมูลจาก Google Sheets ไม่สำเร็จ:`, sheetError);
-  }
-
-  // ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติ (ไม่บล็อกระบบหลัก)
-  try {
-    console.log(`[LOG] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติ...`);
-    scheduleDailyRefresh();
-  } catch (refreshError) {
-    console.error(`[ERROR] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติไม่สำเร็จ:`, refreshError);
-  }
-
-  // ทำให้แน่ใจว่ามีการตั้งค่าเริ่มต้นใน collection settings
-  try {
-    await ensureInstructionIdentifiers();
-  } catch (settingsError) {
-    console.error(`[ERROR] ensureInstructionIdentifiers ล้มเหลว:`, settingsError);
-  }
-
-  try {
-    await ensureSettings();
-  } catch (settingsError) {
-    console.error(`[ERROR] ensureSettings ล้มเหลว:`, settingsError);
-  }
-
-  try {
-    await agentForgeService.ensureIndexes();
-  } catch (agentForgeIndexError) {
-    console.error(
-      `[ERROR] agentForgeService.ensureIndexes ล้มเหลว:`,
-      agentForgeIndexError,
-    );
-  }
-
-  try {
-    await ensureFollowUpIndexes();
-  } catch (followUpIndexError) {
-    console.error(`[ERROR] ensureFollowUpIndexes ล้มเหลว:`, followUpIndexError);
+  const includeLegacyContentRefresh = options.includeLegacyContentRefresh !== false;
+  if (includeLegacyContentRefresh) {
+    try {
+      console.log(`[LOG] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติ...`);
+      scheduleDailyRefresh();
+    } catch (refreshError) {
+      console.error(`[ERROR] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติไม่สำเร็จ:`, refreshError);
+    }
   }
 
   try {
@@ -10759,15 +11115,49 @@ server.listen(PORT, async () => {
     );
   }
 
-  // Telemetry: ส่ง heartbeat ไป Telegram (fire-and-forget)
-  try {
-    initTelemetry(db);
-  } catch (telemetryError) {
-    console.log(`[Telemetry] Init failed (non-critical):`, telemetryError.message);
+  legacyBackgroundJobsStarted = true;
+}
+
+async function startServer(options = {}) {
+  const shouldStartBackgroundJobs =
+    options.startBackgroundJobs !== false &&
+    runtimeConfig.features.legacyBackgroundJobs;
+  const loadLegacyContent = options.loadLegacyContent !== false;
+
+  assertDistributedRealtimeInfrastructureReady();
+
+  if (
+    runtimeConfig.runtimeMode === "admin-app" ||
+    runtimeConfig.runtimeMode === "legacy"
+  ) {
+    await attachAdminRealtimeBridge(io);
   }
 
-  console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
-});
+  return new Promise((resolve, reject) => {
+    const onError = (error) => reject(error);
+    server.once("error", onError);
+    server.listen(PORT, async () => {
+      server.off("error", onError);
+      console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
+      try {
+        await initializeMongoRuntime({
+          runMigrations: options.runMigrations !== false,
+          loadLegacyContent,
+        });
+        if (shouldStartBackgroundJobs) {
+          await startLegacyBackgroundJobs({
+            includeLegacyContentRefresh: loadLegacyContent,
+          });
+        }
+        console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
+        resolve(server);
+      } catch (error) {
+        console.error(`[ERROR] ไม่สามารถเริ่มระบบได้:`, error);
+        reject(error);
+      }
+    });
+  });
+}
 
 // เพิ่มฟังก์ชันเพื่อเก็บและดึงประวัติการวิเคราะห์ Flow ของผู้ใช้
 async function getUserFlowHistory(userId) {
@@ -10801,6 +11191,7 @@ async function sendMessage(
   splitLongMessage = false,
   channelAccessToken = null,
   channelSecret = null,
+  botId = null,
 ) {
   try {
     const normalizedMessage = normalizeOutgoingText(message);
@@ -10822,33 +11213,44 @@ async function sendMessage(
     // Line มีขีดจำกัด 5,000 อักขระต่อข้อความ แต่เราจะตั้งที่ 4,000 เพื่อความปลอดภัย
     const MAX_LENGTH = 4000;
 
-    if (splitLongMessage && normalizedMessage.length > MAX_LENGTH) {
-      // แบ่งข้อความที่ยาวออกเป็นส่วนๆ
-      const parts = [];
-      for (let i = 0; i < normalizedMessage.length; i += MAX_LENGTH) {
-        parts.push(
-          normalizedMessage.substring(
-            i,
-            Math.min(normalizedMessage.length, i + MAX_LENGTH),
-          ),
-        );
-      }
+    await runOutboundDelivery(
+      {
+        platform: "line",
+        botId,
+        userId,
+        transport: "line-reply-api",
+        messageText: normalizedMessage,
+        payload: { splitLongMessage: Boolean(splitLongMessage) },
+      },
+      async () => {
+        if (splitLongMessage && normalizedMessage.length > MAX_LENGTH) {
+          const parts = [];
+          for (let i = 0; i < normalizedMessage.length; i += MAX_LENGTH) {
+            parts.push(
+              normalizedMessage.substring(
+                i,
+                Math.min(normalizedMessage.length, i + MAX_LENGTH),
+              ),
+            );
+          }
 
-      // ส่งข้อความที่แบ่งเป็นชุด
-      await client.replyMessage(
-        replyToken,
-        parts.map((part) => ({
+          await client.replyMessage(
+            replyToken,
+            parts.map((part) => ({
+              type: "text",
+              text: part,
+            })),
+          );
+          return { payload: { partCount: parts.length } };
+        }
+
+        await client.replyMessage(replyToken, {
           type: "text",
-          text: part,
-        })),
-      );
-    } else {
-      // ส่งข้อความปกติ
-      await client.replyMessage(replyToken, {
-        type: "text",
-        text: normalizedMessage.substring(0, MAX_LENGTH), // ตัดข้อความให้ไม่เกินขีดจำกัด
-      });
-    }
+          text: normalizedMessage.substring(0, MAX_LENGTH),
+        });
+        return { payload: { partCount: 1 } };
+      },
+    );
   } catch (err) {
     console.error(`[ERROR] ไม่สามารถส่งข้อความถึงผู้ใช้ ${userId} ได้:`, err);
   }
@@ -12188,10 +12590,6 @@ async function getAssistantResponseMultimodal(
 
 // ============================ Settings & Instructions Helpers ============================
 async function ensureSettings() {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("settings");
-
   // ตรวจสอบและสร้างการตั้งค่าเริ่มต้น
   const defaultSettings = [
     { key: "aiEnabled", value: true },
@@ -12230,16 +12628,7 @@ async function ensureSettings() {
       ],
     },
   ];
-
-  for (const setting of defaultSettings) {
-    const existing = await coll.findOne({ key: setting.key });
-    if (!existing) {
-      await coll.insertOne(setting);
-      console.log(
-        `[SETTINGS] สร้างการตั้งค่าเริ่มต้น: ${setting.key} = ${setting.value}`,
-      );
-    }
-  }
+  await getSettingsRepository().ensureDefaults(defaultSettings);
 }
 
 function parseOptionalBoolean(value) {
@@ -12252,23 +12641,9 @@ function parseOptionalBoolean(value) {
   return undefined;
 }
 
-// Get setting value with default fallback
-const _settingsCache = new Map(); // key → { value, expireAt }
-const _SETTINGS_CACHE_TTL_MS = 30_000; // 30 วินาที
-
 async function getSettingValue(key, defaultValue) {
   try {
-    const cached = _settingsCache.get(key);
-    if (cached && Date.now() < cached.expireAt) {
-      return cached.value;
-    }
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("settings");
-    const doc = await coll.findOne({ key });
-    const value = !doc || typeof doc.value === "undefined" ? defaultValue : doc.value;
-    _settingsCache.set(key, { value, expireAt: Date.now() + _SETTINGS_CACHE_TTL_MS });
-    return value;
+    return await getSettingsRepository().getValue(key, defaultValue);
   } catch (error) {
     console.error(`Error getting setting ${key}:`, error);
     return defaultValue;
@@ -12277,12 +12652,7 @@ async function getSettingValue(key, defaultValue) {
 
 async function setSettingValue(key, value) {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("settings");
-    await coll.updateOne({ key }, { $set: { value } }, { upsert: true });
-    _settingsCache.delete(key); // invalidate cache ทันที
-    return true;
+    return await getSettingsRepository().setValue(key, value);
   } catch (error) {
     console.error(`Error setting ${key}:`, error);
     return false;
@@ -12290,12 +12660,7 @@ async function setSettingValue(key, value) {
 }
 
 function invalidateSettingsCacheKeys(keys = []) {
-  if (!Array.isArray(keys)) return;
-  for (const key of keys) {
-    if (typeof key === "string" && key.trim()) {
-      _settingsCache.delete(key.trim());
-    }
-  }
+  getSettingsRepository().invalidateKeys(keys);
 }
 
 async function getOrderExtractionModeSetting() {
@@ -12303,11 +12668,7 @@ async function getOrderExtractionModeSetting() {
 }
 
 async function getAiEnabled() {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("settings");
-  const doc = await coll.findOne({ key: "aiEnabled" });
-  return doc ? doc.value : true;
+  return getSettingValue("aiEnabled", true);
 }
 
 async function setAiEnabled(state) {
@@ -13293,6 +13654,238 @@ async function uploadBufferToGridFS(bucket, filename, buffer, options = {}) {
   });
 }
 
+function normalizeStorageMetadata(metadata = {}) {
+  const normalized = {};
+  Object.entries(metadata || {}).forEach(([key, value]) => {
+    if (value === null || typeof value === "undefined") return;
+    normalized[String(key)] =
+      typeof value === "string" ? value : JSON.stringify(value);
+  });
+  return normalized;
+}
+
+function buildAssetStorageKey(prefix, filename) {
+  const normalizedPrefix = String(prefix || "assets")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  const normalizedFileName = String(filename || "")
+    .trim()
+    .replace(/^\/+/, "");
+  if (!normalizedFileName) {
+    throw new Error("Missing filename for asset storage key");
+  }
+  return normalizedPrefix
+    ? `${normalizedPrefix}/${normalizedFileName}`
+    : normalizedFileName;
+}
+
+function isBucketNotFoundError(err) {
+  const statusCode = err?.$metadata?.httpStatusCode;
+  const errorName = err?.name || err?.Code || err?.code || "";
+  return (
+    statusCode === 404 ||
+    errorName === "NotFound" ||
+    errorName === "NoSuchKey" ||
+    errorName === "NoSuchBucket"
+  );
+}
+
+function buildBucketKeyCandidates(prefix, explicitKey, fileName) {
+  const candidates = [];
+  if (explicitKey) candidates.push(String(explicitKey).trim());
+  if (fileName) {
+    candidates.push(buildAssetStorageKey(prefix, fileName));
+  }
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+async function getFirstBucketObjectStream(keys = []) {
+  if (!isBucketConfigured()) return null;
+
+  for (const key of keys) {
+    try {
+      const stream = await getBucketObjectStream(key);
+      return { key, stream };
+    } catch (err) {
+      if (isBucketNotFoundError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return null;
+}
+
+async function checkBucketObjectCandidates(keys = []) {
+  if (!isBucketConfigured()) {
+    return { exists: false, key: null };
+  }
+
+  for (const key of keys) {
+    try {
+      await headBucketObject(key);
+      return { exists: true, key };
+    } catch (err) {
+      if (isBucketNotFoundError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return { exists: false, key: null };
+}
+
+async function checkGridFsVariantCandidates(bucket, fileId, fileNames = []) {
+  const objectId = toObjectId(fileId);
+  if (objectId) {
+    try {
+      const files = await bucket.find({ _id: objectId }).limit(1).toArray();
+      if (files.length > 0) {
+        return {
+          exists: true,
+          idExists: true,
+          filenameExists: true,
+          fileId: files[0]._id,
+          fileName: files[0].filename || null,
+        };
+      }
+    } catch (err) {
+      console.warn("[GridFS] check by id failed:", err?.message || err);
+    }
+  }
+
+  for (const fileName of fileNames) {
+    if (!fileName) continue;
+    try {
+      const files = await bucket
+        .find({ filename: fileName })
+        .sort({ uploadDate: -1 })
+        .limit(1)
+        .toArray();
+      if (files.length > 0) {
+        return {
+          exists: true,
+          idExists: false,
+          filenameExists: true,
+          fileId: files[0]._id,
+          fileName: files[0].filename || fileName,
+        };
+      }
+    } catch (err) {
+      console.warn("[GridFS] check by filename failed:", err?.message || err);
+    }
+  }
+
+  return {
+    exists: false,
+    idExists: false,
+    filenameExists: false,
+    fileId: null,
+    fileName: null,
+  };
+}
+
+function checkLocalAssetCandidates(localDir, fileNames = []) {
+  if (!localDir) {
+    return { exists: false, filePath: null, fileName: null };
+  }
+
+  for (const fileName of fileNames) {
+    if (!fileName) continue;
+    const filePath = path.join(localDir, fileName);
+    if (fs.existsSync(filePath)) {
+      return { exists: true, filePath, fileName };
+    }
+  }
+
+  return { exists: false, filePath: null, fileName: null };
+}
+
+function deleteLocalAssetFileInDir(localDir, fileName) {
+  if (!localDir || !fileName) return;
+  try {
+    const filePath = path.join(localDir, fileName);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (err) {
+    console.warn(
+      "[Assets] Failed to remove local asset file:",
+      err?.message || err,
+    );
+  }
+}
+
+async function uploadBufferToAssetStorage({
+  db,
+  gridFsBucketName,
+  storagePrefix,
+  filename,
+  buffer,
+  contentType,
+  metadata = {},
+}) {
+  if (isBucketConfigured()) {
+    const storageKey = buildAssetStorageKey(storagePrefix, filename);
+    await putBucketObject(storageKey, buffer, {
+      contentType,
+      metadata: normalizeStorageMetadata(metadata),
+    });
+    return {
+      storage: "bucket",
+      storageKey,
+      fileId: null,
+    };
+  }
+
+  const bucket = new GridFSBucket(db, { bucketName: gridFsBucketName });
+  const fileId = await uploadBufferToGridFS(bucket, filename, buffer, {
+    contentType,
+    metadata,
+  });
+  return {
+    storage: "mongo",
+    storageKey: null,
+    fileId,
+  };
+}
+
+async function deleteStoredAssetEntries(db, gridFsBucketName, entries = []) {
+  const bucketEntries = entries
+    .map((entry) => entry?.storageKey)
+    .filter(Boolean);
+
+  if (bucketEntries.length > 0 && isBucketConfigured()) {
+    await Promise.all(
+      bucketEntries.map(async (storageKey) => {
+        try {
+          await deleteBucketObject(storageKey);
+        } catch (err) {
+          if (!isBucketNotFoundError(err)) {
+            console.warn("[BucketStorage] delete failed:", err?.message || err);
+          }
+        }
+      }),
+    );
+  }
+
+  const gridEntries = entries
+    .map((entry) => {
+      if (!entry) return null;
+      if (entry.id) return { id: entry.id };
+      if (entry.filename) return { filename: entry.filename };
+      return null;
+    })
+    .filter(Boolean);
+
+  if (gridEntries.length > 0) {
+    const bucket = new GridFSBucket(db, { bucketName: gridFsBucketName });
+    await deleteGridFsEntries(bucket, gridEntries);
+  }
+}
+
 async function deleteGridFsEntries(bucket, entries = []) {
   for (const entry of entries) {
     if (!entry) continue;
@@ -14148,6 +14741,7 @@ app.use(
     connectDB,
     requireAdmin,
     getAdminUserContext,
+    getChatRepository,
     agentForgeService,
     agentForgeRunner,
     agentForgeScheduler,
@@ -14289,26 +14883,18 @@ app.get("/s/:code", async (req, res) => {
 app.post("/webhook/line/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
-    const escapeRegex = (value = "") =>
-      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedBotId = escapeRegex(botId);
-    const queryConditions = [
-      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
-    ];
-
-    if (ObjectId.isValid(botId)) {
-      queryConditions.push({ _id: new ObjectId(botId) });
-    }
-
-    const lineBot = await coll.findOne({ $or: queryConditions });
+    const lineBot = await getBotRepository().findByIdentifier("line", botId);
 
     if (!lineBot) {
       return res.status(404).json({ error: "Line Bot ไม่พบหรือไม่เปิดใช้งาน" });
     }
+
+    await recordInboundWebhookEvent(
+      "line",
+      lineBot._id ? lineBot._id.toString() : botId,
+      "line-http-request",
+      req.body,
+    );
 
     const botIsActive = lineBot.status === "active";
     const pageRuntime = await getAgentRuntimeForPage(
@@ -14365,21 +14951,30 @@ app.post("/webhook/line/:botId", async (req, res) => {
       runtimePriority: pageRuntime.managed ? "agent_mode" : "bot_status",
     };
 
-    for (const event of events) {
-      try {
-        await handleLineEvent(event, queueOptions);
-      } catch (eventError) {
-        console.error(
-          `[Line Bot: ${lineBot.name}] Error handling event:`,
-          eventError,
-        );
-      }
-    }
+    res.status(200).json({ status: "EVENT_RECEIVED" });
 
-    res.json({ status: "OK" });
+    (async () => {
+      for (const event of events) {
+        try {
+          await handleLineEvent(event, queueOptions);
+        } catch (eventError) {
+          console.error(
+            `[Line Bot: ${lineBot.name}] Error handling event:`,
+            eventError,
+          );
+        }
+      }
+    })().catch((processingError) => {
+      console.error(
+        `[Line Bot: ${lineBot.name}] Async webhook processing failed:`,
+        processingError?.message || processingError,
+      );
+    });
   } catch (err) {
     console.error("Error handling Line webhook:", err);
-    res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
+    }
   }
 });
 
@@ -14389,14 +14984,7 @@ app.post("/webhook/line/:botId", async (req, res) => {
 app.get("/webhook/facebook/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
-    // Find the Facebook Bot by ID
-    const facebookBot = ObjectId.isValid(botId)
-      ? await coll.findOne({ _id: new ObjectId(botId) })
-      : null;
+    const facebookBot = await getBotRepository().findById("facebook", botId);
 
     if (!facebookBot || facebookBot.status !== "active") {
       // สำหรับขั้นตอน verify อนุญาต status อื่น ๆ ได้
@@ -14427,18 +15015,18 @@ app.get("/webhook/facebook/:botId", async (req, res) => {
 app.post("/webhook/facebook/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
-    // Find the Facebook Bot by ID
-    const facebookBot = ObjectId.isValid(botId)
-      ? await coll.findOne({ _id: new ObjectId(botId) })
-      : null;
+    const facebookBot = await getBotRepository().findById("facebook", botId);
 
     if (!facebookBot) {
       return res.status(404).json({ error: "Facebook Bot ไม่พบ" });
     }
+
+    await recordInboundWebhookEvent(
+      "facebook",
+      facebookBot._id ? facebookBot._id.toString() : botId,
+      "facebook-http-request",
+      req.body,
+    );
 
     const botIsActive = facebookBot.status === "active";
     const pageRuntime = await getAgentRuntimeForPage(
@@ -14583,10 +15171,6 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                   continue;
                 }
 
-                const client = await connectDB();
-                const db = client.db("chatbot");
-                const coll = db.collection("chat_history");
-
                 // ตรวจสอบ keyword actions ก่อน (เช่น เปิด/ปิด AI, ปิดระบบติดตาม)
                 const keywordResult = await detectKeywordAction(
                   text,
@@ -14623,9 +15207,9 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                       platform: "facebook",
                       botId: facebookBot?._id?.toString?.() || null,
                     };
-                    const controlInsertResult = await coll.insertOne(controlDoc);
-                    if (controlInsertResult?.insertedId) {
-                      controlDoc._id = controlInsertResult.insertedId;
+                    const savedControlDoc = await getChatRepository().insertMessage(controlDoc);
+                    if (savedControlDoc?._id) {
+                      controlDoc._id = savedControlDoc._id;
                     }
 
                     try {
@@ -14634,7 +15218,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
                     // แจ้ง UI แอดมินแบบเรียลไทม์
                     try {
-                      io.to("admin").emit("newMessage", {
+                      emitAdminEvent("newMessage", {
                         userId: targetUserId,
                         message: controlDoc,
                         sender: "assistant",
@@ -14662,9 +15246,9 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     platform: "facebook",
                     botId: facebookBot?._id?.toString?.() || null,
                   };
-                  const controlInsertResult = await coll.insertOne(controlDoc);
-                  if (controlInsertResult?.insertedId) {
-                    controlDoc._id = controlInsertResult.insertedId;
+                  const savedControlDoc = await getChatRepository().insertMessage(controlDoc);
+                  if (savedControlDoc?._id) {
+                    controlDoc._id = savedControlDoc._id;
                   }
 
                   try {
@@ -14673,7 +15257,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
                   // แจ้ง UI แอดมินแบบเรียลไทม์
                   try {
-                    io.to("admin").emit("newMessage", {
+                    emitAdminEvent("newMessage", {
                       userId: targetUserId,
                       message: controlDoc,
                       sender: "assistant",
@@ -14695,16 +15279,16 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     platform: "facebook",
                     botId: facebookBot?._id?.toString?.() || null,
                   };
-                  const baseInsertResult = await coll.insertOne(baseDoc);
-                  if (baseInsertResult?.insertedId) {
-                    baseDoc._id = baseInsertResult.insertedId;
+                  const savedBaseDoc = await getChatRepository().insertMessage(baseDoc);
+                  if (savedBaseDoc?._id) {
+                    baseDoc._id = savedBaseDoc._id;
                   }
                   // ข้อความทั่วไปจากแอดมินเพจ – อัปเดต UI และ unread count
                   try {
                     await resetUserUnreadCount(targetUserId);
                   } catch (_) { }
                   try {
-                    io.to("admin").emit("newMessage", {
+                    emitAdminEvent("newMessage", {
                       userId: targetUserId,
                       message: baseDoc,
                       sender: "assistant",
@@ -14758,22 +15342,32 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
               if (messagingEvent.message.attachments) {
                 for (const attachment of messagingEvent.message.attachments) {
                   if (attachment.type === "image" && attachment.payload?.url) {
-                    try {
-                      const base64 = await fetchFacebookImageAsBase64(
-                        attachment.payload.url,
-                      );
+                    if (shouldUseDistributedConversationQueue()) {
                       itemsToQueue.push({
                         data: {
-                          type: "image",
-                          base64,
+                          type: "facebook-image-url",
+                          url: attachment.payload.url,
                           text: "ผู้ใช้ส่งรูปภาพมา",
                         },
                       });
-                    } catch (imgErr) {
-                      console.error(
-                        `[Facebook Bot: ${facebookBot.name}] Error fetching image:`,
-                        imgErr.message,
-                      );
+                    } else {
+                      try {
+                        const base64 = await fetchFacebookImageAsBase64(
+                          attachment.payload.url,
+                        );
+                        itemsToQueue.push({
+                          data: {
+                            type: "image",
+                            base64,
+                            text: "ผู้ใช้ส่งรูปภาพมา",
+                          },
+                        });
+                      } catch (imgErr) {
+                        console.error(
+                          `[Facebook Bot: ${facebookBot.name}] Error fetching image:`,
+                          imgErr.message,
+                        );
+                      }
                     }
                   } else if (attachment.type === "audio") {
                     audioAttachments.push({
@@ -14879,20 +15473,10 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 app.get("/webhook/instagram/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const escapeRegex = (value = "") =>
-      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedBotId = escapeRegex(botId);
-    const queryConditions = [
-      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
-    ];
-    if (ObjectId.isValid(botId)) {
-      queryConditions.push({ _id: new ObjectId(botId) });
-    }
-    const instagramBot = await coll.findOne({ $or: queryConditions });
+    const instagramBot = await getBotRepository().findByIdentifier(
+      "instagram",
+      botId,
+    );
 
     if (!instagramBot) {
       return res.status(404).send("Instagram Bot not found");
@@ -14915,24 +15499,21 @@ app.get("/webhook/instagram/:botId", async (req, res) => {
 app.post("/webhook/instagram/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const escapeRegex = (value = "") =>
-      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedBotId = escapeRegex(botId);
-    const queryConditions = [
-      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
-    ];
-    if (ObjectId.isValid(botId)) {
-      queryConditions.push({ _id: new ObjectId(botId) });
-    }
-    const instagramBot = await coll.findOne({ $or: queryConditions });
+    const instagramBot = await getBotRepository().findByIdentifier(
+      "instagram",
+      botId,
+    );
 
     if (!instagramBot) {
       return res.status(404).json({ error: "Instagram Bot ไม่พบ" });
     }
+
+    await recordInboundWebhookEvent(
+      "instagram",
+      instagramBot._id ? instagramBot._id.toString() : botId,
+      "instagram-http-request",
+      req.body,
+    );
 
     const botIsActive = instagramBot.status === "active";
     const pageRuntime = await getAgentRuntimeForPage(
@@ -15005,22 +15586,32 @@ app.post("/webhook/instagram/:botId", async (req, res) => {
 
         for (const attachment of attachments) {
           if (attachment?.type === "image" && attachment?.payload?.url) {
-            try {
-              const base64 = await fetchFacebookImageAsBase64(
-                attachment.payload.url,
-              );
+            if (shouldUseDistributedConversationQueue()) {
               itemsToQueue.push({
                 data: {
-                  type: "image",
-                  base64,
+                  type: "instagram-image-url",
+                  url: attachment.payload.url,
                   text: "ผู้ใช้ส่งรูปภาพมา",
                 },
               });
-            } catch (imgErr) {
-              console.error(
-                `[Instagram Bot: ${instagramBot.name || instagramBot._id}] Error fetching image:`,
-                imgErr?.message || imgErr,
-              );
+            } else {
+              try {
+                const base64 = await fetchFacebookImageAsBase64(
+                  attachment.payload.url,
+                );
+                itemsToQueue.push({
+                  data: {
+                    type: "image",
+                    base64,
+                    text: "ผู้ใช้ส่งรูปภาพมา",
+                  },
+                });
+              } catch (imgErr) {
+                console.error(
+                  `[Instagram Bot: ${instagramBot.name || instagramBot._id}] Error fetching image:`,
+                  imgErr?.message || imgErr,
+                );
+              }
             }
           } else if (attachment?.type === "audio") {
             audioAttachments.push({
@@ -15111,20 +15702,10 @@ app.post("/webhook/instagram/:botId", async (req, res) => {
 app.get("/webhook/whatsapp/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const escapeRegex = (value = "") =>
-      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedBotId = escapeRegex(botId);
-    const queryConditions = [
-      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
-    ];
-    if (ObjectId.isValid(botId)) {
-      queryConditions.push({ _id: new ObjectId(botId) });
-    }
-    const whatsappBot = await coll.findOne({ $or: queryConditions });
+    const whatsappBot = await getBotRepository().findByIdentifier(
+      "whatsapp",
+      botId,
+    );
     if (!whatsappBot) {
       return res.status(404).send("WhatsApp Bot not found");
     }
@@ -15146,23 +15727,20 @@ app.get("/webhook/whatsapp/:botId", async (req, res) => {
 app.post("/webhook/whatsapp/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const escapeRegex = (value = "") =>
-      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedBotId = escapeRegex(botId);
-    const queryConditions = [
-      { webhookUrl: { $regex: `${escapedBotId}$`, $options: "i" } },
-    ];
-    if (ObjectId.isValid(botId)) {
-      queryConditions.push({ _id: new ObjectId(botId) });
-    }
-    const whatsappBot = await coll.findOne({ $or: queryConditions });
+    const whatsappBot = await getBotRepository().findByIdentifier(
+      "whatsapp",
+      botId,
+    );
     if (!whatsappBot) {
       return res.status(404).json({ error: "WhatsApp Bot ไม่พบ" });
     }
+
+    await recordInboundWebhookEvent(
+      "whatsapp",
+      whatsappBot._id ? whatsappBot._id.toString() : botId,
+      "whatsapp-http-request",
+      req.body,
+    );
 
     const botIsActive = whatsappBot.status === "active";
     const pageRuntime = await getAgentRuntimeForPage(
@@ -15209,10 +15787,10 @@ app.post("/webhook/whatsapp/:botId", async (req, res) => {
               : "";
           if (messageId) {
             const dedupeKey = `wa:${messageId}`;
-            if (processedIds.has(dedupeKey)) {
+            const claimedMessage = await claimProcessedEvent(dedupeKey);
+            if (!claimedMessage) {
               continue;
             }
-            processedIds.add(dedupeKey);
           }
 
           const senderId = incomingMessage?.from;
@@ -15276,26 +15854,38 @@ app.post("/webhook/whatsapp/:botId", async (req, res) => {
           } else if (incomingType === "image") {
             const mediaId = incomingMessage?.image?.id || null;
             if (mediaId && queueOptions.whatsappAccessToken) {
-              try {
-                const media = await fetchWhatsAppMediaAsBase64(
-                  mediaId,
-                  queueOptions.whatsappAccessToken,
-                );
+              if (shouldUseDistributedConversationQueue()) {
                 itemsToQueue.push({
                   data: {
-                    type: "image",
-                    base64: media.base64,
+                    type: "whatsapp-image-media",
+                    mediaId,
                     text:
                       incomingMessage?.image?.caption ||
                       "ผู้ใช้ส่งรูปภาพมา",
-                    mime: media.mimeType || null,
                   },
                 });
-              } catch (imgErr) {
-                console.error(
-                  `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] Error fetching image media:`,
-                  imgErr?.message || imgErr,
-                );
+              } else {
+                try {
+                  const media = await fetchWhatsAppMediaAsBase64(
+                    mediaId,
+                    queueOptions.whatsappAccessToken,
+                  );
+                  itemsToQueue.push({
+                    data: {
+                      type: "image",
+                      base64: media.base64,
+                      text:
+                        incomingMessage?.image?.caption ||
+                        "ผู้ใช้ส่งรูปภาพมา",
+                      mime: media.mimeType || null,
+                    },
+                  });
+                } catch (imgErr) {
+                  console.error(
+                    `[WhatsApp Bot: ${whatsappBot.name || whatsappBot._id}] Error fetching image media:`,
+                    imgErr?.message || imgErr,
+                  );
+                }
               }
             }
           } else if (incomingType === "audio") {
@@ -15498,6 +16088,7 @@ async function sendFacebookMessage(
     messagingType = null,
     tag = null,
     selectedImageCollections = null,
+    botId = null,
   } = options || {};
   const normalizedMessage = normalizeOutgoingText(message);
   // แยกข้อความตามตัวแบ่ง [cut] → จากนั้น parse #[IMAGE:<label>] เป็น segments
@@ -15511,134 +16102,80 @@ async function sendFacebookMessage(
     customAssetsMap || (await getAssetsMapForBot(selectedImageCollections));
   const maxLength = 2000;
 
-  for (const part of parts) {
-    const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
-    for (const seg of segments) {
-      if (seg.type === "text") {
-        const text = seg.text || "";
-        // chunk text to maxLength
-        for (let i = 0; i < text.length; i += maxLength) {
-          const chunk = text.slice(i, i + maxLength);
-          if (!chunk.trim()) continue;
-          try {
-            const payload = { text: chunk };
-            if (metadata) {
-              payload.metadata = metadata;
+  let lastProviderMessageId = null;
+  await runOutboundDelivery(
+    {
+      platform: "facebook",
+      botId,
+      userId: recipientId,
+      transport: "facebook-graph-api",
+      messageText: normalizedMessage,
+      payload: { metadata, messagingType, tag },
+    },
+    async () => {
+      for (const part of parts) {
+        const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
+        for (const seg of segments) {
+          if (seg.type === "text") {
+            const text = seg.text || "";
+            for (let i = 0; i < text.length; i += maxLength) {
+              const chunk = text.slice(i, i + maxLength);
+              if (!chunk.trim()) continue;
+              try {
+                const payload = { text: chunk };
+                if (metadata) {
+                  payload.metadata = metadata;
+                }
+                const body = {
+                  recipient: { id: recipientId },
+                  message: payload,
+                };
+                if (messagingType) {
+                  body.messaging_type = messagingType;
+                }
+                if (tag) {
+                  body.tag = tag;
+                }
+                const response = await axios.post(
+                  `https://graph.facebook.com/v18.0/me/messages`,
+                  body,
+                  {
+                    params: { access_token: accessToken },
+                    headers: { "Content-Type": "application/json" },
+                  },
+                );
+                lastProviderMessageId = response.data?.message_id || lastProviderMessageId;
+                logHotPathDebug(
+                  "Facebook text sent:",
+                  response.data?.message_id || "ok",
+                );
+              } catch (error) {
+                const status = error.response?.status;
+                const fbMessage =
+                  error.response?.data?.error?.message || error.message;
+                const conciseError = status
+                  ? `Facebook API ${status}: ${fbMessage}`
+                  : fbMessage;
+                console.error("Error sending Facebook text:", conciseError);
+                throw new Error(conciseError);
+              }
             }
-            const body = {
-              recipient: { id: recipientId },
-              message: payload,
-            };
-            if (messagingType) {
-              body.messaging_type = messagingType;
-            }
-            if (tag) {
-              body.tag = tag;
-            }
-            const response = await axios.post(
-              `https://graph.facebook.com/v18.0/me/messages`,
-              body,
-              {
-                params: { access_token: accessToken },
-                headers: { "Content-Type": "application/json" },
-              },
-            );
-            logHotPathDebug(
-              "Facebook text sent:",
-              response.data?.message_id || "ok",
-            );
-          } catch (error) {
-            const status = error.response?.status;
-            const fbMessage =
-              error.response?.data?.error?.message || error.message;
-            const conciseError = status
-              ? `Facebook API ${status}: ${fbMessage}`
-              : fbMessage;
-            console.error("Error sending Facebook text:", conciseError);
-            throw new Error(conciseError);
-          }
-        }
-      } else if (seg.type === "image") {
-        const mode = await getSettingValue("facebookImageSendMode", "upload");
-        const tryUploadFirst = mode === "upload";
-        let sent = false;
-        const sendByUrl = async () => {
-          const messagePayload = {
-            attachment: {
-              type: "image",
-              payload: { url: seg.url, is_reusable: true },
-            },
-          };
-          if (metadata) {
-            messagePayload.metadata = metadata;
-          }
-          const body = {
-            recipient: { id: recipientId },
-            message: messagePayload,
-          };
-          if (messagingType) {
-            body.messaging_type = messagingType;
-          }
-          if (tag) {
-            body.tag = tag;
-          }
-          const response = await axios.post(
-            `https://graph.facebook.com/v18.0/me/messages`,
-            body,
-            {
-              params: { access_token: accessToken },
-              headers: { "Content-Type": "application/json" },
-            },
-          );
-          logHotPathDebug(
-            "Facebook image sent (url):",
-            response.data?.message_id || "ok",
-            seg.label,
-          );
-        };
-        const sendByUpload = async () => {
-          await sendFacebookImageByUpload(recipientId, seg, accessToken, {
-            metadata,
-            messagingType,
-            tag,
-          });
-          logHotPathDebug("Facebook image sent (upload):", seg.label);
-        };
-        try {
-          if (tryUploadFirst) {
-            await sendByUpload();
-          } else {
-            await sendByUrl();
-          }
-          sent = true;
-        } catch (firstErr) {
-          console.error(
-            `Facebook image ${tryUploadFirst ? "upload" : "url"} mode failed:`,
-            firstErr?.message || firstErr,
-          );
-          try {
-            if (tryUploadFirst) {
-              await sendByUrl();
-            } else {
-              await sendByUpload();
-            }
-            sent = true;
-          } catch (secondErr) {
-            console.error(
-              "Facebook image both modes failed:",
-              secondErr?.message || secondErr,
-            );
-            const alt = seg.alt ? `\n(รูป: ${seg.alt})` : "";
-            try {
-              const fallbackPayload = {
-                text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}`,
+          } else if (seg.type === "image") {
+            const mode = await getSettingValue("facebookImageSendMode", "upload");
+            const tryUploadFirst = mode === "upload";
+            const sendByUrl = async () => {
+              const messagePayload = {
+                attachment: {
+                  type: "image",
+                  payload: { url: seg.url, is_reusable: true },
+                },
               };
               if (metadata) {
-                fallbackPayload.metadata = metadata;
+                messagePayload.metadata = metadata;
               }
               const body = {
                 recipient: { id: recipientId },
-                message: fallbackPayload,
+                message: messagePayload,
               };
               if (messagingType) {
                 body.messaging_type = messagingType;
@@ -15646,7 +16183,7 @@ async function sendFacebookMessage(
               if (tag) {
                 body.tag = tag;
               }
-              await axios.post(
+              const response = await axios.post(
                 `https://graph.facebook.com/v18.0/me/messages`,
                 body,
                 {
@@ -15654,12 +16191,78 @@ async function sendFacebookMessage(
                   headers: { "Content-Type": "application/json" },
                 },
               );
-            } catch (_) { }
+              lastProviderMessageId = response.data?.message_id || lastProviderMessageId;
+              logHotPathDebug(
+                "Facebook image sent (url):",
+                response.data?.message_id || "ok",
+                seg.label,
+              );
+            };
+            const sendByUpload = async () => {
+              await sendFacebookImageByUpload(recipientId, seg, accessToken, {
+                metadata,
+                messagingType,
+                tag,
+              });
+              logHotPathDebug("Facebook image sent (upload):", seg.label);
+            };
+            try {
+              if (tryUploadFirst) {
+                await sendByUpload();
+              } else {
+                await sendByUrl();
+              }
+            } catch (firstErr) {
+              console.error(
+                `Facebook image ${tryUploadFirst ? "upload" : "url"} mode failed:`,
+                firstErr?.message || firstErr,
+              );
+              try {
+                if (tryUploadFirst) {
+                  await sendByUrl();
+                } else {
+                  await sendByUpload();
+                }
+              } catch (secondErr) {
+                console.error(
+                  "Facebook image both modes failed:",
+                  secondErr?.message || secondErr,
+                );
+                const alt = seg.alt ? `\n(รูป: ${seg.alt})` : "";
+                try {
+                  const fallbackPayload = {
+                    text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}`,
+                  };
+                  if (metadata) {
+                    fallbackPayload.metadata = metadata;
+                  }
+                  const body = {
+                    recipient: { id: recipientId },
+                    message: fallbackPayload,
+                  };
+                  if (messagingType) {
+                    body.messaging_type = messagingType;
+                  }
+                  if (tag) {
+                    body.tag = tag;
+                  }
+                  await axios.post(
+                    `https://graph.facebook.com/v18.0/me/messages`,
+                    body,
+                    {
+                      params: { access_token: accessToken },
+                      headers: { "Content-Type": "application/json" },
+                    },
+                  );
+                } catch (_) { }
+              }
+            }
           }
         }
       }
-    }
-  }
+      return { providerMessageId: lastProviderMessageId };
+    },
+  );
 }
 
 // Upload image to Facebook to obtain attachment_id, then send it
@@ -15787,7 +16390,7 @@ async function sendInstagramMessage(
   options = {},
   customAssetsMap = null,
 ) {
-  const { selectedImageCollections = null } = options || {};
+  const { selectedImageCollections = null, botId = null } = options || {};
   const normalizedMessage = normalizeOutgoingText(message);
   if (!normalizedMessage || !accessToken || !instagramSenderId || !recipientId) {
     return;
@@ -15800,47 +16403,69 @@ async function sendInstagramMessage(
   const assetsMap =
     customAssetsMap || (await getAssetsMapForBot(selectedImageCollections));
 
-  for (const part of parts) {
-    const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
-    for (const seg of segments) {
-      if (seg.type === "text") {
-        const textChunks = chunkTextByLength(seg.text || "", 1000);
-        for (const chunk of textChunks) {
-          await axios.post(
-            `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramSenderId}/messages`,
-            {
-              recipient: { id: recipientId },
-              message: { text: chunk },
-            },
-            {
-              params: { access_token: accessToken },
-              headers: { "Content-Type": "application/json" },
-            },
-          );
-        }
-        continue;
-      }
+  await runOutboundDelivery(
+    {
+      platform: "instagram",
+      botId,
+      userId: recipientId,
+      transport: "instagram-graph-api",
+      messageText: normalizedMessage,
+      payload: {},
+    },
+    async () => {
+      let lastProviderMessageId = null;
+      for (const part of parts) {
+        const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
+        for (const seg of segments) {
+          if (seg.type === "text") {
+            const textChunks = chunkTextByLength(seg.text || "", 1000);
+            for (const chunk of textChunks) {
+              const response = await axios.post(
+                `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramSenderId}/messages`,
+                {
+                  recipient: { id: recipientId },
+                  message: { text: chunk },
+                },
+                {
+                  params: { access_token: accessToken },
+                  headers: { "Content-Type": "application/json" },
+                },
+              );
+              lastProviderMessageId =
+                response.data?.message_id ||
+                response.data?.messages?.[0]?.id ||
+                lastProviderMessageId;
+            }
+            continue;
+          }
 
-      if (seg.type === "image" && seg.url) {
-        await axios.post(
-          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramSenderId}/messages`,
-          {
-            recipient: { id: recipientId },
-            message: {
-              attachment: {
-                type: "image",
-                payload: { url: seg.url, is_reusable: true },
+          if (seg.type === "image" && seg.url) {
+            const response = await axios.post(
+              `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramSenderId}/messages`,
+              {
+                recipient: { id: recipientId },
+                message: {
+                  attachment: {
+                    type: "image",
+                    payload: { url: seg.url, is_reusable: true },
+                  },
+                },
               },
-            },
-          },
-          {
-            params: { access_token: accessToken },
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+              {
+                params: { access_token: accessToken },
+                headers: { "Content-Type": "application/json" },
+              },
+            );
+            lastProviderMessageId =
+              response.data?.message_id ||
+              response.data?.messages?.[0]?.id ||
+              lastProviderMessageId;
+          }
+        }
       }
-    }
-  }
+      return { providerMessageId: lastProviderMessageId };
+    },
+  );
 }
 
 async function sendWhatsAppImageByUrl(
@@ -15889,7 +16514,7 @@ async function sendWhatsAppMessage(
   options = {},
   customAssetsMap = null,
 ) {
-  const { selectedImageCollections = null } = options || {};
+  const { selectedImageCollections = null, botId = null } = options || {};
   const normalizedMessage = normalizeOutgoingText(message);
   if (!normalizedMessage || !accessToken || !phoneNumberId || !recipientId) {
     return;
@@ -15902,70 +16527,88 @@ async function sendWhatsAppMessage(
   const assetsMap =
     customAssetsMap || (await getAssetsMapForBot(selectedImageCollections));
 
-  for (const part of parts) {
-    const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
-    for (const seg of segments) {
-      if (seg.type === "text") {
-        const textChunks = chunkTextByLength(seg.text || "", 4096);
-        for (const chunk of textChunks) {
-          await axios.post(
-            `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
-            {
-              messaging_product: "whatsapp",
-              recipient_type: "individual",
-              to: recipientId,
-              type: "text",
-              text: {
-                preview_url: false,
-                body: chunk,
-              },
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-              },
-            },
-          );
-        }
-        continue;
-      }
+  await runOutboundDelivery(
+    {
+      platform: "whatsapp",
+      botId,
+      userId: recipientId,
+      transport: "whatsapp-graph-api",
+      messageText: normalizedMessage,
+      payload: {},
+    },
+    async () => {
+      let lastProviderMessageId = null;
+      for (const part of parts) {
+        const segments = parseMessageSegmentsByImageTokens(part, assetsMap);
+        for (const seg of segments) {
+          if (seg.type === "text") {
+            const textChunks = chunkTextByLength(seg.text || "", 4096);
+            for (const chunk of textChunks) {
+              const response = await axios.post(
+                `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+                {
+                  messaging_product: "whatsapp",
+                  recipient_type: "individual",
+                  to: recipientId,
+                  type: "text",
+                  text: {
+                    preview_url: false,
+                    body: chunk,
+                  },
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                  },
+                },
+              );
+              lastProviderMessageId =
+                response.data?.messages?.[0]?.id || lastProviderMessageId;
+            }
+            continue;
+          }
 
-      if (seg.type === "image" && seg.url) {
-        try {
-          await sendWhatsAppImageByUrl(
-            recipientId,
-            seg.url,
-            accessToken,
-            phoneNumberId,
-            seg.alt || "",
-          );
-        } catch (imageError) {
-          const fallback = `[ไม่สามารถส่งรูป ${seg.label || "image"}]`;
-          await axios.post(
-            `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
-            {
-              messaging_product: "whatsapp",
-              recipient_type: "individual",
-              to: recipientId,
-              type: "text",
-              text: { body: fallback },
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-              },
-            },
-          );
-          console.warn(
-            "[WhatsApp] ส่งรูปไม่สำเร็จ:",
-            imageError?.response?.data || imageError?.message || imageError,
-          );
+          if (seg.type === "image" && seg.url) {
+            try {
+              await sendWhatsAppImageByUrl(
+                recipientId,
+                seg.url,
+                accessToken,
+                phoneNumberId,
+                seg.alt || "",
+              );
+            } catch (imageError) {
+              const fallback = `[ไม่สามารถส่งรูป ${seg.label || "image"}]`;
+              const response = await axios.post(
+                `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+                {
+                  messaging_product: "whatsapp",
+                  recipient_type: "individual",
+                  to: recipientId,
+                  type: "text",
+                  text: { body: fallback },
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                  },
+                },
+              );
+              lastProviderMessageId =
+                response.data?.messages?.[0]?.id || lastProviderMessageId;
+              console.warn(
+                "[WhatsApp] ส่งรูปไม่สำเร็จ:",
+                imageError?.response?.data || imageError?.message || imageError,
+              );
+            }
+          }
         }
       }
-    }
-  }
+      return { providerMessageId: lastProviderMessageId };
+    },
+  );
 }
 
 async function fetchWhatsAppMediaAsBase64(mediaId, accessToken) {
@@ -16059,7 +16702,6 @@ async function readInstructionAssetBuffer(seg) {
     }
 
     if (assetDoc) {
-      const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
       const baseName = getInstructionAssetBaseName(assetDoc);
       const mainFileNames = Array.from(
         new Set(
@@ -16086,6 +16728,45 @@ async function readInstructionAssetBuffer(seg) {
         (requestedFileName === assetDoc.thumbFileName ||
           /_thumb\.(jpe?g)$/i.test(requestedFileName));
       const candidateFileNames = useThumb ? thumbFileNames : mainFileNames;
+      const bucketCandidates = useThumb
+        ? [
+          ...buildBucketKeyCandidates(
+            "instructions",
+            assetDoc.thumbStorageKey,
+            assetDoc.thumbFileName,
+          ),
+          ...buildBucketKeyCandidates(
+            "instructions",
+            assetDoc.storageKey,
+            assetDoc.fileName,
+          ),
+        ]
+        : [
+          ...buildBucketKeyCandidates(
+            "instructions",
+            assetDoc.storageKey,
+            assetDoc.fileName,
+          ),
+          ...buildBucketKeyCandidates(
+            "instructions",
+            assetDoc.thumbStorageKey,
+            assetDoc.thumbFileName,
+          ),
+        ];
+      const bucketAsset = await getFirstBucketObjectStream(bucketCandidates);
+      if (bucketAsset?.stream) {
+        const buffer = await streamToBuffer(bucketAsset.stream);
+        return {
+          buffer,
+          filename:
+            candidateFileNames[0] ||
+            path.basename(bucketAsset.key || "") ||
+            requestedFileName,
+          contentType: assetDoc.mime || "image/jpeg",
+        };
+      }
+
+      const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
       const targetId = useThumb ? assetDoc.thumbFileId : assetDoc.fileId;
       if (!candidateFileNames.length) {
         throw new Error("ไม่พบชื่อไฟล์ของรูปภาพที่ต้องการใช้งาน");
@@ -16214,12 +16895,10 @@ async function readInstructionAssetBuffer(seg) {
   );
 }
 
-// Helper to download and optimize Facebook image to base64
-async function fetchFacebookImageAsBase64(url) {
-  const response = await axios.get(url, { responseType: "arraybuffer" });
-  let buffer = Buffer.from(response.data, "binary");
+async function optimizeImageBufferForVision(originalBuffer) {
+  let optimizedBuffer = originalBuffer;
   try {
-    buffer = await sharp(buffer)
+    optimizedBuffer = await sharp(originalBuffer)
       .resize({
         width: 1024,
         height: 1024,
@@ -16229,8 +16908,17 @@ async function fetchFacebookImageAsBase64(url) {
       .jpeg({ quality: 85, progressive: true })
       .toBuffer();
   } catch (err) {
-    console.error("Error processing Facebook image:", err.message);
+    console.error("Error optimizing image buffer:", err.message);
   }
+  return optimizedBuffer;
+}
+
+// Helper to download and optimize Facebook image to base64
+async function fetchFacebookImageAsBase64(url) {
+  const response = await axios.get(url, { responseType: "arraybuffer" });
+  const buffer = await optimizeImageBufferForVision(
+    Buffer.from(response.data, "binary"),
+  );
   return buffer.toString("base64");
 }
 
@@ -16619,10 +17307,9 @@ async function processMessageWithAI(message, userId, lineBot) {
 // Get all Line Bots
 app.get("/api/line-bots", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-    const lineBots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    const lineBots = await getBotRepository().list("line", {
+      sort: { createdAt: -1 },
+    });
     res.json(lineBots);
   } catch (err) {
     console.error("Error fetching line bots:", err);
@@ -16634,10 +17321,7 @@ app.get("/api/line-bots", async (req, res) => {
 app.get("/api/line-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-    const lineBot = await coll.findOne({ _id: new ObjectId(id) });
+    const lineBot = await getBotRepository().findById("line", id);
 
     if (!lineBot) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
@@ -16676,13 +17360,9 @@ app.post("/api/line-bots", async (req, res) => {
         .json({ error: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
     // If this is default, unset other defaults
     if (isDefault) {
-      await coll.updateMany({}, { $set: { isDefault: false } });
+      await clearPlatformDefaultBots("line");
     }
 
     // Generate unique webhook URL if not provided
@@ -16725,10 +17405,10 @@ app.post("/api/line-bots", async (req, res) => {
       updatedAt: new Date(),
     };
 
-    const result = await coll.insertOne(lineBot);
-    lineBot._id = result.insertedId;
+    const savedLineBot = await getBotRepository().insertOne("line", lineBot);
+    invalidateBotMutationCaches("line", savedLineBot?._id);
 
-    res.status(201).json(lineBot);
+    res.status(201).json(savedLineBot);
   } catch (err) {
     console.error("Error creating line bot:", err);
     res.status(500).json({ error: "ไม่สามารถสร้าง Line Bot ได้" });
@@ -16759,21 +17439,14 @@ app.put("/api/line-bots/:id", async (req, res) => {
         .json({ error: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
-    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    const existing = await getBotRepository().findById("line", id);
     if (!existing) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
     // If this is default, unset other defaults
     if (isDefault) {
-      await coll.updateMany(
-        { _id: { $ne: new ObjectId(id) } },
-        { $set: { isDefault: false } },
-      );
+      await clearPlatformDefaultBots("line", id);
     }
 
     const updateData = {
@@ -16803,17 +17476,15 @@ app.put("/api/line-bots/:id", async (req, res) => {
       updateData.selectedImageCollections = [];
     }
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateData },
-    );
+    const result = await getBotRepository().updateById("line", id, {
+      $set: updateData,
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    lineBotCredentialCache.delete(normalizeRuntimeCacheId(id, ""));
-    invalidateBotRuntimeCaches("line", id);
+    invalidateBotMutationCaches("line", id);
     res.json({ message: "อัปเดต Line Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating line bot:", err);
@@ -16825,16 +17496,13 @@ app.put("/api/line-bots/:id", async (req, res) => {
 app.delete("/api/line-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
-    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    const result = await getBotRepository().deleteById("line", id);
 
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
+    invalidateBotMutationCaches("line", id);
     res.json({ message: "ลบ Line Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error deleting line bot:", err);
@@ -16846,12 +17514,8 @@ app.delete("/api/line-bots/:id", async (req, res) => {
 app.patch("/api/line-bots/:id/toggle-status", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
     // Get current bot
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("line", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
@@ -16859,15 +17523,15 @@ app.patch("/api/line-bots/:id/toggle-status", async (req, res) => {
     // Toggle status: active <-> inactive
     const newStatus = bot.status === "active" ? "inactive" : "active";
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { status: newStatus, updatedAt: new Date() } },
-    );
+    const result = await getBotRepository().updateById("line", id, {
+      $set: { status: newStatus, updatedAt: new Date() },
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
+    invalidateBotMutationCaches("line", id);
     res.json({
       message: `เปลี่ยนสถานะ Line Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
       status: newStatus,
@@ -16882,11 +17546,7 @@ app.patch("/api/line-bots/:id/toggle-status", async (req, res) => {
 app.patch("/api/line-bots/:id/toggle-notifications", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("line", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
@@ -16899,10 +17559,11 @@ app.patch("/api/line-bots/:id/toggle-notifications", async (req, res) => {
           ? false
           : true;
 
-    await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { notificationEnabled: nextValue, updatedAt: new Date() } },
-    );
+    await getBotRepository().updateById("line", id, {
+      $set: { notificationEnabled: nextValue, updatedAt: new Date() },
+    });
+
+    invalidateBotMutationCaches("line", id);
 
     res.json({
       message: `เปลี่ยนสถานะการแจ้งเตือน Line Bot เป็น ${nextValue ? "เปิดใช้งาน" : "ปิดใช้งาน"
@@ -16921,11 +17582,7 @@ app.patch("/api/line-bots/:id/toggle-notifications", async (req, res) => {
 app.post("/api/line-bots/:id/test", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
-    const lineBot = await coll.findOne({ _id: new ObjectId(id) });
+    const lineBot = await getBotRepository().findById("line", id);
     if (!lineBot) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
@@ -16971,25 +17628,18 @@ app.put("/api/line-bots/:id/instructions", async (req, res) => {
     const normalizedSelections =
       normalizeLatestOnlyInstructionSelections(selectedInstructions);
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          selectedInstructions: normalizedSelections,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("line", id, {
+      $set: {
+        selectedInstructions: normalizedSelections,
+        updatedAt: new Date(),
       },
-    );
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    invalidateBotRuntimeCaches("line", id);
+    invalidateBotMutationCaches("line", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating line bot instructions:", err);
@@ -17018,25 +17668,18 @@ app.put("/api/line-bots/:id/image-collections", async (req, res) => {
       selectedImageCollections,
     );
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
-
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          selectedImageCollections: normalizedCollections,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("line", id, {
+      $set: {
+        selectedImageCollections: normalizedCollections,
+        updatedAt: new Date(),
       },
-    );
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    invalidateBotRuntimeCaches("line", id);
+    invalidateBotMutationCaches("line", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
       selectedImageCollections: normalizedCollections,
@@ -17058,10 +17701,6 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
     if (!keywordSettings || typeof keywordSettings !== "object") {
       return res.status(400).json({ error: "keywordSettings ต้องเป็น object" });
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("line_bots");
 
     // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response, sendResponse)
     const normalizeKeywordSetting = (setting) => {
@@ -17093,20 +17732,18 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
       disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          keywordSettings: normalizedSettings,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("line", id, {
+      $set: {
+        keywordSettings: normalizedSettings,
+        updatedAt: new Date(),
       },
-    );
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
+    invalidateBotMutationCaches("line", id);
     res.json({
       message: "อัปเดต keyword settings เรียบร้อยแล้ว",
       keywordSettings: normalizedSettings,
@@ -17122,10 +17759,6 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
 // Initialize a Facebook Bot stub for webhook verification
 app.post("/api/facebook-bots/init", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
     const providedVerifyToken = (req.body && req.body.verifyToken) || null;
     const verifyToken =
       providedVerifyToken ||
@@ -17150,14 +17783,17 @@ app.post("/api/facebook-bots/init", async (req, res) => {
       updatedAt: new Date(),
     };
 
-    const insert = await coll.insertOne(stub);
-    const id = insert.insertedId;
+    const savedStub = await getBotRepository().insertOne("facebook", stub);
+    const id = savedStub._id;
 
     // Build webhook URL using bot id
     const baseUrl = process.env.PUBLIC_BASE_URL || "https://" + req.get("host");
     const webhookUrl = `${baseUrl}/webhook/facebook/${id.toString()}`;
 
-    await coll.updateOne({ _id: id }, { $set: { webhookUrl } });
+    await getBotRepository().updateById("facebook", id, {
+      $set: { webhookUrl, updatedAt: new Date() },
+    });
+    invalidateBotMutationCaches("facebook", id);
 
     return res.json({ id: id.toString(), webhookUrl, verifyToken });
   } catch (err) {
@@ -17171,10 +17807,9 @@ app.post("/api/facebook-bots/init", async (req, res) => {
 // Get all Facebook Bots
 app.get("/api/facebook-bots", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-    const facebookBots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    const facebookBots = await getBotRepository().list("facebook", {
+      sort: { createdAt: -1 },
+    });
     res.json(facebookBots);
   } catch (err) {
     console.error("Error fetching facebook bots:", err);
@@ -17186,10 +17821,7 @@ app.get("/api/facebook-bots", async (req, res) => {
 app.get("/api/facebook-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-    const facebookBot = await coll.findOne({ _id: new ObjectId(id) });
+    const facebookBot = await getBotRepository().findById("facebook", id);
 
     if (!facebookBot) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
@@ -17226,13 +17858,9 @@ app.post("/api/facebook-bots", async (req, res) => {
         .json({ error: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
     // If this is default, unset other defaults
     if (isDefault) {
-      await coll.updateMany({}, { $set: { isDefault: false } });
+      await clearPlatformDefaultBots("facebook");
     }
 
     // Generate unique webhook URL if not provided
@@ -17293,10 +17921,13 @@ app.post("/api/facebook-bots", async (req, res) => {
       updatedAt: new Date(),
     };
 
-    const result = await coll.insertOne(facebookBot);
-    facebookBot._id = result.insertedId;
+    const savedFacebookBot = await getBotRepository().insertOne(
+      "facebook",
+      facebookBot,
+    );
+    invalidateBotMutationCaches("facebook", savedFacebookBot?._id);
 
-    res.status(201).json(facebookBot);
+    res.status(201).json(savedFacebookBot);
   } catch (err) {
     console.error("Error creating facebook bot:", err);
     res.status(500).json({ error: "ไม่สามารถสร้าง Facebook Bot ได้" });
@@ -17326,19 +17957,15 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
         .json({ error: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
     // Fetch existing bot data first
-    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    const existing = await getBotRepository().findById("facebook", id);
     if (!existing) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
     // If this is default, unset other defaults
     if (isDefault) {
-      await coll.updateMany({}, { $set: { isDefault: false } });
+      await clearPlatformDefaultBots("facebook", id);
     }
 
     let datasetId =
@@ -17388,16 +18015,15 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       updateData.selectedImageCollections = [];
     }
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateData },
-    );
+    const result = await getBotRepository().updateById("facebook", id, {
+      $set: updateData,
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    invalidateBotRuntimeCaches("facebook", id);
+    invalidateBotMutationCaches("facebook", id);
     res.json({ message: "อัปเดต Facebook Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating facebook bot:", err);
@@ -17413,11 +18039,7 @@ app.post("/api/facebook-bots/:id/dataset", async (req, res) => {
       return res.status(400).json({ error: "รหัส Facebook Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("facebook", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
@@ -17450,10 +18072,11 @@ app.post("/api/facebook-bots/:id/dataset", async (req, res) => {
       });
     }
 
-    await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { datasetId: datasetResult.datasetId, updatedAt: new Date() } },
-    );
+    await getBotRepository().updateById("facebook", id, {
+      $set: { datasetId: datasetResult.datasetId, updatedAt: new Date() },
+    });
+
+    invalidateBotMutationCaches("facebook", id);
 
     res.json({ success: true, datasetId: datasetResult.datasetId });
   } catch (err) {
@@ -17466,16 +18089,13 @@ app.post("/api/facebook-bots/:id/dataset", async (req, res) => {
 app.delete("/api/facebook-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
-    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    const result = await getBotRepository().deleteById("facebook", id);
 
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
+    invalidateBotMutationCaches("facebook", id);
     res.json({ message: "ลบ Facebook Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error deleting facebook bot:", err);
@@ -17487,12 +18107,8 @@ app.delete("/api/facebook-bots/:id", async (req, res) => {
 app.patch("/api/facebook-bots/:id/toggle-status", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
     // Get current bot
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("facebook", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
@@ -17500,15 +18116,15 @@ app.patch("/api/facebook-bots/:id/toggle-status", async (req, res) => {
     // Toggle status: active <-> inactive
     const newStatus = bot.status === "active" ? "inactive" : "active";
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { status: newStatus, updatedAt: new Date() } },
-    );
+    const result = await getBotRepository().updateById("facebook", id, {
+      $set: { status: newStatus, updatedAt: new Date() },
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
+    invalidateBotMutationCaches("facebook", id);
     res.json({
       message: `เปลี่ยนสถานะ Facebook Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
       status: newStatus,
@@ -17523,11 +18139,7 @@ app.patch("/api/facebook-bots/:id/toggle-status", async (req, res) => {
 app.post("/api/facebook-bots/:id/test", async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
-    const facebookBot = await coll.findOne({ _id: new ObjectId(id) });
+    const facebookBot = await getBotRepository().findById("facebook", id);
     if (!facebookBot) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
@@ -17575,25 +18187,18 @@ app.put("/api/facebook-bots/:id/instructions", async (req, res) => {
     const normalizedSelections =
       normalizeLatestOnlyInstructionSelections(selectedInstructions);
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          selectedInstructions: normalizedSelections,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("facebook", id, {
+      $set: {
+        selectedInstructions: normalizedSelections,
+        updatedAt: new Date(),
       },
-    );
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    invalidateBotRuntimeCaches("facebook", id);
+    invalidateBotMutationCaches("facebook", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating facebook bot instructions:", err);
@@ -17622,25 +18227,18 @@ app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
       selectedImageCollections,
     );
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          selectedImageCollections: normalizedCollections,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("facebook", id, {
+      $set: {
+        selectedImageCollections: normalizedCollections,
+        updatedAt: new Date(),
       },
-    );
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    invalidateBotRuntimeCaches("facebook", id);
+    invalidateBotMutationCaches("facebook", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
       selectedImageCollections: normalizedCollections,
@@ -17904,11 +18502,10 @@ app.put(
 
       const client = await connectDB();
       const db = client.db("chatbot");
-      const botsColl = db.collection("facebook_bots");
       const policiesColl = db.collection("facebook_comment_policies");
 
       const botId = toObjectId(id) || id;
-      const bot = await botsColl.findOne({ _id: botId });
+      const bot = await getBotRepository().findById("facebook", botId);
       if (!bot) {
         return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
       }
@@ -17957,10 +18554,6 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
       return res.status(400).json({ error: "keywordSettings ต้องเป็น object" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_bots");
-
     // รองรับทั้งรูปแบบเก่า (string) และใหม่ (object with keyword, response, sendResponse)
     const normalizeKeywordSetting = (setting) => {
       if (!setting) return { keyword: "", response: "", sendResponse: false };
@@ -17991,20 +18584,18 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
       disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          keywordSettings: normalizedSettings,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("facebook", id, {
+      $set: {
+        keywordSettings: normalizedSettings,
+        updatedAt: new Date(),
       },
-    );
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
+    invalidateBotMutationCaches("facebook", id);
     res.json({
       message: "อัปเดต keyword settings เรียบร้อยแล้ว",
       keywordSettings: normalizedSettings,
@@ -18019,10 +18610,9 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
 
 app.get("/api/instagram-bots", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const bots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    const bots = await getBotRepository().list("instagram", {
+      sort: { createdAt: -1 },
+    });
     res.json(bots);
   } catch (err) {
     console.error("Error fetching instagram bots:", err);
@@ -18037,10 +18627,7 @@ app.get("/api/instagram-bots/:id", async (req, res) => {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("instagram", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
@@ -18079,12 +18666,8 @@ app.post("/api/instagram-bots", async (req, res) => {
         .json({ error: "กรุณากรอก name, instagramUserId และ accessToken" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-
     if (isDefault) {
-      await coll.updateMany({}, { $set: { isDefault: false } });
+      await clearPlatformDefaultBots("instagram");
     }
 
     let finalWebhookUrl = webhookUrl;
@@ -18128,9 +18711,9 @@ app.post("/api/instagram-bots", async (req, res) => {
       updatedAt: new Date(),
     };
 
-    const insert = await coll.insertOne(bot);
-    bot._id = insert.insertedId;
-    res.status(201).json(bot);
+    const savedBot = await getBotRepository().insertOne("instagram", bot);
+    invalidateBotMutationCaches("instagram", savedBot?._id);
+    res.status(201).json(savedBot);
   } catch (err) {
     console.error("Error creating instagram bot:", err);
     res.status(500).json({ error: "ไม่สามารถสร้าง Instagram Bot ได้" });
@@ -18168,19 +18751,13 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
         .json({ error: "กรุณากรอก name, instagramUserId และ accessToken" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    const existing = await getBotRepository().findById("instagram", id);
     if (!existing) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
 
     if (isDefault) {
-      await coll.updateMany(
-        { _id: { $ne: new ObjectId(id) } },
-        { $set: { isDefault: false } },
-      );
+      await clearPlatformDefaultBots("instagram", id);
     }
 
     const updateData = {
@@ -18214,8 +18791,8 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
       updateData.selectedImageCollections = [];
     }
 
-    await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-    invalidateBotRuntimeCaches("instagram", id);
+    await getBotRepository().updateById("instagram", id, { $set: updateData });
+    invalidateBotMutationCaches("instagram", id);
     res.json({ message: "อัปเดต Instagram Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating instagram bot:", err);
@@ -18230,13 +18807,11 @@ app.delete("/api/instagram-bots/:id", async (req, res) => {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    const result = await getBotRepository().deleteById("instagram", id);
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
+    invalidateBotMutationCaches("instagram", id);
     res.json({ message: "ลบ Instagram Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error deleting instagram bot:", err);
@@ -18251,18 +18826,15 @@ app.patch("/api/instagram-bots/:id/toggle-status", async (req, res) => {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("instagram", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
     const newStatus = bot.status === "active" ? "inactive" : "active";
-    await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { status: newStatus, updatedAt: new Date() } },
-    );
+    await getBotRepository().updateById("instagram", id, {
+      $set: { status: newStatus, updatedAt: new Date() },
+    });
+    invalidateBotMutationCaches("instagram", id);
     res.json({
       message: `เปลี่ยนสถานะ Instagram Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
       status: newStatus,
@@ -18280,10 +18852,7 @@ app.post("/api/instagram-bots/:id/test", async (req, res) => {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("instagram", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
@@ -18331,22 +18900,16 @@ app.put("/api/instagram-bots/:id/instructions", async (req, res) => {
 
     const normalizedSelections =
       normalizeLatestOnlyInstructionSelections(selectedInstructions);
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          selectedInstructions: normalizedSelections,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("instagram", id, {
+      $set: {
+        selectedInstructions: normalizedSelections,
+        updatedAt: new Date(),
       },
-    );
+    });
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
-    invalidateBotRuntimeCaches("instagram", id);
+    invalidateBotMutationCaches("instagram", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating instagram bot instructions:", err);
@@ -18374,23 +18937,17 @@ app.put("/api/instagram-bots/:id/image-collections", async (req, res) => {
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections,
     );
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          selectedImageCollections: normalizedCollections,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("instagram", id, {
+      $set: {
+        selectedImageCollections: normalizedCollections,
+        updatedAt: new Date(),
       },
-    );
+    });
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
 
-    invalidateBotRuntimeCaches("instagram", id);
+    invalidateBotMutationCaches("instagram", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
       selectedImageCollections: normalizedCollections,
@@ -18443,21 +19000,16 @@ app.put("/api/instagram-bots/:id/keywords", async (req, res) => {
       disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instagram_bots");
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          keywordSettings: normalizedSettings,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("instagram", id, {
+      $set: {
+        keywordSettings: normalizedSettings,
+        updatedAt: new Date(),
       },
-    );
+    });
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
+    invalidateBotMutationCaches("instagram", id);
     res.json({
       message: "อัปเดต keyword settings เรียบร้อยแล้ว",
       keywordSettings: normalizedSettings,
@@ -18472,10 +19024,9 @@ app.put("/api/instagram-bots/:id/keywords", async (req, res) => {
 
 app.get("/api/whatsapp-bots", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const bots = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    const bots = await getBotRepository().list("whatsapp", {
+      sort: { createdAt: -1 },
+    });
     res.json(bots);
   } catch (err) {
     console.error("Error fetching whatsapp bots:", err);
@@ -18490,10 +19041,7 @@ app.get("/api/whatsapp-bots/:id", async (req, res) => {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("whatsapp", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
@@ -18531,11 +19079,8 @@ app.post("/api/whatsapp-bots", async (req, res) => {
         .json({ error: "กรุณากรอก name, phoneNumberId และ accessToken" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
     if (isDefault) {
-      await coll.updateMany({}, { $set: { isDefault: false } });
+      await clearPlatformDefaultBots("whatsapp");
     }
 
     let finalWebhookUrl = webhookUrl;
@@ -18579,9 +19124,9 @@ app.post("/api/whatsapp-bots", async (req, res) => {
       updatedAt: new Date(),
     };
 
-    const insert = await coll.insertOne(bot);
-    bot._id = insert.insertedId;
-    res.status(201).json(bot);
+    const savedBot = await getBotRepository().insertOne("whatsapp", bot);
+    invalidateBotMutationCaches("whatsapp", savedBot?._id);
+    res.status(201).json(savedBot);
   } catch (err) {
     console.error("Error creating whatsapp bot:", err);
     res.status(500).json({ error: "ไม่สามารถสร้าง WhatsApp Bot ได้" });
@@ -18618,19 +19163,13 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
         .json({ error: "กรุณากรอก name, phoneNumberId และ accessToken" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    const existing = await getBotRepository().findById("whatsapp", id);
     if (!existing) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
 
     if (isDefault) {
-      await coll.updateMany(
-        { _id: { $ne: new ObjectId(id) } },
-        { $set: { isDefault: false } },
-      );
+      await clearPlatformDefaultBots("whatsapp", id);
     }
 
     const updateData = {
@@ -18664,8 +19203,8 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
       updateData.selectedImageCollections = [];
     }
 
-    await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-    invalidateBotRuntimeCaches("whatsapp", id);
+    await getBotRepository().updateById("whatsapp", id, { $set: updateData });
+    invalidateBotMutationCaches("whatsapp", id);
     res.json({ message: "อัปเดต WhatsApp Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating whatsapp bot:", err);
@@ -18680,13 +19219,11 @@ app.delete("/api/whatsapp-bots/:id", async (req, res) => {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const result = await coll.deleteOne({ _id: new ObjectId(id) });
+    const result = await getBotRepository().deleteById("whatsapp", id);
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
+    invalidateBotMutationCaches("whatsapp", id);
     res.json({ message: "ลบ WhatsApp Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error deleting whatsapp bot:", err);
@@ -18701,18 +19238,15 @@ app.patch("/api/whatsapp-bots/:id/toggle-status", async (req, res) => {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("whatsapp", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
     const newStatus = bot.status === "active" ? "inactive" : "active";
-    await coll.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { status: newStatus, updatedAt: new Date() } },
-    );
+    await getBotRepository().updateById("whatsapp", id, {
+      $set: { status: newStatus, updatedAt: new Date() },
+    });
+    invalidateBotMutationCaches("whatsapp", id);
     res.json({
       message: `เปลี่ยนสถานะ WhatsApp Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
       status: newStatus,
@@ -18730,10 +19264,7 @@ app.post("/api/whatsapp-bots/:id/test", async (req, res) => {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const bot = await coll.findOne({ _id: new ObjectId(id) });
+    const bot = await getBotRepository().findById("whatsapp", id);
     if (!bot) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
@@ -18783,22 +19314,16 @@ app.put("/api/whatsapp-bots/:id/instructions", async (req, res) => {
 
     const normalizedSelections =
       normalizeLatestOnlyInstructionSelections(selectedInstructions);
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          selectedInstructions: normalizedSelections,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("whatsapp", id, {
+      $set: {
+        selectedInstructions: normalizedSelections,
+        updatedAt: new Date(),
       },
-    );
+    });
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
-    invalidateBotRuntimeCaches("whatsapp", id);
+    invalidateBotMutationCaches("whatsapp", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating whatsapp bot instructions:", err);
@@ -18826,23 +19351,17 @@ app.put("/api/whatsapp-bots/:id/image-collections", async (req, res) => {
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections,
     );
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          selectedImageCollections: normalizedCollections,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("whatsapp", id, {
+      $set: {
+        selectedImageCollections: normalizedCollections,
+        updatedAt: new Date(),
       },
-    );
+    });
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
 
-    invalidateBotRuntimeCaches("whatsapp", id);
+    invalidateBotMutationCaches("whatsapp", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
       selectedImageCollections: normalizedCollections,
@@ -18895,21 +19414,16 @@ app.put("/api/whatsapp-bots/:id/keywords", async (req, res) => {
       disableFollowUp: normalizeKeywordSetting(keywordSettings.disableFollowUp),
     };
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("whatsapp_bots");
-    const result = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          keywordSettings: normalizedSettings,
-          updatedAt: new Date(),
-        },
+    const result = await getBotRepository().updateById("whatsapp", id, {
+      $set: {
+        keywordSettings: normalizedSettings,
+        updatedAt: new Date(),
       },
-    );
+    });
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
+    invalidateBotMutationCaches("whatsapp", id);
     res.json({
       message: "อัปเดต keyword settings เรียบร้อยแล้ว",
       keywordSettings: normalizedSettings,
@@ -20651,7 +21165,6 @@ app.post(
       const client = await connectDB();
       const db = client.db("chatbot");
       const coll = db.collection("instruction_assets");
-      const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
 
       const existing = await coll.findOne({ label });
       if (existing && !overwrite) {
@@ -20675,16 +21188,24 @@ app.post(
       const thumbUrl = `${urlBase}/assets/instructions/${thumbName}`;
 
       if (existing) {
-        await deleteGridFsEntries(bucket, [
-          { id: existing.fileId },
-          { id: existing.thumbFileId },
+        await deleteStoredAssetEntries(db, "instructionAssets", [
+          { storageKey: existing.storageKey, id: existing.fileId },
+          { storageKey: existing.thumbStorageKey, id: existing.thumbFileId },
           { filename: existing.fileName },
-          { filename: existing.thumbFileName || `${existing.slug}_thumb.jpg` },
+          {
+            filename:
+              existing.thumbFileName || `${existing.slug}_thumb.jpg`,
+          },
         ]);
       }
 
-      const [fileId, thumbFileId] = await Promise.all([
-        uploadBufferToGridFS(bucket, fileName, optimized, {
+      const [mainUpload, thumbUpload] = await Promise.all([
+        uploadBufferToAssetStorage({
+          db,
+          gridFsBucketName: "instructionAssets",
+          storagePrefix: "instructions",
+          filename: fileName,
+          buffer: optimized,
           contentType: "image/jpeg",
           metadata: {
             label,
@@ -20694,7 +21215,12 @@ app.post(
             height: metadata.height || null,
           },
         }),
-        uploadBufferToGridFS(bucket, thumbName, thumb, {
+        uploadBufferToAssetStorage({
+          db,
+          gridFsBucketName: "instructionAssets",
+          storagePrefix: "instructions",
+          filename: thumbName,
+          buffer: thumb,
           contentType: "image/jpeg",
           metadata: { label, slug, type: "thumb" },
         }),
@@ -20710,9 +21236,11 @@ app.post(
         slug,
         fileName,
         thumbFileName: thumbName,
-        fileId,
-        thumbFileId,
-        storage: "mongo",
+        fileId: mainUpload.fileId,
+        thumbFileId: thumbUpload.fileId,
+        storage: mainUpload.storage,
+        storageKey: mainUpload.storageKey || null,
+        thumbStorageKey: thumbUpload.storageKey || null,
         mime: "image/jpeg",
         size: optimized.length,
         width: metadata.width || null,
@@ -20888,12 +21416,22 @@ app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
       instruction_assets: await checkAndFixAssetConsistency(
         db,
         "instruction_assets",
-        "instructionAssets"
+        "instructionAssets",
+        {
+          storagePrefix: "instructions",
+          localDir: ASSETS_DIR,
+          removeFromCollections: true,
+        },
       ),
       follow_up_assets: await checkAndFixAssetConsistency(
         db,
         "follow_up_assets",
-        "followupAssets"
+        "followupAssets",
+        {
+          storagePrefix: "followup",
+          localDir: FOLLOWUP_ASSETS_DIR,
+          removeFromCollections: false,
+        },
       ),
     };
 
@@ -20931,7 +21469,17 @@ app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
   }
 });
 
-async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
+async function checkAndFixAssetConsistency(
+  db,
+  collectionName,
+  bucketName,
+  options = {},
+) {
+  const {
+    storagePrefix = "assets",
+    localDir = null,
+    removeFromCollections = false,
+  } = options;
   const coll = db.collection(collectionName);
   const bucket = new GridFSBucket(db, { bucketName });
 
@@ -20969,62 +21517,127 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
     let needsDelete = false;
     const updates = {};
 
-    // Check main file
-    let mainFileExists = true;
-    if (asset.fileId) {
-      const exists = await checkGridFsFileExists(bucket, asset.fileId);
-      if (!exists) {
-        console.log(
-          `[Consistency] Missing fileId ${asset.fileId} for ${label}`
-        );
-        updates.fileId = null;
-        updates.fileName = null;
-        updates.url = null;
-        updates.mime = null;
-        needsUpdate = true;
-        mainFileExists = false;
-        deleteLocalInstructionAssetFile(asset.fileName);
-      }
-    } else {
-      mainFileExists = false;
+    const thumbId = asset.thumbFileId || asset.thumbId;
+    const thumbPrimaryName =
+      asset.thumbFileName || asset.thumbName || `${asset.label || baseName || "asset"}_thumb.jpg`;
+
+    const mainBucketState = await checkBucketObjectCandidates(
+      buildBucketKeyCandidates(storagePrefix, asset.storageKey, asset.fileName),
+    );
+    const thumbBucketState = await checkBucketObjectCandidates(
+      buildBucketKeyCandidates(storagePrefix, asset.thumbStorageKey, thumbPrimaryName),
+    );
+    const mainGridFsState = await checkGridFsVariantCandidates(
+      bucket,
+      asset.fileId,
+      mainFileNames,
+    );
+    const thumbGridFsState = await checkGridFsVariantCandidates(
+      bucket,
+      thumbId,
+      thumbFileNames,
+    );
+    const mainLocalState = checkLocalAssetCandidates(localDir, mainFileNames);
+    const thumbLocalState = checkLocalAssetCandidates(localDir, thumbFileNames);
+
+    const mainFileExists =
+      mainBucketState.exists || mainGridFsState.exists || mainLocalState.exists;
+    const thumbFileExists =
+      thumbBucketState.exists || thumbGridFsState.exists || thumbLocalState.exists;
+
+    if (
+      !asset.storageKey &&
+      mainBucketState.exists &&
+      mainBucketState.key
+    ) {
+      updates.storageKey = mainBucketState.key;
+      needsUpdate = true;
+    } else if (asset.storageKey && !mainBucketState.exists && isBucketConfigured()) {
+      updates.storageKey = null;
+      needsUpdate = true;
     }
 
-    // Check thumbnail file
-    let thumbFileExists = true;
-    const thumbId = asset.thumbFileId || asset.thumbId;
-    if (thumbId) {
-      const exists = await checkGridFsFileExists(bucket, thumbId);
-      if (!exists) {
-        console.log(`[Consistency] Missing thumbFileId ${thumbId} for ${label}`);
-        updates.thumbFileId = null;
-        if (asset.thumbId) updates.thumbId = null;
-        updates.thumbFileName = null;
-        updates.thumbUrl = null;
-        updates.thumbMime = null;
-        needsUpdate = true;
-        thumbFileExists = false;
-        const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
-        deleteLocalInstructionAssetFile(thumbName);
-      }
-    } else {
-      thumbFileExists = false;
+    if (
+      !asset.thumbStorageKey &&
+      thumbBucketState.exists &&
+      thumbBucketState.key
+    ) {
+      updates.thumbStorageKey = thumbBucketState.key;
+      needsUpdate = true;
+    } else if (
+      asset.thumbStorageKey &&
+      !thumbBucketState.exists &&
+      isBucketConfigured()
+    ) {
+      updates.thumbStorageKey = null;
+      needsUpdate = true;
+    }
+
+    if (!asset.fileId && mainGridFsState.fileId) {
+      updates.fileId = mainGridFsState.fileId;
+      needsUpdate = true;
+    } else if (asset.fileId && !mainGridFsState.idExists && !mainBucketState.exists) {
+      console.log(`[Consistency] Missing fileId ${asset.fileId} for ${label}`);
+      updates.fileId = null;
+      needsUpdate = true;
+    }
+
+    if (!thumbId && thumbGridFsState.fileId) {
+      updates.thumbFileId = thumbGridFsState.fileId;
+      if (asset.thumbId) updates.thumbId = thumbGridFsState.fileId;
+      needsUpdate = true;
+    } else if (thumbId && !thumbGridFsState.idExists && !thumbBucketState.exists) {
+      console.log(`[Consistency] Missing thumbFileId ${thumbId} for ${label}`);
+      updates.thumbFileId = null;
+      if (asset.thumbId) updates.thumbId = null;
+      needsUpdate = true;
+    }
+
+    if (!mainFileExists) {
+      updates.fileId = null;
+      updates.storageKey = null;
+      updates.fileName = null;
+      updates.url = null;
+      updates.mime = null;
+      needsUpdate = true;
+      deleteLocalAssetFileInDir(localDir, asset.fileName);
+    }
+
+    if (!thumbFileExists) {
+      updates.thumbFileId = null;
+      if (asset.thumbId) updates.thumbId = null;
+      updates.thumbStorageKey = null;
+      updates.thumbFileName = null;
+      if (asset.thumbName) updates.thumbName = null;
+      updates.thumbUrl = null;
+      updates.thumbMime = null;
+      needsUpdate = true;
+      deleteLocalAssetFileInDir(localDir, thumbPrimaryName);
     }
 
     // Delete orphaned records (no files at all)
     if (!mainFileExists && !thumbFileExists) {
       console.log(`[Consistency] Deleting orphaned record: ${label}`);
-      await removeInstructionAssetFromCollections(db, asset);
-      await deleteGridFsEntries(bucket, [
-        { id: asset.fileId },
-        { id: asset.thumbFileId },
-        { filename: asset.fileName },
-        { filename: asset.thumbFileName },
+      if (removeFromCollections) {
+        await removeInstructionAssetFromCollections(db, asset);
+      }
+      await deleteStoredAssetEntries(db, bucketName, [
+        { storageKey: asset.storageKey, id: asset.fileId, filename: asset.fileName },
+        {
+          storageKey: asset.thumbStorageKey,
+          id: asset.thumbFileId || asset.thumbId,
+          filename: thumbPrimaryName,
+        },
       ]);
       await coll.deleteOne({ _id: asset._id });
-      deleteLocalInstructionAssetFile(asset.fileName);
-      const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
-      deleteLocalInstructionAssetFile(thumbName);
-      deletedItems.push({ label, reason: 'No files in GridFS' });
+      deleteLocalAssetFileInDir(localDir, asset.fileName);
+      deleteLocalAssetFileInDir(localDir, thumbPrimaryName);
+      deletedItems.push({
+        label,
+        reason: isBucketConfigured()
+          ? "No files in bucket/GridFS/local"
+          : "No files in GridFS/local",
+      });
       deletedCount++;
       needsDelete = true;
     }
@@ -21055,6 +21668,61 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
 async function resolveInstructionAssetStream(db, asset, { isThumbRequest }) {
   if (!db || !asset) {
     return { stream: null, mime: null, missingReferences: {} };
+  }
+
+  const bucketCandidates = isThumbRequest
+    ? [
+      {
+        variant: "thumb",
+        keys: buildBucketKeyCandidates(
+          "instructions",
+          asset.thumbStorageKey,
+          asset.thumbFileName,
+        ),
+      },
+      {
+        variant: "main",
+        keys: buildBucketKeyCandidates(
+          "instructions",
+          asset.storageKey,
+          asset.fileName,
+        ),
+      },
+    ]
+    : [
+      {
+        variant: "main",
+        keys: buildBucketKeyCandidates(
+          "instructions",
+          asset.storageKey,
+          asset.fileName,
+        ),
+      },
+      {
+        variant: "thumb",
+        keys: buildBucketKeyCandidates(
+          "instructions",
+          asset.thumbStorageKey,
+          asset.thumbFileName,
+        ),
+      },
+    ];
+  for (const candidate of bucketCandidates) {
+    const bucketResult = await getFirstBucketObjectStream(candidate.keys);
+    if (bucketResult?.stream) {
+      const isThumbVariant = candidate.variant === "thumb";
+      return {
+        stream: bucketResult.stream,
+        mime: isThumbVariant
+          ? asset.thumbMime || asset.mime || "image/jpeg"
+          : asset.mime || asset.thumbMime || "image/jpeg",
+        missingReferences: {
+          main: { id: false, filename: false },
+          thumb: { id: false, filename: false },
+        },
+        servedVariant: candidate.variant,
+      };
+    }
   }
 
   const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
@@ -21574,8 +22242,6 @@ async function performInstructionAssetDeletion(db, asset) {
   await coll.deleteOne({ _id: asset._id });
 
   await removeInstructionAssetFromCollections(db, asset);
-
-  const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
   const baseName = getInstructionAssetBaseName(asset);
   const mainFileNames = Array.from(
     new Set(
@@ -21597,9 +22263,9 @@ async function performInstructionAssetDeletion(db, asset) {
         .map((name) => name.trim()),
     ),
   );
-  await deleteGridFsEntries(bucket, [
-    { id: asset.fileId },
-    { id: asset.thumbFileId },
+  await deleteStoredAssetEntries(db, "instructionAssets", [
+    { storageKey: asset.storageKey, id: asset.fileId },
+    { storageKey: asset.thumbStorageKey, id: asset.thumbFileId },
     ...mainFileNames.map((name) => ({ filename: name })),
     ...thumbFileNames.map((name) => ({ filename: name })),
   ]);
@@ -22238,7 +22904,7 @@ class BroadcastQueue {
 
   async updateProgress() {
     if (typeof io !== 'undefined') {
-      io.to("admin").emit("broadcastProgress", { jobId: this.jobId, stats: this.stats });
+      emitAdminEvent("broadcastProgress", { jobId: this.jobId, stats: this.stats });
     }
     await this.saveHistory();
   }
@@ -22247,60 +22913,17 @@ class BroadcastQueue {
 async function getBroadcastAudience(channels, audienceType) {
   const client = await connectDB();
   const db = client.db("chatbot");
-  const chatColl = db.collection("chat_history");
-  const followUpColl = db.collection("follow_up_status");
+  const followUpRepo = getFollowUpRepository();
+  const chatRepo = getChatRepository();
 
   let users = [];
   const getChatUserIdsForChannel = async (platform, botId) => {
-    const pipeline = [
-      { $match: { platform, botId, role: "user" } },
-      {
-        $addFields: {
-          userKey: {
-            $let: {
-              vars: {
-                raw: {
-                  $cond: [
-                    {
-                      $or: [
-                        { $eq: ["$senderId", null] },
-                        { $eq: ["$senderId", ""] },
-                      ],
-                    },
-                    "$userId",
-                    "$senderId",
-                  ],
-                },
-              },
-              in: {
-                $cond: [
-                  {
-                    $or: [
-                      { $eq: ["$$raw", null] },
-                      { $eq: ["$$raw", ""] },
-                    ],
-                  },
-                  null,
-                  {
-                    $convert: {
-                      input: "$$raw",
-                      to: "string",
-                      onError: null,
-                      onNull: null,
-                    },
-                  },
-                ],
-              },
-            },
-          },
-        },
-      },
-      { $match: { userKey: { $nin: [null, ""] } } },
-      { $group: { _id: "$userKey" } },
-    ];
-
-    const rows = await chatColl.aggregate(pipeline).toArray();
-    return rows.map((row) => row._id).filter(Boolean);
+    return chatRepo.listDistinctUserIds({
+      platform,
+      botId,
+      defaultBotOnly: !botId || botId === "default",
+      role: "user",
+    });
   };
 
   for (const ch of channels) {
@@ -22313,19 +22936,19 @@ async function getBroadcastAudience(channels, audienceType) {
       // No filter
     } else if (audienceType === 'tagged') {
       // Filter only those with hasFollowUp: true
-      const taggedUsers = await followUpColl.find({
-        senderId: { $in: userIds },
-        hasFollowUp: true
-      }).project({ senderId: 1 }).toArray();
-      const taggedSet = new Set(taggedUsers.map(u => u.senderId));
+      const taggedUsers = await followUpRepo.listStatuses({
+        userIds,
+        hasFollowUp: true,
+      });
+      const taggedSet = new Set(taggedUsers.map((u) => u.senderId));
       userIds = userIds.filter(id => taggedSet.has(id));
     } else if (audienceType === 'untagged') {
       // Filter exclude hasFollowUp: true
-      const taggedUsers = await followUpColl.find({
-        senderId: { $in: userIds },
-        hasFollowUp: true
-      }).project({ senderId: 1 }).toArray();
-      const taggedSet = new Set(taggedUsers.map(u => u.senderId));
+      const taggedUsers = await followUpRepo.listStatuses({
+        userIds,
+        hasFollowUp: true,
+      });
+      const taggedSet = new Set(taggedUsers.map((u) => u.senderId));
       userIds = userIds.filter(id => !taggedSet.has(id));
     }
 
@@ -22486,8 +23109,6 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
     if (req.files && req.files.length > 0) {
       const client = await connectDB();
       const db = client.db("chatbot");
-      const bucket = new GridFSBucket(db, { bucketName: "broadcastAssets" });
-      const { Readable } = require("stream");
 
       let fileIndex = 0;
       for (let i = 0; i < messages.length; i++) {
@@ -22500,22 +23121,17 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
           const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
           const filename = `broadcast-${Date.now()}-${safeName}`;
 
-          // Upload to GridFS
-          await new Promise((resolve, reject) => {
-            const uploadStream = bucket.openUploadStream(filename, {
-              contentType: file.mimetype,
-            });
-            const bufferStream = new Readable();
-            bufferStream.push(file.buffer);
-            bufferStream.push(null);
-
-            bufferStream
-              .pipe(uploadStream)
-              .on("error", reject)
-              .on("finish", () => resolve());
+          await uploadBufferToAssetStorage({
+            db,
+            gridFsBucketName: "broadcastAssets",
+            storagePrefix: "broadcast",
+            filename,
+            buffer: file.buffer,
+            contentType: file.mimetype,
+            metadata: {
+              originalName: file.originalname || "",
+            },
           });
-
-          // Set URL (must be absolute for LINE/Facebook)
           const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
           messages[i].url = `${urlBase}/broadcast/assets/${filename}`;
         }
@@ -22587,6 +23203,16 @@ app.delete("/admin/broadcast/cancel/:jobId", (req, res) => {
 // Serve Broadcast Assets
 app.get("/broadcast/assets/:filename", async (req, res) => {
   try {
+    const bucketStreamResult = await getFirstBucketObjectStream(
+      buildBucketKeyCandidates("broadcast", null, req.params.filename),
+    );
+    if (bucketStreamResult?.stream) {
+      res.set("Content-Type", "image/jpeg");
+      res.set("Cache-Control", "public, max-age=604800, immutable");
+      bucketStreamResult.stream.pipe(res);
+      return;
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const bucket = new GridFSBucket(db, { bucketName: "broadcastAssets" });
@@ -22699,23 +23325,15 @@ app.post("/admin/followup/clear", async (req, res) => {
     if (!userId) {
       return res.json({ success: false, error: "กรุณาระบุ userId" });
     }
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const existing = await db
-      .collection("follow_up_status")
-      .findOne({ senderId: userId });
+    const followUpRepo = getFollowUpRepository();
+    const existing = await followUpRepo.getStatus(userId);
     let platform = existing?.platform || null;
     let botId = existing ? normalizeFollowUpBotId(existing?.botId) : null;
     if (!platform) {
-      const latestTask = await db
-        .collection("follow_up_tasks")
-        .find({ userId })
-        .sort({ createdAt: -1 })
-        .limit(1)
-        .toArray();
-      if (latestTask.length > 0) {
-        platform = latestTask[0].platform || null;
-        botId = normalizeFollowUpBotId(latestTask[0].botId);
+      const latestTask = await followUpRepo.findLatestTaskByUser(userId);
+      if (latestTask) {
+        platform = latestTask.platform || null;
+        botId = normalizeFollowUpBotId(latestTask.botId);
       }
     }
 
@@ -22738,7 +23356,7 @@ app.post("/admin/followup/clear", async (req, res) => {
     await clearFollowUpStatus(userId);
     try {
       if (io) {
-        io.to("admin").emit("followUpTagged", {
+        emitAdminEvent("followUpTagged", {
           userId,
           hasFollowUp: false,
           followUpReason: "",
@@ -22824,21 +23442,10 @@ app.post("/admin/followup/page-settings", async (req, res) => {
       sanitized.rounds = normalizeFollowUpRounds(settings.rounds);
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_page_settings");
-
-    await coll.updateOne(
-      { platform: normalizedPlatform, botId: normalizedBotId },
-      {
-        $set: {
-          platform: normalizedPlatform,
-          botId: normalizedBotId,
-          settings: sanitized,
-          updatedAt: new Date(),
-        },
-      },
-      { upsert: true },
+    await getFollowUpPageSettingsRepository().upsert(
+      normalizedPlatform,
+      normalizedBotId,
+      sanitized,
     );
 
     resetFollowUpConfigCache();
@@ -22861,11 +23468,10 @@ app.delete("/admin/followup/page-settings", async (req, res) => {
         .json({ success: false, error: "ระบุแพลตฟอร์มไม่ถูกต้อง" });
     }
     const normalizedBotId = normalizeFollowUpBotId(botId);
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_page_settings");
-
-    await coll.deleteOne({ platform: normalizedPlatform, botId: normalizedBotId });
+    await getFollowUpPageSettingsRepository().deleteOne(
+      normalizedPlatform,
+      normalizedBotId,
+    );
     resetFollowUpConfigCache();
 
     res.json({ success: true });
@@ -22895,7 +23501,6 @@ app.post(
       const client = await connectDB();
       const db = client.db("chatbot");
       const coll = db.collection("follow_up_assets");
-      const bucket = new GridFSBucket(db, { bucketName: "followupAssets" });
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -22945,8 +23550,13 @@ app.post(
         const baseName = `followup_${timestamp}_${uniqueId}`;
         const fileName = `${baseName}.jpg`;
         const thumbName = `${baseName}_thumb.jpg`;
-        const [fileId, thumbFileId] = await Promise.all([
-          uploadBufferToGridFS(bucket, fileName, optimized, {
+        const [mainUpload, thumbUpload] = await Promise.all([
+          uploadBufferToAssetStorage({
+            db,
+            gridFsBucketName: "followupAssets",
+            storagePrefix: "followup",
+            filename: fileName,
+            buffer: optimized,
             contentType: "image/jpeg",
             metadata: {
               type: "original",
@@ -22954,7 +23564,12 @@ app.post(
               height: metadata.height || null,
             },
           }),
-          uploadBufferToGridFS(bucket, thumbName, thumb, {
+          uploadBufferToAssetStorage({
+            db,
+            gridFsBucketName: "followupAssets",
+            storagePrefix: "followup",
+            filename: thumbName,
+            buffer: thumb,
             contentType: "image/jpeg",
             metadata: { type: "thumb" },
           }),
@@ -22964,9 +23579,11 @@ app.post(
           fileName,
           thumbName,
           thumbFileName: thumbName,
-          fileId,
-          thumbFileId,
-          storage: "mongo",
+          fileId: mainUpload.fileId,
+          thumbFileId: thumbUpload.fileId,
+          storage: mainUpload.storage,
+          storageKey: mainUpload.storageKey || null,
+          thumbStorageKey: thumbUpload.storageKey || null,
           sha256,
           mime: "image/jpeg",
           size: optimized.length,
@@ -23401,7 +24018,11 @@ app.get("/api/instruction-conversations/:instructionId", requireAdmin, async (re
 
     const client = await connectDB();
     const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db);
+    const threadService = new ConversationThreadService(db, {
+      chatRepository: getChatRepository(),
+      orderRepository: getOrderRepository(),
+      botRepository: getBotRepository(),
+    });
     const parsedVersion = parseInstructionConversationVersionQuery(version);
 
     // Parse filters
@@ -23449,7 +24070,11 @@ app.get("/api/instruction-conversations/:instructionId/thread/:threadId", requir
     const { page, limit } = req.query;
     const client = await connectDB();
     const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db);
+    const threadService = new ConversationThreadService(db, {
+      chatRepository: getChatRepository(),
+      orderRepository: getOrderRepository(),
+      botRepository: getBotRepository(),
+    });
 
     const result = await threadService.getThreadMessages(threadId, {
       page: Number(page) || 1,
@@ -23470,7 +24095,11 @@ app.get("/api/instruction-conversations/:instructionId/analytics", requireAdmin,
     const { version, dateFrom, dateTo } = req.query;
     const client = await connectDB();
     const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db);
+    const threadService = new ConversationThreadService(db, {
+      chatRepository: getChatRepository(),
+      orderRepository: getOrderRepository(),
+      botRepository: getBotRepository(),
+    });
     const parsedVersion = parseInstructionConversationVersionQuery(version);
 
     const analytics = await threadService.getConversationAnalytics(
@@ -23493,7 +24122,11 @@ app.get("/api/instruction-conversations/:instructionId/filters", requireAdmin, a
     const { version } = req.query;
     const client = await connectDB();
     const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db);
+    const threadService = new ConversationThreadService(db, {
+      chatRepository: getChatRepository(),
+      orderRepository: getOrderRepository(),
+      botRepository: getBotRepository(),
+    });
     const parsedVersion = parseInstructionConversationVersionQuery(version);
 
     const options = await threadService.getFilterOptions(
@@ -23515,7 +24148,11 @@ app.patch("/api/instruction-conversations/thread/:threadId/tags", requireAdmin, 
     const { add = [], remove = [] } = req.body;
     const client = await connectDB();
     const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db);
+    const threadService = new ConversationThreadService(db, {
+      chatRepository: getChatRepository(),
+      orderRepository: getOrderRepository(),
+      botRepository: getBotRepository(),
+    });
 
     const result = await threadService.manageTags(threadId, add, remove);
     res.json(result);
@@ -23530,7 +24167,11 @@ app.post("/api/instruction-conversations/:instructionId/rebuild", requireAdmin, 
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db);
+    const threadService = new ConversationThreadService(db, {
+      chatRepository: getChatRepository(),
+      orderRepository: getOrderRepository(),
+      botRepository: getBotRepository(),
+    });
 
     // Ensure indexes first
     await threadService.ensureIndexes();
@@ -24055,6 +24696,12 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       apiKeyToUse.provider,
     );
     const chatService = new InstructionChatService(db, openai, {
+      followUpPageSettingsRepository: getFollowUpPageSettingsRepository(),
+      conversationThreadOptions: {
+        chatRepository: getChatRepository(),
+        orderRepository: getOrderRepository(),
+        botRepository: getBotRepository(),
+      },
       resetFollowUpConfigCache,
       invalidateInstructionPromptCaches,
       invalidateAllRuntimeCaches,
@@ -24290,6 +24937,12 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     const openaiClient = buildLLMClientFromKey(apiKeyToUse);
     const chatService = new InstructionChatService(db, openaiClient, {
+      followUpPageSettingsRepository: getFollowUpPageSettingsRepository(),
+      conversationThreadOptions: {
+        chatRepository: getChatRepository(),
+        orderRepository: getOrderRepository(),
+        botRepository: getBotRepository(),
+      },
       resetFollowUpConfigCache,
       invalidateInstructionPromptCaches,
       invalidateAllRuntimeCaches,
@@ -24820,6 +25473,12 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       apiKeyToUse.provider,
     );
     const chatService = new InstructionChatService(db, openai, {
+      followUpPageSettingsRepository: getFollowUpPageSettingsRepository(),
+      conversationThreadOptions: {
+        chatRepository: getChatRepository(),
+        orderRepository: getOrderRepository(),
+        botRepository: getBotRepository(),
+      },
       resetFollowUpConfigCache,
       invalidateInstructionPromptCaches,
       invalidateAllRuntimeCaches,
@@ -25579,6 +26238,8 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     const { pageKey, startDate, endDate } = req.query;
     const client = await connectDB();
     const db = client.db("chatbot");
+    const chatRepo = getChatRepository();
+    const followUpRepo = getFollowUpRepository();
 
     // Parse date filters (normalize to Bangkok time)
     const { startMoment, endMoment } = parseCustomerStatsDateRange(
@@ -25619,29 +26280,25 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     }
 
     // Build base query for chat history
-    const chatQuery = {
-      timestamp: { $gte: dateStart, $lte: dateEnd },
-      role: "user"
-    };
-    if (filterPlatform) chatQuery.platform = filterPlatform;
-    if (filterBotId) {
-      chatQuery.botId = filterBotId;
-    } else if (isDefaultPageBot) {
-      chatQuery.$or = [
-        { botId: null },
-        { botId: { $exists: false } },
-        { botId: "" },
-      ];
-    }
-
     // Get orders
-    const orders = await db.collection("orders").find(orderQuery).toArray();
+    const orders = await getOrderRepository().list(orderQuery, {
+      sort: { extractedAt: -1 },
+    });
 
     // Get chat messages for hourly distribution
-    const chatMessages = await db.collection("chat_history")
-      .find(chatQuery)
-      .project({ senderId: 1, timestamp: 1 })
-      .toArray();
+    const chatMessages = await chatRepo.listActivityMessages(
+      {
+        start: dateStart,
+        end: dateEnd,
+        platform: filterPlatform,
+        botId: filterBotId,
+        defaultBotOnly: isDefaultPageBot && !filterBotId,
+        role: "user",
+      },
+      {
+        sort: { timestamp: 1 },
+      },
+    );
 
     // Calculate overview stats
     const uniqueUsers = new Set(
@@ -25665,31 +26322,15 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     const allUserIds = [...uniqueUsers];
     let newUsers = 0;
     if (allUserIds.length > 0) {
-      const existingMatch = {
-        senderId: { $in: allUserIds },
-        timestamp: { $lt: dateStart },
+      const existingUsers = await chatRepo.listDistinctUserIds({
+        userIds: allUserIds,
+        before: dateStart,
+        platform: filterPlatform,
+        botId: filterBotId,
+        defaultBotOnly: isDefaultPageBot && !filterBotId,
         role: "user",
-      };
-      if (filterPlatform) existingMatch.platform = filterPlatform;
-      if (filterBotId) {
-        existingMatch.botId = filterBotId;
-      } else if (isDefaultPageBot) {
-        existingMatch.$or = [
-          { botId: null },
-          { botId: { $exists: false } },
-          { botId: "" },
-        ];
-      }
-
-      const existingUsers = await db.collection("chat_history")
-        .aggregate([
-          {
-            $match: existingMatch
-          },
-          { $group: { _id: "$senderId" } }
-        ])
-        .toArray();
-      const existingUserIds = new Set(existingUsers.map(u => u._id));
+      });
+      const existingUserIds = new Set(existingUsers);
       newUsers = allUserIds.filter(id => !existingUserIds.has(id)).length;
     }
 
@@ -25866,7 +26507,11 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     if (filterPlatform) followUpQuery.platform = filterPlatform;
     if (filterBotId) followUpQuery.botId = normalizeFollowUpBotId(filterBotId);
 
-    const followUpTasks = await db.collection("follow_up_tasks").find(followUpQuery).toArray();
+    const followUpTasks = await followUpRepo.listTasks({
+      dateKeyRange: { gte: startDateKey, lte: endDateKey },
+      platform: filterPlatform || undefined,
+      botId: filterBotId ? normalizeFollowUpBotId(filterBotId) : undefined,
+    });
     const followUpActive = followUpTasks.filter(
       (t) => t.canceled !== true && t.completed !== true && t.status !== "failed",
     ).length;
@@ -25939,10 +26584,12 @@ app.get("/admin/customer-stats/data", async (req, res) => {
     const customerUserIds = topCustomersRaw.map(c => c.userId).filter(Boolean);
     let profileMap = {};
     if (customerUserIds.length > 0) {
-      const profiles = await db.collection("user_profiles")
-        .find({ userId: { $in: customerUserIds } })
-        .project({ userId: 1, displayName: 1 })
-        .toArray();
+      const profiles = await getProfileRepository().listProfilesByUserIds(
+        customerUserIds,
+        {
+          projection: { userId: 1, displayName: 1 },
+        },
+      );
       profiles.forEach(p => {
         profileMap[p.userId] = p.displayName;
       });
@@ -26005,66 +26652,24 @@ app.get("/admin/customer-stats/data", async (req, res) => {
 
 app.get("/admin/orders/pages", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const orderRepo = getOrderRepository();
+    const botRepo = getBotRepository();
 
     const [lineBots, facebookBots, instagramBots, whatsappBots, orderGroups] =
       await Promise.all([
-      db
-        .collection("line_bots")
-        .find({})
-        .project({ name: 1, displayName: 1, botName: 1 })
-        .toArray(),
-      db
-        .collection("facebook_bots")
-        .find({})
-        .project({ name: 1, pageName: 1 })
-        .toArray(),
-      db
-        .collection("instagram_bots")
-        .find({})
-        .project({ name: 1, instagramUsername: 1, instagramUserId: 1, igUserId: 1 })
-        .toArray(),
-      db
-        .collection("whatsapp_bots")
-        .find({})
-        .project({ name: 1, phoneNumber: 1, phoneNumberId: 1 })
-        .toArray(),
-      db
-        .collection("orders")
-        .aggregate([
-          {
-            $project: {
-              platform: {
-                $toLower: { $ifNull: ["$platform", "line"] },
-              },
-              botIdText: {
-                $trim: {
-                  input: {
-                    $convert: {
-                      input: "$botId",
-                      to: "string",
-                      onError: "",
-                      onNull: "",
-                    },
-                  },
-                },
-              },
-              extractedAt: "$extractedAt",
-            },
-          },
-          {
-            $group: {
-              _id: {
-                platform: "$platform",
-                botIdText: "$botIdText",
-              },
-              orderCount: { $sum: 1 },
-              lastOrderAt: { $max: "$extractedAt" },
-            },
-          },
-        ])
-        .toArray(),
+      botRepo.list("line", {
+        projection: { name: 1, displayName: 1, botName: 1 },
+      }),
+      botRepo.list("facebook", {
+        projection: { name: 1, pageName: 1 },
+      }),
+      botRepo.list("instagram", {
+        projection: { name: 1, instagramUsername: 1, instagramUserId: 1, igUserId: 1 },
+      }),
+      botRepo.list("whatsapp", {
+        projection: { name: 1, phoneNumber: 1, phoneNumberId: 1 },
+      }),
+      orderRepo.aggregatePageSummaries(),
       ]);
 
     const pageMap = new Map();
@@ -26269,13 +26874,7 @@ app.post("/admin/chat/user-status", async (req, res) => {
     await setUserStatus(userId, !!aiEnabled);
 
     // บันทึกข้อความระบบลงประวัติ (ไม่ส่งถึงผู้ใช้จริง)
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("chat_history");
-    const lastChat = await coll.findOne(
-      buildChatHistoryUserMatch(userId),
-      { sort: { timestamp: -1 } },
-    );
+    const lastChat = await getChatRepository().getLatestContext(userId);
     const platform = normalizeChatPlatform(lastChat?.platform || "line");
     const botId = lastChat?.botId || null;
 
@@ -26291,9 +26890,9 @@ app.post("/admin/chat/user-status", async (req, res) => {
       platform,
       botId,
     };
-    const controlInsertResult = await coll.insertOne(controlDoc);
-    if (controlInsertResult?.insertedId) {
-      controlDoc._id = controlInsertResult.insertedId;
+    const savedControlDoc = await getChatRepository().insertMessage(controlDoc);
+    if (savedControlDoc?._id) {
+      controlDoc._id = savedControlDoc._id;
     }
 
     try {
@@ -26302,7 +26901,7 @@ app.post("/admin/chat/user-status", async (req, res) => {
 
     // Notify admin UIs
     try {
-      io.to("admin").emit("newMessage", {
+      emitAdminEvent("newMessage", {
         userId,
         message: controlDoc,
         sender: "assistant",
@@ -26326,18 +26925,11 @@ app.post("/admin/chat/users/:userId/refresh-profile", async (req, res) => {
 
     const { platform: bodyPlatform, botId: bodyBotId } = req.body || {};
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const chatColl = db.collection("chat_history");
-
     let platform = bodyPlatform || null;
     let botId = bodyBotId || null;
 
     if (!platform || !botId) {
-      const lastChat = await chatColl.findOne(
-        buildChatHistoryUserMatch(userId),
-        { sort: { timestamp: -1 }, projection: { platform: 1, botId: 1 } },
-      );
+      const lastChat = await getChatRepository().getLatestContext(userId);
       platform = platform || lastChat?.platform || null;
       botId = botId || lastChat?.botId || null;
     }
@@ -26356,18 +26948,10 @@ app.post("/admin/chat/users/:userId/refresh-profile", async (req, res) => {
       });
     }
 
-    const fbColl = db.collection("facebook_bots");
-    let facebookBot = null;
-
-    if (ObjectId.isValid(botId)) {
-      facebookBot = await fbColl.findOne({ _id: new ObjectId(botId) });
-    }
-    if (!facebookBot) {
-      facebookBot = await fbColl.findOne({ _id: botId });
-    }
-    if (!facebookBot) {
-      facebookBot = await fbColl.findOne({ pageId: botId });
-    }
+    const facebookBot = await getBotRepository().findByIdentifier(
+      "facebook",
+      botId,
+    );
 
     if (!facebookBot || !facebookBot.accessToken) {
       return res.json({
@@ -26380,12 +26964,9 @@ app.post("/admin/chat/users/:userId/refresh-profile", async (req, res) => {
       forceRefresh: true,
     });
 
-    const profile = await db
-      .collection("user_profiles")
-      .findOne(
-        { userId, platform: "facebook" },
-        { projection: { displayName: 1, updatedAt: 1 } },
-      );
+    const profile = await getProfileRepository().getProfile(userId, "facebook", {
+      projection: { displayName: 1, updatedAt: 1 },
+    });
 
     if (!profile?.displayName) {
       return res.json({
@@ -26450,15 +27031,10 @@ app.post("/admin/chat/send", async (req, res) => {
     // ตรวจจับคำสั่งควบคุมจากแอดมิน
     const trimmed = String(message).trim();
 
+    // Determine platform and bot from latest chat
+    const lastChat = await getChatRepository().getLatestContext(userId);
     const client = await connectDB();
     const db = client.db("chatbot");
-    const coll = db.collection("chat_history");
-
-    // Determine platform and bot from latest chat
-    const lastChat = await coll.findOne(
-      buildChatHistoryUserMatch(userId),
-      { sort: { timestamp: -1 } },
-    );
     const platform = lastChat?.platform || "line";
     const botId = lastChat?.botId || null;
 
@@ -26526,14 +27102,14 @@ app.post("/admin/chat/send", async (req, res) => {
           platform,
           botId,
         };
-        const controlInsertResult = await coll.insertOne(controlDoc);
-        if (controlInsertResult?.insertedId) {
-          controlDoc._id = controlInsertResult.insertedId;
+        const savedControlDoc = await getChatRepository().insertMessage(controlDoc);
+        if (savedControlDoc?._id) {
+          controlDoc._id = savedControlDoc._id;
         }
         await resetUserUnreadCount(userId);
 
         // Emit เพื่ออัปเดต UI ของแอดมิน
-        io.to("admin").emit("newMessage", {
+        emitAdminEvent("newMessage", {
           userId: userId,
           message: controlDoc,
           sender: "assistant",
@@ -26575,9 +27151,9 @@ app.post("/admin/chat/send", async (req, res) => {
         platform,
         botId,
       };
-      const legacyControlInsert = await coll.insertOne(controlDoc);
-      if (legacyControlInsert?.insertedId) {
-        controlDoc._id = legacyControlInsert.insertedId;
+      const savedControlDoc = await getChatRepository().insertMessage(controlDoc);
+      if (savedControlDoc?._id) {
+        controlDoc._id = savedControlDoc._id;
       }
 
       // รีเซ็ต unread count เมื่อแอดมินตอบกลับ
@@ -26586,7 +27162,7 @@ app.post("/admin/chat/send", async (req, res) => {
       // ไม่ส่งข้อความควบคุมไปยังผู้ใช้
 
       // Emit เพื่ออัปเดต UI ของแอดมิน
-      io.to("admin").emit("newMessage", {
+      emitAdminEvent("newMessage", {
         userId: userId,
         message: controlDoc,
         sender: "assistant",
@@ -26612,12 +27188,12 @@ app.post("/admin/chat/send", async (req, res) => {
     });
 
     const saveAndEmitAdminMessage = async (doc) => {
-      const insertResult = await coll.insertOne(doc);
-      if (insertResult?.insertedId) {
-        doc._id = insertResult.insertedId;
+      const savedDoc = await getChatRepository().insertMessage(doc);
+      if (savedDoc?._id) {
+        doc._id = savedDoc._id;
       }
       await resetUserUnreadCount(userId);
-      io.to("admin").emit("newMessage", {
+      emitAdminEvent("newMessage", {
         userId,
         message: doc,
         sender: "assistant",
@@ -26800,7 +27376,7 @@ app.delete("/admin/chat/clear/:userId", async (req, res) => {
     await resetUserUnreadCount(userId);
 
     // Emit to socket clients
-    io.to("admin").emit("chatCleared", { userId });
+    emitAdminEvent("chatCleared", { userId });
 
     res.json({ success: true, message: "ล้างประวัติการสนทนาเรียบร้อยแล้ว" });
   } catch (err) {
@@ -26815,11 +27391,7 @@ app.delete("/admin/chat/clear/:userId", async (req, res) => {
 app.get("/admin/chat/tags/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const tagsColl = db.collection("user_tags");
-
-    const userTags = await tagsColl.findOne({ userId });
+    const userTags = await getUserStateRepository().getTags(userId);
 
     res.json({
       success: true,
@@ -26847,23 +27419,10 @@ app.post("/admin/chat/tags/:userId", async (req, res) => {
       .filter((tag) => tag.length > 0 && tag.length <= 50)
       .slice(0, 20); // จำกัดไม่เกิน 20 tags ต่อคน
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const tagsColl = db.collection("user_tags");
-
-    await tagsColl.updateOne(
-      { userId },
-      {
-        $set: {
-          tags: cleanTags,
-          updatedAt: new Date(),
-        },
-      },
-      { upsert: true },
-    );
+    await getUserStateRepository().setTags(userId, cleanTags);
 
     // Emit to socket clients
-    io.to("admin").emit("userTagsUpdated", { userId, tags: cleanTags });
+    emitAdminEvent("userTagsUpdated", { userId, tags: cleanTags });
 
     res.json({ success: true, tags: cleanTags });
   } catch (err) {
@@ -26888,17 +27447,14 @@ app.post("/admin/chat/feedback", async (req, res) => {
       return res.json({ success: false, error: "ประเภทการประเมินไม่ถูกต้อง" });
     }
 
-    const messageObjectId = toObjectId(messageId);
-    if (!messageObjectId) {
+    const normalizedMessageId =
+      typeof messageId === "string" ? messageId.trim() : String(messageId || "").trim();
+    const messageObjectId = toObjectId(normalizedMessageId);
+    if (!normalizedMessageId) {
       return res.json({ success: false, error: "รหัสข้อความไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const historyColl = db.collection("chat_history");
-    const feedbackColl = db.collection("chat_feedback");
-
-    const messageDoc = await historyColl.findOne({ _id: messageObjectId });
+    const messageDoc = await getChatRepository().findMessageById(normalizedMessageId);
     if (!messageDoc) {
       return res.json({
         success: false,
@@ -26923,35 +27479,26 @@ app.post("/admin/chat/feedback", async (req, res) => {
     }
 
     if (feedback === "clear") {
-      await feedbackColl.deleteOne({ messageId: messageObjectId });
+      await getFeedbackRepository().clearFeedback(normalizedMessageId);
       return res.json({ success: true, feedback: null });
     }
 
     const sanitizedNotes =
       typeof notes === "string" ? notes.trim().substring(0, 500) : "";
     const now = new Date();
-
-    await feedbackColl.updateOne(
-      { messageId: messageObjectId },
-      {
-        $set: {
-          messageId: messageObjectId,
-          messageIdString: messageObjectId.toString(),
-          userId: trimmedUserId,
-          senderId: messageSenderId || null,
-          senderRole: messageDoc.role || null,
-          platform: messageDoc.platform || null,
-          botId: messageDoc.botId || null,
-          feedback,
-          notes: sanitizedNotes,
-          updatedAt: now,
-        },
-        $setOnInsert: {
-          createdAt: now,
-        },
-      },
-      { upsert: true },
-    );
+    await getFeedbackRepository().upsertFeedback({
+      messageId: messageObjectId || null,
+      messageIdString: normalizedMessageId,
+      userId: trimmedUserId,
+      senderId: messageSenderId || null,
+      senderRole: messageDoc.role || null,
+      platform: messageDoc.platform || null,
+      botId: messageDoc.botId || null,
+      feedback,
+      notes: sanitizedNotes,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     res.json({
       success: true,
@@ -26993,11 +27540,8 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
       return res.json({ success: false, error: "orderId ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
-    const existingOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+    const orderRepo = getOrderRepository();
+    const existingOrder = await orderRepo.findById(orderId);
     if (!existingOrder) {
       return res.json({ success: false, error: "ไม่พบออเดอร์" });
     }
@@ -27045,8 +27589,8 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
       updateDoc.notes = notes;
     }
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(orderId) },
+    const result = await orderRepo.updateById(
+      orderId,
       { $set: updateDoc },
     );
 
@@ -27054,13 +27598,12 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
       return res.json({ success: false, error: "ไม่พบออเดอร์" });
     }
 
-    // ดึงข้อมูลออเดอร์ที่อัปเดตแล้ว
-    const updatedOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+    const updatedOrder = result.document;
 
     // Emit socket event
     try {
       if (io) {
-        io.to("admin").emit("orderUpdated", {
+        emitAdminEvent("orderUpdated", {
           orderId,
           userId: updatedOrder.userId,
           orderData: updatedOrder.orderData,
@@ -27090,17 +27633,15 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
       return res.json({ success: false, error: "orderId ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
+    const orderRepo = getOrderRepository();
 
     // ดึงข้อมูลออเดอร์ก่อนลบ
-    const order = await coll.findOne({ _id: new ObjectId(orderId) });
+    const order = await orderRepo.findById(orderId);
     if (!order) {
       return res.json({ success: false, error: "ไม่พบออเดอร์" });
     }
 
-    const result = await coll.deleteOne({ _id: new ObjectId(orderId) });
+    const result = await orderRepo.deleteById(orderId);
 
     if (result.deletedCount === 0) {
       return res.json({ success: false, error: "ไม่สามารถลบออเดอร์ได้" });
@@ -27109,7 +27650,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
     // Emit socket event
     try {
       if (io) {
-        io.to("admin").emit("orderDeleted", {
+        emitAdminEvent("orderDeleted", {
           orderId,
           userId: order.userId,
         });
@@ -27135,29 +27676,28 @@ app.get("/admin/chat/orders", async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
     const query = {};
     if (status) {
       query.status = status;
     }
 
-    const orders = await coll
-      .find(query)
-      .sort({ extractedAt: -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(offset))
-      .toArray();
-
-    const totalCount = await coll.countDocuments(query);
+    const orderRepo = getOrderRepository();
+    const numericLimit = parseInt(limit, 10);
+    const numericOffset = parseInt(offset, 10);
+    const [orders, totalCount] = await Promise.all([
+      orderRepo.list(query, {
+        sort: { extractedAt: -1 },
+        limit: numericLimit,
+        skip: numericOffset,
+      }),
+      orderRepo.count(query),
+    ]);
 
     res.json({
       success: true,
       orders,
       totalCount,
-      hasMore: parseInt(offset) + orders.length < totalCount,
+      hasMore: numericOffset + orders.length < totalCount,
     });
   } catch (err) {
     console.error("Error getting all orders:", err);
@@ -27169,21 +27709,17 @@ app.get("/admin/chat/orders", async (req, res) => {
 
 app.get("/admin/api/all-bots", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    const lineBots = await db.collection("line_bots").find({}).project({ _id: 1, name: 1 }).toArray();
-    const facebookBots = await db.collection("facebook_bots").find({}).project({ _id: 1, name: 1 }).toArray();
-    const instagramBots = await db
-      .collection("instagram_bots")
-      .find({})
-      .project({ _id: 1, name: 1, instagramUsername: 1 })
-      .toArray();
-    const whatsappBots = await db
-      .collection("whatsapp_bots")
-      .find({})
-      .project({ _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 })
-      .toArray();
+    const botRepo = getBotRepository();
+    const [lineBots, facebookBots, instagramBots, whatsappBots] = await Promise.all([
+      botRepo.list("line", { projection: { _id: 1, name: 1 } }),
+      botRepo.list("facebook", { projection: { _id: 1, name: 1 } }),
+      botRepo.list("instagram", {
+        projection: { _id: 1, name: 1, instagramUsername: 1 },
+      }),
+      botRepo.list("whatsapp", {
+        projection: { _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 },
+      }),
+    ]);
 
     const bots = [
       ...lineBots.map(b => ({ id: b._id, name: b.name, platform: "line" })),
@@ -27367,12 +27903,8 @@ async function evaluateNotificationSummarySchedules() {
 
   notificationSummaryProcessing = true;
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const channels = await db
-      .collection("notification_channels")
-      .find({ isActive: true })
-      .toArray();
+    const notificationRepo = getNotificationRepository();
+    const channels = await notificationRepo.listChannels({ isActive: true });
 
     if (!channels.length) return;
 
@@ -27438,16 +27970,11 @@ async function evaluateNotificationSummarySchedules() {
         });
 
         if (result?.success) {
-          await db.collection("notification_channels").updateOne(
-            { _id: channel._id },
-            {
-              $set: {
-                lastSummaryAt: dueMoment.toDate(),
-                lastSummarySlotKey: slotKey,
-                updatedAt: new Date(),
-              },
-            },
-          );
+          await notificationRepo.setChannelSummaryState(channel._id, {
+            lastSummaryAt: dueMoment.toDate(),
+            lastSummarySlotKey: slotKey,
+            updatedAt: new Date(),
+          });
         }
       } catch (channelError) {
         console.error(
@@ -27492,6 +28019,10 @@ async function startNotificationSummaryScheduler() {
   console.log(
     `[Notifications] Summary scheduler started (interval ${NOTIFICATION_SUMMARY_INTERVAL_MS / 1000}s)`,
   );
+}
+
+async function runAgentForgeScheduledTick() {
+  return agentForgeScheduler.tick();
 }
 
 function normalizeNotificationSourcesInput(sources) {
@@ -27547,12 +28078,11 @@ app.get("/admin/api/notification-channels", requireAdmin, async (req, res) => {
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
+    const notificationRepo = getNotificationRepository();
 
-    const channels = await db
-      .collection("notification_channels")
-      .find({})
-      .sort({ createdAt: -1 })
-      .toArray();
+    const channels = await notificationRepo.listChannels({}, {
+      sort: { createdAt: -1 },
+    });
 
     const senderBotIds = Array.from(
       new Set(
@@ -27687,8 +28217,7 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
       updatedAt: now,
     };
 
-    const result = await db.collection("notification_channels").insertOne(doc);
-    doc._id = result.insertedId;
+    doc._id = (await getNotificationRepository().insertChannel(doc))._id;
 
     res.status(201).json({ success: true, channel: mapNotificationChannelDoc(doc) });
   } catch (err) {
@@ -27745,10 +28274,9 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
 
     const client = await connectDB();
     const db = client.db("chatbot");
+    const notificationRepo = getNotificationRepository();
 
-    const existing = await db
-      .collection("notification_channels")
-      .findOne({ _id: new ObjectId(channelId) });
+    const existing = await notificationRepo.findChannelById(channelId);
     if (!existing) {
       return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
     }
@@ -27786,13 +28314,7 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       update.isActive = isActive;
     }
 
-    await db
-      .collection("notification_channels")
-      .updateOne({ _id: new ObjectId(channelId) }, { $set: update });
-
-    const updated = await db
-      .collection("notification_channels")
-      .findOne({ _id: new ObjectId(channelId) });
+    const updated = await notificationRepo.updateChannelById(channelId, update);
 
     res.json({ success: true, channel: mapNotificationChannelDoc(updated) });
   } catch (err) {
@@ -27811,11 +28333,8 @@ app.patch(
         return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
       }
 
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("notification_channels");
-
-      const existing = await coll.findOne({ _id: new ObjectId(channelId) });
+      const notificationRepo = getNotificationRepository();
+      const existing = await notificationRepo.findChannelById(channelId);
       if (!existing) {
         return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
       }
@@ -27823,10 +28342,10 @@ app.patch(
       const requested = parseOptionalBoolean(req.body?.isActive);
       const nextValue = typeof requested === "boolean" ? requested : !existing.isActive;
 
-      await coll.updateOne(
-        { _id: new ObjectId(channelId) },
-        { $set: { isActive: nextValue, updatedAt: new Date() } },
-      );
+      await notificationRepo.updateChannelById(channelId, {
+        isActive: nextValue,
+        updatedAt: new Date(),
+      });
 
       res.json({ success: true, isActive: nextValue });
     } catch (err) {
@@ -27846,11 +28365,7 @@ app.delete(
         return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
       }
 
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const result = await db
-        .collection("notification_channels")
-        .deleteOne({ _id: new ObjectId(channelId) });
+      const result = await getNotificationRepository().deleteChannelById(channelId);
 
       if (result.deletedCount === 0) {
         return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
@@ -27955,14 +28470,10 @@ app.get("/admin/api/notification-logs", requireAdmin, async (req, res) => {
       }
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const logs = await db
-      .collection("notification_logs")
-      .find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .toArray();
+    const logs = await getNotificationRepository().listLogs(query, {
+      sort: { createdAt: -1 },
+      limit,
+    });
 
     res.json({
       success: true,
@@ -28430,28 +28941,7 @@ async function searchItemBroad(db, categoryName, keyword, botId, platform) {
 // Get all available tags in the system
 app.get("/admin/chat/available-tags", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const tagsColl = db.collection("user_tags");
-
-    // ดึงแท็กทั้งหมดจากผู้ใช้ทั้งหมด
-    const allUserTags = await tagsColl.find({}).toArray();
-
-    // รวมแท็กทั้งหมดและนับจำนวนการใช้งาน
-    const tagCount = {};
-    allUserTags.forEach((userTag) => {
-      if (userTag.tags && Array.isArray(userTag.tags)) {
-        userTag.tags.forEach((tag) => {
-          tagCount[tag] = (tagCount[tag] || 0) + 1;
-        });
-      }
-    });
-
-    // แปลงเป็น array และเรียงตามความนิยม
-    const availableTags = Object.entries(tagCount)
-      .map(([tag, count]) => ({ tag, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 50); // เอาแค่ 50 tags ที่นิยมสุด
+    const availableTags = await getUserStateRepository().listAvailableTags(50);
 
     res.json({ success: true, tags: availableTags });
   } catch (err) {
@@ -28473,24 +28963,14 @@ app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
       });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const statusColl = db.collection("user_purchase_status");
-
-    await statusColl.updateOne(
-      { userId },
-      {
-        $set: {
-          hasPurchased,
-          updatedAt: new Date(),
-          updatedBy: "admin",
-        },
-      },
-      { upsert: true },
+    await getUserStateRepository().setPurchaseStatus(
+      userId,
+      hasPurchased,
+      "admin",
     );
 
     // Emit to socket clients
-    io.to("admin").emit("userPurchaseStatusUpdated", { userId, hasPurchased });
+    emitAdminEvent("userPurchaseStatusUpdated", { userId, hasPurchased });
 
     res.json({ success: true, hasPurchased });
   } catch (err) {
@@ -28531,11 +29011,7 @@ app.get("/admin/chat/unread-count", async (req, res) => {
 // Get all settings
 app.get("/api/settings", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("settings");
-
-    const settings = await coll.find({}).toArray();
+    const settings = await getSettingsRepository().getAll();
     const settingsObj = {};
 
     settings.forEach((setting) => {
@@ -28599,10 +29075,6 @@ app.post("/api/settings/chat", async (req, res) => {
       audioAttachmentResponse,
     } = req.body;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("settings");
-
     // Validate input
     if (chatDelaySeconds < 0 || chatDelaySeconds > 60) {
       return res.status(400).json({
@@ -28618,31 +29090,6 @@ app.post("/api/settings/chat", async (req, res) => {
       });
     }
 
-    // Save settings
-    await coll.updateOne(
-      { key: "chatDelaySeconds" },
-      { $set: { value: chatDelaySeconds } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "maxQueueMessages" },
-      { $set: { value: maxQueueMessages } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "enableMessageMerging" },
-      { $set: { value: enableMessageMerging } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "showTokenUsage" },
-      { $set: { value: showTokenUsage } },
-      { upsert: true },
-    );
-
     const sanitizedAudioResponse =
       typeof audioAttachmentResponse === "string"
         ? audioAttachmentResponse.trim()
@@ -28657,12 +29104,6 @@ app.post("/api/settings/chat", async (req, res) => {
       });
     }
 
-    await coll.updateOne(
-      { key: "audioAttachmentResponse" },
-      { $set: { value: finalAudioResponse } },
-      { upsert: true },
-    );
-
     const followUpUpdates = [
       {
         key: "enableFollowUpAnalysis",
@@ -28675,16 +29116,22 @@ app.post("/api/settings/chat", async (req, res) => {
       },
     ];
 
+    const updates = [
+      { key: "chatDelaySeconds", value: chatDelaySeconds },
+      { key: "maxQueueMessages", value: maxQueueMessages },
+      { key: "enableMessageMerging", value: enableMessageMerging },
+      { key: "showTokenUsage", value: showTokenUsage },
+      { key: "audioAttachmentResponse", value: finalAudioResponse },
+    ];
+
     let followUpConfigTouched = false;
     for (const update of followUpUpdates) {
       if (typeof update.value !== "boolean") continue;
       followUpConfigTouched = true;
-      await coll.updateOne(
-        { key: update.key },
-        { $set: { value: update.value } },
-        { upsert: true },
-      );
+      updates.push(update);
     }
+
+    await getSettingsRepository().setMany(updates);
 
     if (followUpConfigTouched) {
       resetFollowUpConfigCache();
@@ -28715,10 +29162,6 @@ app.post("/api/settings/ai", async (req, res) => {
     const { textModel, visionModel, maxImagesPerMessage, defaultInstruction } =
       req.body;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("settings");
-
     // Validate input
     const validModels = [
       "gpt-5",
@@ -28748,30 +29191,12 @@ app.post("/api/settings/ai", async (req, res) => {
         .json({ success: false, error: "จำนวนรูปภาพต้องอยู่ระหว่าง 1-10" });
     }
 
-    // Save settings
-    await coll.updateOne(
-      { key: "textModel" },
-      { $set: { value: textModel } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "visionModel" },
-      { $set: { value: visionModel } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "maxImagesPerMessage" },
-      { $set: { value: maxImagesPerMessage } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "defaultInstruction" },
-      { $set: { value: defaultInstruction || "" } },
-      { upsert: true },
-    );
+    await getSettingsRepository().setMany([
+      { key: "textModel", value: textModel },
+      { key: "visionModel", value: visionModel },
+      { key: "maxImagesPerMessage", value: maxImagesPerMessage },
+      { key: "defaultInstruction", value: defaultInstruction || "" },
+    ]);
 
     invalidateSettingsCacheKeys([
       "textModel",
@@ -28800,10 +29225,6 @@ app.post("/api/settings/system", async (req, res) => {
       aiHistoryLimit,
       orderRequiredFields,
     } = req.body;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("settings");
 
     // Validate input
     const validSystemModes = ["production", "development", "maintenance"];
@@ -28865,51 +29286,29 @@ app.post("/api/settings/system", async (req, res) => {
       });
     }
 
-    await coll.updateOne(
-      { key: "aiEnabled" },
-      { $set: { value: aiEnabledValue } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "enableChatHistory" },
-      { $set: { value: enableChatHistoryValue } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "enableAdminNotifications" },
-      { $set: { value: enableAdminNotificationsValue } },
-      { upsert: true },
-    );
+    const updates = [
+      { key: "aiEnabled", value: aiEnabledValue },
+      { key: "enableChatHistory", value: enableChatHistoryValue },
+      {
+        key: "enableAdminNotifications",
+        value: enableAdminNotificationsValue,
+      },
+      { key: "systemMode", value: systemMode },
+      { key: "aiHistoryLimit", value: parsedHistoryLimit },
+    ];
 
     if (typeof showDebugInfoValue === "boolean") {
-      await coll.updateOne(
-        { key: "showDebugInfo" },
-        { $set: { value: showDebugInfoValue } },
-        { upsert: true },
-      );
+      updates.push({ key: "showDebugInfo", value: showDebugInfoValue });
     }
-
-    await coll.updateOne(
-      { key: "systemMode" },
-      { $set: { value: systemMode } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "aiHistoryLimit" },
-      { $set: { value: parsedHistoryLimit } },
-      { upsert: true },
-    );
 
     if (normalizedOrderRequiredFields) {
-      await coll.updateOne(
-        { key: "orderRequiredFields" },
-        { $set: { value: normalizedOrderRequiredFields } },
-        { upsert: true },
-      );
+      updates.push({
+        key: "orderRequiredFields",
+        value: normalizedOrderRequiredFields,
+      });
     }
+
+    await getSettingsRepository().setMany(updates);
 
     invalidateSettingsCacheKeys([
       "aiEnabled",
@@ -28939,33 +29338,12 @@ app.post("/api/settings/filter", async (req, res) => {
       enableStrictFiltering,
     } = req.body;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("settings");
-
-    await coll.updateOne(
-      { key: "enableMessageFiltering" },
-      { $set: { value: enableMessageFiltering } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "hiddenWords" },
-      { $set: { value: hiddenWords } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "replacementText" },
-      { $set: { value: replacementText } },
-      { upsert: true },
-    );
-
-    await coll.updateOne(
-      { key: "enableStrictFiltering" },
-      { $set: { value: enableStrictFiltering } },
-      { upsert: true },
-    );
+    await getSettingsRepository().setMany([
+      { key: "enableMessageFiltering", value: enableMessageFiltering },
+      { key: "hiddenWords", value: hiddenWords },
+      { key: "replacementText", value: replacementText },
+      { key: "enableStrictFiltering", value: enableStrictFiltering },
+    ]);
 
     invalidateSettingsCacheKeys([
       "enableMessageFiltering",
@@ -30302,101 +30680,37 @@ app.get("/admin/orders/data", async (req, res) => {
       sortConfig.extractedAt = -1;
     }
 
+    const orderRepo = getOrderRepository();
     const client = await connectDB();
     const db = client.db("chatbot");
-    const coll = db.collection("orders");
-    const numericTotalAmountExpr = {
-      $convert: {
-        input: "$orderData.totalAmount",
-        to: "double",
-        onError: 0,
-        onNull: 0,
-      },
-    };
-    const numericShippingExpr = {
-      $convert: {
-        input: "$orderData.shippingCost",
-        to: "double",
-        onError: 0,
-        onNull: 0,
-      },
-    };
     const confirmedStatuses = ["confirmed", "shipped", "completed"];
 
-    const ordersCursor = coll
-      .find(query)
-      .sort(sortConfig)
-      .skip(skip)
-      .limit(limit);
-
     const [orders, totalCount, statusAgg, totalsAgg] = await Promise.all([
-      ordersCursor.toArray(),
-      coll.countDocuments(query),
-      coll
-        .aggregate([
-          { $match: query },
-          { $group: { _id: "$status", count: { $sum: 1 } } },
-        ])
-        .toArray(),
-      coll
-        .aggregate([
-          { $match: query },
-          {
-            $group: {
-              _id: null,
-              totalAmount: {
-                $sum: {
-                  $cond: [
-                    { $ne: ["$status", "cancelled"] },
-                    numericTotalAmountExpr,
-                    0,
-                  ],
-                },
-              },
-              totalAmountConfirmed: {
-                $sum: {
-                  $cond: [
-                    { $in: ["$status", confirmedStatuses] },
-                    numericTotalAmountExpr,
-                    0,
-                  ],
-                },
-              },
-              totalShipping: {
-                $sum: {
-                  $cond: [
-                    { $ne: ["$status", "cancelled"] },
-                    numericShippingExpr,
-                    0,
-                  ],
-                },
-              },
-              confirmedOrders: {
-                $sum: {
-                  $cond: [{ $in: ["$status", confirmedStatuses] }, 1, 0],
-                },
-              },
-            },
-          },
-        ])
-        .toArray(),
+      orderRepo.list(query, { sort: sortConfig, skip, limit }),
+      orderRepo.count(query),
+      orderRepo.aggregateStatusCounts(query),
+      orderRepo.aggregateTotals(query, { confirmedStatuses }),
     ]);
 
-    const userIds = Array.from(
-      new Set(orders.map((order) => order.userId).filter(Boolean)),
-    );
-    let profiles = [];
-    if (userIds.length) {
-      profiles = await db
-        .collection("user_profiles")
-        .find({ userId: { $in: userIds } })
-        .project({ userId: 1, displayName: 1 })
-        .toArray();
-    }
+    const profilePairs = orders
+      .map((order) => ({
+        userId: order.userId,
+        platform: normalizeOrderPlatform(order.platform || "line"),
+      }))
+      .filter((entry) => entry.userId);
+    const profiles =
+      profilePairs.length > 0
+        ? await getProfileRepository().listProfilesByPairs(profilePairs, {
+          projection: { userId: 1, platform: 1, displayName: 1 },
+        })
+        : [];
 
-    const profileMap = {};
+    const profileMap = new Map();
     profiles.forEach((profile) => {
-      profileMap[profile.userId] = profile.displayName;
+      profileMap.set(
+        `${profile.userId}:${normalizeOrderPlatform(profile.platform || "line")}`,
+        profile.displayName,
+      );
     });
 
     const botIdSets = {
@@ -30511,10 +30825,13 @@ app.get("/admin/orders/data", async (req, res) => {
     const formattedOrders = orders.map((order) => {
       const orderData = order.orderData || {};
       const customerName = normalizeCustomerName(orderData.customerName);
-      const displayName =
-        customerName || profileMap[order.userId] || order.userId || "";
-      const addressInfo = normalizeOrderAddress(orderData);
       const platform = normalizeOrderPlatform(order.platform || "line");
+      const displayName =
+        customerName ||
+        profileMap.get(`${order.userId}:${platform}`) ||
+        order.userId ||
+        "";
+      const addressInfo = normalizeOrderAddress(orderData);
       const rawBotId = order.botId || null;
       const botId =
         rawBotId && typeof rawBotId.toString === "function"
@@ -30610,31 +30927,34 @@ app.get("/admin/orders/data", async (req, res) => {
 app.get("/admin/orders/export", async (req, res) => {
   try {
     const { query } = buildOrderQuery(req.query || {});
+    const orderRepo = getOrderRepository();
     const client = await connectDB();
     const db = client.db("chatbot");
-    const coll = db.collection("orders");
 
-    const orders = await coll
-      .find(query)
-      .sort({ extractedAt: -1 })
-      .limit(5000)
-      .toArray();
+    const orders = await orderRepo.list(query, {
+      sort: { extractedAt: -1 },
+      limit: 5000,
+    });
 
-    const userIds = Array.from(
-      new Set(orders.map((order) => order.userId).filter(Boolean)),
-    );
-    let profiles = [];
-    if (userIds.length) {
-      profiles = await db
-        .collection("user_profiles")
-        .find({ userId: { $in: userIds } })
-        .project({ userId: 1, displayName: 1 })
-        .toArray();
-    }
+    const profilePairs = orders
+      .map((order) => ({
+        userId: order.userId,
+        platform: normalizeOrderPlatform(order.platform || "line"),
+      }))
+      .filter((entry) => entry.userId);
+    const profiles =
+      profilePairs.length > 0
+        ? await getProfileRepository().listProfilesByPairs(profilePairs, {
+          projection: { userId: 1, platform: 1, displayName: 1 },
+        })
+        : [];
 
-    const profileMap = {};
+    const profileMap = new Map();
     profiles.forEach((profile) => {
-      profileMap[profile.userId] = profile.displayName;
+      profileMap.set(
+        `${profile.userId}:${normalizeOrderPlatform(profile.platform || "line")}`,
+        profile.displayName,
+      );
     });
 
     const botIdSets = {
@@ -30930,7 +31250,8 @@ app.get("/admin/orders/export", async (req, res) => {
           : `${getPlatformLabel(platform)} (default)`);
 
       const customerName = toText(
-        normalizeCustomerName(orderData.customerName) || profileMap[order.userId],
+        normalizeCustomerName(orderData.customerName) ||
+        profileMap.get(`${order.userId}:${platform}`),
       );
       const recipientName = toText(
         normalizeCustomerName(orderData.recipientName) || customerName || order.userId,
@@ -31311,11 +31632,7 @@ async function processFacebookConversion(order) {
   }
 
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const fbBot = await db.collection("facebook_bots").findOne({
-      _id: ObjectId.isValid(order.botId) ? new ObjectId(order.botId) : null,
-    });
+    const fbBot = await getBotRepository().findById("facebook", order.botId);
 
     if (!fbBot) {
       return { success: false, reason: "Facebook Bot not found" };
@@ -31354,16 +31671,13 @@ async function processFacebookConversion(order) {
     });
 
     // Store conversion result in order
-    await db.collection("orders").updateOne(
-      { _id: order._id },
-      {
-        $set: {
-          fbConversionSent: result.success,
-          fbConversionResult: result,
-          fbConversionSentAt: new Date(),
-        },
-      }
-    );
+    await getOrderRepository().updateById(order._id, {
+      $set: {
+        fbConversionSent: result.success,
+        fbConversionResult: result,
+        fbConversionSentAt: new Date(),
+      },
+    });
 
     return result;
   } catch (error) {
@@ -31402,13 +31716,9 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
       return res.status(400).json({ success: false, error: "ไม่พบรหัสออเดอร์ที่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
-    const result = await coll.updateMany(
-      { _id: { $in: validIds.map((id) => new ObjectId(id)) } },
-      { $set: { status, updatedAt: new Date() } }
+    const result = await getOrderRepository().updateManyByIds(
+      validIds,
+      { $set: { status, updatedAt: new Date() } },
     );
 
     console.log(`[Orders] อัปเดตสถานะ ${result.modifiedCount} ออเดอร์เป็น ${status}`);
@@ -31444,23 +31754,13 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
       return res.status(400).json({ success: false, error: "ไม่พบรหัสออเดอร์ที่ถูกต้อง" });
     }
 
-    const objectIds = validIds.map((id) => new ObjectId(id));
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
-    const orders = await coll
-      .find({ _id: { $in: objectIds } })
-      .project({ _id: 1, userId: 1, platform: 1, botId: 1 })
-      .toArray();
+    const { deletedCount, documents: orders } = await getOrderRepository().deleteManyByIds(
+      validIds,
+    );
 
     if (!orders.length) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์ที่ต้องการลบ" });
     }
-
-    const deleteResult = await coll.deleteMany({
-      _id: { $in: orders.map((order) => order._id) },
-    });
 
     const followUpTargets = new Map();
     orders.forEach((order) => {
@@ -31468,7 +31768,7 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
       const userId = order?.userId || null;
       if (io && orderId && userId) {
         try {
-          io.to("admin").emit("orderDeleted", { orderId, userId });
+          emitAdminEvent("orderDeleted", { orderId, userId });
         } catch (_) { }
       }
 
@@ -31490,11 +31790,11 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
     );
 
     console.log(
-      `[Orders] ลบออเดอร์แบบกลุ่มสำเร็จ ${deleteResult.deletedCount}/${orders.length} รายการ`,
+      `[Orders] ลบออเดอร์แบบกลุ่มสำเร็จ ${deletedCount}/${orders.length} รายการ`,
     );
     res.json({
       success: true,
-      deletedCount: deleteResult.deletedCount,
+      deletedCount,
       requestedCount: orderIds.length,
       matchedCount: orders.length,
     });
@@ -31522,22 +31822,19 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
       return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
+    const orderRepo = getOrderRepository();
 
     // ดึงข้อมูลออเดอร์เดิมก่อนอัปเดต
-    const existingOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+    const existingOrder = await orderRepo.findById(orderId);
     if (!existingOrder) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
     }
 
     const previousStatus = existingOrder.status;
 
-    const result = await coll.updateOne(
-      { _id: new ObjectId(orderId) },
-      { $set: { status, updatedAt: new Date() } }
-    );
+    const result = await orderRepo.updateById(orderId, {
+      $set: { status, updatedAt: new Date() },
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
@@ -31548,8 +31845,7 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
     // ส่ง Facebook Conversions API เมื่อสถานะเปลี่ยนเป็น "confirmed"
     let fbConversionResult = null;
     if (status === "confirmed" && previousStatus !== "confirmed") {
-      // ดึงข้อมูลออเดอร์ที่อัปเดตแล้ว
-      const updatedOrder = await coll.findOne({ _id: new ObjectId(orderId) });
+      const updatedOrder = result.document;
 
       if (updatedOrder && updatedOrder.platform === "facebook" && !updatedOrder.fbConversionSent) {
         console.log(`[FB Conversions API] กำลังส่ง Purchase event สำหรับออเดอร์ ${orderId}...`);
@@ -31588,14 +31884,9 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
 
     const sanitizedNotes = typeof notes === "string" ? notes.trim().slice(0, 2000) : "";
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
-    const result = await coll.updateOne(
-      { _id: new ObjectId(orderId) },
-      { $set: { notes: sanitizedNotes, updatedAt: new Date() } }
-    );
+    const result = await getOrderRepository().updateById(orderId, {
+      $set: { notes: sanitizedNotes, updatedAt: new Date() },
+    });
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
@@ -31618,23 +31909,20 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
       return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
-    const order = await coll.findOne({ _id: new ObjectId(orderId) });
+    const orderRepo = getOrderRepository();
+    const order = await orderRepo.findById(orderId);
     if (!order) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
     }
 
-    const result = await coll.deleteOne({ _id: new ObjectId(orderId) });
+    const result = await orderRepo.deleteById(orderId);
     if (result.deletedCount === 0) {
       return res.status(500).json({ success: false, error: "ไม่สามารถลบออเดอร์ได้" });
     }
 
     try {
       if (io) {
-        io.to("admin").emit("orderDeleted", {
+        emitAdminEvent("orderDeleted", {
           orderId,
           userId: order.userId,
         });
@@ -31731,11 +32019,7 @@ app.get("/admin/orders/:orderId/print-label", async (req, res) => {
       return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("orders");
-
-    const order = await coll.findOne({ _id: new ObjectId(orderId) });
+    const order = await getOrderRepository().findById(orderId);
     if (!order) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
     }
@@ -32918,26 +33202,29 @@ function createImageHTML(imageData, index = 0) {
 async function getNormalizedChatHistory(userId, options = {}) {
   try {
     const { applyFilter = false } = options || {};
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("chat_history");
-
-    const messages = await coll
-      .find(buildChatHistoryUserMatch(userId))
-      .sort({ timestamp: 1 })
-      .limit(200)
-      .toArray();
+    const messages = await getChatRepository().getHistory(userId, {
+      sort: { timestamp: 1 },
+      limit: 200,
+    });
 
     const messageIds = messages
       .map((message) => (message?._id ? message._id : null))
       .filter(Boolean);
+    const messageIdStrings = messageIds
+      .map((messageId) =>
+        messageId && typeof messageId.toString === "function"
+          ? messageId.toString()
+          : typeof messageId === "string"
+            ? messageId
+            : null,
+      )
+      .filter(Boolean);
 
     let feedbackMap = {};
-    if (messageIds.length > 0) {
-      const feedbackColl = db.collection("chat_feedback");
-      const feedbackDocs = await feedbackColl
-        .find({ messageId: { $in: messageIds } })
-        .toArray();
+    if (messageIds.length > 0 || messageIdStrings.length > 0) {
+      const feedbackDocs = await getFeedbackRepository().getByMessageIds(
+        messageIdStrings.length > 0 ? messageIdStrings : messageIds,
+      );
 
       feedbackDocs.forEach((doc) => {
         const key =
@@ -32974,7 +33261,9 @@ async function getNormalizedChatHistory(userId, options = {}) {
         const messageIdStr =
           message?._id && typeof message._id.toString === "function"
             ? message._id.toString()
-            : null;
+            : message?._id
+              ? String(message._id)
+              : null;
         if (messageIdStr && feedbackMap[messageIdStr]) {
           const feedbackInfo = feedbackMap[messageIdStr];
           normalized.feedback = feedbackInfo.feedback;
@@ -33029,132 +33318,13 @@ async function getNormalizedChatUsers(options = {}) {
     const { applyFilter = false, focusUserId = "" } = options || {};
     const client = await connectDB();
     const db = client.db("chatbot");
-    const chatColl = db.collection("chat_history");
-    const profileColl = db.collection("user_profiles");
-    const followColl = db.collection("follow_up_status");
-
-    // ดึงข้อมูลผู้ใช้ด้วย aggregation
-    const pipeline = [
-      {
-        $addFields: {
-          senderKey: {
-            $let: {
-              vars: {
-                raw: {
-                  $cond: [
-                    {
-                      $or: [
-                        { $eq: ["$senderId", null] },
-                        { $eq: ["$senderId", ""] },
-                      ],
-                    },
-                    "$userId",
-                    "$senderId",
-                  ],
-                },
-              },
-              in: {
-                $cond: [
-                  {
-                    $or: [
-                      { $eq: ["$$raw", null] },
-                      { $eq: ["$$raw", ""] },
-                    ],
-                  },
-                  null,
-                  { $toString: "$$raw" },
-                ],
-              },
-            },
-          },
-        },
-      },
-      { $match: { senderKey: { $nin: [null, ""] } } },
-      {
-        $group: {
-          _id: "$senderKey",
-          lastMessage: { $last: "$content" },
-          lastTimestamp: { $last: "$timestamp" },
-          messageCount: { $sum: 1 },
-          platform: { $last: "$platform" },
-          botId: { $last: "$botId" },
-        },
-      },
-      {
-        $sort: { lastTimestamp: -1 },
-      },
-      {
-        $limit: 50,
-      },
-    ];
-
-    const users = await chatColl.aggregate(pipeline).toArray();
-
-    const normalizedFocusUserId =
-      typeof focusUserId === "string" ? focusUserId.trim() : "";
-    if (normalizedFocusUserId) {
-      const exists = users.some(
-        (user) =>
-          (typeof user._id === "string"
-            ? user._id
-            : user._id?.toString?.() || "") === normalizedFocusUserId,
-      );
-      if (!exists) {
-        const focusPipeline = [
-          {
-            $addFields: {
-              senderKey: {
-                $let: {
-                  vars: {
-                    raw: {
-                      $cond: [
-                        {
-                          $or: [
-                            { $eq: ["$senderId", null] },
-                            { $eq: ["$senderId", ""] },
-                          ],
-                        },
-                        "$userId",
-                        "$senderId",
-                      ],
-                    },
-                  },
-                  in: {
-                    $cond: [
-                      {
-                        $or: [
-                          { $eq: ["$$raw", null] },
-                          { $eq: ["$$raw", ""] },
-                        ],
-                      },
-                      null,
-                      { $toString: "$$raw" },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-          { $match: { senderKey: normalizedFocusUserId } },
-          {
-            $group: {
-              _id: "$senderKey",
-              lastMessage: { $last: "$content" },
-              lastTimestamp: { $last: "$timestamp" },
-              messageCount: { $sum: 1 },
-              platform: { $last: "$platform" },
-              botId: { $last: "$botId" },
-            },
-          },
-          { $sort: { lastTimestamp: -1 } },
-          { $limit: 1 },
-        ];
-        const focusUsers = await chatColl.aggregate(focusPipeline).toArray();
-        if (focusUsers.length > 0) {
-          users.unshift(focusUsers[0]);
-        }
-      }
-    }
+    const followUpRepo = getFollowUpRepository();
+    const userStateRepo = getUserStateRepository();
+    const profileRepo = getProfileRepository();
+    const users = await getChatRepository().listUsers({
+      limit: 50,
+      focusUserId,
+    });
 
     // Map botId -> bot display name for showing channel in chat user list
     const botIdsByPlatform = {
@@ -33306,18 +33476,16 @@ async function getNormalizedChatUsers(options = {}) {
     const userIds = users.map((user) => user._id).filter(Boolean);
     const followStatuses =
       userIds.length > 0
-        ? await followColl.find({ senderId: { $in: userIds } }).toArray()
+        ? await followUpRepo.listStatuses({ userIds })
         : [];
     const followMap = {};
     followStatuses.forEach((status) => {
       followMap[status.senderId] = status;
     });
 
-    // ดึงข้อมูลแท็ก
-    const tagsColl = db.collection("user_tags");
     const userTags =
       userIds.length > 0
-        ? await tagsColl.find({ userId: { $in: userIds } }).toArray()
+        ? await userStateRepo.listTagsByUsers(userIds)
         : [];
     const tagsMap = {};
     userTags.forEach((userTag) => {
@@ -33325,28 +33493,41 @@ async function getNormalizedChatUsers(options = {}) {
     });
 
     // ดึงข้อมูลสถานะการซื้อ
-    const purchaseColl = db.collection("user_purchase_status");
     const purchaseStatuses =
       userIds.length > 0
-        ? await purchaseColl.find({ userId: { $in: userIds } }).toArray()
+        ? await userStateRepo.listPurchaseStatuses(userIds)
         : [];
     const purchaseMap = {};
     purchaseStatuses.forEach((status) => {
       purchaseMap[status.userId] = status.hasPurchased;
     });
 
+    const aiStatuses =
+      userIds.length > 0
+        ? await userStateRepo.listAiStatuses(userIds)
+        : [];
+    const aiStatusMap = new Map();
+    aiStatuses.forEach((status) => {
+      aiStatusMap.set(status.senderId, Boolean(status.aiEnabled));
+    });
+
     const profileDocs =
       userIds.length > 0
-        ? await profileColl
-          .find({ userId: { $in: userIds } })
-          .project({
-            userId: 1,
-            platform: 1,
-            displayName: 1,
-            pictureUrl: 1,
-            statusMessage: 1,
-          })
-          .toArray()
+        ? await profileRepo.listProfilesByPairs(
+          users.map((user) => ({
+            userId: user._id,
+            platform: user.platform || "line",
+          })),
+          {
+            projection: {
+              userId: 1,
+              platform: 1,
+              displayName: 1,
+              pictureUrl: 1,
+              statusMessage: 1,
+            },
+          },
+        )
         : [];
     const profileMap = new Map();
     profileDocs.forEach((doc) => {
@@ -33392,10 +33573,9 @@ async function getNormalizedChatUsers(options = {}) {
     }
 
     // ดึงข้อมูลออเดอร์
-    const ordersColl = db.collection("orders");
     const userOrders =
       userIds.length > 0
-        ? await ordersColl.find({ userId: { $in: userIds } }).toArray()
+        ? await getOrderRepository().findByUsers(userIds)
         : [];
     const ordersMap = {};
     userOrders.forEach((order) => {
@@ -33406,26 +33586,13 @@ async function getNormalizedChatUsers(options = {}) {
     });
 
     // ดึงงานติดตาม (follow-up tasks) ที่ยัง active
-    const followUpTaskColl = db.collection("follow_up_tasks");
     const followUpTasks =
       userIds.length > 0
-        ? await followUpTaskColl
-          .find({
-            userId: { $in: userIds },
-            canceled: { $ne: true },
-            completed: { $ne: true },
-            nextScheduledAt: { $ne: null },
-          })
-          .project({
-            userId: 1,
-            platform: 1,
-            botId: 1,
-            nextScheduledAt: 1,
-            nextRoundIndex: 1,
-            createdAt: 1,
-            updatedAt: 1,
-          })
-          .toArray()
+        ? await followUpRepo.listTasks({
+          userIds,
+          activeOnly: true,
+          nextScheduledAtNotNull: true,
+        })
         : [];
 
     const followUpTaskMap = new Map();
@@ -33527,11 +33694,9 @@ async function getNormalizedChatUsers(options = {}) {
           }
 
           // ดึงสถานะ AI ต่อผู้ใช้
-          let aiEnabled = true;
-          try {
-            const status = await getUserStatus(userId);
-            aiEnabled = !!status.aiEnabled;
-          } catch (_) { }
+          const aiEnabled = aiStatusMap.has(userId)
+            ? Boolean(aiStatusMap.get(userId))
+            : true;
 
           const followStatus = followMap[userId];
           const showFollowUp = config.showInChat !== false;
@@ -33621,3 +33786,25 @@ async function getNormalizedChatUsers(options = {}) {
     return [];
   }
 }
+
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error("[Runtime] Fatal startup error:", error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  app,
+  connectDB,
+  evaluateNotificationSummarySchedules,
+  FOLLOW_UP_TASK_INTERVAL_MS,
+  initializeMongoRuntime,
+  processFlushedMessages,
+  processDueFollowUpTasks,
+  runAgentForgeScheduledTick,
+  server,
+  startLegacyBackgroundJobs,
+  NOTIFICATION_SUMMARY_INTERVAL_MS,
+  startServer,
+};

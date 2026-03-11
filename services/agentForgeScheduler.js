@@ -48,6 +48,10 @@ class AgentForgeScheduler {
     );
   }
 
+  async tick() {
+    return this._tick();
+  }
+
   async _tick() {
     if (this.isRunning) return;
 

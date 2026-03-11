@@ -19,6 +19,8 @@ class InstructionChatService {
         this._cachedId = null;
         // Callback to reset follow-up config cache after writes
         this._resetFollowUpConfigCache = options.resetFollowUpConfigCache || null;
+        this._followUpPageSettingsRepository =
+            options.followUpPageSettingsRepository || null;
         this._invalidateInstructionPromptCaches =
             typeof options.invalidateInstructionPromptCaches === "function"
                 ? options.invalidateInstructionPromptCaches
@@ -27,6 +29,11 @@ class InstructionChatService {
             typeof options.invalidateAllRuntimeCaches === "function"
                 ? options.invalidateAllRuntimeCaches
                 : null;
+        this._conversationThreadOptions =
+            options.conversationThreadOptions &&
+                typeof options.conversationThreadOptions === "object"
+                ? options.conversationThreadOptions
+                : {};
     }
 
     async _getInstruction(instructionId) {
@@ -66,6 +73,45 @@ class InstructionChatService {
         this._runOptionalCallback(
             this._invalidateAllRuntimeCaches,
             "invalidateAllRuntimeCaches"
+        );
+    }
+
+    _createConversationThreadService() {
+        return new ConversationThreadService(
+            this.db,
+            this._conversationThreadOptions,
+        );
+    }
+
+    async _getFollowUpPageSettingsDoc(platform, botId) {
+        if (this._followUpPageSettingsRepository) {
+            return this._followUpPageSettingsRepository.getExact(platform, botId);
+        }
+        return this.db.collection("follow_up_page_settings").findOne({ platform, botId });
+    }
+
+    async _listFollowUpPageSettings() {
+        if (this._followUpPageSettingsRepository) {
+            return this._followUpPageSettingsRepository.listAll();
+        }
+        return this.db.collection("follow_up_page_settings").find({}).toArray();
+    }
+
+    async _upsertFollowUpPageSettings(platform, botId, settings) {
+        if (this._followUpPageSettingsRepository) {
+            return this._followUpPageSettingsRepository.upsert(platform, botId, settings);
+        }
+        return this.db.collection("follow_up_page_settings").updateOne(
+            { platform, botId },
+            {
+                $set: {
+                    platform,
+                    botId,
+                    settings,
+                    updatedAt: new Date(),
+                },
+            },
+            { upsert: true }
         );
     }
 
@@ -899,7 +945,7 @@ class InstructionChatService {
     async _getPageRounds(pageKey) {
         const parsed = this._parsePageKey(pageKey);
         if (!parsed) return null;
-        const doc = await this.db.collection("follow_up_page_settings").findOne({ platform: parsed.platform, botId: parsed.botId });
+        const doc = await this._getFollowUpPageSettingsDoc(parsed.platform, parsed.botId);
         return doc?.settings?.rounds || null;
     }
 
@@ -919,7 +965,7 @@ class InstructionChatService {
     async list_followup_pages() {
         const lineBots = await this.db.collection("line_bots").find({}).sort({ createdAt: -1 }).toArray();
         const facebookBots = await this.db.collection("facebook_bots").find({}).sort({ createdAt: -1 }).toArray();
-        const overrides = await this.db.collection("follow_up_page_settings").find({}).toArray();
+        const overrides = await this._listFollowUpPageSettings();
         const overrideMap = {};
         overrides.forEach(d => { if (d.platform && d.botId) overrideMap[`${d.platform}:${d.botId}`] = d; });
 
@@ -1012,7 +1058,7 @@ class InstructionChatService {
         for (const pk of pageKeys.slice(0, 20)) {
             const parsed = this._parsePageKey(pk);
             if (!parsed) { pageConfigs.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง (ใช้ platform:botId)" }); continue; }
-            const doc = await this.db.collection("follow_up_page_settings").findOne({ platform: parsed.platform, botId: parsed.botId });
+            const doc = await this._getFollowUpPageSettingsDoc(parsed.platform, parsed.botId);
             const settings = doc?.settings || {};
             const effectiveRounds = Array.isArray(settings.rounds) && settings.rounds.length > 0 ? settings.rounds : globalRounds;
             pageConfigs.push({
@@ -1154,7 +1200,6 @@ class InstructionChatService {
         // If pageKeys provided, write to per-page settings
         if (Array.isArray(pageKeys) && pageKeys.length > 0) {
             const results = [];
-            const pageColl = this.db.collection("follow_up_page_settings");
             for (const pk of pageKeys.slice(0, 20)) {
                 const parsed = this._parsePageKey(pk);
                 if (!parsed) { results.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง" }); continue; }
@@ -1173,10 +1218,20 @@ class InstructionChatService {
 
                 if (!Object.keys(setFields).length) { results.push({ pageKey: pk, error: "ไม่มีการเปลี่ยนแปลง" }); continue; }
 
-                await pageColl.updateOne(
-                    { platform: parsed.platform, botId: parsed.botId },
-                    { $set: { platform: parsed.platform, botId: parsed.botId, ...setFields, updatedAt: new Date() } },
-                    { upsert: true }
+                const currentDoc = await this._getFollowUpPageSettingsDoc(parsed.platform, parsed.botId);
+                const nextSettings = {
+                    ...(currentDoc?.settings || {}),
+                };
+                if (Object.prototype.hasOwnProperty.call(setFields, "settings.autoFollowUpEnabled")) {
+                    nextSettings.autoFollowUpEnabled = setFields["settings.autoFollowUpEnabled"];
+                }
+                if (Object.prototype.hasOwnProperty.call(setFields, "settings.orderPromptInstructions")) {
+                    nextSettings.orderPromptInstructions = setFields["settings.orderPromptInstructions"];
+                }
+                await this._upsertFollowUpPageSettings(
+                    parsed.platform,
+                    parsed.botId,
+                    nextSettings,
                 );
                 results.push({ pageKey: pk, success: true, updated: updates });
             }
@@ -1208,13 +1263,12 @@ class InstructionChatService {
         // If pageKeys provided, update per-page rounds
         if (Array.isArray(pageKeys) && pageKeys.length > 0) {
             const results = [];
-            const pageColl = this.db.collection("follow_up_page_settings");
             for (const pk of pageKeys.slice(0, 20)) {
                 const parsed = this._parsePageKey(pk);
                 if (!parsed) { results.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง" }); continue; }
 
                 // Get current page rounds (or copy from global if none)
-                const doc = await pageColl.findOne({ platform: parsed.platform, botId: parsed.botId });
+                const doc = await this._getFollowUpPageSettingsDoc(parsed.platform, parsed.botId);
                 let rounds = doc?.settings?.rounds;
                 if (!Array.isArray(rounds) || rounds.length === 0) {
                     // Copy global rounds to this page first
@@ -1229,10 +1283,13 @@ class InstructionChatService {
                 if (typeof message === "string") this._setRoundMessage(rounds[roundIndex], message);
                 if (typeof delayMinutes === "number" && delayMinutes >= 1) rounds[roundIndex].delayMinutes = Math.round(delayMinutes);
 
-                await pageColl.updateOne(
-                    { platform: parsed.platform, botId: parsed.botId },
-                    { $set: { platform: parsed.platform, botId: parsed.botId, "settings.rounds": rounds, updatedAt: new Date() } },
-                    { upsert: true }
+                await this._upsertFollowUpPageSettings(
+                    parsed.platform,
+                    parsed.botId,
+                    {
+                        ...(doc?.settings || {}),
+                        rounds,
+                    },
                 );
                 const { message: afterMsg } = this._getRoundContent(rounds[roundIndex]);
                 results.push({
@@ -1290,12 +1347,11 @@ class InstructionChatService {
         // Per-page update
         if (Array.isArray(pageKeys) && pageKeys.length > 0) {
             const results = [];
-            const pageColl = this.db.collection("follow_up_page_settings");
             for (const pk of pageKeys.slice(0, 20)) {
                 const parsed = this._parsePageKey(pk);
                 if (!parsed) { results.push({ pageKey: pk, error: "รูปแบบ pageKey ไม่ถูกต้อง" }); continue; }
 
-                const doc = await pageColl.findOne({ platform: parsed.platform, botId: parsed.botId });
+                const doc = await this._getFollowUpPageSettingsDoc(parsed.platform, parsed.botId);
                 let rounds = doc?.settings?.rounds;
                 if (!Array.isArray(rounds) || rounds.length === 0) {
                     rounds = JSON.parse(JSON.stringify(await this._getGlobalRounds()));
@@ -1313,10 +1369,13 @@ class InstructionChatService {
                     results.push({ pageKey: pk, error: "action ต้องเป็น 'add' หรือ 'remove'" }); continue;
                 }
 
-                await pageColl.updateOne(
-                    { platform: parsed.platform, botId: parsed.botId },
-                    { $set: { platform: parsed.platform, botId: parsed.botId, "settings.rounds": rounds, updatedAt: new Date() } },
-                    { upsert: true }
+                await this._upsertFollowUpPageSettings(
+                    parsed.platform,
+                    parsed.botId,
+                    {
+                        ...(doc?.settings || {}),
+                        rounds,
+                    },
                 );
                 results.push({ pageKey: pk, success: true, roundIndex, action, currentImageCount: this._countRoundImages(rounds[roundIndex]) });
             }
@@ -1938,7 +1997,7 @@ class InstructionChatService {
         if (version1 == null || version2 == null) return { error: "ต้องระบุ version1 และ version2" };
 
         const instId = inst.instructionId || instructionId;
-        const threadService = new ConversationThreadService(this.db);
+        const threadService = this._createConversationThreadService();
 
         const [stats1, stats2] = await Promise.all([
             threadService.getConversationAnalytics(instId, Number(version1)),
@@ -1976,7 +2035,7 @@ class InstructionChatService {
     // ──────────────────────────── CONVERSATION ANALYSIS TOOLS ────────────────────────────
 
     async get_conversation_stats(instructionId) {
-        const threadService = new ConversationThreadService(this.db);
+        const threadService = this._createConversationThreadService();
         // Look up the instructionId identifier for the instruction
         const inst = await this._getInstruction(instructionId);
         const instIdForQuery = inst?.instructionId || instructionId;
@@ -1997,7 +2056,7 @@ class InstructionChatService {
     }
 
     async search_conversations(instructionId, { outcome, minMessages, maxMessages, products, limit = 10 }) {
-        const threadService = new ConversationThreadService(this.db);
+        const threadService = this._createConversationThreadService();
         const inst = await this._getInstruction(instructionId);
         const instIdForQuery = inst?.instructionId || instructionId;
 
@@ -2031,7 +2090,7 @@ class InstructionChatService {
 
     async get_conversation_detail(instructionId, { threadId, page = 1, limit = 30 }) {
         if (!threadId) return { error: "ต้องระบุ threadId" };
-        const threadService = new ConversationThreadService(this.db);
+        const threadService = this._createConversationThreadService();
 
         const result = await threadService.getThreadMessages(threadId, {
             page: Number(page) || 1,

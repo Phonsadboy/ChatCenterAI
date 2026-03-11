@@ -9,11 +9,18 @@ const { ObjectId } = require("mongodb");
 const crypto = require("crypto");
 
 class ConversationThreadService {
-    constructor(db) {
+    constructor(db, options = {}) {
         this.db = db;
         this.threadColl = db.collection("conversation_threads");
-        this.chatColl = db.collection("chat_history");
-        this.orderColl = db.collection("orders");
+        this.chatRepository = options.chatRepository || null;
+        this.orderRepository = options.orderRepository || null;
+        this.botRepository = options.botRepository || null;
+
+        if (!this.chatRepository || !this.orderRepository || !this.botRepository) {
+            throw new Error(
+                "ConversationThreadService requires chatRepository, orderRepository, and botRepository",
+            );
+        }
     }
 
     // ──────────────────────────── THREAD MANAGEMENT ────────────────────────────
@@ -24,6 +31,15 @@ class ConversationThreadService {
     _generateThreadId(senderId, botId, platform) {
         const raw = `${senderId}::${botId || "default"}::${platform || "line"}`;
         return "thread_" + crypto.createHash("md5").update(raw).digest("hex").substring(0, 16);
+    }
+
+    _toLegacyId(value) {
+        if (value === null || typeof value === "undefined") return "";
+        if (typeof value === "string") return value.trim();
+        if (value && typeof value.toString === "function") {
+            return value.toString().trim();
+        }
+        return String(value).trim();
     }
 
     /**
@@ -233,33 +249,54 @@ class ConversationThreadService {
      * Compute message stats from chat_history for a given user+bot+platform
      */
     async _computeStats(senderId, botId, platform) {
-        const query = { senderId };
-        if (botId) query.botId = botId;
-        if (platform) query.platform = platform;
+        const filter = { userId: senderId };
+        if (botId) filter.botId = botId;
+        if (platform) filter.platform = platform;
 
-        const pipeline = [
-            { $match: query },
-            {
-                $group: {
-                    _id: null,
-                    totalMessages: { $sum: 1 },
-                    userMessages: {
-                        $sum: { $cond: [{ $eq: ["$role", "user"] }, 1, 0] },
-                    },
-                    assistantMessages: {
-                        $sum: { $cond: [{ $eq: ["$role", "assistant"] }, 1, 0] },
-                    },
-                    firstMessageAt: { $min: "$timestamp" },
-                    lastMessageAt: { $max: "$timestamp" },
-                },
+        const messages = await this.chatRepository.listActivityMessages(filter, {
+            projection: {
+                role: 1,
+                timestamp: 1,
             },
-        ];
+            sort: { timestamp: 1 },
+        });
 
-        const result = await this.chatColl.aggregate(pipeline).toArray();
-        if (result.length === 0) {
-            return { totalMessages: 0, userMessages: 0, assistantMessages: 0, firstMessageAt: null, lastMessageAt: null };
+        if (!Array.isArray(messages) || messages.length === 0) {
+            return {
+                totalMessages: 0,
+                userMessages: 0,
+                assistantMessages: 0,
+                firstMessageAt: null,
+                lastMessageAt: null,
+            };
         }
-        return result[0];
+
+        let userMessages = 0;
+        let assistantMessages = 0;
+        let firstMessageAt = null;
+        let lastMessageAt = null;
+
+        for (const message of messages) {
+            const role = typeof message?.role === "string" ? message.role : "";
+            if (role === "user") userMessages += 1;
+            if (role === "assistant") assistantMessages += 1;
+            const timestamp = message?.timestamp ? new Date(message.timestamp) : null;
+            if (!timestamp || Number.isNaN(timestamp.getTime())) continue;
+            if (!firstMessageAt || timestamp < firstMessageAt) {
+                firstMessageAt = timestamp;
+            }
+            if (!lastMessageAt || timestamp > lastMessageAt) {
+                lastMessageAt = timestamp;
+            }
+        }
+
+        return {
+            totalMessages: messages.length,
+            userMessages,
+            assistantMessages,
+            firstMessageAt,
+            lastMessageAt,
+        };
     }
 
     /**
@@ -270,7 +307,9 @@ class ConversationThreadService {
         if (platform) orderQuery.platform = platform;
         if (botId) orderQuery.botId = botId;
 
-        const orders = await this.orderColl.find(orderQuery).sort({ extractedAt: -1 }).toArray();
+        const orders = await this.orderRepository.list(orderQuery, {
+            sort: { extractedAt: -1 },
+        });
 
         const hasOrder = orders.length > 0;
         const orderIds = orders.map(o => o._id.toString());
@@ -426,16 +465,16 @@ class ConversationThreadService {
         const thread = await this.threadColl.findOne({ threadId });
         if (!thread) return { error: "ไม่พบ thread" };
 
-        const query = { senderId: thread.senderId };
-        if (thread.botId) query.botId = thread.botId;
-        if (thread.platform) query.platform = thread.platform;
+        const filter = { userId: thread.senderId };
+        if (thread.botId) filter.botId = thread.botId;
+        if (thread.platform) filter.platform = thread.platform;
 
         const page = Math.max(1, Number(pagination.page) || 1);
         const limit = Math.min(100, Math.max(1, Number(pagination.limit) || 50));
         const skip = (page - 1) * limit;
 
         const [messages, totalCount] = await Promise.all([
-            this.chatColl.find(query, {
+            this.chatRepository.listActivityMessages(filter, {
                 projection: {
                     senderId: 1,
                     role: 1,
@@ -445,8 +484,11 @@ class ConversationThreadService {
                     instructionRefs: 1,
                     instructionMeta: 1,
                 },
-            }).sort({ timestamp: 1 }).skip(skip).limit(limit).toArray(),
-            this.chatColl.countDocuments(query),
+                sort: { timestamp: 1 },
+                skip,
+                limit,
+            }),
+            this.chatRepository.countActivityMessages(filter),
         ]);
 
         // Sanitize content (hide base64 images, limit length)
@@ -505,12 +547,32 @@ class ConversationThreadService {
 
         // Search in chat_history for these users
         const senderIds = [...new Set(threads.map(t => t.senderId))];
-        const searchResults = await this.chatColl.find({
-            senderId: { $in: senderIds },
-            content: { $regex: keyword, $options: "i" },
+        const searchResults = await this.chatRepository.listActivityMessages({
+            userIds: senderIds,
+            contentRegex: keyword,
         }, {
-            projection: { senderId: 1, role: 1, content: 1, timestamp: 1, botId: 1, platform: 1 },
-        }).sort({ timestamp: -1 }).limit(limit).toArray();
+            projection: {
+                senderId: 1,
+                role: 1,
+                content: 1,
+                timestamp: 1,
+                botId: 1,
+                platform: 1,
+            },
+            sort: { timestamp: -1 },
+            limit,
+        });
+
+        const threadMap = new Map(
+            threads.map((thread) => {
+                const key = [
+                    this._toLegacyId(thread.senderId),
+                    this._toLegacyId(thread.botId),
+                    this._toLegacyId(thread.platform || "line"),
+                ].join("|");
+                return [key, thread.threadId];
+            }),
+        );
 
         return {
             results: searchResults.map(m => ({
@@ -518,7 +580,11 @@ class ConversationThreadService {
                 role: m.role,
                 content: (m.content || "").substring(0, 500),
                 timestamp: m.timestamp,
-                threadId: threads.find(t => t.senderId === m.senderId && t.botId === m.botId)?.threadId,
+                threadId: threadMap.get([
+                    this._toLegacyId(m.senderId),
+                    this._toLegacyId(m.botId),
+                    this._toLegacyId(m.platform || "line"),
+                ].join("|")) || null,
             })),
             totalResults: searchResults.length,
         };
@@ -688,24 +754,57 @@ class ConversationThreadService {
      * Groups by senderId+botId+platform, looks up bot config for instructionRefs.
      */
     async rebuildAllThreads(progressCallback = null) {
-        // Get all unique senderId+botId+platform combinations
-        const groups = await this.chatColl.aggregate([
-            {
-                $group: {
-                    _id: { senderId: "$senderId", botId: "$botId", platform: "$platform" },
-                    totalMessages: { $sum: 1 },
-                    userMessages: { $sum: { $cond: [{ $eq: ["$role", "user"] }, 1, 0] } },
-                    assistantMessages: { $sum: { $cond: [{ $eq: ["$role", "assistant"] }, 1, 0] } },
-                    firstMessageAt: { $min: "$timestamp" },
-                    lastMessageAt: { $max: "$timestamp" },
-                },
+        const allMessages = await this.chatRepository.listActivityMessages({}, {
+            projection: {
+                senderId: 1,
+                role: 1,
+                timestamp: 1,
+                platform: 1,
+                botId: 1,
             },
-        ]).toArray();
+            sort: { timestamp: 1 },
+        });
+
+        const groupStats = new Map();
+        for (const message of allMessages) {
+            const senderId = this._toLegacyId(message.senderId || message.userId);
+            if (!senderId) continue;
+            const platform = this._toLegacyId(message.platform || "line") || "line";
+            const botId = this._toLegacyId(message.botId) || null;
+            const key = `${senderId}::${botId || "default"}::${platform}`;
+            if (!groupStats.has(key)) {
+                groupStats.set(key, {
+                    _id: { senderId, botId, platform },
+                    totalMessages: 0,
+                    userMessages: 0,
+                    assistantMessages: 0,
+                    firstMessageAt: null,
+                    lastMessageAt: null,
+                });
+            }
+            const group = groupStats.get(key);
+            group.totalMessages += 1;
+            if (message.role === "user") group.userMessages += 1;
+            if (message.role === "assistant") group.assistantMessages += 1;
+            const timestamp = message?.timestamp ? new Date(message.timestamp) : null;
+            if (!timestamp || Number.isNaN(timestamp.getTime())) continue;
+            if (!group.firstMessageAt || timestamp < group.firstMessageAt) {
+                group.firstMessageAt = timestamp;
+            }
+            if (!group.lastMessageAt || timestamp > group.lastMessageAt) {
+                group.lastMessageAt = timestamp;
+            }
+        }
+        const groups = Array.from(groupStats.values());
 
         // Pre-load all bots for instruction ref lookup
         const [lineBots, fbBots] = await Promise.all([
-            this.db.collection("line_bots").find({}, { projection: { _id: 1, name: 1, selectedInstructions: 1 } }).toArray(),
-            this.db.collection("facebook_bots").find({}, { projection: { _id: 1, name: 1, selectedInstructions: 1 } }).toArray(),
+            this.botRepository.list("line", {
+                projection: { _id: 1, name: 1, selectedInstructions: 1 },
+            }),
+            this.botRepository.list("facebook", {
+                projection: { _id: 1, name: 1, selectedInstructions: 1 },
+            }),
         ]);
 
         const botMap = new Map();

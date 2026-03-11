@@ -134,6 +134,9 @@ class AgentForgeRunner {
     this.resolveModelForProvider = typeof options.resolveModelForProvider === "function"
       ? options.resolveModelForProvider
       : null;
+    this.getChatRepository = typeof options.getChatRepository === "function"
+      ? options.getChatRepository
+      : null;
     this.timezone = options.timezone || DEFAULT_TIMEZONE;
     this.activeRuns = new Map();
   }
@@ -455,7 +458,9 @@ class AgentForgeRunner {
 
     try {
       const db = (await this.connectDB()).db("chatbot");
-      const tools = new AgentForgeTools(db);
+      const tools = new AgentForgeTools(db, {
+        chatRepository: this.getChatRepository ? this.getChatRepository() : null,
+      });
       const cursorRows = await this.agentForgeService.getRunCursors(profile._id);
       const cursorMap = new Map();
       for (const row of cursorRows) {
