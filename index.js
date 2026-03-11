@@ -754,6 +754,7 @@ const buildInstructionLookupNames = (fileName) => {
 app.get("/assets/instructions/:fileName", async (req, res, next) => {
   const { fileName } = req.params;
   if (!fileName) return next();
+  if (!isMongoRuntimeEnabled()) return next();
 
   try {
     const client = await connectDB();
@@ -854,9 +855,12 @@ app.get("/assets/instructions/:fileName", async (req, res, next) => {
 });
 
 app.get("/assets/followup/:fileName", async (req, res, next) => {
+  const requestedFileName =
+    typeof req?.params?.fileName === "string" ? req.params.fileName : "";
   try {
     const { fileName } = req.params;
     if (!fileName) return next();
+    if (!isMongoRuntimeEnabled()) return next();
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -930,10 +934,10 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
     });
     stream.pipe(res);
   } catch (err) {
-    console.error(`[Asset Error] Error in followup asset route: ${fileName}`, {
+    console.error(`[Asset Error] Error in followup asset route: ${requestedFileName}`, {
       error: err.message,
       stack: err.stack,
-      fileName,
+      fileName: requestedFileName,
     });
     next(err);
   }
