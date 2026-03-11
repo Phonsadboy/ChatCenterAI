@@ -3,6 +3,7 @@ require("dotenv").config();
 
 const { MongoClient } = require("mongodb");
 const {
+  attachPgClientErrorLogger,
   closePgPool,
   getPgPool,
   query,
@@ -202,6 +203,10 @@ async function migrateMongoToPostgres(options = {}) {
   await mongo.connect();
   const db = mongo.db(MONGO_DB_NAME);
   const pgClient = await getPgPool().connect();
+  const detachClientErrorLogger = attachPgClientErrorLogger(
+    pgClient,
+    "mongo-to-postgres migration client",
+  );
 
   try {
     const client = pgClient;
@@ -969,6 +974,7 @@ async function migrateMongoToPostgres(options = {}) {
       }
       await writeCheckpoint("short_links", shortLinks.length);
   } finally {
+    detachClientErrorLogger();
     pgClient.release();
     await mongo.close();
   }

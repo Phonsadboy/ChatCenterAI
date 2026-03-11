@@ -1,5 +1,6 @@
 const { getRuntimeConfig, parseBoolean } = require("../infra/runtimeConfig");
 const {
+  attachPgClientErrorLogger,
   getPgPool,
   isPostgresConfigured,
   runSqlMigrationsWithLock,
@@ -103,6 +104,10 @@ async function ensureAutoDeployMigration(runtimeLabel, runtimeConfig) {
     process.env.CCAI_MIGRATION_DEPLOY_LOCK_ID || DEFAULT_DEPLOY_MIGRATION_LOCK_ID,
   );
   const client = await getPgPool().connect();
+  const detachClientErrorLogger = attachPgClientErrorLogger(
+    client,
+    `auto deploy migration client (${runtimeLabel})`,
+  );
 
   try {
     await client.query("SELECT pg_advisory_lock($1)", [lockId]);
@@ -179,6 +184,7 @@ async function ensureAutoDeployMigration(runtimeLabel, runtimeConfig) {
         error?.message || error,
       );
     }
+    detachClientErrorLogger();
     client.release();
   }
 }

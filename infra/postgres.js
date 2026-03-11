@@ -6,6 +6,26 @@ const { getRuntimeConfig } = require("./runtimeConfig");
 let pool = null;
 const DEFAULT_MIGRATION_LOCK_ID = 7482301;
 
+function attachPgClientErrorLogger(client, label = "client") {
+  if (!client || typeof client.on !== "function") {
+    return () => {};
+  }
+
+  const onError = (error) => {
+    console.error(
+      `[Postgres] ${label} error:`,
+      error?.message || error,
+    );
+  };
+
+  client.on("error", onError);
+  return () => {
+    if (typeof client.off === "function") {
+      client.off("error", onError);
+    }
+  };
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -51,15 +71,20 @@ async function query(text, params = []) {
 
 async function withTransaction(callback) {
   const client = await getPgPool().connect();
+  const detachClientErrorLogger = attachPgClientErrorLogger(
+    client,
+    "transaction client",
+  );
   try {
     await client.query("BEGIN");
     const result = await callback(client);
     await client.query("COMMIT");
     return result;
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
+    detachClientErrorLogger();
     client.release();
   }
 }
@@ -190,6 +215,9 @@ async function releaseMigrationLock(client, lockId = DEFAULT_MIGRATION_LOCK_ID) 
 async function runSqlMigrationsWithLock(dirPath, options = {}) {
   const ownClient = !options?.client;
   const client = options?.client || await getPgPool().connect();
+  const detachClientErrorLogger = ownClient
+    ? attachPgClientErrorLogger(client, "migration lock client")
+    : () => {};
   let acquiredLockId = null;
 
   try {
@@ -208,6 +236,7 @@ async function runSqlMigrationsWithLock(dirPath, options = {}) {
     }
 
     if (ownClient) {
+      detachClientErrorLogger();
       client.release();
     }
   }
@@ -222,6 +251,7 @@ async function closePgPool() {
 module.exports = {
   closePgPool,
   getPgPool,
+  attachPgClientErrorLogger,
   isPostgresConfigured,
   query,
   runSqlMigrations,
