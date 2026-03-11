@@ -3183,22 +3183,17 @@ async function getFollowUpBaseConfig() {
     return followUpBaseConfigCache;
   }
 
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("settings");
-  const keys = [
-    "enableFollowUpAnalysis",
-    "followUpShowInChat",
-    "followUpShowInDashboard",
-    "followUpAutoEnabled",
-    "followUpRounds",
-    "followUpOrderPromptInstructions",
-  ];
-  const docs = await coll.find({ key: { $in: keys } }).toArray();
-  const map = {};
-  docs.forEach((doc) => {
-    map[doc.key] = doc.value;
-  });
+  const map = {
+    enableFollowUpAnalysis: await getSettingValue("enableFollowUpAnalysis", true),
+    followUpShowInChat: await getSettingValue("followUpShowInChat", true),
+    followUpShowInDashboard: await getSettingValue("followUpShowInDashboard", true),
+    followUpAutoEnabled: await getSettingValue("followUpAutoEnabled", false),
+    followUpRounds: await getSettingValue("followUpRounds", []),
+    followUpOrderPromptInstructions: await getSettingValue(
+      "followUpOrderPromptInstructions",
+      DEFAULT_ORDER_PROMPT_BODY,
+    ),
+  };
 
   const config = {
     analysisEnabled:
@@ -3304,28 +3299,25 @@ async function getOrderPromptBody(platform = "line", botId = null) {
 
 async function listFollowUpPageSettings() {
   const baseConfig = await getFollowUpBaseConfig();
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const lineBots = await db
-    .collection("line_bots")
-    .find({})
-    .sort({ createdAt: -1 })
-    .toArray();
-  const facebookBots = await db
-    .collection("facebook_bots")
-    .find({})
-    .sort({ createdAt: -1 })
-    .toArray();
-  const instagramBots = await db
-    .collection("instagram_bots")
-    .find({})
-    .sort({ createdAt: -1 })
-    .toArray();
-  const whatsappBots = await db
-    .collection("whatsapp_bots")
-    .find({})
-    .sort({ createdAt: -1 })
-    .toArray();
+  const mongoDb = isMongoRuntimeEnabled()
+    ? (await connectDB()).db("chatbot")
+    : null;
+  const botRepo = getBotRepository();
+  const [lineBots, facebookBots, instagramBots, whatsappBots] = await Promise.all(
+    mongoDb
+      ? [
+        mongoDb.collection("line_bots").find({}).sort({ createdAt: -1 }).toArray(),
+        mongoDb.collection("facebook_bots").find({}).sort({ createdAt: -1 }).toArray(),
+        mongoDb.collection("instagram_bots").find({}).sort({ createdAt: -1 }).toArray(),
+        mongoDb.collection("whatsapp_bots").find({}).sort({ createdAt: -1 }).toArray(),
+      ]
+      : [
+        botRepo.list("line", { sort: { createdAt: -1 } }),
+        botRepo.list("facebook", { sort: { createdAt: -1 } }),
+        botRepo.list("instagram", { sort: { createdAt: -1 } }),
+        botRepo.list("whatsapp", { sort: { createdAt: -1 } }),
+      ],
+  );
   const settingsDocs = await getFollowUpPageSettingsRepository().listAll();
 
   const settingsMap = {};
@@ -3367,21 +3359,29 @@ async function listFollowUpPageSettings() {
   };
 
   const pages = [];
+  const resolveBotId = (bot) =>
+    bot?._id && typeof bot._id.toString === "function"
+      ? bot._id.toString()
+      : typeof bot?._id === "string"
+        ? bot._id
+        : "";
 
   lineBots.forEach((bot) => {
-    const key = `line:${bot._id.toString()}`;
-    const config = buildConfig("line", bot._id.toString());
+    const resolvedBotId = resolveBotId(bot);
+    if (!resolvedBotId) return;
+    const key = `line:${resolvedBotId}`;
+    const config = buildConfig("line", resolvedBotId);
     const doc = settingsMap[key];
     pages.push({
       id: key,
       platform: "line",
-      botId: bot._id.toString(),
+      botId: resolvedBotId,
       type: "line_bot",
       name:
         bot.name ||
         bot.displayName ||
         bot.botName ||
-        `LINE Bot (${bot._id.toString().slice(-4)})`,
+        `LINE Bot (${resolvedBotId.slice(-4)})`,
       settings: config,
       hasOverride: !!doc,
       updatedAt: doc?.updatedAt || null,
@@ -3393,18 +3393,20 @@ async function listFollowUpPageSettings() {
   });
 
   facebookBots.forEach((bot) => {
-    const key = `facebook:${bot._id.toString()}`;
-    const config = buildConfig("facebook", bot._id.toString());
+    const resolvedBotId = resolveBotId(bot);
+    if (!resolvedBotId) return;
+    const key = `facebook:${resolvedBotId}`;
+    const config = buildConfig("facebook", resolvedBotId);
     const doc = settingsMap[key];
     pages.push({
       id: key,
       platform: "facebook",
-      botId: bot._id.toString(),
+      botId: resolvedBotId,
       type: "facebook_bot",
       name:
         bot.pageName ||
         bot.name ||
-        `Facebook Page (${bot._id.toString().slice(-4)})`,
+        `Facebook Page (${resolvedBotId.slice(-4)})`,
       settings: config,
       hasOverride: !!doc,
       updatedAt: doc?.updatedAt || null,
@@ -3416,17 +3418,19 @@ async function listFollowUpPageSettings() {
   });
 
   instagramBots.forEach((bot) => {
-    const key = `instagram:${bot._id.toString()}`;
-    const config = buildConfig("instagram", bot._id.toString());
+    const resolvedBotId = resolveBotId(bot);
+    if (!resolvedBotId) return;
+    const key = `instagram:${resolvedBotId}`;
+    const config = buildConfig("instagram", resolvedBotId);
     const doc = settingsMap[key];
     pages.push({
       id: key,
       platform: "instagram",
-      botId: bot._id.toString(),
+      botId: resolvedBotId,
       type: "instagram_bot",
       name:
         getBotDisplayName("instagram", bot) ||
-        `Instagram (${bot._id.toString().slice(-4)})`,
+        `Instagram (${resolvedBotId.slice(-4)})`,
       settings: config,
       hasOverride: !!doc,
       updatedAt: doc?.updatedAt || null,
@@ -3439,17 +3443,19 @@ async function listFollowUpPageSettings() {
   });
 
   whatsappBots.forEach((bot) => {
-    const key = `whatsapp:${bot._id.toString()}`;
-    const config = buildConfig("whatsapp", bot._id.toString());
+    const resolvedBotId = resolveBotId(bot);
+    if (!resolvedBotId) return;
+    const key = `whatsapp:${resolvedBotId}`;
+    const config = buildConfig("whatsapp", resolvedBotId);
     const doc = settingsMap[key];
     pages.push({
       id: key,
       platform: "whatsapp",
-      botId: bot._id.toString(),
+      botId: resolvedBotId,
       type: "whatsapp_bot",
       name:
         getBotDisplayName("whatsapp", bot) ||
-        `WhatsApp (${bot._id.toString().slice(-4)})`,
+        `WhatsApp (${resolvedBotId.slice(-4)})`,
       settings: config,
       hasOverride: !!doc,
       updatedAt: doc?.updatedAt || null,
@@ -16780,150 +16786,152 @@ async function readInstructionAssetBuffer(seg) {
   const requestedFileName = seg.fileName || "";
   let assetDoc = null;
 
-  try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instruction_assets");
+  if (isMongoRuntimeEnabled()) {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("instruction_assets");
 
-    if (label) {
-      // ค้นหาด้วย label ก่อน (รองรับทั้งภาษาไทยและอังกฤษ)
-      assetDoc = await coll.findOne({ label });
+      if (label) {
+        // ค้นหาด้วย label ก่อน (รองรับทั้งภาษาไทยและอังกฤษ)
+        assetDoc = await coll.findOne({ label });
 
-      // ถ้าไม่เจอ ลองค้นหาด้วย slug (กรณีที่ส่ง slug มาแทน label)
-      if (!assetDoc) {
-        assetDoc = await coll.findOne({ slug: label });
-      }
-    }
-    if (!assetDoc && requestedFileName) {
-      assetDoc = await coll.findOne({
-        $or: [
-          { fileName: requestedFileName },
-          { thumbFileName: requestedFileName },
-        ],
-      });
-    }
-
-    if (assetDoc) {
-      const baseName = getInstructionAssetBaseName(assetDoc);
-      const mainFileNames = Array.from(
-        new Set(
-          [
-            assetDoc.fileName,
-            ...buildInstructionAssetVariantFilenames(baseName, "main"),
-          ]
-            .filter((name) => typeof name === "string" && name.trim())
-            .map((name) => name.trim()),
-        ),
-      );
-      const thumbFileNames = Array.from(
-        new Set(
-          [
-            assetDoc.thumbFileName,
-            ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
-          ]
-            .filter((name) => typeof name === "string" && name.trim())
-            .map((name) => name.trim()),
-        ),
-      );
-      const useThumb =
-        requestedFileName &&
-        (requestedFileName === assetDoc.thumbFileName ||
-          /_thumb\.(jpe?g)$/i.test(requestedFileName));
-      const candidateFileNames = useThumb ? thumbFileNames : mainFileNames;
-      const bucketCandidates = useThumb
-        ? [
-          ...buildBucketKeyCandidates(
-            "instructions",
-            assetDoc.thumbStorageKey,
-            assetDoc.thumbFileName,
-          ),
-          ...buildBucketKeyCandidates(
-            "instructions",
-            assetDoc.storageKey,
-            assetDoc.fileName,
-          ),
-        ]
-        : [
-          ...buildBucketKeyCandidates(
-            "instructions",
-            assetDoc.storageKey,
-            assetDoc.fileName,
-          ),
-          ...buildBucketKeyCandidates(
-            "instructions",
-            assetDoc.thumbStorageKey,
-            assetDoc.thumbFileName,
-          ),
-        ];
-      const bucketAsset = await getFirstBucketObjectStream(bucketCandidates);
-      if (bucketAsset?.stream) {
-        const buffer = await streamToBuffer(bucketAsset.stream);
-        return {
-          buffer,
-          filename:
-            candidateFileNames[0] ||
-            path.basename(bucketAsset.key || "") ||
-            requestedFileName,
-          contentType: assetDoc.mime || "image/jpeg",
-        };
-      }
-
-      const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
-      const targetId = useThumb ? assetDoc.thumbFileId : assetDoc.fileId;
-      if (!candidateFileNames.length) {
-        throw new Error("ไม่พบชื่อไฟล์ของรูปภาพที่ต้องการใช้งาน");
-      }
-      let resolvedFileName = candidateFileNames[0];
-      let downloadStream = null;
-
-      if (targetId) {
-        const objectId = toObjectId(targetId);
-        if (objectId) {
-          downloadStream = bucket.openDownloadStream(objectId);
+        // ถ้าไม่เจอ ลองค้นหาด้วย slug (กรณีที่ส่ง slug มาแทน label)
+        if (!assetDoc) {
+          assetDoc = await coll.findOne({ slug: label });
         }
       }
+      if (!assetDoc && requestedFileName) {
+        assetDoc = await coll.findOne({
+          $or: [
+            { fileName: requestedFileName },
+            { thumbFileName: requestedFileName },
+          ],
+        });
+      }
 
-      if (!downloadStream) {
-        for (const name of candidateFileNames) {
-          try {
-            downloadStream = bucket.openDownloadStreamByName(name);
-            resolvedFileName = name;
-            break;
-          } catch (err) {
-            const isFileNotFound =
-              err?.code === "FileNotFound" ||
-              err?.code === 26 ||
-              err?.message?.includes("File not found") ||
-              err?.message?.includes("FileNotFound");
-            if (!isFileNotFound) {
-              throw err;
-            }
+      if (assetDoc) {
+        const baseName = getInstructionAssetBaseName(assetDoc);
+        const mainFileNames = Array.from(
+          new Set(
+            [
+              assetDoc.fileName,
+              ...buildInstructionAssetVariantFilenames(baseName, "main"),
+            ]
+              .filter((name) => typeof name === "string" && name.trim())
+              .map((name) => name.trim()),
+          ),
+        );
+        const thumbFileNames = Array.from(
+          new Set(
+            [
+              assetDoc.thumbFileName,
+              ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
+            ]
+              .filter((name) => typeof name === "string" && name.trim())
+              .map((name) => name.trim()),
+          ),
+        );
+        const useThumb =
+          requestedFileName &&
+          (requestedFileName === assetDoc.thumbFileName ||
+            /_thumb\.(jpe?g)$/i.test(requestedFileName));
+        const candidateFileNames = useThumb ? thumbFileNames : mainFileNames;
+        const bucketCandidates = useThumb
+          ? [
+            ...buildBucketKeyCandidates(
+              "instructions",
+              assetDoc.thumbStorageKey,
+              assetDoc.thumbFileName,
+            ),
+            ...buildBucketKeyCandidates(
+              "instructions",
+              assetDoc.storageKey,
+              assetDoc.fileName,
+            ),
+          ]
+          : [
+            ...buildBucketKeyCandidates(
+              "instructions",
+              assetDoc.storageKey,
+              assetDoc.fileName,
+            ),
+            ...buildBucketKeyCandidates(
+              "instructions",
+              assetDoc.thumbStorageKey,
+              assetDoc.thumbFileName,
+            ),
+          ];
+        const bucketAsset = await getFirstBucketObjectStream(bucketCandidates);
+        if (bucketAsset?.stream) {
+          const buffer = await streamToBuffer(bucketAsset.stream);
+          return {
+            buffer,
+            filename:
+              candidateFileNames[0] ||
+              path.basename(bucketAsset.key || "") ||
+              requestedFileName,
+            contentType: assetDoc.mime || "image/jpeg",
+          };
+        }
+
+        const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
+        const targetId = useThumb ? assetDoc.thumbFileId : assetDoc.fileId;
+        if (!candidateFileNames.length) {
+          throw new Error("ไม่พบชื่อไฟล์ของรูปภาพที่ต้องการใช้งาน");
+        }
+        let resolvedFileName = candidateFileNames[0];
+        let downloadStream = null;
+
+        if (targetId) {
+          const objectId = toObjectId(targetId);
+          if (objectId) {
+            downloadStream = bucket.openDownloadStream(objectId);
           }
         }
+
         if (!downloadStream) {
-          throw new Error("ไม่พบไฟล์รูปภาพในระบบจัดเก็บ");
+          for (const name of candidateFileNames) {
+            try {
+              downloadStream = bucket.openDownloadStreamByName(name);
+              resolvedFileName = name;
+              break;
+            } catch (err) {
+              const isFileNotFound =
+                err?.code === "FileNotFound" ||
+                err?.code === 26 ||
+                err?.message?.includes("File not found") ||
+                err?.message?.includes("FileNotFound");
+              if (!isFileNotFound) {
+                throw err;
+              }
+            }
+          }
+          if (!downloadStream) {
+            throw new Error("ไม่พบไฟล์รูปภาพในระบบจัดเก็บ");
+          }
         }
-      }
 
-      const buffer = await streamToBuffer(downloadStream);
-      let contentType = assetDoc.mime || "image/jpeg";
-      if (!assetDoc.mime) {
-        const ext = path.extname(resolvedFileName).toLowerCase();
-        if (ext === ".png") contentType = "image/png";
-        else if (ext === ".webp") contentType = "image/webp";
-      }
+        const buffer = await streamToBuffer(downloadStream);
+        let contentType = assetDoc.mime || "image/jpeg";
+        if (!assetDoc.mime) {
+          const ext = path.extname(resolvedFileName).toLowerCase();
+          if (ext === ".png") contentType = "image/png";
+          else if (ext === ".webp") contentType = "image/webp";
+        }
 
-      return {
-        buffer,
-        filename: resolvedFileName,
-        contentType,
-      };
+        return {
+          buffer,
+          filename: resolvedFileName,
+          contentType,
+        };
+      }
+    } catch (err) {
+      console.warn(
+        "[Assets] read buffer from MongoDB failed, fallback to filesystem/url:",
+        err?.message || err,
+      );
     }
-  } catch (err) {
-    console.warn(
-      "[Assets] read buffer from MongoDB failed, fallback to filesystem/url:",
-      err?.message || err,
-    );
   }
 
   const baseDir = ASSETS_DIR;
