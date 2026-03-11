@@ -1051,10 +1051,30 @@ async function ensureShortLinkIndexes(db) {
   }
 }
 
+async function ensureChatHistoryIndexes(db) {
+  try {
+    const coll = db.collection("chat_history");
+    await coll.createIndexes([
+      { key: { senderId: 1, timestamp: 1 } },
+      { key: { userId: 1, timestamp: 1 } },
+    ]);
+    console.log("[DB] Chat history indexes ensured");
+  } catch (err) {
+    console.warn(
+      "[DB] ไม่สามารถตั้งค่า index สำหรับ chat_history ได้:",
+      err?.message || err,
+    );
+  }
+}
+
 let mongoClient = null;
 async function connectDB() {
   if (!mongoClient) {
-    mongoClient = new MongoClient(MONGO_URI);
+    mongoClient = new MongoClient(MONGO_URI, {
+      maxPoolSize: 20,
+      minPoolSize: 5,
+      serverSelectionTimeoutMS: 5000,
+    });
     await mongoClient.connect();
     try {
       const db = mongoClient.db("chatbot");
@@ -1063,6 +1083,7 @@ async function connectDB() {
       await ensureCategoryIndexes(db);
       await ensureNotificationIndexes(db);
       await ensureShortLinkIndexes(db);
+      await ensureChatHistoryIndexes(db);
     } catch (err) {
       console.warn(
         "[DB] ไม่สามารถตั้งค่า index ได้:",
@@ -11859,16 +11880,22 @@ function parseOptionalBoolean(value) {
 }
 
 // Get setting value with default fallback
+const _settingsCache = new Map(); // key → { value, expireAt }
+const _SETTINGS_CACHE_TTL_MS = 30_000; // 30 วินาที
+
 async function getSettingValue(key, defaultValue) {
   try {
+    const cached = _settingsCache.get(key);
+    if (cached && Date.now() < cached.expireAt) {
+      return cached.value;
+    }
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("settings");
     const doc = await coll.findOne({ key });
-    if (!doc || typeof doc.value === "undefined") {
-      return defaultValue;
-    }
-    return doc.value;
+    const value = !doc || typeof doc.value === "undefined" ? defaultValue : doc.value;
+    _settingsCache.set(key, { value, expireAt: Date.now() + _SETTINGS_CACHE_TTL_MS });
+    return value;
   } catch (error) {
     console.error(`Error getting setting ${key}:`, error);
     return defaultValue;
@@ -11881,6 +11908,7 @@ async function setSettingValue(key, value) {
     const db = client.db("chatbot");
     const coll = db.collection("settings");
     await coll.updateOne({ key }, { $set: { value } }, { upsert: true });
+    _settingsCache.delete(key); // invalidate cache ทันที
     return true;
   } catch (error) {
     console.error(`Error setting ${key}:`, error);
