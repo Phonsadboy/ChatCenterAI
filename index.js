@@ -1803,6 +1803,15 @@ async function getAgentRuntimeForPage(platform, botId) {
       customerDefaultModel: null,
     };
   }
+  if (!isMongoRuntimeEnabled()) {
+    return {
+      managed: false,
+      agentId: null,
+      agentName: null,
+      mode: null,
+      customerDefaultModel: null,
+    };
+  }
   const pageKey = `${platform}:${botId}`;
   try {
     return await agentForgeService.getPageAgentRuntime(pageKey);
@@ -32281,6 +32290,9 @@ io.on("connection", (socket) => {
 
 // Function to notify admins of new user messages
 async function notifyAdminsNewMessage(userId, message) {
+  if (!isMongoRuntimeEnabled()) {
+    return;
+  }
   // อัปเดต unread count สำหรับผู้ใช้
   try {
     const client = await connectDB();
@@ -32299,6 +32311,9 @@ async function notifyAdminsNewMessage(userId, message) {
 
 // ฟังก์ชันสำหรับดึง unread count ของผู้ใช้
 async function getUserUnreadCount(userId) {
+  if (!isMongoRuntimeEnabled()) {
+    return 0;
+  }
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -32314,6 +32329,9 @@ async function getUserUnreadCount(userId) {
 
 // ฟังก์ชันสำหรับรีเซ็ต unread count ของผู้ใช้
 async function resetUserUnreadCount(userId) {
+  if (!isMongoRuntimeEnabled()) {
+    return;
+  }
   try {
     const client = await connectDB();
     const db = client.db("chatbot");
