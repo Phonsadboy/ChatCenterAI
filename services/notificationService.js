@@ -856,17 +856,20 @@ function createNotificationService({
   getChatRepository = null,
   getNotificationRepository = null,
 } = {}) {
-  if (typeof connectDB !== "function") {
-    throw new Error("createNotificationService requires connectDB()");
-  }
-
   const baseUrl =
     typeof publicBaseUrl === "string" ? publicBaseUrl.trim() : "";
+  const getMongoDbSafe = async () => {
+    if (typeof connectDB !== "function") return null;
+    try {
+      const client = await connectDB();
+      if (!client || typeof client.db !== "function") return null;
+      return client.db("chatbot");
+    } catch (error) {
+      return null;
+    }
+  };
 
   const sendToLineTarget = async (senderBotId, targetId, message) => {
-    if (!ObjectId.isValid(senderBotId)) {
-      throw new Error("Invalid senderBotId");
-    }
     if (typeof getBotById !== "function") {
       throw new Error("notification_bot_resolver_not_configured");
     }
@@ -902,12 +905,10 @@ function createNotificationService({
 
   const sendNewOrder = async (orderId) => {
     const orderIdString = normalizeIdString(orderId);
-    if (!ObjectId.isValid(orderIdString)) {
+    if (!orderIdString) {
       throw new Error("Invalid orderId");
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = await getMongoDbSafe();
     const orderRepository =
       typeof getOrderRepository === "function" ? getOrderRepository() : null;
     const chatRepository =
@@ -944,16 +945,18 @@ function createNotificationService({
     let shortChatLink = "";
     if (canBuildLinks && orderUserId) {
       const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(orderUserId)}`;
-      try {
-        const code = await createShortLink(db, chatUrl);
-        if (code) {
-          shortChatLink = buildShortLinkUrl(normalizedBaseUrl, code);
+      if (db) {
+        try {
+          const code = await createShortLink(db, chatUrl);
+          if (code) {
+            shortChatLink = buildShortLinkUrl(normalizedBaseUrl, code);
+          }
+        } catch (err) {
+          console.warn(
+            "[Notifications] สร้าง short link สำหรับแชทไม่สำเร็จ:",
+            err?.message || err,
+          );
         }
-      } catch (err) {
-        console.warn(
-          "[Notifications] สร้าง short link สำหรับแชทไม่สำเร็จ:",
-          err?.message || err,
-        );
       }
     }
 
@@ -1029,8 +1032,7 @@ function createNotificationService({
       return { success: false, error: "INVALID_WINDOW" };
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = await getMongoDbSafe();
     const orderRepository =
       typeof getOrderRepository === "function" ? getOrderRepository() : null;
     const chatRepository =
@@ -1063,9 +1065,7 @@ function createNotificationService({
             if (!botId) return null;
             return {
               platform,
-              botId: ObjectId.isValid(botId)
-                ? { $in: [botId, new ObjectId(botId)] }
-                : botId,
+              botId,
             };
           })
           .filter(Boolean);
@@ -1078,7 +1078,7 @@ function createNotificationService({
     const normalizedBaseUrl = normalizePublicBaseUrl(baseUrl);
     const canBuildLinks = isHttpUrl(normalizedBaseUrl);
     const shortChatLinks = {};
-    if (canBuildLinks && dedupedOrders.length) {
+    if (db && canBuildLinks && dedupedOrders.length) {
       for (const order of dedupedOrders) {
         const userId = normalizeIdString(order?.userId);
         if (!userId || shortChatLinks[userId]) continue;
