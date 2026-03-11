@@ -744,8 +744,30 @@ async function migrateMongoToPostgres(options = {}) {
       }
       await writeCheckpoint("notification_logs", notificationLogs.length);
 
-      const activeUserStatuses = await db.collection("active_user_status").find({}).toArray().catch(() => []);
-      for (const doc of activeUserStatuses) {
+      const activeUserStatusCursor = db
+        .collection("active_user_status")
+        .aggregate(
+          [
+            {
+              $match: {
+                senderId: { $exists: true, $ne: null, $ne: "" },
+              },
+            },
+            { $sort: { updatedAt: 1, _id: 1 } },
+            {
+              $group: {
+                _id: { $toString: "$senderId" },
+                aiEnabled: { $last: "$aiEnabled" },
+                updatedAt: { $last: "$updatedAt" },
+              },
+            },
+          ],
+          { allowDiskUse: true },
+        );
+      let migratedActiveUserStatuses = 0;
+      for await (const doc of activeUserStatusCursor) {
+        const legacyContactId = String(doc?._id || "").trim();
+        if (!legacyContactId) continue;
         await client.query(
           `
             INSERT INTO active_user_status (
@@ -758,13 +780,17 @@ async function migrateMongoToPostgres(options = {}) {
               updated_at = EXCLUDED.updated_at
           `,
           [
-            doc?.senderId || null,
+            legacyContactId,
             doc?.aiEnabled !== false,
             doc?.updatedAt || new Date(),
           ],
         );
+        migratedActiveUserStatuses += 1;
+        if (migratedActiveUserStatuses % 5000 === 0) {
+          console.log(`[Migration] active_user_status processed: ${migratedActiveUserStatuses}`);
+        }
       }
-      await writeCheckpoint("active_user_status", activeUserStatuses.length);
+      await writeCheckpoint("active_user_status", migratedActiveUserStatuses);
 
       const userTags = await db.collection("user_tags").find({}).toArray().catch(() => []);
       for (const doc of userTags) {
@@ -870,18 +896,21 @@ async function migrateMongoToPostgres(options = {}) {
 
       const profilesCursor = db.collection("user_profiles").find({});
       const profileMap = new Map();
+      const contactIdCache = new Map();
+      const threadIdCache = new Map();
       let migratedProfiles = 0;
       for await (const profile of profilesCursor) {
         const platform = profile?.platform || "line";
         const userId = profile?.userId || "";
         profileMap.set(`${platform}:${userId}`, profile);
         if (!userId) continue;
-        await upsertContact(client, userId, platform, profile);
+        const contactId = await upsertContact(client, userId, platform, profile);
+        contactIdCache.set(`${platform}:${userId}`, contactId);
         migratedProfiles += 1;
       }
       await writeCheckpoint("user_profiles", migratedProfiles);
 
-      const messagesCursor = db.collection("chat_history").find({}).sort({ timestamp: 1 });
+      const messagesCursor = db.collection("chat_history").find({}, { batchSize: 1000 });
       let migratedMessages = 0;
       for await (const doc of messagesCursor) {
         const platform = doc?.platform || "line";
@@ -889,18 +918,28 @@ async function migrateMongoToPostgres(options = {}) {
         if (!legacyUserId) continue;
 
         const profile = profileMap.get(`${platform}:${legacyUserId}`) || {};
-        const contactId = await upsertContact(client, legacyUserId, platform, profile);
+        const contactCacheKey = `${platform}:${legacyUserId}`;
+        let contactId = contactIdCache.get(contactCacheKey);
+        if (!contactId) {
+          contactId = await upsertContact(client, legacyUserId, platform, profile);
+          contactIdCache.set(contactCacheKey, contactId);
+        }
+
         const legacyBotId = doc?.botId ? String(doc.botId) : "";
         const botId = botIdMap.get(`${platform}:${legacyBotId}`) || null;
         const legacyThreadKey = `${platform}:${legacyBotId || "default"}:${legacyUserId}`;
-        const threadId = await upsertThread(
-          client,
-          platform,
-          botId,
-          contactId,
-          legacyThreadKey,
-          {},
-        );
+        let threadId = threadIdCache.get(legacyThreadKey);
+        if (!threadId) {
+          threadId = await upsertThread(
+            client,
+            platform,
+            botId,
+            contactId,
+            legacyThreadKey,
+            {},
+          );
+          threadIdCache.set(legacyThreadKey, threadId);
+        }
 
         await client.query(
           `
