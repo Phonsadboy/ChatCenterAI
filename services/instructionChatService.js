@@ -19,6 +19,14 @@ class InstructionChatService {
         this._cachedId = null;
         // Callback to reset follow-up config cache after writes
         this._resetFollowUpConfigCache = options.resetFollowUpConfigCache || null;
+        this._invalidateInstructionPromptCaches =
+            typeof options.invalidateInstructionPromptCaches === "function"
+                ? options.invalidateInstructionPromptCaches
+                : null;
+        this._invalidateAllRuntimeCaches =
+            typeof options.invalidateAllRuntimeCaches === "function"
+                ? options.invalidateAllRuntimeCaches
+                : null;
     }
 
     async _getInstruction(instructionId) {
@@ -36,6 +44,29 @@ class InstructionChatService {
     _invalidateCache() {
         this._cachedInstruction = null;
         this._cachedId = null;
+    }
+
+    _runOptionalCallback(callback, label) {
+        if (typeof callback !== "function") return;
+        try {
+            callback();
+        } catch (error) {
+            console.warn(`[InstructionChatService] ${label} callback failed:`, error?.message || error);
+        }
+    }
+
+    _notifyInstructionRuntimeChanged() {
+        this._runOptionalCallback(
+            this._invalidateInstructionPromptCaches,
+            "invalidateInstructionPromptCaches"
+        );
+    }
+
+    _notifyAllRuntimeChanged() {
+        this._runOptionalCallback(
+            this._invalidateAllRuntimeCaches,
+            "invalidateAllRuntimeCaches"
+        );
     }
 
     _getDataItem(instruction, itemId) {
@@ -1840,6 +1871,7 @@ class InstructionChatService {
             { $set: { version: nextVersion, updatedAt: new Date() } }
         );
         this._invalidateCache();
+        this._notifyInstructionRuntimeChanged();
 
         // Log the change
         await this._logChange(instructionId, sessionId, "save_version",
@@ -2125,7 +2157,9 @@ class InstructionChatService {
         }
 
         if (writeTools.includes(toolName)) {
-            return this[toolName](instructionId, args, sessionId);
+            const result = await this[toolName](instructionId, args, sessionId);
+            if (!result?.error) this._notifyInstructionRuntimeChanged();
+            return result;
         }
 
         // Follow-up tools — no instructionId needed
@@ -2137,7 +2171,9 @@ class InstructionChatService {
         }
 
         if (followUpWriteTools.includes(toolName)) {
-            return this[toolName](args);
+            const result = await this[toolName](args);
+            if (!result?.error) this._notifyAllRuntimeChanged();
+            return result;
         }
 
         // Conversation analysis tools

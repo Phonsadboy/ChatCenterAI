@@ -338,6 +338,159 @@ function getBotCollectionName(platform, fallbackCollection = "line_bots") {
   return BOT_COLLECTION_BY_PLATFORM[normalized] || fallbackCollection;
 }
 
+function normalizeRuntimeCacheId(value, fallback = "default") {
+  if (value instanceof ObjectId) {
+    return value.toString();
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (value && typeof value === "object" && value._id) {
+    return normalizeRuntimeCacheId(value._id, fallback);
+  }
+  if (value === null || typeof value === "undefined") {
+    return fallback;
+  }
+  const normalized = String(value).trim();
+  return normalized || fallback;
+}
+
+function buildBotRuntimeCacheKey(platform, botId = null) {
+  const normalizedPlatform = normalizeChatPlatform(platform, "line");
+  const normalizedBotId = normalizeRuntimeCacheId(botId, "default");
+  return `${normalizedPlatform}:${normalizedBotId}`;
+}
+
+function normalizeInstructionSelectionCacheValue(selectedInstructions = []) {
+  const normalizedSelections = normalizeLatestOnlyInstructionSelections(
+    Array.isArray(selectedInstructions) ? selectedInstructions : [],
+  );
+  return JSON.stringify(normalizedSelections);
+}
+
+function normalizeAssetSelectionCacheKey(selectedCollectionIds = null) {
+  if (
+    !Array.isArray(selectedCollectionIds) ||
+    selectedCollectionIds.length === 0
+  ) {
+    return "__all__";
+  }
+
+  const normalizedIds = Array.from(
+    new Set(
+      selectedCollectionIds
+        .map((entry) => normalizeRuntimeCacheId(entry, ""))
+        .filter(Boolean),
+    ),
+  ).sort();
+
+  return normalizedIds.length > 0 ? normalizedIds.join("|") : "__all__";
+}
+
+const runtimeBotSnapshotCache = new Map();
+const runtimePromptBaseCache = new Map();
+const runtimeAssetsTextCache = new Map();
+const runtimeAssetsMapCache = new Map();
+const runtimeOpenAIKeyCache = new Map();
+const runtimeBotAiConfigCache = new Map();
+
+function clearCacheMapEntriesByPrefix(cacheMap, prefix) {
+  if (!cacheMap || !prefix) return;
+  for (const key of cacheMap.keys()) {
+    if (typeof key === "string" && key.startsWith(prefix)) {
+      cacheMap.delete(key);
+    }
+  }
+}
+
+function invalidateInstructionPromptCaches() {
+  runtimePromptBaseCache.clear();
+}
+
+function invalidateAssetRuntimeCaches() {
+  runtimeAssetsTextCache.clear();
+  runtimeAssetsMapCache.clear();
+  invalidateInstructionPromptCaches();
+}
+
+function invalidateOpenAIKeyRuntimeCaches() {
+  runtimeOpenAIKeyCache.clear();
+}
+
+function invalidateBotRuntimeCaches(platform = null, botId = null) {
+  if (!platform || !botId) {
+    runtimeBotSnapshotCache.clear();
+    runtimeBotAiConfigCache.clear();
+    invalidateOpenAIKeyRuntimeCaches();
+    invalidateInstructionPromptCaches();
+    return;
+  }
+
+  const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
+  runtimeBotSnapshotCache.delete(runtimeKey);
+  runtimeBotAiConfigCache.delete(runtimeKey);
+  runtimeOpenAIKeyCache.delete(runtimeKey);
+  clearCacheMapEntriesByPrefix(runtimePromptBaseCache, `${runtimeKey}::`);
+}
+
+function invalidateAllRuntimeCaches() {
+  invalidateBotRuntimeCaches();
+  invalidateAssetRuntimeCaches();
+}
+
+function logHotPathDebug(...args) {
+  if (process.env.ENABLE_HOT_PATH_LOGS === "true") {
+    console.log(...args);
+  }
+}
+
+async function getBotRuntimeSnapshot(botId, platform) {
+  if (!botId) return null;
+
+  const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
+  if (runtimeBotSnapshotCache.has(runtimeKey)) {
+    return runtimeBotSnapshotCache.get(runtimeKey);
+  }
+
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection(getBotCollectionName(platform));
+    const normalizedBotId = normalizeRuntimeCacheId(botId, "");
+    const query = ObjectId.isValid(normalizedBotId)
+      ? { _id: new ObjectId(normalizedBotId) }
+      : { _id: normalizedBotId };
+
+    const bot = await coll.findOne(query, {
+      projection: {
+        selectedInstructions: 1,
+        selectedImageCollections: 1,
+        aiConfig: 1,
+        openaiApiKeyId: 1,
+      },
+    });
+
+    const snapshot = bot
+      ? {
+        selectedInstructions: Array.isArray(bot.selectedInstructions)
+          ? bot.selectedInstructions
+          : [],
+        selectedImageCollections: Array.isArray(bot.selectedImageCollections)
+          ? bot.selectedImageCollections
+          : [],
+        aiConfig: normalizeAiConfig(bot.aiConfig || {}),
+        openaiApiKeyId: bot.openaiApiKeyId || null,
+      }
+      : null;
+
+    runtimeBotSnapshotCache.set(runtimeKey, snapshot);
+    return snapshot;
+  } catch (error) {
+    console.error("[RuntimeCache] ไม่สามารถดึง bot runtime snapshot ได้:", error);
+    return null;
+  }
+}
+
 function getPlatformLabel(platform) {
   const normalized = normalizeChatPlatform(platform);
   if (normalized === "facebook") return "Facebook";
@@ -1085,6 +1238,22 @@ async function ensureChatHistoryIndexes(db) {
   }
 }
 
+async function ensurePerformanceIndexes(db) {
+  try {
+    await db.collection("orders").createIndex({ userId: 1, extractedAt: -1 });
+    await db.collection("follow_up_status").createIndex({ senderId: 1 });
+    await db.collection("active_user_status").createIndex({ senderId: 1 });
+    await db.collection("user_profiles").createIndex({ userId: 1, platform: 1 });
+    await db.collection("user_unread_counts").createIndex({ userId: 1 });
+    console.log("[DB] Performance indexes ensured");
+  } catch (err) {
+    console.warn(
+      "[DB] ไม่สามารถตั้งค่า performance indexes ได้:",
+      err?.message || err,
+    );
+  }
+}
+
 const USAGE_LOGS_TTL_DAYS = Number(process.env.USAGE_LOGS_TTL_DAYS || 90);
 const NOTIFICATION_LOGS_TTL_DAYS = Number(process.env.NOTIFICATION_LOGS_TTL_DAYS || 30);
 const FB_COMMENT_TTL_DAYS = Number(process.env.FB_COMMENT_TTL_DAYS || 30);
@@ -1119,6 +1288,7 @@ async function connectDB() {
       await ensureNotificationIndexes(db);
       await ensureShortLinkIndexes(db);
       await ensureChatHistoryIndexes(db);
+      await ensurePerformanceIndexes(db);
       await ensureUsageLogsTTL(db);
     } catch (err) {
       console.warn(
@@ -1654,9 +1824,34 @@ async function saveOrUpdateUserProfile(userId, botId = null) {
   }
 }
 
+function isPermanentFacebookProfileFetchError(error = {}) {
+  const status = Number(error?.status || 0);
+  const code = Number(error?.code || 0);
+  const message =
+    typeof error?.message === "string" ? error.message.toLowerCase() : "";
+
+  if ([400, 403, 404].includes(status)) {
+    return true;
+  }
+  if ([10, 100, 200, 201, 230].includes(code)) {
+    return true;
+  }
+  if (
+    message.includes("permissions error") ||
+    message.includes("permission") ||
+    message.includes("unsupported get request") ||
+    message.includes("does not exist") ||
+    message.includes("cannot be loaded")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 async function fetchFacebookProfile(psid, accessToken) {
   if (!psid || !accessToken) {
-    return null;
+    return { profile: null, retryable: false, reason: "missing_credentials" };
   }
 
   const apiVersion = "v18.0";
@@ -1677,31 +1872,63 @@ async function fetchFacebookProfile(psid, accessToken) {
       [data?.first_name, data?.last_name].filter(Boolean).join(" ").trim();
 
     if (!fullName) {
-      return null;
+      return {
+        profile: null,
+        retryable: false,
+        reason: "facebook_name_unavailable",
+        message: "facebook profile returned without display name",
+      };
     }
 
     return {
-      userId: psid,
-      platform: "facebook",
-      displayName: fullName,
-      pictureUrl: data?.profile_pic || null,
-      updatedAt: new Date(),
+      profile: {
+        userId: psid,
+        platform: "facebook",
+        displayName: fullName,
+        pictureUrl: data?.profile_pic || null,
+        updatedAt: new Date(),
+      },
+      retryable: false,
+      reason: null,
+      message: null,
     };
   } catch (error) {
     const status = error?.response?.status;
-    const message =
-      error?.response?.data?.error?.message || error?.message || "unknown";
+    const fbError = error?.response?.data?.error || {};
+    const message = fbError?.message || error?.message || "unknown";
+    const code = fbError?.code;
+    const retryable = !isPermanentFacebookProfileFetchError({
+      status,
+      code,
+      message,
+    });
+
     console.warn(
       `[Facebook] ไม่สามารถดึงโปรไฟล์ ${psid} (${status || "n/a"}): ${message}`,
     );
-    return null;
+    return {
+      profile: null,
+      retryable,
+      reason: retryable
+        ? "facebook_profile_fetch_retryable"
+        : "facebook_profile_fetch_blocked",
+      message,
+      status: status || null,
+      code: Number.isFinite(code) ? code : null,
+    };
   }
 }
 
-async function ensureFacebookProfileDisplayName(psid, accessToken) {
+async function ensureFacebookProfileDisplayName(
+  psid,
+  accessToken,
+  options = {},
+) {
   if (!psid || !accessToken) {
     return null;
   }
+
+  const forceRefresh = options?.forceRefresh === true;
 
   const client = await connectDB();
   const db = client.db("chatbot");
@@ -1709,15 +1936,52 @@ async function ensureFacebookProfileDisplayName(psid, accessToken) {
 
   const existing = await coll.findOne(
     { userId: psid, platform: "facebook" },
-    { projection: { displayName: 1 } },
+    {
+      projection: {
+        displayName: 1,
+        pictureUrl: 1,
+        profileFetchDisabled: 1,
+        profileFetchDisabledReason: 1,
+        profileFetchFailedAt: 1,
+        profileFetchLastError: 1,
+      },
+    },
   );
 
-  if (existing?.displayName && existing.displayName.trim()) {
+  if (!forceRefresh && existing?.displayName && existing.displayName.trim()) {
     return existing;
   }
 
-  const profile = await fetchFacebookProfile(psid, accessToken);
+  if (!forceRefresh && existing?.profileFetchDisabled) {
+    return existing;
+  }
+
+  const fetchResult = await fetchFacebookProfile(psid, accessToken);
+  const profile = fetchResult?.profile || null;
   if (!profile?.displayName) {
+    if (!fetchResult?.retryable) {
+      const now = new Date();
+      await coll.updateOne(
+        { userId: psid, platform: "facebook" },
+        {
+          $set: {
+            userId: psid,
+            platform: "facebook",
+            profileFetchDisabled: true,
+            profileFetchDisabledReason:
+              fetchResult?.reason || "facebook_profile_fetch_blocked",
+            profileFetchFailedAt: now,
+            profileFetchLastError:
+              fetchResult?.message || "facebook profile unavailable",
+            updatedAt: now,
+          },
+          $setOnInsert: {
+            createdAt: now,
+          },
+        },
+        { upsert: true },
+      );
+    }
     return existing;
   }
 
@@ -1729,6 +1993,12 @@ async function ensureFacebookProfileDisplayName(psid, accessToken) {
         displayName: profile.displayName,
         pictureUrl: profile.pictureUrl || null,
         updatedAt: now,
+        profileFetchDisabled: false,
+      },
+      $unset: {
+        profileFetchDisabledReason: "",
+        profileFetchFailedAt: "",
+        profileFetchLastError: "",
       },
       $setOnInsert: {
         userId: psid,
@@ -1739,7 +2009,7 @@ async function ensureFacebookProfileDisplayName(psid, accessToken) {
     { upsert: true },
   );
 
-  return profile;
+  return await coll.findOne({ userId: psid, platform: "facebook" });
 }
 
 async function saveChatHistory(
@@ -1829,9 +2099,9 @@ async function saveChatHistory(
     userMessageDoc._id = userInsertResult.insertedId;
   }
 
+  let emittedUserMessage = userMessageDoc;
   try {
     if (typeof io !== "undefined" && io) {
-      let emittedUserMessage = userMessageDoc;
       try {
         const normalizedForEmit = normalizeMessageForFrontend(userMessageDoc);
         if (
@@ -1859,7 +2129,7 @@ async function saveChatHistory(
         emittedUserMessage = { ...userMessageDoc };
       }
 
-      io.emit("newMessage", {
+      io.to("admin").emit("newMessage", {
         userId: userId,
         message: emittedUserMessage,
         sender: "user",
@@ -1870,17 +2140,27 @@ async function saveChatHistory(
     // non-fatal: socket emit failure should not block saving history
   }
 
-  try {
-    const previewText = buildFollowUpPreview(userMsgToSave);
-    await scheduleFollowUpForUser(userId, {
-      platform,
-      botId,
-      messageTimestamp: userTimestamp,
-      preview: previewText,
-    });
-  } catch (scheduleError) {
-    console.error("[FollowUp] ตั้งเวลาติดตามไม่สำเร็จ:", scheduleError.message);
-  }
+  void notifyAdminsNewMessage(userId, emittedUserMessage || userMessageDoc).catch(
+    (notifyError) => {
+      console.error(
+        "[Socket.IO] ไม่สามารถอัปเดต unread count ได้:",
+        notifyError?.message || notifyError,
+      );
+    },
+  );
+
+  const previewText = buildFollowUpPreview(userMsgToSave);
+  void scheduleFollowUpForUser(userId, {
+    platform,
+    botId,
+    messageTimestamp: userTimestamp,
+    preview: previewText,
+  }).catch((scheduleError) => {
+    console.error(
+      "[FollowUp] ตั้งเวลาติดตามไม่สำเร็จ:",
+      scheduleError?.message || scheduleError,
+    );
+  });
 
   // Insert assistant message (only when we actually have content)
   const assistantText =
@@ -1910,7 +2190,7 @@ async function saveChatHistory(
 
     try {
       if (typeof io !== "undefined" && io) {
-        io.emit("newMessage", {
+        io.to("admin").emit("newMessage", {
           userId,
           message: assistantMessageDoc,
           sender: "assistant",
@@ -2988,7 +3268,7 @@ function emitFollowUpScheduleUpdate(payload) {
           delete sanitized[key];
         }
       });
-      io.emit("followUpScheduleUpdated", sanitized);
+      io.to("admin").emit("followUpScheduleUpdated", sanitized);
     }
   } catch (_) { }
 }
@@ -3644,7 +3924,7 @@ async function sendFollowUpMessage(task, round, db) {
 
   try {
     if (io) {
-      io.emit("newMessage", {
+      io.to("admin").emit("newMessage", {
         userId: task.userId,
         message: messageDoc,
         sender: "assistant",
@@ -3924,7 +4204,7 @@ async function maybeAnalyzeFollowUp(
 
     try {
       if (io) {
-        io.emit("followUpTagged", {
+        io.to("admin").emit("followUpTagged", {
           userId,
           hasFollowUp: true,
           followUpReason: reason,
@@ -5373,7 +5653,7 @@ async function createOrderFromTool(args = {}, context = {}) {
 
   try {
     if (io) {
-      io.emit("orderExtracted", {
+      io.to("admin").emit("orderExtracted", {
         userId,
         orderId: orderIdString,
         orderData: normalized.orderData,
@@ -5502,7 +5782,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
 
   try {
     if (io) {
-      io.emit("orderUpdated", {
+      io.to("admin").emit("orderUpdated", {
         orderId: orderIdString,
         userId,
         orderData: updatedOrder?.orderData || null,
@@ -5987,6 +6267,44 @@ async function fetchAllSheetsData(spreadsheetId) {
 // ------------------------
 const processedIds = new Set();
 const userQueues = {}; // { queueKey: { userId, messages: [], timer: null, context: {}, isProcessing: false, flushRequested: false, flushDelayMs: null } }
+const USER_QUEUE_IDLE_CLEANUP_MS = 5 * 60 * 1000;
+const USER_QUEUE_SWEEP_INTERVAL_MS = 60 * 1000;
+
+function touchQueue(queue) {
+  if (queue) {
+    queue.lastTouchedAt = Date.now();
+  }
+}
+
+function isQueueDisposable(queue) {
+  return (
+    !!queue &&
+    Array.isArray(queue.messages) &&
+    queue.messages.length === 0 &&
+    !queue.timer &&
+    !queue.isProcessing &&
+    !queue.flushRequested
+  );
+}
+
+function tryDisposeQueue(queueKey) {
+  const queue = userQueues[queueKey];
+  if (!isQueueDisposable(queue)) return false;
+  delete userQueues[queueKey];
+  return true;
+}
+
+const userQueueSweepTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [queueKey, queue] of Object.entries(userQueues)) {
+    if (!isQueueDisposable(queue)) continue;
+    const lastTouchedAt = Number(queue?.lastTouchedAt || 0);
+    if (!lastTouchedAt || now - lastTouchedAt >= USER_QUEUE_IDLE_CLEANUP_MS) {
+      delete userQueues[queueKey];
+    }
+  }
+}, USER_QUEUE_SWEEP_INTERVAL_MS);
+userQueueSweepTimer.unref?.();
 
 function buildQueueKey(userId, options = {}) {
   if (options.queueKey) {
@@ -6026,6 +6344,7 @@ function clearQueueTimer(queue) {
   }
   clearTimeout(queue.timer);
   queue.timer = null;
+  touchQueue(queue);
 }
 
 function scheduleQueueFlush(queueKey, delayMs = 0) {
@@ -6041,7 +6360,7 @@ function scheduleQueueFlush(queueKey, delayMs = 0) {
     const currentQueue = userQueues[queueKey];
     if (!currentQueue) return;
     const queueUserId = currentQueue.userId || "unknown";
-    console.log(
+    logHotPathDebug(
       `[LOG] ครบเวลา delay (${delaySeconds} วินาที) เริ่มประมวลผลคิวสำหรับผู้ใช้: ${queueUserId} (queueKey: ${queueKey})`,
     );
     flushQueue(queueKey).catch((err) => {
@@ -6051,6 +6370,7 @@ function scheduleQueueFlush(queueKey, delayMs = 0) {
       );
     });
   }, normalizedDelayMs);
+  touchQueue(queue);
 }
 
 function requestQueueFlush(queueKey, delayMs = 0) {
@@ -6065,7 +6385,7 @@ function requestQueueFlush(queueKey, delayMs = 0) {
   }
 
   if (queue.isProcessing) {
-    console.log(
+    logHotPathDebug(
       `[LOG] คิวกำลังประมวลผลอยู่ จะรอให้คำตอบก่อนหน้าส่งเสร็จก่อน (queueKey: ${queueKey})`,
     );
     return;
@@ -7061,11 +7381,11 @@ async function sendConversationStarterSequence(
 }
 
 async function addToQueue(userId, incomingItem, options = {}) {
-  console.log(`[LOG] เพิ่มข้อมูลเข้าคิวสำหรับผู้ใช้: ${userId}`);
+  logHotPathDebug(`[LOG] เพิ่มข้อมูลเข้าคิวสำหรับผู้ใช้: ${userId}`);
   const queueKey = buildQueueKey(userId, options);
 
   if (!userQueues[queueKey]) {
-    console.log(
+    logHotPathDebug(
       `[LOG] สร้างคิวใหม่สำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
     );
     userQueues[queueKey] = {
@@ -7076,6 +7396,7 @@ async function addToQueue(userId, incomingItem, options = {}) {
       isProcessing: false,
       flushRequested: false,
       flushDelayMs: null,
+      lastTouchedAt: Date.now(),
     };
   }
 
@@ -7094,7 +7415,8 @@ async function addToQueue(userId, incomingItem, options = {}) {
       : 10;
 
   queue.messages.push(incomingItem);
-  console.log(
+  touchQueue(queue);
+  logHotPathDebug(
     `[LOG] คิวของผู้ใช้ ${userId} (queueKey: ${queueKey}) มีข้อความ ${queue.messages.length} ข้อความ`,
   );
 
@@ -7106,17 +7428,17 @@ async function addToQueue(userId, incomingItem, options = {}) {
   const normalizedDelayMs = Math.floor(normalizedDelay * 1000);
 
   if (queue.messages.length >= normalizedMax) {
-    console.log(
+    logHotPathDebug(
       `[LOG] จำนวนข้อความในคิวถึงขีดจำกัด (${normalizedMax}) จะเร่งประมวลผลทันทีหลังรอบปัจจุบันเสร็จ (queueKey: ${queueKey})`,
     );
     requestQueueFlush(queueKey, 0);
     return;
   }
 
-  console.log(
+  logHotPathDebug(
     `[LOG] ตั้งเวลาประมวลผลคิวใน ${normalizedDelay} วินาที สำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
   );
-  console.log(
+  logHotPathDebug(
     `[LOG] ระบบจะรอข้อความเพิ่มจากผู้ใช้เป็นเวลา ${normalizedDelay} วินาที`,
   );
   requestQueueFlush(queueKey, normalizedDelayMs);
@@ -7125,34 +7447,37 @@ async function addToQueue(userId, incomingItem, options = {}) {
 async function flushQueue(queueKey) {
   const queue = userQueues[queueKey];
   if (!queue) {
-    console.log(`[LOG] ไม่พบคิวสำหรับ key: ${queueKey}`);
+    logHotPathDebug(`[LOG] ไม่พบคิวสำหรับ key: ${queueKey}`);
     return;
   }
   const { userId } = queue;
 
   if (queue.isProcessing) {
-    console.log(
+    logHotPathDebug(
       `[LOG] ข้ามการประมวลผลซ้ำเพราะคิวยังทำงานอยู่สำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
     );
     return;
   }
 
   clearQueueTimer(queue);
+  touchQueue(queue);
 
-  console.log(
+  logHotPathDebug(
     `[LOG] เริ่มการประมวลผลคิวสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
   );
 
   if (!queue.messages || queue.messages.length === 0) {
-    console.log(
+    logHotPathDebug(
       `[LOG] ไม่พบข้อความในคิวสำหรับผู้ใช้: ${userId} (queueKey: ${queueKey})`,
     );
     queue.flushRequested = false;
     queue.flushDelayMs = null;
+    touchQueue(queue);
+    tryDisposeQueue(queueKey);
     return;
   }
   const allItems = [...queue.messages];
-  console.log(
+  logHotPathDebug(
     `[LOG] มีข้อความ ${allItems.length} ข้อความในคิวของผู้ใช้: ${userId}`,
   );
   queue.messages = [];
@@ -7161,20 +7486,23 @@ async function flushQueue(queueKey) {
   queue.flushDelayMs = null;
 
   try {
-    console.log(`[LOG] เริ่มประมวลผลข้อความทั้งหมดในคิวสำหรับผู้ใช้: ${userId}`);
+    logHotPathDebug(`[LOG] เริ่มประมวลผลข้อความทั้งหมดในคิวสำหรับผู้ใช้: ${userId}`);
     await processFlushedMessages(userId, allItems, queue.context);
-    console.log(`[LOG] ประมวลผลคิวเสร็จสิ้นสำหรับผู้ใช้: ${userId}`);
+    logHotPathDebug(`[LOG] ประมวลผลคิวเสร็จสิ้นสำหรับผู้ใช้: ${userId}`);
   } finally {
     queue.isProcessing = false;
+    touchQueue(queue);
     if (queue.messages.length > 0 || queue.flushRequested) {
       const nextDelayMs =
         Number.isFinite(queue.flushDelayMs) && queue.flushDelayMs >= 0
           ? queue.flushDelayMs
           : 0;
-      console.log(
+      logHotPathDebug(
         `[LOG] พบข้อความค้างระหว่างประมวลผล จะเริ่มรอบถัดไปใน ${(nextDelayMs / 1000).toFixed(2).replace(/\.00$/, "")} วินาที (queueKey: ${queueKey})`,
       );
       scheduleQueueFlush(queueKey, nextDelayMs);
+    } else {
+      tryDisposeQueue(queueKey);
     }
   }
 }
@@ -7184,7 +7512,7 @@ async function processFlushedMessages(
   mergedContent,
   queueContext = {},
 ) {
-  console.log(`[LOG] เริ่มประมวลผลข้อความในคิวสำหรับผู้ใช้: ${userId}`);
+  logHotPathDebug(`[LOG] เริ่มประมวลผลข้อความในคิวสำหรับผู้ใช้: ${userId}`);
 
   const platform = normalizeChatPlatform(
     queueContext.platform || queueContext.botType || "line",
@@ -7253,7 +7581,7 @@ async function processFlushedMessages(
       return false;
     }
     if (!replyToken) {
-      console.log(
+      logHotPathDebug(
         `[LOG] ไม่มี replyToken สำหรับผู้ใช้ ${userId} ไม่สามารถส่งข้อความกลับได้`,
       );
       return false;
@@ -7280,7 +7608,7 @@ async function processFlushedMessages(
       }
 
       if (!client) {
-        console.log(
+        logHotPathDebug(
           `[LOG] ไม่สามารถส่งข้อความได้ - ไม่มีข้อมูล Line Client หรือ Channel Credentials สำหรับผู้ใช้ ${userId}`,
         );
         return false;
@@ -7321,7 +7649,7 @@ async function processFlushedMessages(
 
   const emergencyStop = await getSettingValue("agentEmergencyStop", false);
   if (emergencyStop) {
-    console.log("[LOG] Agent emergency stop เปิดใช้งาน - ข้ามการตอบ AI");
+    logHotPathDebug("[LOG] Agent emergency stop เปิดใช้งาน - ข้ามการตอบ AI");
     await saveChatHistory(
       userId,
       mergedContent,
@@ -7338,7 +7666,7 @@ async function processFlushedMessages(
   // ตรวจสอบโหมดระบบ
   const systemMode = await getSettingValue("systemMode", "production");
   if (systemMode === "maintenance") {
-    console.log(`[LOG] ระบบอยู่ในโหมดบำรุงรักษา ไม่สามารถประมวลผลข้อความได้`);
+    logHotPathDebug(`[LOG] ระบบอยู่ในโหมดบำรุงรักษา ไม่สามารถประมวลผลข้อความได้`);
     if (isLinePlatform) {
       await replyWithLineText(
         "ขออภัยค่ะ ระบบกำลังอยู่ในโหมดบำรุงรักษา กรุณาลองใหม่อีกครั้ง",
@@ -7349,7 +7677,7 @@ async function processFlushedMessages(
 
   // agent.mode มี priority เหนือ bot.status สำหรับเพจที่อยู่ภายใต้ Agent Forge
   if (agentManaged && agentMode === "human-only") {
-    console.log(
+    logHotPathDebug(
       `[LOG] Agent mode = human-only, บันทึกข้อความโดยไม่ตอบกลับสำหรับผู้ใช้: ${userId}`,
     );
     await saveChatHistory(
@@ -7367,7 +7695,7 @@ async function processFlushedMessages(
 
   // กรณีเพจที่ไม่ได้ถูกจัดการโดย Agent Forge ให้ใช้พฤติกรรมเดิมตาม bot.status
   if (disableAiReply) {
-    console.log(
+    logHotPathDebug(
       `[LOG] Bot ปิดการตอบอัตโนมัติ - บันทึกข้อความโดยไม่ตอบกลับสำหรับผู้ใช้: ${userId}`,
     );
     await saveChatHistory(
@@ -7385,14 +7713,14 @@ async function processFlushedMessages(
 
   const userStatus = await getUserStatus(userId);
   const aiEnabled = userStatus.aiEnabled;
-  console.log(
+  logHotPathDebug(
     `[LOG] สถานะการใช้ AI ของผู้ใช้ ${userId}: ${aiEnabled ? "เปิดใช้งาน" : "ปิดใช้งาน"}`,
   );
 
   // ตรวจสอบการตั้งค่า AI ในระดับระบบ
   const systemAiEnabled = await getSettingValue("aiEnabled", true);
   if (!systemAiEnabled) {
-    console.log(`[LOG] AI ถูกปิดใช้งานในระดับระบบ`);
+    logHotPathDebug(`[LOG] AI ถูกปิดใช้งานในระดับระบบ`);
     await saveChatHistory(
       userId,
       mergedContent,
@@ -7408,7 +7736,7 @@ async function processFlushedMessages(
 
   if (!aiEnabled) {
     // ถ้า AI ปิดอยู่
-    console.log(
+    logHotPathDebug(
       `[LOG] AI ปิดใช้งาน, บันทึกข้อความโดยไม่มีการตอบกลับสำหรับผู้ใช้: ${userId}`,
     );
     await saveChatHistory(
@@ -7440,7 +7768,7 @@ async function processFlushedMessages(
       );
 
       if (!hasUserHistory) {
-        console.log(
+        logHotPathDebug(
           `[Starter] เริ่มส่งข้อความเริ่มต้นแทน AI สำหรับผู้ใช้ ${userId} (${platform})`,
         );
         const starterSendResult = await sendConversationStarterSequence(
@@ -7491,7 +7819,7 @@ async function processFlushedMessages(
   }
 
   const history = await getAIHistory(userId);
-  console.log(
+  logHotPathDebug(
     `[LOG] ดึงประวัติ (สำหรับ AI) ของผู้ใช้ ${userId}: ${history.length} ข้อความ`,
   );
 
@@ -7565,12 +7893,12 @@ async function processFlushedMessages(
       if (meta.droppedOthers > 0) {
         adjustments.push(`ละเว้นข้อมูลอื่น ${meta.droppedOthers} รายการ`);
       }
-      console.log(
+      logHotPathDebug(
         `[LOG] กลยุทธ์ "${strategy.label}" มีการปรับข้อมูล: ${adjustments.join(", ")}`,
       );
     }
 
-    console.log(
+    logHotPathDebug(
       `[LOG] เริ่มสร้าง system instructions (กลยุทธ์ ${strategy.label}, รอบที่ ${attemptIndex + 1}/${recoveryStrategies.length})`,
     );
     const systemInstructions = await buildSystemInstructionsWithContext(
@@ -7579,7 +7907,7 @@ async function processFlushedMessages(
     );
 
     if (hasImages) {
-      console.log(
+      logHotPathDebug(
         `[LOG] ประมวลผลแบบ multimodal (กลยุทธ์ ${strategy.label}): ข้อความ ${textSegmentCount} ส่วน, รูปภาพ ${imageCount} รูป`,
       );
       assistantMsg = await getAssistantResponseMultimodal(
@@ -7593,7 +7921,7 @@ async function processFlushedMessages(
       );
     } else {
       const preview = combinedText.substring(0, 100);
-      console.log(
+      logHotPathDebug(
         `[LOG] ประมวลผลข้อความอย่างเดียว (กลยุทธ์ ${strategy.label}): ${preview}${combinedText.length > 100 ? "..." : ""}`,
       );
       assistantMsg = await getAssistantResponseTextOnly(
@@ -7615,7 +7943,7 @@ async function processFlushedMessages(
   }
 
   if (assistantMsg) {
-    console.log(
+    logHotPathDebug(
       `[LOG] ได้รับคำตอบ: ${assistantMsg.substring(0, 100)}${assistantMsg.length > 100 ? "..." : ""}`,
     );
   } else {
@@ -7624,7 +7952,7 @@ async function processFlushedMessages(
     );
   }
 
-  console.log(`[LOG] บันทึกประวัติการสนทนาสำหรับผู้ใช้: ${userId}`);
+  logHotPathDebug(`[LOG] บันทึกประวัติการสนทนาสำหรับผู้ใช้: ${userId}`);
   await saveChatHistory(
     userId,
     mergedContent,
@@ -7636,36 +7964,23 @@ async function processFlushedMessages(
     buildHistoryOptions(),
   );
 
-  // แจ้งเตือนแอดมินเมื่อมีข้อความใหม่จากผู้ใช้
-  try {
-    await notifyAdminsNewMessage(userId, {
-      content: Array.isArray(mergedContent)
-        ? mergedContent.map((item) => item.data?.text || "ไฟล์แนบ").join(" ")
-        : mergedContent,
-      role: "user",
-      timestamp: new Date(),
-    });
-  } catch (notifyError) {
-    console.error("[Socket.IO] ไม่สามารถแจ้งเตือนแอดมินได้:", notifyError);
-  }
-
   if (replyToken && isLinePlatform) {
-    console.log(`[LOG] ส่งข้อความตอบกลับให้ผู้ใช้: ${userId}`);
+    logHotPathDebug(`[LOG] ส่งข้อความตอบกลับให้ผู้ใช้: ${userId}`);
 
     // กรองข้อความก่อนส่ง
     const filteredMessage = await filterMessage(assistantMsg);
-    console.log(
+    logHotPathDebug(
       `[LOG] ข้อความหลังกรอง: ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? "..." : ""}`,
     );
 
     const sent = await replyWithLineText(filteredMessage);
     if (sent) {
-      console.log(`[LOG] ส่งข้อความตอบกลับเรียบร้อยแล้ว`);
+      logHotPathDebug(`[LOG] ส่งข้อความตอบกลับเรียบร้อยแล้ว`);
     }
   } else if (platform === "facebook") {
-    console.log(`[LOG] ส่งข้อความตอบกลับผ่าน Facebook ให้ผู้ใช้: ${userId}`);
+    logHotPathDebug(`[LOG] ส่งข้อความตอบกลับผ่าน Facebook ให้ผู้ใช้: ${userId}`);
     const filteredMessage = await filterMessage(assistantMsg);
-    console.log(
+    logHotPathDebug(
       `[LOG] ข้อความหลังกรอง (Facebook): ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? "..." : ""}`,
     );
 
@@ -7683,15 +7998,15 @@ async function processFlushedMessages(
               queueContext.selectedImageCollections || null,
           },
         );
-        console.log("[Facebook] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
+        logHotPathDebug("[Facebook] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
       } catch (error) {
         console.error("[Facebook] ไม่สามารถส่งข้อความตอบกลับได้:", error);
       }
     }
   } else if (platform === "instagram") {
-    console.log(`[LOG] ส่งข้อความตอบกลับผ่าน Instagram ให้ผู้ใช้: ${userId}`);
+    logHotPathDebug(`[LOG] ส่งข้อความตอบกลับผ่าน Instagram ให้ผู้ใช้: ${userId}`);
     const filteredMessage = await filterMessage(assistantMsg);
-    console.log(
+    logHotPathDebug(
       `[LOG] ข้อความหลังกรอง (Instagram): ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? "..." : ""}`,
     );
 
@@ -7711,15 +8026,15 @@ async function processFlushedMessages(
               queueContext.selectedImageCollections || null,
           },
         );
-        console.log("[Instagram] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
+        logHotPathDebug("[Instagram] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
       } catch (error) {
         console.error("[Instagram] ไม่สามารถส่งข้อความตอบกลับได้:", error);
       }
     }
   } else if (platform === "whatsapp") {
-    console.log(`[LOG] ส่งข้อความตอบกลับผ่าน WhatsApp ให้ผู้ใช้: ${userId}`);
+    logHotPathDebug(`[LOG] ส่งข้อความตอบกลับผ่าน WhatsApp ให้ผู้ใช้: ${userId}`);
     const filteredMessage = await filterMessage(assistantMsg);
-    console.log(
+    logHotPathDebug(
       `[LOG] ข้อความหลังกรอง (WhatsApp): ${filteredMessage.substring(0, 100)}${filteredMessage.length > 100 ? "..." : ""}`,
     );
 
@@ -7739,7 +8054,7 @@ async function processFlushedMessages(
               queueContext.selectedImageCollections || null,
           },
         );
-        console.log("[WhatsApp] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
+        logHotPathDebug("[WhatsApp] ส่งข้อความตอบกลับเรียบร้อยแล้ว");
       } catch (error) {
         console.error("[WhatsApp] ไม่สามารถส่งข้อความตอบกลับได้:", error);
       }
@@ -10741,37 +11056,43 @@ function scheduleDailyRefresh() {
 }
 
 async function buildSystemInstructions(history, selectedImageCollections = null) {
-  // ดึง instructions จากฐานข้อมูลเท่านั้น ไม่ใช้ Google Docs/Sheets อีกต่อไป
-  const instructions = await getInstructions();
-  const assetsText = await getAssetsInstructionsText(selectedImageCollections);
+  const assetKey = normalizeAssetSelectionCacheKey(selectedImageCollections);
+  const cacheKey = `legacy::${assetKey}`;
+  let cachedBase = runtimePromptBaseCache.get(cacheKey);
 
-  let systemText = "คุณเป็น AI chatbot ภาษาไทย\n\n";
+  if (!cachedBase) {
+    // ดึง instructions จากฐานข้อมูลเท่านั้น ไม่ใช้ Google Docs/Sheets อีกต่อไป
+    const instructions = await getInstructions();
+    const assetsText = await getAssetsInstructionsText(selectedImageCollections);
 
-  for (const inst of instructions) {
-    if (inst.type === "text") {
-      if (inst.title) systemText += `=== ${inst.title} ===\n`;
-      systemText += inst.content + "\n\n";
-    } else if (inst.type === "table") {
-      if (inst.title) systemText += `=== ${inst.title} ===\n`;
-      systemText +=
-        "ข้อมูลตารางในรูปแบบ JSON:\n```json\n" +
-        JSON.stringify(inst.data, null, 2) +
-        "\n```\n\n";
+    let systemText = "คุณเป็น AI chatbot ภาษาไทย\n\n";
+
+    for (const inst of instructions) {
+      if (inst.type === "text") {
+        if (inst.title) systemText += `=== ${inst.title} ===\n`;
+        systemText += inst.content + "\n\n";
+      } else if (inst.type === "table") {
+        if (inst.title) systemText += `=== ${inst.title} ===\n`;
+        systemText +=
+          "ข้อมูลตารางในรูปแบบ JSON:\n```json\n" +
+          JSON.stringify(inst.data, null, 2) +
+          "\n```\n\n";
+      }
     }
+
+    if (assetsText) {
+      systemText += "\n\n" + assetsText + "\n\n";
+    }
+
+    cachedBase = systemText.trim();
+    runtimePromptBaseCache.set(cacheKey, cachedBase);
   }
 
-  if (assetsText) {
-    systemText += "\n\n" + assetsText + "\n\n";
-  }
-
-  // เพิ่มเวลาไทยปัจจุบัน
   const now = new Date().toLocaleString("th-TH", {
     timeZone: "Asia/Bangkok",
     hour12: false,
   });
-  systemText += `เวลาปัจจุบัน: ${now}`;
-
-  return systemText.trim();
+  return `${cachedBase}\n\nเวลาปัจจุบัน: ${now}`.trim();
 }
 
 async function buildSystemInstructionsWithContext(history, queueContext = {}) {
@@ -10788,7 +11109,6 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
     normalizedSelections.length > 0 && SUPPORTED_CHAT_PLATFORMS.has(botKind);
 
   let systemPrompt = "";
-  let client = null;
   let db = null;
   let selectedImageCollections = Array.isArray(
     queueContext.selectedImageCollections,
@@ -10798,55 +11118,66 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
 
   const ensureDb = async () => {
     if (!db) {
-      client = await connectDB();
+      const client = await connectDB();
       db = client.db("chatbot");
     }
     return db;
   };
 
   const loadSelectedImageCollections = async () => {
-    if (!queueContext.botId) return;
+    if (
+      !queueContext.botId ||
+      (Array.isArray(selectedImageCollections) &&
+        selectedImageCollections.length > 0)
+    ) {
+      return;
+    }
+
     try {
-      const database = await ensureDb();
-      const botCollection = getBotCollectionName(botKind);
-      const botId =
-        queueContext.botId instanceof ObjectId
-          ? queueContext.botId
-          : toObjectId(queueContext.botId) || queueContext.botId;
-
-      const botDoc = await database.collection(botCollection).findOne({
-        _id: botId,
-      });
-
-      if (botDoc && botDoc.selectedImageCollections) {
-        selectedImageCollections = botDoc.selectedImageCollections;
+      const snapshot = await getBotRuntimeSnapshot(queueContext.botId, botKind);
+      if (
+        snapshot &&
+        Array.isArray(snapshot.selectedImageCollections) &&
+        snapshot.selectedImageCollections.length > 0
+      ) {
+        selectedImageCollections = snapshot.selectedImageCollections;
       }
     } catch (error) {
       console.error("[LOG] ไม่สามารถดึง selectedImageCollections:", error);
     }
   };
 
-  if (supportsCustomSelections) {
-    try {
-      const database = await ensureDb();
-      systemPrompt = (
-        await buildSystemPromptFromSelections(normalizedSelections, database)
-      ).trim();
-    } catch (error) {
-      console.error(
-        "[LOG] ไม่สามารถสร้าง system instructions จาก selections:",
-        error,
-      );
-    }
-  }
+  await loadSelectedImageCollections();
 
-  if (!systemPrompt) {
-    try {
-      const defaultInstructionKey = await getSettingValue(
-        "defaultInstruction",
-        "",
-      );
-      if (defaultInstructionKey) {
+  const defaultInstructionKey = await getSettingValue("defaultInstruction", "");
+  const runtimeKey = buildBotRuntimeCacheKey(botKind, queueContext.botId);
+  const selectionCacheValue = normalizeInstructionSelectionCacheValue(
+    normalizedSelections,
+  );
+  const assetsCacheValue = normalizeAssetSelectionCacheKey(
+    selectedImageCollections,
+  );
+  const promptCacheKey = `${runtimeKey}::instructions=${selectionCacheValue}::assets=${assetsCacheValue}::default=${defaultInstructionKey || "__none__"}`;
+
+  if (runtimePromptBaseCache.has(promptCacheKey)) {
+    systemPrompt = runtimePromptBaseCache.get(promptCacheKey) || "";
+  } else {
+    if (supportsCustomSelections) {
+      try {
+        const database = await ensureDb();
+        systemPrompt = (
+          await buildSystemPromptFromSelections(normalizedSelections, database)
+        ).trim();
+      } catch (error) {
+        console.error(
+          "[LOG] ไม่สามารถสร้าง system instructions จาก selections:",
+          error,
+        );
+      }
+    }
+
+    if (!systemPrompt && defaultInstructionKey) {
+      try {
         const database = await ensureDb();
         const fallbackSelections = normalizeInstructionSelections([
           defaultInstructionKey,
@@ -10854,33 +11185,33 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
         systemPrompt = (
           await buildSystemPromptFromSelections(fallbackSelections, database)
         ).trim();
+      } catch (error) {
+        console.error(
+          "[LOG] ไม่สามารถสร้าง system instructions จาก default instruction:",
+          error,
+        );
       }
-    } catch (error) {
-      console.error(
-        "[LOG] ไม่สามารถสร้าง system instructions จาก default instruction:",
-        error,
-      );
+    }
+
+    if (systemPrompt) {
+      const assetsText = await getAssetsInstructionsText(selectedImageCollections);
+      if (assetsText) {
+        systemPrompt = `${systemPrompt}\n\n${assetsText}`;
+      }
+      systemPrompt = systemPrompt.trim();
+      runtimePromptBaseCache.set(promptCacheKey, systemPrompt);
     }
   }
 
-  await loadSelectedImageCollections();
-
   if (!systemPrompt) {
     return await buildSystemInstructions(history, selectedImageCollections);
-  }
-
-  const assetsText = await getAssetsInstructionsText(selectedImageCollections);
-  if (assetsText) {
-    systemPrompt = `${systemPrompt}\n\n${assetsText}`;
   }
 
   const now = new Date().toLocaleString("th-TH", {
     timeZone: "Asia/Bangkok",
     hour12: false,
   });
-  systemPrompt += `\n\nเวลาปัจจุบัน: ${now}`;
-
-  return systemPrompt.trim();
+  return `${systemPrompt}\n\nเวลาปัจจุบัน: ${now}`.trim();
 }
 
 // ฟังก์ชันสำหรับดึงข้อความจากแท็ก <THAI_REPLY>
@@ -10932,6 +11263,11 @@ const ORDER_TOOL_INSTRUCTIONS = `🚨 สำคัญ! คุณต้องใ�
 - ลูกค้าบอกว่า "แก้ไข" หรือ "เปลี่ยน" ข้อมูลออเดอร์ที่สั่งไปแล้ว
 - ลูกค้าพูดถึงออเดอร์เดิมโดยเฉพาะ เช่น "ออเดอร์ที่แล้ว" "ที่สั่งไปเมื่อกี้"
 
+🔄 เมื่อ create_order คืน error พร้อม existingOrderId (ตรวจพบออเดอร์ซ้ำ):
+- หมายความว่าระบบเพิ่งสร้างออเดอร์ที่มีรายการเหมือนกันไปแล้วภายใน 1 ชั่วโมง ไม่อนุญาตให้สร้างซ้ำ
+- ให้เรียก update_order ด้วย existingOrderId ที่ได้รับทันที เพื่ออัปเดตข้อมูลล่าสุดจากบทสนทนา (ที่อยู่, เบอร์, ชื่อ ฯลฯ)
+- หลัง update สำเร็จ ให้แจ้งลูกค้าว่าอัปเดตข้อมูลออเดอร์ให้เรียบร้อยแล้ว
+
 🚫 ข้อห้าม:
 1. ห้ามพูดว่า "บันทึกแล้ว" หรือ "สั่งซื้อสำเร็จ" โดยไม่ได้เรียก tool จริง
 2. ห้ามคาดเดาข้อมูลออเดอร์ - ถามให้ครบก่อน
@@ -10955,15 +11291,16 @@ async function appendOrderToolInstructions(systemInstructions) {
 async function fetchBotAiConfig(botId, platform) {
   try {
     if (!botId) return normalizeAiConfig({});
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection(getBotCollectionName(platform));
-    const query = ObjectId.isValid(botId)
-      ? { _id: new ObjectId(botId) }
-      : { _id: botId };
-    const bot = await coll.findOne(query);
-    if (!bot) return normalizeAiConfig({});
-    return normalizeAiConfig(bot.aiConfig || {});
+    const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
+    if (runtimeBotAiConfigCache.has(runtimeKey)) {
+      return runtimeBotAiConfigCache.get(runtimeKey);
+    }
+    const snapshot = await getBotRuntimeSnapshot(botId, platform);
+    const config = snapshot?.aiConfig
+      ? normalizeAiConfig(snapshot.aiConfig)
+      : normalizeAiConfig({});
+    runtimeBotAiConfigCache.set(runtimeKey, config);
+    return config;
   } catch (err) {
     console.error("fetchBotAiConfig error:", err);
     return normalizeAiConfig({});
@@ -11952,6 +12289,15 @@ async function setSettingValue(key, value) {
   }
 }
 
+function invalidateSettingsCacheKeys(keys = []) {
+  if (!Array.isArray(keys)) return;
+  for (const key of keys) {
+    if (typeof key === "string" && key.trim()) {
+      _settingsCache.delete(key.trim());
+    }
+  }
+}
+
 async function getOrderExtractionModeSetting() {
   return "realtime";
 }
@@ -11965,14 +12311,8 @@ async function getAiEnabled() {
 }
 
 async function setAiEnabled(state) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("settings");
-  await coll.updateOne(
-    { key: "aiEnabled" },
-    { $set: { value: !!state } },
-    { upsert: true },
-  );
+  await setSettingValue("aiEnabled", !!state);
+  invalidateAllRuntimeCaches();
 }
 
 async function getInstructions() {
@@ -12141,6 +12481,7 @@ async function recordInstructionVersionSnapshot(
     { $set: snapshot },
     { upsert: true },
   );
+  invalidateInstructionPromptCaches();
   return snapshot;
 }
 
@@ -12805,6 +13146,7 @@ async function createDashboardSnapshotOrThrow(
       snapshotResult?.error || "dashboard_snapshot_failed",
     );
   }
+  invalidateInstructionPromptCaches();
   return snapshotResult;
 }
 
@@ -13166,6 +13508,11 @@ async function getInstructionAssetsMap() {
 
 // ฟังก์ชันใหม่: ดึงรูปภาพจาก collections ที่เลือก (สำหรับ bot context)
 async function getAssetsInstructionsText(selectedCollectionIds = null) {
+  const cacheKey = normalizeAssetSelectionCacheKey(selectedCollectionIds);
+  if (runtimeAssetsTextCache.has(cacheKey)) {
+    return runtimeAssetsTextCache.get(cacheKey);
+  }
+
   let assets = [];
 
   // ถ้ามีการเลือก collections ให้ใช้รูปจาก collections
@@ -13180,7 +13527,10 @@ async function getAssetsInstructionsText(selectedCollectionIds = null) {
     assets = await getInstructionAssets();
   }
 
-  if (!assets || assets.length === 0) return "";
+  if (!assets || assets.length === 0) {
+    runtimeAssetsTextCache.set(cacheKey, "");
+    return "";
+  }
   const lines = [];
   lines.push(
     'การแทรกรูปภาพในการตอบ: ใช้แท็ก #[IMAGE:<ชื่อรูปภาพ>] ในตำแหน่งที่ต้องการ เช่น ตัวอย่าง: "ยอดชำระ 500 บาท #[IMAGE:QR Code ชำระเงิน] ขอบคุณค่ะ" หรือ "นี่คือสินค้าของเรา #[IMAGE:สินค้า A] ราคา 199 บาท" ระบบจะแยกเป็นข้อความ-รูปภาพ-ข้อความโดยอัตโนมัติ',
@@ -13191,11 +13541,18 @@ async function getAssetsInstructionsText(selectedCollectionIds = null) {
     const desc = a.description || a.alt || "";
     lines.push(`- ${label}: ${desc}`);
   }
-  return lines.join("\n");
+  const result = lines.join("\n");
+  runtimeAssetsTextCache.set(cacheKey, result);
+  return result;
 }
 
 // ฟังก์ชันใหม่: สร้าง assets map จาก collections ที่เลือก
 async function getAssetsMapForBot(selectedCollectionIds = null) {
+  const cacheKey = normalizeAssetSelectionCacheKey(selectedCollectionIds);
+  if (runtimeAssetsMapCache.has(cacheKey)) {
+    return runtimeAssetsMapCache.get(cacheKey);
+  }
+
   const hasSelections =
     Array.isArray(selectedCollectionIds) && selectedCollectionIds.length > 0;
   const map = {};
@@ -13223,6 +13580,7 @@ async function getAssetsMapForBot(selectedCollectionIds = null) {
   // If collections are explicitly selected, do not fall back to the full asset list.
   // This prevents the bot from accessing images outside the allowed collections.
   if (hasSelections) {
+    runtimeAssetsMapCache.set(cacheKey, map);
     return map;
   }
 
@@ -13243,6 +13601,7 @@ async function getAssetsMapForBot(selectedCollectionIds = null) {
     }
   }
 
+  runtimeAssetsMapCache.set(cacheKey, map);
   return map;
 }
 
@@ -13429,6 +13788,8 @@ app.post("/admin/instructions/library-now", async (req, res) => {
       { upsert: true },
     );
 
+    invalidateInstructionPromptCaches();
+
     res.json({
       success: true,
       message: `บันทึก instructions ลงคลังเรียบร้อยแล้ว (${instructions.length} instructions)`,
@@ -13468,6 +13829,7 @@ app.put("/admin/instructions/library/:date", async (req, res) => {
         error: "ไม่พบคลัง instruction ของวันที่ระบุ",
       });
     }
+    invalidateInstructionPromptCaches();
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });
@@ -13490,6 +13852,7 @@ app.delete("/admin/instructions/library/:date", async (req, res) => {
         error: "ไม่พบคลัง instruction ของวันที่ระบุ",
       });
     }
+    invalidateInstructionPromptCaches();
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });
@@ -13562,6 +13925,8 @@ app.post("/admin/instructions/restore/:date", async (req, res) => {
 
       await instrColl.insertMany(instructionsToInsert);
     }
+
+    invalidateInstructionPromptCaches();
 
     res.json({
       success: true,
@@ -14269,7 +14634,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
                     // แจ้ง UI แอดมินแบบเรียลไทม์
                     try {
-                      io.emit("newMessage", {
+                      io.to("admin").emit("newMessage", {
                         userId: targetUserId,
                         message: controlDoc,
                         sender: "assistant",
@@ -14308,7 +14673,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
                   // แจ้ง UI แอดมินแบบเรียลไทม์
                   try {
-                    io.emit("newMessage", {
+                    io.to("admin").emit("newMessage", {
                       userId: targetUserId,
                       message: controlDoc,
                       sender: "assistant",
@@ -14339,7 +14704,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
                     await resetUserUnreadCount(targetUserId);
                   } catch (_) { }
                   try {
-                    io.emit("newMessage", {
+                    io.to("admin").emit("newMessage", {
                       userId: targetUserId,
                       message: baseDoc,
                       sender: "assistant",
@@ -15178,7 +15543,7 @@ async function sendFacebookMessage(
                 headers: { "Content-Type": "application/json" },
               },
             );
-            console.log(
+            logHotPathDebug(
               "Facebook text sent:",
               response.data?.message_id || "ok",
             );
@@ -15225,7 +15590,7 @@ async function sendFacebookMessage(
               headers: { "Content-Type": "application/json" },
             },
           );
-          console.log(
+          logHotPathDebug(
             "Facebook image sent (url):",
             response.data?.message_id || "ok",
             seg.label,
@@ -15237,7 +15602,7 @@ async function sendFacebookMessage(
             messagingType,
             tag,
           });
-          console.log("Facebook image sent (upload):", seg.label);
+          logHotPathDebug("Facebook image sent (upload):", seg.label);
         };
         try {
           if (tryUploadFirst) {
@@ -16447,6 +16812,8 @@ app.put("/api/line-bots/:id", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
+    lineBotCredentialCache.delete(normalizeRuntimeCacheId(id, ""));
+    invalidateBotRuntimeCaches("line", id);
     res.json({ message: "อัปเดต Line Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating line bot:", err);
@@ -16622,6 +16989,7 @@ app.put("/api/line-bots/:id/instructions", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
+    invalidateBotRuntimeCaches("line", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating line bot instructions:", err);
@@ -16668,6 +17036,7 @@ app.put("/api/line-bots/:id/image-collections", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
+    invalidateBotRuntimeCaches("line", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
       selectedImageCollections: normalizedCollections,
@@ -17028,6 +17397,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
+    invalidateBotRuntimeCaches("facebook", id);
     res.json({ message: "อัปเดต Facebook Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating facebook bot:", err);
@@ -17223,6 +17593,7 @@ app.put("/api/facebook-bots/:id/instructions", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
+    invalidateBotRuntimeCaches("facebook", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating facebook bot instructions:", err);
@@ -17269,6 +17640,7 @@ app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
+    invalidateBotRuntimeCaches("facebook", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
       selectedImageCollections: normalizedCollections,
@@ -17843,6 +18215,7 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
     }
 
     await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+    invalidateBotRuntimeCaches("instagram", id);
     res.json({ message: "อัปเดต Instagram Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating instagram bot:", err);
@@ -17973,6 +18346,7 @@ app.put("/api/instagram-bots/:id/instructions", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
+    invalidateBotRuntimeCaches("instagram", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating instagram bot instructions:", err);
@@ -18016,6 +18390,7 @@ app.put("/api/instagram-bots/:id/image-collections", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
 
+    invalidateBotRuntimeCaches("instagram", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
       selectedImageCollections: normalizedCollections,
@@ -18290,6 +18665,7 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
     }
 
     await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+    invalidateBotRuntimeCaches("whatsapp", id);
     res.json({ message: "อัปเดต WhatsApp Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating whatsapp bot:", err);
@@ -18422,6 +18798,7 @@ app.put("/api/whatsapp-bots/:id/instructions", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
+    invalidateBotRuntimeCaches("whatsapp", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error updating whatsapp bot instructions:", err);
@@ -18465,6 +18842,7 @@ app.put("/api/whatsapp-bots/:id/image-collections", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
 
+    invalidateBotRuntimeCaches("whatsapp", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
       selectedImageCollections: normalizedCollections,
@@ -19665,6 +20043,7 @@ app.post("/admin/instructions/:id/delete", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions");
     await coll.deleteOne({ _id: new ObjectId(id) });
+    invalidateInstructionPromptCaches();
     res.redirect("/admin/dashboard");
   } catch (err) {
     res.redirect("/admin/dashboard?error=ไม่สามารถลบข้อมูลได้");
@@ -20038,6 +20417,7 @@ app.post("/admin/instructions/reorder", async (req, res) => {
       { _id: target._id },
       { $set: { order: current.order || idx } },
     );
+    invalidateInstructionPromptCaches();
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });
@@ -20082,6 +20462,7 @@ app.post("/admin/instructions/reorder/drag", async (req, res) => {
       await coll.bulkWrite(bulkOps, { ordered: true });
     }
 
+    invalidateInstructionPromptCaches();
     res.json({ success: true });
   } catch (err) {
     console.error("[Instructions] drag reorder error:", err);
@@ -20528,6 +20909,7 @@ app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
       if (totalFixed > 0) parts.push(`ซ่อมแซม ${totalFixed} รายการ`);
       if (totalDeleted > 0) parts.push(`ลบ ${totalDeleted} รายการ`);
       message = parts.join(" และ ");
+      invalidateAssetRuntimeCaches();
     }
 
     res.json({
@@ -21137,6 +21519,8 @@ async function syncInstructionAssetToCollections(db, asset) {
       );
     }
   }
+
+  invalidateAssetRuntimeCaches();
 }
 
 async function removeInstructionAssetFromCollections(db, asset) {
@@ -21230,6 +21614,7 @@ async function performInstructionAssetDeletion(db, asset) {
     } catch (_) { }
   });
 
+  invalidateAssetRuntimeCaches();
   return true;
 }
 
@@ -21368,6 +21753,7 @@ app.post("/admin/image-collections", async (req, res) => {
     };
 
     await collectionsColl.insertOne(newCollection);
+    invalidateAssetRuntimeCaches();
 
     res.json({
       success: true,
@@ -21440,6 +21826,7 @@ app.put("/admin/image-collections/:id", async (req, res) => {
     );
 
     const updated = await collectionsColl.findOne({ _id: id });
+    invalidateAssetRuntimeCaches();
 
     res.json({
       success: true,
@@ -21508,6 +21895,7 @@ app.delete("/admin/image-collections/:id", async (req, res) => {
 
     // ลบ collection
     await coll.deleteOne({ _id: id });
+    invalidateAllRuntimeCaches();
 
     res.json({
       success: true,
@@ -21549,6 +21937,7 @@ app.delete("/admin/instructions/:id", async (req, res) => {
     }
 
     if (deleted > 0) {
+      invalidateInstructionPromptCaches();
       res.json({ success: true, message: "ลบข้อมูลเรียบร้อยแล้ว" });
     } else {
       res.json({ success: false, error: "ไม่พบข้อมูลที่ต้องการลบ" });
@@ -21849,7 +22238,7 @@ class BroadcastQueue {
 
   async updateProgress() {
     if (typeof io !== 'undefined') {
-      io.emit('broadcastProgress', { jobId: this.jobId, stats: this.stats });
+      io.to("admin").emit("broadcastProgress", { jobId: this.jobId, stats: this.stats });
     }
     await this.saveHistory();
   }
@@ -22349,7 +22738,7 @@ app.post("/admin/followup/clear", async (req, res) => {
     await clearFollowUpStatus(userId);
     try {
       if (io) {
-        io.emit("followUpTagged", {
+        io.to("admin").emit("followUpTagged", {
           userId,
           hasFollowUp: false,
           followUpReason: "",
@@ -23255,6 +23644,7 @@ app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req
       { _id: new ObjectId(instructionId) },
       { $set: { version: nextVersion, updatedAt: new Date() } }
     );
+    invalidateInstructionPromptCaches();
 
     res.json({
       success: true,
@@ -23664,7 +24054,11 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     const usePreviousResponseId = canUseInstructionPreviousResponseId(
       apiKeyToUse.provider,
     );
-    const chatService = new InstructionChatService(db, openai, { resetFollowUpConfigCache });
+    const chatService = new InstructionChatService(db, openai, {
+      resetFollowUpConfigCache,
+      invalidateInstructionPromptCaches,
+      invalidateAllRuntimeCaches,
+    });
 
     // Get instruction for system prompt
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
@@ -23895,48 +24289,68 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
 
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     const openaiClient = buildLLMClientFromKey(apiKeyToUse);
-    const chatService = new InstructionChatService(db, openaiClient, { resetFollowUpConfigCache });
+    const chatService = new InstructionChatService(db, openaiClient, {
+      resetFollowUpConfigCache,
+      invalidateInstructionPromptCaches,
+      invalidateAllRuntimeCaches,
+    });
+    let instructionMutated = false;
 
     // Reverse the operation
     if (changeLog.tool === "update_cell" && changeLog.before) {
-      await chatService.update_cell(changeLog.instructionId, {
+      const undoResult = await chatService.update_cell(changeLog.instructionId, {
         itemId: changeLog.params.itemId,
         rowIndex: changeLog.params.rowIndex,
         column: changeLog.params.column,
         newValue: changeLog.before.value,
       }, "undo");
+      if (undoResult?.error) return res.json({ error: undoResult.error });
+      instructionMutated = true;
     } else if (changeLog.tool === "add_row" && changeLog.after) {
-      await chatService.delete_row(changeLog.instructionId, {
+      const undoResult = await chatService.delete_row(changeLog.instructionId, {
         itemId: changeLog.params.itemId,
         rowIndex: changeLog.after.rowIndex,
       }, "undo");
+      if (undoResult?.error) return res.json({ error: undoResult.error });
+      instructionMutated = true;
     } else if (changeLog.tool === "delete_row" && changeLog.before) {
-      await chatService.add_row(changeLog.instructionId, {
+      const undoResult = await chatService.add_row(changeLog.instructionId, {
         itemId: changeLog.params.itemId,
         rowData: changeLog.before.rowData,
         position: "after",
         afterRowIndex: Math.max(0, changeLog.params.rowIndex - 1),
       }, "undo");
+      if (undoResult?.error) return res.json({ error: undoResult.error });
+      instructionMutated = true;
     } else if (changeLog.tool === "update_text_content" && changeLog.before) {
       const inst = await db.collection("instructions_v2").findOne({ _id: new ObjectId(changeLog.instructionId) });
       if (inst) {
         const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === changeLog.params.itemId);
         if (itemIndex !== -1) {
-          await db.collection("instructions_v2").updateOne(
+          const updateResult = await db.collection("instructions_v2").updateOne(
             { _id: new ObjectId(changeLog.instructionId) },
-            { $set: { [`dataItems.${itemIndex}.content`]: changeLog.before.content } }
+            {
+              $set: {
+                [`dataItems.${itemIndex}.content`]: changeLog.before.content,
+                [`dataItems.${itemIndex}.updatedAt`]: new Date(),
+                updatedAt: new Date(),
+              },
+            }
           );
+          if (updateResult.matchedCount > 0) instructionMutated = true;
         }
       }
     } else if (changeLog.tool === "update_rows_bulk" && changeLog.before?.changes) {
       // Reverse each cell update
       for (const c of changeLog.before.changes) {
-        await chatService.update_cell(changeLog.instructionId, {
+        const undoResult = await chatService.update_cell(changeLog.instructionId, {
           itemId: changeLog.params.itemId,
           rowIndex: c.rowIndex,
           column: c.column,
           newValue: c.value,
         }, "undo");
+        if (undoResult?.error) return res.json({ error: undoResult.error });
+        instructionMutated = true;
       }
     } else if (changeLog.tool === "add_column" && changeLog.after) {
       // Remove the added column
@@ -23951,10 +24365,17 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
           if (ci !== -1) {
             cols.splice(ci, 1);
             rows.forEach(row => { if (Array.isArray(row)) row.splice(ci, 1); });
-            await db.collection("instructions_v2").updateOne(
+            const updateResult = await db.collection("instructions_v2").updateOne(
               { _id: new ObjectId(changeLog.instructionId) },
-              { $set: { [`dataItems.${itemIndex}.data`]: { columns: cols, rows }, updatedAt: new Date() } }
+              {
+                $set: {
+                  [`dataItems.${itemIndex}.data`]: { columns: cols, rows },
+                  [`dataItems.${itemIndex}.updatedAt`]: new Date(),
+                  updatedAt: new Date(),
+                },
+              }
             );
+            if (updateResult.matchedCount > 0) instructionMutated = true;
           }
         }
       }
@@ -23973,10 +24394,17 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
             const idx = Math.min(deleted.rowIndex, rows.length);
             rows.splice(idx, 0, rowArr);
           }
-          await db.collection("instructions_v2").updateOne(
+          const updateResult = await db.collection("instructions_v2").updateOne(
             { _id: new ObjectId(changeLog.instructionId) },
-            { $set: { [`dataItems.${itemIndex}.data.rows`]: rows, updatedAt: new Date() } }
+            {
+              $set: {
+                [`dataItems.${itemIndex}.data.rows`]: rows,
+                [`dataItems.${itemIndex}.updatedAt`]: new Date(),
+                updatedAt: new Date(),
+              },
+            }
           );
+          if (updateResult.matchedCount > 0) instructionMutated = true;
         }
       }
     }
@@ -23985,6 +24413,9 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
       { changeId: req.params.changeId },
       { $set: { undone: true, undoneAt: new Date() } }
     );
+    if (instructionMutated) {
+      invalidateInstructionPromptCaches();
+    }
 
     res.json({ success: true, message: "ยกเลิกการแก้ไขเรียบร้อย" });
   } catch (error) {
@@ -24388,7 +24819,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const usePreviousResponseId = canUseInstructionPreviousResponseId(
       apiKeyToUse.provider,
     );
-    const chatService = new InstructionChatService(db, openai, { resetFollowUpConfigCache });
+    const chatService = new InstructionChatService(db, openai, {
+      resetFollowUpConfigCache,
+      invalidateInstructionPromptCaches,
+      invalidateAllRuntimeCaches,
+    });
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
       sendEvent("error", { error: "ไม่พบ Instruction" });
@@ -25867,7 +26302,7 @@ app.post("/admin/chat/user-status", async (req, res) => {
 
     // Notify admin UIs
     try {
-      io.emit("newMessage", {
+      io.to("admin").emit("newMessage", {
         userId,
         message: controlDoc,
         sender: "assistant",
@@ -25941,7 +26376,9 @@ app.post("/admin/chat/users/:userId/refresh-profile", async (req, res) => {
       });
     }
 
-    await ensureFacebookProfileDisplayName(userId, facebookBot.accessToken);
+    await ensureFacebookProfileDisplayName(userId, facebookBot.accessToken, {
+      forceRefresh: true,
+    });
 
     const profile = await db
       .collection("user_profiles")
@@ -26096,7 +26533,7 @@ app.post("/admin/chat/send", async (req, res) => {
         await resetUserUnreadCount(userId);
 
         // Emit เพื่ออัปเดต UI ของแอดมิน
-        io.emit("newMessage", {
+        io.to("admin").emit("newMessage", {
           userId: userId,
           message: controlDoc,
           sender: "assistant",
@@ -26149,7 +26586,7 @@ app.post("/admin/chat/send", async (req, res) => {
       // ไม่ส่งข้อความควบคุมไปยังผู้ใช้
 
       // Emit เพื่ออัปเดต UI ของแอดมิน
-      io.emit("newMessage", {
+      io.to("admin").emit("newMessage", {
         userId: userId,
         message: controlDoc,
         sender: "assistant",
@@ -26180,7 +26617,7 @@ app.post("/admin/chat/send", async (req, res) => {
         doc._id = insertResult.insertedId;
       }
       await resetUserUnreadCount(userId);
-      io.emit("newMessage", {
+      io.to("admin").emit("newMessage", {
         userId,
         message: doc,
         sender: "assistant",
@@ -26363,7 +26800,7 @@ app.delete("/admin/chat/clear/:userId", async (req, res) => {
     await resetUserUnreadCount(userId);
 
     // Emit to socket clients
-    io.emit("chatCleared", { userId });
+    io.to("admin").emit("chatCleared", { userId });
 
     res.json({ success: true, message: "ล้างประวัติการสนทนาเรียบร้อยแล้ว" });
   } catch (err) {
@@ -26426,7 +26863,7 @@ app.post("/admin/chat/tags/:userId", async (req, res) => {
     );
 
     // Emit to socket clients
-    io.emit("userTagsUpdated", { userId, tags: cleanTags });
+    io.to("admin").emit("userTagsUpdated", { userId, tags: cleanTags });
 
     res.json({ success: true, tags: cleanTags });
   } catch (err) {
@@ -26623,7 +27060,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     // Emit socket event
     try {
       if (io) {
-        io.emit("orderUpdated", {
+        io.to("admin").emit("orderUpdated", {
           orderId,
           userId: updatedOrder.userId,
           orderData: updatedOrder.orderData,
@@ -26672,7 +27109,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
     // Emit socket event
     try {
       if (io) {
-        io.emit("orderDeleted", {
+        io.to("admin").emit("orderDeleted", {
           orderId,
           userId: order.userId,
         });
@@ -28053,7 +28490,7 @@ app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
     );
 
     // Emit to socket clients
-    io.emit("userPurchaseStatusUpdated", { userId, hasPurchased });
+    io.to("admin").emit("userPurchaseStatusUpdated", { userId, hasPurchased });
 
     res.json({ success: true, hasPurchased });
   } catch (err) {
@@ -28253,6 +28690,18 @@ app.post("/api/settings/chat", async (req, res) => {
       resetFollowUpConfigCache();
     }
 
+    invalidateSettingsCacheKeys([
+      "chatDelaySeconds",
+      "maxQueueMessages",
+      "enableMessageMerging",
+      "showTokenUsage",
+      "enableFollowUpAnalysis",
+      "followUpShowInChat",
+      "followUpShowInDashboard",
+      "audioAttachmentResponse",
+    ]);
+    invalidateAllRuntimeCaches();
+
     res.json({ success: true, message: "บันทึกการตั้งค่าแชทเรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error saving chat settings:", err);
@@ -28323,6 +28772,14 @@ app.post("/api/settings/ai", async (req, res) => {
       { $set: { value: defaultInstruction || "" } },
       { upsert: true },
     );
+
+    invalidateSettingsCacheKeys([
+      "textModel",
+      "visionModel",
+      "maxImagesPerMessage",
+      "defaultInstruction",
+    ]);
+    invalidateAllRuntimeCaches();
 
     res.json({ success: true, message: "บันทึกการตั้งค่า AI เรียบร้อยแล้ว" });
   } catch (err) {
@@ -28454,6 +28911,17 @@ app.post("/api/settings/system", async (req, res) => {
       );
     }
 
+    invalidateSettingsCacheKeys([
+      "aiEnabled",
+      "enableChatHistory",
+      "enableAdminNotifications",
+      "showDebugInfo",
+      "systemMode",
+      "aiHistoryLimit",
+      "orderRequiredFields",
+    ]);
+    invalidateAllRuntimeCaches();
+
     res.json({ success: true, message: "บันทึกการตั้งค่าระบบเรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error saving system settings:", err);
@@ -28498,6 +28966,14 @@ app.post("/api/settings/filter", async (req, res) => {
       { $set: { value: enableStrictFiltering } },
       { upsert: true },
     );
+
+    invalidateSettingsCacheKeys([
+      "enableMessageFiltering",
+      "hiddenWords",
+      "replacementText",
+      "enableStrictFiltering",
+    ]);
+    invalidateAllRuntimeCaches();
 
     res.json({
       success: true,
@@ -28575,69 +29051,82 @@ async function getOpenAIApiKeyForBot(botId, platform) {
   });
 
   try {
+    const runtimeKey = buildBotRuntimeCacheKey(platform, botId);
+    if (runtimeOpenAIKeyCache.has(runtimeKey)) {
+      return runtimeOpenAIKeyCache.get(runtimeKey);
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
 
     // First, check if bot has a specific key assigned
-    let bot = null;
-    if (botId) {
-      const collection = getBotCollectionName(platform);
-      bot = await db.collection(collection).findOne({
-        _id: ObjectId.isValid(botId) ? new ObjectId(botId) : botId
-      });
-    }
+    const botSnapshot = botId
+      ? await getBotRuntimeSnapshot(botId, platform)
+      : null;
 
-    if (bot && bot.openaiApiKeyId) {
+    if (botSnapshot?.openaiApiKeyId) {
       const keyDoc = await db.collection("openai_api_keys").findOne({
-        _id: new ObjectId(bot.openaiApiKeyId),
-        isActive: true
+        _id: new ObjectId(botSnapshot.openaiApiKeyId),
+        isActive: true,
       });
       if (keyDoc && keyDoc.apiKey) {
-        return normalizeKeyPayload(
+        const payload = normalizeKeyPayload(
           keyDoc.apiKey,
           keyDoc._id.toString(),
           keyDoc.name,
           keyDoc.provider,
         );
+        runtimeOpenAIKeyCache.set(runtimeKey, payload);
+        return payload;
       }
     }
 
     // Fallback to default key
     const defaultKey = await db.collection("openai_api_keys").findOne({
       isDefault: true,
-      isActive: true
+      isActive: true,
     });
     if (defaultKey && defaultKey.apiKey) {
-      return normalizeKeyPayload(
+      const payload = normalizeKeyPayload(
         defaultKey.apiKey,
         defaultKey._id.toString(),
         defaultKey.name,
         defaultKey.provider,
       );
+      runtimeOpenAIKeyCache.set(runtimeKey, payload);
+      return payload;
     }
 
     // Fallback to any active key
-    const anyKey = await db.collection("openai_api_keys").findOne({ isActive: true });
+    const anyKey = await db.collection("openai_api_keys").findOne({
+      isActive: true,
+    });
     if (anyKey && anyKey.apiKey) {
-      return normalizeKeyPayload(
+      const payload = normalizeKeyPayload(
         anyKey.apiKey,
         anyKey._id.toString(),
         anyKey.name,
         anyKey.provider,
       );
+      runtimeOpenAIKeyCache.set(runtimeKey, payload);
+      return payload;
     }
 
     // Final fallback to environment variable
     if (OPENAI_API_KEY) {
-      return normalizeKeyPayload(
+      const payload = normalizeKeyPayload(
         OPENAI_API_KEY,
         null,
         "Environment Variable",
         LLM_PROVIDER_OPENAI,
       );
+      runtimeOpenAIKeyCache.set(runtimeKey, payload);
+      return payload;
     }
 
-    return normalizeKeyPayload(null, null, null);
+    const emptyPayload = normalizeKeyPayload(null, null, null);
+    runtimeOpenAIKeyCache.set(runtimeKey, emptyPayload);
+    return emptyPayload;
   } catch (err) {
     console.error("[OpenAI Keys] Error getting API key for bot:", err);
     return normalizeKeyPayload(
@@ -28770,6 +29259,8 @@ app.post("/api/openai-keys", async (req, res) => {
 
     const result = await coll.insertOne(keyDoc);
 
+    invalidateAllRuntimeCaches();
+
     res.json({
       success: true,
       key: {
@@ -28855,6 +29346,7 @@ app.put("/api/openai-keys/:id", async (req, res) => {
     await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
 
     const updated = await coll.findOne({ _id: new ObjectId(id) });
+    invalidateAllRuntimeCaches();
 
     res.json({
       success: true,
@@ -28912,6 +29404,8 @@ app.delete("/api/openai-keys/:id", async (req, res) => {
       { openaiApiKeyId: id },
       { $unset: { openaiApiKeyId: "" } }
     );
+
+    invalidateAllRuntimeCaches();
 
     res.json({ success: true, message: "ลบ API Key เรียบร้อยแล้ว" });
   } catch (err) {
@@ -30974,7 +31468,7 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
       const userId = order?.userId || null;
       if (io && orderId && userId) {
         try {
-          io.emit("orderDeleted", { orderId, userId });
+          io.to("admin").emit("orderDeleted", { orderId, userId });
         } catch (_) { }
       }
 
@@ -31140,7 +31634,7 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
 
     try {
       if (io) {
-        io.emit("orderDeleted", {
+        io.to("admin").emit("orderDeleted", {
           orderId,
           userId: order.userId,
         });
@@ -31382,22 +31876,6 @@ io.on("connection", (socket) => {
 
 // Function to notify admins of new user messages
 async function notifyAdminsNewMessage(userId, message) {
-  // ตรวจสอบการตั้งค่าการแจ้งเตือน
-  const enableAdminNotifications = await getSettingValue(
-    "enableAdminNotifications",
-    true,
-  );
-
-  if (enableAdminNotifications) {
-    // แจ้งเตือนแอดมินผ่าน Socket.IO
-    io.to("admin").emit("newMessage", {
-      userId: userId,
-      message: message,
-      sender: "user",
-      timestamp: new Date(),
-    });
-  }
-
   // อัปเดต unread count สำหรับผู้ใช้
   try {
     const client = await connectDB();
