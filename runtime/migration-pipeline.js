@@ -37,6 +37,30 @@ function resolveMigrationPipelineOptions(env = process.env) {
   };
 }
 
+function shouldSkipMongoMigration() {
+  const mongoUri = String(process.env.MONGO_URI || "").trim();
+  const mongoEnabled = parseBoolean(
+    process.env.CCAI_MONGO_ENABLED,
+    Boolean(mongoUri),
+  );
+  const respectMongoEnabled = parseBoolean(
+    process.env.CCAI_MIGRATION_RESPECT_MONGO_ENABLED,
+    true,
+  );
+
+  if (!mongoUri) return true;
+  if (/disabled_mongo_uri/i.test(mongoUri)) return true;
+  if (respectMongoEnabled && !mongoEnabled) return true;
+  return false;
+}
+
+function isMongoUnavailableError(error) {
+  const message = String(error?.message || error || "");
+  return /(mongo.*not configured|MongoDB runtime is disabled|MongoServerSelectionError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|authentication failed|timed out)/i.test(
+    message,
+  );
+}
+
 async function runDataMigrationPipeline(options = {}) {
   const logger = options.logger || console;
   const pipelineOptions = options.pipelineOptions || resolveMigrationPipelineOptions();
@@ -48,11 +72,34 @@ async function runDataMigrationPipeline(options = {}) {
   };
 
   if (pipelineOptions.runMongoToPg) {
-    await migrateMongoToPostgres({
-      skipSqlMigrations: true,
-    });
-    summary.runMongoToPg = true;
-    logger.log("[MigrationPipeline] MongoDB -> PostgreSQL migration completed");
+    if (shouldSkipMongoMigration()) {
+      summary.runMongoToPg = "skipped_mongo_disabled_or_missing";
+      logger.log(
+        "[MigrationPipeline] MongoDB -> PostgreSQL migration skipped (Mongo disabled or MONGO_URI missing)",
+      );
+    } else {
+      try {
+        await migrateMongoToPostgres({
+          skipSqlMigrations: true,
+        });
+        summary.runMongoToPg = true;
+        logger.log("[MigrationPipeline] MongoDB -> PostgreSQL migration completed");
+      } catch (error) {
+        const skipOnUnavailable = parseBoolean(
+          process.env.CCAI_MIGRATION_SKIP_ON_MONGO_UNAVAILABLE,
+          true,
+        );
+        if (skipOnUnavailable && isMongoUnavailableError(error)) {
+          summary.runMongoToPg = "skipped_mongo_unavailable";
+          logger.warn(
+            "[MigrationPipeline] MongoDB -> PostgreSQL migration skipped because Mongo is unavailable:",
+            error?.message || error,
+          );
+        } else {
+          throw error;
+        }
+      }
+    }
   }
 
   if (pipelineOptions.runGridFsToBucket) {
