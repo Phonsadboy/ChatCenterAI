@@ -62,6 +62,12 @@ function normalizeSkip(value, fallback = 0) {
   return Math.floor(numeric);
 }
 
+function parsePositiveInteger(value, fallback) {
+  const numeric = Number.parseInt(value, 10);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return numeric;
+}
+
 function normalizeDate(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -124,6 +130,14 @@ function createChatRepository({
   runtimeConfig,
 }) {
   const pgBotIdCache = new Map();
+  const userSummaryCacheTtlMs = parsePositiveInteger(
+    process.env.CCAI_CHAT_USER_SUMMARY_CACHE_MS,
+    5000,
+  );
+  const userSummaryRecentThreadScanLimit = parsePositiveInteger(
+    process.env.CCAI_CHAT_USER_SUMMARY_SCAN_LIMIT,
+    5000,
+  );
   const userSummariesCache = {
     docs: [],
     updatedAt: 0,
@@ -834,59 +848,105 @@ function createChatRepository({
     const limit =
       Number.isFinite(options.limit) && options.limit > 0 ? options.limit : 50;
     const focusUserId = toLegacyId(options.focusUserId) || null;
+    const scanLimit = Math.max(
+      userSummaryRecentThreadScanLimit,
+      limit * 40,
+    );
 
     const result = await query(
       `
-        WITH latest_per_contact AS (
-          SELECT DISTINCT ON (c.legacy_contact_id)
-            c.legacy_contact_id,
+        WITH recent_threads AS (
+          SELECT
+            t.contact_id,
             t.platform,
-            b.legacy_bot_id,
-            COALESCE(NULLIF(t.stats->>'lastPreview', ''), '') AS last_message,
+            t.bot_id,
+            t.stats,
+            t.updated_at,
+            t.id
+          FROM threads t
+          ORDER BY t.updated_at DESC, t.id DESC
+          LIMIT $3
+        ),
+        latest_per_contact AS (
+          SELECT DISTINCT ON (rt.contact_id)
+            rt.contact_id,
+            rt.platform,
+            rt.bot_id,
+            COALESCE(NULLIF(rt.stats->>'lastPreview', ''), '') AS last_message,
             CASE
-              WHEN COALESCE(t.stats->>'lastMessageAt', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
-                THEN (t.stats->>'lastMessageAt')::timestamptz
-              ELSE t.updated_at
+              WHEN COALESCE(rt.stats->>'lastMessageAt', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+                THEN (rt.stats->>'lastMessageAt')::timestamptz
+              ELSE rt.updated_at
             END AS last_timestamp,
             CASE
-              WHEN COALESCE(t.stats->>'messageCount', '') ~ '^[0-9]+$'
-                THEN (t.stats->>'messageCount')::int
+              WHEN COALESCE(rt.stats->>'messageCount', '') ~ '^[0-9]+$'
+                THEN (rt.stats->>'messageCount')::int
               ELSE 0
             END AS message_count
-          FROM threads t
-          INNER JOIN contacts c ON c.id = t.contact_id
-          LEFT JOIN bots b ON b.id = t.bot_id
+          FROM recent_threads rt
           ORDER BY
-            c.legacy_contact_id,
-            CASE
-              WHEN COALESCE(t.stats->>'lastMessageAt', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
-                THEN (t.stats->>'lastMessageAt')::timestamptz
-              ELSE t.updated_at
-            END DESC,
-            t.updated_at DESC,
-            t.id DESC
+            rt.contact_id,
+            rt.updated_at DESC,
+            rt.id DESC
         )
         SELECT
-          l.legacy_contact_id,
+          c.legacy_contact_id,
           l.last_message,
           l.last_timestamp,
           l.message_count,
           l.platform,
-          l.legacy_bot_id
+          b.legacy_bot_id
         FROM latest_per_contact l
+        INNER JOIN contacts c ON c.id = l.contact_id
+        LEFT JOIN bots b ON b.id = l.bot_id
         ORDER BY
           CASE
-            WHEN $1::text IS NOT NULL AND l.legacy_contact_id = $1 THEN 0
+            WHEN $1::text IS NOT NULL AND c.legacy_contact_id = $1 THEN 0
             ELSE 1
           END,
           l.last_timestamp DESC NULLS LAST,
-          l.legacy_contact_id ASC
+          c.legacy_contact_id ASC
         LIMIT $2
       `,
-      [focusUserId, limit],
+      [focusUserId, limit, scanLimit],
     );
 
-    return result.rows.map((row) => hydratePostgresUserSummary(row));
+    const docs = result.rows.map((row) => hydratePostgresUserSummary(row));
+    if (!focusUserId || docs.some((doc) => toLegacyId(doc?._id) === focusUserId)) {
+      return docs;
+    }
+
+    const focusResult = await query(
+      `
+        SELECT
+          c.legacy_contact_id,
+          COALESCE(NULLIF(t.stats->>'lastPreview', ''), '') AS last_message,
+          CASE
+            WHEN COALESCE(t.stats->>'lastMessageAt', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+              THEN (t.stats->>'lastMessageAt')::timestamptz
+            ELSE t.updated_at
+          END AS last_timestamp,
+          CASE
+            WHEN COALESCE(t.stats->>'messageCount', '') ~ '^[0-9]+$'
+              THEN (t.stats->>'messageCount')::int
+            ELSE 0
+          END AS message_count,
+          t.platform,
+          b.legacy_bot_id
+        FROM threads t
+        INNER JOIN contacts c ON c.id = t.contact_id
+        LEFT JOIN bots b ON b.id = t.bot_id
+        WHERE c.legacy_contact_id = $1
+        ORDER BY t.updated_at DESC, t.id DESC
+        LIMIT 1
+      `,
+      [focusUserId],
+    );
+    if (focusResult.rowCount === 0) {
+      return docs;
+    }
+    const focusDoc = hydratePostgresUserSummary(focusResult.rows[0]);
+    return [focusDoc, ...docs].slice(0, limit);
   }
 
   function buildPostgresMessageFilter(filter = {}) {
@@ -1644,8 +1704,48 @@ function createChatRepository({
     return mongoDoc;
   }
 
+  function getCachedUserSummaries(options = {}, allowStale = false) {
+    if (!Array.isArray(userSummariesCache.docs) || userSummariesCache.docs.length === 0) {
+      return null;
+    }
+
+    const now = Date.now();
+    if (
+      !allowStale
+      && userSummaryCacheTtlMs > 0
+      && now - userSummariesCache.updatedAt > userSummaryCacheTtlMs
+    ) {
+      return null;
+    }
+
+    const limit =
+      Number.isFinite(options.limit) && options.limit > 0
+        ? options.limit
+        : 50;
+    const focusUserId = toLegacyId(options.focusUserId);
+    const docs = [...userSummariesCache.docs];
+    if (focusUserId) {
+      const focusExists = docs.some((doc) => toLegacyId(doc?._id) === focusUserId);
+      if (!focusExists && !allowStale) {
+        return null;
+      }
+      docs.sort((left, right) => {
+        const leftPriority = toLegacyId(left?._id) === focusUserId ? 0 : 1;
+        const rightPriority = toLegacyId(right?._id) === focusUserId ? 0 : 1;
+        if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+        return 0;
+      });
+    }
+    return docs.slice(0, limit);
+  }
+
   async function listUsers(options = {}) {
     if (shouldReadPrimary()) {
+      const cachedDocs = getCachedUserSummaries(options);
+      if (cachedDocs) {
+        return cachedDocs;
+      }
+
       try {
         const pgDocs = await readPostgresUserSummaries(options);
         if (Array.isArray(pgDocs) && pgDocs.length > 0) {
@@ -1662,22 +1762,11 @@ function createChatRepository({
           canUseMongo: canUseMongo(),
           error,
         });
-        if (!canUseMongo() && userSummariesCache.docs.length > 0) {
-          const limit =
-            Number.isFinite(options.limit) && options.limit > 0
-              ? options.limit
-              : 50;
-          const focusUserId = toLegacyId(options.focusUserId);
-          const docs = [...userSummariesCache.docs];
-          if (focusUserId) {
-            docs.sort((left, right) => {
-              const leftPriority = toLegacyId(left?._id) === focusUserId ? 0 : 1;
-              const rightPriority = toLegacyId(right?._id) === focusUserId ? 0 : 1;
-              if (leftPriority !== rightPriority) return leftPriority - rightPriority;
-              return 0;
-            });
+        if (!canUseMongo()) {
+          const staleCache = getCachedUserSummaries(options, true);
+          if (staleCache) {
+            return staleCache;
           }
-          return docs.slice(0, limit);
         }
       }
     }

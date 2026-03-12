@@ -131,6 +131,77 @@ const BOT_COLLECTION_BY_PLATFORM = {
 const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
 const runtimeConfig = getRuntimeConfig();
+const WEBHOOK_FORWARD_TIMEOUT_MS = Number(
+  process.env.CCAI_WEBHOOK_FORWARD_TIMEOUT_MS || 4000,
+);
+const ADMIN_CHAT_USERS_CACHE_TTL_MS = Number(
+  process.env.CCAI_ADMIN_CHAT_USERS_CACHE_MS || 2500,
+);
+const adminChatUsersCache = new Map();
+const adminChatUsersInflight = new Map();
+
+function normalizeBaseUrl(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\/+$/, "");
+}
+
+function resolveWebhookPublicBaseUrl(req) {
+  const preferredBaseUrl =
+    normalizeBaseUrl(process.env.CCAI_INGEST_PUBLIC_BASE_URL)
+    || normalizeBaseUrl(process.env.RAILWAY_SERVICE_PUBLIC_INGEST_URL)
+    || normalizeBaseUrl(process.env.PUBLIC_BASE_URL);
+  if (preferredBaseUrl) {
+    return preferredBaseUrl;
+  }
+  const host = typeof req?.get === "function" ? String(req.get("host") || "").trim() : "";
+  return host ? `https://${host}` : "";
+}
+
+function buildDefaultWebhookUrl(req, platform, identifier) {
+  const safePlatform = String(platform || "").trim().toLowerCase();
+  const safeIdentifier = String(identifier || "").trim();
+  if (!safePlatform || !safeIdentifier) return "";
+  const path = `/webhook/${safePlatform}/${safeIdentifier}`;
+  const baseUrl = resolveWebhookPublicBaseUrl(req);
+  return baseUrl ? `${baseUrl}${path}` : path;
+}
+
+function shouldForwardWebhookToIngest() {
+  const enabled = parseOptionalBoolean(
+    process.env.CCAI_ADMIN_FORWARD_WEBHOOKS_TO_INGEST,
+  );
+  if (runtimeConfig.runtimeMode !== "admin-app") {
+    return false;
+  }
+  if (enabled === false) {
+    return false;
+  }
+  return Boolean(
+    normalizeBaseUrl(process.env.CCAI_INGEST_PUBLIC_BASE_URL)
+    || normalizeBaseUrl(process.env.RAILWAY_SERVICE_PUBLIC_INGEST_URL),
+  );
+}
+
+function resolveWebhookForwardBaseUrl() {
+  return (
+    normalizeBaseUrl(process.env.CCAI_INGEST_PUBLIC_BASE_URL)
+    || normalizeBaseUrl(process.env.RAILWAY_SERVICE_PUBLIC_INGEST_URL)
+    || ""
+  );
+}
+
+function getCachedAdminChatUsers(cacheKey) {
+  if (ADMIN_CHAT_USERS_CACHE_TTL_MS <= 0) return null;
+  const cacheEntry = adminChatUsersCache.get(cacheKey);
+  if (!cacheEntry) return null;
+  if (Date.now() - cacheEntry.updatedAt > ADMIN_CHAT_USERS_CACHE_TTL_MS) {
+    adminChatUsersCache.delete(cacheKey);
+    return null;
+  }
+  return Array.isArray(cacheEntry.users) ? cacheEntry.users : null;
+}
 
 function normalizeProvider(provider) {
   if (typeof provider !== "string") return LLM_PROVIDER_OPENAI;
@@ -5368,11 +5439,22 @@ function parseOrderPageKey(pageKey) {
   }
   const [platformPart, ...rest] = pageKey.split(":");
   const botIdPart = rest.join(":");
-  const platform = normalizeOrderPlatform(platformPart);
+  const normalizedPlatformText = String(platformPart || "").trim().toLowerCase();
+  if (
+    !["facebook", "line", "instagram", "whatsapp"].includes(
+      normalizedPlatformText,
+    )
+  ) {
+    return { platform: null, botId: null };
+  }
+
+  const normalizedBotIdText = String(botIdPart || "").trim();
   const botId =
-    botIdPart && botIdPart !== "default"
-      ? normalizeOrderBotId(botIdPart)
+    normalizedBotIdText &&
+    normalizedBotIdText.toLowerCase() !== "default"
+      ? normalizeOrderBotId(normalizedBotIdText)
       : null;
+  const platform = normalizedPlatformText;
   return { platform, botId };
 }
 
@@ -5383,6 +5465,16 @@ function buildOrderBotIdMatchCondition(botId) {
     return { $in: [normalizedBotId, new ObjectId(normalizedBotId)] };
   }
   return normalizedBotId;
+}
+
+function buildDefaultOrderBotConditions() {
+  return [
+    { botId: null },
+    { botId: { $exists: false } },
+    { botId: "" },
+    { botId: "default" },
+    { botId: "DEFAULT" },
+  ];
 }
 
 
@@ -5424,6 +5516,11 @@ async function markMessagesAsOrderExtracted(
 
 function buildOrderQuery(params = {}) {
   const query = {};
+  const appendAndCondition = (condition) => {
+    if (!condition || typeof condition !== "object") return;
+    if (!query.$and) query.$and = [];
+    query.$and.push(condition);
+  };
   const pageKeyParam = params.pageKey;
 
   if (pageKeyParam && pageKeyParam !== "all") {
@@ -5450,11 +5547,7 @@ function buildOrderQuery(params = {}) {
             platform: normalizeOrderPlatform(parsed.platform),
           };
           if (parsed.botId === null) {
-            cond.$or = [
-              { botId: null },
-              { botId: { $exists: false } },
-              { botId: "" },
-            ];
+            cond.$or = buildDefaultOrderBotConditions();
           } else {
             const botIdCondition = buildOrderBotIdMatchCondition(parsed.botId);
             if (!botIdCondition) return null;
@@ -5487,11 +5580,7 @@ function buildOrderQuery(params = {}) {
       botIdFilter !== "all"
     ) {
       if (botIdFilter === "default") {
-        const defaultConditions = [
-          { botId: null },
-          { botId: { $exists: false } },
-          { botId: "" },
-        ];
+        const defaultConditions = buildDefaultOrderBotConditions();
         if (!query.$or) query.$or = defaultConditions;
         else query.$or.push(...defaultConditions);
       } else {
@@ -5521,6 +5610,34 @@ function buildOrderQuery(params = {}) {
     query.status = status;
   }
 
+  const searchText =
+    typeof params.search === "string" ? params.search.trim() : "";
+  if (searchText) {
+    const escapedSearchText = searchText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const searchPattern = new RegExp(escapedSearchText, "i");
+    appendAndCondition({
+      $or: [
+        { userId: searchPattern },
+        { notes: searchPattern },
+        { "orderData.customerName": searchPattern },
+        { "orderData.recipientName": searchPattern },
+        { "orderData.phone": searchPattern },
+        { "orderData.customerPhone": searchPattern },
+        { "orderData.shippingPhone": searchPattern },
+        { "orderData.email": searchPattern },
+        { "orderData.customerEmail": searchPattern },
+        { "orderData.shippingAddress": searchPattern },
+        { "orderData.addressSubDistrict": searchPattern },
+        { "orderData.addressDistrict": searchPattern },
+        { "orderData.addressProvince": searchPattern },
+        { "orderData.addressPostalCode": searchPattern },
+        { "orderData.paymentMethod": searchPattern },
+        { "orderData.paymentType": searchPattern },
+        { "orderData.notes": searchPattern },
+      ],
+    });
+  }
+
   const timezone = "Asia/Bangkok";
   let startMoment = null;
   let endMoment = null;
@@ -5544,9 +5661,31 @@ function buildOrderQuery(params = {}) {
   }
 
   if (startMoment || endMoment) {
-    query.extractedAt = {};
-    if (startMoment) query.extractedAt.$gte = startMoment.toDate();
-    if (endMoment) query.extractedAt.$lte = endMoment.toDate();
+    const extractedAtRange = {};
+    if (startMoment) extractedAtRange.$gte = startMoment.toDate();
+    if (endMoment) extractedAtRange.$lte = endMoment.toDate();
+
+    const createdAtRange = {};
+    if (startMoment) createdAtRange.$gte = startMoment.toDate();
+    if (endMoment) createdAtRange.$lte = endMoment.toDate();
+
+    appendAndCondition({
+      $or: [
+        { extractedAt: extractedAtRange },
+        {
+          $and: [
+            {
+              $or: [
+                { extractedAt: null },
+                { extractedAt: { $exists: false } },
+                { extractedAt: "" },
+              ],
+            },
+            { createdAt: createdAtRange },
+          ],
+        },
+      ],
+    });
   }
 
   return { query, dateRange: { start: startMoment, end: endMoment } };
@@ -16855,6 +16994,68 @@ app.get("/s/:code", async (req, res) => {
   }
 });
 
+// Forward webhook requests from admin-app to public-ingest when callback URLs still point here.
+app.use("/webhook", async (req, res, next) => {
+  if (!shouldForwardWebhookToIngest()) {
+    return next();
+  }
+
+  const targetBaseUrl = resolveWebhookForwardBaseUrl();
+  if (!targetBaseUrl) {
+    return next();
+  }
+
+  let targetUrl = "";
+  try {
+    const requestUrl = req.originalUrl || req.url || "/";
+    targetUrl = new URL(requestUrl, `${targetBaseUrl}/`).toString();
+  } catch (error) {
+    console.warn(
+      "[WebhookForward] Invalid target URL, fallback to local handler:",
+      error?.message || error,
+    );
+    return next();
+  }
+
+  try {
+    const incomingHost = String(req.get("host") || "").trim().toLowerCase();
+    const targetHost = new URL(targetUrl).host.toLowerCase();
+    if (incomingHost && targetHost && incomingHost === targetHost) {
+      return next();
+    }
+
+    const headers = { ...req.headers };
+    delete headers.host;
+    delete headers["content-length"];
+
+    const response = await axios({
+      method: req.method,
+      url: targetUrl,
+      headers,
+      data: req.body,
+      maxRedirects: 0,
+      responseType: "arraybuffer",
+      timeout: WEBHOOK_FORWARD_TIMEOUT_MS,
+      validateStatus: () => true,
+    });
+
+    const contentType = response?.headers?.["content-type"];
+    if (contentType && !res.headersSent) {
+      res.set("content-type", contentType);
+    }
+    if (!res.headersSent) {
+      return res.status(response.status).send(response.data);
+    }
+    return undefined;
+  } catch (error) {
+    console.warn(
+      `[WebhookForward] Failed to proxy ${req.method} ${req.originalUrl || req.url}; fallback to local handler:`,
+      error?.message || error,
+    );
+    return next();
+  }
+});
+
 // ============================ Line Bot Management API ============================
 
 // Dynamic Line Bot webhook handler
@@ -19487,11 +19688,9 @@ app.post("/api/line-bots", async (req, res) => {
     // Generate unique webhook URL if not provided
     let finalWebhookUrl = webhookUrl;
     if (!finalWebhookUrl) {
-      const baseUrl =
-        process.env.PUBLIC_BASE_URL || "https://" + req.get("host");
       const uniqueId =
         Date.now().toString(36) + Math.random().toString(36).substr(2);
-      finalWebhookUrl = `${baseUrl}/webhook/line/${uniqueId}`;
+      finalWebhookUrl = buildDefaultWebhookUrl(req, "line", uniqueId);
     }
 
     const normalizedSelections = normalizeLatestOnlyInstructionSelections(
@@ -19906,8 +20105,7 @@ app.post("/api/facebook-bots/init", async (req, res) => {
     const id = savedStub._id;
 
     // Build webhook URL using bot id
-    const baseUrl = process.env.PUBLIC_BASE_URL || "https://" + req.get("host");
-    const webhookUrl = `${baseUrl}/webhook/facebook/${id.toString()}`;
+    const webhookUrl = buildDefaultWebhookUrl(req, "facebook", id.toString());
 
     await getBotRepository().updateById("facebook", id, {
       $set: { webhookUrl, updatedAt: new Date() },
@@ -19985,11 +20183,9 @@ app.post("/api/facebook-bots", async (req, res) => {
     // Generate unique webhook URL if not provided
     let finalWebhookUrl = webhookUrl;
     if (!finalWebhookUrl) {
-      const baseUrl =
-        process.env.PUBLIC_BASE_URL || "https://" + req.get("host");
       const uniqueId =
         Date.now().toString(36) + Math.random().toString(36).substr(2);
-      finalWebhookUrl = `${baseUrl}/webhook/facebook/${uniqueId}`;
+      finalWebhookUrl = buildDefaultWebhookUrl(req, "facebook", uniqueId);
     }
 
     const normalizedSelections = normalizeLatestOnlyInstructionSelections(
@@ -20816,10 +21012,9 @@ app.post("/api/instagram-bots", async (req, res) => {
 
     let finalWebhookUrl = webhookUrl;
     if (!finalWebhookUrl) {
-      const baseUrl = process.env.PUBLIC_BASE_URL || "https://" + req.get("host");
       const uniqueId =
         Date.now().toString(36) + Math.random().toString(36).slice(2);
-      finalWebhookUrl = `${baseUrl}/webhook/instagram/${uniqueId}`;
+      finalWebhookUrl = buildDefaultWebhookUrl(req, "instagram", uniqueId);
     }
 
     const normalizedSelections = normalizeLatestOnlyInstructionSelections(
@@ -21229,10 +21424,9 @@ app.post("/api/whatsapp-bots", async (req, res) => {
 
     let finalWebhookUrl = webhookUrl;
     if (!finalWebhookUrl) {
-      const baseUrl = process.env.PUBLIC_BASE_URL || "https://" + req.get("host");
       const uniqueId =
         Date.now().toString(36) + Math.random().toString(36).slice(2);
-      finalWebhookUrl = `${baseUrl}/webhook/whatsapp/${uniqueId}`;
+      finalWebhookUrl = buildDefaultWebhookUrl(req, "whatsapp", uniqueId);
     }
 
     const normalizedSelections = normalizeLatestOnlyInstructionSelections(
@@ -30007,14 +30201,44 @@ app.get("/admin/chat/users", async (req, res) => {
     const focusUserId = Array.isArray(rawFocus)
       ? String(rawFocus[0] || "").trim()
       : String(rawFocus || "").trim();
+    const cacheKey = `focus:${focusUserId || "-"}`;
+    const cachedUsers = getCachedAdminChatUsers(cacheKey);
+    if (cachedUsers) {
+      return res.json({ success: true, users: cachedUsers });
+    }
+
+    const inflightUsersPromise = adminChatUsersInflight.get(cacheKey);
+    if (inflightUsersPromise) {
+      const users = await inflightUsersPromise;
+      return res.json({ success: true, users });
+    }
+
     // ใช้ฟังก์ชันตัวกรองข้อมูลใหม่
-    const users = await getNormalizedChatUsers({
+    const usersPromise = getNormalizedChatUsers({
       applyFilter: true,
       focusUserId,
     });
+    adminChatUsersInflight.set(cacheKey, usersPromise);
+    const users = await usersPromise;
+    adminChatUsersInflight.delete(cacheKey);
+
+    if (Array.isArray(users)) {
+      adminChatUsersCache.set(cacheKey, {
+        users,
+        updatedAt: Date.now(),
+      });
+    }
 
     res.json({ success: true, users: users });
   } catch (err) {
+    const rawFocus =
+      (req.query && (req.query.focus || req.query.userId || req.query.user)) ||
+      "";
+    const focusUserId = Array.isArray(rawFocus)
+      ? String(rawFocus[0] || "").trim()
+      : String(rawFocus || "").trim();
+    const cacheKey = `focus:${focusUserId || "-"}`;
+    adminChatUsersInflight.delete(cacheKey);
     console.error("Error getting chat users:", err);
     res.json({ success: false, error: err.message });
   }
