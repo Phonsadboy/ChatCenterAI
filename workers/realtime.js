@@ -100,14 +100,6 @@ async function startRealtimeWorkers() {
     `[Worker:realtime] started with concurrency ${runtimeConfig.queues.realtimeConcurrency}`,
   );
 
-  const shutdown = async () => {
-    await worker.close();
-    process.exit(0);
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-
   return worker;
 }
 

@@ -115,17 +115,6 @@ async function startBatchWorkers() {
     `[Worker:batch] started with scheduler workers (configured batch concurrency ${runtimeConfig.queues.batchConcurrency})`,
   );
 
-  const shutdown = async () => {
-    await Promise.allSettled([
-      followUpWorker.close(),
-      statsWorker.close(),
-    ]);
-    process.exit(0);
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-
   return {
     followUpWorker,
     statsWorker,
