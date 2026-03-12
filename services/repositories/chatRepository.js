@@ -24,6 +24,7 @@ function buildThreadStats(messages = []) {
   if (!latestMessage) return {};
   const preview = toText(latestMessage.content).slice(0, 500);
   return {
+    messageCount: messages.length,
     lastMessageAt: latestMessage.timestamp || new Date(),
     lastRole: latestMessage.role || "user",
     lastSource: latestMessage.source || null,
@@ -360,7 +361,26 @@ function createChatRepository({
         ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)
         ON CONFLICT (legacy_thread_key) DO UPDATE SET
           bot_id = COALESCE(EXCLUDED.bot_id, threads.bot_id),
-          stats = EXCLUDED.stats,
+          stats = jsonb_set(
+            COALESCE(threads.stats, '{}'::jsonb) || (EXCLUDED.stats - 'messageCount'),
+            '{messageCount}',
+            to_jsonb(
+              GREATEST(
+                CASE
+                  WHEN COALESCE(threads.stats->>'messageCount', '') ~ '^[0-9]+$'
+                    THEN (threads.stats->>'messageCount')::int
+                  ELSE 0
+                END +
+                CASE
+                  WHEN COALESCE(EXCLUDED.stats->>'messageCount', '') ~ '^[0-9]+$'
+                    THEN (EXCLUDED.stats->>'messageCount')::int
+                  ELSE 0
+                END,
+                0
+              )
+            ),
+            true
+          ),
           updated_at = EXCLUDED.updated_at
         RETURNING id
       `,
@@ -804,32 +824,38 @@ function createChatRepository({
             c.legacy_contact_id,
             t.platform,
             b.legacy_bot_id,
-            m.content AS last_message,
-            m.created_at AS last_timestamp
-          FROM messages m
-          INNER JOIN contacts c ON c.id = m.contact_id
-          INNER JOIN threads t ON t.id = m.thread_id
-          LEFT JOIN bots b ON b.id = m.bot_id
-          ORDER BY c.legacy_contact_id, m.created_at DESC, m.id DESC
-        ),
-        message_counts AS (
-          SELECT
+            COALESCE(NULLIF(t.stats->>'lastPreview', ''), '') AS last_message,
+            CASE
+              WHEN COALESCE(t.stats->>'lastMessageAt', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+                THEN (t.stats->>'lastMessageAt')::timestamptz
+              ELSE t.updated_at
+            END AS last_timestamp,
+            CASE
+              WHEN COALESCE(t.stats->>'messageCount', '') ~ '^[0-9]+$'
+                THEN (t.stats->>'messageCount')::int
+              ELSE 0
+            END AS message_count
+          FROM threads t
+          INNER JOIN contacts c ON c.id = t.contact_id
+          LEFT JOIN bots b ON b.id = t.bot_id
+          ORDER BY
             c.legacy_contact_id,
-            COUNT(*)::int AS message_count
-          FROM messages m
-          INNER JOIN contacts c ON c.id = m.contact_id
-          GROUP BY c.legacy_contact_id
+            CASE
+              WHEN COALESCE(t.stats->>'lastMessageAt', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+                THEN (t.stats->>'lastMessageAt')::timestamptz
+              ELSE t.updated_at
+            END DESC,
+            t.updated_at DESC,
+            t.id DESC
         )
         SELECT
           l.legacy_contact_id,
           l.last_message,
           l.last_timestamp,
-          mc.message_count,
+          l.message_count,
           l.platform,
           l.legacy_bot_id
         FROM latest_per_contact l
-        INNER JOIN message_counts mc
-          ON mc.legacy_contact_id = l.legacy_contact_id
         ORDER BY
           CASE
             WHEN $1::text IS NOT NULL AND l.legacy_contact_id = $1 THEN 0

@@ -19,6 +19,8 @@
     "migrate:mongodb-to-pg": "node scripts/migrate-mongo-to-postgres.js",
     "migrate:gridfs-to-bucket": "node scripts/migrate-gridfs-to-bucket.js",
     "migrate:all": "node runtime/migration-runner.js",
+    "migrate:thread-stats": "node scripts/backfill-thread-stats.js",
+    "ops:disable-followup": "node scripts/disable-followup-globally.js",
     "verify:bucket-assets": "node scripts/verify-bucket-assets.js",
     "verify:pg-parity": "node scripts/verify-postgres-parity.js"
   },

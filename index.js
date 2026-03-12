@@ -3196,6 +3196,8 @@ async function getFollowUpBaseConfig() {
   }
 
   const map = {
+    agentEmergencyStop: await getSettingValue("agentEmergencyStop", false),
+    followUpEmergencyStop: await getSettingValue("followUpEmergencyStop", false),
     enableFollowUpAnalysis: await getSettingValue("enableFollowUpAnalysis", true),
     followUpShowInChat: await getSettingValue("followUpShowInChat", true),
     followUpShowInDashboard: await getSettingValue("followUpShowInDashboard", true),
@@ -3206,6 +3208,9 @@ async function getFollowUpBaseConfig() {
       DEFAULT_ORDER_PROMPT_BODY,
     ),
   };
+
+  const hardStopEnabled =
+    map.agentEmergencyStop === true || map.followUpEmergencyStop === true;
 
   const config = {
     analysisEnabled:
@@ -3230,7 +3235,15 @@ async function getFollowUpBaseConfig() {
         map.followUpOrderPromptInstructions.trim().length
         ? map.followUpOrderPromptInstructions.trim()
         : DEFAULT_ORDER_PROMPT_BODY,
+    hardStopEnabled,
   };
+
+  if (hardStopEnabled) {
+    config.analysisEnabled = false;
+    config.showInChat = false;
+    config.showInDashboard = false;
+    config.autoFollowUpEnabled = false;
+  }
 
   followUpBaseConfigCache = config;
   followUpBaseCacheTimestamp = now;
@@ -3278,6 +3291,16 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
 
   if (typeof merged.autoFollowUpEnabled !== "boolean") {
     merged.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
+  }
+  if (typeof merged.analysisEnabled !== "boolean") {
+    merged.analysisEnabled = baseConfig.analysisEnabled !== false;
+  }
+  if (baseConfig.hardStopEnabled) {
+    merged.hardStopEnabled = true;
+    merged.analysisEnabled = false;
+    merged.showInChat = false;
+    merged.showInDashboard = false;
+    merged.autoFollowUpEnabled = false;
   }
 
   const promptText =
@@ -3861,7 +3884,33 @@ async function handleFollowUpTask(task, db) {
   const derivedContextKey =
     task.contextKey ||
     `${task.platform || "line"}:${normalizeFollowUpBotId(task.botId) || "default"}`;
+  const contextConfig = await getFollowUpConfigForContext(
+    task.platform || "line",
+    normalizeFollowUpBotId(task.botId),
+  );
 
+  if (contextConfig?.hardStopEnabled || contextConfig?.autoFollowUpEnabled === false) {
+    const cancelReason = contextConfig?.hardStopEnabled
+      ? "emergency_stop"
+      : "auto_disabled";
+    await followUpRepo.updateTaskById(task._id, {
+      $set: {
+        canceled: true,
+        cancelReason,
+        canceledAt: now,
+        updatedAt: now,
+      },
+    });
+    emitFollowUpScheduleUpdate({
+      userId: task.userId,
+      platform: task.platform,
+      botId: task.botId,
+      contextKey: derivedContextKey,
+      status: "canceled",
+      reason: cancelReason,
+    });
+    return;
+  }
 
   if (!round) {
     await followUpRepo.updateTaskById(task._id, {
@@ -4377,7 +4426,13 @@ async function maybeAnalyzeFollowUp(
       forceUpdate = false,
     } = options || {};
 
-    if (!config || (!forceUpdate && !config.analysisEnabled)) {
+    if (!config) {
+      return;
+    }
+    if (config.hardStopEnabled) {
+      return;
+    }
+    if (!forceUpdate && !config.analysisEnabled) {
       return;
     }
 
