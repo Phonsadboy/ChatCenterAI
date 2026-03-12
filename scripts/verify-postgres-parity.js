@@ -11,9 +11,23 @@ const SAMPLE_LIMIT = Math.max(
   Math.min(parseInt(process.env.PARITY_SAMPLE_LIMIT || "200", 10) || 200, 1000),
 );
 
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalize(item));
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, nested]) => [key, canonicalize(nested)]);
+    return Object.fromEntries(entries);
+  }
+  return value;
+}
+
 function safeStringify(value) {
   try {
-    return JSON.stringify(value === undefined ? null : value);
+    const normalized = value === undefined ? null : canonicalize(value);
+    return JSON.stringify(normalized);
   } catch (_) {
     return JSON.stringify(String(value));
   }
@@ -124,7 +138,7 @@ function buildChatSenderKeyAddFields() {
 function normalizeChatUserSummary(doc) {
   if (!doc || typeof doc !== "object") return doc;
   return {
-    _id: toLegacyId(doc._id),
+    _id: toLegacyId(doc._id || doc.legacy_contact_id),
     lastMessage:
       Object.prototype.hasOwnProperty.call(doc, "lastMessage")
         ? doc.lastMessage
@@ -1026,8 +1040,7 @@ async function buildProfilesParity(db) {
           created_at,
           updated_at
         FROM contacts
-        WHERE display_name IS NOT NULL
-           OR profile_data <> '{}'::jsonb
+        WHERE legacy_contact_id IS NOT NULL
       `,
     ),
   ]);
