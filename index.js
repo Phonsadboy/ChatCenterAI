@@ -19547,49 +19547,82 @@ app.put("/api/whatsapp-bots/:id/keywords", async (req, res) => {
 // Route: ดึงรายการ instruction library ทั้งหมด
 app.get("/api/instructions/library", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const libraryColl = db.collection("instruction_library");
+    let legacyLibraries = [];
+    let instructionV2Docs = [];
 
-    const [legacyLibraries, instructionV2Docs] = await Promise.all([
-      libraryColl
-        .find(
-          {},
-          {
-            projection: {
-              date: 1,
-              name: 1,
-              description: 1,
-              displayDate: 1,
-              displayTime: 1,
-              type: 1,
-              savedAt: 1,
-              convertedInstructionId: 1,
-              convertedAt: 1,
-            },
-          },
-        )
-        .sort({ date: -1 })
-        .toArray(),
-      db
-        .collection("instructions_v2")
-        .aggregate([
-          {
-            $project: {
-              instructionId: 1,
-              name: 1,
-              description: 1,
-              createdAt: 1,
-              updatedAt: 1,
-              dataItemCount: {
-                $size: { $ifNull: ["$dataItems", []] },
+    if (isMongoRuntimeEnabled()) {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const libraryColl = db.collection("instruction_library");
+
+      [legacyLibraries, instructionV2Docs] = await Promise.all([
+        libraryColl
+          .find(
+            {},
+            {
+              projection: {
+                date: 1,
+                name: 1,
+                description: 1,
+                displayDate: 1,
+                displayTime: 1,
+                type: 1,
+                savedAt: 1,
+                convertedInstructionId: 1,
+                convertedAt: 1,
               },
             },
-          },
-          { $sort: { updatedAt: -1, createdAt: -1 } },
-        ])
-        .toArray(),
-    ]);
+          )
+          .sort({ date: -1 })
+          .toArray(),
+        db
+          .collection("instructions_v2")
+          .aggregate([
+            {
+              $project: {
+                instructionId: 1,
+                name: 1,
+                description: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                dataItemCount: {
+                  $size: { $ifNull: ["$dataItems", []] },
+                },
+              },
+            },
+            { $sort: { updatedAt: -1, createdAt: -1 } },
+          ])
+          .toArray(),
+      ]);
+    } else if (isPostgresConfigured()) {
+      const pgResult = await pgQuery(
+        `
+          SELECT
+            id::text AS instruction_id,
+            COALESCE(legacy_instruction_id, id::text) AS legacy_instruction_id,
+            name,
+            description,
+            type,
+            created_at,
+            updated_at,
+            CASE
+              WHEN jsonb_typeof(data->'dataItems') = 'array' THEN jsonb_array_length(data->'dataItems')
+              ELSE 0
+            END AS data_item_count
+          FROM instructions
+          ORDER BY updated_at DESC, created_at DESC
+        `,
+      );
+
+      instructionV2Docs = pgResult.rows.map((row) => ({
+        instructionId: row.legacy_instruction_id || row.instruction_id,
+        name: row.name || "",
+        description: row.description || "",
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || null,
+        dataItemCount: Number(row.data_item_count || 0),
+      }));
+    }
 
     const toDateSafe = (value) => {
       if (value instanceof Date) return value;
@@ -28192,8 +28225,6 @@ function mapNotificationChannelDoc(doc, ctx = {}) {
 
 app.get("/admin/api/notification-channels", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const notificationRepo = getNotificationRepository();
 
     const channels = await notificationRepo.listChannels({}, {
@@ -28207,39 +28238,62 @@ app.get("/admin/api/notification-channels", requireAdmin, async (req, res) => {
           .filter(Boolean)
           .map((id) => String(id)),
       ),
-    ).filter((id) => ObjectId.isValid(id));
-
-    const botDocs = senderBotIds.length
-      ? await db
-        .collection("line_bots")
-        .find({ _id: { $in: senderBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, displayName: 1, botName: 1 })
-        .toArray()
-      : [];
+    );
 
     const botMap = new Map();
-    botDocs.forEach((bot) => {
-      const label =
-        bot.displayName ||
-        bot.name ||
-        bot.botName ||
-        `LINE Bot (${bot._id.toString().slice(-4)})`;
-      botMap.set(bot._id.toString(), label);
-    });
-
-    const groupDocs = senderBotIds.length
-      ? await db
-        .collection("line_bot_groups")
-        .find({ botId: { $in: senderBotIds } })
-        .project({ botId: 1, groupId: 1, groupName: 1, status: 1, sourceType: 1 })
-        .toArray()
-      : [];
-
     const groupMap = new Map();
-    groupDocs.forEach((group) => {
-      if (!group?.botId || !group?.groupId) return;
-      groupMap.set(`${group.botId}:${group.groupId}`, group);
-    });
+
+    if (isMongoRuntimeEnabled()) {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const mongoSenderBotIds = senderBotIds.filter((id) => ObjectId.isValid(id));
+
+      const botDocs = mongoSenderBotIds.length
+        ? await db
+          .collection("line_bots")
+          .find({ _id: { $in: mongoSenderBotIds.map((id) => new ObjectId(id)) } })
+          .project({ name: 1, displayName: 1, botName: 1 })
+          .toArray()
+        : [];
+
+      botDocs.forEach((bot) => {
+        const label =
+          bot.displayName ||
+          bot.name ||
+          bot.botName ||
+          `LINE Bot (${bot._id.toString().slice(-4)})`;
+        botMap.set(bot._id.toString(), label);
+      });
+
+      const groupDocs = mongoSenderBotIds.length
+        ? await db
+          .collection("line_bot_groups")
+          .find({ botId: { $in: mongoSenderBotIds } })
+          .project({ botId: 1, groupId: 1, groupName: 1, status: 1, sourceType: 1 })
+          .toArray()
+        : [];
+
+      groupDocs.forEach((group) => {
+        if (!group?.botId || !group?.groupId) return;
+        groupMap.set(`${group.botId}:${group.groupId}`, group);
+      });
+    } else {
+      const lineBots = await getBotRepository().list(
+        "line",
+        {},
+        { projection: { _id: 1, name: 1, displayName: 1, botName: 1 } },
+      );
+      lineBots.forEach((bot) => {
+        const id = bot?._id ? String(bot._id) : "";
+        if (!id || !senderBotIds.includes(id)) return;
+        const label =
+          bot.displayName ||
+          bot.name ||
+          bot.botName ||
+          `LINE Bot (${id.slice(-4)})`;
+        botMap.set(id, label);
+      });
+    }
 
     res.json({
       success: true,
@@ -28292,27 +28346,34 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
       });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    if (isMongoRuntimeEnabled()) {
+      const client = await connectDB();
+      const db = client.db("chatbot");
 
-    const senderBot = await db
-      .collection("line_bots")
-      .findOne({ _id: new ObjectId(senderBotId) }, { projection: { _id: 1 } });
-    if (!senderBot) {
-      return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
-    }
+      const senderBot = await db
+        .collection("line_bots")
+        .findOne({ _id: new ObjectId(senderBotId) }, { projection: { _id: 1 } });
+      if (!senderBot) {
+        return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
+      }
 
-    const group = await db.collection("line_bot_groups").findOne({
-      botId: senderBotId,
-      groupId,
-      status: { $ne: "left" },
-    });
-    if (!group) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+      const group = await db.collection("line_bot_groups").findOne({
+        botId: senderBotId,
+        groupId,
+        status: { $ne: "left" },
       });
+      if (!group) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+        });
+      }
+    } else {
+      const senderBot = await getBotRepository().findById("line", senderBotId);
+      if (!senderBot) {
+        return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
+      }
     }
 
     const now = new Date();
@@ -28388,8 +28449,6 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const notificationRepo = getNotificationRepository();
 
     const existing = await notificationRepo.findChannelById(channelId);
@@ -28397,17 +28456,27 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
     }
 
-    const group = await db.collection("line_bot_groups").findOne({
-      botId: senderBotId,
-      groupId,
-      status: { $ne: "left" },
-    });
-    if (!group) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+    if (isMongoRuntimeEnabled()) {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+
+      const group = await db.collection("line_bot_groups").findOne({
+        botId: senderBotId,
+        groupId,
+        status: { $ne: "left" },
       });
+      if (!group) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+        });
+      }
+    } else {
+      const senderBot = await getBotRepository().findById("line", senderBotId);
+      if (!senderBot) {
+        return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
+      }
     }
 
     const update = {
@@ -28527,6 +28596,10 @@ app.get(
       const botId = typeof req.params.botId === "string" ? req.params.botId.trim() : "";
       if (!botId) {
         return res.status(400).json({ success: false, error: "botId ไม่ถูกต้อง" });
+      }
+
+      if (!isMongoRuntimeEnabled()) {
+        return res.json({ success: true, groups: [] });
       }
 
       const client = await connectDB();
