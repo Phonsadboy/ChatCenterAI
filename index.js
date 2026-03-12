@@ -33847,7 +33847,9 @@ app.get("/api/openai-usage/summary", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${whereSql}
-          GROUP BY model, provider
+          GROUP BY
+            COALESCE(NULLIF(u.model, ''), 'unknown'),
+            ${PG_USAGE_PROVIDER_SQL}
           ORDER BY cost DESC, calls DESC
           LIMIT 10
         `,
@@ -33872,7 +33874,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${byBotWhereSql}
-          GROUP BY bot_id, u.platform
+          GROUP BY ${PG_USAGE_BOT_REF_SQL}, u.platform
           ORDER BY cost DESC, calls DESC
           LIMIT 20
         `,
@@ -33893,7 +33895,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${whereSql}
-          GROUP BY key_id
+          GROUP BY ${PG_USAGE_KEY_REF_SQL}
           ORDER BY cost DESC, calls DESC
         `,
         params,
@@ -33911,7 +33913,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${whereSql}
-          GROUP BY day_key
+          GROUP BY TO_CHAR((u.created_at AT TIME ZONE '${BANGKOK_TZ}'), 'YYYY-MM-DD')
           ORDER BY day_key ASC
         `,
         params,
