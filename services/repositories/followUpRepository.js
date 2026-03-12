@@ -151,11 +151,17 @@ function createFollowUpRepository({
         ? normalizePlatform(doc.platform)
         : null;
     const pgBotId = await resolvePgBotId({ query }, platform, doc?.botId);
+    const normalizedStatus =
+      typeof doc?.status === "string" ? doc.status.trim().toLowerCase() : "";
     const status = doc?.completed
       ? "completed"
       : doc?.canceled
         ? "canceled"
-        : doc?.status || "pending";
+        : normalizedStatus === "sent"
+          ? "sent"
+          : normalizedStatus === "failed"
+            ? "failed"
+            : "pending";
     await query(
       `
         INSERT INTO follow_up_tasks (
