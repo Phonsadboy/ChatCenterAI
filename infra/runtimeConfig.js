@@ -48,12 +48,20 @@ function resolvePostgresConnectionString() {
   ).trim();
 }
 
+function isMongoConnectionStringDisabled(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return true;
+  if (/disabled_mongo_uri/i.test(normalized)) return true;
+  if (/^(disabled|null|none|off)$/i.test(normalized)) return true;
+  return false;
+}
+
 function resolveMongoConnectionString() {
-  return (
+  const raw =
     process.env.MONGO_URI ||
     process.env.MONGODB_URI ||
-    ""
-  ).trim();
+    "";
+  return isMongoConnectionStringDisabled(raw) ? "" : String(raw).trim();
 }
 
 function getRuntimeConfig() {
@@ -210,6 +218,7 @@ function getRuntimeConfig() {
 module.exports = {
   VALID_RUNTIME_MODES,
   getRuntimeConfig,
+  isMongoConnectionStringDisabled,
   parseBoolean,
   parseInteger,
   resolveMongoConnectionString,

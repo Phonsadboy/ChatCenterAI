@@ -14,8 +14,11 @@ function createSessionStore({ connectDB, dbName, collectionName, ttl }) {
     });
   }
 
-  if (!process.env.MONGO_URI) {
-    console.warn("[SessionStore] MONGO_URI is missing, using MemoryStore");
+  if (
+    !runtimeConfig.features.mongoEnabled ||
+    !runtimeConfig.mongoConnectionString
+  ) {
+    console.warn("[SessionStore] Mongo session store disabled, using MemoryStore");
     return new session.MemoryStore();
   }
 

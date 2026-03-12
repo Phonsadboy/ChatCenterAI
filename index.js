@@ -61,6 +61,7 @@ const rateLimit = require("express-rate-limit");
 const { emitAdminRoomEvent, attachAdminRealtimeBridge } = require("./infra/adminRealtime");
 const { appendConversationBuffer } = require("./infra/conversationBuffer");
 const { claimProcessedEvent } = require("./infra/dedupe");
+const { createMongoDisabledClient } = require("./infra/mongoDisabledClient");
 const { isRedisConfigured } = require("./infra/redis");
 const { createRuntimeRouteGuard } = require("./infra/runtimeRouteGuard");
 const { getRuntimeConfig } = require("./infra/runtimeConfig");
@@ -1332,6 +1333,8 @@ let userStateRepository = null;
 let feedbackRepository = null;
 let profileRepository = null;
 let notificationRepository = null;
+let mongoDisabledCompatClient = null;
+let mongoDisabledNoticePrinted = false;
 
 function isMongoRuntimeEnabled() {
   return runtimeConfig?.features?.mongoEnabled !== false;
@@ -1339,7 +1342,16 @@ function isMongoRuntimeEnabled() {
 
 async function connectDB() {
   if (!isMongoRuntimeEnabled()) {
-    throw new Error("MongoDB runtime is disabled");
+    if (!mongoDisabledCompatClient) {
+      mongoDisabledCompatClient = createMongoDisabledClient();
+    }
+    if (!mongoDisabledNoticePrinted) {
+      console.warn(
+        "[DB] MongoDB runtime is disabled; using compatibility no-op client",
+      );
+      mongoDisabledNoticePrinted = true;
+    }
+    return mongoDisabledCompatClient;
   }
 
   const mongoUri =
