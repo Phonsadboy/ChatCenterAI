@@ -755,14 +755,116 @@ const buildInstructionLookupNames = (fileName) => {
 app.get("/assets/instructions/:fileName", async (req, res, next) => {
   const { fileName } = req.params;
   if (!fileName) return next();
-  if (!isMongoRuntimeEnabled()) return next();
 
   try {
+    const lookupNames = buildInstructionLookupNames(fileName);
+
+    if (canUsePostgresAssets()) {
+      const pgDoc = await readPostgresInstructionAssetByLookupNames(lookupNames);
+      if (pgDoc) {
+        const normalizedAsset = normalizeInstructionAssetDocument(pgDoc) || pgDoc;
+        const baseName = getInstructionAssetBaseName(normalizedAsset);
+        const mainFileNames = Array.from(
+          new Set(
+            [
+              normalizedAsset.fileName,
+              ...buildInstructionAssetVariantFilenames(baseName, "main"),
+            ]
+              .filter((name) => typeof name === "string" && name.trim())
+              .map((name) => name.trim()),
+          ),
+        );
+        const thumbFileNames = Array.from(
+          new Set(
+            [
+              normalizedAsset.thumbFileName,
+              ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
+            ]
+              .filter((name) => typeof name === "string" && name.trim())
+              .map((name) => name.trim()),
+          ),
+        );
+        const isThumbRequest =
+          thumbFileNames.includes(fileName)
+          || fileName.endsWith("_thumb.jpg")
+          || fileName.endsWith("_thumb.jpeg");
+
+        const bucketCandidates = isThumbRequest
+          ? [
+            ...buildBucketKeyCandidates(
+              "instructions",
+              normalizedAsset.thumbStorageKey,
+              normalizedAsset.thumbFileName,
+            ),
+            ...buildBucketKeyCandidates(
+              "instructions",
+              normalizedAsset.storageKey,
+              normalizedAsset.fileName,
+            ),
+          ]
+          : [
+            ...buildBucketKeyCandidates(
+              "instructions",
+              normalizedAsset.storageKey,
+              normalizedAsset.fileName,
+            ),
+            ...buildBucketKeyCandidates(
+              "instructions",
+              normalizedAsset.thumbStorageKey,
+              normalizedAsset.thumbFileName,
+            ),
+          ];
+
+        const bucketResult = await getFirstBucketObjectStream(bucketCandidates);
+        if (bucketResult?.stream) {
+          const mime = isThumbRequest
+            ? normalizedAsset.thumbMime || normalizedAsset.mime || "image/jpeg"
+            : normalizedAsset.mime || normalizedAsset.thumbMime || "image/jpeg";
+          res.set("Content-Type", mime);
+          res.set("Cache-Control", "public, max-age=604800, immutable");
+          bucketResult.stream.on("error", (err) => {
+            console.error(
+              `[Asset Error] Failed to stream instruction bucket asset: ${fileName}`,
+              {
+                error: err?.message || err,
+                code: err?.code,
+                storageKey: bucketResult.key,
+              },
+            );
+            next(err);
+          });
+          bucketResult.stream.pipe(res);
+          return;
+        }
+
+        const fileCandidates = isThumbRequest ? thumbFileNames : mainFileNames;
+        for (const candidate of fileCandidates) {
+          if (!candidate) continue;
+          const localPath = path.join(ASSETS_DIR, candidate);
+          if (!fs.existsSync(localPath)) continue;
+          const ext = path.extname(localPath).toLowerCase();
+          const contentType =
+            ext === ".png"
+              ? "image/png"
+              : ext === ".webp"
+                ? "image/webp"
+                : "image/jpeg";
+          res.set("Content-Type", contentType);
+          res.set("Cache-Control", "public, max-age=604800, immutable");
+          fs.createReadStream(localPath).pipe(res);
+          return;
+        }
+
+        return res.sendStatus(404);
+      }
+    }
+
+    if (!isMongoRuntimeEnabled()) return next();
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instruction_assets");
     const queryOr = [{ fileName }, { thumbFileName: fileName }];
-    const lookupNames = buildInstructionLookupNames(fileName);
     for (const name of lookupNames) {
       queryOr.push({ label: name });
       queryOr.push({ slug: name });
@@ -1637,6 +1739,11 @@ async function recordInboundWebhookEvent(platform, botId, eventType, payload) {
       `[WebhookEvent] Failed to record ${platform}:${eventType}:`,
       error?.message || error,
     );
+    try {
+      accepted = await claimProcessedEvent(`webhook-fallback:${idempotencyKey}`);
+    } catch (_) {
+      accepted = true;
+    }
   }
   return { idempotencyKey, accepted };
 }
@@ -14817,8 +14924,199 @@ async function deleteGridFsEntries(bucket, entries = []) {
 }
 
 // ============================ Instruction Assets Helpers ============================
+function canUsePostgresAssets() {
+  return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
+}
+
+function extractFileNameFromStorageKey(storageKey) {
+  if (typeof storageKey !== "string" || !storageKey.trim()) return null;
+  const segments = storageKey.split("/").filter(Boolean);
+  if (!segments.length) return null;
+  return segments[segments.length - 1];
+}
+
+function normalizeInstructionAssetDocument(asset = {}) {
+  if (!asset || typeof asset !== "object") return null;
+  const legacyId =
+    asset._id?.toString?.()
+    || (typeof asset._id === "string" ? asset._id : null)
+    || (typeof asset.assetId === "string" ? asset.assetId : null)
+    || (typeof asset.legacyAssetId === "string" ? asset.legacyAssetId : null)
+    || null;
+  const label = typeof asset.label === "string" ? asset.label.trim() : "";
+  const slugCandidate =
+    typeof asset.slug === "string" && asset.slug.trim()
+      ? asset.slug.trim()
+      : label
+        ? generateSlugFromLabel(label)
+        : "";
+  const slug = slugCandidate || null;
+  const fileNameCandidate =
+    typeof asset.fileName === "string" && asset.fileName.trim()
+      ? asset.fileName.trim()
+      : extractFileNameFromStorageKey(asset.storageKey);
+  const thumbFileNameCandidate =
+    typeof asset.thumbFileName === "string" && asset.thumbFileName.trim()
+      ? asset.thumbFileName.trim()
+      : extractFileNameFromStorageKey(asset.thumbStorageKey);
+  const fileName = fileNameCandidate || (slug ? `${slug}.jpg` : null);
+  const thumbFileName =
+    thumbFileNameCandidate || (slug ? `${slug}_thumb.jpg` : null);
+  const storageKey =
+    typeof asset.storageKey === "string" && asset.storageKey.trim()
+      ? asset.storageKey.trim()
+      : fileName
+        ? buildAssetStorageKey("instructions", fileName)
+        : null;
+  const thumbStorageKey =
+    typeof asset.thumbStorageKey === "string" && asset.thumbStorageKey.trim()
+      ? asset.thumbStorageKey.trim()
+      : thumbFileName
+        ? buildAssetStorageKey("instructions", thumbFileName)
+        : null;
+  const normalized = {
+    ...asset,
+    _id: legacyId || asset._id || null,
+    label,
+    slug,
+    description:
+      typeof asset.description === "string" && asset.description.trim()
+        ? asset.description.trim()
+        : typeof asset.alt === "string"
+          ? asset.alt.trim()
+          : "",
+    alt:
+      typeof asset.alt === "string" && asset.alt.trim()
+        ? asset.alt.trim()
+        : typeof asset.description === "string"
+          ? asset.description.trim()
+          : "",
+    fileName: fileName || undefined,
+    thumbFileName: thumbFileName || undefined,
+    storageKey,
+    thumbStorageKey,
+  };
+  normalized.url = resolveInstructionAssetUrl(
+    typeof asset.url === "string" ? asset.url : null,
+    fileName,
+  );
+  normalized.thumbUrl = resolveInstructionAssetUrl(
+    typeof asset.thumbUrl === "string" ? asset.thumbUrl : normalized.url,
+    thumbFileName || fileName,
+  );
+  if (!normalized.assetId && normalized._id) {
+    normalized.assetId = String(normalized._id);
+  }
+  if (normalized.fileId && typeof normalized.fileId !== "string") {
+    normalized.fileId = normalized.fileId?.toString?.() || normalized.fileId;
+  }
+  if (normalized.thumbFileId && typeof normalized.thumbFileId !== "string") {
+    normalized.thumbFileId =
+      normalized.thumbFileId?.toString?.() || normalized.thumbFileId;
+  }
+  return normalized;
+}
+
+function mapPostgresInstructionAssetRow(row = {}) {
+  if (!row || typeof row !== "object") return null;
+  const metadata =
+    row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const merged = normalizeInstructionAssetDocument({
+    ...metadata,
+    _id: row.legacy_asset_id || metadata._id || metadata.assetId || null,
+    legacyAssetId: row.legacy_asset_id || null,
+    label: row.label || metadata.label || "",
+    slug: row.slug || metadata.slug || "",
+    description: row.description || metadata.description || metadata.alt || "",
+    storageKey: row.storage_key || metadata.storageKey || metadata.fileName || null,
+    thumbStorageKey:
+      row.thumb_storage_key
+      || metadata.thumbStorageKey
+      || metadata.thumbFileName
+      || null,
+    createdAt: row.created_at || metadata.createdAt || null,
+    updatedAt: row.updated_at || metadata.updatedAt || null,
+  });
+  if (!merged) return null;
+  merged.pgAssetId = row.id || null;
+  return merged;
+}
+
+async function readPostgresInstructionAssets() {
+  if (!canUsePostgresAssets()) return [];
+  const result = await pgQuery(
+    `
+      SELECT
+        id,
+        legacy_asset_id,
+        label,
+        slug,
+        description,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+      FROM instruction_assets
+      ORDER BY created_at DESC, id DESC
+    `,
+  );
+  return result.rows
+    .map((row) => mapPostgresInstructionAssetRow(row))
+    .filter(Boolean);
+}
+
+async function readPostgresInstructionAssetByLookupNames(lookupNames = []) {
+  if (!canUsePostgresAssets()) return null;
+  const normalizedNames = Array.from(
+    new Set(
+      (Array.isArray(lookupNames) ? lookupNames : [])
+        .map((value) => (typeof value === "string" ? value.trim().toLowerCase() : ""))
+        .filter(Boolean),
+    ),
+  );
+  if (normalizedNames.length === 0) return null;
+
+  const result = await pgQuery(
+    `
+      SELECT
+        id,
+        legacy_asset_id,
+        label,
+        slug,
+        description,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+      FROM instruction_assets
+      WHERE
+        LOWER(COALESCE(label, '')) = ANY($1::text[])
+        OR LOWER(COALESCE(slug, '')) = ANY($1::text[])
+        OR LOWER(COALESCE(metadata->>'label', '')) = ANY($1::text[])
+        OR LOWER(COALESCE(metadata->>'slug', '')) = ANY($1::text[])
+        OR LOWER(COALESCE(metadata->>'fileName', '')) = ANY($1::text[])
+        OR LOWER(COALESCE(metadata->>'thumbFileName', '')) = ANY($1::text[])
+        OR LOWER(regexp_replace(COALESCE(storage_key, ''), '^.*/', '')) = ANY($1::text[])
+        OR LOWER(regexp_replace(COALESCE(thumb_storage_key, ''), '^.*/', '')) = ANY($1::text[])
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    `,
+    [normalizedNames],
+  );
+  return mapPostgresInstructionAssetRow(result.rows[0]);
+}
+
 async function getInstructionAssets() {
   try {
+    if (canUsePostgresAssets()) {
+      const pgAssets = await readPostgresInstructionAssets();
+      if (pgAssets.length > 0 || !isMongoRuntimeEnabled()) {
+        return pgAssets;
+      }
+    }
+
     if (!isMongoRuntimeEnabled()) {
       return [];
     }
@@ -14826,18 +15124,9 @@ async function getInstructionAssets() {
     const db = client.db("chatbot");
     const coll = db.collection("instruction_assets");
     const assets = await coll.find({}).sort({ createdAt: -1 }).toArray();
-    return assets.map((asset) => ({
-      ...asset,
-      url: resolveInstructionAssetUrl(asset.url, asset.fileName),
-      thumbUrl: resolveInstructionAssetUrl(
-        asset.thumbUrl || asset.url,
-        asset.thumbFileName || asset.fileName,
-      ),
-      fileId: asset?.fileId ? asset.fileId.toString() : undefined,
-      thumbFileId: asset?.thumbFileId
-        ? asset.thumbFileId.toString()
-        : undefined,
-    }));
+    return assets
+      .map((asset) => normalizeInstructionAssetDocument(asset))
+      .filter(Boolean);
   } catch (e) {
     console.error("[Assets] Error fetching assets:", e);
     return [];
@@ -17603,6 +17892,96 @@ async function readInstructionAssetBuffer(seg) {
   const label = seg.label || "";
   const requestedFileName = seg.fileName || "";
   let assetDoc = null;
+
+  if (canUsePostgresAssets()) {
+    try {
+      const lookupNames = [
+        label,
+        requestedFileName,
+        typeof seg.slug === "string" ? seg.slug : "",
+        label ? generateSlugFromLabel(label) : "",
+        ...buildInstructionLookupNames(requestedFileName),
+      ];
+      assetDoc = await readPostgresInstructionAssetByLookupNames(lookupNames);
+
+      if (assetDoc) {
+        const normalizedAsset = normalizeInstructionAssetDocument(assetDoc) || assetDoc;
+        const baseName = getInstructionAssetBaseName(normalizedAsset);
+        const mainFileNames = Array.from(
+          new Set(
+            [
+              normalizedAsset.fileName,
+              ...buildInstructionAssetVariantFilenames(baseName, "main"),
+            ]
+              .filter((name) => typeof name === "string" && name.trim())
+              .map((name) => name.trim()),
+          ),
+        );
+        const thumbFileNames = Array.from(
+          new Set(
+            [
+              normalizedAsset.thumbFileName,
+              ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
+            ]
+              .filter((name) => typeof name === "string" && name.trim())
+              .map((name) => name.trim()),
+          ),
+        );
+        const useThumb =
+          requestedFileName &&
+          (requestedFileName === normalizedAsset.thumbFileName ||
+            /_thumb\.(jpe?g)$/i.test(requestedFileName));
+        const candidateFileNames = useThumb ? thumbFileNames : mainFileNames;
+        const bucketCandidates = useThumb
+          ? [
+            ...buildBucketKeyCandidates(
+              "instructions",
+              normalizedAsset.thumbStorageKey,
+              normalizedAsset.thumbFileName,
+            ),
+            ...buildBucketKeyCandidates(
+              "instructions",
+              normalizedAsset.storageKey,
+              normalizedAsset.fileName,
+            ),
+          ]
+          : [
+            ...buildBucketKeyCandidates(
+              "instructions",
+              normalizedAsset.storageKey,
+              normalizedAsset.fileName,
+            ),
+            ...buildBucketKeyCandidates(
+              "instructions",
+              normalizedAsset.thumbStorageKey,
+              normalizedAsset.thumbFileName,
+            ),
+          ];
+        const bucketAsset = await getFirstBucketObjectStream(bucketCandidates);
+        if (bucketAsset?.stream) {
+          const buffer = await streamToBuffer(bucketAsset.stream);
+          return {
+            buffer,
+            filename:
+              candidateFileNames[0]
+              || path.basename(bucketAsset.key || "")
+              || requestedFileName
+              || normalizedAsset.fileName
+              || `${generateSlugFromLabel(normalizedAsset.label || "asset")}.jpg`,
+            contentType:
+              normalizedAsset.mime
+              || normalizedAsset.thumbMime
+              || "image/jpeg",
+          };
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[Assets] read buffer from PostgreSQL failed, fallback to Mongo/filesystem/url:",
+        err?.message || err,
+      );
+    }
+  }
 
   if (isMongoRuntimeEnabled()) {
     try {
@@ -22103,6 +22482,234 @@ async function ensureUniqueInstructionSlug(
   return `${sanitizedBase}-${Date.now().toString(36)}`;
 }
 
+async function ensureUniqueInstructionSlugPostgres(
+  baseSlug,
+  { excludeLegacyAssetId } = {},
+) {
+  const sanitizedBase = baseSlug || `asset-${Date.now()}`;
+  let candidate = sanitizedBase;
+  let counter = 1;
+  const maxAttempts = 50;
+  const excludedId =
+    typeof excludeLegacyAssetId === "string" && excludeLegacyAssetId.trim()
+      ? excludeLegacyAssetId.trim()
+      : null;
+
+  while (counter <= maxAttempts) {
+    const conflict = await pgQuery(
+      `
+        SELECT id
+        FROM instruction_assets
+        WHERE slug = $1
+          AND ($2::text IS NULL OR COALESCE(legacy_asset_id, '') <> $2)
+        LIMIT 1
+      `,
+      [candidate, excludedId],
+    );
+    if (conflict.rowCount === 0) {
+      return candidate;
+    }
+    candidate = `${sanitizedBase}-${counter++}`;
+  }
+
+  return `${sanitizedBase}-${Date.now().toString(36)}`;
+}
+
+async function readPostgresInstructionAssetByLabel(label) {
+  if (!canUsePostgresAssets()) return null;
+  const normalizedLabel = typeof label === "string" ? label.trim() : "";
+  if (!normalizedLabel) return null;
+  const result = await pgQuery(
+    `
+      SELECT
+        id,
+        legacy_asset_id,
+        label,
+        slug,
+        description,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+      FROM instruction_assets
+      WHERE LOWER(label) = LOWER($1)
+      LIMIT 1
+    `,
+    [normalizedLabel],
+  );
+  return mapPostgresInstructionAssetRow(result.rows[0]);
+}
+
+async function upsertPostgresInstructionAssetDocument(asset = {}, existingAsset = null) {
+  if (!canUsePostgresAssets()) {
+    throw new Error("PostgreSQL asset store is not configured");
+  }
+  const normalized = normalizeInstructionAssetDocument(asset);
+  if (!normalized) {
+    throw new Error("Invalid instruction asset payload");
+  }
+  const existingLegacyId =
+    existingAsset?._id?.toString?.()
+    || (typeof existingAsset?._id === "string" ? existingAsset._id : null)
+    || null;
+  const legacyAssetId =
+    normalized._id?.toString?.()
+    || existingLegacyId
+    || new ObjectId().toString();
+  const createdAt = existingAsset?.createdAt || normalized.createdAt || new Date();
+  const updatedAt = normalized.updatedAt || new Date();
+  const metadata = {
+    ...(existingAsset && typeof existingAsset === "object" ? existingAsset : {}),
+    ...normalized,
+    _id: legacyAssetId,
+    assetId: legacyAssetId,
+    createdAt,
+    updatedAt,
+  };
+
+  await pgQuery(
+    `
+      INSERT INTO instruction_assets (
+        legacy_asset_id,
+        label,
+        slug,
+        description,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
+      ON CONFLICT (legacy_asset_id) DO UPDATE SET
+        label = EXCLUDED.label,
+        slug = EXCLUDED.slug,
+        description = EXCLUDED.description,
+        storage_key = EXCLUDED.storage_key,
+        thumb_storage_key = EXCLUDED.thumb_storage_key,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [
+      legacyAssetId,
+      normalized.label || "",
+      normalized.slug || null,
+      normalized.description || "",
+      normalized.storageKey || normalized.fileName || null,
+      normalized.thumbStorageKey || normalized.thumbFileName || null,
+      JSON.stringify(metadata),
+      createdAt,
+      updatedAt,
+    ],
+  );
+
+  return readPostgresInstructionAssetByLookupNames([
+    legacyAssetId,
+    normalized.label,
+    normalized.slug,
+    normalized.fileName,
+    normalized.thumbFileName,
+  ]);
+}
+
+async function deletePostgresInstructionAssetByLegacyId(legacyAssetId) {
+  const normalizedLegacyId =
+    typeof legacyAssetId === "string" ? legacyAssetId.trim() : "";
+  if (!normalizedLegacyId) return { deletedCount: 0 };
+  return pgQuery(
+    "DELETE FROM instruction_assets WHERE legacy_asset_id = $1",
+    [normalizedLegacyId],
+  );
+}
+
+async function performPostgresInstructionAssetDeletion(asset) {
+  if (!asset) return false;
+  const legacyAssetId =
+    asset._id?.toString?.() || (typeof asset._id === "string" ? asset._id : "");
+  const normalizedLegacyId = typeof legacyAssetId === "string" ? legacyAssetId.trim() : "";
+  const normalizedLabel =
+    typeof asset.label === "string" ? asset.label.trim() : "";
+
+  if (normalizedLegacyId || normalizedLabel) {
+    await pgQuery(
+      `
+        UPDATE image_collections
+        SET updated_at = NOW()
+        WHERE id IN (
+          SELECT DISTINCT collection_id
+          FROM image_collection_items
+          WHERE
+            ($1::text <> '' AND legacy_asset_id = $1)
+            OR ($2::text <> '' AND COALESCE(metadata->>'label', '') = $2)
+        )
+      `,
+      [normalizedLegacyId, normalizedLabel],
+    ).catch(() => {});
+    await pgQuery(
+      `
+        DELETE FROM image_collection_items
+        WHERE
+          ($1::text <> '' AND legacy_asset_id = $1)
+          OR ($2::text <> '' AND COALESCE(metadata->>'label', '') = $2)
+      `,
+      [normalizedLegacyId, normalizedLabel],
+    );
+  }
+
+  const removableKeys = [asset.storageKey, asset.thumbStorageKey].filter(
+    (value) => typeof value === "string" && value.trim(),
+  );
+  await Promise.all(
+    removableKeys.map(async (key) => {
+      try {
+        await deleteBucketObject(key);
+      } catch (err) {
+        if (!isBucketNotFoundError(err)) {
+          console.warn("[BucketStorage] delete failed:", err?.message || err);
+        }
+      }
+    }),
+  );
+
+  const baseName = getInstructionAssetBaseName(asset);
+  const mainFileNames = Array.from(
+    new Set(
+      [
+        asset.fileName,
+        ...buildInstructionAssetVariantFilenames(baseName, "main"),
+      ]
+        .filter((name) => typeof name === "string" && name.trim())
+        .map((name) => name.trim()),
+    ),
+  );
+  const thumbFileNames = Array.from(
+    new Set(
+      [
+        asset.thumbFileName,
+        ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
+      ]
+        .filter((name) => typeof name === "string" && name.trim())
+        .map((name) => name.trim()),
+    ),
+  );
+
+  for (const fileName of [...mainFileNames, ...thumbFileNames]) {
+    if (!fileName) continue;
+    const filePath = path.join(ASSETS_DIR, fileName);
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (_) {}
+  }
+
+  if (normalizedLegacyId) {
+    await deletePostgresInstructionAssetByLegacyId(normalizedLegacyId);
+  }
+  invalidateAssetRuntimeCaches();
+  return true;
+}
+
 // Upload a new instruction asset
 app.post(
   "/admin/instructions/assets",
@@ -22147,6 +22754,114 @@ app.post(
 
       const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
       let slug = generateSlugFromLabel(label);
+
+      if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+        const existing = await readPostgresInstructionAssetByLabel(label);
+        if (existing && !overwrite) {
+          return res.status(409).json({
+            success: false,
+            error: "label นี้มีอยู่แล้ว หากต้องการแทนที่ให้ส่ง overwrite=true",
+          });
+        }
+
+        if (existing?.slug) {
+          slug = existing.slug;
+        } else {
+          slug = await ensureUniqueInstructionSlugPostgres(slug, {
+            excludeLegacyAssetId: existing?._id?.toString?.() || existing?._id || null,
+          });
+        }
+
+        const fileName = `${slug}.jpg`;
+        const thumbName = `${slug}_thumb.jpg`;
+        const url = `${urlBase}/assets/instructions/${fileName}`;
+        const thumbUrl = `${urlBase}/assets/instructions/${thumbName}`;
+
+        if (existing) {
+          const removableKeys = [existing.storageKey, existing.thumbStorageKey].filter(
+            (value) => typeof value === "string" && value.trim(),
+          );
+          await Promise.all(
+            removableKeys.map(async (key) => {
+              try {
+                await deleteBucketObject(key);
+              } catch (err) {
+                if (!isBucketNotFoundError(err)) {
+                  console.warn("[BucketStorage] delete failed:", err?.message || err);
+                }
+              }
+            }),
+          );
+        }
+
+        const [mainUpload, thumbUpload] = await Promise.all([
+          uploadBufferToAssetStorage({
+            db: null,
+            gridFsBucketName: "instructionAssets",
+            storagePrefix: "instructions",
+            filename: fileName,
+            buffer: optimized,
+            contentType: "image/jpeg",
+            metadata: {
+              label,
+              slug,
+              type: "original",
+              width: metadata.width || null,
+              height: metadata.height || null,
+            },
+          }),
+          uploadBufferToAssetStorage({
+            db: null,
+            gridFsBucketName: "instructionAssets",
+            storagePrefix: "instructions",
+            filename: thumbName,
+            buffer: thumb,
+            contentType: "image/jpeg",
+            metadata: { label, slug, type: "thumb" },
+          }),
+        ]);
+
+        const sha256 = crypto
+          .createHash("sha256")
+          .update(optimized)
+          .digest("hex")
+          .slice(0, 16);
+        const doc = {
+          _id: existing?._id?.toString?.() || existing?._id || undefined,
+          label,
+          slug,
+          fileName,
+          thumbFileName: thumbName,
+          fileId: null,
+          thumbFileId: null,
+          storage: mainUpload.storage,
+          storageKey: mainUpload.storageKey || null,
+          thumbStorageKey: thumbUpload.storageKey || null,
+          mime: "image/jpeg",
+          size: optimized.length,
+          width: metadata.width || null,
+          height: metadata.height || null,
+          sha256,
+          alt,
+          description,
+          url,
+          thumbUrl,
+          updatedAt: new Date(),
+          createdAt: existing?.createdAt || new Date(),
+        };
+
+        const savedAsset = await upsertPostgresInstructionAssetDocument(doc, existing);
+        if (!savedAsset) {
+          throw new Error("ไม่สามารถบันทึกข้อมูลรูปภาพได้");
+        }
+
+        invalidateAssetRuntimeCaches();
+        res.json({
+          success: true,
+          asset: mapInstructionAssetResponse(savedAsset),
+        });
+        return;
+      }
 
       const client = await connectDB();
       const db = client.db("chatbot");
@@ -22276,6 +22991,42 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
         .json({ success: false, error: "กรุณาระบุชื่อรูปภาพ" });
     }
 
+    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      const doc = await readPostgresInstructionAssetByLabel(originalLabel);
+      if (!doc) {
+        return res
+          .status(404)
+          .json({ success: false, error: "ไม่พบรูปภาพที่ต้องการแก้ไข" });
+      }
+
+      if (newLabel !== originalLabel) {
+        const exists = await readPostgresInstructionAssetByLabel(newLabel);
+        if (exists) {
+          return res
+            .status(409)
+            .json({ success: false, error: "มีชื่อรูปภาพนี้อยู่แล้ว" });
+        }
+      }
+
+      const updatedDoc = await upsertPostgresInstructionAssetDocument(
+        {
+          ...doc,
+          _id: doc._id?.toString?.() || doc._id,
+          label: newLabel,
+          description,
+          alt: description,
+          updatedAt: new Date(),
+        },
+        doc,
+      );
+
+      invalidateAssetRuntimeCaches();
+      return res.json({
+        success: true,
+        asset: mapInstructionAssetResponse(updatedDoc),
+      });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instruction_assets");
@@ -22318,6 +23069,16 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
 app.delete("/admin/instructions/assets/:label", async (req, res) => {
   try {
     const { label } = req.params;
+
+    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      const doc = await readPostgresInstructionAssetByLabel(label);
+      if (!doc) {
+        return res.status(404).json({ success: false, error: "ไม่พบ asset" });
+      }
+      await performPostgresInstructionAssetDeletion(doc);
+      return res.json({ success: true });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instruction_assets");
@@ -22350,6 +23111,35 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
       return res
         .status(400)
         .json({ success: false, error: "กรุณาระบุชื่อรูปภาพที่ต้องการลบ" });
+    }
+
+    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      const deleted = [];
+      const failed = [];
+
+      for (const label of labels) {
+        try {
+          const doc = await readPostgresInstructionAssetByLabel(label);
+          if (!doc) {
+            failed.push({ label, error: "ไม่พบรูปภาพ" });
+            continue;
+          }
+          await performPostgresInstructionAssetDeletion(doc);
+          deleted.push(label);
+        } catch (err) {
+          failed.push({ label, error: err.message || "ลบไม่สำเร็จ" });
+        }
+      }
+
+      if (deleted.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "ไม่สามารถลบรูปภาพได้",
+          failed,
+        });
+      }
+
+      return res.json({ success: true, deleted, failed });
     }
 
     const client = await connectDB();
@@ -22395,6 +23185,66 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
 // Check and fix asset data consistency
 app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      const assets = await getInstructionAssets();
+      let okCount = 0;
+      let missingCount = 0;
+      const missingItems = [];
+
+      for (const asset of assets) {
+        const mainState = await checkBucketObjectCandidates(
+          buildBucketKeyCandidates("instructions", asset.storageKey, asset.fileName),
+        );
+        const thumbState = await checkBucketObjectCandidates(
+          buildBucketKeyCandidates(
+            "instructions",
+            asset.thumbStorageKey,
+            asset.thumbFileName,
+          ),
+        );
+        if (mainState.exists || thumbState.exists) {
+          okCount += 1;
+        } else {
+          missingCount += 1;
+          missingItems.push({
+            label: asset.label || asset.fileName || asset._id,
+            reason: "No files found in bucket/local",
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        message:
+          missingCount > 0
+            ? `พบรายการที่ไฟล์หาย ${missingCount} รายการ`
+            : "ข้อมูลถูกต้องครบถ้วน",
+        results: {
+          instruction_assets: {
+            total: assets.length,
+            ok: okCount,
+            fixed: 0,
+            deleted: 0,
+            items: [],
+            deletedItems: missingItems,
+          },
+          follow_up_assets: {
+            total: 0,
+            ok: 0,
+            fixed: 0,
+            deleted: 0,
+            items: [],
+            deletedItems: [],
+          },
+        },
+        summary: {
+          ok: okCount,
+          fixed: 0,
+          deleted: 0,
+        },
+      });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
 
@@ -22917,9 +23767,211 @@ async function checkGridFsFileExists(bucket, fileId) {
 
 // ==================== IMAGE COLLECTIONS API ====================
 
+function normalizeCollectionIdentifiers(selectedCollectionIds = []) {
+  const identifiers = [];
+  const seen = new Set();
+  const addValue = (value) => {
+    if (typeof value !== "string") return;
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    identifiers.push(normalized);
+  };
+
+  for (const rawId of Array.isArray(selectedCollectionIds) ? selectedCollectionIds : []) {
+    if (!rawId) continue;
+    if (typeof rawId === "string" || rawId instanceof ObjectId) {
+      addValue(String(rawId));
+      continue;
+    }
+    if (rawId && typeof rawId === "object" && rawId._id) {
+      addValue(String(rawId._id));
+    }
+  }
+
+  return identifiers;
+}
+
+function normalizeCollectionImageRecord(image = {}, fallbackAsset = null) {
+  const merged = {
+    ...(fallbackAsset && typeof fallbackAsset === "object" ? fallbackAsset : {}),
+    ...(image && typeof image === "object" ? image : {}),
+  };
+  const label = typeof merged.label === "string" ? merged.label.trim() : "";
+  if (!label) return null;
+  const slug =
+    typeof merged.slug === "string" && merged.slug.trim()
+      ? merged.slug.trim()
+      : generateSlugFromLabel(label);
+  const fileName =
+    typeof merged.fileName === "string" && merged.fileName.trim()
+      ? merged.fileName.trim()
+      : extractFileNameFromStorageKey(merged.storageKey);
+  const thumbFileName =
+    typeof merged.thumbFileName === "string" && merged.thumbFileName.trim()
+      ? merged.thumbFileName.trim()
+      : extractFileNameFromStorageKey(merged.thumbStorageKey);
+  const url = resolveInstructionAssetUrl(merged.url, fileName || `${slug}.jpg`);
+  const thumbUrl = resolveInstructionAssetUrl(
+    merged.thumbUrl || url,
+    thumbFileName || fileName || `${slug}_thumb.jpg`,
+  );
+  const assetId =
+    merged.assetId
+    || merged._id?.toString?.()
+    || merged._id
+    || merged.legacyAssetId
+    || null;
+  return {
+    ...merged,
+    label,
+    slug,
+    url,
+    thumbUrl,
+    fileName: fileName || undefined,
+    thumbFileName: thumbFileName || undefined,
+    description:
+      typeof merged.description === "string" && merged.description.trim()
+        ? merged.description.trim()
+        : typeof merged.alt === "string"
+          ? merged.alt.trim()
+          : "",
+    assetId: assetId ? String(assetId) : undefined,
+  };
+}
+
+function toBooleanLike(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+async function readPostgresImageCollectionsByIdentifiers(identifiers = null) {
+  if (!canUsePostgresAssets()) return [];
+  const normalizedIds = normalizeCollectionIdentifiers(identifiers || []);
+  const params = [];
+  const whereClauses = [];
+  if (normalizedIds.length > 0) {
+    params.push(normalizedIds);
+    whereClauses.push(
+      "(c.legacy_collection_id = ANY($1::text[]) OR c.id::text = ANY($1::text[]))",
+    );
+  }
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+  const querySql = `
+    SELECT
+      c.id AS pg_collection_id,
+      c.legacy_collection_id,
+      c.name,
+      c.description,
+      c.metadata,
+      c.created_at,
+      c.updated_at,
+      i.id AS item_id,
+      i.legacy_asset_id,
+      i.sort_order,
+      i.metadata AS item_metadata
+    FROM image_collections c
+    LEFT JOIN image_collection_items i ON i.collection_id = c.id
+    ${whereSql}
+    ORDER BY c.created_at DESC, c.id ASC, i.sort_order ASC, i.id ASC
+  `;
+  const result = await pgQuery(querySql, params);
+  if (!Array.isArray(result.rows) || result.rows.length === 0) {
+    return [];
+  }
+
+  const assets = await getInstructionAssets();
+  const assetsByLegacyId = new Map();
+  const assetsByLabel = new Map();
+  for (const asset of assets) {
+    if (!asset) continue;
+    const assetId =
+      asset.assetId || asset._id?.toString?.() || asset._id || asset.legacyAssetId;
+    if (assetId) {
+      assetsByLegacyId.set(String(assetId), asset);
+    }
+    if (typeof asset.label === "string" && asset.label.trim()) {
+      assetsByLabel.set(asset.label.trim(), asset);
+    }
+  }
+
+  const grouped = new Map();
+  for (const row of result.rows) {
+    const key = row.pg_collection_id;
+    if (!grouped.has(key)) {
+      const metadata =
+        row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+      grouped.set(key, {
+        pgCollectionId: row.pg_collection_id,
+        _id:
+          row.legacy_collection_id
+          || metadata._id
+          || row.pg_collection_id,
+        name: row.name || metadata.name || "",
+        description: row.description || metadata.description || "",
+        isDefault: toBooleanLike(metadata.isDefault, false),
+        createdAt: row.created_at || metadata.createdAt || null,
+        updatedAt: row.updated_at || metadata.updatedAt || null,
+        metadata,
+        images: [],
+      });
+    }
+
+    if (!row.item_id) continue;
+    const itemMetadata =
+      row.item_metadata && typeof row.item_metadata === "object"
+        ? row.item_metadata
+        : {};
+    const fallbackAsset =
+      (row.legacy_asset_id && assetsByLegacyId.get(String(row.legacy_asset_id)))
+      || (itemMetadata.assetId && assetsByLegacyId.get(String(itemMetadata.assetId)))
+      || (itemMetadata.label && assetsByLabel.get(String(itemMetadata.label)))
+      || null;
+    const normalizedImage = normalizeCollectionImageRecord(itemMetadata, fallbackAsset);
+    if (normalizedImage) {
+      grouped.get(key).images.push(normalizedImage);
+    }
+  }
+
+  const collections = [];
+  for (const collection of grouped.values()) {
+    if (collection.images.length === 0) {
+      const metadataImages = Array.isArray(collection.metadata?.images)
+        ? collection.metadata.images
+        : [];
+      for (const image of metadataImages) {
+        const fallbackAsset =
+          (image?.assetId && assetsByLegacyId.get(String(image.assetId)))
+          || (image?.label && assetsByLabel.get(String(image.label)))
+          || null;
+        const normalizedImage = normalizeCollectionImageRecord(image, fallbackAsset);
+        if (normalizedImage) {
+          collection.images.push(normalizedImage);
+        }
+      }
+    }
+    delete collection.metadata;
+    collections.push(collection);
+  }
+
+  return collections;
+}
+
 // Helper: ดึง Image Collections ทั้งหมด
 async function getImageCollections() {
   try {
+    if (canUsePostgresAssets()) {
+      const pgCollections = await readPostgresImageCollectionsByIdentifiers();
+      if (pgCollections.length > 0 || !isMongoRuntimeEnabled()) {
+        return pgCollections;
+      }
+    }
+
     if (!isMongoRuntimeEnabled()) {
       return [];
     }
@@ -22937,9 +23989,6 @@ async function getImageCollections() {
 // Helper: ดึงรูปภาพจาก collections ที่เลือก (สำหรับ bot)
 async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
   try {
-    if (!isMongoRuntimeEnabled()) {
-      return [];
-    }
     if (
       !Array.isArray(selectedCollectionIds) ||
       selectedCollectionIds.length === 0
@@ -22947,77 +23996,62 @@ async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
       return [];
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("image_collections");
-
-    const stringIds = new Set();
-    const objectIds = [];
-    for (const rawId of selectedCollectionIds) {
-      if (!rawId) continue;
-      if (typeof rawId === "string") {
-        const trimmed = rawId.trim();
-        if (!trimmed) continue;
-        stringIds.add(trimmed);
-        if (ObjectId.isValid(trimmed)) {
-          objectIds.push(new ObjectId(trimmed));
-        }
-      } else if (rawId instanceof ObjectId) {
-        objectIds.push(rawId);
-      } else if (rawId && typeof rawId === "object" && rawId._id) {
-        const nestedId = rawId._id;
-        if (nestedId instanceof ObjectId) {
-          objectIds.push(nestedId);
-        } else if (typeof nestedId === "string" && nestedId.trim()) {
-          stringIds.add(nestedId.trim());
-          if (ObjectId.isValid(nestedId.trim())) {
-            objectIds.push(new ObjectId(nestedId.trim()));
+    if (canUsePostgresAssets()) {
+      const pgCollections =
+        await readPostgresImageCollectionsByIdentifiers(selectedCollectionIds);
+      if (pgCollections.length > 0 || !isMongoRuntimeEnabled()) {
+        const allImages = [];
+        const seenLabels = new Set();
+        for (const collection of pgCollections) {
+          for (const img of Array.isArray(collection.images) ? collection.images : []) {
+            if (!img?.label || seenLabels.has(img.label)) continue;
+            allImages.push(img);
+            seenLabels.add(img.label);
           }
         }
+        return allImages;
       }
     }
 
+    if (!isMongoRuntimeEnabled()) {
+      return [];
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("image_collections");
+    const normalizedIds = normalizeCollectionIdentifiers(selectedCollectionIds);
+    const objectIds = normalizedIds
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
     const queries = [];
-    if (stringIds.size > 0) {
-      queries.push({ _id: { $in: Array.from(stringIds) } });
+    if (normalizedIds.length > 0) {
+      queries.push({ _id: { $in: normalizedIds } });
     }
     if (objectIds.length > 0) {
       queries.push({ _id: { $in: objectIds } });
     }
-
     const findQuery =
       queries.length === 0
-        ? { _id: { $in: Array.from(stringIds) } }
+        ? { _id: { $in: normalizedIds } }
         : queries.length === 1
           ? queries[0]
           : { $or: queries };
-
     const collections = await coll.find(findQuery).toArray();
 
-    // รวมรูปภาพจากทุก collection
     const allImages = [];
     const seenLabels = new Set();
-
     for (const collection of collections) {
-      if (Array.isArray(collection.images)) {
-        for (const img of collection.images) {
-          // ป้องกันรูปซ้ำ (ใช้ label เป็น key)
-          if (img.label && !seenLabels.has(img.label)) {
-            const resolvedImage = {
-              ...img,
-              url: resolveInstructionAssetUrl(img.url, img.fileName),
-              thumbUrl: resolveInstructionAssetUrl(
-                img.thumbUrl || img.url,
-                img.thumbFileName || img.fileName,
-              ),
-            };
-            allImages.push(resolvedImage);
-            seenLabels.add(img.label);
-          }
+      if (!Array.isArray(collection.images)) continue;
+      for (const img of collection.images) {
+        if (!img?.label || seenLabels.has(img.label)) continue;
+        const resolvedImage = normalizeCollectionImageRecord(img);
+        if (resolvedImage) {
+          allImages.push(resolvedImage);
+          seenLabels.add(resolvedImage.label);
         }
       }
     }
-
     return allImages;
   } catch (e) {
     console.error("[Collections] Error getting images from collections:", e);
@@ -23339,6 +24373,19 @@ app.get("/admin/image-collections", async (req, res) => {
 app.get("/admin/image-collections/:id", async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      const collections = await readPostgresImageCollectionsByIdentifiers([id]);
+      const collection = collections[0] || null;
+      if (!collection) {
+        return res.status(404).json({
+          success: false,
+          error: "ไม่พบ Image Collection",
+        });
+      }
+      return res.json({ success: true, collection });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("image_collections");
@@ -23371,6 +24418,94 @@ app.post("/admin/image-collections", async (req, res) => {
       return res.status(400).json({
         success: false,
         error: "กรุณาระบุชื่อ Collection",
+      });
+    }
+
+    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      const assets = await getInstructionAssets();
+      const assetsByLabel = new Map();
+      for (const asset of assets) {
+        if (!asset?.label) continue;
+        assetsByLabel.set(asset.label, asset);
+      }
+      const labels = Array.from(
+        new Set(
+          (Array.isArray(imageLabels) ? imageLabels : [])
+            .map((value) => (typeof value === "string" ? value.trim() : ""))
+            .filter(Boolean),
+        ),
+      );
+      const images = labels
+        .map((label) => buildCollectionImageEntryFromAsset(assetsByLabel.get(label)))
+        .filter(Boolean);
+
+      const now = new Date();
+      const legacyCollectionId =
+        "collection-"
+        + Date.now()
+        + "-"
+        + Math.random().toString(36).slice(2, 9);
+      const metadata = {
+        _id: legacyCollectionId,
+        name: name.trim(),
+        description: (description || "").trim(),
+        images,
+        isDefault: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const insertResult = await pgQuery(
+        `
+          INSERT INTO image_collections (
+            legacy_collection_id,
+            name,
+            description,
+            metadata,
+            created_at,
+            updated_at
+          ) VALUES ($1,$2,$3,$4::jsonb,$5,$5)
+          RETURNING id
+        `,
+        [
+          legacyCollectionId,
+          name.trim(),
+          (description || "").trim(),
+          JSON.stringify(metadata),
+          now,
+        ],
+      );
+      const pgCollectionId = insertResult.rows[0]?.id;
+
+      for (let index = 0; index < images.length; index += 1) {
+        const image = images[index];
+        await pgQuery(
+          `
+            INSERT INTO image_collection_items (
+              collection_id,
+              legacy_asset_id,
+              sort_order,
+              metadata
+            ) VALUES ($1,$2,$3,$4::jsonb)
+          `,
+          [
+            pgCollectionId,
+            image?.assetId || null,
+            index,
+            JSON.stringify(image),
+          ],
+        );
+      }
+
+      const savedCollectionRows = await readPostgresImageCollectionsByIdentifiers([
+        legacyCollectionId,
+      ]);
+      const savedCollection = savedCollectionRows[0] || metadata;
+      invalidateAssetRuntimeCaches();
+      return res.json({
+        success: true,
+        collection: savedCollection,
+        message: `สร้าง Collection "${savedCollection.name}" สำเร็จ (${images.length} รูป)`,
       });
     }
 
@@ -23440,6 +24575,96 @@ app.put("/admin/image-collections/:id", async (req, res) => {
       });
     }
 
+    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      const existingRows = await readPostgresImageCollectionsByIdentifiers([id]);
+      const existing = existingRows[0] || null;
+      if (!existing || !existing.pgCollectionId) {
+        return res.status(404).json({
+          success: false,
+          error: "ไม่พบ Image Collection",
+        });
+      }
+
+      const assets = await getInstructionAssets();
+      const assetsByLabel = new Map();
+      for (const asset of assets) {
+        if (!asset?.label) continue;
+        assetsByLabel.set(asset.label, asset);
+      }
+      const labels = Array.from(
+        new Set(
+          (Array.isArray(imageLabels) ? imageLabels : [])
+            .map((value) => (typeof value === "string" ? value.trim() : ""))
+            .filter(Boolean),
+        ),
+      );
+      const images = labels
+        .map((label) => buildCollectionImageEntryFromAsset(assetsByLabel.get(label)))
+        .filter(Boolean);
+
+      const now = new Date();
+      const metadata = {
+        _id: existing._id || id,
+        name: name.trim(),
+        description: (description || "").trim(),
+        images,
+        isDefault: Boolean(existing.isDefault),
+        createdAt: existing.createdAt || now,
+        updatedAt: now,
+      };
+
+      await pgQuery(
+        `
+          UPDATE image_collections
+          SET
+            name = $2,
+            description = $3,
+            metadata = $4::jsonb,
+            updated_at = $5
+          WHERE id = $1
+        `,
+        [
+          existing.pgCollectionId,
+          name.trim(),
+          (description || "").trim(),
+          JSON.stringify(metadata),
+          now,
+        ],
+      );
+      await pgQuery(
+        "DELETE FROM image_collection_items WHERE collection_id = $1",
+        [existing.pgCollectionId],
+      );
+      for (let index = 0; index < images.length; index += 1) {
+        const image = images[index];
+        await pgQuery(
+          `
+            INSERT INTO image_collection_items (
+              collection_id,
+              legacy_asset_id,
+              sort_order,
+              metadata
+            ) VALUES ($1,$2,$3,$4::jsonb)
+          `,
+          [
+            existing.pgCollectionId,
+            image?.assetId || null,
+            index,
+            JSON.stringify(image),
+          ],
+        );
+      }
+
+      const updatedRows = await readPostgresImageCollectionsByIdentifiers([id]);
+      const updated = updatedRows[0] || metadata;
+      invalidateAssetRuntimeCaches();
+      return res.json({
+        success: true,
+        collection: updated,
+        message: `แก้ไข Collection "${updated.name}" สำเร็จ (${images.length} รูป)`,
+      });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const collectionsColl = db.collection("image_collections");
@@ -23504,6 +24729,60 @@ app.put("/admin/image-collections/:id", async (req, res) => {
 app.delete("/admin/image-collections/:id", async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      const collectionRows = await readPostgresImageCollectionsByIdentifiers([id]);
+      const collection = collectionRows[0] || null;
+      if (!collection || !collection.pgCollectionId) {
+        return res.status(404).json({
+          success: false,
+          error: "ไม่พบ Image Collection",
+        });
+      }
+
+      if (collection.isDefault) {
+        return res.status(400).json({
+          success: false,
+          error: "ไม่สามารถลบ Default Collection ได้",
+        });
+      }
+
+      const selectedCollectionId = String(collection._id || id);
+      await pgQuery(
+        `
+          UPDATE bots
+          SET
+            selected_image_collections = COALESCE(
+              (
+                SELECT jsonb_agg(entry)
+                FROM (
+                  SELECT value AS entry
+                  FROM jsonb_array_elements_text(
+                    COALESCE(selected_image_collections, '[]'::jsonb)
+                  )
+                  WHERE value <> $1
+                ) entries
+              ),
+              '[]'::jsonb
+            ),
+            updated_at = NOW()
+          WHERE COALESCE(selected_image_collections, '[]'::jsonb) ? $1
+        `,
+        [selectedCollectionId],
+      );
+
+      await pgQuery(
+        "DELETE FROM image_collections WHERE id = $1",
+        [collection.pgCollectionId],
+      );
+      invalidateAllRuntimeCaches();
+
+      return res.json({
+        success: true,
+        message: `ลบ Collection "${collection.name}" สำเร็จ`,
+      });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("image_collections");
