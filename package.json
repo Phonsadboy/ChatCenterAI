@@ -5,7 +5,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "start": "node runtime/admin-app.js",
+    "start": "node runtime/entrypoint.js",
     "start:legacy": "node index.js",
     "start:admin": "node runtime/admin-app.js",
     "start:public-ingest": "node runtime/public-ingest.js",
