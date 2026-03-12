@@ -311,6 +311,12 @@ function createChatRepository({
   }
 
   async function upsertPgContact(client, userId, platform, profile = {}) {
+    const normalizedProfile = normalizeJson(profile, {});
+    const hasProfilePayload =
+      normalizedProfile
+      && typeof normalizedProfile === "object"
+      && Object.keys(normalizedProfile).length > 0;
+
     const result = await client.query(
       `
         INSERT INTO contacts (
@@ -323,7 +329,10 @@ function createChatRepository({
         ) VALUES ($1,$2,$3,$4::jsonb,$5,$6)
         ON CONFLICT (platform, legacy_contact_id) DO UPDATE SET
           display_name = COALESCE(EXCLUDED.display_name, contacts.display_name),
-          profile_data = EXCLUDED.profile_data,
+          profile_data = CASE
+            WHEN $7::boolean THEN EXCLUDED.profile_data
+            ELSE contacts.profile_data
+          END,
           updated_at = EXCLUDED.updated_at
         RETURNING id
       `,
@@ -331,9 +340,10 @@ function createChatRepository({
         normalizePlatform(platform),
         toLegacyId(userId),
         profile?.displayName || null,
-        JSON.stringify(normalizeJson(profile, {})),
+        JSON.stringify(normalizedProfile),
         profile?.createdAt || new Date(),
         profile?.updatedAt || profile?.createdAt || new Date(),
+        hasProfilePayload,
       ],
     );
     return result.rows[0].id;
@@ -1184,19 +1194,19 @@ function createChatRepository({
       if (!canUsePostgres()) {
         throw new Error("MongoDB is disabled and PostgreSQL is not configured");
       }
-      await withTransaction(async (client) => {
-        const primary = preparedDocs[0];
-        const userId = toLegacyId(primary?.senderId || primary?.userId);
-        if (!userId) return;
-        const platform = normalizePlatform(primary?.platform);
-        const profile = await loadProfile(null, userId, platform);
-        const pgBotId = await resolvePgBotId(platform, primary?.botId, null);
-        const legacyThreadKey = buildThreadKey(platform, primary?.botId, userId);
-        const stats = buildThreadStats(preparedDocs);
-        const updatedAt =
-          preparedDocs[preparedDocs.length - 1]?.timestamp || new Date();
 
-        const contactId = await upsertPgContact(client, userId, platform, profile);
+      const primary = preparedDocs[0];
+      const userId = toLegacyId(primary?.senderId || primary?.userId);
+      if (!userId) return preparedDocs;
+      const platform = normalizePlatform(primary?.platform);
+      const pgBotId = await resolvePgBotId(platform, primary?.botId, null);
+      const legacyThreadKey = buildThreadKey(platform, primary?.botId, userId);
+      const stats = buildThreadStats(preparedDocs);
+      const updatedAt =
+        preparedDocs[preparedDocs.length - 1]?.timestamp || new Date();
+
+      await withTransaction(async (client) => {
+        const contactId = await upsertPgContact(client, userId, platform, {});
         const threadId = await upsertPgThread(
           client,
           platform,
