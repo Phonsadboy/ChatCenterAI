@@ -1540,6 +1540,81 @@ function buildWebhookEventIdempotencyKey(platform, botId, eventType, payload) {
   ].join(":");
 }
 
+function buildMessagingEventDedupeKey(platform, botId, messagingEvent = {}) {
+  const normalizedPlatform = normalizeChatPlatform(platform);
+  const normalizedBotId = normalizeRuntimeCacheId(botId, "default");
+  const messageMid =
+    typeof messagingEvent?.message?.mid === "string"
+      ? messagingEvent.message.mid.trim()
+      : "";
+
+  if (messageMid) {
+    return [
+      "messaging",
+      normalizedPlatform,
+      normalizedBotId,
+      "mid",
+      messageMid,
+    ].join(":");
+  }
+
+  const fallbackPayload = {
+    senderId: messagingEvent?.sender?.id || "",
+    recipientId: messagingEvent?.recipient?.id || "",
+    timestamp: messagingEvent?.timestamp || "",
+    isEcho: Boolean(messagingEvent?.message?.is_echo),
+    text: messagingEvent?.message?.text || "",
+    attachments: Array.isArray(messagingEvent?.message?.attachments)
+      ? messagingEvent.message.attachments.map((attachment) => ({
+        type: attachment?.type || "",
+        url: attachment?.payload?.url || "",
+        id: attachment?.payload?.id || "",
+      }))
+      : [],
+    quickReplyPayload: messagingEvent?.message?.quick_reply?.payload || "",
+    postbackPayload: messagingEvent?.postback?.payload || "",
+  };
+
+  const fallbackHash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(fallbackPayload))
+    .digest("hex");
+
+  return [
+    "messaging",
+    normalizedPlatform,
+    normalizedBotId,
+    "fallback",
+    fallbackHash,
+  ].join(":");
+}
+
+function buildFacebookCommentDedupeKey(botId, changeValue = {}) {
+  const normalizedBotId = normalizeRuntimeCacheId(botId, "default");
+  const commentId =
+    typeof changeValue?.comment_id === "string"
+      ? changeValue.comment_id.trim()
+      : "";
+
+  if (commentId) {
+    return ["facebook", "comment", normalizedBotId, commentId].join(":");
+  }
+
+  const fallbackPayload = {
+    postId: changeValue?.post_id || changeValue?.post?.id || changeValue?.parent_id || "",
+    message: changeValue?.message || "",
+    fromId: changeValue?.from?.id || "",
+    createdTime: changeValue?.created_time || "",
+    verb: changeValue?.verb || "",
+  };
+  const fallbackHash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(fallbackPayload))
+    .digest("hex");
+
+  return ["facebook", "comment", normalizedBotId, "fallback", fallbackHash].join(":");
+}
+
 async function recordInboundWebhookEvent(platform, botId, eventType, payload) {
   const idempotencyKey = buildWebhookEventIdempotencyKey(
     platform,
@@ -1547,21 +1622,23 @@ async function recordInboundWebhookEvent(platform, botId, eventType, payload) {
     eventType,
     payload,
   );
-  await getWebhookEventRepository()
-    .recordReceived({
+  let accepted = true;
+  try {
+    const insertResult = await getWebhookEventRepository().recordReceived({
       platform,
       botId,
       eventType,
       payload,
       idempotencyKey,
-    })
-    .catch((error) => {
-      console.warn(
-        `[WebhookEvent] Failed to record ${platform}:${eventType}:`,
-        error?.message || error,
-      );
     });
-  return idempotencyKey;
+    accepted = insertResult !== false;
+  } catch (error) {
+    console.warn(
+      `[WebhookEvent] Failed to record ${platform}:${eventType}:`,
+      error?.message || error,
+    );
+  }
+  return { idempotencyKey, accepted };
 }
 
 async function runOutboundDelivery(meta = {}, operation) {
@@ -2156,8 +2233,7 @@ async function fetchFacebookProfile(psid, accessToken) {
     return { profile: null, retryable: false, reason: "missing_credentials" };
   }
 
-  const apiVersion = "v18.0";
-  const url = `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(
+  const url = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${encodeURIComponent(
     psid,
   )}`;
 
@@ -7455,7 +7531,7 @@ async function sendFacebookConversationStarterSequence(
     if (message.type === "video" && message.url) {
       try {
         await axios.post(
-          "https://graph.facebook.com/v18.0/me/messages",
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
           {
             recipient: { id: userId },
             message: {
@@ -9292,7 +9368,7 @@ function mapFacebookAttachments(attachments) {
 }
 
 async function fetchFacebookPostDetails(postId, accessToken) {
-  const url = `https://graph.facebook.com/v18.0/${postId}`;
+  const url = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${postId}`;
   const response = await axios.get(url, {
     params: {
       fields: FACEBOOK_POST_FIELDS,
@@ -9358,7 +9434,7 @@ async function upsertFacebookPost(db, bot, postId, source = "webhook") {
 
 async function sendCommentReply(commentId, message, accessToken) {
   try {
-    const url = `https://graph.facebook.com/v22.0/${commentId}/comments`;
+    const url = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${commentId}/comments`;
     const normalizedMessage = normalizeOutgoingText(message);
     const response = await axios.post(
       url,
@@ -9377,7 +9453,7 @@ async function sendCommentReply(commentId, message, accessToken) {
 
 async function sendPrivateMessageFromComment(commentId, message, accessToken) {
   try {
-    const url = `https://graph.facebook.com/v22.0/${commentId}/private_replies`;
+    const url = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${commentId}/private_replies`;
     const normalizedMessage = normalizeOutgoingText(message);
     const response = await axios.post(
       url,
@@ -15064,12 +15140,15 @@ app.post("/webhook/line/:botId", async (req, res) => {
       return res.status(404).json({ error: "Line Bot ไม่พบหรือไม่เปิดใช้งาน" });
     }
 
-    await recordInboundWebhookEvent(
+    const lineInboundEvent = await recordInboundWebhookEvent(
       "line",
       lineBot._id ? lineBot._id.toString() : botId,
       "line-http-request",
       req.body,
     );
+    if (lineInboundEvent.accepted === false) {
+      return res.status(200).json({ status: "EVENT_DUPLICATE" });
+    }
 
     const botIsActive = lineBot.status === "active";
     const pageRuntime = await getAgentRuntimeForPage(
@@ -15196,12 +15275,15 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
       return res.status(404).json({ error: "Facebook Bot ไม่พบ" });
     }
 
-    await recordInboundWebhookEvent(
+    const facebookInboundEvent = await recordInboundWebhookEvent(
       "facebook",
       facebookBot._id ? facebookBot._id.toString() : botId,
       "facebook-http-request",
       req.body,
     );
+    if (facebookInboundEvent.accepted === false) {
+      return res.status(200).json({ status: "EVENT_DUPLICATE" });
+    }
 
     const botIsActive = facebookBot.status === "active";
     const pageRuntime = await getAgentRuntimeForPage(
@@ -15263,6 +15345,15 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
             // Handle new comments
             if (value.item === "comment" && value.verb === "add") {
+              const commentDedupeKey = buildFacebookCommentDedupeKey(
+                facebookBot._id ? facebookBot._id.toString() : botId,
+                value,
+              );
+              const claimedComment = await claimProcessedEvent(commentDedupeKey);
+              if (!claimedComment) {
+                continue;
+              }
+
               if (disableAiReply) {
                 continue;
               }
@@ -15288,6 +15379,18 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
         // Handle messaging events (existing code)
         if (entry.messaging && Array.isArray(entry.messaging)) {
           for (let messagingEvent of entry.messaging) {
+            const messagingDedupeKey = buildMessagingEventDedupeKey(
+              "facebook",
+              facebookBot._id ? facebookBot._id.toString() : botId,
+              messagingEvent,
+            );
+            const claimedMessagingEvent = await claimProcessedEvent(
+              messagingDedupeKey,
+            );
+            if (!claimedMessagingEvent) {
+              continue;
+            }
+
             // จัดการข้อความที่ส่งจากเพจเอง (echo) – ถือว่าเป็นข้อความจากแอดมินเพจ
             if (messagingEvent.message?.is_echo) {
               try {
@@ -15683,12 +15786,15 @@ app.post("/webhook/instagram/:botId", async (req, res) => {
       return res.status(404).json({ error: "Instagram Bot ไม่พบ" });
     }
 
-    await recordInboundWebhookEvent(
+    const instagramInboundEvent = await recordInboundWebhookEvent(
       "instagram",
       instagramBot._id ? instagramBot._id.toString() : botId,
       "instagram-http-request",
       req.body,
     );
+    if (instagramInboundEvent.accepted === false) {
+      return res.status(200).json({ status: "EVENT_DUPLICATE" });
+    }
 
     const botIsActive = instagramBot.status === "active";
     const pageRuntime = await getAgentRuntimeForPage(
@@ -15726,6 +15832,18 @@ app.post("/webhook/instagram/:botId", async (req, res) => {
     for (const entry of entries) {
       if (!Array.isArray(entry?.messaging)) continue;
       for (const messagingEvent of entry.messaging) {
+        const messagingDedupeKey = buildMessagingEventDedupeKey(
+          "instagram",
+          instagramBot._id ? instagramBot._id.toString() : botId,
+          messagingEvent,
+        );
+        const claimedMessagingEvent = await claimProcessedEvent(
+          messagingDedupeKey,
+        );
+        if (!claimedMessagingEvent) {
+          continue;
+        }
+
         if (messagingEvent?.message?.is_echo) {
           continue;
         }
@@ -15910,12 +16028,15 @@ app.post("/webhook/whatsapp/:botId", async (req, res) => {
       return res.status(404).json({ error: "WhatsApp Bot ไม่พบ" });
     }
 
-    await recordInboundWebhookEvent(
+    const whatsappInboundEvent = await recordInboundWebhookEvent(
       "whatsapp",
       whatsappBot._id ? whatsappBot._id.toString() : botId,
       "whatsapp-http-request",
       req.body,
     );
+    if (whatsappInboundEvent.accepted === false) {
+      return res.status(200).json({ status: "EVENT_DUPLICATE" });
+    }
 
     const botIsActive = whatsappBot.status === "active";
     const pageRuntime = await getAgentRuntimeForPage(
@@ -16312,7 +16433,7 @@ async function sendFacebookMessage(
                   body.tag = tag;
                 }
                 const response = await axios.post(
-                  `https://graph.facebook.com/v18.0/me/messages`,
+                  `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
                   body,
                   {
                     params: { access_token: accessToken },
@@ -16359,7 +16480,7 @@ async function sendFacebookMessage(
                 body.tag = tag;
               }
               const response = await axios.post(
-                `https://graph.facebook.com/v18.0/me/messages`,
+                `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
                 body,
                 {
                   params: { access_token: accessToken },
@@ -16422,7 +16543,7 @@ async function sendFacebookMessage(
                     body.tag = tag;
                   }
                   await axios.post(
-                    `https://graph.facebook.com/v18.0/me/messages`,
+                    `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
                     body,
                     {
                       params: { access_token: accessToken },
@@ -16477,7 +16598,7 @@ async function sendFacebookImageMessage(
       body.tag = tag;
     }
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/me/messages`,
+      `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
       body,
       {
         params: { access_token: accessToken },
@@ -16524,7 +16645,7 @@ async function sendFacebookImageByUpload(
 
   // 1) Upload attachment to get attachment_id
   const uploadRes = await axios.post(
-    `https://graph.facebook.com/v18.0/me/message_attachments`,
+    `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/message_attachments`,
     form,
     {
       params: { access_token: accessToken },
@@ -16551,10 +16672,14 @@ async function sendFacebookImageByUpload(
   if (tag) {
     body.tag = tag;
   }
-  await axios.post(`https://graph.facebook.com/v22.0/me/messages`, body, {
-    params: { access_token: accessToken },
-    headers: { "Content-Type": "application/json" },
-  });
+  await axios.post(
+    `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
+    body,
+    {
+      params: { access_token: accessToken },
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 async function sendInstagramMessage(
@@ -18325,7 +18450,7 @@ app.post("/api/facebook-bots/:id/test", async (req, res) => {
     try {
       // Test Facebook Graph API connection
       const response = await axios.get(
-        `https://graph.facebook.com/v18.0/${facebookBot.pageId}`,
+        `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${facebookBot.pageId}`,
         {
           params: {
             access_token: facebookBot.accessToken,
@@ -18459,7 +18584,7 @@ app.get("/api/facebook-posts", requireAdmin, async (req, res) => {
 
 async function fetchPagePostsFromFB(pageId, accessToken, limit = 20) {
   try {
-    const url = `https://graph.facebook.com/v18.0/${pageId}/feed`;
+    const url = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}/feed`;
     const response = await axios.get(url, {
       params: {
         access_token: accessToken,
@@ -22995,7 +23120,7 @@ class BroadcastQueue {
           await sendFacebookMessage(userId, msg.content, bot.accessToken, { metadata: "broadcast_auto" });
         } else if (msg.type === 'image') {
           await axios.post(
-            `https://graph.facebook.com/v18.0/me/messages`,
+            `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
             {
               recipient: { id: userId },
               message: {
@@ -32022,7 +32147,7 @@ async function sendFacebookConversionEvent(options) {
   };
 
   try {
-    const url = `https://graph.facebook.com/v18.0/${datasetId}/events`;
+    const url = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${datasetId}/events`;
     const response = await axios.post(url, payload, {
       params: { access_token: accessToken },
       headers: { "Content-Type": "application/json" },
@@ -32058,7 +32183,7 @@ async function fetchFacebookDatasetId({ pageId, accessToken } = {}) {
   }
 
   try {
-    const url = `https://graph.facebook.com/v18.0/${pageId}/dataset`;
+    const url = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}/dataset`;
     const response = await axios.post(url, null, {
       params: { access_token: accessToken },
       headers: { "Content-Type": "application/json" },
