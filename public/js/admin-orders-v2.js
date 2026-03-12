@@ -230,6 +230,7 @@
 
       if (data.success && data.pages) {
         state.pages = data.pages;
+        reconcilePageFiltersWithAvailablePages();
         renderPageSelect();
       }
     } catch (error) {
@@ -509,6 +510,33 @@
     }
 
     renderPageDropdownText();
+  }
+
+  function normalizePageKeys(values) {
+    const list = Array.isArray(values) ? values : [];
+    const seen = new Set();
+    return list
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .filter((value) => {
+        if (seen.has(value)) return false;
+        seen.add(value);
+        return true;
+      });
+  }
+
+  function reconcilePageFiltersWithAvailablePages() {
+    const availablePageKeys = new Set((state.pages || []).map(page => page.pageKey));
+    const selectedPageKeys = normalizePageKeys(state.filters.pageKeys);
+    const validPageKeys = selectedPageKeys.filter(key => availablePageKeys.has(key));
+    const hasChanged = validPageKeys.length !== selectedPageKeys.length;
+
+    state.filters.pageKeys = validPageKeys;
+    state.filters.pageKey = validPageKeys.length > 0 ? validPageKeys.join(',') : '';
+
+    if (hasChanged) {
+      saveFilters();
+    }
   }
 
   function updatePageSelectedCount() {
@@ -1059,6 +1087,10 @@
       }
 
       state.filters = { ...state.filters, ...filters };
+      state.filters.pageKeys = normalizePageKeys(state.filters.pageKeys);
+      state.filters.pageKey = state.filters.pageKeys.length > 0
+        ? state.filters.pageKeys.join(',')
+        : '';
 
       // Apply to inputs
       if (els.searchInput) els.searchInput.value = state.filters.search || '';

@@ -16315,12 +16315,19 @@ async function getAssetsMapForBot(selectedCollectionIds = null) {
   return map;
 }
 
+const IMAGE_TOKEN_PATTERN =
+  "#+\\s*\\[\\s*IMAGE\\s*:\\s*([^\\]\\}\\r\\n]*?)\\s*[\\]\\}]";
+
+function createImageTokenRegex(flags = "gi") {
+  return new RegExp(IMAGE_TOKEN_PATTERN, flags);
+}
+
 // Parse assistant reply into segments of text and images based on #[IMAGE:label]
 function parseMessageSegmentsByImageTokens(message, assetsMap) {
   if (!message || typeof message !== "string")
     return [{ type: "text", text: "" }];
   const segments = [];
-  const regex = /#\[\s*IMAGE\s*:\s*([^\]]*?)\s*\]/gi;
+  const regex = createImageTokenRegex("gi");
   const uniquePush = (arr, value) => {
     const candidate = typeof value === "string" ? value.trim() : "";
     if (!candidate) return;
@@ -18215,7 +18222,7 @@ async function buildLineMessagesFromTemplate(
     .filter((p) => p.length > 0);
   if (!parts.length) return [];
 
-  const hasImageToken = /#\[\s*IMAGE\s*:/i.test(normalizedMessage);
+  const hasImageToken = createImageTokenRegex("i").test(normalizedMessage);
   const assetsMap = hasImageToken
     ? customAssetsMap || (await getAssetsMapForBot(selectedImageCollections))
     : null;

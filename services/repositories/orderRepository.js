@@ -116,6 +116,13 @@ function createOrderRepository({
           ? toLegacyId(getValueByPath(doc, key))
           : normalizeMongoComparable(getValueByPath(doc, key));
 
+      if (expected instanceof RegExp) {
+        const actualText =
+          actual === null || typeof actual === "undefined" ? "" : String(actual);
+        expected.lastIndex = 0;
+        return expected.test(actualText);
+      }
+
       if (expected && typeof expected === "object" && !Array.isArray(expected)) {
         if (Object.prototype.hasOwnProperty.call(expected, "$in")) {
           const values = Array.isArray(expected.$in) ? expected.$in : [];
@@ -145,6 +152,26 @@ function createOrderRepository({
         }
         if (Object.prototype.hasOwnProperty.call(expected, "$lte")) {
           if (!(actual <= normalizeMongoComparable(expected.$lte))) return false;
+        }
+        if (Object.prototype.hasOwnProperty.call(expected, "$regex")) {
+          const actualText =
+            actual === null || typeof actual === "undefined" ? "" : String(actual);
+          const source =
+            expected.$regex instanceof RegExp
+              ? expected.$regex.source
+              : String(expected.$regex || "");
+          const flags =
+            expected.$regex instanceof RegExp
+              ? expected.$regex.flags
+              : typeof expected.$options === "string"
+                ? expected.$options
+                : "";
+          if (!source) return true;
+          try {
+            return new RegExp(source, flags).test(actualText);
+          } catch (_) {
+            return false;
+          }
         }
         return true;
       }

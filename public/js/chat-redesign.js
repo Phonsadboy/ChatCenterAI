@@ -921,6 +921,9 @@ class ChatManager {
         const isFollowUp = user.followUp && user.followUp.isFollowUp;
         const aiEnabled = user.aiEnabled !== false;
         const hasOrders = user.hasOrders || false;
+        const orderCount = Number.isFinite(Number(user.orderCount))
+            ? Number(user.orderCount)
+            : 0;
 
         const avatarLetter = user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U';
         const lastMessage = user.lastMessage ? this.truncateText(user.lastMessage, 50) : 'ไม่มีข้อความ';
@@ -954,17 +957,17 @@ class ChatManager {
                 </div>
             `);
         }
+        if (hasOrders) {
+            statusDots.push(`
+                <div class="status-dot has-orders" title="มีออเดอร์ ${orderCount}">
+                    <span class="status-tooltip">มีออเดอร์ ${orderCount}</span>
+                </div>
+            `);
+        }
         if (isPurchased) {
             statusDots.push(`
                 <div class="status-dot purchased" title="ซื้อสินค้าแล้ว">
                     <span class="status-tooltip">ซื้อแล้ว</span>
-                </div>
-            `);
-        }
-        if (hasOrders) {
-            statusDots.push(`
-                <div class="status-dot has-orders" title="มีออเดอร์">
-                    <span class="status-tooltip">มีออเดอร์</span>
                 </div>
             `);
         }
@@ -994,7 +997,7 @@ class ChatManager {
 		                <div class="user-avatar">
 		                    ${avatarContent}
 		                    <div class="user-status-indicators">
-		                        ${statusDots.slice(0, 2).join('')}
+		                        ${statusDots.join('')}
 		                    </div>
                 </div>
                 <div class="user-item-content">
@@ -1003,6 +1006,7 @@ class ChatManager {
                         <div class="user-time">${time}</div>
                     </div>
                     ${channelHtml}
+                    ${hasOrders ? `<div class="user-badges"><span class="badge-sm badge-order">มีออเดอร์ ${orderCount}</span></div>` : ''}
                     <div class="user-last-message">${this.escapeHtml(lastMessage)}</div>
                     ${tags ? `<div class="user-tags">${tags}</div>` : ''}
                 </div>
@@ -1041,7 +1045,9 @@ class ChatManager {
 
     updateChatHeader() {
         const btnRefreshProfile = document.getElementById('btnRefreshProfile');
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user =
+            this.users.find(u => u.userId === this.currentUserId) ||
+            this.allUsers.find(u => u.userId === this.currentUserId);
         if (!user) {
             if (btnRefreshProfile) {
                 btnRefreshProfile.disabled = true;
@@ -1081,9 +1087,31 @@ class ChatManager {
 
         if (chatUserMeta) {
             const messages = this.chatHistory[this.currentUserId] || [];
-            if (messageCount) {
-                messageCount.textContent = messages.length;
-            }
+            const orderCount = Number.isFinite(Number(user.orderCount))
+                ? Number(user.orderCount)
+                : 0;
+            const orderMetaHtml = orderCount > 0
+                ? `
+                    <span class="meta-item meta-item-order">
+                        <i class="fas fa-box"></i>
+                        ${orderCount} ออเดอร์
+                    </span>
+                `
+                : '';
+            chatUserMeta.innerHTML = `
+                <span class="meta-item">
+                    <i class="fas fa-comment"></i>
+                    <span id="messageCount">${messages.length}</span> ข้อความ
+                </span>
+                <span class="meta-item meta-item-active">
+                    <i class="fas fa-eye"></i>
+                    กำลังอ่านอยู่
+                </span>
+                ${orderMetaHtml}
+            `;
+        } else if (messageCount) {
+            const messages = this.chatHistory[this.currentUserId] || [];
+            messageCount.textContent = messages.length;
         }
 
         if (chatHeaderActions) {
@@ -1131,6 +1159,9 @@ class ChatManager {
                     return this.prepareMessageForDisplay(normalized);
                 });
                 this.renderMessages();
+                if (userId === this.currentUserId) {
+                    this.updateChatHeader();
+                }
             } else {
                 this.showToast('ไม่สามารถโหลดประวัติการสนทนาได้', 'error');
             }
