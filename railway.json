@@ -5,6 +5,7 @@
   },
   "deploy": {
     "startCommand": "npm start",
+    "region": "asia-southeast1-eqsg3a",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
