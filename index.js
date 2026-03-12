@@ -9880,7 +9880,80 @@ function generateDataItemId() {
 }
 
 // Helper: Get all instructions v2
+function shouldUsePostgresInstructionsV2() {
+  return !isMongoRuntimeEnabled() && isPostgresConfigured();
+}
+
+function normalizeInstructionV2DataItems(dataValue) {
+  if (Array.isArray(dataValue)) {
+    return dataValue;
+  }
+  if (
+    dataValue &&
+    typeof dataValue === "object" &&
+    Array.isArray(dataValue.dataItems)
+  ) {
+    return dataValue.dataItems;
+  }
+  return [];
+}
+
+function mapPostgresInstructionV2Row(row = {}) {
+  const instructionId =
+    typeof row.legacy_instruction_id === "string" &&
+    row.legacy_instruction_id.trim()
+      ? row.legacy_instruction_id.trim()
+      : String(row.id || "").trim();
+  const createdAt = row.created_at || null;
+  const updatedAt = row.updated_at || createdAt || null;
+
+  return {
+    _id: String(row.id || instructionId || ""),
+    instructionId,
+    name: row.name || "",
+    description: row.description || "",
+    type: row.type || "instruction",
+    content: row.content || "",
+    dataItems: normalizeInstructionV2DataItems(row.data),
+    conversationStarter: normalizeConversationStarterConfig(
+      row.conversation_starter && typeof row.conversation_starter === "object"
+        ? row.conversation_starter
+        : {},
+    ),
+    version:
+      Number.isInteger(row.current_version) && row.current_version > 0
+        ? row.current_version
+        : 1,
+    usageCount: 0,
+    createdAt,
+    updatedAt,
+  };
+}
+
 async function getInstructionsV2() {
+  if (shouldUsePostgresInstructionsV2()) {
+    const result = await pgQuery(
+      `
+        SELECT
+          id::text AS id,
+          legacy_instruction_id,
+          name,
+          description,
+          type,
+          content,
+          data,
+          conversation_starter,
+          current_version,
+          created_at,
+          updated_at
+        FROM instructions
+        WHERE source_kind = 'instructions_v2'
+        ORDER BY updated_at DESC, created_at DESC
+      `,
+    );
+    return result.rows.map((row) => mapPostgresInstructionV2Row(row));
+  }
+
   const client = await connectDB();
   const db = client.db("chatbot");
   const coll = db.collection("instructions_v2");
@@ -9910,6 +9983,41 @@ app.get("/api/instructions-v2", async (req, res) => {
 app.get("/api/instructions-v2/:id", async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (shouldUsePostgresInstructionsV2()) {
+      const result = await pgQuery(
+        `
+          SELECT
+            id::text AS id,
+            legacy_instruction_id,
+            name,
+            description,
+            type,
+            content,
+            data,
+            conversation_starter,
+            current_version,
+            created_at,
+            updated_at
+          FROM instructions
+          WHERE source_kind = 'instructions_v2'
+            AND (id::text = $1 OR legacy_instruction_id = $1)
+          LIMIT 1
+        `,
+        [String(id || "").trim()],
+      );
+      const row = result.rows[0] || null;
+      if (!row) {
+        return res
+          .status(404)
+          .json({ success: false, error: "ไม่พบ Instruction" });
+      }
+      return res.json({
+        success: true,
+        instruction: mapPostgresInstructionV2Row(row),
+      });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
@@ -10544,12 +10652,39 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
 app.get("/api/instructions-v2/:id/preview", async (req, res) => {
   try {
     const { id } = req.params;
+    let instruction = null;
+    if (shouldUsePostgresInstructionsV2()) {
+      const result = await pgQuery(
+        `
+          SELECT
+            id::text AS id,
+            legacy_instruction_id,
+            name,
+            description,
+            type,
+            content,
+            data,
+            conversation_starter,
+            current_version,
+            created_at,
+            updated_at
+          FROM instructions
+          WHERE source_kind = 'instructions_v2'
+            AND (id::text = $1 OR legacy_instruction_id = $1)
+          LIMIT 1
+        `,
+        [String(id || "").trim()],
+      );
+      if (result.rows[0]) {
+        instruction = mapPostgresInstructionV2Row(result.rows[0]);
+      }
+    } else {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("instructions_v2");
+      instruction = await coll.findOne({ _id: toObjectId(id) });
+    }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instruction = await coll.findOne({ _id: toObjectId(id) });
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
@@ -18184,6 +18319,7 @@ app.post("/api/facebook-bots", async (req, res) => {
 
     let datasetId =
       typeof req.body.datasetId === "string" ? req.body.datasetId.trim() : "";
+    let datasetAutoCreateBlocked = false;
     if (!datasetId) {
       const datasetResult = await fetchFacebookDatasetId({
         pageId,
@@ -18192,10 +18328,18 @@ app.post("/api/facebook-bots", async (req, res) => {
       if (datasetResult?.success) {
         datasetId = datasetResult.datasetId;
       } else {
+        datasetAutoCreateBlocked = isFacebookDatasetPermissionError(
+          datasetResult,
+        );
         console.warn(
           "[FB Dataset] Auto-create dataset failed:",
           datasetResult?.error || datasetResult?.reason || "unknown",
         );
+        if (datasetAutoCreateBlocked) {
+          console.warn(
+            "[FB Dataset] Missing Meta page_events permission; disable auto-create until manually fixed",
+          );
+        }
       }
     }
 
@@ -18214,6 +18358,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
       datasetId: datasetId || null,
+      datasetAutoCreateBlocked,
       keywordSettings: {
         enableAI: { keyword: "", response: "", sendResponse: false },
         disableAI: { keyword: "", response: "", sendResponse: false },
@@ -18276,18 +18421,28 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       datasetId =
         typeof existing.datasetId === "string" ? existing.datasetId.trim() : "";
     }
-    if (!datasetId) {
+    let datasetAutoCreateBlocked = Boolean(existing.datasetAutoCreateBlocked);
+    if (!datasetId && !datasetAutoCreateBlocked) {
       const datasetResult = await fetchFacebookDatasetId({
         pageId,
         accessToken,
       });
       if (datasetResult?.success) {
         datasetId = datasetResult.datasetId;
+        datasetAutoCreateBlocked = false;
       } else {
+        datasetAutoCreateBlocked = isFacebookDatasetPermissionError(
+          datasetResult,
+        );
         console.warn(
           "[FB Dataset] Auto-create dataset failed:",
           datasetResult?.error || datasetResult?.reason || "unknown",
         );
+        if (datasetAutoCreateBlocked) {
+          console.warn(
+            "[FB Dataset] Missing Meta page_events permission; skip future auto-create until manually fixed",
+          );
+        }
       }
     }
 
@@ -18306,6 +18461,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       ),
       openaiApiKeyId: req.body.openaiApiKeyId !== undefined ? (req.body.openaiApiKeyId || null) : existing.openaiApiKeyId,
       datasetId: datasetId || null,
+      datasetAutoCreateBlocked,
       updatedAt: new Date(),
     };
 
@@ -18375,7 +18531,11 @@ app.post("/api/facebook-bots/:id/dataset", async (req, res) => {
     }
 
     await getBotRepository().updateById("facebook", id, {
-      $set: { datasetId: datasetResult.datasetId, updatedAt: new Date() },
+      $set: {
+        datasetId: datasetResult.datasetId,
+        datasetAutoCreateBlocked: false,
+        updatedAt: new Date(),
+      },
     });
 
     invalidateBotMutationCaches("facebook", id);
@@ -32209,6 +32369,14 @@ async function fetchFacebookDatasetId({ pageId, accessToken } = {}) {
     const status = error.response?.status || null;
     return { success: false, error: errorMessage, code: errorCode, status };
   }
+}
+
+function isFacebookDatasetPermissionError(result = {}) {
+  const code = Number(result?.code || 0);
+  const message = String(
+    result?.error || result?.reason || result?.message || "",
+  ).toLowerCase();
+  return code === 200 && message.includes("page_events");
 }
 
 /**
