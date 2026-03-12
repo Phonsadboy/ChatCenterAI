@@ -11,6 +11,7 @@ const {
   safeStringify,
   toLegacyId,
   toObjectId,
+  warnPrimaryReadFailure,
 } = require("./shared");
 
 function createOrderRepository({
@@ -542,10 +543,13 @@ function createOrderRepository({
         const docs = await readPostgresDocs({ _id: orderId });
         if (docs.length > 0 || !canUseMongo()) return docs[0] || null;
       } catch (error) {
-        console.warn(
-          `[OrderRepository] Primary read failed for ${orderId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "OrderRepository",
+          operation: "read",
+          identifier: orderId,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -578,10 +582,13 @@ function createOrderRepository({
           return docs[0] || null;
         }
       } catch (error) {
-        console.warn(
-          `[OrderRepository] Primary latest read failed for user ${userId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "OrderRepository",
+          operation: "latest read",
+          identifier: userId,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -636,10 +643,12 @@ function createOrderRepository({
         const docs = await readPostgresDocs(filter);
         return applyListOptions(docs, options);
       } catch (error) {
-        console.warn(
-          "[OrderRepository] Primary list read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "OrderRepository",
+          operation: "list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -688,10 +697,12 @@ function createOrderRepository({
         const docs = await readPostgresDocs(filter);
         return docs.length;
       } catch (error) {
-        console.warn(
-          "[OrderRepository] Primary count read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "OrderRepository",
+          operation: "count read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -728,10 +739,12 @@ function createOrderRepository({
         const docs = await readPostgresDocs(filter);
         return computeStatusCountsFromDocs(docs);
       } catch (error) {
-        console.warn(
-          "[OrderRepository] Primary status aggregate failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "OrderRepository",
+          operation: "status aggregate",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -777,10 +790,12 @@ function createOrderRepository({
         const docs = await readPostgresDocs(filter);
         return computeTotalsFromDocs(docs, options.confirmedStatuses);
       } catch (error) {
-        console.warn(
-          "[OrderRepository] Primary totals aggregate failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "OrderRepository",
+          operation: "totals aggregate",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -880,10 +895,12 @@ function createOrderRepository({
         const docs = await readPostgresDocs(filter);
         return computePageSummariesFromDocs(docs);
       } catch (error) {
-        console.warn(
-          "[OrderRepository] Primary page summary aggregate failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "OrderRepository",
+          operation: "page summary aggregate",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -959,10 +976,12 @@ function createOrderRepository({
         const docs = await readPostgresDocs(filter);
         return computeFrequentProductNamesFromDocs(docs, limit);
       } catch (error) {
-        console.warn(
-          "[OrderRepository] Primary product aggregate failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "OrderRepository",
+          operation: "product aggregate",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 

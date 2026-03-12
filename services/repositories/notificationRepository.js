@@ -5,6 +5,7 @@ const {
   buildMongoIdQuery,
   safeStringify,
   toLegacyId,
+  warnPrimaryReadFailure,
 } = require("./shared");
 
 function normalizeChannelType(value) {
@@ -533,10 +534,12 @@ function createNotificationRepository({
       try {
         return await readPostgresChannels(filter, options);
       } catch (error) {
-        console.warn(
-          "[NotificationRepository] Primary channel list read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "NotificationRepository",
+          operation: "channel list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -585,10 +588,13 @@ function createNotificationRepository({
           return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
         }
       } catch (error) {
-        console.warn(
-          `[NotificationRepository] Primary channel read failed for ${normalizedId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "NotificationRepository",
+          operation: "channel read",
+          identifier: normalizedId,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -785,10 +791,12 @@ function createNotificationRepository({
       try {
         return await readPostgresLogs(filter, options);
       } catch (error) {
-        console.warn(
-          "[NotificationRepository] Primary log list read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "NotificationRepository",
+          operation: "log list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 

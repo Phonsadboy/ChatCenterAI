@@ -45,7 +45,7 @@ function shouldSkipMongoMigration() {
   );
   const respectMongoEnabled = parseBoolean(
     process.env.CCAI_MIGRATION_RESPECT_MONGO_ENABLED,
-    true,
+    false,
   );
 
   if (!mongoUri) return true;

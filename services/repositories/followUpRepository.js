@@ -8,6 +8,7 @@ const {
   safeStringify,
   toLegacyId,
   toObjectId,
+  warnPrimaryReadFailure,
 } = require("./shared");
 
 function createFollowUpRepository({
@@ -613,10 +614,13 @@ function createFollowUpRepository({
         const docs = await readPostgresStatuses({ userId: normalizedUserId }, { limit: 1 });
         if (docs.length > 0 || !canUseMongo()) return docs[0] || null;
       } catch (error) {
-        console.warn(
-          `[FollowUpRepository] Primary status read failed for ${normalizedUserId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "FollowUpRepository",
+          operation: "status read",
+          identifier: normalizedUserId,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -656,10 +660,12 @@ function createFollowUpRepository({
           return docs;
         }
       } catch (error) {
-        console.warn(
-          "[FollowUpRepository] Primary status list failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "FollowUpRepository",
+          operation: "status list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -742,10 +748,13 @@ function createFollowUpRepository({
         );
         if (docs.length > 0 || !canUseMongo()) return docs[0] || null;
       } catch (error) {
-        console.warn(
-          `[FollowUpRepository] Primary task-by-date read failed for ${normalizedUserId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "FollowUpRepository",
+          operation: "task-by-date read",
+          identifier: normalizedUserId,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -815,10 +824,12 @@ function createFollowUpRepository({
           return docs;
         }
       } catch (error) {
-        console.warn(
-          "[FollowUpRepository] Primary task list failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "FollowUpRepository",
+          operation: "task list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 

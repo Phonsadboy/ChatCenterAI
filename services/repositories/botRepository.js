@@ -10,6 +10,7 @@ const {
   safeStringify,
   toLegacyId,
   toObjectId,
+  warnPrimaryReadFailure,
 } = require("./shared");
 
 function createBotRepository({
@@ -17,6 +18,9 @@ function createBotRepository({
   dbName = "chatbot",
   runtimeConfig,
 }) {
+  const cachedBotsById = new Map();
+  const cachedBotsByPlatform = new Map();
+
   function canUseMongo() {
     return runtimeConfig?.features?.mongoEnabled !== false;
   }
@@ -256,7 +260,15 @@ function createBotRepository({
       [normalizedPlatform],
     );
 
-    return result.rows.map((row) => hydratePostgresBot(row));
+    const docs = result.rows.map((row) => hydratePostgresBot(row));
+    cachedBotsByPlatform.set(normalizedPlatform, docs);
+    docs.forEach((doc) => {
+      const legacyId = toLegacyId(doc?._id);
+      if (legacyId) {
+        cachedBotsById.set(`${normalizedPlatform}:${legacyId}`, doc);
+      }
+    });
+    return docs;
   }
 
   async function readPostgresByLegacyId(platform, botId) {
@@ -289,7 +301,16 @@ function createBotRepository({
       [normalizedPlatform, legacyBotId],
     );
 
-    return hydratePostgresBot(result.rows[0]);
+    const doc = hydratePostgresBot(result.rows[0]);
+    if (doc) {
+      cachedBotsById.set(`${normalizedPlatform}:${legacyBotId}`, doc);
+      const current = cachedBotsByPlatform.get(normalizedPlatform) || [];
+      const filtered = current.filter(
+        (entry) => toLegacyId(entry?._id) !== legacyBotId,
+      );
+      cachedBotsByPlatform.set(normalizedPlatform, [doc, ...filtered]);
+    }
+    return doc;
   }
 
   async function readPostgresByIdentifier(platform, identifier) {
@@ -326,7 +347,56 @@ function createBotRepository({
       [normalizedPlatform, normalizedIdentifier, `${escapeRegex(normalizedIdentifier)}$`],
     );
 
-    return hydratePostgresBot(result.rows[0]);
+    const doc = hydratePostgresBot(result.rows[0]);
+    if (doc) {
+      const legacyBotId = toLegacyId(doc?._id);
+      if (legacyBotId) {
+        cachedBotsById.set(`${normalizedPlatform}:${legacyBotId}`, doc);
+      }
+    }
+    return doc;
+  }
+
+  function readCachedBotById(platform, botId) {
+    const normalizedPlatform = normalizePlatform(platform);
+    const legacyId = toLegacyId(botId);
+    if (!legacyId) return null;
+    return cachedBotsById.get(`${normalizedPlatform}:${legacyId}`) || null;
+  }
+
+  function readCachedBots(platform) {
+    const normalizedPlatform = normalizePlatform(platform);
+    return cachedBotsByPlatform.get(normalizedPlatform) || [];
+  }
+
+  function readCachedBotByIdentifier(platform, identifier) {
+    const normalizedPlatform = normalizePlatform(platform);
+    const normalizedIdentifier = String(identifier || "").trim();
+    if (!normalizedIdentifier) return null;
+
+    const byId = readCachedBotById(normalizedPlatform, normalizedIdentifier);
+    if (byId) return byId;
+
+    const lookupRegex =
+      normalizedPlatform === "facebook"
+        ? null
+        : new RegExp(`${escapeRegex(normalizedIdentifier)}$`, "i");
+    const candidates = readCachedBots(normalizedPlatform);
+    return (
+      candidates.find((entry) => {
+        if (!entry || typeof entry !== "object") return false;
+        if (
+          normalizedPlatform === "facebook"
+          && toLegacyId(entry?._id) === normalizedIdentifier
+        ) {
+          return true;
+        }
+        const webhookUrl =
+          typeof entry.webhookUrl === "string" ? entry.webhookUrl.trim() : "";
+        return Boolean(lookupRegex && webhookUrl && lookupRegex.test(webhookUrl));
+      })
+      || null
+    );
   }
 
   function startShadowCompare(platform, identifier, mongoDoc, pgDoc) {
@@ -394,10 +464,19 @@ function createBotRepository({
           return applyListOptions(pgDocs, options);
         }
       } catch (error) {
-        console.warn(
-          `[BotRepository] Primary list read failed for ${platform}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "BotRepository",
+          operation: "list read",
+          identifier: platform,
+          canUseMongo: canUseMongo(),
+          error,
+        });
+        if (!canUseMongo()) {
+          const cachedDocs = readCachedBots(platform);
+          if (cachedDocs.length > 0) {
+            return applyListOptions(cachedDocs, options);
+          }
+        }
       }
     }
 
@@ -658,10 +737,21 @@ function createBotRepository({
           return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
         }
       } catch (error) {
-        console.warn(
-          `[BotRepository] Primary read failed for ${platform}:${botId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "BotRepository",
+          operation: "read",
+          identifier: `${platform}:${botId}`,
+          canUseMongo: canUseMongo(),
+          error,
+        });
+        if (!canUseMongo()) {
+          const cachedDoc = readCachedBotById(platform, botId);
+          if (cachedDoc) {
+            return options.projection
+              ? applyProjection(cachedDoc, options.projection)
+              : cachedDoc;
+          }
+        }
       }
     }
 
@@ -702,10 +792,21 @@ function createBotRepository({
           return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
         }
       } catch (error) {
-        console.warn(
-          `[BotRepository] Primary identifier read failed for ${platform}:${identifier}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "BotRepository",
+          operation: "identifier read",
+          identifier: `${platform}:${identifier}`,
+          canUseMongo: canUseMongo(),
+          error,
+        });
+        if (!canUseMongo()) {
+          const cachedDoc = readCachedBotByIdentifier(platform, identifier);
+          if (cachedDoc) {
+            return options.projection
+              ? applyProjection(cachedDoc, options.projection)
+              : cachedDoc;
+          }
+        }
       }
     }
 
@@ -765,6 +866,9 @@ function createBotRepository({
   }
 
   async function deleteById(platform, botId) {
+    const normalizedPlatform = normalizePlatform(platform);
+    const legacyId = toLegacyId(botId);
+
     if (!canUseMongo()) {
       if (canUsePostgres()) {
         const existingDoc = await readPostgresByLegacyId(platform, botId).catch(() => null);
@@ -777,6 +881,14 @@ function createBotRepository({
             error?.message || error,
           );
         });
+        if (legacyId) {
+          cachedBotsById.delete(`${normalizedPlatform}:${legacyId}`);
+          const current = cachedBotsByPlatform.get(normalizedPlatform) || [];
+          cachedBotsByPlatform.set(
+            normalizedPlatform,
+            current.filter((doc) => toLegacyId(doc?._id) !== legacyId),
+          );
+        }
         return { deletedCount: 1 };
       }
       return { deletedCount: 0 };
@@ -791,6 +903,14 @@ function createBotRepository({
           error?.message || error,
         );
       });
+    }
+    if (result.deletedCount > 0 && legacyId) {
+      cachedBotsById.delete(`${normalizedPlatform}:${legacyId}`);
+      const current = cachedBotsByPlatform.get(normalizedPlatform) || [];
+      cachedBotsByPlatform.set(
+        normalizedPlatform,
+        current.filter((doc) => toLegacyId(doc?._id) !== legacyId),
+      );
     }
     return result;
   }

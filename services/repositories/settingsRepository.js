@@ -1,5 +1,9 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
-const { normalizeJson, safeStringify } = require("./shared");
+const {
+  normalizeJson,
+  safeStringify,
+  warnPrimaryReadFailure,
+} = require("./shared");
 
 function createSettingsRepository({
   connectDB,
@@ -142,14 +146,33 @@ function createSettingsRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPostgresAll();
+        const expireAt = Date.now() + cacheTtlMs;
+        pgDocs.forEach((doc) => {
+          if (doc && typeof doc.key === "string") {
+            cache.set(doc.key, { value: doc.value, expireAt });
+          }
+        });
         if (pgDocs.length > 0 || !canUseMongo()) {
           return pgDocs;
         }
       } catch (error) {
-        console.warn(
-          "[SettingsRepository] Primary read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "SettingsRepository",
+          operation: "read",
+          identifier: "all",
+          canUseMongo: canUseMongo(),
+          error,
+        });
+        if (!canUseMongo()) {
+          const stale = Array.from(cache.entries()).map(([key, entry]) => ({
+            key,
+            value: entry?.value,
+            updatedAt: null,
+          }));
+          if (stale.length > 0) {
+            return stale;
+          }
+        }
       }
     }
 
@@ -177,10 +200,16 @@ function createSettingsRepository({
           return value;
         }
       } catch (error) {
-        console.warn(
-          `[SettingsRepository] Primary read failed for "${key}", falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "SettingsRepository",
+          operation: "read",
+          identifier: key,
+          canUseMongo: canUseMongo(),
+          error,
+        });
+        if (!canUseMongo() && cached) {
+          return cached.value;
+        }
       }
     }
 

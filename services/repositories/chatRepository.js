@@ -10,6 +10,7 @@ const {
   toLegacyId,
   toObjectId,
   toText,
+  warnPrimaryReadFailure,
 } = require("./shared");
 
 function buildThreadKey(platform, botId, userId) {
@@ -123,6 +124,10 @@ function createChatRepository({
   runtimeConfig,
 }) {
   const pgBotIdCache = new Map();
+  const userSummariesCache = {
+    docs: [],
+    updatedAt: 0,
+  };
   const createGeneratedId = () =>
     `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
@@ -260,10 +265,13 @@ function createChatRepository({
         const pgDoc = await readPgProfile();
         if (pgDoc) return pgDoc;
       } catch (error) {
-        console.warn(
-          `[ChatRepository] Primary profile read failed for ${normalizedPlatform}:${normalizedUserId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "profile read",
+          identifier: `${normalizedPlatform}:${normalizedUserId}`,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -1256,10 +1264,13 @@ function createChatRepository({
         const pgDoc = await readPostgresMessageById(messageId);
         if (pgDoc) return pgDoc;
       } catch (error) {
-        console.warn(
-          `[ChatRepository] Primary message read failed for ${toLegacyId(messageId)}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "message read",
+          identifier: toLegacyId(messageId),
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -1298,10 +1309,12 @@ function createChatRepository({
         const rows = await readPostgresActivityDocs(filter, { limit: 1, sort: { timestamp: -1 } });
         return rows.length > 0;
       } catch (error) {
-        console.warn(
-          "[ChatRepository] Primary has-messages read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "has-messages read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -1365,10 +1378,12 @@ function createChatRepository({
       try {
         return await readPostgresDistinctUserIds(filter);
       } catch (error) {
-        console.warn(
-          "[ChatRepository] Primary distinct-user read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "distinct-user read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -1399,10 +1414,12 @@ function createChatRepository({
       try {
         return await readPostgresActivityDocs(filter, options);
       } catch (error) {
-        console.warn(
-          "[ChatRepository] Primary activity read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "activity read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -1434,10 +1451,12 @@ function createChatRepository({
       try {
         return await readPostgresActivityCount(filter);
       } catch (error) {
-        console.warn(
-          "[ChatRepository] Primary activity-count read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "activity-count read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -1553,10 +1572,13 @@ function createChatRepository({
           return pgDocs;
         }
       } catch (error) {
-        console.warn(
-          `[ChatRepository] Primary history read failed for ${toLegacyId(userId)}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "history read",
+          identifier: toLegacyId(userId),
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -1589,10 +1611,13 @@ function createChatRepository({
         const pgDoc = await readPostgresLatestContext(userId);
         if (pgDoc) return pgDoc;
       } catch (error) {
-        console.warn(
-          `[ChatRepository] Primary latest-context read failed for ${toLegacyId(userId)}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "latest-context read",
+          identifier: toLegacyId(userId),
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -1623,14 +1648,37 @@ function createChatRepository({
     if (shouldReadPrimary()) {
       try {
         const pgDocs = await readPostgresUserSummaries(options);
+        if (Array.isArray(pgDocs) && pgDocs.length > 0) {
+          userSummariesCache.docs = pgDocs;
+          userSummariesCache.updatedAt = Date.now();
+        }
         if (pgDocs.length > 0) {
           return pgDocs;
         }
       } catch (error) {
-        console.warn(
-          "[ChatRepository] Primary user-list read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ChatRepository",
+          operation: "user-list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
+        if (!canUseMongo() && userSummariesCache.docs.length > 0) {
+          const limit =
+            Number.isFinite(options.limit) && options.limit > 0
+              ? options.limit
+              : 50;
+          const focusUserId = toLegacyId(options.focusUserId);
+          const docs = [...userSummariesCache.docs];
+          if (focusUserId) {
+            docs.sort((left, right) => {
+              const leftPriority = toLegacyId(left?._id) === focusUserId ? 0 : 1;
+              const rightPriority = toLegacyId(right?._id) === focusUserId ? 0 : 1;
+              if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+              return 0;
+            });
+          }
+          return docs.slice(0, limit);
+        }
       }
     }
 

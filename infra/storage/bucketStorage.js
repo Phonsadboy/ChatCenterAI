@@ -3,6 +3,7 @@ const {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } = require("@aws-sdk/client-s3");
@@ -84,11 +85,38 @@ async function getObjectStream(key) {
   throw new Error("Storage body is not readable");
 }
 
+async function listObjects(prefix = "", options = {}) {
+  const config = getRuntimeConfig();
+  const maxKeys = Number(options.maxKeys) > 0
+    ? Math.min(Number(options.maxKeys), 1000)
+    : 1000;
+  const continuationToken =
+    typeof options.continuationToken === "string" && options.continuationToken.trim()
+      ? options.continuationToken.trim()
+      : undefined;
+
+  const result = await getBucketClient().send(
+    new ListObjectsV2Command({
+      Bucket: config.storage.bucketName,
+      Prefix: prefix || undefined,
+      MaxKeys: maxKeys,
+      ContinuationToken: continuationToken,
+    }),
+  );
+
+  return {
+    objects: Array.isArray(result.Contents) ? result.Contents : [],
+    isTruncated: Boolean(result.IsTruncated),
+    nextContinuationToken: result.NextContinuationToken || null,
+  };
+}
+
 module.exports = {
   deleteObject,
   getBucketClient,
   getObjectStream,
   headObject,
   isBucketConfigured,
+  listObjects,
   putObject,
 };

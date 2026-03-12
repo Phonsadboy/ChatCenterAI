@@ -4,6 +4,7 @@ const {
   normalizePlatform,
   safeStringify,
   toLegacyId,
+  warnPrimaryReadFailure,
 } = require("./shared");
 
 function buildPairKey(platform, userId) {
@@ -297,10 +298,13 @@ function createProfileRepository({
           return applyProjection(pgDoc, projection);
         }
       } catch (error) {
-        console.warn(
-          `[ProfileRepository] Primary profile read failed for ${normalizedPlatform}:${normalizedUserId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ProfileRepository",
+          operation: "profile read",
+          identifier: `${normalizedPlatform}:${normalizedUserId}`,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -358,10 +362,12 @@ function createProfileRepository({
           }
         }
       } catch (error) {
-        console.warn(
-          "[ProfileRepository] Primary profile pair-list read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ProfileRepository",
+          operation: "profile pair-list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -427,10 +433,12 @@ function createProfileRepository({
           }
         }
       } catch (error) {
-        console.warn(
-          "[ProfileRepository] Primary profile user-list read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "ProfileRepository",
+          operation: "profile user-list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 

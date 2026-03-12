@@ -1,6 +1,11 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
 const { resolvePgBotId } = require("./postgresRefs");
-const { safeStringify, toLegacyId, toObjectId } = require("./shared");
+const {
+  safeStringify,
+  toLegacyId,
+  toObjectId,
+  warnPrimaryReadFailure,
+} = require("./shared");
 
 function createFeedbackRepository({
   connectDB,
@@ -146,10 +151,12 @@ function createFeedbackRepository({
         const pgDocs = await readPgByMessageIds(normalizedIds);
         if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
-        console.warn(
-          "[FeedbackRepository] Primary feedback read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "FeedbackRepository",
+          operation: "feedback read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 

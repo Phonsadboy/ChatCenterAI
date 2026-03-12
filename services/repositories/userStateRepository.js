@@ -1,5 +1,9 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
-const { safeStringify, toLegacyId } = require("./shared");
+const {
+  safeStringify,
+  toLegacyId,
+  warnPrimaryReadFailure,
+} = require("./shared");
 
 function createUserStateRepository({
   connectDB,
@@ -263,10 +267,13 @@ function createUserStateRepository({
           };
         }
       } catch (error) {
-        console.warn(
-          `[UserStateRepository] Primary AI status read failed for ${normalizedUserId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "UserStateRepository",
+          operation: "AI status read",
+          identifier: normalizedUserId,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -314,10 +321,12 @@ function createUserStateRepository({
         const pgDocs = await readPgAiStatuses(userIds);
         if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
-        console.warn(
-          "[UserStateRepository] Primary AI status list failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "UserStateRepository",
+          operation: "AI status list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -388,10 +397,13 @@ function createUserStateRepository({
           return pgDoc || { userId: normalizedUserId, tags: [], updatedAt: null };
         }
       } catch (error) {
-        console.warn(
-          `[UserStateRepository] Primary tags read failed for ${normalizedUserId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "UserStateRepository",
+          operation: "tags read",
+          identifier: normalizedUserId,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -425,10 +437,12 @@ function createUserStateRepository({
         const pgDocs = await readPgTagsByUsers(userIds);
         if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
-        console.warn(
-          "[UserStateRepository] Primary tags list failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "UserStateRepository",
+          operation: "tags list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -498,10 +512,12 @@ function createUserStateRepository({
         const pgTags = await readPgAvailableTags(limit);
         if (pgTags.length > 0 || !canUseMongo()) return pgTags;
       } catch (error) {
-        console.warn(
-          "[UserStateRepository] Primary available-tags read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "UserStateRepository",
+          operation: "available-tags read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -555,10 +571,13 @@ function createUserStateRepository({
           };
         }
       } catch (error) {
-        console.warn(
-          `[UserStateRepository] Primary purchase-status read failed for ${normalizedUserId}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "UserStateRepository",
+          operation: "purchase-status read",
+          identifier: normalizedUserId,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -594,10 +613,12 @@ function createUserStateRepository({
         const pgDocs = await readPgPurchaseStatuses(userIds);
         if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
-        console.warn(
-          "[UserStateRepository] Primary purchase-status list failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "UserStateRepository",
+          operation: "purchase-status list read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 

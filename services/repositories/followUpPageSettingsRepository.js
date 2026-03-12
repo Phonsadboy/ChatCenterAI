@@ -4,6 +4,7 @@ const {
   normalizePlatform,
   safeStringify,
   toLegacyId,
+  warnPrimaryReadFailure,
 } = require("./shared");
 
 function normalizeSettingsPayload(value = {}) {
@@ -196,10 +197,12 @@ function createFollowUpPageSettingsRepository({
         const pgDocs = await readPgListAll();
         if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
-        console.warn(
-          "[FollowUpPageSettingsRepository] Primary listAll read failed, falling back to Mongo:",
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "FollowUpPageSettingsRepository",
+          operation: "listAll read",
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -249,10 +252,13 @@ function createFollowUpPageSettingsRepository({
         const pgDocs = await readPgByPlatform(normalizedPlatform);
         if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
       } catch (error) {
-        console.warn(
-          `[FollowUpPageSettingsRepository] Primary platform read failed for ${normalizedPlatform}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "FollowUpPageSettingsRepository",
+          operation: "platform read",
+          identifier: normalizedPlatform,
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 
@@ -293,10 +299,13 @@ function createFollowUpPageSettingsRepository({
         const pgDoc = await readPgExact(normalizedPlatform, normalizedBotId);
         if (pgDoc || !canUseMongo()) return pgDoc;
       } catch (error) {
-        console.warn(
-          `[FollowUpPageSettingsRepository] Primary exact read failed for ${buildSettingsKey(normalizedPlatform, normalizedBotId)}, falling back to Mongo:`,
-          error?.message || error,
-        );
+        warnPrimaryReadFailure({
+          repository: "FollowUpPageSettingsRepository",
+          operation: "exact read",
+          identifier: buildSettingsKey(normalizedPlatform, normalizedBotId),
+          canUseMongo: canUseMongo(),
+          error,
+        });
       }
     }
 

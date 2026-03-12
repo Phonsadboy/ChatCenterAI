@@ -6,6 +6,9 @@ const BOT_COLLECTION_BY_PLATFORM = {
   instagram: "instagram_bots",
   whatsapp: "whatsapp_bots",
 };
+const primaryReadWarningTimestamps = new Map();
+const PRIMARY_READ_WARNING_TTL_MS = 30_000;
+const MAX_PRIMARY_WARNING_KEYS = 5000;
 
 function normalizePlatform(platform, fallback = "line") {
   if (typeof platform !== "string") return fallback;
@@ -76,6 +79,43 @@ function safeStringify(value) {
   }
 }
 
+function warnPrimaryReadFailure({
+  repository,
+  operation,
+  identifier = "",
+  canUseMongo = true,
+  error,
+}) {
+  const repositoryName = String(repository || "Repository").trim() || "Repository";
+  const operationName = String(operation || "read").trim() || "read";
+  const target = String(identifier || "").trim();
+  const errorMessage = error?.message || String(error || "unknown error");
+  const warningKey = `${repositoryName}:${operationName}:${target}:${errorMessage}`;
+  const now = Date.now();
+  const previous = primaryReadWarningTimestamps.get(warningKey);
+  if (previous && now - previous < PRIMARY_READ_WARNING_TTL_MS) {
+    return;
+  }
+  primaryReadWarningTimestamps.set(warningKey, now);
+  if (primaryReadWarningTimestamps.size > MAX_PRIMARY_WARNING_KEYS) {
+    primaryReadWarningTimestamps.clear();
+  }
+
+  const targetSuffix = target ? ` for ${target}` : "";
+  if (canUseMongo) {
+    console.warn(
+      `[${repositoryName}] Primary ${operationName} failed${targetSuffix}, falling back to Mongo:`,
+      errorMessage,
+    );
+    return;
+  }
+
+  console.warn(
+    `[${repositoryName}] Primary ${operationName} failed${targetSuffix}; Mongo fallback disabled:`,
+    errorMessage,
+  );
+}
+
 function applyProjection(document, projection) {
   if (!document || !projection || typeof projection !== "object") {
     return document;
@@ -119,4 +159,5 @@ module.exports = {
   toLegacyId,
   toObjectId,
   toText,
+  warnPrimaryReadFailure,
 };

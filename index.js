@@ -75,6 +75,7 @@ const {
   getObjectStream: getBucketObjectStream,
   headObject: headBucketObject,
   isBucketConfigured,
+  listObjects: listBucketObjects,
   putObject: putBucketObject,
 } = require("./infra/storage/bucketStorage");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
@@ -270,7 +271,7 @@ const {
 } = require("./utils/chatHistoryMigration");
 const { initTelemetry, notifyPageVisit, notifyInstructionAIUsage } = require("./utils/telemetry");
 
-function resolveInstructionAssetUrl(url, fallbackFileName) {
+function resolvePublicAssetUrl(url, fallbackPath = null) {
   const base =
     typeof PUBLIC_BASE_URL === "string"
       ? PUBLIC_BASE_URL.replace(/\/$/, "")
@@ -279,8 +280,8 @@ function resolveInstructionAssetUrl(url, fallbackFileName) {
     if (typeof url === "string" && url.trim()) {
       return url.trim();
     }
-    if (fallbackFileName) {
-      return `/assets/instructions/${fallbackFileName}`;
+    if (typeof fallbackPath === "string" && fallbackPath.trim()) {
+      return fallbackPath.trim();
     }
     return null;
   })();
@@ -288,13 +289,18 @@ function resolveInstructionAssetUrl(url, fallbackFileName) {
   if (/^https?:\/\//i.test(candidate)) {
     return candidate;
   }
-  const pathPart = candidate.startsWith("/")
-    ? candidate
-    : `/assets/instructions/${candidate}`;
+  const pathPart = candidate.startsWith("/") ? candidate : `/${candidate}`;
   if (base) {
     return `${base}${pathPart}`;
   }
   return pathPart;
+}
+
+function resolveInstructionAssetUrl(url, fallbackFileName) {
+  const fallbackPath = fallbackFileName
+    ? `/assets/instructions/${fallbackFileName}`
+    : null;
+  return resolvePublicAssetUrl(url, fallbackPath);
 }
 
 // Line Client จะถูกสร้างเมื่อต้องการใช้งานจริง (ไม่สร้างตั้งแต่เริ่มต้น)
@@ -320,21 +326,21 @@ const LINE_BOT_CREDENTIAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const lineBotCredentialCache = new Map();
 
 async function getLineBotCredentials(botId) {
-  const id = typeof botId === "string" ? botId.trim() : botId ? String(botId) : "";
-  if (!ObjectId.isValid(id)) return null;
+  const id = typeof botId === "string"
+    ? botId.trim()
+    : botId
+      ? String(botId).trim()
+      : "";
+  if (!id) return null;
 
   const cached = lineBotCredentialCache.get(id);
   if (cached && Date.now() - cached.fetchedAt < LINE_BOT_CREDENTIAL_CACHE_TTL_MS) {
     return cached.credentials;
   }
 
-  const db = isMongoRuntimeEnabled()
-    ? (await connectDB()).db("chatbot")
-    : null;
-  const bot = await db.collection("line_bots").findOne(
-    { _id: new ObjectId(id) },
-    { projection: { channelAccessToken: 1, channelSecret: 1 } },
-  );
+  const bot = await getBotRepository().findById("line", id, {
+    projection: { channelAccessToken: 1, channelSecret: 1 },
+  });
 
   const credentials =
     bot && bot.channelAccessToken && bot.channelSecret
@@ -7538,25 +7544,32 @@ async function sendLineConversationStarterSequence(
     }
 
     if (message.type === "image") {
-      if (!message.url) continue;
+      const originalContentUrl = resolvePublicAssetUrl(message.url);
+      if (!originalContentUrl) continue;
+      const previewImageUrl =
+        resolvePublicAssetUrl(message.previewUrl, originalContentUrl)
+        || originalContentUrl;
       payloads.push({
         type: "image",
-        originalContentUrl: message.url,
-        previewImageUrl: message.previewUrl || message.url,
+        originalContentUrl,
+        previewImageUrl,
       });
       continue;
     }
 
     if (message.type === "video") {
-      if (!message.url) continue;
-      const previewUrl =
-        typeof message.previewUrl === "string" ? message.previewUrl.trim() : "";
+      const originalContentUrl = resolvePublicAssetUrl(message.url);
+      if (!originalContentUrl) continue;
+      const previewUrl = resolvePublicAssetUrl(
+        message.previewUrl,
+        originalContentUrl,
+      );
       if (!previewUrl) {
         continue;
       }
       payloads.push({
         type: "video",
-        originalContentUrl: message.url,
+        originalContentUrl,
         previewImageUrl: previewUrl,
       });
     }
@@ -7647,6 +7660,10 @@ async function sendFacebookConversationStarterSequence(
     }
 
     if (message.type === "image" && message.url) {
+      const imageUrl = resolvePublicAssetUrl(message.url);
+      if (!imageUrl) continue;
+      const previewUrl =
+        resolvePublicAssetUrl(message.previewUrl, imageUrl) || imageUrl;
       imageCounter += 1;
       const label =
         (typeof message.alt === "string" && message.alt.trim()) ||
@@ -7655,8 +7672,8 @@ async function sendFacebookConversationStarterSequence(
       const assetsMap = buildAssetsLookup([
         {
           label,
-          url: message.url,
-          thumbUrl: message.previewUrl || message.url,
+          url: imageUrl,
+          thumbUrl: previewUrl,
           fileName: message.fileName || "",
           alt: message.alt || "",
         },
@@ -7680,6 +7697,8 @@ async function sendFacebookConversationStarterSequence(
     }
 
     if (message.type === "video" && message.url) {
+      const videoUrl = resolvePublicAssetUrl(message.url);
+      if (!videoUrl) continue;
       try {
         await axios.post(
           `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
@@ -7689,7 +7708,7 @@ async function sendFacebookConversationStarterSequence(
               attachment: {
                 type: "video",
                 payload: {
-                  url: message.url,
+                  url: videoUrl,
                   is_reusable: true,
                 },
               },
@@ -7768,6 +7787,10 @@ async function sendInstagramConversationStarterSequence(
     }
 
     if (message.type === "image" && message.url) {
+      const imageUrl = resolvePublicAssetUrl(message.url);
+      if (!imageUrl) continue;
+      const previewUrl =
+        resolvePublicAssetUrl(message.previewUrl, imageUrl) || imageUrl;
       imageCounter += 1;
       const label =
         (typeof message.alt === "string" && message.alt.trim()) ||
@@ -7776,8 +7799,8 @@ async function sendInstagramConversationStarterSequence(
       const assetsMap = buildAssetsLookup([
         {
           label,
-          url: message.url,
-          thumbUrl: message.previewUrl || message.url,
+          url: imageUrl,
+          thumbUrl: previewUrl,
           fileName: message.fileName || "",
           alt: message.alt || "",
         },
@@ -7802,6 +7825,8 @@ async function sendInstagramConversationStarterSequence(
     }
 
     if (message.type === "video" && message.url) {
+      const videoUrl = resolvePublicAssetUrl(message.url);
+      if (!videoUrl) continue;
       try {
         await axios.post(
           `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${instagramSenderId}/messages`,
@@ -7811,7 +7836,7 @@ async function sendInstagramConversationStarterSequence(
               attachment: {
                 type: "video",
                 payload: {
-                  url: message.url,
+                  url: videoUrl,
                   is_reusable: true,
                 },
               },
@@ -7884,6 +7909,10 @@ async function sendWhatsAppConversationStarterSequence(
     }
 
     if (message.type === "image" && message.url) {
+      const imageUrl = resolvePublicAssetUrl(message.url);
+      if (!imageUrl) continue;
+      const previewUrl =
+        resolvePublicAssetUrl(message.previewUrl, imageUrl) || imageUrl;
       imageCounter += 1;
       const label =
         (typeof message.alt === "string" && message.alt.trim()) ||
@@ -7892,8 +7921,8 @@ async function sendWhatsAppConversationStarterSequence(
       const assetsMap = buildAssetsLookup([
         {
           label,
-          url: message.url,
-          thumbUrl: message.previewUrl || message.url,
+          url: imageUrl,
+          thumbUrl: previewUrl,
           fileName: message.fileName || "",
           alt: message.alt || "",
         },
@@ -7918,6 +7947,8 @@ async function sendWhatsAppConversationStarterSequence(
     }
 
     if (message.type === "video" && message.url) {
+      const videoUrl = resolvePublicAssetUrl(message.url);
+      if (!videoUrl) continue;
       try {
         const payload = {
           messaging_product: "whatsapp",
@@ -7925,7 +7956,7 @@ async function sendWhatsAppConversationStarterSequence(
           to: userId,
           type: "video",
           video: {
-            link: message.url,
+            link: videoUrl,
           },
         };
         const trimmedCaption =
@@ -10081,6 +10112,11 @@ function mapPostgresInstructionV2Row(row = {}) {
   };
 }
 
+function buildInstructionV2SourceCondition(columnName = "source_kind") {
+  const column = String(columnName || "source_kind").trim() || "source_kind";
+  return `(${column} = 'instructions_v2' OR ${column} IS NULL OR ${column} = '')`;
+}
+
 function buildInstructionV2SelectSql(whereClause = "") {
   return `
     SELECT
@@ -10096,7 +10132,7 @@ function buildInstructionV2SelectSql(whereClause = "") {
       created_at,
       updated_at
     FROM instructions
-    WHERE source_kind = 'instructions_v2'
+    WHERE ${buildInstructionV2SourceCondition("source_kind")}
     ${whereClause}
   `;
 }
@@ -10113,6 +10149,394 @@ async function getPostgresInstructionV2ByRef(instructionRef) {
   );
   const row = result.rows[0] || null;
   return row ? mapPostgresInstructionV2Row(row) : null;
+}
+
+function convertImportedSheetObjectsToColumnsRows(data = []) {
+  if (!Array.isArray(data) || data.length === 0) {
+    return { columns: ["คอลัมน์ 1"], rows: [[""]] };
+  }
+
+  const columnSet = new Set();
+  data.forEach((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return;
+    Object.keys(row).forEach((key) => {
+      if (typeof key === "string" && key.trim()) {
+        columnSet.add(key);
+      }
+    });
+  });
+  const columns = Array.from(columnSet);
+  if (!columns.length) {
+    return { columns: ["คอลัมน์ 1"], rows: [[""]] };
+  }
+
+  const rows = data.map((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      return columns.map(() => "");
+    }
+    return columns.map((column) =>
+      row[column] !== undefined && row[column] !== null ? row[column] : "",
+    );
+  });
+
+  return { columns, rows };
+}
+
+function normalizeInstructionTableRowsForExport(item = null) {
+  if (!item || typeof item !== "object") return [];
+  const parseJsonIfString = (value) => {
+    if (typeof value !== "string") return value;
+    try {
+      return JSON.parse(value);
+    } catch (_) {
+      return value;
+    }
+  };
+
+  const candidate = parseJsonIfString(item.data ?? item.content);
+  if (Array.isArray(candidate)) {
+    if (!candidate.length) return [];
+    if (
+      typeof candidate[0] === "object"
+      && candidate[0] !== null
+      && !Array.isArray(candidate[0])
+    ) {
+      return candidate;
+    }
+    return candidate.map((row) => {
+      if (!Array.isArray(row)) {
+        return { value: row === null || row === undefined ? "" : row };
+      }
+      return row.reduce((acc, value, index) => {
+        acc[`Column ${index + 1}`] =
+          value === null || value === undefined ? "" : value;
+        return acc;
+      }, {});
+    });
+  }
+
+  if (candidate && typeof candidate === "object") {
+    if (Array.isArray(candidate.columns) && Array.isArray(candidate.rows)) {
+      return candidate.rows.map((row) => {
+        const rowArray = Array.isArray(row) ? row : [];
+        return candidate.columns.reduce((acc, columnName, index) => {
+          const key =
+            typeof columnName === "string" && columnName.trim()
+              ? columnName.trim()
+              : `Column ${index + 1}`;
+          acc[key] =
+            rowArray[index] === null || rowArray[index] === undefined
+              ? ""
+              : rowArray[index];
+          return acc;
+        }, {});
+      });
+    }
+    if (Array.isArray(candidate.rows)) {
+      return candidate.rows;
+    }
+    return [candidate];
+  }
+
+  return [];
+}
+
+function mergeImportedTableData(existingData, incomingData) {
+  if (
+    !existingData
+    || typeof existingData !== "object"
+    || !Array.isArray(existingData.columns)
+    || !Array.isArray(existingData.rows)
+  ) {
+    return incomingData;
+  }
+  if (
+    !incomingData
+    || typeof incomingData !== "object"
+    || !Array.isArray(incomingData.columns)
+    || !Array.isArray(incomingData.rows)
+  ) {
+    return existingData;
+  }
+
+  const mergedColumns = [...existingData.columns.map((column) => String(column))];
+  const normalizedIncomingColumns = incomingData.columns.map((column) =>
+    String(column),
+  );
+  normalizedIncomingColumns.forEach((normalized) => {
+    if (!mergedColumns.includes(normalized)) {
+      mergedColumns.push(normalized);
+    }
+  });
+
+  const mappedIncomingRows = incomingData.rows.map((row) => {
+    const sourceRow = Array.isArray(row) ? row : [];
+    return mergedColumns.map((column) => {
+      const sourceIndex = normalizedIncomingColumns.indexOf(column);
+      if (sourceIndex < 0) return "";
+      return sourceRow[sourceIndex] !== undefined ? sourceRow[sourceIndex] : "";
+    });
+  });
+
+  return {
+    columns: mergedColumns,
+    rows: [...existingData.rows, ...mappedIncomingRows],
+  };
+}
+
+async function executePostgresInstructionSheetImport(mappings = [], filePath) {
+  const workbook = XLSX.readFile(filePath);
+  const results = [];
+
+  for (const map of mappings) {
+    const sheetName = String(map?.sheetName || "").trim();
+    if (!sheetName) continue;
+    try {
+      const action = String(map?.action || "").trim().toLowerCase();
+      if (action === "ignore") continue;
+
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet) {
+        results.push({ sheetName, success: false, error: "Sheet not found" });
+        continue;
+      }
+
+      const rawData = XLSX.utils.sheet_to_json(sheet);
+      const formattedData = convertImportedSheetObjectsToColumnsRows(rawData);
+
+      if (action === "create") {
+        const now = new Date();
+        const targetName =
+          typeof map?.targetName === "string" && map.targetName.trim()
+            ? map.targetName.trim()
+            : sheetName;
+        const dataItem = {
+          itemId: generateDataItemId(),
+          title: "Main Data",
+          type: "table",
+          order: 1,
+          content: "",
+          data: formattedData,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const insertResult = await pgQuery(
+          `
+            INSERT INTO instructions (
+              legacy_instruction_id,
+              source_kind,
+              name,
+              description,
+              type,
+              content,
+              data,
+              conversation_starter,
+              current_version,
+              created_at,
+              updated_at
+            ) VALUES ($1,'instructions_v2',$2,$3,'instruction','',$4::jsonb,$5::jsonb,1,$6,$6)
+            RETURNING id::text AS id, legacy_instruction_id
+          `,
+          [
+            generateInstructionId(),
+            targetName,
+            `Imported from ${sheetName}`,
+            JSON.stringify([dataItem]),
+            JSON.stringify({
+              enabled: false,
+              messages: [],
+              updatedAt: now,
+            }),
+            now,
+          ],
+        );
+
+        const insertedRow = insertResult.rows[0] || {};
+        results.push({
+          sheetName,
+          success: true,
+          action: "created",
+          targetName,
+          instructionObjectId: insertedRow.id || null,
+          instructionId: insertedRow.legacy_instruction_id || insertedRow.id || null,
+        });
+        continue;
+      }
+
+      if (action === "update") {
+        const targetRef =
+          typeof map?.targetId === "string" ? map.targetId.trim() : "";
+        if (!targetRef) {
+          results.push({
+            sheetName,
+            success: false,
+            error: "Invalid Target ID",
+          });
+          continue;
+        }
+
+        const instruction = await getPostgresInstructionV2ByRef(targetRef);
+        if (!instruction) {
+          results.push({
+            sheetName,
+            success: false,
+            error: "Target instruction not found",
+          });
+          continue;
+        }
+
+        const now = new Date();
+        const mode = String(map?.mode || "replace").trim().toLowerCase();
+        const newItems = Array.isArray(instruction.dataItems)
+          ? instruction.dataItems.map((item) => ({
+            ...item,
+            data:
+              item && typeof item.data === "object" && item.data
+                ? { ...item.data }
+                : item?.data,
+          }))
+          : [];
+
+        let targetItem = newItems.find((item) => item?.type === "table");
+        if (!targetItem) {
+          targetItem = {
+            itemId: generateDataItemId(),
+            title: sheetName,
+            type: "table",
+            order: newItems.length + 1,
+            content: "",
+            data: formattedData,
+            createdAt: now,
+            updatedAt: now,
+          };
+          newItems.push(targetItem);
+        } else {
+          targetItem.data =
+            mode === "append"
+              ? mergeImportedTableData(targetItem.data, formattedData)
+              : formattedData;
+          targetItem.updatedAt = now;
+          const index = newItems.findIndex(
+            (item) => item?.itemId === targetItem.itemId,
+          );
+          if (index >= 0) {
+            newItems[index] = targetItem;
+          }
+        }
+
+        const nextVersion = Math.max(
+          1,
+          Number.isInteger(instruction.version) ? instruction.version : 1,
+        ) + 1;
+        await pgQuery(
+          `
+            UPDATE instructions
+            SET
+              data = $2::jsonb,
+              current_version = $3,
+              updated_at = $4
+            WHERE id = $1::uuid
+              AND ${buildInstructionV2SourceCondition("source_kind")}
+          `,
+          [
+            instruction._id,
+            JSON.stringify(newItems),
+            nextVersion,
+            now,
+          ],
+        );
+
+        results.push({
+          sheetName,
+          success: true,
+          action: "updated",
+          targetName: instruction.name,
+          instructionObjectId: instruction._id,
+          instructionId: instruction.instructionId || null,
+        });
+        continue;
+      }
+
+      results.push({
+        sheetName,
+        success: false,
+        error: "Unknown action",
+      });
+    } catch (err) {
+      results.push({
+        sheetName,
+        success: false,
+        error: err?.message || String(err),
+      });
+    }
+  }
+
+  return results;
+}
+
+async function exportPostgresInstructionSheets(instructionIds = []) {
+  const normalizedIds = Array.from(
+    new Set(
+      (Array.isArray(instructionIds) ? instructionIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!normalizedIds.length) {
+    throw new Error("No valid instruction IDs provided.");
+  }
+
+  const result = await pgQuery(
+    `
+      ${buildInstructionV2SelectSql(
+        "AND (id::text = ANY($1::text[]) OR legacy_instruction_id = ANY($1::text[]))",
+      )}
+      ORDER BY updated_at DESC, created_at DESC
+    `,
+    [normalizedIds],
+  );
+  const instructions = result.rows.map((row) => mapPostgresInstructionV2Row(row));
+  if (!instructions.length) {
+    throw new Error("No instructions found to export.");
+  }
+
+  const workbook = XLSX.utils.book_new();
+  instructions.forEach((instruction, index) => {
+    const fallbackName = `Instruction_${index + 1}`;
+    const baseSheetName = sanitizeSheetName(
+      instruction.name || fallbackName,
+      fallbackName,
+    );
+    let sheetName = baseSheetName;
+    let suffix = 1;
+    while (workbook.SheetNames.includes(sheetName)) {
+      const trimmedBase = baseSheetName.substring(0, 28);
+      sheetName = `${trimmedBase}_${suffix}`;
+      suffix += 1;
+    }
+
+    const dataItems = Array.isArray(instruction.dataItems)
+      ? instruction.dataItems
+      : [];
+    const tableItem = dataItems.find((item) => item?.type === "table");
+    const normalizedRows = normalizeInstructionTableRowsForExport(tableItem);
+    const rows =
+      normalizedRows.length > 0
+        ? normalizedRows
+        : dataItems.length > 0
+          ? dataItems.map((item) => ({
+            type: item?.type || "",
+            title: item?.title || "",
+            content: item?.content || "",
+            order: item?.order ?? "",
+          }))
+          : [{ note: "ไม่มีข้อมูลใน instruction นี้" }];
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  });
+
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
 }
 
 async function getInstructionsV2() {
@@ -10172,7 +10596,7 @@ app.get("/api/instructions-v2/:id", async (req, res) => {
             created_at,
             updated_at
           FROM instructions
-          WHERE source_kind = 'instructions_v2'
+          WHERE ${buildInstructionV2SourceCondition("source_kind")}
             AND (id::text = $1 OR legacy_instruction_id = $1)
           LIMIT 1
         `,
@@ -10346,7 +10770,7 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
             current_version = $5,
             updated_at = $6
           WHERE id = $1::uuid
-            AND source_kind = 'instructions_v2'
+            AND ${buildInstructionV2SourceCondition("source_kind")}
           RETURNING
             id::text AS id,
             legacy_instruction_id,
@@ -10454,7 +10878,7 @@ app.delete("/api/instructions-v2/:id", async (req, res) => {
         `
           DELETE FROM instructions
           WHERE id = $1::uuid
-            AND source_kind = 'instructions_v2'
+            AND ${buildInstructionV2SourceCondition("source_kind")}
         `,
         [existing._id],
       );
@@ -10516,7 +10940,7 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
         `
           SELECT 1
           FROM instructions
-          WHERE source_kind = 'instructions_v2'
+          WHERE ${buildInstructionV2SourceCondition("source_kind")}
             AND lower(name) = lower($1)
           LIMIT 1
         `,
@@ -10683,7 +11107,11 @@ app.post(
 
       const client = await connectDB();
       const db = client.db("chatbot");
-      const coll = db.collection("follow_up_assets");
+      const usePostgresFollowUpAssets =
+        !isMongoRuntimeEnabled() && canUsePostgresAssets();
+      const coll = usePostgresFollowUpAssets
+        ? null
+        : db.collection("follow_up_assets");
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -10703,14 +11131,23 @@ app.post(
           .update(optimized)
           .digest("hex");
 
-        const existing = await coll.findOne({ sha256 });
+        const existing = usePostgresFollowUpAssets
+          ? await findPostgresFollowUpAssetByChecksum("starter", sha256)
+          : await coll.findOne({ sha256 });
         if (existing) {
+          const urls = resolveScopedFollowUpAssetUrls(existing, urlBase);
+          const existingId =
+            existing._id?.toString?.()
+            || existing.legacyAssetId
+            || existing.assetId
+            || existing.id
+            || null;
           assets.push({
-            id: existing._id?.toString(),
-            assetId: existing._id?.toString(),
-            url: existing.url,
-            previewUrl: existing.thumbUrl || existing.url,
-            thumbUrl: existing.thumbUrl || existing.url,
+            id: existingId,
+            assetId: existingId,
+            url: urls.url,
+            previewUrl: urls.thumbUrl || urls.url,
+            thumbUrl: urls.thumbUrl || urls.url,
             width: existing.width || null,
             height: existing.height || null,
             size: existing.size || null,
@@ -10759,6 +11196,7 @@ app.post(
           }),
         ]);
 
+        const now = new Date();
         const assetDoc = {
           fileName,
           thumbName,
@@ -10776,12 +11214,21 @@ app.post(
           url: `${urlBase}/assets/followup/${fileName}`,
           thumbUrl: `${urlBase}/assets/followup/${thumbName}`,
           originalName: file.originalname || "",
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          createdAt: now,
+          updatedAt: now,
         };
-
-        const insertResult = await coll.insertOne(assetDoc);
-        const assetId = insertResult.insertedId?.toString();
+        let assetId = null;
+        if (usePostgresFollowUpAssets) {
+          const saved = await insertPostgresFollowUpAsset("starter", assetDoc);
+          assetId =
+            saved?._id?.toString?.()
+            || saved?.legacyAssetId
+            || saved?.id
+            || null;
+        } else {
+          const insertResult = await coll.insertOne(assetDoc);
+          assetId = insertResult.insertedId?.toString() || null;
+        }
 
         assets.push({
           id: assetId,
@@ -10854,7 +11301,7 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
             current_version = $3,
             updated_at = $4
           WHERE id = $1::uuid
-            AND source_kind = 'instructions_v2'
+            AND ${buildInstructionV2SourceCondition("source_kind")}
         `,
         [
           instruction._id,
@@ -10965,7 +11412,7 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
             current_version = $3,
             updated_at = $4
           WHERE id = $1::uuid
-            AND source_kind = 'instructions_v2'
+            AND ${buildInstructionV2SourceCondition("source_kind")}
         `,
         [
           instruction._id,
@@ -11058,7 +11505,7 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
             current_version = $3,
             updated_at = $4
           WHERE id = $1::uuid
-            AND source_kind = 'instructions_v2'
+            AND ${buildInstructionV2SourceCondition("source_kind")}
         `,
         [
           instruction._id,
@@ -11150,7 +11597,7 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
             current_version = $3,
             updated_at = $4
           WHERE id = $1::uuid
-            AND source_kind = 'instructions_v2'
+            AND ${buildInstructionV2SourceCondition("source_kind")}
         `,
         [
           instruction._id,
@@ -11233,7 +11680,7 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
             current_version = $3,
             updated_at = $4
           WHERE id = $1::uuid
-            AND source_kind = 'instructions_v2'
+            AND ${buildInstructionV2SourceCondition("source_kind")}
         `,
         [
           instruction._id,
@@ -11315,7 +11762,7 @@ app.get("/api/instructions-v2/:id/preview", async (req, res) => {
             created_at,
             updated_at
           FROM instructions
-          WHERE source_kind = 'instructions_v2'
+          WHERE ${buildInstructionV2SourceCondition("source_kind")}
             AND (id::text = $1 OR legacy_instruction_id = $1)
           LIMIT 1
         `,
@@ -11449,9 +11896,11 @@ app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), as
       return res.status(400).json({ success: false, error: "กรุณาอัพโหลดไฟล์ Excel" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const service = new InstructionDataService(db);
+    const service = new InstructionDataService({
+      collection() {
+        return {};
+      },
+    });
 
     // Save buffer to temp file
     const tempDir = os.tmpdir();
@@ -11463,7 +11912,26 @@ app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), as
     const previews = service.previewImportSheets(filePath);
 
     // Get list of existing instructions for mapping
-    const instructions = await db.collection("instructions_v2").find({}, { projection: { _id: 1, name: 1 } }).toArray();
+    const instructions = shouldUsePostgresInstructionsV2()
+      ? (await getInstructionsV2()).map((instruction) => ({
+        _id: instruction._id,
+        name: instruction.name || "",
+      }))
+      : await (async () => {
+        const client = await connectDB();
+        const db = client.db("chatbot");
+        const docs = await db
+          .collection("instructions_v2")
+          .find({}, { projection: { _id: 1, name: 1 } })
+          .toArray();
+        return docs.map((doc) => ({
+          _id:
+            doc?._id && typeof doc._id.toString === "function"
+              ? doc._id.toString()
+              : doc?._id || null,
+          name: doc?.name || "",
+        }));
+      })();
 
     res.json({
       success: true,
@@ -11494,23 +11962,28 @@ app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
       return res.status(400).json({ success: false, error: "ไฟล์หมดอายุหรือถูกลบไปแล้ว กรุณาอัพโหลดใหม่" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const service = new InstructionDataService(db);
+    let results = [];
+    if (shouldUsePostgresInstructionsV2()) {
+      results = await executePostgresInstructionSheetImport(mappings, filePath);
+    } else {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const service = new InstructionDataService(db);
 
-    const results = await service.executeImport(mappings, filePath);
-    for (const result of results) {
-      if (!result || result.success !== true) continue;
-      if (!["created", "updated"].includes(result.action)) continue;
-      if (!result.instructionObjectId) continue;
-      const snapshotResult = await createDashboardSnapshotOrThrow(
-        result.instructionObjectId,
-        "import_sheets",
-        db,
-        "dashboard_api",
-      );
-      result.version = snapshotResult.version;
-      result.snapshotAt = snapshotResult.snapshotAt;
+      results = await service.executeImport(mappings, filePath);
+      for (const result of results) {
+        if (!result || result.success !== true) continue;
+        if (!["created", "updated"].includes(result.action)) continue;
+        if (!result.instructionObjectId) continue;
+        const snapshotResult = await createDashboardSnapshotOrThrow(
+          result.instructionObjectId,
+          "import_sheets",
+          db,
+          "dashboard_api",
+        );
+        result.version = snapshotResult.version;
+        result.snapshotAt = snapshotResult.snapshotAt;
+      }
     }
 
     // Clean up
@@ -11533,11 +12006,14 @@ app.post("/api/instructions-v2/export-sheets", async (req, res) => {
       return res.status(400).json({ success: false, error: "กรุณาเลือก Instruction ที่ต้องการส่งออก" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const service = new InstructionDataService(db);
-
-    const buffer = await service.exportInstructions(instructionIds);
+    const buffer = shouldUsePostgresInstructionsV2()
+      ? await exportPostgresInstructionSheets(instructionIds)
+      : await (async () => {
+        const client = await connectDB();
+        const db = client.db("chatbot");
+        const service = new InstructionDataService(db);
+        return service.exportInstructions(instructionIds);
+      })();
 
     const filename = `instructions_export_${moment().format('YYYYMMDD_HHmm')}.xlsx`;
 
@@ -14016,7 +14492,7 @@ async function resolveInstructionSelectionsV2(
             created_at,
             updated_at
           FROM instructions
-          WHERE source_kind = 'instructions_v2'
+          WHERE ${buildInstructionV2SourceCondition("source_kind")}
             AND legacy_instruction_id = ANY($1::text[])
         `,
         [instructionIds],
@@ -15086,6 +15562,189 @@ function mapPostgresInstructionAssetRow(row = {}) {
   return merged;
 }
 
+function resolveScopedFollowUpAssetUrls(asset = {}, urlBase = "") {
+  const base = typeof urlBase === "string" ? urlBase.replace(/\/$/, "") : "";
+  const fileName =
+    typeof asset.fileName === "string" && asset.fileName.trim()
+      ? asset.fileName.trim()
+      : null;
+  const thumbFileName =
+    typeof asset.thumbFileName === "string" && asset.thumbFileName.trim()
+      ? asset.thumbFileName.trim()
+      : typeof asset.thumbName === "string" && asset.thumbName.trim()
+        ? asset.thumbName.trim()
+        : null;
+  const fallbackPath = fileName ? `/assets/followup/${fileName}` : null;
+  const fallbackThumbPath = thumbFileName
+    ? `/assets/followup/${thumbFileName}`
+    : fallbackPath;
+  const resolveWithBase = (rawUrl, fallbackPathValue) => {
+    if (typeof rawUrl === "string" && rawUrl.trim()) {
+      const normalized = rawUrl.trim();
+      if (/^https?:\/\//i.test(normalized)) {
+        return normalized;
+      }
+      if (base) {
+        return normalized.startsWith("/")
+          ? `${base}${normalized}`
+          : `${base}/${normalized.replace(/^\/+/, "")}`;
+      }
+      return resolvePublicAssetUrl(normalized, fallbackPathValue);
+    }
+    if (fallbackPathValue) {
+      if (base) {
+        return `${base}${fallbackPathValue.startsWith("/") ? fallbackPathValue : `/${fallbackPathValue}`}`;
+      }
+      return resolvePublicAssetUrl(null, fallbackPathValue);
+    }
+    return null;
+  };
+  return {
+    url: resolveWithBase(asset.url, fallbackPath),
+    thumbUrl: resolveWithBase(asset.thumbUrl, fallbackThumbPath),
+  };
+}
+
+function mapPostgresFollowUpAssetRow(row = {}) {
+  const metadata =
+    row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const fileNameCandidate =
+    metadata.fileName
+    || metadata.filename
+    || extractFileNameFromStorageKey(row.storage_key)
+    || "";
+  const thumbNameCandidate =
+    metadata.thumbFileName
+    || metadata.thumbName
+    || extractFileNameFromStorageKey(row.thumb_storage_key)
+    || "";
+  return {
+    _id: row.legacy_asset_id || row.id || null,
+    legacyAssetId: row.legacy_asset_id || null,
+    fileName: fileNameCandidate || null,
+    thumbFileName: thumbNameCandidate || null,
+    storageKey: row.storage_key || metadata.storageKey || null,
+    thumbStorageKey: row.thumb_storage_key || metadata.thumbStorageKey || null,
+    sha256:
+      typeof metadata.sha256 === "string" && metadata.sha256.trim()
+        ? metadata.sha256.trim()
+        : "",
+    width: Number.isFinite(Number(metadata.width)) ? Number(metadata.width) : null,
+    height: Number.isFinite(Number(metadata.height)) ? Number(metadata.height) : null,
+    size: Number.isFinite(Number(metadata.size)) ? Number(metadata.size) : null,
+    mime:
+      typeof metadata.mime === "string" && metadata.mime.trim()
+        ? metadata.mime.trim()
+        : "image/jpeg",
+    url: typeof metadata.url === "string" ? metadata.url : "",
+    thumbUrl: typeof metadata.thumbUrl === "string" ? metadata.thumbUrl : "",
+    originalName:
+      typeof metadata.originalName === "string" ? metadata.originalName : "",
+    createdAt: row.created_at || metadata.createdAt || null,
+    updatedAt: row.updated_at || metadata.updatedAt || null,
+  };
+}
+
+async function findPostgresFollowUpAssetByChecksum(scope, sha256) {
+  if (!canUsePostgresAssets()) return null;
+  const normalizedScope = String(scope || "").trim();
+  const normalizedChecksum = String(sha256 || "").trim();
+  if (!normalizedScope || !normalizedChecksum) return null;
+
+  const result = await pgQuery(
+    `
+      SELECT
+        id::text AS id,
+        legacy_asset_id,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+      FROM instruction_assets
+      WHERE COALESCE(metadata->>'scope', '') = $1
+        AND COALESCE(metadata->>'sha256', '') = $2
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    `,
+    [normalizedScope, normalizedChecksum],
+  );
+  return result.rows[0] ? mapPostgresFollowUpAssetRow(result.rows[0]) : null;
+}
+
+async function insertPostgresFollowUpAsset(scope, assetDoc = {}) {
+  if (!canUsePostgresAssets()) {
+    return null;
+  }
+  const normalizedScope = String(scope || "").trim();
+  const now = assetDoc.createdAt || assetDoc.updatedAt || new Date();
+  const labelCandidate =
+    typeof assetDoc.originalName === "string" && assetDoc.originalName.trim()
+      ? assetDoc.originalName.trim()
+      : typeof assetDoc.fileName === "string" && assetDoc.fileName.trim()
+        ? assetDoc.fileName.trim()
+        : `${normalizedScope || "asset"}_${Date.now()}`;
+  const slugBase = generateSlugFromLabel(labelCandidate) || `${normalizedScope || "asset"}_${Date.now()}`;
+  const legacyAssetId = `${normalizedScope || "asset"}_${Date.now()}_${crypto
+    .randomBytes(6)
+    .toString("hex")}`;
+
+  const metadata = {
+    scope: normalizedScope || "followup",
+    fileName: assetDoc.fileName || null,
+    thumbFileName: assetDoc.thumbFileName || assetDoc.thumbName || null,
+    storageKey: assetDoc.storageKey || null,
+    thumbStorageKey: assetDoc.thumbStorageKey || null,
+    sha256: assetDoc.sha256 || null,
+    mime: assetDoc.mime || "image/jpeg",
+    size: assetDoc.size || null,
+    width: assetDoc.width || null,
+    height: assetDoc.height || null,
+    url: assetDoc.url || null,
+    thumbUrl: assetDoc.thumbUrl || null,
+    originalName: assetDoc.originalName || "",
+    createdAt: assetDoc.createdAt || now,
+    updatedAt: assetDoc.updatedAt || now,
+  };
+
+  const result = await pgQuery(
+    `
+      INSERT INTO instruction_assets (
+        legacy_asset_id,
+        label,
+        slug,
+        description,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
+      RETURNING
+        id::text AS id,
+        legacy_asset_id,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+    `,
+    [
+      legacyAssetId,
+      labelCandidate.slice(0, 255),
+      slugBase.slice(0, 255),
+      "",
+      assetDoc.storageKey || null,
+      assetDoc.thumbStorageKey || null,
+      JSON.stringify(metadata),
+      assetDoc.createdAt || now,
+      assetDoc.updatedAt || now,
+    ],
+  );
+
+  return result.rows[0] ? mapPostgresFollowUpAssetRow(result.rows[0]) : null;
+}
+
 async function readPostgresInstructionAssets() {
   if (!canUsePostgresAssets()) return [];
   const result = await pgQuery(
@@ -15152,17 +15811,126 @@ async function readPostgresInstructionAssetByLookupNames(lookupNames = []) {
   return mapPostgresInstructionAssetRow(result.rows[0]);
 }
 
+function isLikelyImageFileName(fileName = "") {
+  return /\.(jpe?g|png|webp|gif)$/i.test(String(fileName || "").trim());
+}
+
+function buildInstructionFallbackAssetLabel(baseName = "") {
+  const raw = String(baseName || "").trim();
+  if (!raw) return "";
+  return raw
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function listInstructionFallbackAssetsFromStorage() {
+  const collected = new Map();
+  const registerFile = (fileName, storageKey = null) => {
+    const normalizedFileName = String(fileName || "").trim();
+    if (!normalizedFileName || !isLikelyImageFileName(normalizedFileName)) return;
+    const baseRaw = stripAssetExtension(normalizedFileName);
+    if (!baseRaw) return;
+    const isThumb = /_thumb$/i.test(baseRaw);
+    const baseName = isThumb ? baseRaw.replace(/_thumb$/i, "") : baseRaw;
+    if (!baseName) return;
+
+    const entry = collected.get(baseName) || {
+      baseName,
+      fileName: null,
+      thumbFileName: null,
+      storageKey: null,
+      thumbStorageKey: null,
+    };
+
+    if (isThumb) {
+      entry.thumbFileName = normalizedFileName;
+      if (storageKey) {
+        entry.thumbStorageKey = storageKey;
+      }
+    } else {
+      entry.fileName = normalizedFileName;
+      if (storageKey) {
+        entry.storageKey = storageKey;
+      }
+    }
+
+    collected.set(baseName, entry);
+  };
+
+  try {
+    if (ASSETS_DIR && fs.existsSync(ASSETS_DIR)) {
+      const localFiles = fs.readdirSync(ASSETS_DIR);
+      localFiles.forEach((name) => registerFile(name, null));
+    }
+  } catch (error) {
+    console.warn(
+      "[Assets] Failed to read local instruction asset directory:",
+      error?.message || error,
+    );
+  }
+
+  if (isBucketConfigured() && typeof listBucketObjects === "function") {
+    try {
+      let continuationToken = null;
+      let pageCount = 0;
+      do {
+        const page = await listBucketObjects("instructions/", {
+          maxKeys: 1000,
+          continuationToken,
+        });
+        const objects = Array.isArray(page.objects) ? page.objects : [];
+        objects.forEach((object) => {
+          const key = String(object?.Key || "").trim();
+          if (!key) return;
+          const fileName = key.split("/").pop();
+          registerFile(fileName, key);
+        });
+        continuationToken = page.isTruncated ? page.nextContinuationToken : null;
+        pageCount += 1;
+      } while (continuationToken && pageCount < 10);
+    } catch (error) {
+      console.warn(
+        "[Assets] Failed to list instruction assets from bucket:",
+        error?.message || error,
+      );
+    }
+  }
+
+  return Array.from(collected.values())
+    .filter((entry) => entry.fileName || entry.thumbFileName)
+    .map((entry) =>
+      normalizeInstructionAssetDocument({
+        _id: `fallback:${entry.baseName}`,
+        assetId: `fallback:${entry.baseName}`,
+        label: buildInstructionFallbackAssetLabel(entry.baseName),
+        slug: entry.baseName,
+        description: "",
+        fileName: entry.fileName || `${entry.baseName}.jpg`,
+        thumbFileName:
+          entry.thumbFileName
+          || `${entry.baseName}_thumb.jpg`,
+        storageKey: entry.storageKey || null,
+        thumbStorageKey: entry.thumbStorageKey || null,
+      }))
+    .filter(Boolean);
+}
+
 async function getInstructionAssets() {
   try {
     if (canUsePostgresAssets()) {
       const pgAssets = await readPostgresInstructionAssets();
       if (pgAssets.length > 0 || !isMongoRuntimeEnabled()) {
-        return pgAssets;
+        if (pgAssets.length > 0) {
+          return pgAssets;
+        }
+        const fallbackAssets = await listInstructionFallbackAssetsFromStorage();
+        return fallbackAssets;
       }
     }
 
     if (!isMongoRuntimeEnabled()) {
-      return [];
+      return await listInstructionFallbackAssetsFromStorage();
     }
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -20872,6 +21640,7 @@ app.get("/api/instructions/library", async (req, res) => {
             created_at,
             updated_at,
             CASE
+              WHEN jsonb_typeof(data) = 'array' THEN jsonb_array_length(data)
               WHEN jsonb_typeof(data->'dataItems') = 'array' THEN jsonb_array_length(data->'dataItems')
               ELSE 0
             END AS data_item_count
@@ -21328,13 +22097,17 @@ app.get(
   async (req, res) => {
     try {
       const { instructionId } = req.params;
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instructions_v2");
-
-      const instruction = await coll.findOne({
-        _id: new ObjectId(instructionId),
-      });
+      let instruction = null;
+      if (shouldUsePostgresInstructionsV2()) {
+        instruction = await getPostgresInstructionV2ByRef(instructionId);
+      } else {
+        const client = await connectDB();
+        const db = client.db("chatbot");
+        const coll = db.collection("instructions_v2");
+        instruction = await coll.findOne({
+          _id: new ObjectId(instructionId),
+        });
+      }
       if (!instruction) {
         return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
       }
@@ -21370,12 +22143,15 @@ app.get(
 app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (req, res) => {
   try {
     const { instructionId, itemId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    // ดึง instruction
-    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    let instruction = null;
+    if (shouldUsePostgresInstructionsV2()) {
+      instruction = await getPostgresInstructionV2ByRef(instructionId);
+    } else {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("instructions_v2");
+      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    }
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -21418,14 +22194,20 @@ app.post(
     try {
       const { instructionId } = req.params;
       let { type = "text", title = "", content = "", tableData } = req.body;
-
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instructions_v2");
-
-      const instruction = await coll.findOne({
-        _id: new ObjectId(instructionId),
-      });
+      const usingPostgres = shouldUsePostgresInstructionsV2();
+      let instruction = null;
+      let coll = null;
+      let db = null;
+      if (usingPostgres) {
+        instruction = await getPostgresInstructionV2ByRef(instructionId);
+      } else {
+        const client = await connectDB();
+        db = client.db("chatbot");
+        coll = db.collection("instructions_v2");
+        instruction = await coll.findOne({
+          _id: new ObjectId(instructionId),
+        });
+      }
       if (!instruction) {
         return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
       }
@@ -21484,19 +22266,39 @@ app.post(
         newItem.data = null;
       }
 
-      await coll.updateOne(
-        { _id: new ObjectId(instructionId) },
-        {
-          $push: { dataItems: newItem },
-          $set: { updatedAt: now },
-        },
-      );
-      await createDashboardSnapshotOrThrow(
-        instructionId,
-        "add_data_item",
-        db,
-        "dashboard_admin",
-      );
+      if (usingPostgres) {
+        const nextItems = [...items, newItem];
+        const nextVersion = Math.max(
+          1,
+          Number.isInteger(instruction.version) ? instruction.version : 1,
+        ) + 1;
+        await pgQuery(
+          `
+            UPDATE instructions
+            SET
+              data = $2::jsonb,
+              current_version = $3,
+              updated_at = $4
+            WHERE id = $1::uuid
+              AND ${buildInstructionV2SourceCondition("source_kind")}
+          `,
+          [instruction._id, JSON.stringify(nextItems), nextVersion, now],
+        );
+      } else {
+        await coll.updateOne(
+          { _id: new ObjectId(instructionId) },
+          {
+            $push: { dataItems: newItem },
+            $set: { updatedAt: now },
+          },
+        );
+        await createDashboardSnapshotOrThrow(
+          instructionId,
+          "add_data_item",
+          db,
+          "dashboard_admin",
+        );
+      }
 
       res.redirect(
         `/admin/dashboard?success=${encodeURIComponent(
@@ -21517,13 +22319,18 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
   try {
     const { instructionId, itemId } = req.params;
     const { type, title, content, tableData } = req.body;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    // ดึง instruction
-    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    const usingPostgres = shouldUsePostgresInstructionsV2();
+    let instruction = null;
+    let coll = null;
+    let db = null;
+    if (usingPostgres) {
+      instruction = await getPostgresInstructionV2ByRef(instructionId);
+    } else {
+      const client = await connectDB();
+      db = client.db("chatbot");
+      coll = db.collection("instructions_v2");
+      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    }
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -21535,13 +22342,17 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
     }
 
     const now = new Date();
-    const updateFields = {};
     const isTable = type === 'table';
     let parsedTableData = null;
-
-    // อัปเดต title
+    const items = Array.isArray(instruction.dataItems)
+      ? [...instruction.dataItems]
+      : [];
+    const targetItem = items[itemIndex] ? { ...items[itemIndex] } : null;
+    if (!targetItem) {
+      return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
+    }
     if (title !== undefined) {
-      updateFields[`dataItems.${itemIndex}.title`] = title.trim();
+      targetItem.title = title.trim();
     }
 
     // อัปเดตตาม type
@@ -21563,29 +22374,53 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
           `/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit?error=${encodeURIComponent("ข้อมูลตารางไม่ถูกต้อง")}`,
         );
       }
-      updateFields[`dataItems.${itemIndex}.data`] = parsedTableData;
-      updateFields[`dataItems.${itemIndex}.content`] = ""; // ล้าง content สำหรับตาราง
+      targetItem.data = parsedTableData;
+      targetItem.content = ""; // ล้าง content สำหรับตาราง
     } else {
       // ข้อความ: อัปเดต content field
-      updateFields[`dataItems.${itemIndex}.content`] = content || "";
-      updateFields[`dataItems.${itemIndex}.data`] = null; // ล้าง data สำหรับข้อความ
+      targetItem.content = content || "";
+      targetItem.data = null; // ล้าง data สำหรับข้อความ
     }
+    targetItem.type = isTable ? "table" : "text";
+    targetItem.updatedAt = now;
+    items[itemIndex] = targetItem;
 
-    updateFields[`dataItems.${itemIndex}.type`] = isTable ? "table" : "text";
-    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
-    updateFields.updatedAt = now;
-
-    // บันทึกลง database
-    await coll.updateOne(
-      { _id: new ObjectId(instructionId) },
-      { $set: updateFields }
-    );
-    await createDashboardSnapshotOrThrow(
-      instructionId,
-      "update_data_item",
-      db,
-      "dashboard_admin",
-    );
+    if (usingPostgres) {
+      const nextVersion = Math.max(
+        1,
+        Number.isInteger(instruction.version) ? instruction.version : 1,
+      ) + 1;
+      await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            data = $2::jsonb,
+            current_version = $3,
+            updated_at = $4
+          WHERE id = $1::uuid
+            AND ${buildInstructionV2SourceCondition("source_kind")}
+        `,
+        [instruction._id, JSON.stringify(items), nextVersion, now],
+      );
+    } else {
+      const updateFields = {};
+      updateFields[`dataItems.${itemIndex}.title`] = targetItem.title || "";
+      updateFields[`dataItems.${itemIndex}.content`] = targetItem.content || "";
+      updateFields[`dataItems.${itemIndex}.data`] = targetItem.data || null;
+      updateFields[`dataItems.${itemIndex}.type`] = targetItem.type;
+      updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
+      updateFields.updatedAt = now;
+      await coll.updateOne(
+        { _id: new ObjectId(instructionId) },
+        { $set: updateFields }
+      );
+      await createDashboardSnapshotOrThrow(
+        instructionId,
+        "update_data_item",
+        db,
+        "dashboard_admin",
+      );
+    }
 
     res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
   } catch (err) {
@@ -25815,7 +26650,11 @@ app.post(
 
       const client = await connectDB();
       const db = client.db("chatbot");
-      const coll = db.collection("follow_up_assets");
+      const usePostgresFollowUpAssets =
+        !isMongoRuntimeEnabled() && canUsePostgresAssets();
+      const coll = usePostgresFollowUpAssets
+        ? null
+        : db.collection("follow_up_assets");
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -25834,14 +26673,23 @@ app.post(
           .update(optimized)
           .digest("hex");
 
-        const existing = await coll.findOne({ sha256 });
+        const existing = usePostgresFollowUpAssets
+          ? await findPostgresFollowUpAssetByChecksum("followup", sha256)
+          : await coll.findOne({ sha256 });
         if (existing) {
+          const urls = resolveScopedFollowUpAssetUrls(existing, urlBase);
+          const existingId =
+            existing._id?.toString?.()
+            || existing.legacyAssetId
+            || existing.assetId
+            || existing.id
+            || null;
           assets.push({
-            id: existing._id?.toString(),
-            assetId: existing._id?.toString(),
-            url: existing.url,
-            previewUrl: existing.thumbUrl || existing.url,
-            thumbUrl: existing.thumbUrl,
+            id: existingId,
+            assetId: existingId,
+            url: urls.url,
+            previewUrl: urls.thumbUrl || urls.url,
+            thumbUrl: urls.thumbUrl,
             width: existing.width || null,
             height: existing.height || null,
             size: existing.size || null,
@@ -25890,6 +26738,7 @@ app.post(
           }),
         ]);
 
+        const now = new Date();
         const assetDoc = {
           fileName,
           thumbName,
@@ -25907,12 +26756,21 @@ app.post(
           url: `${urlBase}/assets/followup/${fileName}`,
           thumbUrl: `${urlBase}/assets/followup/${thumbName}`,
           originalName: file.originalname || "",
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          createdAt: now,
+          updatedAt: now,
         };
-
-        const insertResult = await coll.insertOne(assetDoc);
-        const assetId = insertResult.insertedId?.toString();
+        let assetId = null;
+        if (usePostgresFollowUpAssets) {
+          const saved = await insertPostgresFollowUpAsset("followup", assetDoc);
+          assetId =
+            saved?._id?.toString?.()
+            || saved?.legacyAssetId
+            || saved?.id
+            || null;
+        } else {
+          const insertResult = await coll.insertOne(assetDoc);
+          assetId = insertResult.insertedId?.toString() || null;
+        }
 
         assets.push({
           id: assetId,
@@ -32127,9 +32985,141 @@ async function logOpenAIUsage(data) {
   }
 }
 
+function extractApiKeyFromKeyMetadata(metadata = {}) {
+  if (!metadata || typeof metadata !== "object") return "";
+  const directApiKey =
+    typeof metadata.apiKey === "string" ? metadata.apiKey.trim() : "";
+  if (directApiKey) return directApiKey;
+
+  const fallbackKey =
+    typeof metadata.key === "string" ? metadata.key.trim() : "";
+  if (fallbackKey) return fallbackKey;
+
+  const nestedApiKey =
+    typeof metadata.openaiApiKey === "string"
+      ? metadata.openaiApiKey.trim()
+      : "";
+  if (nestedApiKey) return nestedApiKey;
+
+  return "";
+}
+
+function mapPostgresApiKeyRow(row = {}) {
+  const metadata =
+    row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const apiKey = extractApiKeyFromKeyMetadata(metadata);
+  const resolvedId = row.legacy_key_id || row.id || null;
+  return {
+    id: resolvedId,
+    rowId: row.id || null,
+    legacyKeyId: row.legacy_key_id || null,
+    name: row.name || "",
+    provider: normalizeProvider(row.provider || metadata.provider || LLM_PROVIDER_OPENAI),
+    apiKey,
+    maskedKey:
+      typeof metadata.maskedKey === "string" && metadata.maskedKey.trim()
+        ? metadata.maskedKey.trim()
+        : apiKey
+          ? maskApiKey(apiKey)
+          : "",
+    isActive: row.is_active !== false,
+    isDefault: row.is_default === true,
+    usageCount: Number(metadata.usageCount || 0),
+    lastUsedAt: metadata.lastUsedAt || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    metadata,
+  };
+}
+
+async function readPostgresApiKeyByRef(keyRef) {
+  const normalizedRef = typeof keyRef === "string" ? keyRef.trim() : "";
+  if (!normalizedRef) return null;
+  const result = await pgQuery(
+    `
+      SELECT
+        id::text AS id,
+        legacy_key_id,
+        provider,
+        name,
+        is_active,
+        is_default,
+        metadata,
+        created_at,
+        updated_at
+      FROM api_keys
+      WHERE id::text = $1 OR legacy_key_id = $1
+      ORDER BY CASE WHEN id::text = $1 THEN 0 ELSE 1 END
+      LIMIT 1
+    `,
+    [normalizedRef],
+  );
+  return result.rows[0] ? mapPostgresApiKeyRow(result.rows[0]) : null;
+}
+
+async function listPostgresApiKeys() {
+  const result = await pgQuery(
+    `
+      SELECT
+        id::text AS id,
+        legacy_key_id,
+        provider,
+        name,
+        is_active,
+        is_default,
+        metadata,
+        created_at,
+        updated_at
+      FROM api_keys
+      ORDER BY updated_at DESC, created_at DESC
+    `,
+  );
+  return result.rows.map((row) => mapPostgresApiKeyRow(row));
+}
+
+async function unsetPostgresDefaultApiKeys(excludedRowId = null) {
+  if (excludedRowId) {
+    await pgQuery(
+      `
+        UPDATE api_keys
+        SET is_default = FALSE, updated_at = NOW()
+        WHERE id::text <> $1
+          AND is_default = TRUE
+      `,
+      [excludedRowId],
+    );
+    return;
+  }
+
+  await pgQuery(
+    `
+      UPDATE api_keys
+      SET is_default = FALSE, updated_at = NOW()
+      WHERE is_default = TRUE
+    `,
+  );
+}
+
 // GET: List all API keys (masked)
 app.get("/api/openai-keys", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      const keys = await listPostgresApiKeys();
+      const maskedKeys = keys.map((key) => ({
+        id: key.id,
+        name: key.name,
+        provider: normalizeProvider(key.provider),
+        maskedKey: key.maskedKey || maskApiKey(key.apiKey || ""),
+        isActive: key.isActive !== false,
+        isDefault: key.isDefault === true,
+        usageCount: key.usageCount || 0,
+        lastUsedAt: key.lastUsedAt || null,
+        createdAt: key.createdAt,
+        updatedAt: key.updatedAt,
+      }));
+      return res.json({ success: true, keys: maskedKeys });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const keys = await db.collection("openai_api_keys")
@@ -32173,6 +33163,61 @@ app.post("/api/openai-keys", async (req, res) => {
       return res.status(400).json({
         success: false,
         error: getApiKeyFormatHint(normalizedProvider),
+      });
+    }
+
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      if (isDefault) {
+        await unsetPostgresDefaultApiKeys(null);
+      }
+
+      const now = new Date();
+      const normalizedApiKey = apiKey.trim();
+      const legacyKeyId = new ObjectId().toString();
+      const metadata = {
+        apiKey: normalizedApiKey,
+        maskedKey: maskApiKey(normalizedApiKey),
+        usageCount: 0,
+        lastUsedAt: null,
+        provider: normalizedProvider,
+      };
+
+      await pgQuery(
+        `
+          INSERT INTO api_keys (
+            legacy_key_id,
+            provider,
+            name,
+            is_active,
+            is_default,
+            metadata,
+            created_at,
+            updated_at
+          ) VALUES ($1,$2,$3,TRUE,$4,$5::jsonb,$6,$6)
+        `,
+        [
+          legacyKeyId,
+          normalizedProvider,
+          name.trim(),
+          isDefault === true,
+          JSON.stringify(metadata),
+          now,
+        ],
+      );
+
+      invalidateAllRuntimeCaches();
+
+      return res.json({
+        success: true,
+        key: {
+          id: legacyKeyId,
+          name: name.trim(),
+          provider: normalizedProvider,
+          maskedKey: metadata.maskedKey,
+          isActive: true,
+          isDefault: isDefault === true,
+          createdAt: now,
+        },
       });
     }
 
@@ -32226,6 +33271,126 @@ app.put("/api/openai-keys/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { name, apiKey, isActive, isDefault, provider } = req.body;
+
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      const existing = await readPostgresApiKeyByRef(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+      }
+
+      const updatePayload = {};
+      if (name !== undefined) {
+        updatePayload.name = String(name || "").trim();
+      } else {
+        updatePayload.name = existing.name || "";
+      }
+
+      const nextProvider =
+        provider !== undefined
+          ? normalizeProvider(provider)
+          : normalizeProvider(existing.provider);
+      updatePayload.provider = nextProvider;
+
+      const normalizedApiKey =
+        typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : "";
+      const metadata =
+        existing.metadata && typeof existing.metadata === "object"
+          ? { ...existing.metadata }
+          : {};
+      const previousKey = existing.apiKey || "";
+      const effectiveKey = normalizedApiKey || previousKey;
+
+      if (!effectiveKey) {
+        return res.status(400).json({
+          success: false,
+          error: "API Key ไม่ถูกต้องหรือว่างเปล่า",
+        });
+      }
+      if (!validateApiKeyForProvider(effectiveKey, nextProvider)) {
+        return res.status(400).json({
+          success: false,
+          error: getApiKeyFormatHint(nextProvider),
+        });
+      }
+
+      if (normalizedApiKey) {
+        metadata.apiKey = normalizedApiKey;
+        metadata.maskedKey = maskApiKey(normalizedApiKey);
+      } else if (!metadata.maskedKey && previousKey) {
+        metadata.maskedKey = maskApiKey(previousKey);
+      }
+      metadata.provider = nextProvider;
+
+      if (isActive !== undefined) {
+        updatePayload.isActive = Boolean(isActive);
+      } else {
+        updatePayload.isActive = existing.isActive !== false;
+      }
+
+      if (isDefault === true) {
+        await unsetPostgresDefaultApiKeys(existing.rowId || existing.id);
+        updatePayload.isDefault = true;
+      } else if (isDefault === false) {
+        updatePayload.isDefault = false;
+      } else {
+        updatePayload.isDefault = existing.isDefault === true;
+      }
+
+      const now = new Date();
+      const result = await pgQuery(
+        `
+          UPDATE api_keys
+          SET
+            name = $2,
+            provider = $3,
+            is_active = $4,
+            is_default = $5,
+            metadata = $6::jsonb,
+            updated_at = $7
+          WHERE id::text = $1 OR legacy_key_id = $1
+          RETURNING
+            id::text AS id,
+            legacy_key_id,
+            provider,
+            name,
+            is_active,
+            is_default,
+            metadata,
+            created_at,
+            updated_at
+        `,
+        [
+          String(id || "").trim(),
+          updatePayload.name,
+          updatePayload.provider,
+          updatePayload.isActive,
+          updatePayload.isDefault,
+          JSON.stringify(metadata),
+          now,
+        ],
+      );
+
+      const updated = result.rows[0] ? mapPostgresApiKeyRow(result.rows[0]) : null;
+      if (!updated) {
+        return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+      }
+
+      invalidateAllRuntimeCaches();
+      return res.json({
+        success: true,
+        key: {
+          id: updated.id,
+          name: updated.name,
+          provider: normalizeProvider(updated.provider),
+          maskedKey: updated.maskedKey,
+          isActive: updated.isActive,
+          isDefault: updated.isDefault,
+          usageCount: updated.usageCount,
+          lastUsedAt: updated.lastUsedAt,
+          updatedAt: updated.updatedAt,
+        },
+      });
+    }
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
@@ -32315,6 +33480,48 @@ app.delete("/api/openai-keys/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      const existing = await readPostgresApiKeyByRef(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+      }
+
+      await pgQuery(
+        `
+          DELETE FROM api_keys
+          WHERE id::text = $1 OR legacy_key_id = $1
+        `,
+        [String(id || "").trim()],
+      );
+
+      await pgQuery(
+        `
+          UPDATE bots
+          SET
+            config = config - 'openaiApiKeyId',
+            updated_at = NOW()
+          WHERE COALESCE(config->>'openaiApiKeyId', '') = $1
+        `,
+        [String(existing.id || "").trim()],
+      ).catch(() => null);
+
+      if (existing.legacyKeyId) {
+        await pgQuery(
+          `
+            UPDATE bots
+            SET
+              config = config - 'openaiApiKeyId',
+              updated_at = NOW()
+            WHERE COALESCE(config->>'openaiApiKeyId', '') = $1
+          `,
+          [String(existing.legacyKeyId).trim()],
+        ).catch(() => null);
+      }
+
+      invalidateAllRuntimeCaches();
+      return res.json({ success: true, message: "ลบ API Key เรียบร้อยแล้ว" });
+    }
+
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
     }
@@ -32402,6 +33609,45 @@ app.post("/api/openai-keys/:id/test", async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      const keyDoc = await readPostgresApiKeyByRef(id);
+      if (!keyDoc) {
+        return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+      }
+      if (!keyDoc.apiKey) {
+        return res.status(400).json({
+          success: false,
+          error: "API Key นี้ไม่มีข้อมูล key สำหรับทดสอบ",
+        });
+      }
+
+      try {
+        const provider = normalizeProvider(keyDoc.provider);
+        const testOpenai = buildLLMClientFromKey({
+          apiKey: keyDoc.apiKey,
+          provider,
+        });
+        if (!testOpenai) {
+          return res.status(400).json({
+            success: false,
+            error: "ไม่สามารถสร้าง client สำหรับทดสอบ API Key ได้",
+          });
+        }
+        const response = await testOpenai.models.list();
+        return res.json({
+          success: true,
+          message: `API Key ใช้งานได้! พบ ${response.data?.length || 0} โมเดล`,
+          modelsCount: response.data?.length || 0,
+          provider,
+        });
+      } catch (apiError) {
+        return res.status(400).json({
+          success: false,
+          error: `API Key ไม่ถูกต้องหรือหมดอายุ: ${apiError.message}`,
+        });
+      }
+    }
+
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
     }
@@ -32481,17 +33727,247 @@ function parseApiUsageDateRange(startDateStr, endDateStr) {
   return { startMoment, endMoment };
 }
 
+const PG_USAGE_PROVIDER_SQL = "COALESCE(NULLIF(u.metadata->>'provider', ''), 'openai')";
+const PG_USAGE_COST_SQL = `
+  CASE
+    WHEN COALESCE(u.metadata->>'estimatedCost', '') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+      THEN (u.metadata->>'estimatedCost')::numeric
+    ELSE NULL
+  END
+`;
+const PG_USAGE_BOT_REF_SQL =
+  "COALESCE(b.legacy_bot_id, NULLIF(u.metadata->>'legacyBotId', ''), u.bot_id::text)";
+const PG_USAGE_KEY_REF_SQL =
+  "COALESCE(ak.legacy_key_id, NULLIF(u.metadata->>'legacyApiKeyId', ''), u.api_key_id::text, 'env')";
+
+function buildPostgresUsageFilter({
+  startDate,
+  endDate,
+  keyId,
+  botId,
+  platform,
+  provider,
+} = {}) {
+  const params = [];
+  const conditions = [];
+  const push = (sql, value) => {
+    params.push(value);
+    conditions.push(`${sql} $${params.length}`);
+  };
+
+  if (startDate) {
+    push("u.created_at >=", startDate);
+  }
+  if (endDate) {
+    push("u.created_at <=", endDate);
+  }
+  if (platform) {
+    push("u.platform =", platform);
+  }
+  if (provider) {
+    push(`${PG_USAGE_PROVIDER_SQL} =`, normalizeProvider(provider));
+  }
+  if (keyId) {
+    const normalized = String(keyId || "").trim();
+    if (normalized) {
+      params.push(normalized);
+      const position = params.length;
+      conditions.push(
+        `(${PG_USAGE_KEY_REF_SQL} = $${position} OR u.api_key_id::text = $${position})`,
+      );
+    }
+  }
+  if (botId) {
+    const normalized = String(botId || "").trim();
+    if (normalized) {
+      params.push(normalized);
+      const position = params.length;
+      conditions.push(
+        `(${PG_USAGE_BOT_REF_SQL} = $${position} OR u.bot_id::text = $${position})`,
+      );
+    }
+  }
+
+  return {
+    whereSql: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
+    params,
+  };
+}
+
 app.get("/api/openai-usage/summary", async (req, res) => {
   try {
     const { startDate, endDate, keyId, botId, platform, provider } = req.query;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
       endDate,
     );
+
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      const normalizedPlatform =
+        typeof platform === "string" && platform.trim()
+          ? normalizeChatPlatform(platform)
+          : "";
+      const { whereSql, params } = buildPostgresUsageFilter({
+        startDate: startMoment.toDate(),
+        endDate: endMoment.toDate(),
+        keyId,
+        botId,
+        platform: normalizedPlatform || null,
+        provider,
+      });
+
+      const totalsResult = await pgQuery(
+        `
+          SELECT
+            COUNT(*)::int AS total_calls,
+            COALESCE(SUM(COALESCE(u.prompt_tokens, 0)), 0)::bigint AS total_prompt_tokens,
+            COALESCE(SUM(COALESCE(u.completion_tokens, 0)), 0)::bigint AS total_completion_tokens,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS total_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NULL THEN 1 ELSE 0 END), 0)::int AS unpriced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+        `,
+        params,
+      );
+
+      const byModelResult = await pgQuery(
+        `
+          SELECT
+            COALESCE(NULLIF(u.model, ''), 'unknown') AS model,
+            ${PG_USAGE_PROVIDER_SQL} AS provider,
+            COUNT(*)::int AS calls,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY model, provider
+          ORDER BY cost DESC, calls DESC
+          LIMIT 10
+        `,
+        params,
+      );
+
+      const byBotWhereSql = botId
+        ? whereSql
+        : `${whereSql ? `${whereSql} AND` : "WHERE"} COALESCE(${PG_USAGE_BOT_REF_SQL}, '') <> ''`;
+
+      const byBotResult = await pgQuery(
+        `
+          SELECT
+            ${PG_USAGE_BOT_REF_SQL} AS bot_id,
+            u.platform,
+            MAX(COALESCE(NULLIF(b.name, ''), b.config->>'name', b.config->>'pageName', ${PG_USAGE_BOT_REF_SQL})) AS bot_name,
+            COUNT(*)::int AS calls,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${byBotWhereSql}
+          GROUP BY bot_id, u.platform
+          ORDER BY cost DESC, calls DESC
+          LIMIT 20
+        `,
+        params,
+      );
+
+      const byKeyResult = await pgQuery(
+        `
+          SELECT
+            ${PG_USAGE_KEY_REF_SQL} AS key_id,
+            MAX(COALESCE(NULLIF(ak.name, ''), 'Environment Variable')) AS key_name,
+            MAX(COALESCE(NULLIF(ak.provider, ''), ${PG_USAGE_PROVIDER_SQL})) AS key_provider,
+            COUNT(*)::int AS calls,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY key_id
+          ORDER BY cost DESC, calls DESC
+        `,
+        params,
+      );
+
+      const dailyResult = await pgQuery(
+        `
+          SELECT
+            TO_CHAR((u.created_at AT TIME ZONE '${BANGKOK_TZ}'), 'YYYY-MM-DD') AS day_key,
+            COUNT(*)::int AS calls,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY day_key
+          ORDER BY day_key ASC
+        `,
+        params,
+      );
+
+      const summaryRow = totalsResult.rows[0] || {};
+      return res.json({
+        success: true,
+        summary: {
+          totalCalls: Number(summaryRow.total_calls || 0),
+          totalPromptTokens: Number(summaryRow.total_prompt_tokens || 0),
+          totalCompletionTokens: Number(summaryRow.total_completion_tokens || 0),
+          totalTokens: Number(summaryRow.total_tokens || 0),
+          totalCostUSD: Number(summaryRow.total_cost || 0),
+          totalCostTHB: Number(summaryRow.total_cost || 0) * 33,
+          pricedCalls: Number(summaryRow.priced_calls || 0),
+          unpricedCalls: Number(summaryRow.unpriced_calls || 0),
+        },
+        byModel: byModelResult.rows.map((row) => ({
+          model: row.model || "unknown",
+          provider: normalizeProvider(row.provider),
+          calls: Number(row.calls || 0),
+          tokens: Number(row.tokens || 0),
+          costUSD: Number(row.cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        byBot: byBotResult.rows.map((row) => ({
+          botId: row.bot_id || null,
+          platform: row.platform || null,
+          name: row.bot_name || row.bot_id || "Unknown",
+          calls: Number(row.calls || 0),
+          tokens: Number(row.tokens || 0),
+          costUSD: Number(row.cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        byKey: byKeyResult.rows.map((row) => ({
+          keyId: row.key_id || null,
+          name: row.key_name || "Unknown Key",
+          provider: normalizeProvider(row.key_provider),
+          calls: Number(row.calls || 0),
+          tokens: Number(row.tokens || 0),
+          costUSD: Number(row.cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        daily: dailyResult.rows.map((row) => ({
+          _id: row.day_key,
+          calls: Number(row.calls || 0),
+          tokens: Number(row.tokens || 0),
+          cost: Number(row.cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+      });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
     const match = {
       timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
     };
@@ -32735,14 +34211,100 @@ app.get("/api/openai-usage", async (req, res) => {
       page = 1,
       limit = 50,
     } = req.query;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
       endDate,
     );
+
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      const normalizedPlatform =
+        typeof platform === "string" && platform.trim()
+          ? normalizeChatPlatform(platform)
+          : "";
+      const pageNumber = Math.max(Number.parseInt(page, 10) || 1, 1);
+      const limitNumber = Math.min(
+        Math.max(Number.parseInt(limit, 10) || 50, 1),
+        500,
+      );
+      const offset = (pageNumber - 1) * limitNumber;
+
+      const { whereSql, params } = buildPostgresUsageFilter({
+        startDate: startMoment.toDate(),
+        endDate: endMoment.toDate(),
+        keyId,
+        botId,
+        platform: normalizedPlatform || null,
+        provider,
+      });
+
+      const totalResult = await pgQuery(
+        `
+          SELECT COUNT(*)::int AS total
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+        `,
+        params,
+      );
+
+      const logsResult = await pgQuery(
+        `
+          SELECT
+            u.id::text AS row_id,
+            ${PG_USAGE_KEY_REF_SQL} AS key_id,
+            ${PG_USAGE_BOT_REF_SQL} AS bot_id,
+            u.platform,
+            ${PG_USAGE_PROVIDER_SQL} AS provider,
+            u.model,
+            u.prompt_tokens,
+            u.completion_tokens,
+            u.total_tokens,
+            ${PG_USAGE_COST_SQL} AS estimated_cost,
+            u.metadata->>'functionName' AS function_name,
+            u.created_at AS created_at
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          ORDER BY u.created_at DESC
+          LIMIT $${params.length + 1}
+          OFFSET $${params.length + 2}
+        `,
+        [...params, limitNumber, offset],
+      );
+
+      const total = Number(totalResult.rows[0]?.total || 0);
+      return res.json({
+        success: true,
+        logs: logsResult.rows.map((row) => ({
+          id: row.row_id,
+          apiKeyId: row.key_id || null,
+          botId: row.bot_id || null,
+          platform: row.platform || null,
+          provider: normalizeProvider(row.provider),
+          model: row.model || "unknown",
+          promptTokens: Number(row.prompt_tokens || 0),
+          completionTokens: Number(row.completion_tokens || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCostUSD:
+            row.estimated_cost === null || typeof row.estimated_cost === "undefined"
+              ? null
+              : Number(row.estimated_cost),
+          functionName: row.function_name || null,
+          timestamp: row.created_at,
+        })),
+        pagination: {
+          page: pageNumber,
+          limit: limitNumber,
+          total,
+          pages: Math.ceil(total / limitNumber),
+        },
+      });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
     const match = {
       timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
     };
@@ -32799,14 +34361,166 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
     const { startDate, endDate } = req.query;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
       endDate,
     );
+
+    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+      const { whereSql, params } = buildPostgresUsageFilter({
+        startDate: startMoment.toDate(),
+        endDate: endMoment.toDate(),
+        botId,
+      });
+
+      const byModelResult = await pgQuery(
+        `
+          SELECT
+            COALESCE(NULLIF(u.model, ''), 'unknown') AS model,
+            ${PG_USAGE_PROVIDER_SQL} AS provider,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(u.prompt_tokens, 0)), 0)::bigint AS prompt_tokens,
+            COALESCE(SUM(COALESCE(u.completion_tokens, 0)), 0)::bigint AS completion_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS estimated_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY model, provider
+          ORDER BY count DESC, estimated_cost DESC
+        `,
+        params,
+      );
+
+      const byKeyResult = await pgQuery(
+        `
+          SELECT
+            ${PG_USAGE_KEY_REF_SQL} AS key_id,
+            MAX(COALESCE(NULLIF(ak.name, ''), 'Environment Variable')) AS key_name,
+            MAX(COALESCE(NULLIF(ak.provider, ''), ${PG_USAGE_PROVIDER_SQL})) AS key_provider,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS estimated_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY key_id
+          ORDER BY count DESC, estimated_cost DESC
+        `,
+        params,
+      );
+
+      const byDayResult = await pgQuery(
+        `
+          SELECT
+            TO_CHAR((u.created_at AT TIME ZONE '${BANGKOK_TZ}'), 'YYYY-MM-DD') AS day_key,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS estimated_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY day_key
+          ORDER BY day_key DESC
+          LIMIT 30
+        `,
+        params,
+      );
+
+      const recentResult = await pgQuery(
+        `
+          SELECT
+            u.id::text AS row_id,
+            u.model,
+            ${PG_USAGE_PROVIDER_SQL} AS provider,
+            u.total_tokens,
+            ${PG_USAGE_COST_SQL} AS estimated_cost,
+            u.metadata->>'functionName' AS function_name,
+            u.created_at AS created_at
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          ORDER BY u.created_at DESC
+          LIMIT 20
+        `,
+        params,
+      );
+
+      const totalsResult = await pgQuery(
+        `
+          SELECT
+            COUNT(*)::int AS total_calls,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS total_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+        `,
+        params,
+      );
+
+      const totals = totalsResult.rows[0] || {};
+      return res.json({
+        success: true,
+        botId,
+        totals: {
+          totalCalls: Number(totals.total_calls || 0),
+          totalTokens: Number(totals.total_tokens || 0),
+          totalCost: Number(totals.total_cost || 0),
+          pricedCalls: Number(totals.priced_calls || 0),
+        },
+        byModel: byModelResult.rows.map((row) => ({
+          model: row.model || "unknown",
+          provider: normalizeProvider(row.provider),
+          count: Number(row.count || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          promptTokens: Number(row.prompt_tokens || 0),
+          completionTokens: Number(row.completion_tokens || 0),
+          estimatedCost: Number(row.estimated_cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        byKey: byKeyResult.rows.map((row) => ({
+          keyId: row.key_id || null,
+          keyName: row.key_name || "Environment Variable",
+          provider: normalizeProvider(row.key_provider),
+          count: Number(row.count || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCost: Number(row.estimated_cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        byDay: byDayResult.rows.map((row) => ({
+          date: row.day_key,
+          count: Number(row.count || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCost: Number(row.estimated_cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        recentLogs: recentResult.rows.map((row) => ({
+          id: row.row_id,
+          model: row.model || "unknown",
+          provider: normalizeProvider(row.provider),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCost:
+            row.estimated_cost === null || typeof row.estimated_cost === "undefined"
+              ? null
+              : Number(row.estimated_cost),
+          timestamp: row.created_at,
+          functionName: row.function_name || null,
+        })),
+      });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
     const match = {
       botId,
       timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
@@ -34521,12 +36235,58 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
 // User Notes API
 // ========================================
 
+function canUsePostgresUserNotes() {
+  return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
+}
+
+let userNotesTableReadyPromise = null;
+
+async function ensurePostgresUserNotesTable() {
+  if (!canUsePostgresUserNotes()) return;
+  if (!userNotesTableReadyPromise) {
+    userNotesTableReadyPromise = pgQuery(
+      `
+        CREATE TABLE IF NOT EXISTS user_notes (
+          user_id TEXT PRIMARY KEY,
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    ).catch((error) => {
+      userNotesTableReadyPromise = null;
+      throw error;
+    });
+  }
+  await userNotesTableReadyPromise;
+}
+
 // API: ดึงโน้ตของผู้ใช้
 app.get("/api/users/:userId/notes", async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId || typeof userId !== "string") {
       return res.status(400).json({ success: false, error: "ไม่พบรหัสผู้ใช้" });
+    }
+
+    if (canUsePostgresUserNotes()) {
+      await ensurePostgresUserNotesTable();
+      const result = await pgQuery(
+        `
+          SELECT notes, updated_at
+          FROM user_notes
+          WHERE user_id = $1
+          LIMIT 1
+        `,
+        [userId],
+      );
+      const row = result.rows[0] || null;
+      return res.json({
+        success: true,
+        userId,
+        notes: row?.notes || "",
+        updatedAt: row?.updated_at || null,
+      });
     }
 
     const client = await connectDB();
@@ -34555,6 +36315,23 @@ app.patch("/api/users/:userId/notes", async (req, res) => {
     }
 
     const sanitizedNotes = typeof notes === "string" ? notes.trim().slice(0, 5000) : "";
+
+    if (canUsePostgresUserNotes()) {
+      await ensurePostgresUserNotesTable();
+      await pgQuery(
+        `
+          INSERT INTO user_notes (user_id, notes, created_at, updated_at)
+          VALUES ($1, $2, NOW(), NOW())
+          ON CONFLICT (user_id)
+          DO UPDATE SET
+            notes = EXCLUDED.notes,
+            updated_at = NOW()
+        `,
+        [userId, sanitizedNotes],
+      );
+      console.log(`[UserNotes] บันทึกโน้ตสำหรับผู้ใช้ ${userId.substring(0, 8)}...`);
+      return res.json({ success: true, userId, notes: sanitizedNotes });
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
