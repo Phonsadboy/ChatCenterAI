@@ -963,6 +963,50 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
   try {
     const { fileName } = req.params;
     if (!fileName) return next();
+
+    // Bucket-first path so starter/follow-up assets work even when Mongo is disabled.
+    const directBucketResult = await getFirstBucketObjectStream(
+      buildBucketKeyCandidates("followup", null, fileName),
+    );
+    if (directBucketResult?.stream) {
+      const ext = path.extname(fileName).toLowerCase();
+      const contentType =
+        ext === ".png"
+          ? "image/png"
+          : ext === ".webp"
+            ? "image/webp"
+            : "image/jpeg";
+      res.set("Content-Type", contentType);
+      res.set("Cache-Control", "public, max-age=604800, immutable");
+      directBucketResult.stream.on("error", (err) => {
+        console.error(`[Asset Error] Failed to stream followup bucket asset (direct): ${fileName}`, {
+          error: err.message,
+          code: err.code,
+          fileName,
+          storageKey: directBucketResult.key,
+        });
+        next(err);
+      });
+      directBucketResult.stream.pipe(res);
+      return;
+    }
+
+    // Local filesystem fallback (for legacy/manual files)
+    const localFollowupPath = path.join(FOLLOWUP_ASSETS_DIR, fileName);
+    if (fs.existsSync(localFollowupPath)) {
+      const ext = path.extname(fileName).toLowerCase();
+      const contentType =
+        ext === ".png"
+          ? "image/png"
+          : ext === ".webp"
+            ? "image/webp"
+            : "image/jpeg";
+      res.set("Content-Type", contentType);
+      res.set("Cache-Control", "public, max-age=604800, immutable");
+      fs.createReadStream(localFollowupPath).pipe(res);
+      return;
+    }
+
     if (!isMongoRuntimeEnabled()) return next();
 
     const client = await connectDB();
