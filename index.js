@@ -9930,24 +9930,45 @@ function mapPostgresInstructionV2Row(row = {}) {
   };
 }
 
+function buildInstructionV2SelectSql(whereClause = "") {
+  return `
+    SELECT
+      id::text AS id,
+      legacy_instruction_id,
+      name,
+      description,
+      type,
+      content,
+      data,
+      conversation_starter,
+      current_version,
+      created_at,
+      updated_at
+    FROM instructions
+    WHERE source_kind = 'instructions_v2'
+    ${whereClause}
+  `;
+}
+
+async function getPostgresInstructionV2ByRef(instructionRef) {
+  const normalizedRef = String(instructionRef || "").trim();
+  if (!normalizedRef) return null;
+  const result = await pgQuery(
+    `
+      ${buildInstructionV2SelectSql("AND (id::text = $1 OR legacy_instruction_id = $1)")}
+      LIMIT 1
+    `,
+    [normalizedRef],
+  );
+  const row = result.rows[0] || null;
+  return row ? mapPostgresInstructionV2Row(row) : null;
+}
+
 async function getInstructionsV2() {
   if (shouldUsePostgresInstructionsV2()) {
     const result = await pgQuery(
       `
-        SELECT
-          id::text AS id,
-          legacy_instruction_id,
-          name,
-          description,
-          type,
-          content,
-          data,
-          conversation_starter,
-          current_version,
-          created_at,
-          updated_at
-        FROM instructions
-        WHERE source_kind = 'instructions_v2'
+        ${buildInstructionV2SelectSql("")}
         ORDER BY updated_at DESC, created_at DESC
       `,
     );
@@ -10052,6 +10073,57 @@ app.post("/api/instructions-v2", async (req, res) => {
       return res.status(400).json({ success: false, error: "กรุณาระบุชื่อ Instruction" });
     }
 
+    if (shouldUsePostgresInstructionsV2()) {
+      const now = new Date();
+      const instructionId = generateInstructionId();
+      const conversationStarter = {
+        enabled: false,
+        messages: [],
+        updatedAt: now,
+      };
+      const result = await pgQuery(
+        `
+          INSERT INTO instructions (
+            legacy_instruction_id,
+            source_kind,
+            name,
+            description,
+            type,
+            content,
+            data,
+            conversation_starter,
+            current_version,
+            created_at,
+            updated_at
+          ) VALUES ($1,'instructions_v2',$2,$3,'instruction','',$4::jsonb,$5::jsonb,1,$6,$6)
+          RETURNING
+            id::text AS id,
+            legacy_instruction_id,
+            name,
+            description,
+            type,
+            content,
+            data,
+            conversation_starter,
+            current_version,
+            created_at,
+            updated_at
+        `,
+        [
+          instructionId,
+          name.trim(),
+          (description || "").trim(),
+          JSON.stringify([]),
+          JSON.stringify(conversationStarter),
+          now,
+        ],
+      );
+      return res.json({
+        success: true,
+        instruction: mapPostgresInstructionV2Row(result.rows[0]),
+      });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
@@ -10096,6 +10168,75 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, conversationStarter } = req.body || {};
+
+    if (shouldUsePostgresInstructionsV2()) {
+      const existing = await getPostgresInstructionV2ByRef(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      }
+
+      const now = new Date();
+      const normalizedStarter =
+        conversationStarter !== undefined
+          ? normalizeConversationStarterConfig(conversationStarter)
+          : existing.conversationStarter || {};
+      const nextVersion = Math.max(
+        1,
+        Number.isInteger(existing.version) ? existing.version : 1,
+      ) + 1;
+
+      const result = await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            name = $2,
+            description = $3,
+            conversation_starter = $4::jsonb,
+            current_version = $5,
+            updated_at = $6
+          WHERE id = $1::uuid
+            AND source_kind = 'instructions_v2'
+          RETURNING
+            id::text AS id,
+            legacy_instruction_id,
+            name,
+            description,
+            type,
+            content,
+            data,
+            conversation_starter,
+            current_version,
+            created_at,
+            updated_at
+        `,
+        [
+          existing._id,
+          name !== undefined ? String(name || "").trim() : existing.name || "",
+          description !== undefined
+            ? String(description || "").trim()
+            : existing.description || "",
+          JSON.stringify({
+            enabled: !!normalizedStarter.enabled,
+            messages: Array.isArray(normalizedStarter.messages)
+              ? normalizedStarter.messages
+              : [],
+            updatedAt: now,
+          }),
+          nextVersion,
+          now,
+        ],
+      );
+
+      const updated = result.rows[0] ? mapPostgresInstructionV2Row(result.rows[0]) : null;
+      if (!updated) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      }
+
+      return res.json({
+        success: true,
+        instruction: updated,
+      });
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -10151,6 +10292,25 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
 app.delete("/api/instructions-v2/:id", async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (shouldUsePostgresInstructionsV2()) {
+      const existing = await getPostgresInstructionV2ByRef(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      }
+
+      await pgQuery(
+        `
+          DELETE FROM instructions
+          WHERE id = $1::uuid
+            AND source_kind = 'instructions_v2'
+        `,
+        [existing._id],
+      );
+
+      return res.json({ success: true });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
@@ -10183,6 +10343,102 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
+
+    if (shouldUsePostgresInstructionsV2()) {
+      const original = await getPostgresInstructionV2ByRef(id);
+      if (!original) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction ต้นฉบับ" });
+      }
+
+      const requestedName = typeof name === "string" ? name.trim() : "";
+      const baseName = (original.name || "").trim() || "ไม่มีชื่อ";
+      const finalName = (requestedName || `${baseName} (สำเนา)`).trim();
+
+      if (!finalName) {
+        return res.status(400).json({
+          success: false,
+          error: "กรุณาระบุชื่อ Instruction ใหม่",
+        });
+      }
+
+      const duplicatedName = await pgQuery(
+        `
+          SELECT 1
+          FROM instructions
+          WHERE source_kind = 'instructions_v2'
+            AND lower(name) = lower($1)
+          LIMIT 1
+        `,
+        [finalName],
+      );
+      if (duplicatedName.rowCount > 0) {
+        return res.status(409).json({
+          success: false,
+          error: "ชื่อ Instruction นี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น",
+        });
+      }
+
+      const now = new Date();
+      const duplicatedItems = (Array.isArray(original.dataItems)
+        ? original.dataItems
+        : []
+      ).map((item) => ({
+        ...item,
+        itemId: generateDataItemId(),
+        createdAt: now,
+        updatedAt: now,
+      }));
+
+      const result = await pgQuery(
+        `
+          INSERT INTO instructions (
+            legacy_instruction_id,
+            source_kind,
+            name,
+            description,
+            type,
+            content,
+            data,
+            conversation_starter,
+            current_version,
+            created_at,
+            updated_at
+          ) VALUES ($1,'instructions_v2',$2,$3,$4,$5,$6::jsonb,$7::jsonb,1,$8,$8)
+          RETURNING
+            id::text AS id,
+            legacy_instruction_id,
+            name,
+            description,
+            type,
+            content,
+            data,
+            conversation_starter,
+            current_version,
+            created_at,
+            updated_at
+        `,
+        [
+          generateInstructionId(),
+          finalName,
+          original.description || "",
+          original.type || "instruction",
+          original.content || "",
+          JSON.stringify(duplicatedItems),
+          JSON.stringify(
+            cloneConversationStarterConfigForStorage(
+              original?.conversationStarter || {},
+              now,
+            ),
+          ),
+          now,
+        ],
+      );
+
+      return res.json({
+        success: true,
+        instruction: mapPostgresInstructionV2Row(result.rows[0]),
+      });
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -10417,6 +10673,52 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
       return res.status(400).json({ success: false, error: "ประเภทไม่ถูกต้อง" });
     }
 
+    if (shouldUsePostgresInstructionsV2()) {
+      const instruction = await getPostgresInstructionV2ByRef(id);
+      if (!instruction) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      }
+
+      const now = new Date();
+      const dataItems = Array.isArray(instruction.dataItems)
+        ? [...instruction.dataItems]
+        : [];
+      const newItem = {
+        itemId: generateDataItemId(),
+        title: title.trim(),
+        type,
+        content: type === "text" ? (content || "") : "",
+        data: type === "table" ? (data || { columns: [], rows: [] }) : null,
+        order: dataItems.length + 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      dataItems.push(newItem);
+
+      await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            data = $2::jsonb,
+            current_version = $3,
+            updated_at = $4
+          WHERE id = $1::uuid
+            AND source_kind = 'instructions_v2'
+        `,
+        [
+          instruction._id,
+          JSON.stringify(dataItems),
+          Math.max(
+            1,
+            Number.isInteger(instruction.version) ? instruction.version : 1,
+          ) + 1,
+          now,
+        ],
+      );
+
+      return res.json({ success: true, dataItem: newItem });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
@@ -10474,6 +10776,60 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
       return res.status(400).json({ success: false, error: "itemIds ต้องเป็น array" });
     }
 
+    if (shouldUsePostgresInstructionsV2()) {
+      const instruction = await getPostgresInstructionV2ByRef(id);
+      if (!instruction) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      }
+
+      const existingItems = Array.isArray(instruction.dataItems)
+        ? instruction.dataItems
+        : [];
+      const byId = new Map(
+        existingItems
+          .filter((item) => item && item.itemId)
+          .map((item) => [item.itemId, item]),
+      );
+      const reorderedItems = itemIds
+        .map((itemId, index) => {
+          const item = byId.get(itemId);
+          if (!item) return null;
+          return { ...item, order: index + 1 };
+        })
+        .filter(Boolean);
+
+      if (reorderedItems.length !== existingItems.length) {
+        return res.status(400).json({
+          success: false,
+          error: "รายการ itemIds ไม่ครบหรือไม่ถูกต้อง",
+        });
+      }
+
+      const now = new Date();
+      await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            data = $2::jsonb,
+            current_version = $3,
+            updated_at = $4
+          WHERE id = $1::uuid
+            AND source_kind = 'instructions_v2'
+        `,
+        [
+          instruction._id,
+          JSON.stringify(reorderedItems),
+          Math.max(
+            1,
+            Number.isInteger(instruction.version) ? instruction.version : 1,
+          ) + 1,
+          now,
+        ],
+      );
+
+      return res.json({ success: true });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
@@ -10520,6 +10876,52 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
   try {
     const { id, itemId } = req.params;
     const { title, content, data } = req.body;
+
+    if (shouldUsePostgresInstructionsV2()) {
+      const instruction = await getPostgresInstructionV2ByRef(id);
+      if (!instruction) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      }
+
+      const dataItems = Array.isArray(instruction.dataItems)
+        ? [...instruction.dataItems]
+        : [];
+      const itemIndex = dataItems.findIndex((item) => item.itemId === itemId);
+      if (itemIndex === -1) {
+        return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
+      }
+
+      const now = new Date();
+      const targetItem = { ...dataItems[itemIndex] };
+      if (title !== undefined) targetItem.title = String(title || "").trim();
+      if (content !== undefined) targetItem.content = content;
+      if (data !== undefined) targetItem.data = data;
+      targetItem.updatedAt = now;
+      dataItems[itemIndex] = targetItem;
+
+      await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            data = $2::jsonb,
+            current_version = $3,
+            updated_at = $4
+          WHERE id = $1::uuid
+            AND source_kind = 'instructions_v2'
+        `,
+        [
+          instruction._id,
+          JSON.stringify(dataItems),
+          Math.max(
+            1,
+            Number.isInteger(instruction.version) ? instruction.version : 1,
+          ) + 1,
+          now,
+        ],
+      );
+
+      return res.json({ success: true, dataItem: targetItem });
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -10569,6 +10971,50 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
   try {
     const { id, itemId } = req.params;
 
+    if (shouldUsePostgresInstructionsV2()) {
+      const instruction = await getPostgresInstructionV2ByRef(id);
+      if (!instruction) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      }
+
+      const dataItems = Array.isArray(instruction.dataItems)
+        ? [...instruction.dataItems]
+        : [];
+      const nextItems = dataItems.filter((item) => item?.itemId !== itemId);
+      if (nextItems.length === dataItems.length) {
+        return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
+      }
+
+      nextItems.forEach((item, index) => {
+        if (!item || typeof item !== "object") return;
+        item.order = index + 1;
+      });
+
+      const now = new Date();
+      await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            data = $2::jsonb,
+            current_version = $3,
+            updated_at = $4
+          WHERE id = $1::uuid
+            AND source_kind = 'instructions_v2'
+        `,
+        [
+          instruction._id,
+          JSON.stringify(nextItems),
+          Math.max(
+            1,
+            Number.isInteger(instruction.version) ? instruction.version : 1,
+          ) + 1,
+          now,
+        ],
+      );
+
+      return res.json({ success: true });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
@@ -10602,6 +11048,55 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
 app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, res) => {
   try {
     const { id, itemId } = req.params;
+
+    if (shouldUsePostgresInstructionsV2()) {
+      const instruction = await getPostgresInstructionV2ByRef(id);
+      if (!instruction) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      }
+
+      const dataItems = Array.isArray(instruction.dataItems)
+        ? [...instruction.dataItems]
+        : [];
+      const originalItem = dataItems.find((item) => item?.itemId === itemId);
+      if (!originalItem) {
+        return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
+      }
+
+      const now = new Date();
+      const duplicateItem = {
+        ...originalItem,
+        itemId: generateDataItemId(),
+        title: `${originalItem.title} (สำเนา)`,
+        order: dataItems.length + 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      dataItems.push(duplicateItem);
+
+      await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            data = $2::jsonb,
+            current_version = $3,
+            updated_at = $4
+          WHERE id = $1::uuid
+            AND source_kind = 'instructions_v2'
+        `,
+        [
+          instruction._id,
+          JSON.stringify(dataItems),
+          Math.max(
+            1,
+            Number.isInteger(instruction.version) ? instruction.version : 1,
+          ) + 1,
+          now,
+        ],
+      );
+
+      return res.json({ success: true, dataItem: duplicateItem });
+    }
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -10738,15 +11233,11 @@ app.get("/api/instructions-v2/:id/preview", async (req, res) => {
 // API: Export Instructions V2 to Excel
 app.get("/api/instructions-v2/export", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instructions = await coll.find({}).sort({ createdAt: -1 }).toArray();
+    const instructions = await getInstructionsV2();
 
     // 1. Instructions Sheet
     const instructionRows = instructions.map(inst => ({
-      "Instruction ID": inst._id.toString(),
+      "Instruction ID": String(inst._id || ""),
       "Name": inst.name,
       "Description": inst.description || "",
       "Created At": inst.createdAt ? new Date(inst.createdAt).toISOString() : "",
@@ -10766,7 +11257,7 @@ app.get("/api/instructions-v2/export", async (req, res) => {
           }
 
           dataItemRows.push({
-            "Instruction ID": inst._id.toString(),
+            "Instruction ID": String(inst._id || ""),
             "Instruction Name": inst.name,
             "Item ID": item.itemId,
             "Item Title": item.title,
