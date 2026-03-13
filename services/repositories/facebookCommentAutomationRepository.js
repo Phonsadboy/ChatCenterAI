@@ -1,9 +1,8 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
 const { resolvePgBotId } = require("./postgresRefs");
 const {
-  safeStringify,
   toLegacyId,
-  toObjectId,
+  safeStringify,
 } = require("./shared");
 
 function buildDefaultReplyProfile() {
@@ -177,34 +176,16 @@ function normalizeFacebookCommentEventDoc(doc = {}) {
 }
 
 function createFacebookCommentAutomationRepository({
-  connectDB,
   dbName = "chatbot",
   runtimeConfig,
 }) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
 
-  function shouldReadPrimary() {
-    return canUsePostgres();
-  }
-
-  async function getDb() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
-    }
-    const client = await connectDB();
-    return client.db(dbName);
-  }
-
-  function toMongoBotId(botId) {
-    const legacyBotId = toLegacyId(botId);
-    const objectId = toObjectId(legacyBotId);
-    return objectId || legacyBotId;
+  function ensurePostgresAvailable() {
+    if (canUsePostgres()) return;
+    throw new Error(`facebook_comment_automation_requires_postgres:${dbName}`);
   }
 
   async function readPostgresPost(filter = {}) {
@@ -259,106 +240,67 @@ function createFacebookCommentAutomationRepository({
     return result.rows[0] ? normalizeFacebookPostDoc(result.rows[0]) : null;
   }
 
-  async function readMongoPost(filter = {}) {
-    const postId = toLegacyId(filter.postId);
-    if (!postId) return null;
-    const queryFilter = { postId };
-    const legacyBotId = toLegacyId(filter.botId);
-    if (legacyBotId) {
-      queryFilter.botId = toMongoBotId(legacyBotId);
-    }
-    const db = await getDb();
-    return db.collection("facebook_page_posts").findOne(queryFilter);
-  }
-
   async function listPosts(filter = {}, options = {}) {
+    ensurePostgresAvailable();
     const limit = Math.min(Math.max(Number(options.limit) || 50, 1), 200);
     const legacyBotId = toLegacyId(filter.botId);
-
-    if (shouldReadPrimary()) {
-      const params = [];
-      const whereSql = legacyBotId
-        ? (() => {
-            params.push(legacyBotId);
-            return `WHERE legacy_bot_id = $${params.length}`;
-          })()
-        : "";
-      params.push(limit);
-      const result = await query(
-        `
-          SELECT
-            id::text AS id,
-            legacy_bot_id,
-            page_id,
-            post_id,
-            message,
-            permalink,
-            created_time,
-            attachments,
-            status_type,
-            full_picture,
-            reply_profile,
-            comment_count,
-            captured_from,
-            pulled_to_chat,
-            last_comment_at,
-            last_reply_at,
-            synced_at,
-            metadata,
-            created_at,
-            updated_at
-          FROM facebook_page_posts
-          ${whereSql}
-          ORDER BY created_time DESC NULLS LAST, synced_at DESC NULLS LAST, updated_at DESC
-          LIMIT $${params.length}
-        `,
-        params,
-      );
-      return result.rows.map((row) => normalizeFacebookPostDoc(row));
-    }
-
-    if (!canUseMongo()) {
-      return [];
-    }
-
-    const db = await getDb();
-    const queryFilter = {};
-    if (legacyBotId) {
-      queryFilter.botId = toMongoBotId(legacyBotId);
-    }
-    const docs = await db
-      .collection("facebook_page_posts")
-      .find(queryFilter)
-      .sort({ createdTime: -1, syncedAt: -1 })
-      .limit(limit)
-      .toArray();
-    return docs.map((doc) => normalizeFacebookPostDoc(doc));
+    const params = [];
+    const whereSql = legacyBotId
+      ? (() => {
+          params.push(legacyBotId);
+          return `WHERE legacy_bot_id = $${params.length}`;
+        })()
+      : "";
+    params.push(limit);
+    const result = await query(
+      `
+        SELECT
+          id::text AS id,
+          legacy_bot_id,
+          page_id,
+          post_id,
+          message,
+          permalink,
+          created_time,
+          attachments,
+          status_type,
+          full_picture,
+          reply_profile,
+          comment_count,
+          captured_from,
+          pulled_to_chat,
+          last_comment_at,
+          last_reply_at,
+          synced_at,
+          metadata,
+          created_at,
+          updated_at
+        FROM facebook_page_posts
+        ${whereSql}
+        ORDER BY created_time DESC NULLS LAST, synced_at DESC NULLS LAST, updated_at DESC
+        LIMIT $${params.length}
+      `,
+      params,
+    );
+    return result.rows.map((row) => normalizeFacebookPostDoc(row));
   }
 
   async function findPost(filter = {}) {
-    if (shouldReadPrimary()) {
-      return readPostgresPost(filter);
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const mongoDoc = await readMongoPost(filter);
-    return mongoDoc ? normalizeFacebookPostDoc(mongoDoc) : null;
+    ensurePostgresAvailable();
+    return readPostgresPost(filter);
   }
 
   async function upsertPost(doc = {}) {
+    ensurePostgresAvailable();
     const normalized = normalizeFacebookPostDoc(doc);
     if (!normalized.botId || !normalized.postId) {
       throw new Error("facebook_post_requires_bot_id_and_post_id");
     }
 
-    if (canUsePostgres()) {
-      const pgBotId = await resolvePgBotId({ query }, "facebook", normalized.botId).catch(() => null);
-      const now = normalized.updatedAt || new Date();
-      const createdAt = normalized.createdAt || now;
-      const result = await query(
+    const pgBotId = await resolvePgBotId({ query }, "facebook", normalized.botId).catch(() => null);
+    const now = normalized.updatedAt || new Date();
+    const createdAt = normalized.createdAt || now;
+    const result = await query(
         `
           INSERT INTO facebook_page_posts (
             bot_id,
@@ -442,64 +384,24 @@ function createFacebookCommentAutomationRepository({
           now,
         ],
       );
-      return normalizeFacebookPostDoc(result.rows[0] || {});
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("facebook_post_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const mongoBotId = toMongoBotId(normalized.botId);
-    await db.collection("facebook_page_posts").updateOne(
-      { botId: mongoBotId, postId: normalized.postId },
-      {
-        $set: {
-          botId: mongoBotId,
-          pageId: normalized.pageId || "",
-          postId: normalized.postId,
-          message: normalized.message || "",
-          permalink: normalized.permalink || "",
-          createdTime: normalized.createdTime,
-          attachments: normalized.attachments || [],
-          statusType: normalized.statusType || null,
-          fullPicture: normalized.fullPicture || null,
-          capturedFrom: normalized.capturedFrom || "webhook",
-          syncedAt: normalized.syncedAt || null,
-          updatedAt: normalized.updatedAt || new Date(),
-        },
-        $setOnInsert: {
-          replyProfile: normalized.replyProfile || buildDefaultReplyProfile(),
-          createdAt: normalized.createdAt || new Date(),
-          commentCount: Number.isFinite(normalized.commentCount)
-            ? normalized.commentCount
-            : 0,
-        },
-      },
-      { upsert: true },
-    );
-    const updated = await db.collection("facebook_page_posts").findOne({
-      botId: mongoBotId,
-      postId: normalized.postId,
-    });
-    return updated ? normalizeFacebookPostDoc(updated) : null;
+    return normalizeFacebookPostDoc(result.rows[0] || {});
   }
 
   async function updateReplyProfile(filter = {}, replyProfile = {}) {
+    ensurePostgresAvailable();
     const postId = toLegacyId(filter.postId);
     const legacyBotId = toLegacyId(filter.botId);
     if (!postId) return null;
     const normalizedProfile = normalizeReplyProfile(replyProfile);
     const updatedAt = new Date();
 
-    if (canUsePostgres()) {
-      const params = [postId, safeStringify(normalizedProfile), updatedAt];
-      let whereSql = "post_id = $1";
-      if (legacyBotId) {
-        params.push(legacyBotId);
-        whereSql += ` AND legacy_bot_id = $${params.length}`;
-      }
-      const result = await query(
+    const params = [postId, safeStringify(normalizedProfile), updatedAt];
+    let whereSql = "post_id = $1";
+    if (legacyBotId) {
+      params.push(legacyBotId);
+      whereSql += ` AND legacy_bot_id = $${params.length}`;
+    }
+    const result = await query(
         `
           UPDATE facebook_page_posts
           SET
@@ -527,41 +429,19 @@ function createFacebookCommentAutomationRepository({
             metadata,
             created_at,
             updated_at
-        `,
-        params,
-      );
-      return result.rows[0] ? normalizeFacebookPostDoc(result.rows[0]) : null;
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("facebook_post_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const queryFilter = { postId };
-    if (legacyBotId) {
-      queryFilter.botId = toMongoBotId(legacyBotId);
-    }
-    await db.collection("facebook_page_posts").updateOne(
-      queryFilter,
-      {
-        $set: {
-          replyProfile: normalizedProfile,
-          updatedAt,
-        },
-      },
+      `,
+      params,
     );
-    const updated = await db.collection("facebook_page_posts").findOne(queryFilter);
-    return updated ? normalizeFacebookPostDoc(updated) : null;
+    return result.rows[0] ? normalizeFacebookPostDoc(result.rows[0]) : null;
   }
 
   async function touchPostComment(filter = {}, touchedAt = new Date()) {
+    ensurePostgresAvailable();
     const postId = toLegacyId(filter.postId);
     const legacyBotId = toLegacyId(filter.botId);
     if (!postId || !legacyBotId) return null;
 
-    if (canUsePostgres()) {
-      const result = await query(
+    const result = await query(
         `
           UPDATE facebook_page_posts
           SET
@@ -593,37 +473,20 @@ function createFacebookCommentAutomationRepository({
             metadata,
             created_at,
             updated_at
-        `,
-        [legacyBotId, postId, touchedAt],
-      );
-      return result.rows[0] ? normalizeFacebookPostDoc(result.rows[0]) : null;
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("facebook_post_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const mongoBotId = toMongoBotId(legacyBotId);
-    await db.collection("facebook_page_posts").updateOne(
-      { botId: mongoBotId, postId },
-      { $set: { lastCommentAt: touchedAt, updatedAt: touchedAt } },
+      `,
+      [legacyBotId, postId, touchedAt],
     );
-    const updated = await db.collection("facebook_page_posts").findOne({
-      botId: mongoBotId,
-      postId,
-    });
-    return updated ? normalizeFacebookPostDoc(updated) : null;
+    return result.rows[0] ? normalizeFacebookPostDoc(result.rows[0]) : null;
   }
 
   async function applyCommentResult(filter = {}, { action = "", privateSent = false, occurredAt = new Date() } = {}) {
+    ensurePostgresAvailable();
     const postId = toLegacyId(filter.postId);
     const legacyBotId = toLegacyId(filter.botId);
     if (!postId || !legacyBotId) return null;
     const replied = action === "replied";
 
-    if (canUsePostgres()) {
-      const result = await query(
+    const result = await query(
         `
           UPDATE facebook_page_posts
           SET
@@ -664,86 +527,48 @@ function createFacebookCommentAutomationRepository({
             metadata,
             created_at,
             updated_at
-        `,
-        [legacyBotId, postId, occurredAt, replied, privateSent === true],
-      );
-      return result.rows[0] ? normalizeFacebookPostDoc(result.rows[0]) : null;
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("facebook_post_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const mongoBotId = toMongoBotId(legacyBotId);
-    const updatePayload = {
-      $set: { updatedAt: occurredAt },
-      $inc: { commentCount: 1 },
-    };
-    if (replied) {
-      updatePayload.$set.lastReplyAt = occurredAt;
-      updatePayload.$set.lastCommentAt = occurredAt;
-      if (privateSent === true) {
-        updatePayload.$set.pulledToChat = true;
-      }
-    }
-    await db.collection("facebook_page_posts").updateOne(
-      { botId: mongoBotId, postId },
-      updatePayload,
+      `,
+      [legacyBotId, postId, occurredAt, replied, privateSent === true],
     );
-    const updated = await db.collection("facebook_page_posts").findOne({
-      botId: mongoBotId,
-      postId,
-    });
-    return updated ? normalizeFacebookPostDoc(updated) : null;
+    return result.rows[0] ? normalizeFacebookPostDoc(result.rows[0]) : null;
   }
 
   async function findEventByCommentId(commentId) {
+    ensurePostgresAvailable();
     const normalizedCommentId = toLegacyId(commentId);
     if (!normalizedCommentId) return null;
 
-    if (shouldReadPrimary()) {
-      const result = await query(
-        `
-          SELECT
-            id::text AS id,
-            legacy_bot_id,
-            page_id,
-            post_id,
-            comment_id,
-            comment_text,
-            commenter_id,
-            commenter_name,
-            reply_mode,
-            reply_text,
-            action,
-            reason,
-            metadata,
-            created_at,
-            updated_at
-          FROM facebook_comment_events
-          WHERE comment_id = $1
-          LIMIT 1
-        `,
-        [normalizedCommentId],
-      );
-      return result.rows[0]
-        ? normalizeFacebookCommentEventDoc(result.rows[0])
-        : null;
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const db = await getDb();
-    const doc = await db.collection("facebook_comment_events").findOne({
-      commentId: normalizedCommentId,
-    });
-    return doc ? normalizeFacebookCommentEventDoc(doc) : null;
+    const result = await query(
+      `
+        SELECT
+          id::text AS id,
+          legacy_bot_id,
+          page_id,
+          post_id,
+          comment_id,
+          comment_text,
+          commenter_id,
+          commenter_name,
+          reply_mode,
+          reply_text,
+          action,
+          reason,
+          metadata,
+          created_at,
+          updated_at
+        FROM facebook_comment_events
+        WHERE comment_id = $1
+        LIMIT 1
+      `,
+      [normalizedCommentId],
+    );
+    return result.rows[0]
+      ? normalizeFacebookCommentEventDoc(result.rows[0])
+      : null;
   }
 
   async function recordEvent(eventDoc = {}) {
+    ensurePostgresAvailable();
     const normalized = normalizeFacebookCommentEventDoc({
       ...eventDoc,
       updatedAt: eventDoc.updatedAt || eventDoc.createdAt || new Date(),
@@ -752,13 +577,12 @@ function createFacebookCommentAutomationRepository({
       throw new Error("facebook_comment_event_requires_comment_id");
     }
 
-    if (canUsePostgres()) {
-      const pgBotId = normalized.botId
-        ? await resolvePgBotId({ query }, "facebook", normalized.botId).catch(() => null)
-        : null;
-      const createdAt = normalized.createdAt || new Date();
-      const updatedAt = normalized.updatedAt || createdAt;
-      const result = await query(
+    const pgBotId = normalized.botId
+      ? await resolvePgBotId({ query }, "facebook", normalized.botId).catch(() => null)
+      : null;
+    const createdAt = normalized.createdAt || new Date();
+    const updatedAt = normalized.updatedAt || createdAt;
+    const result = await query(
         `
           INSERT INTO facebook_comment_events (
             bot_id,
@@ -821,42 +645,10 @@ function createFacebookCommentAutomationRepository({
           updatedAt,
         ],
       );
-      if (result.rows[0]) {
-        return normalizeFacebookCommentEventDoc(result.rows[0]);
-      }
-      return findEventByCommentId(normalized.commentId);
+    if (result.rows[0]) {
+      return normalizeFacebookCommentEventDoc(result.rows[0]);
     }
-
-    if (!canUseMongo()) {
-      throw new Error("facebook_comment_event_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const mongoDoc = {
-      ...eventDoc,
-      botId: normalized.botId ? toMongoBotId(normalized.botId) : "",
-      pageId: normalized.pageId || "",
-      postId: normalized.postId || "",
-      commentId: normalized.commentId,
-      commentText: normalized.commentText || "",
-      commenterId: normalized.commenterId || "",
-      commenterName: normalized.commenterName || "",
-      replyMode: normalized.replyMode,
-      replyText: normalized.replyText || "",
-      action: normalized.action || "",
-      reason: normalized.reason || "",
-      createdAt: normalized.createdAt || new Date(),
-      updatedAt: normalized.updatedAt || normalized.createdAt || new Date(),
-    };
-    await db.collection("facebook_comment_events").updateOne(
-      { commentId: normalized.commentId },
-      { $setOnInsert: mongoDoc },
-      { upsert: true },
-    );
-    const saved = await db.collection("facebook_comment_events").findOne({
-      commentId: normalized.commentId,
-    });
-    return saved ? normalizeFacebookCommentEventDoc(saved) : null;
+    return findEventByCommentId(normalized.commentId);
   }
 
   return {

@@ -87,29 +87,11 @@ function normalizeCategoryTableDoc(doc = {}) {
   };
 }
 
-function createCategoryRepository({
-  connectDB,
-  dbName = "chatbot",
-  runtimeConfig,
-}) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
-  function canUsePostgres() {
-    return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
-  }
-
-  function shouldReadPrimary() {
-    return canUsePostgres();
-  }
-
-  async function getDb() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
+function createCategoryRepository() {
+  function ensurePostgres() {
+    if (!isPostgresConfigured()) {
+      throw new Error("category_storage_requires_postgres");
     }
-    const client = await connectDB();
-    return client.db(dbName);
   }
 
   function buildPostgresFilter(filter = {}) {
@@ -156,37 +138,8 @@ function createCategoryRepository({
     };
   }
 
-  function buildMongoFilter(filter = {}) {
-    const queryFilter = {};
-    const categoryId = toLegacyId(filter.categoryId);
-    if (categoryId) {
-      queryFilter.categoryId = categoryId;
-    }
-    const botId = toLegacyId(filter.botId);
-    if (botId) {
-      queryFilter.botId = botId;
-    }
-    const platform =
-      typeof filter.platform === "string" && filter.platform.trim()
-        ? normalizePlatform(filter.platform)
-        : "";
-    if (platform) {
-      queryFilter.platform = platform;
-    }
-    const name =
-      typeof filter.name === "string" && filter.name.trim()
-        ? filter.name.trim()
-        : "";
-    if (name) {
-      queryFilter.name = name;
-    }
-    if (typeof filter.isActive === "boolean") {
-      queryFilter.isActive = filter.isActive;
-    }
-    return queryFilter;
-  }
-
   async function readPostgresCategories(filter = {}, options = {}) {
+    ensurePostgres();
     const { whereSql, params } = buildPostgresFilter(filter);
     const sortDirection = Number(options?.sort?.createdAt) >= 0 ? "ASC" : "DESC";
     const result = await query(
@@ -212,6 +165,7 @@ function createCategoryRepository({
   }
 
   async function readPostgresCategory(filter = {}) {
+    ensurePostgres();
     const { whereSql, params } = buildPostgresFilter(filter);
     if (!whereSql) return null;
     const result = await query(
@@ -238,6 +192,7 @@ function createCategoryRepository({
   }
 
   async function readPostgresTable(categoryId) {
+    ensurePostgres();
     const normalizedCategoryId = toLegacyId(categoryId);
     if (!normalizedCategoryId) return null;
     const result = await query(
@@ -259,105 +214,32 @@ function createCategoryRepository({
     return row ? normalizeCategoryTableDoc(row) : null;
   }
 
-  async function readMongoCategories(filter = {}, options = {}) {
-    if (!canUseMongo()) return [];
-    const db = await getDb();
-    const cursor = db
-      .collection("categories")
-      .find(buildMongoFilter(filter))
-      .sort(options.sort || { createdAt: -1 });
-    return cursor.toArray();
-  }
-
-  async function readMongoCategory(filter = {}) {
-    if (!canUseMongo()) return null;
-    const db = await getDb();
-    return db.collection("categories").findOne(buildMongoFilter(filter));
-  }
-
-  async function readMongoTable(categoryId) {
-    if (!canUseMongo()) return null;
-    const normalizedCategoryId = toLegacyId(categoryId);
-    if (!normalizedCategoryId) return null;
-    const db = await getDb();
-    return db.collection("category_tables").findOne({ categoryId: normalizedCategoryId });
-  }
-
   async function list(filter = {}, options = {}) {
-    if (shouldReadPrimary()) {
-      return readPostgresCategories(filter, options);
-    }
-
-    if (!canUseMongo()) {
-      return [];
-    }
-
-    const mongoDocs = await readMongoCategories(filter, options);
-    return mongoDocs.map((doc) => normalizeCategoryDoc(doc));
+    return readPostgresCategories(filter, options);
   }
 
   async function findByCategoryId(categoryId, options = {}) {
     const normalizedCategoryId = toLegacyId(categoryId);
     if (!normalizedCategoryId) return null;
-
-    if (shouldReadPrimary()) {
-      return readPostgresCategory({
-        categoryId: normalizedCategoryId,
-        isActive: options.includeInactive ? undefined : true,
-      });
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const mongoDoc = await readMongoCategory({
+    return readPostgresCategory({
       categoryId: normalizedCategoryId,
       isActive: options.includeInactive ? undefined : true,
     });
-    return mongoDoc ? normalizeCategoryDoc(mongoDoc) : null;
   }
 
   async function findActiveByName(name, { botId, platform } = {}) {
     const normalizedName = typeof name === "string" ? name.trim() : "";
     if (!normalizedName) return null;
-
-    if (shouldReadPrimary()) {
-      return readPostgresCategory({
-        name: normalizedName,
-        botId,
-        platform,
-        isActive: true,
-      });
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const mongoDoc = await readMongoCategory({
+    return readPostgresCategory({
       name: normalizedName,
       botId,
       platform,
       isActive: true,
     });
-    return mongoDoc ? normalizeCategoryDoc(mongoDoc) : null;
   }
 
   async function getTable(categoryId) {
-    const normalizedCategoryId = toLegacyId(categoryId);
-    if (!normalizedCategoryId) return null;
-
-    if (shouldReadPrimary()) {
-      return readPostgresTable(normalizedCategoryId);
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const mongoDoc = await readMongoTable(normalizedCategoryId);
-    return mongoDoc ? normalizeCategoryTableDoc(mongoDoc) : null;
+    return readPostgresTable(categoryId);
   }
 
   async function listRows(categoryId) {
@@ -366,6 +248,7 @@ function createCategoryRepository({
   }
 
   async function createCategory(payload = {}) {
+    ensurePostgres();
     const name = typeof payload.name === "string" ? payload.name.trim() : "";
     const description =
       typeof payload.description === "string" ? payload.description : "";
@@ -377,8 +260,134 @@ function createCategoryRepository({
       throw new Error("category_missing_required_fields");
     }
 
-    if (canUsePostgres()) {
-      return withTransaction(async (client) => {
+    return withTransaction(async (client) => {
+      const duplicateCheck = await client.query(
+        `
+          SELECT category_id
+          FROM categories
+          WHERE legacy_bot_id = $1
+            AND platform = $2
+            AND is_active = TRUE
+            AND LOWER(name) = LOWER($3)
+          LIMIT 1
+        `,
+        [botId, platform, name],
+      );
+      if (duplicateCheck.rowCount > 0) {
+        throw new Error("category_name_already_exists");
+      }
+
+      const categoryId = generateCategoryId();
+      const now = new Date();
+      const pgBotId = await resolvePgBotId(client, platform, botId).catch(() => null);
+      await client.query(
+        `
+          INSERT INTO categories (
+            category_id,
+            bot_id,
+            legacy_bot_id,
+            platform,
+            name,
+            description,
+            columns,
+            is_active,
+            created_at,
+            updated_at
+          ) VALUES (
+            $1,$2,$3,$4,$5,$6,$7::jsonb,TRUE,$8,$9
+          )
+        `,
+        [
+          categoryId,
+          pgBotId,
+          botId,
+          platform,
+          name,
+          description,
+          safeStringify(columns),
+          now,
+          now,
+        ],
+      );
+      await client.query(
+        `
+          INSERT INTO category_tables (
+            category_id,
+            bot_id,
+            legacy_bot_id,
+            platform,
+            data,
+            created_at,
+            updated_at
+          ) VALUES (
+            $1,$2,$3,$4,'[]'::jsonb,$5,$6
+          )
+        `,
+        [categoryId, pgBotId, botId, platform, now, now],
+      );
+      return {
+        _id: categoryId,
+        categoryId,
+        botId,
+        platform,
+        name,
+        description,
+        columns,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+    });
+  }
+
+  async function updateCategory(categoryId, payload = {}) {
+    ensurePostgres();
+    const normalizedCategoryId = toLegacyId(categoryId);
+    if (!normalizedCategoryId) return null;
+
+    return withTransaction(async (client) => {
+      const existingResult = await client.query(
+        `
+          SELECT
+            id::text AS id,
+            category_id,
+            legacy_bot_id,
+            platform,
+            name,
+            description,
+            columns,
+            is_active,
+            created_at,
+            updated_at
+          FROM categories
+          WHERE category_id = $1
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [normalizedCategoryId],
+      );
+      const existingRow = existingResult.rows[0] || null;
+      if (!existingRow) {
+        return null;
+      }
+
+      const existing = normalizeCategoryDoc(existingRow);
+      const nextName =
+        typeof payload.name === "string" && payload.name.trim()
+          ? payload.name.trim()
+          : existing.name;
+      const nextDescription =
+        typeof payload.description === "string"
+          ? payload.description
+          : payload.description === ""
+            ? ""
+            : existing.description;
+      const nextColumns =
+        Array.isArray(payload.columns) && payload.columns.length > 0
+          ? normalizeCategoryColumns(payload.columns)
+          : existing.columns;
+
+      if (nextName.toLowerCase() !== existing.name.toLowerCase()) {
         const duplicateCheck = await client.query(
           `
             SELECT category_id
@@ -387,46 +396,121 @@ function createCategoryRepository({
               AND platform = $2
               AND is_active = TRUE
               AND LOWER(name) = LOWER($3)
+              AND category_id <> $4
             LIMIT 1
           `,
-          [botId, platform, name],
+          [existing.botId, existing.platform, nextName, normalizedCategoryId],
         );
         if (duplicateCheck.rowCount > 0) {
           throw new Error("category_name_already_exists");
         }
+      }
 
-        const categoryId = generateCategoryId();
-        const now = new Date();
-        const pgBotId = await resolvePgBotId(client, platform, botId).catch(() => null);
-        await client.query(
-          `
-            INSERT INTO categories (
-              category_id,
-              bot_id,
-              legacy_bot_id,
-              platform,
-              name,
-              description,
-              columns,
-              is_active,
-              created_at,
-              updated_at
-            ) VALUES (
-              $1,$2,$3,$4,$5,$6,$7::jsonb,TRUE,$8,$9
-            )
-          `,
-          [
-            categoryId,
-            pgBotId,
-            botId,
+      const updatedAt = new Date();
+      const result = await client.query(
+        `
+          UPDATE categories
+          SET
+            name = $2,
+            description = $3,
+            columns = $4::jsonb,
+            updated_at = $5
+          WHERE category_id = $1
+          RETURNING
+            id::text AS id,
+            category_id,
+            legacy_bot_id,
             platform,
             name,
             description,
-            safeStringify(columns),
-            now,
-            now,
-          ],
+            columns,
+            is_active,
+            created_at,
+            updated_at
+        `,
+        [
+          normalizedCategoryId,
+          nextName,
+          nextDescription,
+          safeStringify(nextColumns),
+          updatedAt,
+        ],
+      );
+      const row = result.rows[0] || null;
+      return row ? normalizeCategoryDoc(row) : null;
+    });
+  }
+
+  async function deleteCategory(categoryId) {
+    ensurePostgres();
+    const normalizedCategoryId = toLegacyId(categoryId);
+    if (!normalizedCategoryId) return false;
+    const result = await query(
+      "DELETE FROM categories WHERE category_id = $1",
+      [normalizedCategoryId],
+    );
+    return result.rowCount > 0;
+  }
+
+  async function addRow(categoryId, values = {}) {
+    ensurePostgres();
+    const normalizedCategoryId = toLegacyId(categoryId);
+    if (!normalizedCategoryId) return null;
+
+    return withTransaction(async (client) => {
+      const categoryResult = await client.query(
+        `
+          SELECT category_id, legacy_bot_id, platform
+          FROM categories
+          WHERE category_id = $1
+            AND is_active = TRUE
+          LIMIT 1
+        `,
+        [normalizedCategoryId],
+      );
+      const categoryRow = categoryResult.rows[0] || null;
+      if (!categoryRow) {
+        return null;
+      }
+
+      const now = new Date();
+      const newRow = normalizeCategoryRow({
+        rowId: generateRowId(),
+        values,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const existingTable = await client.query(
+        `
+          SELECT data
+          FROM category_tables
+          WHERE category_id = $1
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [normalizedCategoryId],
+      );
+      const currentRows = normalizeCategoryRows(existingTable.rows[0]?.data);
+      currentRows.push(newRow);
+
+      if (existingTable.rowCount > 0) {
+        await client.query(
+          `
+            UPDATE category_tables
+            SET
+              data = $2::jsonb,
+              updated_at = $3
+            WHERE category_id = $1
+          `,
+          [normalizedCategoryId, safeStringify(currentRows), now],
         );
+      } else {
+        const pgBotId = await resolvePgBotId(
+          client,
+          categoryRow.platform,
+          categoryRow.legacy_bot_id,
+        ).catch(() => null);
         await client.query(
           `
             INSERT INTO category_tables (
@@ -438,563 +522,200 @@ function createCategoryRepository({
               created_at,
               updated_at
             ) VALUES (
-              $1,$2,$3,$4,'[]'::jsonb,$5,$6
+              $1,$2,$3,$4,$5::jsonb,$6,$7
             )
-          `,
-          [categoryId, pgBotId, botId, platform, now, now],
-        );
-        return {
-          _id: categoryId,
-          categoryId,
-          botId,
-          platform,
-          name,
-          description,
-          columns,
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        };
-      });
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("category_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const existing = await db.collection("categories").findOne({
-      name,
-      botId,
-      platform,
-      isActive: true,
-    });
-    if (existing) {
-      throw new Error("category_name_already_exists");
-    }
-
-    const categoryId = generateCategoryId();
-    const now = new Date();
-    const doc = {
-      categoryId,
-      botId,
-      platform,
-      name,
-      description,
-      columns,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await db.collection("categories").insertOne(doc);
-    await db.collection("category_tables").insertOne({
-      categoryId,
-      botId,
-      platform,
-      data: [],
-      createdAt: now,
-      updatedAt: now,
-    });
-    return normalizeCategoryDoc(doc);
-  }
-
-  async function updateCategory(categoryId, payload = {}) {
-    const normalizedCategoryId = toLegacyId(categoryId);
-    if (!normalizedCategoryId) return null;
-
-    if (canUsePostgres()) {
-      return withTransaction(async (client) => {
-        const existingResult = await client.query(
-          `
-            SELECT
-              id::text AS id,
-              category_id,
-              legacy_bot_id,
-              platform,
-              name,
-              description,
-              columns,
-              is_active,
-              created_at,
-              updated_at
-            FROM categories
-            WHERE category_id = $1
-            LIMIT 1
-            FOR UPDATE
-          `,
-          [normalizedCategoryId],
-        );
-        const existingRow = existingResult.rows[0] || null;
-        if (!existingRow) {
-          return null;
-        }
-
-        const existing = normalizeCategoryDoc(existingRow);
-        const nextName =
-          typeof payload.name === "string" && payload.name.trim()
-            ? payload.name.trim()
-            : existing.name;
-        const nextDescription =
-          typeof payload.description === "string"
-            ? payload.description
-            : payload.description === ""
-              ? ""
-              : existing.description;
-        const nextColumns =
-          Array.isArray(payload.columns) && payload.columns.length > 0
-            ? normalizeCategoryColumns(payload.columns)
-            : existing.columns;
-
-        if (
-          nextName.toLowerCase() !== existing.name.toLowerCase()
-        ) {
-          const duplicateCheck = await client.query(
-            `
-              SELECT category_id
-              FROM categories
-              WHERE legacy_bot_id = $1
-                AND platform = $2
-                AND is_active = TRUE
-                AND LOWER(name) = LOWER($3)
-                AND category_id <> $4
-              LIMIT 1
-            `,
-            [existing.botId, existing.platform, nextName, normalizedCategoryId],
-          );
-          if (duplicateCheck.rowCount > 0) {
-            throw new Error("category_name_already_exists");
-          }
-        }
-
-        const updatedAt = new Date();
-        const result = await client.query(
-          `
-            UPDATE categories
-            SET
-              name = $2,
-              description = $3,
-              columns = $4::jsonb,
-              updated_at = $5
-            WHERE category_id = $1
-            RETURNING
-              id::text AS id,
-              category_id,
-              legacy_bot_id,
-              platform,
-              name,
-              description,
-              columns,
-              is_active,
-              created_at,
-              updated_at
           `,
           [
             normalizedCategoryId,
-            nextName,
-            nextDescription,
-            safeStringify(nextColumns),
-            updatedAt,
+            pgBotId,
+            categoryRow.legacy_bot_id,
+            categoryRow.platform,
+            safeStringify([newRow]),
+            now,
+            now,
           ],
         );
-        const row = result.rows[0] || null;
-        return row ? normalizeCategoryDoc(row) : null;
-      });
-    }
+      }
 
-    if (!canUseMongo()) {
-      throw new Error("category_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const existing = await db.collection("categories").findOne({ categoryId: normalizedCategoryId });
-    if (!existing) {
-      return null;
-    }
-
-    const processedColumns =
-      Array.isArray(payload.columns) && payload.columns.length > 0
-        ? normalizeCategoryColumns(payload.columns)
-        : existing.columns;
-    const updateDoc = {
-      updatedAt: new Date(),
-    };
-    if (typeof payload.name === "string" && payload.name.trim()) {
-      updateDoc.name = payload.name.trim();
-    }
-    if (typeof payload.description === "string") {
-      updateDoc.description = payload.description;
-    }
-    if (Array.isArray(payload.columns)) {
-      updateDoc.columns = processedColumns;
-    }
-    await db.collection("categories").updateOne(
-      { categoryId: normalizedCategoryId },
-      { $set: updateDoc },
-    );
-    const updated = await db.collection("categories").findOne({ categoryId: normalizedCategoryId });
-    return updated ? normalizeCategoryDoc(updated) : null;
-  }
-
-  async function deleteCategory(categoryId) {
-    const normalizedCategoryId = toLegacyId(categoryId);
-    if (!normalizedCategoryId) return false;
-
-    if (canUsePostgres()) {
-      const result = await query(
-        "DELETE FROM categories WHERE category_id = $1",
-        [normalizedCategoryId],
-      );
-      return result.rowCount > 0;
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("category_storage_unavailable");
-    }
-
-    const db = await getDb();
-    await db.collection("category_tables").deleteOne({ categoryId: normalizedCategoryId });
-    const result = await db.collection("categories").deleteOne({ categoryId: normalizedCategoryId });
-    return result.deletedCount > 0;
-  }
-
-  async function addRow(categoryId, values = {}) {
-    const normalizedCategoryId = toLegacyId(categoryId);
-    if (!normalizedCategoryId) return null;
-
-    if (canUsePostgres()) {
-      return withTransaction(async (client) => {
-        const categoryResult = await client.query(
-          `
-            SELECT category_id, legacy_bot_id, platform
-            FROM categories
-            WHERE category_id = $1
-              AND is_active = TRUE
-            LIMIT 1
-          `,
-          [normalizedCategoryId],
-        );
-        const categoryRow = categoryResult.rows[0] || null;
-        if (!categoryRow) {
-          return null;
-        }
-
-        const now = new Date();
-        const newRow = normalizeCategoryRow({
-          rowId: generateRowId(),
-          values,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        const existingTable = await client.query(
-          `
-            SELECT data
-            FROM category_tables
-            WHERE category_id = $1
-            LIMIT 1
-            FOR UPDATE
-          `,
-          [normalizedCategoryId],
-        );
-        const currentRows = normalizeCategoryRows(existingTable.rows[0]?.data);
-        currentRows.push(newRow);
-
-        if (existingTable.rowCount > 0) {
-          await client.query(
-            `
-              UPDATE category_tables
-              SET
-                data = $2::jsonb,
-                updated_at = $3
-              WHERE category_id = $1
-            `,
-            [normalizedCategoryId, safeStringify(currentRows), now],
-          );
-        } else {
-          const pgBotId = await resolvePgBotId(
-            client,
-            categoryRow.platform,
-            categoryRow.legacy_bot_id,
-          ).catch(() => null);
-          await client.query(
-            `
-              INSERT INTO category_tables (
-                category_id,
-                bot_id,
-                legacy_bot_id,
-                platform,
-                data,
-                created_at,
-                updated_at
-              ) VALUES (
-                $1,$2,$3,$4,$5::jsonb,$6,$7
-              )
-            `,
-            [
-              normalizedCategoryId,
-              pgBotId,
-              categoryRow.legacy_bot_id,
-              categoryRow.platform,
-              safeStringify([newRow]),
-              now,
-              now,
-            ],
-          );
-        }
-
-        return newRow;
-      });
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("category_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const newRow = normalizeCategoryRow({ values });
-    const result = await db.collection("category_tables").updateOne(
-      { categoryId: normalizedCategoryId },
-      {
-        $push: { data: newRow },
-        $set: { updatedAt: new Date() },
-      },
-    );
-    if (result.matchedCount === 0) {
-      return null;
-    }
-    return newRow;
+      return newRow;
+    });
   }
 
   async function updateRow(categoryId, rowId, values = {}) {
+    ensurePostgres();
     const normalizedCategoryId = toLegacyId(categoryId);
     const normalizedRowId = toLegacyId(rowId);
     if (!normalizedCategoryId || !normalizedRowId) return null;
 
-    if (canUsePostgres()) {
-      return withTransaction(async (client) => {
-        const existingTable = await client.query(
-          `
-            SELECT data
-            FROM category_tables
-            WHERE category_id = $1
-            LIMIT 1
-            FOR UPDATE
-          `,
-          [normalizedCategoryId],
-        );
-        if (existingTable.rowCount === 0) {
-          return null;
-        }
+    return withTransaction(async (client) => {
+      const existingTable = await client.query(
+        `
+          SELECT data
+          FROM category_tables
+          WHERE category_id = $1
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [normalizedCategoryId],
+      );
+      if (existingTable.rowCount === 0) {
+        return null;
+      }
 
-        const currentRows = normalizeCategoryRows(existingTable.rows[0]?.data);
-        const rowIndex = currentRows.findIndex((entry) => entry.rowId === normalizedRowId);
-        if (rowIndex < 0) {
-          return null;
-        }
+      const currentRows = normalizeCategoryRows(existingTable.rows[0]?.data);
+      const rowIndex = currentRows.findIndex((entry) => entry.rowId === normalizedRowId);
+      if (rowIndex < 0) {
+        return null;
+      }
 
-        const updatedAt = new Date();
-        currentRows[rowIndex] = {
-          ...currentRows[rowIndex],
-          values:
-            values && typeof values === "object" && !Array.isArray(values)
-              ? { ...values }
-              : {},
-          updatedAt,
-        };
+      const updatedAt = new Date();
+      currentRows[rowIndex] = {
+        ...currentRows[rowIndex],
+        values:
+          values && typeof values === "object" && !Array.isArray(values)
+            ? { ...values }
+            : {},
+        updatedAt,
+      };
 
-        await client.query(
-          `
-            UPDATE category_tables
-            SET
-              data = $2::jsonb,
-              updated_at = $3
-            WHERE category_id = $1
-          `,
-          [normalizedCategoryId, safeStringify(currentRows), updatedAt],
-        );
+      await client.query(
+        `
+          UPDATE category_tables
+          SET
+            data = $2::jsonb,
+            updated_at = $3
+          WHERE category_id = $1
+        `,
+        [normalizedCategoryId, safeStringify(currentRows), updatedAt],
+      );
 
-        return currentRows[rowIndex];
-      });
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("category_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const result = await db.collection("category_tables").updateOne(
-      { categoryId: normalizedCategoryId, "data.rowId": normalizedRowId },
-      {
-        $set: {
-          "data.$.values": values,
-          "data.$.updatedAt": new Date(),
-          updatedAt: new Date(),
-        },
-      },
-    );
-    if (result.matchedCount === 0) {
-      return null;
-    }
-    const table = await db.collection("category_tables").findOne({ categoryId: normalizedCategoryId });
-    const row = Array.isArray(table?.data)
-      ? table.data.find((entry) => toLegacyId(entry?.rowId) === normalizedRowId)
-      : null;
-    return row ? normalizeCategoryRow(row) : null;
+      return currentRows[rowIndex];
+    });
   }
 
   async function deleteRow(categoryId, rowId) {
+    ensurePostgres();
     const normalizedCategoryId = toLegacyId(categoryId);
     const normalizedRowId = toLegacyId(rowId);
     if (!normalizedCategoryId || !normalizedRowId) return false;
 
-    if (canUsePostgres()) {
-      return withTransaction(async (client) => {
-        const existingTable = await client.query(
-          `
-            SELECT data
-            FROM category_tables
-            WHERE category_id = $1
-            LIMIT 1
-            FOR UPDATE
-          `,
-          [normalizedCategoryId],
-        );
-        if (existingTable.rowCount === 0) {
-          return false;
-        }
+    return withTransaction(async (client) => {
+      const existingTable = await client.query(
+        `
+          SELECT data
+          FROM category_tables
+          WHERE category_id = $1
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [normalizedCategoryId],
+      );
+      if (existingTable.rowCount === 0) {
+        return false;
+      }
 
-        const currentRows = normalizeCategoryRows(existingTable.rows[0]?.data);
-        const nextRows = currentRows.filter((entry) => entry.rowId !== normalizedRowId);
-        if (nextRows.length === currentRows.length) {
-          return false;
-        }
+      const currentRows = normalizeCategoryRows(existingTable.rows[0]?.data);
+      const nextRows = currentRows.filter((entry) => entry.rowId !== normalizedRowId);
+      if (nextRows.length === currentRows.length) {
+        return false;
+      }
 
-        await client.query(
-          `
-            UPDATE category_tables
-            SET
-              data = $2::jsonb,
-              updated_at = $3
-            WHERE category_id = $1
-          `,
-          [normalizedCategoryId, safeStringify(nextRows), new Date()],
-        );
-        return true;
-      });
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("category_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const result = await db.collection("category_tables").updateOne(
-      { categoryId: normalizedCategoryId },
-      {
-        $pull: { data: { rowId: normalizedRowId } },
-        $set: { updatedAt: new Date() },
-      },
-    );
-    return result.matchedCount > 0 && result.modifiedCount > 0;
+      await client.query(
+        `
+          UPDATE category_tables
+          SET
+            data = $2::jsonb,
+            updated_at = $3
+          WHERE category_id = $1
+        `,
+        [normalizedCategoryId, safeStringify(nextRows), new Date()],
+      );
+      return true;
+    });
   }
 
   async function appendRows(categoryId, rows = []) {
+    ensurePostgres();
     const normalizedCategoryId = toLegacyId(categoryId);
     if (!normalizedCategoryId) return [];
     const normalizedRows = normalizeCategoryRows(rows);
     if (normalizedRows.length === 0) return [];
 
-    if (canUsePostgres()) {
-      return withTransaction(async (client) => {
-        const categoryResult = await client.query(
-          `
-            SELECT category_id, legacy_bot_id, platform
-            FROM categories
-            WHERE category_id = $1
-              AND is_active = TRUE
-            LIMIT 1
-          `,
-          [normalizedCategoryId],
-        );
-        const categoryRow = categoryResult.rows[0] || null;
-        if (!categoryRow) {
-          throw new Error("category_not_found");
-        }
+    return withTransaction(async (client) => {
+      const categoryResult = await client.query(
+        `
+          SELECT category_id, legacy_bot_id, platform
+          FROM categories
+          WHERE category_id = $1
+            AND is_active = TRUE
+          LIMIT 1
+        `,
+        [normalizedCategoryId],
+      );
+      const categoryRow = categoryResult.rows[0] || null;
+      if (!categoryRow) {
+        throw new Error("category_not_found");
+      }
 
-        const existingTable = await client.query(
-          `
-            SELECT data
-            FROM category_tables
-            WHERE category_id = $1
-            LIMIT 1
-            FOR UPDATE
-          `,
-          [normalizedCategoryId],
-        );
-        const currentRows = normalizeCategoryRows(existingTable.rows[0]?.data);
-        const nextRows = currentRows.concat(normalizedRows);
-        const updatedAt = new Date();
+      const existingTable = await client.query(
+        `
+          SELECT data
+          FROM category_tables
+          WHERE category_id = $1
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [normalizedCategoryId],
+      );
+      const currentRows = normalizeCategoryRows(existingTable.rows[0]?.data);
+      const nextRows = currentRows.concat(normalizedRows);
+      const updatedAt = new Date();
 
-        if (existingTable.rowCount > 0) {
-          await client.query(
-            `
-              UPDATE category_tables
-              SET
-                data = $2::jsonb,
-                updated_at = $3
-              WHERE category_id = $1
-            `,
-            [normalizedCategoryId, safeStringify(nextRows), updatedAt],
-          );
-        } else {
-          const pgBotId = await resolvePgBotId(
-            client,
-            categoryRow.platform,
+      if (existingTable.rowCount > 0) {
+        await client.query(
+          `
+            UPDATE category_tables
+            SET
+              data = $2::jsonb,
+              updated_at = $3
+            WHERE category_id = $1
+          `,
+          [normalizedCategoryId, safeStringify(nextRows), updatedAt],
+        );
+      } else {
+        const pgBotId = await resolvePgBotId(
+          client,
+          categoryRow.platform,
+          categoryRow.legacy_bot_id,
+        ).catch(() => null);
+        await client.query(
+          `
+            INSERT INTO category_tables (
+              category_id,
+              bot_id,
+              legacy_bot_id,
+              platform,
+              data,
+              created_at,
+              updated_at
+            ) VALUES (
+              $1,$2,$3,$4,$5::jsonb,$6,$7
+            )
+          `,
+          [
+            normalizedCategoryId,
+            pgBotId,
             categoryRow.legacy_bot_id,
-          ).catch(() => null);
-          await client.query(
-            `
-              INSERT INTO category_tables (
-                category_id,
-                bot_id,
-                legacy_bot_id,
-                platform,
-                data,
-                created_at,
-                updated_at
-              ) VALUES (
-                $1,$2,$3,$4,$5::jsonb,$6,$7
-              )
-            `,
-            [
-              normalizedCategoryId,
-              pgBotId,
-              categoryRow.legacy_bot_id,
-              categoryRow.platform,
-              safeStringify(normalizedRows),
-              updatedAt,
-              updatedAt,
-            ],
-          );
-        }
+            categoryRow.platform,
+            safeStringify(normalizedRows),
+            updatedAt,
+            updatedAt,
+          ],
+        );
+      }
 
-        return normalizedRows;
-      });
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("category_storage_unavailable");
-    }
-
-    const db = await getDb();
-    await db.collection("category_tables").updateOne(
-      { categoryId: normalizedCategoryId },
-      {
-        $push: { data: { $each: normalizedRows } },
-        $set: { updatedAt: new Date() },
-      },
-    );
-    return normalizedRows;
+      return normalizedRows;
+    });
   }
 
   return {

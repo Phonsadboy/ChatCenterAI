@@ -1,51 +1,9 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
-const {
-  safeStringify,
-  toLegacyId,
-  warnPrimaryReadFailure,
-} = require("./shared");
+const { toLegacyId } = require("./shared");
 
-function createUserStateRepository({
-  connectDB,
-  dbName = "chatbot",
-  runtimeConfig,
-}) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
+function createUserStateRepository({ runtimeConfig }) {
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
-  }
-
-  function shouldDualWrite() {
-    return Boolean(runtimeConfig?.features?.postgresDualWrite && canUsePostgres());
-  }
-
-  function shouldShadowRead() {
-    return Boolean(runtimeConfig?.features?.postgresShadowRead && canUsePostgres());
-  }
-
-  function shouldReadPrimary() {
-    return Boolean(
-      canUsePostgres()
-        && (runtimeConfig?.features?.postgresReadPrimaryChat || !canUseMongo()),
-    );
-  }
-
-  async function getDb() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
-    }
-    const client = await connectDB();
-    return client.db(dbName);
-  }
-
-  function startShadowCompare(label, mongoValue, pgValue) {
-    if (!shouldShadowRead() || shouldReadPrimary()) return;
-    if (safeStringify(mongoValue) !== safeStringify(pgValue)) {
-      console.warn(`[UserStateRepository] Shadow read mismatch for ${label}`);
-    }
   }
 
   function normalizeAiStatusDoc(doc = {}) {
@@ -255,132 +213,29 @@ function createUserStateRepository({
     if (!normalizedUserId) {
       return { senderId: "", aiEnabled: true, updatedAt: new Date() };
     }
-
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPgAiStatus(normalizedUserId);
-        if (pgDoc || !canUseMongo()) {
-          return pgDoc || {
-            senderId: normalizedUserId,
-            aiEnabled: true,
-            updatedAt: new Date(),
-          };
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "UserStateRepository",
-          operation: "AI status read",
-          identifier: normalizedUserId,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
+    if (!canUsePostgres()) {
       return { senderId: normalizedUserId, aiEnabled: true, updatedAt: new Date() };
     }
-
-    const db = await getDb();
-    const coll = db.collection("active_user_status");
-    let mongoDoc = await coll.findOne({ senderId: normalizedUserId });
-    if (!mongoDoc) {
-      mongoDoc = { senderId: normalizedUserId, aiEnabled: true, updatedAt: new Date() };
-      await coll.insertOne(mongoDoc);
-      if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
-        await writePgAiStatus(normalizedUserId, true, mongoDoc.updatedAt).catch((error) => {
-          console.warn(
-            `[UserStateRepository] AI status dual-write failed for ${normalizedUserId}:`,
-            error?.message || error,
-          );
-        });
-      }
-    } else if (shouldShadowRead()) {
-      void readPgAiStatus(normalizedUserId)
-        .then((pgDoc) =>
-          startShadowCompare(
-            `aiStatus:${normalizedUserId}`,
-            normalizeAiStatusDoc(mongoDoc),
-            pgDoc,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            `[UserStateRepository] Shadow AI status read failed for ${normalizedUserId}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
+    const pgDoc = await readPgAiStatus(normalizedUserId);
+    return pgDoc || {
+      senderId: normalizedUserId,
+      aiEnabled: true,
+      updatedAt: new Date(),
+    };
   }
 
   async function listAiStatuses(userIds = []) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDocs = await readPgAiStatuses(userIds);
-        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "UserStateRepository",
-          operation: "AI status list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    const normalizedIds = Array.isArray(userIds)
-      ? userIds.map((userId) => toLegacyId(userId)).filter(Boolean)
-      : [];
-    if (normalizedIds.length === 0) return [];
-    if (!canUseMongo()) return [];
-    const db = await getDb();
-    const mongoDocs = await db.collection("active_user_status")
-      .find({ senderId: { $in: normalizedIds } })
-      .toArray();
-
-    if (shouldShadowRead()) {
-      void readPgAiStatuses(normalizedIds)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `aiStatusList:${safeStringify(normalizedIds)}`,
-            mongoDocs.map((doc) => normalizeAiStatusDoc(doc)),
-            pgDocs,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[UserStateRepository] Shadow AI status list failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    if (!canUsePostgres()) return [];
+    return readPgAiStatuses(userIds);
   }
 
   async function setAiStatus(userId, aiEnabled) {
     const normalizedUserId = toLegacyId(userId);
+    if (!normalizedUserId) return false;
     const updatedAt = new Date();
-    if (canUseMongo()) {
-      const db = await getDb();
-      await db.collection("active_user_status").updateOne(
-        { senderId: normalizedUserId },
-        { $set: { aiEnabled: Boolean(aiEnabled), updatedAt } },
-        { upsert: true },
-      );
+    if (canUsePostgres()) {
+      await writePgAiStatus(normalizedUserId, aiEnabled, updatedAt);
     }
-
-    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
-      await writePgAiStatus(normalizedUserId, aiEnabled, updatedAt).catch((error) => {
-        console.warn(
-          `[UserStateRepository] AI status dual-write failed for ${normalizedUserId}:`,
-          error?.message || error,
-        );
-      });
-    }
-
     return true;
   }
 
@@ -389,168 +244,31 @@ function createUserStateRepository({
     if (!normalizedUserId) {
       return { userId: "", tags: [], updatedAt: null };
     }
-
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPgTags(normalizedUserId);
-        if (pgDoc || !canUseMongo()) {
-          return pgDoc || { userId: normalizedUserId, tags: [], updatedAt: null };
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "UserStateRepository",
-          operation: "tags read",
-          identifier: normalizedUserId,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
+    if (!canUsePostgres()) {
+      return { userId: normalizedUserId, tags: [], updatedAt: null };
     }
-
-    if (!canUseMongo()) {
-      return { userId: normalizedUserId, tags: [] };
-    }
-    const db = await getDb();
-    const mongoDoc = await db.collection("user_tags").findOne({ userId: normalizedUserId });
-    if (shouldShadowRead()) {
-      void readPgTags(normalizedUserId)
-        .then((pgDoc) =>
-          startShadowCompare(
-            `tags:${normalizedUserId}`,
-            normalizeTagsDoc(mongoDoc || { userId: normalizedUserId, tags: [] }),
-            pgDoc || { userId: normalizedUserId, tags: [] },
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            `[UserStateRepository] Shadow tags read failed for ${normalizedUserId}:`,
-            error?.message || error,
-          );
-        });
-    }
-    return mongoDoc || { userId: normalizedUserId, tags: [] };
+    const pgDoc = await readPgTags(normalizedUserId);
+    return pgDoc || { userId: normalizedUserId, tags: [], updatedAt: null };
   }
 
   async function listTagsByUsers(userIds = []) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDocs = await readPgTagsByUsers(userIds);
-        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "UserStateRepository",
-          operation: "tags list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    const normalizedIds = Array.isArray(userIds)
-      ? userIds.map((userId) => toLegacyId(userId)).filter(Boolean)
-      : [];
-    if (normalizedIds.length === 0) return [];
-    if (!canUseMongo()) return [];
-    const db = await getDb();
-    const mongoDocs = await db.collection("user_tags")
-      .find({ userId: { $in: normalizedIds } })
-      .toArray();
-
-    if (shouldShadowRead()) {
-      void readPgTagsByUsers(normalizedIds)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `tagsList:${safeStringify(normalizedIds)}`,
-            mongoDocs.map((doc) => normalizeTagsDoc(doc)),
-            pgDocs,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[UserStateRepository] Shadow tags list failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    if (!canUsePostgres()) return [];
+    return readPgTagsByUsers(userIds);
   }
 
   async function setTags(userId, tags = []) {
     const normalizedUserId = toLegacyId(userId);
     const updatedAt = new Date();
     const cleanTags = Array.isArray(tags) ? tags : [];
-    if (canUseMongo()) {
-      const db = await getDb();
-      await db.collection("user_tags").updateOne(
-        { userId: normalizedUserId },
-        {
-          $set: {
-            tags: cleanTags,
-            updatedAt,
-          },
-        },
-        { upsert: true },
-      );
+    if (canUsePostgres() && normalizedUserId) {
+      await writePgTags(normalizedUserId, cleanTags, updatedAt);
     }
-
-    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
-      await writePgTags(normalizedUserId, cleanTags, updatedAt).catch((error) => {
-        console.warn(
-          `[UserStateRepository] Tags dual-write failed for ${normalizedUserId}:`,
-          error?.message || error,
-        );
-      });
-    }
-
     return { userId: normalizedUserId, tags: cleanTags, updatedAt };
   }
 
   async function listAvailableTags(limit = 50) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgTags = await readPgAvailableTags(limit);
-        if (pgTags.length > 0 || !canUseMongo()) return pgTags;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "UserStateRepository",
-          operation: "available-tags read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return [];
-    }
-    const db = await getDb();
-    const allUserTags = await db.collection("user_tags").find({}).toArray();
-    const tagCount = {};
-    allUserTags.forEach((userTag) => {
-      if (!Array.isArray(userTag?.tags)) return;
-      userTag.tags.forEach((tag) => {
-        if (!tag) return;
-        tagCount[tag] = (tagCount[tag] || 0) + 1;
-      });
-    });
-    const mongoTags = Object.entries(tagCount)
-      .map(([tag, count]) => ({ tag, count }))
-      .sort((left, right) => right.count - left.count || left.tag.localeCompare(right.tag))
-      .slice(0, limit);
-
-    if (shouldShadowRead()) {
-      void readPgAvailableTags(limit)
-        .then((pgTags) => startShadowCompare("availableTags", mongoTags, pgTags))
-        .catch((error) => {
-          console.warn(
-            "[UserStateRepository] Shadow available-tags read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoTags;
+    if (!canUsePostgres()) return [];
+    return readPgAvailableTags(limit);
   }
 
   async function getPurchaseStatus(userId) {
@@ -558,130 +276,38 @@ function createUserStateRepository({
     if (!normalizedUserId) {
       return { userId: "", hasPurchased: false, updatedAt: null, updatedBy: null };
     }
-
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPgPurchaseStatus(normalizedUserId);
-        if (pgDoc || !canUseMongo()) {
-          return pgDoc || {
-            userId: normalizedUserId,
-            hasPurchased: false,
-            updatedAt: null,
-            updatedBy: null,
-          };
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "UserStateRepository",
-          operation: "purchase-status read",
-          identifier: normalizedUserId,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
+    if (!canUsePostgres()) {
+      return {
+        userId: normalizedUserId,
+        hasPurchased: false,
+        updatedAt: null,
+        updatedBy: null,
+      };
     }
-
-    if (!canUseMongo()) {
-      return { userId: normalizedUserId, hasPurchased: false };
-    }
-    const db = await getDb();
-    const mongoDoc = await db.collection("user_purchase_status").findOne({ userId: normalizedUserId });
-
-    if (shouldShadowRead()) {
-      void readPgPurchaseStatus(normalizedUserId)
-        .then((pgDoc) =>
-          startShadowCompare(
-            `purchaseStatus:${normalizedUserId}`,
-            normalizePurchaseStatusDoc(mongoDoc || { userId: normalizedUserId, hasPurchased: false }),
-            pgDoc || { userId: normalizedUserId, hasPurchased: false },
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            `[UserStateRepository] Shadow purchase-status read failed for ${normalizedUserId}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc || { userId: normalizedUserId, hasPurchased: false };
+    const pgDoc = await readPgPurchaseStatus(normalizedUserId);
+    return pgDoc || {
+      userId: normalizedUserId,
+      hasPurchased: false,
+      updatedAt: null,
+      updatedBy: null,
+    };
   }
 
   async function listPurchaseStatuses(userIds = []) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDocs = await readPgPurchaseStatuses(userIds);
-        if (pgDocs.length > 0 || !canUseMongo()) return pgDocs;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "UserStateRepository",
-          operation: "purchase-status list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    const normalizedIds = Array.isArray(userIds)
-      ? userIds.map((userId) => toLegacyId(userId)).filter(Boolean)
-      : [];
-    if (normalizedIds.length === 0) return [];
-    if (!canUseMongo()) return [];
-    const db = await getDb();
-    const mongoDocs = await db.collection("user_purchase_status")
-      .find({ userId: { $in: normalizedIds } })
-      .toArray();
-
-    if (shouldShadowRead()) {
-      void readPgPurchaseStatuses(normalizedIds)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `purchaseStatusList:${safeStringify(normalizedIds)}`,
-            mongoDocs.map((doc) => normalizePurchaseStatusDoc(doc)),
-            pgDocs,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[UserStateRepository] Shadow purchase-status list failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    if (!canUsePostgres()) return [];
+    return readPgPurchaseStatuses(userIds);
   }
 
   async function setPurchaseStatus(userId, hasPurchased, updatedBy = "admin") {
     const normalizedUserId = toLegacyId(userId);
     const updatedAt = new Date();
-    if (canUseMongo()) {
-      const db = await getDb();
-      await db.collection("user_purchase_status").updateOne(
-        { userId: normalizedUserId },
-        {
-          $set: {
-            hasPurchased: Boolean(hasPurchased),
-            updatedAt,
-            updatedBy: updatedBy || null,
-          },
-        },
-        { upsert: true },
-      );
-    }
-
-    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
+    if (canUsePostgres() && normalizedUserId) {
       await writePgPurchaseStatus(
         normalizedUserId,
         hasPurchased,
         updatedAt,
         updatedBy,
-      ).catch((error) => {
-        console.warn(
-          `[UserStateRepository] Purchase-status dual-write failed for ${normalizedUserId}:`,
-          error?.message || error,
-        );
-      });
+      );
     }
 
     return {

@@ -3,7 +3,6 @@ const { resolvePgBotId } = require("./postgresRefs");
 const {
   safeStringify,
   toLegacyId,
-  toObjectId,
 } = require("./shared");
 
 function buildDefaultFacebookCommentPolicy() {
@@ -123,38 +122,15 @@ function normalizeFacebookCommentPolicyDoc(doc = {}) {
   };
 }
 
-function createFacebookCommentPolicyRepository({
-  connectDB,
-  dbName = "chatbot",
-  runtimeConfig,
-}) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
-  function canUsePostgres() {
-    return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
-  }
-
-  function shouldReadPrimary() {
-    return canUsePostgres();
-  }
-
-  async function getDb() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
+function createFacebookCommentPolicyRepository() {
+  function ensurePostgres() {
+    if (!isPostgresConfigured()) {
+      throw new Error("facebook_comment_policy_storage_requires_postgres");
     }
-    const client = await connectDB();
-    return client.db(dbName);
-  }
-
-  function toMongoBotId(botId) {
-    const legacyBotId = toLegacyId(botId);
-    const objectId = toObjectId(legacyBotId);
-    return objectId || legacyBotId;
   }
 
   async function readPostgresPolicy(botId, scope = "page_default") {
+    ensurePostgres();
     const legacyBotId = toLegacyId(botId);
     if (!legacyBotId) return null;
     const result = await query(
@@ -188,33 +164,12 @@ function createFacebookCommentPolicyRepository({
       : null;
   }
 
-  async function readMongoPolicy(botId, scope = "page_default") {
-    const legacyBotId = toLegacyId(botId);
-    if (!legacyBotId) return null;
-    const db = await getDb();
-    return db.collection("facebook_comment_policies").findOne({
-      botId: toMongoBotId(legacyBotId),
-      scope,
-    });
-  }
-
   async function getPageDefaultPolicy(botId) {
-    const legacyBotId = toLegacyId(botId);
-    if (!legacyBotId) return null;
-
-    if (shouldReadPrimary()) {
-      return readPostgresPolicy(legacyBotId, "page_default");
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const mongoDoc = await readMongoPolicy(legacyBotId, "page_default");
-    return mongoDoc ? normalizeFacebookCommentPolicyDoc(mongoDoc) : null;
+    return readPostgresPolicy(botId, "page_default");
   }
 
   async function upsertPageDefaultPolicy(botId, payload = {}) {
+    ensurePostgres();
     const legacyBotId = toLegacyId(botId);
     if (!legacyBotId) {
       throw new Error("facebook_comment_policy_requires_bot_id");
@@ -241,108 +196,68 @@ function createFacebookCommentPolicyRepository({
       overridePageDefault: false,
     };
 
-    if (canUsePostgres()) {
-      const pgBotId = await resolvePgBotId({ query }, "facebook", legacyBotId).catch(() => null);
-      await query(
-        `
-          INSERT INTO facebook_comment_policies (
-            bot_id,
-            legacy_bot_id,
-            page_id,
-            scope,
-            mode,
-            template_message,
-            ai_model,
-            system_prompt,
-            private_reply_template,
-            pull_to_chat,
-            send_private_reply,
-            is_active,
-            status,
-            metadata,
-            created_at,
-            updated_at
-          ) VALUES (
-            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16
-          )
-          ON CONFLICT (legacy_bot_id, scope) DO UPDATE SET
-            bot_id = EXCLUDED.bot_id,
-            page_id = EXCLUDED.page_id,
-            mode = EXCLUDED.mode,
-            template_message = EXCLUDED.template_message,
-            ai_model = EXCLUDED.ai_model,
-            system_prompt = EXCLUDED.system_prompt,
-            private_reply_template = EXCLUDED.private_reply_template,
-            pull_to_chat = EXCLUDED.pull_to_chat,
-            send_private_reply = EXCLUDED.send_private_reply,
-            is_active = EXCLUDED.is_active,
-            status = EXCLUDED.status,
-            metadata = EXCLUDED.metadata,
-            updated_at = EXCLUDED.updated_at
-        `,
-        [
-          pgBotId,
-          legacyBotId,
-          normalized.pageId || "",
-          "page_default",
-          normalized.mode,
-          normalized.templateMessage,
-          normalized.aiModel,
-          normalized.systemPrompt,
-          normalized.privateReplyTemplate,
-          normalized.pullToChat,
-          normalized.sendPrivateReply,
-          normalized.isActive,
-          normalized.status,
-          safeStringify(metadata),
-          normalized.createdAt || now,
-          normalized.updatedAt || now,
-        ],
-      );
-
-      return {
-        ...normalized,
-        scope: "page_default",
-        metadata,
-      };
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("facebook_comment_policy_storage_unavailable");
-    }
-
-    const db = await getDb();
-    const mongoBotId = toMongoBotId(legacyBotId);
-    const policy = {
-      ...buildDefaultFacebookCommentPolicy(),
-      botId: mongoBotId,
-      pageId: normalized.pageId || "",
-      scope: "page_default",
-      mode: normalized.mode,
-      templateMessage: normalized.templateMessage,
-      aiModel: normalized.aiModel,
-      systemPrompt: normalized.systemPrompt,
-      privateReplyTemplate: normalized.privateReplyTemplate,
-      pullToChat: normalized.pullToChat,
-      sendPrivateReply: normalized.sendPrivateReply,
-      isActive: normalized.isActive,
-      status: normalized.status,
-      updatedAt: normalized.updatedAt || now,
-    };
-
-    await db.collection("facebook_comment_policies").updateOne(
-      { botId: mongoBotId, scope: "page_default" },
-      {
-        $set: policy,
-        $setOnInsert: { createdAt: normalized.createdAt || now },
-      },
-      { upsert: true },
+    const pgBotId = await resolvePgBotId({ query }, "facebook", legacyBotId).catch(() => null);
+    await query(
+      `
+        INSERT INTO facebook_comment_policies (
+          bot_id,
+          legacy_bot_id,
+          page_id,
+          scope,
+          mode,
+          template_message,
+          ai_model,
+          system_prompt,
+          private_reply_template,
+          pull_to_chat,
+          send_private_reply,
+          is_active,
+          status,
+          metadata,
+          created_at,
+          updated_at
+        ) VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16
+        )
+        ON CONFLICT (legacy_bot_id, scope) DO UPDATE SET
+          bot_id = EXCLUDED.bot_id,
+          page_id = EXCLUDED.page_id,
+          mode = EXCLUDED.mode,
+          template_message = EXCLUDED.template_message,
+          ai_model = EXCLUDED.ai_model,
+          system_prompt = EXCLUDED.system_prompt,
+          private_reply_template = EXCLUDED.private_reply_template,
+          pull_to_chat = EXCLUDED.pull_to_chat,
+          send_private_reply = EXCLUDED.send_private_reply,
+          is_active = EXCLUDED.is_active,
+          status = EXCLUDED.status,
+          metadata = EXCLUDED.metadata,
+          updated_at = EXCLUDED.updated_at
+      `,
+      [
+        pgBotId,
+        legacyBotId,
+        normalized.pageId || "",
+        "page_default",
+        normalized.mode,
+        normalized.templateMessage,
+        normalized.aiModel,
+        normalized.systemPrompt,
+        normalized.privateReplyTemplate,
+        normalized.pullToChat,
+        normalized.sendPrivateReply,
+        normalized.isActive,
+        normalized.status,
+        safeStringify(metadata),
+        normalized.createdAt || now,
+        normalized.updatedAt || now,
+      ],
     );
 
     return {
-      ...normalizeFacebookCommentPolicyDoc(policy),
-      createdAt: normalized.createdAt || now,
-      updatedAt: normalized.updatedAt || now,
+      ...normalized,
+      scope: "page_default",
+      metadata,
     };
   }
 

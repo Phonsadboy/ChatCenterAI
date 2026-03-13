@@ -1,3 +1,5 @@
+> Historical pre-PostgreSQL design note. Archived after MongoDB runtime removal.
+
 # ระบบติดตามลูกค้า (Follow-up) ใน ChatCenterAI
 
 ## ภาพรวม

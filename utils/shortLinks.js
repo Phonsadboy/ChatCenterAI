@@ -49,10 +49,6 @@ function canUsePostgresShortLinks() {
   }
 }
 
-function isMongoDbHandle(db) {
-  return Boolean(db && typeof db.collection === "function");
-}
-
 function hydratePostgresShortLink(row = {}) {
   const metadata =
     row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
@@ -158,69 +154,11 @@ async function createPostgresShortLink(targetUrl, options = {}) {
   return null;
 }
 
-async function createMongoShortLink(db, targetUrl, options = {}) {
-  if (!isMongoDbHandle(db)) return null;
-  const normalizedUrl = typeof targetUrl === "string" ? targetUrl.trim() : "";
-  if (!normalizedUrl || !isHttpUrl(normalizedUrl)) return null;
-
-  const codeLength = Number.isInteger(options.codeLength)
-    ? options.codeLength
-    : DEFAULT_CODE_LENGTH;
-  const maxAttempts = Number.isInteger(options.maxAttempts)
-    ? options.maxAttempts
-    : DEFAULT_MAX_ATTEMPTS;
-  const expiresAt = options.expiresAt instanceof Date ? options.expiresAt : null;
-
-  const coll = db.collection(SHORT_LINK_COLLECTION);
-  const existing = await coll.findOne(
-    { targetUrl: normalizedUrl },
-    { projection: { code: 1, expiresAt: 1 } },
-  );
-  if (
-    existing?.code
-    && (!(existing.expiresAt instanceof Date) || existing.expiresAt > new Date())
-  ) {
-    return existing.code;
+async function createShortLink(targetUrl, options = {}) {
+  if (!canUsePostgresShortLinks()) {
+    throw new Error("short_link_storage_requires_postgres");
   }
-
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const code = generateShortCode(codeLength);
-    try {
-      const doc = {
-        code,
-        targetUrl: normalizedUrl,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      if (expiresAt) doc.expiresAt = expiresAt;
-      await coll.insertOne(doc);
-      return code;
-    } catch (err) {
-      if (err?.code === 11000) {
-        const duplicate = await coll.findOne(
-          { targetUrl: normalizedUrl },
-          { projection: { code: 1, expiresAt: 1 } },
-        );
-        if (
-          duplicate?.code
-          && (!(duplicate.expiresAt instanceof Date) || duplicate.expiresAt > new Date())
-        ) {
-          return duplicate.code;
-        }
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  return null;
-}
-
-async function createShortLink(db, targetUrl, options = {}) {
-  if (canUsePostgresShortLinks()) {
-    return createPostgresShortLink(targetUrl, options);
-  }
-  return createMongoShortLink(db, targetUrl, options);
+  return createPostgresShortLink(targetUrl, options);
 }
 
 async function resolvePostgresShortLink(code) {
@@ -250,56 +188,39 @@ async function resolvePostgresShortLink(code) {
   return doc;
 }
 
-async function resolveMongoShortLink(db, code) {
-  if (!isMongoDbHandle(db)) return null;
-  const normalized = typeof code === "string" ? code.trim() : "";
-  if (!isValidShortCode(normalized)) return null;
-  const coll = db.collection(SHORT_LINK_COLLECTION);
-  const doc = await coll.findOne({ code: normalized });
-  if (!doc) return null;
-  if (doc.expiresAt instanceof Date && doc.expiresAt <= new Date()) return null;
-  return doc;
-}
-
-async function resolveShortLink(db, code) {
-  if (canUsePostgresShortLinks()) {
-    return resolvePostgresShortLink(code);
+async function resolveShortLink(code) {
+  if (!canUsePostgresShortLinks()) {
+    throw new Error("short_link_storage_requires_postgres");
   }
-  return resolveMongoShortLink(db, code);
+  return resolvePostgresShortLink(code);
 }
 
-async function registerShortLinkHit(db, code) {
+async function registerShortLinkHit(code) {
   const normalized = typeof code === "string" ? code.trim() : "";
   if (!isValidShortCode(normalized)) return false;
 
-  if (canUsePostgresShortLinks()) {
-    const result = await query(
-      `
-        UPDATE short_links
-        SET
-          hit_count = COALESCE(hit_count, 0) + 1,
-          last_accessed_at = NOW(),
-          updated_at = NOW(),
-          metadata = jsonb_strip_nulls(
-            COALESCE(metadata, '{}'::jsonb)
-            || jsonb_build_object(
-              'hitCount', COALESCE(hit_count, 0) + 1,
-              'lastAccessedAt', NOW()
-            )
-          )
-        WHERE code = $1
-      `,
-      [normalized],
-    );
-    return result.rowCount > 0;
+  if (!canUsePostgresShortLinks()) {
+    throw new Error("short_link_storage_requires_postgres");
   }
-
-  if (!isMongoDbHandle(db)) return false;
-  const result = await db.collection(SHORT_LINK_COLLECTION).updateOne(
-    { code: normalized },
-    { $inc: { hitCount: 1 }, $set: { lastAccessedAt: new Date() } },
+  const result = await query(
+    `
+      UPDATE short_links
+      SET
+        hit_count = COALESCE(hit_count, 0) + 1,
+        last_accessed_at = NOW(),
+        updated_at = NOW(),
+        metadata = jsonb_strip_nulls(
+          COALESCE(metadata, '{}'::jsonb)
+          || jsonb_build_object(
+            'hitCount', COALESCE(hit_count, 0) + 1,
+            'lastAccessedAt', NOW()
+          )
+        )
+      WHERE code = $1
+    `,
+    [normalized],
   );
-  return result?.matchedCount > 0;
+  return result.rowCount > 0;
 }
 
 module.exports = {

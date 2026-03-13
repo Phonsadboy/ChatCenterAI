@@ -2,9 +2,7 @@ const { isPostgresConfigured, query } = require("../../infra/postgres");
 const {
   applyProjection,
   normalizePlatform,
-  safeStringify,
   toLegacyId,
-  warnPrimaryReadFailure,
 } = require("./shared");
 
 function buildPairKey(platform, userId) {
@@ -19,25 +17,6 @@ function dedupePairs(pairs = []) {
     seen.add(key);
     return true;
   });
-}
-
-function buildMongoProfileFilter(userId, platform) {
-  const normalizedUserId = toLegacyId(userId);
-  const normalizedPlatform = normalizePlatform(platform);
-  if (normalizedPlatform === "line") {
-    return {
-      userId: normalizedUserId,
-      $or: [
-        { platform: "line" },
-        { platform: { $exists: false } },
-        { platform: null },
-      ],
-    };
-  }
-  return {
-    userId: normalizedUserId,
-    platform: normalizedPlatform,
-  };
 }
 
 function normalizeProfileDoc(doc = {}) {
@@ -84,68 +63,17 @@ function normalizeProfileDoc(doc = {}) {
   return merged;
 }
 
-function buildComparableProfile(doc = {}) {
-  const normalized = normalizeProfileDoc(doc);
-  return {
-    userId: normalized.userId,
-    platform: normalized.platform,
-    displayName: normalized.displayName || null,
-    pictureUrl: normalized.pictureUrl || null,
-    statusMessage: normalized.statusMessage || null,
-    profileFetchDisabled: Boolean(normalized.profileFetchDisabled),
-    profileFetchDisabledReason: normalized.profileFetchDisabledReason || null,
-    profileFetchFailedAt: normalized.profileFetchFailedAt || null,
-    profileFetchLastError: normalized.profileFetchLastError || null,
-    createdAt: normalized.createdAt || null,
-    updatedAt: normalized.updatedAt || null,
-  };
-}
-
 function createProfileRepository({
-  connectDB,
   dbName = "chatbot",
   runtimeConfig,
 }) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
 
-  function shouldDualWrite() {
-    return Boolean(runtimeConfig?.features?.postgresDualWrite && canUsePostgres());
-  }
-
-  function shouldShadowRead() {
-    return Boolean(runtimeConfig?.features?.postgresShadowRead && canUsePostgres());
-  }
-
-  function shouldReadPrimary() {
-    return Boolean(
-      canUsePostgres()
-        && (runtimeConfig?.features?.postgresReadPrimaryChat || !canUseMongo()),
-    );
-  }
-
-  async function getDb() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
-    }
-    const client = await connectDB();
-    return client.db(dbName);
-  }
-
-  function startShadowCompare(label, mongoValue, pgValue) {
-    if (!shouldShadowRead() || shouldReadPrimary()) return;
-    const normalizeList = (value) =>
-      Array.isArray(value)
-        ? value.map((item) => buildComparableProfile(item))
-        : buildComparableProfile(value);
-    if (safeStringify(normalizeList(mongoValue)) !== safeStringify(normalizeList(pgValue))) {
-      console.warn(`[ProfileRepository] Shadow read mismatch for ${label}`);
-    }
+  function ensurePostgresAvailable() {
+    if (canUsePostgres()) return;
+    throw new Error(`profile_repository_requires_postgres:${dbName}`);
   }
 
   async function readPgProfile(userId, platform) {
@@ -283,6 +211,7 @@ function createProfileRepository({
   }
 
   async function getProfile(userId, platform, options = {}) {
+    ensurePostgresAvailable();
     const normalizedUserId = toLegacyId(userId);
     const normalizedPlatform = normalizePlatform(platform);
     const projection = options?.projection || null;
@@ -291,52 +220,12 @@ function createProfileRepository({
       return null;
     }
 
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPgProfile(normalizedUserId, normalizedPlatform);
-        if (pgDoc || !canUseMongo()) {
-          return applyProjection(pgDoc, projection);
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ProfileRepository",
-          operation: "profile read",
-          identifier: `${normalizedPlatform}:${normalizedUserId}`,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const db = await getDb();
-    const mongoDoc = await db.collection("user_profiles").findOne(
-      buildMongoProfileFilter(normalizedUserId, normalizedPlatform),
-      projection ? { projection } : {},
-    );
-
-    if (shouldShadowRead()) {
-      void readPgProfile(normalizedUserId, normalizedPlatform)
-        .then((pgDoc) => startShadowCompare(
-          `profile:${normalizedPlatform}:${normalizedUserId}`,
-          mongoDoc,
-          pgDoc,
-        ))
-        .catch((error) => {
-          console.warn(
-            `[ProfileRepository] Shadow profile read failed for ${normalizedPlatform}:${normalizedUserId}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
+    const pgDoc = await readPgProfile(normalizedUserId, normalizedPlatform);
+    return applyProjection(pgDoc, projection);
   }
 
   async function listProfilesByPairs(pairs = [], options = {}) {
+    ensurePostgresAvailable();
     const normalizedPairs = dedupePairs(Array.isArray(pairs)
       ? pairs
         .map((pair) => ({
@@ -347,146 +236,27 @@ function createProfileRepository({
       : []);
     const projection = options?.projection || null;
     if (normalizedPairs.length === 0) return [];
-
-    if (shouldReadPrimary()) {
-      try {
-        const pgDocs = await readPgProfilesByPairs(normalizedPairs);
-        if (pgDocs.length > 0 || !canUseMongo()) {
-          const pgMap = new Map(
-            pgDocs.map((doc) => [buildPairKey(doc.platform, doc.userId), doc]),
-          );
-          if (pgMap.size === normalizedPairs.length || !canUseMongo()) {
-            return projection
-              ? pgDocs.map((doc) => applyProjection(doc, projection))
-              : pgDocs;
-          }
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ProfileRepository",
-          operation: "profile pair-list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return [];
-    }
-
-    const db = await getDb();
-    const mongoDocs = await db.collection("user_profiles")
-      .find(
-        { $or: normalizedPairs.map((pair) => buildMongoProfileFilter(pair.userId, pair.platform)) },
-        projection ? { projection } : {},
-      )
-      .toArray();
-
-    if (shouldShadowRead()) {
-      void readPgProfilesByPairs(normalizedPairs)
-        .then((pgDocs) => {
-          const mongoMap = new Map(
-            mongoDocs.map((doc) => [
-              buildPairKey(doc.platform || "line", doc.userId),
-              normalizeProfileDoc(doc),
-            ]),
-          );
-          const pgMap = new Map(
-            pgDocs.map((doc) => [buildPairKey(doc.platform, doc.userId), doc]),
-          );
-          startShadowCompare(
-            `profilePairs:${safeStringify(normalizedPairs)}`,
-            Array.from(mongoMap.values()),
-            Array.from(pgMap.values()),
-          );
-        })
-        .catch((error) => {
-          console.warn(
-            "[ProfileRepository] Shadow profile pair-list read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    const pgDocs = await readPgProfilesByPairs(normalizedPairs);
+    return projection
+      ? pgDocs.map((doc) => applyProjection(doc, projection))
+      : pgDocs;
   }
 
   async function listProfilesByUserIds(userIds = [], options = {}) {
+    ensurePostgresAvailable();
     const normalizedIds = Array.isArray(userIds)
       ? userIds.map((userId) => toLegacyId(userId)).filter(Boolean)
       : [];
     const projection = options?.projection || null;
     if (normalizedIds.length === 0) return [];
-
-    if (shouldReadPrimary()) {
-      try {
-        const pgDocs = await readPgProfilesByUserIds(normalizedIds);
-        if (pgDocs.length > 0 || !canUseMongo()) {
-          const pgUserIds = new Set(
-            pgDocs.map((doc) => toLegacyId(doc.userId)).filter(Boolean),
-          );
-          if (pgUserIds.size === new Set(normalizedIds).size || !canUseMongo()) {
-            return projection
-              ? pgDocs.map((doc) => applyProjection(doc, projection))
-              : pgDocs;
-          }
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ProfileRepository",
-          operation: "profile user-list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return [];
-    }
-
-    const db = await getDb();
-    const mongoDocs = await db.collection("user_profiles")
-      .find({ userId: { $in: normalizedIds } }, projection ? { projection } : {})
-      .sort({ updatedAt: -1, createdAt: -1 })
-      .toArray();
-
-    const seenUserIds = new Set();
-    const dedupedMongoDocs = mongoDocs.filter((doc) => {
-      const userId = toLegacyId(doc?.userId);
-      if (!userId || seenUserIds.has(userId)) return false;
-      seenUserIds.add(userId);
-      return true;
-    });
-
-    if (shouldShadowRead()) {
-      void readPgProfilesByUserIds(normalizedIds)
-        .then((pgDocs) => {
-          const mongoMap = new Map(
-            dedupedMongoDocs.map((doc) => [toLegacyId(doc.userId), normalizeProfileDoc(doc)]),
-          );
-          const pgMap = new Map(
-            pgDocs.map((doc) => [toLegacyId(doc.userId), doc]),
-          );
-          startShadowCompare(
-            `profileUserIds:${safeStringify(normalizedIds)}`,
-            Array.from(mongoMap.values()),
-            Array.from(pgMap.values()),
-          );
-        })
-        .catch((error) => {
-          console.warn(
-            "[ProfileRepository] Shadow profile user-list read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return dedupedMongoDocs;
+    const pgDocs = await readPgProfilesByUserIds(normalizedIds);
+    return projection
+      ? pgDocs.map((doc) => applyProjection(doc, projection))
+      : pgDocs;
   }
 
   async function upsertProfile(profile = {}, options = {}) {
+    ensurePostgresAvailable();
     const normalized = normalizeProfileDoc(profile);
     if (!normalized.userId) {
       throw new Error("userId is required");
@@ -502,43 +272,6 @@ function createProfileRepository({
     delete updateFields.createdAt;
 
     const now = normalized.updatedAt || new Date();
-    const filter = buildMongoProfileFilter(normalized.userId, normalized.platform);
-    const setDoc = {
-      userId: normalized.userId,
-      platform: normalized.platform,
-      updatedAt: now,
-    };
-
-    Object.entries(updateFields).forEach(([key, value]) => {
-      if (typeof value !== "undefined") {
-        setDoc[key] = value;
-      }
-    });
-
-    const unsetDoc = {};
-    unsetFields.forEach((field) => {
-      unsetDoc[field] = "";
-    });
-
-    let savedDoc = null;
-    if (canUseMongo()) {
-      const db = await getDb();
-      await db.collection("user_profiles").updateOne(
-        filter,
-        {
-          $set: setDoc,
-          ...(unsetFields.length > 0 ? { $unset: unsetDoc } : {}),
-          $setOnInsert: {
-            createdAt: normalized.createdAt || now,
-          },
-        },
-        { upsert: true },
-      );
-
-      savedDoc = await db.collection("user_profiles").findOne(
-        { userId: normalized.userId, platform: normalized.platform },
-      );
-    }
 
     const fallbackDoc = {
       ...profile,
@@ -547,21 +280,12 @@ function createProfileRepository({
       updatedAt: now,
       createdAt: normalized.createdAt || now,
     };
+    unsetFields.forEach((field) => {
+      delete fallbackDoc[field];
+    });
 
-    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
-      await writePgProfile(savedDoc || fallbackDoc).catch((error) => {
-        console.warn(
-          `[ProfileRepository] Dual-write failed for ${normalized.platform}:${normalized.userId}:`,
-          error?.message || error,
-        );
-      });
-    }
-
-    if (!savedDoc && canUsePostgres()) {
-      savedDoc = await readPgProfile(normalized.userId, normalized.platform);
-    }
-
-    return savedDoc || fallbackDoc;
+    await writePgProfile(fallbackDoc);
+    return (await readPgProfile(normalized.userId, normalized.platform)) || fallbackDoc;
   }
 
   return {

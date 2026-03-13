@@ -850,7 +850,6 @@ async function insertNotificationLog(notificationRepository, payload) {
 }
 
 function createNotificationService({
-  connectDB,
   publicBaseUrl = "",
   getBotById = null,
   getOrderRepository = null,
@@ -859,19 +858,6 @@ function createNotificationService({
 } = {}) {
   const baseUrl =
     typeof publicBaseUrl === "string" ? publicBaseUrl.trim() : "";
-  const getMongoDbSafe = async () => {
-    if (isPostgresConfigured()) {
-      return null;
-    }
-    if (typeof connectDB !== "function") return null;
-    try {
-      const client = await connectDB();
-      if (!client || typeof client.db !== "function") return null;
-      return client.db("chatbot");
-    } catch (error) {
-      return null;
-    }
-  };
 
   const sendToLineTarget = async (senderBotId, targetId, message) => {
     if (typeof getBotById !== "function") {
@@ -912,7 +898,6 @@ function createNotificationService({
     if (!orderIdString) {
       throw new Error("Invalid orderId");
     }
-    const db = await getMongoDbSafe();
     const orderRepository =
       typeof getOrderRepository === "function" ? getOrderRepository() : null;
     const chatRepository =
@@ -950,7 +935,7 @@ function createNotificationService({
     if (canBuildLinks && orderUserId) {
       const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(orderUserId)}`;
       try {
-        const code = await createShortLink(db, chatUrl);
+        const code = await createShortLink(chatUrl);
         if (code) {
           shortChatLink = buildShortLinkUrl(normalizedBaseUrl, code);
         }
@@ -1034,7 +1019,6 @@ function createNotificationService({
       return { success: false, error: "INVALID_WINDOW" };
     }
 
-    const db = await getMongoDbSafe();
     const orderRepository =
       typeof getOrderRepository === "function" ? getOrderRepository() : null;
     const chatRepository =
@@ -1086,7 +1070,7 @@ function createNotificationService({
         if (!userId || shortChatLinks[userId]) continue;
         const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(userId)}`;
         try {
-          const code = await createShortLink(db, chatUrl);
+          const code = await createShortLink(chatUrl);
           if (code) {
             shortChatLinks[userId] = buildShortLinkUrl(normalizedBaseUrl, code);
           }

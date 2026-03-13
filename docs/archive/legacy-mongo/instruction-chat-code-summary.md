@@ -1,3 +1,5 @@
+> Historical pre-PostgreSQL implementation note. Archived after MongoDB runtime removal.
+
 # Instruction Chat Editor — Code Summary
 
 > สร้างเมื่อ: 2026-02-22 | ผู้เขียน: AI Pair Programming

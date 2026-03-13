@@ -1,3 +1,5 @@
+> Historical pre-PostgreSQL design note. Archived after MongoDB runtime removal.
+
 # Chat-based Instruction Editor (Demo)
 
 ## เอกสารออกแบบระบบ — ฉบับเต็ม

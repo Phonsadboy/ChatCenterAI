@@ -2,21 +2,17 @@ const { parseBoolean } = require("../infra/runtimeConfig");
 
 function resolveMigrationPipelineOptions(env = process.env) {
   return {
-    runMongoToPg: false,
-    runGridFsToBucket: false,
-    verifyParity: false,
-    verifyBucket: false,
+    runSqlMigrations: parseBoolean(
+      env.CCAI_MIGRATION_RUN_SQL_MIGRATIONS,
+      true,
+    ),
+    autoRunOnDeploy: parseBoolean(
+      env.CCAI_MIGRATION_AUTO_RUN_ON_DEPLOY,
+      true,
+    ),
     failOnVerifyMismatch: parseBoolean(
       env.CCAI_MIGRATION_FAIL_ON_VERIFY_MISMATCH,
       true,
-    ),
-    gridFsDryRun: parseBoolean(
-      env.CCAI_MIGRATION_GRIDFS_DRY_RUN,
-      false,
-    ),
-    gridFsOverwrite: parseBoolean(
-      env.CCAI_MIGRATION_GRIDFS_OVERWRITE,
-      false,
     ),
   };
 }
@@ -25,27 +21,17 @@ async function runDataMigrationPipeline(options = {}) {
   const logger = options.logger || console;
   const pipelineOptions = options.pipelineOptions || resolveMigrationPipelineOptions();
   const summary = {
-    runMongoToPg: "retired",
-    runGridFsToBucket: "retired",
-    verifyParity: {
+    runSqlMigrations: pipelineOptions.runSqlMigrations === true ? "handled_by_runtime" : "disabled",
+    autoRunOnDeploy: pipelineOptions.autoRunOnDeploy === true ? "enabled" : "disabled",
+    verification: {
       skipped: true,
-      reason: "retired_from_runtime_mainline",
-    },
-    verifyBucket: {
-      skipped: true,
-      reason: "retired_from_runtime_mainline",
+      reason: "manual_validation_outside_runtime",
     },
   };
 
-  if (
-    options.pipelineOptions ||
-    pipelineOptions.runMongoToPg ||
-    pipelineOptions.runGridFsToBucket ||
-    pipelineOptions.verifyParity ||
-    pipelineOptions.verifyBucket
-  ) {
+  if (options.pipelineOptions) {
     logger.warn(
-      "[MigrationPipeline] Mongo/GridFS migration tooling has been retired from runtime mainline. Use archived/manual tooling outside the application runtime if historical validation is still required.",
+      "[MigrationPipeline] Runtime migration pipeline only tracks PostgreSQL bootstrap options. Historical data validation now runs outside the application runtime.",
     );
   }
 

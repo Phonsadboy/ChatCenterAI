@@ -4,10 +4,9 @@ const { createQueueWorker, getQueue } = require("../infra/queues");
 const { JOB_NAMES, QUEUE_NAMES } = require("../infra/queueNames");
 const { getRuntimeConfig } = require("../infra/runtimeConfig");
 const {
-  connectDB,
   evaluateNotificationSummarySchedules,
   FOLLOW_UP_TASK_INTERVAL_MS,
-  initializeMongoRuntime,
+  initializeApplicationDataRuntime,
   NOTIFICATION_SUMMARY_INTERVAL_MS,
   processDueFollowUpTasks,
 } = require("../index");
@@ -48,18 +47,10 @@ async function registerBatchSchedulers() {
 
 async function startBatchWorkers() {
   const runtimeConfig = getRuntimeConfig();
-  if (runtimeConfig.features.mongoEnabled) {
-    await connectDB();
-    await initializeMongoRuntime({
-      runMigrations: false,
-      loadLegacyContent: false,
-    });
-  } else {
-    await initializeMongoRuntime({
-      runMigrations: false,
-      loadLegacyContent: false,
-    });
-  }
+  await initializeApplicationDataRuntime({
+    runMigrations: false,
+    loadLegacyContent: false,
+  });
 
   await registerBatchSchedulers();
 

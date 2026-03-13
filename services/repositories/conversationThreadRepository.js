@@ -1,9 +1,7 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
 const {
   normalizePlatform,
-  safeStringify,
   toLegacyId,
-  warnPrimaryReadFailure,
 } = require("./shared");
 
 function normalizeArray(value) {
@@ -58,123 +56,11 @@ function normalizeThreadDoc(doc = {}) {
   };
 }
 
-function createConversationThreadRepository({
-  connectDB,
-  dbName = "chatbot",
-  runtimeConfig,
-}) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
-  function canUsePostgres() {
-    return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
-  }
-
-  function shouldReadPrimary() {
-    return canUsePostgres();
-  }
-
-  async function getCollection() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
+function createConversationThreadRepository() {
+  function ensurePostgres() {
+    if (!isPostgresConfigured()) {
+      throw new Error("conversation_thread_storage_requires_postgres");
     }
-    const client = await connectDB();
-    return client.db(dbName).collection("conversation_threads");
-  }
-
-  function buildInstructionMongoQuery(instructionId, version = null) {
-    const normalizedInstructionId = toLegacyId(instructionId);
-    if (!normalizedInstructionId) return {};
-
-    const parsedVersion = Number(version);
-    if (Number.isInteger(parsedVersion) && parsedVersion > 0) {
-      return {
-        $or: [
-          {
-            instructionRefs: {
-              $elemMatch: {
-                instructionId: normalizedInstructionId,
-                version: parsedVersion,
-              },
-            },
-          },
-          {
-            instructionMeta: {
-              $elemMatch: {
-                instructionId: normalizedInstructionId,
-                versionNumber: parsedVersion,
-              },
-            },
-          },
-          {
-            instructionMeta: {
-              $elemMatch: {
-                instructionId: normalizedInstructionId,
-                versionLabel: `v${parsedVersion}`,
-              },
-            },
-          },
-        ],
-      };
-    }
-
-    return {
-      $or: [
-        { "instructionRefs.instructionId": normalizedInstructionId },
-        { "instructionMeta.instructionId": normalizedInstructionId },
-      ],
-    };
-  }
-
-  function applyMongoFilters(queryFilter = {}, filters = {}) {
-    const query = { ...queryFilter };
-
-    if (Array.isArray(filters.outcome) && filters.outcome.length > 0) {
-      query.outcome = { $in: filters.outcome };
-    }
-    if (filters.minUserMessages != null || filters.maxUserMessages != null) {
-      query["stats.userMessages"] = {};
-      if (filters.minUserMessages != null) {
-        query["stats.userMessages"].$gte = Number(filters.minUserMessages);
-      }
-      if (filters.maxUserMessages != null) {
-        query["stats.userMessages"].$lte = Number(filters.maxUserMessages);
-      }
-    }
-    if (Array.isArray(filters.products) && filters.products.length > 0) {
-      query.orderedProducts = { $in: filters.products };
-    }
-    if (Array.isArray(filters.tags) && filters.tags.length > 0) {
-      query.tags = { $all: filters.tags };
-    }
-    if (filters.platform && filters.platform !== "all") {
-      query.platform = normalizePlatform(filters.platform);
-    }
-    if (filters.botId) {
-      query.botId = toLegacyId(filters.botId);
-    }
-    if (filters.dateFrom || filters.dateTo) {
-      query["stats.lastMessageAt"] = {};
-      if (filters.dateFrom) {
-        query["stats.lastMessageAt"].$gte = new Date(filters.dateFrom);
-      }
-      if (filters.dateTo) {
-        query["stats.lastMessageAt"].$lte = new Date(filters.dateTo);
-      }
-    }
-
-    return query;
-  }
-
-  function buildMongoSort(sortBy) {
-    const sortMap = {
-      newest: { "stats.lastMessageAt": -1 },
-      oldest: { "stats.lastMessageAt": 1 },
-      most_messages: { "stats.userMessages": -1 },
-      highest_order: { totalOrderAmount: -1 },
-    };
-    return sortMap[sortBy] || sortMap.newest;
   }
 
   function buildPostgresMatch(instructionId, version = null, filters = {}) {
@@ -239,15 +125,11 @@ function createConversationThreadRepository({
     }
     if (filters.minUserMessages != null) {
       const value = push(Number(filters.minUserMessages));
-      conditions.push(`
-        COALESCE(${versionIntExpr("stats->>'userMessages'")}, 0) >= ${value}
-      `);
+      conditions.push(`COALESCE(${versionIntExpr("stats->>'userMessages'")}, 0) >= ${value}`);
     }
     if (filters.maxUserMessages != null) {
       const value = push(Number(filters.maxUserMessages));
-      conditions.push(`
-        COALESCE(${versionIntExpr("stats->>'userMessages'")}, 0) <= ${value}
-      `);
+      conditions.push(`COALESCE(${versionIntExpr("stats->>'userMessages'")}, 0) <= ${value}`);
     }
     if (Array.isArray(filters.products) && filters.products.length > 0) {
       const value = push(filters.products.map((item) => String(item).trim()).filter(Boolean));
@@ -260,8 +142,14 @@ function createConversationThreadRepository({
       `);
     }
     if (Array.isArray(filters.tags) && filters.tags.length > 0) {
-      const value = push(safeStringify(filters.tags.map((item) => String(item).trim()).filter(Boolean)));
-      conditions.push(`COALESCE(tags, '[]'::jsonb) @> ${value}::jsonb`);
+      const value = push(filters.tags.map((item) => String(item).trim()).filter(Boolean));
+      conditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM unnest(${value}::text[]) AS tag(value)
+          WHERE NOT COALESCE(tags, '[]'::jsonb) ? tag.value
+        ) = FALSE
+      `);
     }
     if (filters.platform && filters.platform !== "all") {
       const value = push(normalizePlatform(filters.platform));
@@ -269,25 +157,15 @@ function createConversationThreadRepository({
     }
     if (filters.botId) {
       const value = push(toLegacyId(filters.botId));
-      conditions.push(`COALESCE(legacy_bot_id, '') = ${value}`);
+      conditions.push(`legacy_bot_id = ${value}`);
     }
     if (filters.dateFrom) {
-      const value = push(new Date(filters.dateFrom));
-      conditions.push(`
-        CASE
-          WHEN NULLIF(stats->>'lastMessageAt', '') IS NULL THEN NULL
-          ELSE (stats->>'lastMessageAt')::timestamptz
-        END >= ${value}
-      `);
+      const value = push(filters.dateFrom);
+      conditions.push(`COALESCE((stats->>'lastMessageAt')::timestamptz, updated_at) >= ${value}`);
     }
     if (filters.dateTo) {
-      const value = push(new Date(filters.dateTo));
-      conditions.push(`
-        CASE
-          WHEN NULLIF(stats->>'lastMessageAt', '') IS NULL THEN NULL
-          ELSE (stats->>'lastMessageAt')::timestamptz
-        END <= ${value}
-      `);
+      const value = push(filters.dateTo);
+      conditions.push(`COALESCE((stats->>'lastMessageAt')::timestamptz, updated_at) <= ${value}`);
     }
 
     return {
@@ -296,36 +174,18 @@ function createConversationThreadRepository({
     };
   }
 
-  function buildPostgresSort(sortBy) {
-    const lastMessageExpr = `
-      CASE
-        WHEN NULLIF(stats->>'lastMessageAt', '') IS NULL THEN updated_at
-        ELSE (stats->>'lastMessageAt')::timestamptz
-      END
-    `;
-    const userMessagesExpr = `
-      COALESCE(
-        CASE WHEN (stats->>'userMessages') ~ '^[0-9]+$'
-          THEN (stats->>'userMessages')::int
-          ELSE 0
-        END,
-        0
-      )
-    `;
-    switch (sortBy) {
-      case "oldest":
-        return `${lastMessageExpr} ASC, thread_id ASC`;
-      case "most_messages":
-        return `${userMessagesExpr} DESC, ${lastMessageExpr} DESC, thread_id ASC`;
-      case "highest_order":
-        return `total_order_amount DESC, ${lastMessageExpr} DESC, thread_id ASC`;
-      case "newest":
-      default:
-        return `${lastMessageExpr} DESC, thread_id ASC`;
-    }
+  function buildOrderClause(sortBy) {
+    const sortMap = {
+      newest: "COALESCE((stats->>'lastMessageAt')::timestamptz, updated_at) DESC, id DESC",
+      oldest: "COALESCE((stats->>'lastMessageAt')::timestamptz, updated_at) ASC, id ASC",
+      most_messages: "COALESCE((stats->>'userMessages')::int, 0) DESC, id DESC",
+      highest_order: "COALESCE(total_order_amount, 0) DESC, id DESC",
+    };
+    return sortMap[sortBy] || sortMap.newest;
   }
 
   async function readPostgresThread(threadId) {
+    ensurePostgres();
     const normalizedThreadId = toLegacyId(threadId);
     if (!normalizedThreadId) return null;
     const result = await query(
@@ -359,10 +219,8 @@ function createConversationThreadRepository({
   }
 
   async function writePostgresThread(thread = {}) {
+    ensurePostgres();
     const normalized = normalizeThreadDoc(thread);
-    if (!normalized.threadId || !normalized.senderId) {
-      throw new Error("threadId and senderId are required");
-    }
     const createdAt = normalized.createdAt || new Date();
     const updatedAt = normalized.updatedAt || new Date();
     await query(
@@ -411,16 +269,16 @@ function createConversationThreadRepository({
         normalized.platform,
         normalized.botId,
         normalized.botName,
-        safeStringify(normalized.instructionRefs),
-        safeStringify(normalized.instructionMeta),
-        safeStringify(normalized.stats),
+        JSON.stringify(normalized.instructionRefs),
+        JSON.stringify(normalized.instructionMeta),
+        JSON.stringify(normalized.stats),
         normalized.hasOrder,
-        safeStringify(normalized.orderIds),
-        safeStringify(normalized.orderedProducts),
+        JSON.stringify(normalized.orderIds),
+        JSON.stringify(normalized.orderedProducts),
         normalized.orderStatus,
         normalized.totalOrderAmount,
         normalized.outcome,
-        safeStringify(normalized.tags),
+        JSON.stringify(normalized.tags),
         createdAt,
         updatedAt,
       ],
@@ -428,132 +286,54 @@ function createConversationThreadRepository({
     return readPostgresThread(normalized.threadId);
   }
 
-  async function listPostgresByInstruction(
-    instructionId,
-    version = null,
-    filters = {},
-    pagination = {},
-    { disablePagination = false } = {},
-  ) {
+  async function listPostgresByInstruction(instructionId, version = null, filters = {}, pagination = {}, options = {}) {
+    ensurePostgres();
     const { whereSql, params } = buildPostgresMatch(instructionId, version, filters);
-    const sortSql = buildPostgresSort(filters?.sortBy);
-    const limit = disablePagination
-      ? null
-      : Math.min(200, Math.max(1, Number(pagination.limit) || 20));
-    const offset = disablePagination
-      ? null
-      : Math.max(0, (Math.max(1, Number(pagination.page) || 1) - 1) * limit);
-    const pagedParams = [...params];
-    let pagingSql = "";
-    if (!disablePagination) {
-      pagedParams.push(limit);
-      pagingSql += ` LIMIT $${pagedParams.length}`;
-      pagedParams.push(offset);
-      pagingSql += ` OFFSET $${pagedParams.length}`;
-    }
-
-    const [rowsResult, countResult] = await Promise.all([
-      query(
-        `
-          SELECT
-            id::text AS id,
-            thread_id,
-            sender_id,
-            platform,
-            legacy_bot_id,
-            bot_name,
-            instruction_refs,
-            instruction_meta,
-            stats,
-            has_order,
-            order_ids,
-            ordered_products,
-            order_status,
-            total_order_amount,
-            outcome,
-            tags,
-            created_at,
-            updated_at
-          FROM conversation_threads
-          ${whereSql}
-          ORDER BY ${sortSql}
-          ${pagingSql}
-        `,
-        pagedParams,
-      ),
-      query(
-        `
-          SELECT COUNT(*)::int AS total_count
-          FROM conversation_threads
-          ${whereSql}
-        `,
-        params,
-      ),
-    ]);
-
-    return {
-      threads: rowsResult.rows.map((row) => normalizeThreadDoc(row)),
-      totalCount: Number(countResult.rows[0]?.total_count || 0),
-    };
-  }
-
-  async function listMongoByInstruction(
-    instructionId,
-    version = null,
-    filters = {},
-    pagination = {},
-    { disablePagination = false } = {},
-  ) {
-    const coll = await getCollection();
-    const queryFilter = applyMongoFilters(
-      buildInstructionMongoQuery(instructionId, version),
-      filters,
+    const disablePagination = options?.disablePagination === true;
+    const limit = Math.max(1, Number(pagination.limit) || 20);
+    const skip = Math.max(0, Number(pagination.skip) || 0);
+    const orderClause = buildOrderClause(pagination.sortBy);
+    const pageSql = disablePagination ? "" : `LIMIT ${limit} OFFSET ${skip}`;
+    const result = await query(
+      `
+        SELECT
+          id::text AS id,
+          thread_id,
+          sender_id,
+          platform,
+          legacy_bot_id,
+          bot_name,
+          instruction_refs,
+          instruction_meta,
+          stats,
+          has_order,
+          order_ids,
+          ordered_products,
+          order_status,
+          total_order_amount,
+          outcome,
+          tags,
+          created_at,
+          updated_at
+        FROM conversation_threads
+        ${whereSql}
+        ORDER BY ${orderClause}
+        ${pageSql}
+      `,
+      params,
     );
-    const sort = buildMongoSort(filters?.sortBy);
-    const page = Math.max(1, Number(pagination.page) || 1);
-    const limit = Math.min(200, Math.max(1, Number(pagination.limit) || 20));
-    const cursor = coll.find(queryFilter).sort(sort);
-    if (!disablePagination) {
-      cursor.skip((page - 1) * limit).limit(limit);
-    }
-    const [docs, totalCount] = await Promise.all([
-      cursor.toArray(),
-      coll.countDocuments(queryFilter),
-    ]);
+    const countResult = await query(
+      `SELECT COUNT(*)::int AS count FROM conversation_threads ${whereSql}`,
+      params,
+    );
     return {
-      threads: docs.map((doc) => normalizeThreadDoc(doc)),
-      totalCount,
+      threads: result.rows.map((row) => normalizeThreadDoc(row)),
+      totalCount: countResult.rows[0]?.count || 0,
     };
   }
 
   async function getByThreadId(threadId) {
-    const normalizedThreadId = toLegacyId(threadId);
-    if (!normalizedThreadId) return null;
-
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPostgresThread(normalizedThreadId);
-        if (pgDoc || !canUseMongo()) {
-          return pgDoc;
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ConversationThreadRepository",
-          operation: "read",
-          identifier: normalizedThreadId,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-        if (!canUseMongo()) {
-          return null;
-        }
-      }
-    }
-
-    if (!canUseMongo()) return null;
-    const coll = await getCollection();
-    const doc = await coll.findOne({ threadId: normalizedThreadId });
-    return doc ? normalizeThreadDoc(doc) : null;
+    return readPostgresThread(threadId);
   }
 
   async function upsert(thread = {}) {
@@ -561,54 +341,7 @@ function createConversationThreadRepository({
     if (!normalized.threadId || !normalized.senderId) {
       throw new Error("threadId and senderId are required");
     }
-
-    if (canUsePostgres()) {
-      try {
-        return await writePostgresThread(normalized);
-      } catch (error) {
-        if (!canUseMongo()) throw error;
-        console.warn(
-          "[ConversationThreadRepository] PostgreSQL upsert failed, falling back to Mongo:",
-          error?.message || error,
-        );
-      }
-    }
-
-    if (!canUseMongo()) {
-      throw new Error("ConversationThreadRepository requires PostgreSQL or MongoDB");
-    }
-
-    const coll = await getCollection();
-    const createdAt = normalized.createdAt || new Date();
-    const updatedAt = normalized.updatedAt || new Date();
-    await coll.updateOne(
-      { threadId: normalized.threadId },
-      {
-        $set: {
-          threadId: normalized.threadId,
-          senderId: normalized.senderId,
-          platform: normalized.platform,
-          botId: normalized.botId,
-          botName: normalized.botName,
-          instructionRefs: normalized.instructionRefs,
-          instructionMeta: normalized.instructionMeta,
-          stats: normalized.stats,
-          hasOrder: normalized.hasOrder,
-          orderIds: normalized.orderIds,
-          orderedProducts: normalized.orderedProducts,
-          orderStatus: normalized.orderStatus,
-          totalOrderAmount: normalized.totalOrderAmount,
-          outcome: normalized.outcome,
-          tags: normalized.tags,
-          updatedAt,
-        },
-        $setOnInsert: {
-          createdAt,
-        },
-      },
-      { upsert: true },
-    );
-    return getByThreadId(normalized.threadId);
+    return writePostgresThread(normalized);
   }
 
   async function updateFields(threadId, fields = {}) {
@@ -625,57 +358,11 @@ function createConversationThreadRepository({
   }
 
   async function listByInstruction(instructionId, version = null, filters = {}, pagination = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        return await listPostgresByInstruction(instructionId, version, filters, pagination);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ConversationThreadRepository",
-          operation: "read",
-          identifier: toLegacyId(instructionId),
-          canUseMongo: canUseMongo(),
-          error,
-        });
-        if (!canUseMongo()) {
-          return { threads: [], totalCount: 0 };
-        }
-      }
-    }
-
-    if (!canUseMongo()) {
-      return { threads: [], totalCount: 0 };
-    }
-
-    return listMongoByInstruction(instructionId, version, filters, pagination);
+    return listPostgresByInstruction(instructionId, version, filters, pagination);
   }
 
   async function listAllByInstruction(instructionId, version = null, filters = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const result = await listPostgresByInstruction(
-          instructionId,
-          version,
-          filters,
-          {},
-          { disablePagination: true },
-        );
-        return result.threads;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ConversationThreadRepository",
-          operation: "read",
-          identifier: toLegacyId(instructionId),
-          canUseMongo: canUseMongo(),
-          error,
-        });
-        if (!canUseMongo()) {
-          return [];
-        }
-      }
-    }
-
-    if (!canUseMongo()) return [];
-    const result = await listMongoByInstruction(
+    const result = await listPostgresByInstruction(
       instructionId,
       version,
       filters,
@@ -686,33 +373,7 @@ function createConversationThreadRepository({
   }
 
   async function ensureIndexes() {
-    if (!canUseMongo()) {
-      return;
-    }
-    const coll = await getCollection();
-    try {
-      await coll.createIndex({ threadId: 1 }, { unique: true });
-      await coll.createIndex({
-        "instructionRefs.instructionId": 1,
-        "instructionRefs.version": 1,
-        updatedAt: -1,
-      });
-      await coll.createIndex({
-        "instructionMeta.instructionId": 1,
-        "instructionMeta.versionNumber": 1,
-        updatedAt: -1,
-      });
-      await coll.createIndex({ senderId: 1, botId: 1, platform: 1 });
-      await coll.createIndex({ outcome: 1 });
-      await coll.createIndex({ "stats.userMessages": 1 });
-      await coll.createIndex({ tags: 1 });
-      await coll.createIndex({ orderedProducts: 1 });
-    } catch (error) {
-      console.warn(
-        "[ConversationThreadRepository] Mongo index creation warning:",
-        error?.message || error,
-      );
-    }
+    return;
   }
 
   return {

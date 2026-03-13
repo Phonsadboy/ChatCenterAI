@@ -45,62 +45,11 @@ function normalizeLineGroupDoc(doc = {}) {
   };
 }
 
-function createLineGroupRepository({
-  connectDB,
-  dbName = "chatbot",
-  runtimeConfig,
-}) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
-  function canUsePostgres() {
-    return Boolean(isPostgresConfigured());
-  }
-
-  function shouldReadPrimary() {
-    return canUsePostgres();
-  }
-
-  async function getDb() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
+function createLineGroupRepository() {
+  function ensurePostgres() {
+    if (!isPostgresConfigured()) {
+      throw new Error("line_group_storage_requires_postgres");
     }
-    const client = await connectDB();
-    return client.db(dbName);
-  }
-
-  function buildMongoFilter(filter = {}) {
-    const queryFilter = {};
-    const botId = toLegacyId(filter.botId);
-    if (botId) {
-      queryFilter.botId = botId;
-    }
-    const botIds = Array.isArray(filter.botIds)
-      ? filter.botIds.map((value) => toLegacyId(value)).filter(Boolean)
-      : [];
-    if (!botId && botIds.length > 0) {
-      queryFilter.botId = { $in: botIds };
-    }
-    const groupId = toLegacyId(filter.groupId);
-    if (groupId) {
-      queryFilter.groupId = groupId;
-    }
-    const excludedStatuses = Array.isArray(filter.excludeStatuses)
-      ? filter.excludeStatuses.filter(Boolean)
-      : filter.excludeStatus
-        ? [filter.excludeStatus]
-        : [];
-    if (excludedStatuses.length === 1) {
-      queryFilter.status = { $ne: excludedStatuses[0] };
-    } else if (excludedStatuses.length > 1) {
-      queryFilter.status = { $nin: excludedStatuses };
-    }
-    const status = typeof filter.status === "string" ? filter.status.trim() : "";
-    if (status) {
-      queryFilter.status = status;
-    }
-    return queryFilter;
   }
 
   function buildPostgresFilter(filter = {}) {
@@ -147,6 +96,7 @@ function createLineGroupRepository({
   }
 
   async function readPostgresGroups(filter = {}, options = {}) {
+    ensurePostgres();
     const { whereSql, params } = buildPostgresFilter(filter);
     const sortDirection = Number(options?.sort?.lastEventAt) >= 0 ? "ASC" : "DESC";
     const result = await query(
@@ -175,21 +125,13 @@ function createLineGroupRepository({
     return result.rows.map((row) => normalizeLineGroupDoc(row));
   }
 
-  async function readMongoGroups(filter = {}, options = {}) {
-    if (!canUseMongo()) return [];
-    const db = await getDb();
-    const cursor = db
-      .collection("line_bot_groups")
-      .find(buildMongoFilter(filter))
-      .sort(options.sort || { lastEventAt: -1 });
-    return cursor.toArray();
-  }
-
-  async function upsertPostgresGroup(doc = {}) {
+  async function upsertGroup(doc = {}) {
+    ensurePostgres();
     const normalized = normalizeLineGroupDoc(doc);
     if (!normalized.botId || !normalized.groupId) {
       throw new Error("line_group_requires_bot_and_group_id");
     }
+
     const pgBotId = await resolvePgBotId({ query }, "line", normalized.botId).catch(() => null);
     const createdAt = normalized.createdAt || new Date();
     const updatedAt = normalized.updatedAt || new Date();
@@ -255,75 +197,16 @@ function createLineGroupRepository({
         updatedAt,
       ],
     );
-  }
 
-  async function upsertMongoGroup(doc = {}) {
-    if (!canUseMongo()) return null;
-    const normalized = normalizeLineGroupDoc(doc);
-    if (!normalized.botId || !normalized.groupId) return null;
-    const db = await getDb();
-    const setDoc = {
-      sourceType: normalized.sourceType,
-      groupName: normalized.groupName,
-      pictureUrl: normalized.pictureUrl,
-      memberCount: Number.isFinite(normalized.memberCount)
-        ? normalized.memberCount
-        : null,
-      status: normalized.status || "active",
-      lastEventAt: normalized.lastEventAt || new Date(),
-      updatedAt: normalized.updatedAt || new Date(),
-    };
-    if (normalized.joinedAt) {
-      setDoc.joinedAt = normalized.joinedAt;
-    }
-    if (normalized.leftAt) {
-      setDoc.leftAt = normalized.leftAt;
-    }
-    await db.collection("line_bot_groups").updateOne(
+    const [saved] = await readPostgresGroups(
       { botId: normalized.botId, groupId: normalized.groupId },
-      {
-        $setOnInsert: {
-          botId: normalized.botId,
-          groupId: normalized.groupId,
-          createdAt: normalized.createdAt || new Date(),
-        },
-        $set: setDoc,
-      },
-      { upsert: true },
+      { sort: { lastEventAt: -1 } },
     );
-    return true;
-  }
-
-  async function upsertGroup(doc = {}) {
-    const normalized = normalizeLineGroupDoc(doc);
-    if (!normalized.botId || !normalized.groupId) {
-      throw new Error("line_group_requires_bot_and_group_id");
-    }
-
-    if (canUsePostgres()) {
-      await upsertPostgresGroup(normalized);
-      const [saved] = await readPostgresGroups(
-        { botId: normalized.botId, groupId: normalized.groupId },
-        { sort: { lastEventAt: -1 } },
-      );
-      return saved || normalized;
-    }
-    if (canUseMongo()) {
-      await upsertMongoGroup(normalized);
-      const [saved] = await readMongoGroups(
-        { botId: normalized.botId, groupId: normalized.groupId },
-        { sort: { lastEventAt: -1 } },
-      );
-      return saved || normalized;
-    }
-    return normalized;
+    return saved || normalized;
   }
 
   async function listGroups(filter = {}, options = {}) {
-    if (shouldReadPrimary()) {
-      return readPostgresGroups(filter, options);
-    }
-    return readMongoGroups(filter, options);
+    return readPostgresGroups(filter, options);
   }
 
   async function findGroup(filter = {}, options = {}) {

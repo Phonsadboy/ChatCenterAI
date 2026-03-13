@@ -11,14 +11,6 @@ class InstructionChatService {
     constructor(db, openaiClient, options = {}) {
         this.db = db || null;
         this.openai = openaiClient || null;
-        this.collection =
-            db && typeof db.collection === "function"
-                ? db.collection("instructions_v2")
-                : null;
-        this.changelogCollection =
-            db && typeof db.collection === "function"
-                ? db.collection("instruction_chat_changelog")
-                : null;
         this.rag = new InstructionRAGService(this.openai);
         this._cachedInstruction = null;
         this._cachedId = null;
@@ -48,10 +40,6 @@ class InstructionChatService {
             options.versionStore && typeof options.versionStore === "object"
                 ? options.versionStore
                 : null;
-        this._buildMongoInstructionQuery =
-            typeof options.buildMongoInstructionQuery === "function"
-                ? options.buildMongoInstructionQuery
-                : null;
         this._invalidateInstructionPromptCaches =
             typeof options.invalidateInstructionPromptCaches === "function"
                 ? options.invalidateInstructionPromptCaches
@@ -71,14 +59,10 @@ class InstructionChatService {
         if (this._cachedId === instructionId && this._cachedInstruction) {
             return this._cachedInstruction;
         }
-        let inst = null;
-        if (this._instructionStore && typeof this._instructionStore.load === "function") {
-            inst = await this._instructionStore.load(instructionId);
-        } else if (this.collection) {
-            inst = await this.collection.findOne(
-                this._getMongoInstructionQuery(instructionId),
-            );
+        if (!this._instructionStore || typeof this._instructionStore.load !== "function") {
+            throw new Error("Instruction store unavailable");
         }
+        const inst = await this._instructionStore.load(instructionId);
         if (inst) {
             this._cachedInstruction = inst;
             this._cachedId = instructionId;
@@ -136,39 +120,21 @@ class InstructionChatService {
         if (this._followUpPageSettingsRepository) {
             return this._followUpPageSettingsRepository.getExact(platform, botId);
         }
-        return this.db.collection("follow_up_page_settings").findOne({ platform, botId });
+        return null;
     }
 
     async _listFollowUpPageSettings() {
         if (this._followUpPageSettingsRepository) {
             return this._followUpPageSettingsRepository.listAll();
         }
-        return this.db.collection("follow_up_page_settings").find({}).toArray();
+        return [];
     }
 
     async _upsertFollowUpPageSettings(platform, botId, settings) {
         if (this._followUpPageSettingsRepository) {
             return this._followUpPageSettingsRepository.upsert(platform, botId, settings);
         }
-        return this.db.collection("follow_up_page_settings").updateOne(
-            { platform, botId },
-            {
-                $set: {
-                    platform,
-                    botId,
-                    settings,
-                    updatedAt: new Date(),
-                },
-            },
-            { upsert: true }
-        );
-    }
-
-    _getMongoInstructionQuery(instructionId) {
-        if (this._buildMongoInstructionQuery) {
-            return this._buildMongoInstructionQuery(instructionId);
-        }
-        return { _id: instructionId };
+        throw new Error("Follow-up page settings store unavailable");
     }
 
     async _saveInstruction(instructionId, instructionDoc) {
@@ -213,42 +179,29 @@ class InstructionChatService {
             return saved || nextInstruction;
         }
 
-        if (!this.collection) {
+        if (!this._instructionStore || typeof this._instructionStore.save !== "function") {
             throw new Error("Instruction store unavailable");
         }
-
-        const payload = { ...nextInstruction };
-        delete payload._id;
-
-        await this.collection.updateOne(
-            this._getMongoInstructionQuery(normalizedInstructionId),
-            { $set: payload },
+        const saved = await this._instructionStore.save(
+            normalizedInstructionId,
+            nextInstruction,
         );
-        this.primeInstructionCache(normalizedInstructionId, nextInstruction);
-        return nextInstruction;
+        this.primeInstructionCache(normalizedInstructionId, saved || nextInstruction);
+        return saved || nextInstruction;
     }
 
     async _getSettingValue(key, defaultValue) {
         if (this._settingsStore && typeof this._settingsStore.getValue === "function") {
             return this._settingsStore.getValue(key, defaultValue);
         }
-        if (!this.db) return defaultValue;
-        const doc = await this.db.collection("settings").findOne({ key });
-        return !doc || typeof doc.value === "undefined" ? defaultValue : doc.value;
+        return defaultValue;
     }
 
     async _setSettingValue(key, value) {
         if (this._settingsStore && typeof this._settingsStore.setValue === "function") {
             return this._settingsStore.setValue(key, value);
         }
-        if (!this.db) {
-            throw new Error("Settings store unavailable");
-        }
-        return this.db.collection("settings").updateOne(
-            { key },
-            { $set: { key, value, updatedAt: new Date() } },
-            { upsert: true },
-        );
+        throw new Error("Settings store unavailable");
     }
 
     async _getSettingsMap(keys = []) {
@@ -266,21 +219,14 @@ class InstructionChatService {
                 sort: { createdAt: -1 },
             });
         }
-        if (!this.db) return [];
-        return this.db.collection(`${platform}_bots`).find({}).sort({ createdAt: -1 }).toArray();
+        return [];
     }
 
     async _updateBot(platform, botId, update) {
         if (this._botStore && typeof this._botStore.updateById === "function") {
             return this._botStore.updateById(platform, botId, update);
         }
-        if (!this.db) {
-            throw new Error("Bot store unavailable");
-        }
-        return this.db.collection(`${platform}_bots`).updateOne(
-            { _id: botId },
-            update,
-        );
+        throw new Error("Bot store unavailable");
     }
 
     async _getFollowUpAsset(assetId) {
@@ -295,8 +241,7 @@ class InstructionChatService {
         if (this._followUpAssetStore && typeof this._followUpAssetStore.getById === "function") {
             return this._followUpAssetStore.getById(normalizedAssetId);
         }
-        if (!this.db) return null;
-        return this.db.collection("follow_up_assets").findOne({ _id: normalizedAssetId });
+        return null;
     }
 
     async _listFollowUpAssets(limit = 50) {
@@ -306,99 +251,28 @@ class InstructionChatService {
         if (this._followUpAssetStore && typeof this._followUpAssetStore.list === "function") {
             return this._followUpAssetStore.list({ limit: normalizedLimit });
         }
-        if (!this.db) return [];
-        return this.db.collection("follow_up_assets")
-            .find({})
-            .sort({ createdAt: -1 })
-            .limit(normalizedLimit)
-            .toArray();
+        return [];
     }
 
     async _listInstructionVersions(instruction) {
         if (this._versionStore && typeof this._versionStore.list === "function") {
             return this._versionStore.list(instruction);
         }
-        if (!this.db) return [];
-        return this.db.collection("instruction_versions")
-            .find({ instructionId: instruction.instructionId || instruction._id || "" })
-            .sort({ version: -1 })
-            .project({ version: 1, snapshotAt: 1, note: 1, title: 1, instructionId: 1 })
-            .toArray();
+        return [];
     }
 
     async _saveInstructionVersion(instruction, options = {}) {
         if (this._versionStore && typeof this._versionStore.save === "function") {
             return this._versionStore.save(instruction, options);
         }
-        if (!this.db) {
-            throw new Error("Version store unavailable");
-        }
-
-        const instId = instruction.instructionId || instruction._id || "";
-        const versionColl = this.db.collection("instruction_versions");
-        const latest = await versionColl.find({ instructionId: instId })
-            .sort({ version: -1 })
-            .limit(1)
-            .toArray();
-        const nextVersion = latest.length > 0 ? (latest[0].version || 0) + 1 : 1;
-        const snapshotAt = new Date();
-        const snapshot = {
-            instructionId: instId,
-            version: nextVersion,
-            name: instruction.name || "",
-            description: instruction.description || "",
-            conversationStarter: this._normalizeStarterConfig(instruction.conversationStarter),
-            dataItems: (instruction.dataItems || []).map((item) => {
-                const copy = {
-                    itemId: item.itemId,
-                    title: item.title,
-                    type: item.type,
-                };
-                if (item.type === "table" && item.data) {
-                    copy.data = {
-                        columns: item.data.columns || [],
-                        rowCount: Array.isArray(item.data.rows) ? item.data.rows.length : 0,
-                        rows: item.data.rows || [],
-                    };
-                } else if (item.type === "text") {
-                    copy.content = item.content || "";
-                }
-                return copy;
-            }),
-            note: (options.note || "").substring(0, 500),
-            snapshotAt,
-            savedBy: options.savedBy || "instructionAI",
-        };
-
-        await versionColl.updateOne(
-            { instructionId: instId, version: nextVersion },
-            { $set: snapshot },
-            { upsert: true },
-        );
-
-        const nextInstruction = {
-            ...instruction,
-            version: nextVersion,
-            updatedAt: snapshotAt,
-        };
-        await this._saveInstruction(instruction._id || instId, nextInstruction);
-        return {
-            version: nextVersion,
-            note: snapshot.note,
-            snapshotAt,
-            instruction: nextInstruction,
-        };
+        throw new Error("Version store unavailable");
     }
 
     async _getInstructionVersion(instruction, version) {
         if (this._versionStore && typeof this._versionStore.get === "function") {
             return this._versionStore.get(instruction, version);
         }
-        if (!this.db) return null;
-        return this.db.collection("instruction_versions").findOne({
-            instructionId: instruction.instructionId || instruction._id || "",
-            version: Number(version),
-        });
+        return null;
     }
 
     _getDataItem(instruction, itemId) {
@@ -696,8 +570,6 @@ class InstructionChatService {
         };
         if (this._instructionChatStateRepository) {
             await this._instructionChatStateRepository.createChangelogEntry(payload);
-        } else if (this.changelogCollection) {
-            await this.changelogCollection.insertOne(payload);
         }
         return changeId;
     }

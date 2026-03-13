@@ -3,7 +3,7 @@ const { RedisStore } = require("connect-redis");
 const { getRedis, isRedisConfigured } = require("./redis");
 const { getRuntimeConfig } = require("./runtimeConfig");
 
-function createSessionStore({ connectDB, dbName, collectionName, ttl }) {
+function createSessionStore({ ttl }) {
   const runtimeConfig = getRuntimeConfig();
   if (runtimeConfig.features.redisSessions && isRedisConfigured()) {
     return new RedisStore({
@@ -25,7 +25,7 @@ function createSessionStore({ connectDB, dbName, collectionName, ttl }) {
   }
 
   throw new Error(
-    "Redis session store is required. Configure REDIS_URL and CCAI_SESSION_STORE_REDIS=true before removing Mongo runtime.",
+    "Redis session store is required. Configure REDIS_URL and CCAI_SESSION_STORE_REDIS=true for non-test runtime.",
   );
 }
 

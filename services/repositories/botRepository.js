@@ -1,81 +1,25 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
-const { deletePostgresBotByLegacyId, upsertPostgresBotDocument } = require("./postgresBotSync");
+const {
+  deletePostgresBotByLegacyId,
+  upsertPostgresBotDocument,
+} = require("./postgresBotSync");
 const {
   applyProjection,
-  buildMongoIdQuery,
   escapeRegex,
   generateLegacyObjectIdString,
-  getBotCollectionName,
   normalizePlatform,
   safeStringify,
   toLegacyId,
-  toObjectId,
-  warnPrimaryReadFailure,
 } = require("./shared");
 
-function createBotRepository({
-  connectDB,
-  dbName = "chatbot",
-  runtimeConfig,
-}) {
+function createBotRepository({ runtimeConfig }) {
   const cachedBotsById = new Map();
   const cachedBotsByPlatform = new Map();
 
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
-  function canUsePostgres() {
-    return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
-  }
-
-  function shouldDualWrite() {
-    return Boolean(runtimeConfig?.features?.postgresDualWrite && canUsePostgres());
-  }
-
-  function shouldShadowRead() {
-    return Boolean(runtimeConfig?.features?.postgresShadowRead && canUsePostgres());
-  }
-
-  function shouldReadPrimary() {
+  function isStorageReady() {
     return Boolean(
-      canUsePostgres()
-        && (runtimeConfig?.features?.postgresReadPrimaryBots || !canUseMongo()),
+      runtimeConfig?.features?.postgresEnabled && isPostgresConfigured(),
     );
-  }
-
-  async function getCollection(platform) {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
-    }
-    const client = await connectDB();
-    return client.db(dbName).collection(getBotCollectionName(platform));
-  }
-
-  function buildLookupQuery(platform, identifier) {
-    const normalizedPlatform = normalizePlatform(platform);
-    const normalizedIdentifier = String(identifier || "").trim();
-    if (!normalizedIdentifier) return null;
-
-    if (normalizedPlatform === "facebook") {
-      return buildMongoIdQuery(normalizedIdentifier);
-    }
-
-    const queryConditions = [
-      {
-        webhookUrl: {
-          $regex: `${escapeRegex(normalizedIdentifier)}$`,
-          $options: "i",
-        },
-      },
-    ];
-
-    const idQuery = buildMongoIdQuery(normalizedIdentifier);
-    if (idQuery && idQuery._id) {
-      queryConditions.push(idQuery);
-    }
-
-    return { $or: queryConditions };
   }
 
   function hydratePostgresBot(row) {
@@ -133,12 +77,16 @@ function createBotRepository({
 
     return Object.entries(filter).every(([key, expected]) => {
       if (key === "$or") {
-        return Array.isArray(expected)
-          && expected.some((entry) => matchesFilter(doc, entry));
+        return (
+          Array.isArray(expected)
+          && expected.some((entry) => matchesFilter(doc, entry))
+        );
       }
       if (key === "$and") {
-        return Array.isArray(expected)
-          && expected.every((entry) => matchesFilter(doc, entry));
+        return (
+          Array.isArray(expected)
+          && expected.every((entry) => matchesFilter(doc, entry))
+        );
       }
 
       const actual = key === "_id" ? toLegacyId(doc?._id) : getValueByPath(doc, key);
@@ -164,7 +112,8 @@ function createBotRepository({
         if (Object.prototype.hasOwnProperty.call(expected, "$regex")) {
           const pattern = expected.$regex;
           const flags = expected.$options || "";
-          const regex = pattern instanceof RegExp ? pattern : new RegExp(pattern, flags);
+          const regex =
+            pattern instanceof RegExp ? pattern : new RegExp(pattern, flags);
           return regex.test(String(actual || ""));
         }
       }
@@ -234,6 +183,19 @@ function createBotRepository({
     return results;
   }
 
+  function cacheBot(doc) {
+    const normalizedPlatform = normalizePlatform(doc?.platform);
+    const legacyId = toLegacyId(doc?._id);
+    if (!normalizedPlatform || !legacyId) return;
+
+    cachedBotsById.set(`${normalizedPlatform}:${legacyId}`, doc);
+    const current = cachedBotsByPlatform.get(normalizedPlatform) || [];
+    cachedBotsByPlatform.set(
+      normalizedPlatform,
+      [doc, ...current.filter((entry) => toLegacyId(entry?._id) !== legacyId)],
+    );
+  }
+
   async function readPostgresAll(platform) {
     const normalizedPlatform = normalizePlatform(platform);
     const result = await query(
@@ -262,12 +224,7 @@ function createBotRepository({
 
     const docs = result.rows.map((row) => hydratePostgresBot(row));
     cachedBotsByPlatform.set(normalizedPlatform, docs);
-    docs.forEach((doc) => {
-      const legacyId = toLegacyId(doc?._id);
-      if (legacyId) {
-        cachedBotsById.set(`${normalizedPlatform}:${legacyId}`, doc);
-      }
-    });
+    docs.forEach((doc) => cacheBot(doc));
     return docs;
   }
 
@@ -303,12 +260,7 @@ function createBotRepository({
 
     const doc = hydratePostgresBot(result.rows[0]);
     if (doc) {
-      cachedBotsById.set(`${normalizedPlatform}:${legacyBotId}`, doc);
-      const current = cachedBotsByPlatform.get(normalizedPlatform) || [];
-      const filtered = current.filter(
-        (entry) => toLegacyId(entry?._id) !== legacyBotId,
-      );
-      cachedBotsByPlatform.set(normalizedPlatform, [doc, ...filtered]);
+      cacheBot(doc);
     }
     return doc;
   }
@@ -344,15 +296,16 @@ function createBotRepository({
           )
         LIMIT 1
       `,
-      [normalizedPlatform, normalizedIdentifier, `${escapeRegex(normalizedIdentifier)}$`],
+      [
+        normalizedPlatform,
+        normalizedIdentifier,
+        `${escapeRegex(normalizedIdentifier)}$`,
+      ],
     );
 
     const doc = hydratePostgresBot(result.rows[0]);
     if (doc) {
-      const legacyBotId = toLegacyId(doc?._id);
-      if (legacyBotId) {
-        cachedBotsById.set(`${normalizedPlatform}:${legacyBotId}`, doc);
-      }
+      cacheBot(doc);
     }
     return doc;
   }
@@ -365,8 +318,7 @@ function createBotRepository({
   }
 
   function readCachedBots(platform) {
-    const normalizedPlatform = normalizePlatform(platform);
-    return cachedBotsByPlatform.get(normalizedPlatform) || [];
+    return cachedBotsByPlatform.get(normalizePlatform(platform)) || [];
   }
 
   function readCachedBotByIdentifier(platform, identifier) {
@@ -381,9 +333,8 @@ function createBotRepository({
       normalizedPlatform === "facebook"
         ? null
         : new RegExp(`${escapeRegex(normalizedIdentifier)}$`, "i");
-    const candidates = readCachedBots(normalizedPlatform);
     return (
-      candidates.find((entry) => {
+      readCachedBots(normalizedPlatform).find((entry) => {
         if (!entry || typeof entry !== "object") return false;
         if (
           normalizedPlatform === "facebook"
@@ -394,163 +345,8 @@ function createBotRepository({
         const webhookUrl =
           typeof entry.webhookUrl === "string" ? entry.webhookUrl.trim() : "";
         return Boolean(lookupRegex && webhookUrl && lookupRegex.test(webhookUrl));
-      })
-      || null
+      }) || null
     );
-  }
-
-  function startShadowCompare(platform, identifier, mongoDoc, pgDoc) {
-    if (!shouldShadowRead()) return;
-    const comparableMongo = mongoDoc
-      ? {
-        status: mongoDoc.status || "active",
-        aiModel: mongoDoc.aiModel || null,
-        webhookUrl: mongoDoc.webhookUrl || null,
-        selectedInstructions: Array.isArray(mongoDoc.selectedInstructions)
-          ? mongoDoc.selectedInstructions
-          : [],
-        selectedImageCollections: Array.isArray(mongoDoc.selectedImageCollections)
-          ? mongoDoc.selectedImageCollections
-          : [],
-      }
-      : null;
-    const comparablePg = pgDoc
-      ? {
-        status: pgDoc.status || "active",
-        aiModel: pgDoc.aiModel || null,
-        webhookUrl: pgDoc.webhookUrl || null,
-        selectedInstructions: Array.isArray(pgDoc.selectedInstructions)
-          ? pgDoc.selectedInstructions
-          : [],
-        selectedImageCollections: Array.isArray(pgDoc.selectedImageCollections)
-          ? pgDoc.selectedImageCollections
-          : [],
-      }
-      : null;
-
-    if (safeStringify(comparableMongo) !== safeStringify(comparablePg)) {
-      console.warn(
-        `[BotRepository] Shadow read mismatch for ${platform}:${identifier}`,
-      );
-    }
-  }
-
-  async function syncDocumentToPostgres(platform, mongoDoc) {
-    if (!mongoDoc || !shouldDualWrite()) return null;
-    return upsertPostgresBotDocument({ query }, platform, mongoDoc);
-  }
-
-  async function syncDocumentById(platform, botId) {
-    if (!canUseMongo()) {
-      return readPostgresByLegacyId(platform, botId);
-    }
-    const coll = await getCollection(platform);
-    const mongoDoc = await coll.findOne(buildMongoIdQuery(botId));
-    if (!mongoDoc) return null;
-    await syncDocumentToPostgres(platform, mongoDoc).catch((error) => {
-      console.warn(
-        `[BotRepository] Sync failed for ${platform}:${botId}:`,
-        error?.message || error,
-      );
-    });
-    return mongoDoc;
-  }
-
-  async function list(platform, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDocs = await readPostgresAll(platform);
-        if (pgDocs.length > 0 || !canUseMongo()) {
-          return applyListOptions(pgDocs, options);
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "BotRepository",
-          operation: "list read",
-          identifier: platform,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-        if (!canUseMongo()) {
-          const cachedDocs = readCachedBots(platform);
-          if (cachedDocs.length > 0) {
-            return applyListOptions(cachedDocs, options);
-          }
-        }
-      }
-    }
-
-    if (!canUseMongo()) {
-      return [];
-    }
-
-    const coll = await getCollection(platform);
-    const filter =
-      options.filter && typeof options.filter === "object" ? options.filter : {};
-    const findOptions = {};
-    if (options.projection && typeof options.projection === "object") {
-      findOptions.projection = options.projection;
-    }
-    let cursor = coll.find(filter, findOptions);
-    if (options.sort && typeof options.sort === "object") {
-      cursor = cursor.sort(options.sort);
-    }
-    if (Number.isFinite(options.limit) && options.limit > 0) {
-      cursor = cursor.limit(options.limit);
-    }
-    const docs = await cursor.toArray();
-
-    if (shouldDualWrite()) {
-      await Promise.all(
-        docs.map((doc) =>
-          syncDocumentToPostgres(platform, doc).catch((error) => {
-            console.warn(
-              `[BotRepository] Dual-write sync failed for ${platform}:${toLegacyId(doc?._id)}:`,
-              error?.message || error,
-            );
-          }),
-        ),
-      );
-    }
-
-    return docs;
-  }
-
-  async function insertOne(platform, document) {
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
-      }
-      const legacyId =
-        toLegacyId(document?._id)
-        || toLegacyId(document?.pageId)
-        || toLegacyId(document?.phoneNumberId)
-        || toLegacyId(document?.instagramBusinessAccountId)
-        || generateLegacyObjectIdString();
-      const now = new Date();
-      const pgDoc = {
-        ...document,
-        _id: legacyId,
-        createdAt: document?.createdAt || now,
-        updatedAt: document?.updatedAt || now,
-      };
-      await upsertPostgresBotDocument({ query }, platform, pgDoc);
-      const saved = await readPostgresByLegacyId(platform, legacyId);
-      return saved || pgDoc;
-    }
-
-    const coll = await getCollection(platform);
-    const result = await coll.insertOne(document);
-    const savedDoc = { ...document, _id: result.insertedId };
-    if (shouldDualWrite()) {
-      await syncDocumentToPostgres(platform, savedDoc).catch((error) => {
-        console.warn(
-          `[BotRepository] Insert dual-write failed for ${platform}:${toLegacyId(result.insertedId)}:`,
-          error?.message || error,
-        );
-      });
-    }
-    return savedDoc;
   }
 
   function normalizeUpdateDocument(update) {
@@ -561,7 +357,7 @@ function createBotRepository({
     return hasOperator ? update : { $set: update };
   }
 
-  function applyMongoStyleUpdate(target, normalizedUpdate) {
+  function applyDocumentUpdate(target, normalizedUpdate) {
     const next = target && typeof target === "object" ? { ...target } : {};
     const applyPath = (object, path, value, remove = false) => {
       const parts = String(path || "")
@@ -571,7 +367,11 @@ function createBotRepository({
       let cursor = object;
       for (let index = 0; index < parts.length - 1; index += 1) {
         const part = parts[index];
-        if (!cursor[part] || typeof cursor[part] !== "object" || Array.isArray(cursor[part])) {
+        if (
+          !cursor[part]
+          || typeof cursor[part] !== "object"
+          || Array.isArray(cursor[part])
+        ) {
           cursor[part] = {};
         }
         cursor = cursor[part];
@@ -614,232 +414,130 @@ function createBotRepository({
     return next;
   }
 
-  async function updateById(platform, botId, update, options = {}) {
-    const normalizedUpdate = normalizeUpdateDocument(update);
-    const filter = buildMongoIdQuery(botId);
+  async function list(platform, options = {}) {
+    try {
+      if (!isStorageReady()) {
+        return applyListOptions(readCachedBots(platform), options);
+      }
+      return applyListOptions(await readPostgresAll(platform), options);
+    } catch (error) {
+      console.warn(
+        `[BotRepository] list failed for ${platform}:`,
+        error?.message || error,
+      );
+      return applyListOptions(readCachedBots(platform), options);
+    }
+  }
 
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
-      }
-      const existingDoc = await readPostgresByLegacyId(platform, botId);
-      if (!existingDoc) {
-        return { matchedCount: 0, modifiedCount: 0, document: null };
-      }
-      const updatedDoc = applyMongoStyleUpdate(existingDoc, normalizedUpdate);
-      updatedDoc._id = toLegacyId(existingDoc._id) || toLegacyId(botId);
-      updatedDoc.updatedAt = new Date();
-      await upsertPostgresBotDocument({ query }, platform, updatedDoc);
-      const savedDoc = await readPostgresByLegacyId(platform, updatedDoc._id);
-      return {
-        matchedCount: 1,
-        modifiedCount: 1,
-        document: savedDoc || updatedDoc,
-      };
+  async function insertOne(platform, document) {
+    if (!isStorageReady()) {
+      throw new Error("bot_storage_not_configured");
     }
 
-    const coll = await getCollection(platform);
-    const result = await coll.updateOne(filter, normalizedUpdate, options);
-    if (result.matchedCount === 0) {
+    const legacyId =
+      toLegacyId(document?._id)
+      || toLegacyId(document?.pageId)
+      || toLegacyId(document?.phoneNumberId)
+      || toLegacyId(document?.instagramBusinessAccountId)
+      || generateLegacyObjectIdString();
+    const now = new Date();
+    const pgDoc = {
+      ...document,
+      _id: legacyId,
+      createdAt: document?.createdAt || now,
+      updatedAt: document?.updatedAt || now,
+    };
+
+    await upsertPostgresBotDocument({ query }, platform, pgDoc);
+    const saved = await readPostgresByLegacyId(platform, legacyId);
+    return saved || pgDoc;
+  }
+
+  async function updateById(platform, botId, update) {
+    if (!isStorageReady()) {
+      throw new Error("bot_storage_not_configured");
+    }
+
+    const existingDoc = await readPostgresByLegacyId(platform, botId);
+    if (!existingDoc) {
       return { matchedCount: 0, modifiedCount: 0, document: null };
     }
 
-    const updatedDoc = await coll.findOne(filter);
-    if (updatedDoc && shouldDualWrite()) {
-      await syncDocumentToPostgres(platform, updatedDoc).catch((error) => {
-        console.warn(
-          `[BotRepository] Update dual-write failed for ${platform}:${botId}:`,
-          error?.message || error,
-        );
-      });
-    }
+    const updatedDoc = applyDocumentUpdate(
+      existingDoc,
+      normalizeUpdateDocument(update),
+    );
+    updatedDoc._id = toLegacyId(existingDoc._id) || toLegacyId(botId);
+    updatedDoc.updatedAt = new Date();
 
+    await upsertPostgresBotDocument({ query }, platform, updatedDoc);
+    const savedDoc = await readPostgresByLegacyId(platform, updatedDoc._id);
     return {
-      matchedCount: result.matchedCount,
-      modifiedCount: result.modifiedCount,
-      document: updatedDoc,
+      matchedCount: 1,
+      modifiedCount: 1,
+      document: savedDoc || updatedDoc,
     };
   }
 
   async function clearDefaultFlag(platform, excludeBotId = null) {
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
-      }
-      const docs = await readPostgresAll(platform);
-      const excluded = toLegacyId(excludeBotId);
-      let modifiedCount = 0;
-      for (const doc of docs) {
-        const legacyId = toLegacyId(doc?._id);
-        if (!legacyId || (excluded && legacyId === excluded)) continue;
-        if (!doc.isDefault) continue;
-        await upsertPostgresBotDocument(
-          { query },
-          platform,
-          {
-            ...doc,
-            _id: legacyId,
-            isDefault: false,
-            updatedAt: new Date(),
-          },
-        );
-        modifiedCount += 1;
-      }
-      return {
-        acknowledged: true,
-        matchedCount: modifiedCount,
-        modifiedCount,
-      };
+    if (!isStorageReady()) {
+      throw new Error("bot_storage_not_configured");
     }
 
-    const coll = await getCollection(platform);
-    const filter = { isDefault: true };
-    const objectId = toObjectId(excludeBotId);
-    const legacyId = toLegacyId(excludeBotId);
-    if (excludeBotId) {
-      filter._id = { $ne: objectId || legacyId };
+    const docs = await readPostgresAll(platform);
+    const excluded = toLegacyId(excludeBotId);
+    let modifiedCount = 0;
+    for (const doc of docs) {
+      const legacyId = toLegacyId(doc?._id);
+      if (!legacyId || (excluded && legacyId === excluded)) continue;
+      if (!doc.isDefault) continue;
+      await upsertPostgresBotDocument({
+        query,
+      }, platform, {
+        ...doc,
+        _id: legacyId,
+        isDefault: false,
+        updatedAt: new Date(),
+      });
+      modifiedCount += 1;
     }
-
-    const affectedIds = await coll
-      .find(filter, { projection: { _id: 1 } })
-      .toArray();
-
-    if (affectedIds.length === 0) {
-      return { matchedCount: 0, modifiedCount: 0 };
-    }
-
-    const result = await coll.updateMany(
-      filter,
-      { $set: { isDefault: false, updatedAt: new Date() } },
-    );
-
-    if (shouldDualWrite()) {
-      await Promise.all(
-        affectedIds.map((doc) =>
-          syncDocumentById(platform, doc?._id).catch((error) => {
-            console.warn(
-              `[BotRepository] Default reset dual-write failed for ${platform}:${toLegacyId(doc?._id)}:`,
-              error?.message || error,
-            );
-          }),
-        ),
-      );
-    }
-
-    return result;
+    return {
+      acknowledged: true,
+      matchedCount: modifiedCount,
+      modifiedCount,
+    };
   }
 
   async function findById(platform, botId, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPostgresByLegacyId(platform, botId);
-        if (pgDoc || !canUseMongo()) {
-          return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "BotRepository",
-          operation: "read",
-          identifier: `${platform}:${botId}`,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-        if (!canUseMongo()) {
-          const cachedDoc = readCachedBotById(platform, botId);
-          if (cachedDoc) {
-            return options.projection
-              ? applyProjection(cachedDoc, options.projection)
-              : cachedDoc;
-          }
-        }
-      }
+    try {
+      const doc = isStorageReady()
+        ? await readPostgresByLegacyId(platform, botId)
+        : readCachedBotById(platform, botId);
+      return options.projection ? applyProjection(doc, options.projection) : doc;
+    } catch (error) {
+      console.warn(
+        `[BotRepository] read failed for ${platform}:${botId}:`,
+        error?.message || error,
+      );
+      const cachedDoc = readCachedBotById(platform, botId);
+      return options.projection ? applyProjection(cachedDoc, options.projection) : cachedDoc;
     }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const coll = await getCollection(platform);
-    const mongoDoc = await coll.findOne(buildMongoIdQuery(botId), options);
-    if (mongoDoc && shouldDualWrite()) {
-      await syncDocumentToPostgres(platform, mongoDoc).catch((error) => {
-        console.warn(
-          `[BotRepository] Dual-write sync failed for ${platform}:${botId}:`,
-          error?.message || error,
-        );
-      });
-    }
-
-    if (shouldShadowRead()) {
-      void readPostgresByLegacyId(platform, botId)
-        .then((pgDoc) => startShadowCompare(platform, botId, mongoDoc, pgDoc))
-        .catch((error) => {
-          console.warn(
-            `[BotRepository] Shadow read failed for ${platform}:${botId}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
   }
 
   async function findByIdentifier(platform, identifier, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPostgresByIdentifier(platform, identifier);
-        if (pgDoc || !canUseMongo()) {
-          return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "BotRepository",
-          operation: "identifier read",
-          identifier: `${platform}:${identifier}`,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-        if (!canUseMongo()) {
-          const cachedDoc = readCachedBotByIdentifier(platform, identifier);
-          if (cachedDoc) {
-            return options.projection
-              ? applyProjection(cachedDoc, options.projection)
-              : cachedDoc;
-          }
-        }
-      }
+    try {
+      const doc = isStorageReady()
+        ? await readPostgresByIdentifier(platform, identifier)
+        : readCachedBotByIdentifier(platform, identifier);
+      return options.projection ? applyProjection(doc, options.projection) : doc;
+    } catch (error) {
+      console.warn(
+        `[BotRepository] identifier read failed for ${platform}:${identifier}:`,
+        error?.message || error,
+      );
+      const cachedDoc = readCachedBotByIdentifier(platform, identifier);
+      return options.projection ? applyProjection(cachedDoc, options.projection) : cachedDoc;
     }
-
-    const queryObject = buildLookupQuery(platform, identifier);
-    if (!queryObject) return null;
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const coll = await getCollection(platform);
-    const mongoDoc = await coll.findOne(queryObject, options);
-    if (mongoDoc && shouldDualWrite()) {
-      await syncDocumentToPostgres(platform, mongoDoc).catch((error) => {
-        console.warn(
-          `[BotRepository] Dual-write sync failed for ${platform}:${identifier}:`,
-          error?.message || error,
-        );
-      });
-    }
-
-    if (shouldShadowRead()) {
-      void readPostgresByIdentifier(platform, identifier)
-        .then((pgDoc) => startShadowCompare(platform, identifier, mongoDoc, pgDoc))
-        .catch((error) => {
-          console.warn(
-            `[BotRepository] Shadow read failed for ${platform}:${identifier}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
   }
 
   async function getRuntimeSnapshot(platform, botId) {
@@ -860,7 +558,8 @@ function createBotRepository({
       selectedImageCollections: Array.isArray(bot.selectedImageCollections)
         ? bot.selectedImageCollections
         : [],
-      aiConfig: bot.aiConfig && typeof bot.aiConfig === "object" ? bot.aiConfig : {},
+      aiConfig:
+        bot.aiConfig && typeof bot.aiConfig === "object" ? bot.aiConfig : {},
       openaiApiKeyId: bot.openaiApiKeyId || null,
     };
   }
@@ -869,42 +568,23 @@ function createBotRepository({
     const normalizedPlatform = normalizePlatform(platform);
     const legacyId = toLegacyId(botId);
 
-    if (!canUseMongo()) {
-      if (canUsePostgres()) {
-        const existingDoc = await readPostgresByLegacyId(platform, botId).catch(() => null);
-        if (!existingDoc) {
-          return { deletedCount: 0 };
-        }
-        await deletePostgresBotByLegacyId({ query }, platform, botId).catch((error) => {
-          console.warn(
-            `[BotRepository] Delete failed for ${platform}:${botId}:`,
-            error?.message || error,
-          );
-        });
-        if (legacyId) {
-          cachedBotsById.delete(`${normalizedPlatform}:${legacyId}`);
-          const current = cachedBotsByPlatform.get(normalizedPlatform) || [];
-          cachedBotsByPlatform.set(
-            normalizedPlatform,
-            current.filter((doc) => toLegacyId(doc?._id) !== legacyId),
-          );
-        }
-        return { deletedCount: 1 };
-      }
+    if (!isStorageReady()) {
       return { deletedCount: 0 };
     }
 
-    const coll = await getCollection(platform);
-    const result = await coll.deleteOne(buildMongoIdQuery(botId));
-    if (result.deletedCount > 0 && shouldDualWrite()) {
-      await deletePostgresBotByLegacyId({ query }, platform, botId).catch((error) => {
-        console.warn(
-          `[BotRepository] Delete dual-write failed for ${platform}:${botId}:`,
-          error?.message || error,
-        );
-      });
+    const existingDoc = await readPostgresByLegacyId(platform, botId).catch(() => null);
+    if (!existingDoc) {
+      return { deletedCount: 0 };
     }
-    if (result.deletedCount > 0 && legacyId) {
+
+    await deletePostgresBotByLegacyId({ query }, platform, botId).catch((error) => {
+      console.warn(
+        `[BotRepository] Delete failed for ${platform}:${botId}:`,
+        error?.message || error,
+      );
+    });
+
+    if (legacyId) {
       cachedBotsById.delete(`${normalizedPlatform}:${legacyId}`);
       const current = cachedBotsByPlatform.get(normalizedPlatform) || [];
       cachedBotsByPlatform.set(
@@ -912,14 +592,11 @@ function createBotRepository({
         current.filter((doc) => toLegacyId(doc?._id) !== legacyId),
       );
     }
-    return result;
+    return { deletedCount: 1 };
   }
 
   async function syncById(platform, botId) {
-    const bot = await findById(platform, botId);
-    if (!bot) return null;
-    if (!shouldDualWrite()) return bot;
-    return syncDocumentById(platform, botId);
+    return findById(platform, botId);
   }
 
   return {

@@ -48,18 +48,6 @@ function resolvePostgresConnectionString() {
   ).trim();
 }
 
-function isMongoConnectionStringDisabled(value) {
-  const normalized = String(value || "").trim();
-  if (!normalized) return true;
-  if (/disabled_mongo_uri/i.test(normalized)) return true;
-  if (/^(disabled|null|none|off)$/i.test(normalized)) return true;
-  return false;
-}
-
-function resolveMongoConnectionString() {
-  return "";
-}
-
 function getRuntimeConfig() {
   const runtimeMode = resolveRuntimeMode();
   const redisUrl = resolveRedisUrl();
@@ -72,12 +60,9 @@ function getRuntimeConfig() {
   return {
     runtimeMode,
     runtimeId,
-    mongoDatabaseName: (process.env.MONGO_DB_NAME || "chatbot").trim() || "chatbot",
     redisUrl,
     postgresConnectionString,
     features: {
-      // MongoDB runtime support has been removed from the application.
-      mongoEnabled: false,
       redisInfra: parseBoolean(
         process.env.CCAI_USE_REDIS_INFRA,
         Boolean(redisUrl),
@@ -105,38 +90,6 @@ function getRuntimeConfig() {
       postgresAutoMigrateOnBoot: parseBoolean(
         process.env.CCAI_RUN_POSTGRES_MIGRATIONS_ON_BOOT,
         Boolean(postgresConnectionString),
-      ),
-      postgresDualWrite: parseBoolean(
-        process.env.CCAI_PG_DUAL_WRITE,
-        false,
-      ),
-      postgresShadowRead: parseBoolean(
-        process.env.CCAI_PG_SHADOW_READ,
-        false,
-      ),
-      postgresReadPrimarySettings: parseBoolean(
-        process.env.CCAI_PG_PRIMARY_READ_SETTINGS,
-        false,
-      ),
-      postgresReadPrimaryBots: parseBoolean(
-        process.env.CCAI_PG_PRIMARY_READ_BOTS,
-        false,
-      ),
-      postgresReadPrimaryOrders: parseBoolean(
-        process.env.CCAI_PG_PRIMARY_READ_ORDERS,
-        false,
-      ),
-      postgresReadPrimaryChat: parseBoolean(
-        process.env.CCAI_PG_PRIMARY_READ_CHAT,
-        false,
-      ),
-      postgresReadPrimaryFollowUp: parseBoolean(
-        process.env.CCAI_PG_PRIMARY_READ_FOLLOWUP,
-        false,
-      ),
-      postgresReadPrimaryNotifications: parseBoolean(
-        process.env.CCAI_PG_PRIMARY_READ_NOTIFICATIONS,
-        false,
       ),
       legacyBackgroundJobs: parseBoolean(
         process.env.CCAI_ENABLE_LEGACY_BACKGROUND_JOBS,
@@ -210,10 +163,8 @@ function getRuntimeConfig() {
 module.exports = {
   VALID_RUNTIME_MODES,
   getRuntimeConfig,
-  isMongoConnectionStringDisabled,
   parseBoolean,
   parseInteger,
-  resolveMongoConnectionString,
   resolveRedisUrl,
   resolvePostgresConnectionString,
 };

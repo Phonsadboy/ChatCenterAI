@@ -1,3 +1,5 @@
+> Historical pre-PostgreSQL implementation note. Archived after MongoDB runtime removal.
+
 # สรุปการพัฒนา: ระบบเช็กสลิป SlipOK ในกลุ่มออเดอร์ (LINE)
 
 > อัปเดตล่าสุด: 2025-12-17
@@ -55,4 +57,3 @@
   - `public/js/notification-channels.js`
 - เอกสาร:
   - `docs/slipok-slip-check-plan.md`
-

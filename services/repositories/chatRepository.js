@@ -1,16 +1,10 @@
 const { isPostgresConfigured, query, withTransaction } = require("../../infra/postgres");
-const { upsertPostgresBotDocument } = require("./postgresBotSync");
 const {
   applyProjection,
-  buildMongoIdQuery,
-  escapeRegex,
   normalizeJson,
   normalizePlatform,
-  safeStringify,
   toLegacyId,
-  toObjectId,
   toText,
-  warnPrimaryReadFailure,
 } = require("./shared");
 
 function buildThreadKey(platform, botId, userId) {
@@ -31,19 +25,6 @@ function buildThreadStats(messages = []) {
     lastSource: latestMessage.source || null,
     lastPreview: preview,
     botName: latestMessage.botName || null,
-  };
-}
-
-function buildMongoUserMatch(userId) {
-  const normalizedUserId = toLegacyId(userId);
-  if (!normalizedUserId) {
-    return { senderId: null };
-  }
-  return {
-    $or: [
-      { senderId: normalizedUserId },
-      { userId: normalizedUserId },
-    ],
   };
 }
 
@@ -68,65 +49,7 @@ function parsePositiveInteger(value, fallback) {
   return numeric;
 }
 
-function normalizeDate(value) {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function normalizeComparableHistory(doc) {
-  if (!doc || typeof doc !== "object") return doc;
-  return {
-    _id: toLegacyId(doc._id),
-    senderId: toLegacyId(doc.senderId || doc.userId),
-    role: doc.role || "user",
-    source: doc.source || null,
-    platform: normalizePlatform(doc.platform),
-    botId: toLegacyId(doc.botId),
-    timestamp: normalizeDate(doc.timestamp),
-    content: normalizeJson(doc.content, null),
-    instructionRefs: Array.isArray(doc.instructionRefs) ? doc.instructionRefs : [],
-    instructionMeta: Array.isArray(doc.instructionMeta) ? doc.instructionMeta : [],
-    orderExtractionRoundId: doc.orderExtractionRoundId || null,
-    orderId: toLegacyId(doc.orderId),
-  };
-}
-
-function normalizeComparableContext(doc) {
-  if (!doc || typeof doc !== "object") return doc;
-  return {
-    platform: normalizePlatform(doc.platform),
-    botId: toLegacyId(doc.botId),
-    timestamp: normalizeDate(doc.timestamp || doc.createdAt || doc.updatedAt),
-  };
-}
-
-function normalizeComparableUserSummary(doc) {
-  if (!doc || typeof doc !== "object") return doc;
-  return {
-    _id: toLegacyId(doc._id),
-    lastMessage: normalizeJson(doc.lastMessage, null),
-    lastTimestamp: normalizeDate(doc.lastTimestamp),
-    messageCount: Number(doc.messageCount || 0),
-    platform: normalizePlatform(doc.platform),
-    botId: toLegacyId(doc.botId),
-  };
-}
-
-function normalizeComparableActivityDoc(doc) {
-  if (!doc || typeof doc !== "object") return doc;
-  return {
-    senderId: toLegacyId(doc.senderId || doc.userId),
-    role: doc.role || null,
-    platform: normalizePlatform(doc.platform),
-    botId: toLegacyId(doc.botId),
-    timestamp: normalizeDate(doc.timestamp || doc.createdAt),
-  };
-}
-
 function createChatRepository({
-  connectDB,
-  dbName = "chatbot",
   runtimeConfig,
 }) {
   const pgBotIdCache = new Map();
@@ -145,56 +68,17 @@ function createChatRepository({
   const createGeneratedId = () =>
     `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
   }
 
-  function shouldDualWrite() {
-    return Boolean(runtimeConfig?.features?.postgresDualWrite && canUsePostgres());
-  }
-
-  function shouldShadowRead() {
-    return Boolean(runtimeConfig?.features?.postgresShadowRead && canUsePostgres());
-  }
-
-  function shouldReadPrimary() {
-    return Boolean(
-      canUsePostgres()
-        && (runtimeConfig?.features?.postgresReadPrimaryChat || !canUseMongo()),
-    );
-  }
-
-  async function getMongoDb() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
-    }
-    const client = await connectDB();
-    return client.db(dbName);
-  }
-
-  function startShadowCompare(label, mongoValue, pgValue, normalizer) {
-    if (!shouldShadowRead() || shouldReadPrimary()) return;
-    const normalize =
-      typeof normalizer === "function"
-        ? normalizer
-        : (value) => value;
-    const normalizedMongo = Array.isArray(mongoValue)
-      ? mongoValue.map((item) => normalize(item))
-      : normalize(mongoValue);
-    const normalizedPg = Array.isArray(pgValue)
-      ? pgValue.map((item) => normalize(item))
-      : normalize(pgValue);
-
-    if (safeStringify(normalizedMongo) !== safeStringify(normalizedPg)) {
-      console.warn(`[ChatRepository] Shadow read mismatch for ${label}`);
+  function ensurePostgresAvailable(operation) {
+    if (!canUsePostgres()) {
+      throw new Error(`postgres_chat_storage_not_configured:${operation}`);
     }
   }
 
-  async function resolvePgBotId(platform, botId, mongoDb = null) {
+  async function resolveBotRecordId(platform, botId) {
     const normalizedPlatform = normalizePlatform(platform);
     const legacyBotId = toLegacyId(botId);
     if (!legacyBotId) return null;
@@ -204,132 +88,13 @@ function createChatRepository({
       return pgBotIdCache.get(cacheKey);
     }
 
-    let result = await query(
+    const result = await query(
       "SELECT id FROM bots WHERE platform = $1 AND legacy_bot_id = $2 LIMIT 1",
       [normalizedPlatform, legacyBotId],
     );
-
-    if (result.rows[0]?.id) {
-      pgBotIdCache.set(cacheKey, result.rows[0].id);
-      return result.rows[0].id;
-    }
-
-    if (!mongoDb) {
-      return null;
-    }
-
-    const botCollection = mongoDb.collection(
-      normalizedPlatform === "line"
-        ? "line_bots"
-        : normalizedPlatform === "facebook"
-          ? "facebook_bots"
-          : normalizedPlatform === "instagram"
-            ? "instagram_bots"
-            : "whatsapp_bots",
-    );
-    const botDoc = await botCollection.findOne({
-      $or: [buildMongoIdQuery(botId), buildMongoIdQuery(legacyBotId)],
-    });
-    if (!botDoc) return null;
-
-    const pgBotId = await upsertPostgresBotDocument({ query }, normalizedPlatform, botDoc);
+    const pgBotId = result.rows[0]?.id || null;
     pgBotIdCache.set(cacheKey, pgBotId);
     return pgBotId;
-  }
-
-  async function loadProfile(mongoDb, userId, platform) {
-    const normalizedUserId = toLegacyId(userId);
-    const normalizedPlatform = normalizePlatform(platform);
-    const normalizeProfileDoc = (doc = {}) => ({
-      displayName:
-        doc.displayName ||
-        doc.display_name ||
-        doc?.profile_data?.displayName ||
-        null,
-      pictureUrl:
-        doc.pictureUrl ||
-        doc?.profile_data?.pictureUrl ||
-        null,
-      profileFetchDisabled:
-        typeof doc.profileFetchDisabled === "boolean"
-          ? doc.profileFetchDisabled
-          : typeof doc?.profile_data?.profileFetchDisabled === "boolean"
-            ? doc.profile_data.profileFetchDisabled
-            : false,
-      updatedAt: doc.updatedAt || doc.updated_at || doc?.profile_data?.updatedAt || null,
-      createdAt: doc.createdAt || doc.created_at || doc?.profile_data?.createdAt || null,
-    });
-
-    async function readPgProfile() {
-      const result = await query(
-        `
-          SELECT display_name, profile_data, created_at, updated_at
-          FROM contacts
-          WHERE legacy_contact_id = $1
-            AND platform = $2
-          LIMIT 1
-        `,
-        [normalizedUserId, normalizedPlatform],
-      );
-      return result.rows[0] ? normalizeProfileDoc(result.rows[0]) : null;
-    }
-
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPgProfile();
-        if (pgDoc) return pgDoc;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "profile read",
-          identifier: `${normalizedPlatform}:${normalizedUserId}`,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!mongoDb) {
-      return {};
-    }
-
-    const mongoDoc = (
-      await mongoDb.collection("user_profiles").findOne(
-        {
-          userId: normalizedUserId,
-          platform: normalizedPlatform,
-        },
-        {
-          projection: {
-            displayName: 1,
-            pictureUrl: 1,
-            profileFetchDisabled: 1,
-            updatedAt: 1,
-            createdAt: 1,
-          },
-        },
-      )
-    ) || {};
-
-    if (shouldShadowRead()) {
-      void readPgProfile()
-        .then((pgDoc) =>
-          startShadowCompare(
-            `profile:${normalizedPlatform}:${normalizedUserId}`,
-            mongoDoc,
-            pgDoc || {},
-            normalizeProfileDoc,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            `[ChatRepository] Shadow profile read failed for ${normalizedPlatform}:${normalizedUserId}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
   }
 
   async function upsertPgContact(client, userId, platform, profile = {}) {
@@ -470,156 +235,11 @@ function createChatRepository({
           assistantSource: messageDoc?.assistantSource || null,
           orderExtractionRoundId: messageDoc?.orderExtractionRoundId || null,
           orderExtractionMarkedAt: messageDoc?.orderExtractionMarkedAt || null,
-          orderId: messageDoc?.orderId
-            ? toLegacyId(messageDoc.orderId)
-            : null,
+          orderId: messageDoc?.orderId ? toLegacyId(messageDoc.orderId) : null,
         }),
         messageDoc?.timestamp || new Date(),
       ],
     );
-  }
-
-  async function dualWriteMessages(savedDocs) {
-    if (!shouldDualWrite() || savedDocs.length === 0) return;
-
-    const primary = savedDocs[0];
-    const userId = toLegacyId(primary?.senderId || primary?.userId);
-    if (!userId) return;
-
-    const platform = normalizePlatform(primary?.platform);
-    const mongoDb = canUseMongo() ? await getMongoDb() : null;
-    const profile = await loadProfile(mongoDb, userId, platform);
-    const pgBotId = await resolvePgBotId(platform, primary?.botId, mongoDb);
-    const legacyThreadKey = buildThreadKey(platform, primary?.botId, userId);
-    const stats = buildThreadStats(savedDocs);
-    const updatedAt =
-      savedDocs[savedDocs.length - 1]?.timestamp || new Date();
-
-    await withTransaction(async (client) => {
-      const contactId = await upsertPgContact(client, userId, platform, profile);
-      const threadId = await upsertPgThread(
-        client,
-        platform,
-        pgBotId,
-        contactId,
-        legacyThreadKey,
-        stats,
-        updatedAt,
-      );
-
-      for (const messageDoc of savedDocs) {
-        await insertPgMessage(
-          client,
-          { contactId, pgBotId, threadId },
-          messageDoc,
-        );
-      }
-    });
-  }
-
-  async function readMongoHistoryDocs(userId, options = {}) {
-    if (!canUseMongo()) return [];
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const sortDirection = normalizeSortDirection(options.sort, 1);
-    let cursor = coll
-      .find(buildMongoUserMatch(userId))
-      .sort({ timestamp: sortDirection });
-
-    if (Number.isFinite(options.limit) && options.limit > 0) {
-      cursor = cursor.limit(options.limit);
-    }
-
-    return cursor.toArray();
-  }
-
-  function buildMongoBotQuery(filter = {}) {
-    if (filter.defaultBotOnly) {
-      return {
-        $or: [
-          { botId: null },
-          { botId: "" },
-          { botId: { $exists: false } },
-        ],
-      };
-    }
-
-    const normalizedBotId = toLegacyId(filter.botId);
-    if (!normalizedBotId) return null;
-
-    const candidates = [normalizedBotId];
-    const objectId = toObjectId(normalizedBotId);
-    if (objectId) candidates.push(objectId);
-    return { botId: { $in: candidates } };
-  }
-
-  function buildMongoMessageFilter(filter = {}) {
-    const conditions = [];
-    const userId = toLegacyId(filter.userId);
-    if (userId) {
-      conditions.push(buildMongoUserMatch(userId));
-    }
-
-    const userIds = Array.isArray(filter.userIds)
-      ? filter.userIds.map((value) => toLegacyId(value)).filter(Boolean)
-      : [];
-    if (userIds.length > 0) {
-      conditions.push({
-        $or: [
-          { senderId: { $in: userIds } },
-          { userId: { $in: userIds } },
-        ],
-      });
-    }
-
-    if (typeof filter.role === "string" && filter.role.trim()) {
-      conditions.push({ role: filter.role.trim() });
-    }
-
-    if (typeof filter.source === "string" && filter.source.trim()) {
-      conditions.push({ source: filter.source.trim() });
-    } else {
-      const sourceIn = Array.isArray(filter.sourceIn)
-        ? filter.sourceIn
-          .map((value) => (typeof value === "string" ? value.trim() : ""))
-          .filter(Boolean)
-        : [];
-      if (sourceIn.length > 0) {
-        conditions.push({ source: { $in: sourceIn } });
-      }
-    }
-
-    if (typeof filter.platform === "string" && filter.platform.trim()) {
-      conditions.push({ platform: normalizePlatform(filter.platform) });
-    }
-
-    const botQuery = buildMongoBotQuery(filter);
-    if (botQuery) {
-      conditions.push(botQuery);
-    }
-
-    const timestampQuery = {};
-    if (filter.start) timestampQuery.$gte = filter.start;
-    if (filter.end) timestampQuery.$lte = filter.end;
-    if (filter.before) timestampQuery.$lt = filter.before;
-    if (Object.keys(timestampQuery).length > 0) {
-      conditions.push({ timestamp: timestampQuery });
-    }
-
-    const contentRegex =
-      typeof filter.contentRegex === "string" ? filter.contentRegex.trim() : "";
-    if (contentRegex) {
-      conditions.push({
-        content: {
-          $regex: escapeRegex(contentRegex),
-          $options: "i",
-        },
-      });
-    }
-
-    if (conditions.length === 0) return {};
-    if (conditions.length === 1) return conditions[0];
-    return { $and: conditions };
   }
 
   function hydratePostgresMessage(row = {}) {
@@ -693,25 +313,6 @@ function createChatRepository({
     return result.rows.map((row) => hydratePostgresMessage(row));
   }
 
-  async function readMongoLatestContext(userId) {
-    if (!canUseMongo()) return null;
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const doc = await coll.findOne(
-      buildMongoUserMatch(userId),
-      {
-        sort: { timestamp: -1 },
-        projection: { platform: 1, botId: 1, timestamp: 1 },
-      },
-    );
-    if (!doc) return null;
-    return {
-      platform: normalizePlatform(doc.platform),
-      botId: doc.botId || null,
-      timestamp: doc.timestamp || null,
-    };
-  }
-
   async function readPostgresLatestContext(userId) {
     const normalizedUserId = toLegacyId(userId);
     if (!normalizedUserId) return null;
@@ -742,94 +343,6 @@ function createChatRepository({
     };
   }
 
-  async function readMongoUserSummaries(options = {}) {
-    if (!canUseMongo()) return [];
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const limit =
-      Number.isFinite(options.limit) && options.limit > 0 ? options.limit : 50;
-    const focusUserId = toLegacyId(options.focusUserId);
-
-    const buildPipeline = (match = null, pipelineLimit = limit) => {
-      const pipeline = [
-        {
-          $addFields: {
-            senderKey: {
-              $let: {
-                vars: {
-                  raw: {
-                    $cond: [
-                      {
-                        $or: [
-                          { $eq: ["$senderId", null] },
-                          { $eq: ["$senderId", ""] },
-                        ],
-                      },
-                      "$userId",
-                      "$senderId",
-                    ],
-                  },
-                },
-                in: {
-                  $cond: [
-                    {
-                      $or: [
-                        { $eq: ["$$raw", null] },
-                        { $eq: ["$$raw", ""] },
-                      ],
-                    },
-                    null,
-                    { $toString: "$$raw" },
-                  ],
-                },
-              },
-            },
-          },
-        },
-        { $match: { senderKey: { $nin: [null, ""] } } },
-      ];
-
-      if (match) {
-        pipeline.push({ $match: { senderKey: match } });
-      }
-
-      pipeline.push(
-        { $sort: { timestamp: -1, _id: -1 } },
-        {
-          $group: {
-            _id: "$senderKey",
-            lastMessage: { $first: "$content" },
-            lastTimestamp: { $first: "$timestamp" },
-            messageCount: { $sum: 1 },
-            platform: { $first: "$platform" },
-            botId: { $first: "$botId" },
-          },
-        },
-        { $sort: { lastTimestamp: -1, _id: 1 } },
-        { $limit: pipelineLimit },
-      );
-
-      return pipeline;
-    };
-
-    const users = await coll.aggregate(buildPipeline()).toArray();
-    if (!focusUserId) {
-      return users;
-    }
-
-    const exists = users.some((user) => toLegacyId(user?._id) === focusUserId);
-    if (exists) {
-      return users;
-    }
-
-    const focusUsers = await coll.aggregate(buildPipeline(focusUserId, 1)).toArray();
-    if (focusUsers.length === 0) {
-      return users;
-    }
-
-    return [focusUsers[0], ...users].slice(0, limit);
-  }
-
   function hydratePostgresUserSummary(row = {}) {
     return {
       _id: row.legacy_contact_id || "",
@@ -848,10 +361,7 @@ function createChatRepository({
     const limit =
       Number.isFinite(options.limit) && options.limit > 0 ? options.limit : 50;
     const focusUserId = toLegacyId(options.focusUserId) || null;
-    const scanLimit = Math.max(
-      userSummaryRecentThreadScanLimit,
-      limit * 40,
-    );
+    const scanLimit = Math.max(userSummaryRecentThreadScanLimit, limit * 40);
 
     const result = await query(
       `
@@ -956,8 +466,7 @@ function createChatRepository({
       params.push(value);
       conditions.push(`${sql} $${params.length}`);
     };
-    const escapeLike = (value = "") =>
-      String(value).replace(/[\\%_]/g, "\\$&");
+    const escapeLike = (value = "") => String(value).replace(/[\\%_]/g, "\\$&");
 
     if (typeof filter.platform === "string" && filter.platform.trim()) {
       push("t.platform =", normalizePlatform(filter.platform));
@@ -1026,44 +535,6 @@ function createChatRepository({
       whereSql: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
       params,
     };
-  }
-
-  async function readMongoActivityDocs(filter = {}, options = {}) {
-    if (!canUseMongo()) return [];
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const projection =
-      options.projection && typeof options.projection === "object"
-        ? options.projection
-        : {
-          senderId: 1,
-          userId: 1,
-          timestamp: 1,
-          platform: 1,
-          botId: 1,
-          role: 1,
-        };
-    let cursor = coll
-      .find(buildMongoMessageFilter(filter), { projection })
-      .sort(options.sort || { timestamp: 1, _id: 1 });
-
-    const skip = normalizeSkip(options.skip, 0);
-    if (skip > 0) {
-      cursor = cursor.skip(skip);
-    }
-
-    if (Number.isFinite(options.limit) && options.limit > 0) {
-      cursor = cursor.limit(options.limit);
-    }
-
-    return cursor.toArray();
-  }
-
-  async function readMongoActivityCount(filter = {}) {
-    if (!canUseMongo()) return 0;
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    return coll.countDocuments(buildMongoMessageFilter(filter));
   }
 
   async function readPostgresActivityDocs(filter = {}, options = {}) {
@@ -1141,54 +612,6 @@ function createChatRepository({
     return Number(result.rows[0]?.total || 0);
   }
 
-  async function readMongoDistinctUserIds(filter = {}) {
-    if (!canUseMongo()) return [];
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const result = await coll.aggregate([
-      { $match: buildMongoMessageFilter(filter) },
-      {
-        $addFields: {
-          userKey: {
-            $let: {
-              vars: {
-                raw: {
-                  $cond: [
-                    {
-                      $or: [
-                        { $eq: ["$senderId", null] },
-                        { $eq: ["$senderId", ""] },
-                      ],
-                    },
-                    "$userId",
-                    "$senderId",
-                  ],
-                },
-              },
-              in: {
-                $cond: [
-                  {
-                    $or: [
-                      { $eq: ["$$raw", null] },
-                      { $eq: ["$$raw", ""] },
-                    ],
-                  },
-                  null,
-                  { $toString: "$$raw" },
-                ],
-              },
-            },
-          },
-        },
-      },
-      { $match: { userKey: { $nin: [null, ""] } } },
-      { $group: { _id: "$userKey" } },
-      { $sort: { _id: 1 } },
-    ]).toArray();
-
-    return result.map((row) => row._id).filter(Boolean);
-  }
-
   async function readPostgresDistinctUserIds(filter = {}) {
     const { whereSql, params } = buildPostgresMessageFilter(filter);
     const result = await query(
@@ -1248,9 +671,8 @@ function createChatRepository({
   }
 
   async function insertMessages(messageDocs = []) {
-    const docs = Array.isArray(messageDocs)
-      ? messageDocs.filter(Boolean)
-      : [];
+    ensurePostgresAvailable("insertMessages");
+    const docs = Array.isArray(messageDocs) ? messageDocs.filter(Boolean) : [];
     if (docs.length === 0) return [];
 
     const preparedDocs = docs.map((doc) => ({
@@ -1258,59 +680,34 @@ function createChatRepository({
       _id: toLegacyId(doc?._id) || createGeneratedId(),
     }));
 
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
+    const primary = preparedDocs[0];
+    const userId = toLegacyId(primary?.senderId || primary?.userId);
+    if (!userId) return preparedDocs;
+
+    const platform = normalizePlatform(primary?.platform);
+    const pgBotId = await resolveBotRecordId(platform, primary?.botId);
+    const legacyThreadKey = buildThreadKey(platform, primary?.botId, userId);
+    const stats = buildThreadStats(preparedDocs);
+    const updatedAt = preparedDocs[preparedDocs.length - 1]?.timestamp || new Date();
+
+    await withTransaction(async (client) => {
+      const contactId = await upsertPgContact(client, userId, platform, {});
+      const threadId = await upsertPgThread(
+        client,
+        platform,
+        pgBotId,
+        contactId,
+        legacyThreadKey,
+        stats,
+        updatedAt,
+      );
+
+      for (const messageDoc of preparedDocs) {
+        await insertPgMessage(client, { contactId, pgBotId, threadId }, messageDoc);
       }
+    });
 
-      const primary = preparedDocs[0];
-      const userId = toLegacyId(primary?.senderId || primary?.userId);
-      if (!userId) return preparedDocs;
-      const platform = normalizePlatform(primary?.platform);
-      const pgBotId = await resolvePgBotId(platform, primary?.botId, null);
-      const legacyThreadKey = buildThreadKey(platform, primary?.botId, userId);
-      const stats = buildThreadStats(preparedDocs);
-      const updatedAt =
-        preparedDocs[preparedDocs.length - 1]?.timestamp || new Date();
-
-      await withTransaction(async (client) => {
-        const contactId = await upsertPgContact(client, userId, platform, {});
-        const threadId = await upsertPgThread(
-          client,
-          platform,
-          pgBotId,
-          contactId,
-          legacyThreadKey,
-          stats,
-          updatedAt,
-        );
-
-        for (const messageDoc of preparedDocs) {
-          await insertPgMessage(client, { contactId, pgBotId, threadId }, messageDoc);
-        }
-      });
-      return preparedDocs;
-    }
-
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const result = await coll.insertMany(preparedDocs, { ordered: true });
-
-    const savedDocs = preparedDocs.map((doc, index) => ({
-      ...doc,
-      _id: result.insertedIds[index] || doc._id,
-    }));
-
-    if (shouldDualWrite()) {
-      await dualWriteMessages(savedDocs).catch((error) => {
-        console.warn(
-          "[ChatRepository] Dual-write failed:",
-          error?.message || error,
-        );
-      });
-    }
-
-    return savedDocs;
+    return preparedDocs;
   }
 
   async function insertMessage(messageDoc) {
@@ -1319,227 +716,43 @@ function createChatRepository({
   }
 
   async function findMessageById(messageId) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPostgresMessageById(messageId);
-        if (pgDoc) return pgDoc;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "message read",
-          identifier: toLegacyId(messageId),
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const mongoDoc = await coll.findOne(buildMongoIdQuery(messageId));
-
-    if (shouldShadowRead()) {
-      void readPostgresMessageById(messageId)
-        .then((pgDoc) =>
-          startShadowCompare(
-            `message:${toLegacyId(messageId)}`,
-            mongoDoc,
-            pgDoc,
-            normalizeComparableHistory,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            `[ChatRepository] Shadow message read failed for ${toLegacyId(messageId)}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
+    ensurePostgresAvailable("findMessageById");
+    return readPostgresMessageById(messageId);
   }
 
   async function hasMessages(filter = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const rows = await readPostgresActivityDocs(filter, { limit: 1, sort: { timestamp: -1 } });
-        return rows.length > 0;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "has-messages read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return false;
-    }
-
-    const mongoDb = await getMongoDb();
-    const coll = mongoDb.collection("chat_history");
-    const mongoDoc = await coll.findOne(buildMongoMessageFilter(filter), {
-      projection: { _id: 1 },
+    ensurePostgresAvailable("hasMessages");
+    const rows = await readPostgresActivityDocs(filter, {
+      limit: 1,
       sort: { timestamp: -1 },
     });
-    const mongoValue = Boolean(mongoDoc);
-
-    if (shouldShadowRead()) {
-      void readPostgresActivityDocs(filter, { limit: 1, sort: { timestamp: -1 } })
-        .then((rows) =>
-          startShadowCompare(
-            `hasMessages:${safeStringify(filter)}`,
-            mongoValue,
-            rows.length > 0,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[ChatRepository] Shadow has-messages read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoValue;
+    return rows.length > 0;
   }
 
   async function clearHistory(userId) {
     const normalizedUserId = toLegacyId(userId);
     if (!normalizedUserId) return;
-
-    if (canUseMongo()) {
-      const mongoDb = await getMongoDb();
-      const coll = mongoDb.collection("chat_history");
-      await coll.deleteMany(buildMongoUserMatch(normalizedUserId));
-    }
-
-    if (canUsePostgres()) {
-      await query(
-        "DELETE FROM contacts WHERE legacy_contact_id = $1",
-        [normalizedUserId],
-      ).catch((error) => {
-        console.warn(
-          `[ChatRepository] Postgres clear history failed for ${normalizedUserId}:`,
-          error?.message || error,
-        );
-      });
-    }
+    ensurePostgresAvailable("clearHistory");
+    await query("DELETE FROM contacts WHERE legacy_contact_id = $1", [normalizedUserId]);
+    userSummariesCache.docs = userSummariesCache.docs.filter(
+      (doc) => toLegacyId(doc?._id) !== normalizedUserId,
+    );
+    userSummariesCache.updatedAt = Date.now();
   }
 
   async function listDistinctUserIds(filter = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        return await readPostgresDistinctUserIds(filter);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "distinct-user read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    const mongoIds = await readMongoDistinctUserIds(filter);
-
-    if (shouldShadowRead()) {
-      void readPostgresDistinctUserIds(filter)
-        .then((pgIds) =>
-          startShadowCompare(
-            `distinctUsers:${safeStringify(filter)}`,
-            mongoIds,
-            pgIds,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[ChatRepository] Shadow distinct-user read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoIds;
+    ensurePostgresAvailable("listDistinctUserIds");
+    return readPostgresDistinctUserIds(filter);
   }
 
   async function listActivityMessages(filter = {}, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        return await readPostgresActivityDocs(filter, options);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "activity read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    const mongoDocs = await readMongoActivityDocs(filter, options);
-
-    if (shouldShadowRead()) {
-      void readPostgresActivityDocs(filter, options)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `activity:${safeStringify(filter)}`,
-            mongoDocs,
-            pgDocs,
-            normalizeComparableActivityDoc,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[ChatRepository] Shadow activity read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    ensurePostgresAvailable("listActivityMessages");
+    return readPostgresActivityDocs(filter, options);
   }
 
   async function countActivityMessages(filter = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        return await readPostgresActivityCount(filter);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "activity-count read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    const mongoCount = await readMongoActivityCount(filter);
-
-    if (shouldShadowRead()) {
-      void readPostgresActivityCount(filter)
-        .then((pgCount) =>
-          startShadowCompare(
-            `activityCount:${safeStringify(filter)}`,
-            mongoCount,
-            pgCount,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[ChatRepository] Shadow activity-count read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoCount;
+    ensurePostgresAvailable("countActivityMessages");
+    return readPostgresActivityCount(filter);
   }
 
   async function markMessagesAsOrderExtracted(
@@ -1556,40 +769,7 @@ function createChatRepository({
       return;
     }
 
-    const updateDoc = {
-      orderExtractionRoundId: extractionRoundId,
-      orderExtractionMarkedAt: new Date(),
-    };
-    if (orderId) {
-      const normalizedOrderId = toLegacyId(orderId);
-      const objectId = toObjectId(normalizedOrderId);
-      updateDoc.orderId = objectId || normalizedOrderId;
-    }
-
-    if (canUseMongo()) {
-      const objectIds = normalizedMessageIds
-        .map((messageId) => toObjectId(messageId))
-        .filter(Boolean);
-      const mongoDb = await getMongoDb();
-      const coll = mongoDb.collection("chat_history");
-      const mongoMatchConditions = [buildMongoUserMatch(normalizedUserId)];
-
-      if (objectIds.length > 0) {
-        mongoMatchConditions.push({ _id: { $in: objectIds } });
-      } else {
-        mongoMatchConditions.push({ _id: { $in: normalizedMessageIds } });
-      }
-
-      await coll.updateMany(
-        mongoMatchConditions.length === 1
-          ? mongoMatchConditions[0]
-          : { $and: mongoMatchConditions },
-        { $set: updateDoc },
-      );
-    }
-
-    if (!canUsePostgres()) return;
-
+    ensurePostgresAvailable("markMessagesAsOrderExtracted");
     await query(
       `
         UPDATE messages m
@@ -1613,95 +793,20 @@ function createChatRepository({
         normalizedUserId,
         normalizedMessageIds,
         extractionRoundId ? String(extractionRoundId) : null,
-        updateDoc.orderExtractionMarkedAt.toISOString(),
+        new Date().toISOString(),
         orderId ? toLegacyId(orderId) : null,
       ],
-    ).catch((error) => {
-      console.warn(
-        `[ChatRepository] Postgres order-extraction mark failed for ${normalizedUserId}:`,
-        error?.message || error,
-      );
-    });
+    );
   }
 
   async function getHistory(userId, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDocs = await readPostgresHistoryDocs(userId, options);
-        if (pgDocs.length > 0) {
-          return pgDocs;
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "history read",
-          identifier: toLegacyId(userId),
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    const mongoDocs = await readMongoHistoryDocs(userId, options);
-
-    if (shouldShadowRead()) {
-      void readPostgresHistoryDocs(userId, options)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `history:${toLegacyId(userId)}`,
-            mongoDocs,
-            pgDocs,
-            normalizeComparableHistory,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            `[ChatRepository] Shadow history read failed for ${toLegacyId(userId)}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    ensurePostgresAvailable("getHistory");
+    return readPostgresHistoryDocs(userId, options);
   }
 
   async function getLatestContext(userId) {
-    if (shouldReadPrimary()) {
-      try {
-        const pgDoc = await readPostgresLatestContext(userId);
-        if (pgDoc) return pgDoc;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "latest-context read",
-          identifier: toLegacyId(userId),
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    const mongoDoc = await readMongoLatestContext(userId);
-
-    if (shouldShadowRead()) {
-      void readPostgresLatestContext(userId)
-        .then((pgDoc) =>
-          startShadowCompare(
-            `latestContext:${toLegacyId(userId)}`,
-            mongoDoc,
-            pgDoc,
-            normalizeComparableContext,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            `[ChatRepository] Shadow latest-context read failed for ${toLegacyId(userId)}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
+    ensurePostgresAvailable("getLatestContext");
+    return readPostgresLatestContext(userId);
   }
 
   function getCachedUserSummaries(options = {}, allowStale = false) {
@@ -1719,9 +824,7 @@ function createChatRepository({
     }
 
     const limit =
-      Number.isFinite(options.limit) && options.limit > 0
-        ? options.limit
-        : 50;
+      Number.isFinite(options.limit) && options.limit > 0 ? options.limit : 50;
     const focusUserId = toLegacyId(options.focusUserId);
     const docs = [...userSummariesCache.docs];
     if (focusUserId) {
@@ -1740,58 +843,26 @@ function createChatRepository({
   }
 
   async function listUsers(options = {}) {
-    if (shouldReadPrimary()) {
-      const cachedDocs = getCachedUserSummaries(options);
-      if (cachedDocs) {
-        return cachedDocs;
-      }
-
-      try {
-        const pgDocs = await readPostgresUserSummaries(options);
-        if (Array.isArray(pgDocs) && pgDocs.length > 0) {
-          userSummariesCache.docs = pgDocs;
-          userSummariesCache.updatedAt = Date.now();
-        }
-        if (pgDocs.length > 0) {
-          return pgDocs;
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "ChatRepository",
-          operation: "user-list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-        if (!canUseMongo()) {
-          const staleCache = getCachedUserSummaries(options, true);
-          if (staleCache) {
-            return staleCache;
-          }
-        }
-      }
+    const cachedDocs = getCachedUserSummaries(options);
+    if (cachedDocs) {
+      return cachedDocs;
     }
 
-    const mongoDocs = await readMongoUserSummaries(options);
-
-    if (shouldShadowRead()) {
-      void readPostgresUserSummaries(options)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `users:${toLegacyId(options.focusUserId) || "default"}`,
-            mongoDocs,
-            pgDocs,
-            normalizeComparableUserSummary,
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[ChatRepository] Shadow user-list read failed:",
-            error?.message || error,
-          );
-        });
+    ensurePostgresAvailable("listUsers");
+    try {
+      const pgDocs = await readPostgresUserSummaries(options);
+      if (Array.isArray(pgDocs) && pgDocs.length > 0) {
+        userSummariesCache.docs = pgDocs;
+        userSummariesCache.updatedAt = Date.now();
+      }
+      return pgDocs;
+    } catch (error) {
+      const staleCache = getCachedUserSummaries(options, true);
+      if (staleCache) {
+        return staleCache;
+      }
+      throw error;
     }
-
-    return mongoDocs;
   }
 
   return {

@@ -8,13 +8,10 @@ const {
 } = require("../infra/conversationLock");
 const { JOB_NAMES, QUEUE_NAMES } = require("../infra/queueNames");
 const { getRuntimeConfig } = require("../infra/runtimeConfig");
-const { connectDB, processFlushedMessages } = require("../index");
+const { processFlushedMessages } = require("../index");
 
 async function startRealtimeWorkers() {
   const runtimeConfig = getRuntimeConfig();
-  if (runtimeConfig.features.mongoEnabled) {
-    await connectDB();
-  }
 
   const lockOptions = {
     ttlMs: runtimeConfig.queues.conversationLockTtlMs,

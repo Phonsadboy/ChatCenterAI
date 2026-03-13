@@ -70,7 +70,6 @@ const rateLimit = require("express-rate-limit");
 const { emitAdminRoomEvent, attachAdminRealtimeBridge } = require("./infra/adminRealtime");
 const { appendConversationBuffer } = require("./infra/conversationBuffer");
 const { claimProcessedEvent } = require("./infra/dedupe");
-const { createMongoDisabledClient } = require("./infra/mongoDisabledClient");
 const { isRedisConfigured } = require("./infra/redis");
 const { createRuntimeRouteGuard } = require("./infra/runtimeRouteGuard");
 const { getRuntimeConfig } = require("./infra/runtimeConfig");
@@ -164,7 +163,6 @@ const BOT_COLLECTION_BY_PLATFORM = {
 const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
 const runtimeConfig = getRuntimeConfig();
-runtimeConfig.features.mongoEnabled = false;
 const WEBHOOK_FORWARD_TIMEOUT_MS = Number(
   process.env.CCAI_WEBHOOK_FORWARD_TIMEOUT_MS || 4000,
 );
@@ -487,11 +485,6 @@ function normalizeChatPlatform(platform, fallback = "line") {
   return SUPPORTED_CHAT_PLATFORMS.has(normalized) ? normalized : fallback;
 }
 
-function getBotCollectionName(platform, fallbackCollection = "line_bots") {
-  const normalized = normalizeChatPlatform(platform);
-  return BOT_COLLECTION_BY_PLATFORM[normalized] || fallbackCollection;
-}
-
 function normalizeRuntimeCacheId(value, fallback = "default") {
   if (typeof value === "string" && value.trim()) {
     return value.trim();
@@ -707,7 +700,6 @@ async function findBotById(db, platform, botId) {
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
-let commentIndexesEnsured = false;
 
 function emitAdminEvent(eventName, payload) {
   emitAdminRoomEvent(eventName, payload).catch((error) => {
@@ -716,38 +708,6 @@ function emitAdminEvent(eventName, payload) {
       error?.message || error,
     );
   });
-}
-
-async function ensureFacebookCommentIndexes(db) {
-  if (commentIndexesEnsured) return;
-  try {
-    await db.collection("facebook_page_posts").createIndexes([
-      { key: { botId: 1, postId: 1 }, unique: true },
-      { key: { pageId: 1 } },
-      { key: { lastCommentAt: -1 } },
-    ]);
-    await db.collection("facebook_comment_policies").createIndexes([
-      { key: { botId: 1, scope: 1 }, unique: true },
-    ]);
-    await db.collection("facebook_comment_events").createIndexes([
-      { key: { commentId: 1 }, unique: true },
-      { key: { postId: 1, createdAt: -1 } },
-      {
-        key: { createdAt: 1 },
-        expireAfterSeconds: FB_COMMENT_TTL_DAYS * 24 * 60 * 60,
-      },
-    ]);
-    await db.collection("facebook_page_posts").createIndex(
-      { lastCommentAt: 1 },
-      { expireAfterSeconds: FB_PAGE_POST_TTL_DAYS * 24 * 60 * 60 },
-    );
-    commentIndexesEnsured = true;
-  } catch (err) {
-    console.warn(
-      "[DB] ไม่สามารถตั้งค่า index สำหรับ Facebook comment ได้:",
-      err?.message || err,
-    );
-  }
 }
 
 // ============================ CSP Helpers ============================
@@ -972,91 +932,7 @@ app.get("/assets/instructions/:fileName", async (req, res, next) => {
       }
     }
 
-    if (!shouldAllowGridFsAssetFallback()) return next();
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instruction_assets");
-    const queryOr = [{ fileName }, { thumbFileName: fileName }];
-    for (const name of lookupNames) {
-      queryOr.push({ label: name });
-      queryOr.push({ slug: name });
-    }
-    const doc = await coll.findOne({ $or: queryOr });
-
-    if (!doc) return next();
-
-    const isThumbRequest =
-      fileName === doc.thumbFileName ||
-      fileName.endsWith("_thumb.jpg") ||
-      fileName.endsWith("_thumb.jpeg");
-
-    const { stream, mime, missingReferences } = await resolveInstructionAssetStream(
-      db,
-      doc,
-      { isThumbRequest },
-    );
-
-    const variantMissingCompletely = (variant) => {
-      const refs = missingReferences?.[variant] || {};
-      const hasId = variant === "main" ? Boolean(doc.fileId) : Boolean(doc.thumbFileId);
-      const hasFileName =
-        variant === "main" ? Boolean(doc.fileName) : Boolean(doc.thumbFileName);
-      const hasUrl = variant === "main" ? Boolean(doc.url) : Boolean(doc.thumbUrl);
-      const idGone = !hasId || refs.id === true;
-      const fileGone = !hasFileName || refs.filename === true;
-      const urlGone = !hasUrl;
-      return idGone && fileGone && urlGone;
-    };
-
-    if (!stream) {
-      const mainMissing = variantMissingCompletely("main");
-      const thumbMissing = variantMissingCompletely("thumb");
-
-      if (mainMissing && thumbMissing) {
-        await performInstructionAssetDeletion(db, doc);
-      } else if (
-        missingReferences?.main?.id ||
-        missingReferences?.main?.filename ||
-        missingReferences?.thumb?.id ||
-        missingReferences?.thumb?.filename
-      ) {
-        await markInstructionAssetMissingVariants(db, doc, missingReferences);
-      }
-      return res.sendStatus(404);
-    }
-
-    if (
-      missingReferences?.main?.id ||
-      missingReferences?.main?.filename ||
-      missingReferences?.thumb?.id ||
-      missingReferences?.thumb?.filename
-    ) {
-      await markInstructionAssetMissingVariants(db, doc, missingReferences);
-    }
-
-    res.set("Content-Type", mime || doc.mime || "image/jpeg");
-    res.set("Cache-Control", "public, max-age=604800, immutable");
-    stream.on("error", (err) => {
-      console.error(
-        `[Asset Error] Failed to stream instruction asset: ${fileName}`,
-        {
-          error: err.message,
-          code: err.code,
-          fileName,
-        },
-      );
-      if (err.code === "FileNotFound") {
-        markInstructionAssetMissingVariants(db, doc, {
-          main: { id: !isThumbRequest, filename: !isThumbRequest },
-          thumb: { id: isThumbRequest, filename: isThumbRequest },
-        }).catch(() => { });
-        res.status(404).end();
-        return;
-      }
-      next(err);
-    });
-    stream.pipe(res);
+    return next();
   } catch (err) {
     console.error(
       `[Asset Error] Error in instruction asset route: ${fileName}`,
@@ -1077,7 +953,7 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
     const { fileName } = req.params;
     if (!fileName) return next();
 
-    // Bucket-first path so starter/follow-up assets work even when Mongo is disabled.
+    // Bucket-first path so starter/follow-up assets work even when the retired legacy store is absent.
     const directBucketResult = await getFirstBucketObjectStream(
       buildBucketKeyCandidates("followup", null, fileName),
     );
@@ -1388,124 +1264,6 @@ function buildInstructionText(instructions, options = {}) {
     .join("\n\n");
 }
 
-async function ensureCategoryIndexes(db) {
-  try {
-    const categories = db.collection("categories");
-    // Unique categoryId per bot
-    await categories.createIndex({ botId: 1, platform: 1, categoryId: 1 }, { unique: true });
-    await categories.createIndex({ botId: 1, platform: 1, name: 1 });
-    await categories.createIndex({ isActive: 1, createdAt: -1 });
-
-    const categoryTables = db.collection("category_tables");
-    await categoryTables.createIndex({ categoryId: 1 }, { unique: true });
-    await categoryTables.createIndex({ botId: 1, platform: 1 });
-
-    console.log("[DB] Category indexes ensured");
-  } catch (err) {
-    console.error("[DB] Error ensuring category indexes:", err);
-  }
-}
-
-async function ensureNotificationIndexes(db) {
-  try {
-    await db.collection("line_bot_groups").createIndexes([
-      { key: { botId: 1, groupId: 1 }, unique: true },
-      { key: { botId: 1, status: 1, lastEventAt: -1 } },
-    ]);
-
-    await db.collection("notification_channels").createIndexes([
-      { key: { isActive: 1, type: 1 } },
-      { key: { senderBotId: 1, groupId: 1 } },
-      { key: { "sources.platform": 1, "sources.botId": 1 } },
-    ]);
-
-    await db.collection("notification_logs").createIndexes([
-      { key: { channelId: 1, createdAt: -1 } },
-      { key: { createdAt: -1 } },
-      {
-        key: { createdAt: 1 },
-        expireAfterSeconds: NOTIFICATION_LOGS_TTL_DAYS * 24 * 60 * 60,
-      },
-    ]);
-
-    console.log("[DB] Notification indexes ensured");
-  } catch (err) {
-    console.warn(
-      "[DB] ไม่สามารถตั้งค่า index สำหรับ Notifications ได้:",
-      err?.message || err,
-    );
-  }
-}
-
-async function ensureShortLinkIndexes(db) {
-  try {
-    const coll = db.collection(SHORT_LINK_COLLECTION);
-    await coll.createIndex({ code: 1 }, { unique: true });
-    await coll.createIndex({ targetUrl: 1 }, { unique: true });
-    await coll.createIndex({ createdAt: -1 });
-    console.log("[DB] Short link indexes ensured");
-  } catch (err) {
-    console.warn(
-      "[DB] ไม่สามารถตั้งค่า index สำหรับ Short Links ได้:",
-      err?.message || err,
-    );
-  }
-}
-
-const CHAT_HISTORY_TTL_DAYS = Number(process.env.CHAT_HISTORY_TTL_DAYS || 90);
-
-async function ensureChatHistoryIndexes(db) {
-  try {
-    const coll = db.collection("chat_history");
-    await coll.createIndexes([
-      { key: { senderId: 1, timestamp: 1 } },
-      { key: { userId: 1, timestamp: 1 } },
-      {
-        key: { timestamp: 1 },
-        expireAfterSeconds: CHAT_HISTORY_TTL_DAYS * 24 * 60 * 60,
-      },
-    ]);
-    console.log(`[DB] Chat history indexes ensured (TTL: ${CHAT_HISTORY_TTL_DAYS} days)`);
-  } catch (err) {
-    console.warn(
-      "[DB] ไม่สามารถตั้งค่า index สำหรับ chat_history ได้:",
-      err?.message || err,
-    );
-  }
-}
-
-async function ensurePerformanceIndexes(db) {
-  try {
-    await db.collection("orders").createIndex({ userId: 1, extractedAt: -1 });
-    await db.collection("follow_up_status").createIndex({ senderId: 1 });
-    await db.collection("active_user_status").createIndex({ senderId: 1 });
-    await db.collection("user_profiles").createIndex({ userId: 1, platform: 1 });
-    console.log("[DB] Performance indexes ensured");
-  } catch (err) {
-    console.warn(
-      "[DB] ไม่สามารถตั้งค่า performance indexes ได้:",
-      err?.message || err,
-    );
-  }
-}
-
-const USAGE_LOGS_TTL_DAYS = Number(process.env.USAGE_LOGS_TTL_DAYS || 90);
-const NOTIFICATION_LOGS_TTL_DAYS = Number(process.env.NOTIFICATION_LOGS_TTL_DAYS || 30);
-const FB_COMMENT_TTL_DAYS = Number(process.env.FB_COMMENT_TTL_DAYS || 30);
-const FB_PAGE_POST_TTL_DAYS = Number(process.env.FB_PAGE_POST_TTL_DAYS || 90);
-
-async function ensureUsageLogsTTL(db) {
-  try {
-    await db.collection("openai_usage_logs").createIndex(
-      { timestamp: 1 },
-      { expireAfterSeconds: USAGE_LOGS_TTL_DAYS * 24 * 60 * 60 },
-    );
-    console.log(`[DB] openai_usage_logs TTL ensured (${USAGE_LOGS_TTL_DAYS} days)`);
-  } catch (err) {
-    console.warn("[DB] openai_usage_logs TTL index:", err?.message || err);
-  }
-}
-
 let settingsRepository = null;
 let botRepository = null;
 let chatRepository = null;
@@ -1524,33 +1282,10 @@ let conversationThreadRepository = null;
 let facebookCommentPolicyRepository = null;
 let facebookCommentAutomationRepository = null;
 let instructionChatStateRepository = null;
-let mongoDisabledCompatClient = null;
-let mongoDisabledNoticePrinted = false;
-
-function isMongoRuntimeEnabled() {
-  return false;
-}
-
-async function connectDB() {
-  if (!mongoDisabledCompatClient) {
-    mongoDisabledCompatClient = createMongoDisabledClient();
-  }
-  if (!mongoDisabledNoticePrinted) {
-    console.warn(
-      "[DB] MongoDB runtime has been removed; using fail-fast compatibility client",
-    );
-    mongoDisabledNoticePrinted = true;
-  }
-  return mongoDisabledCompatClient;
-}
 
 function getSettingsRepository() {
   if (!settingsRepository) {
-    settingsRepository = createSettingsRepository({
-      connectDB,
-      dbName: "chatbot",
-      runtimeConfig,
-    });
+    settingsRepository = createSettingsRepository();
   }
   return settingsRepository;
 }
@@ -1558,8 +1293,6 @@ function getSettingsRepository() {
 function getBotRepository() {
   if (!botRepository) {
     botRepository = createBotRepository({
-      connectDB,
-      dbName: "chatbot",
       runtimeConfig,
     });
   }
@@ -1569,8 +1302,6 @@ function getBotRepository() {
 function getChatRepository() {
   if (!chatRepository) {
     chatRepository = createChatRepository({
-      connectDB,
-      dbName: "chatbot",
       runtimeConfig,
     });
   }
@@ -1587,8 +1318,6 @@ function getWebhookEventRepository() {
 function getOrderRepository() {
   if (!orderRepository) {
     orderRepository = createOrderRepository({
-      connectDB,
-      dbName: "chatbot",
       runtimeConfig,
     });
   }
@@ -1598,8 +1327,6 @@ function getOrderRepository() {
 function getFollowUpRepository() {
   if (!followUpRepository) {
     followUpRepository = createFollowUpRepository({
-      connectDB,
-      dbName: "chatbot",
       runtimeConfig,
     });
   }
@@ -1608,11 +1335,7 @@ function getFollowUpRepository() {
 
 function getFollowUpPageSettingsRepository() {
   if (!followUpPageSettingsRepository) {
-    followUpPageSettingsRepository = createFollowUpPageSettingsRepository({
-      connectDB,
-      dbName: "chatbot",
-      runtimeConfig,
-    });
+    followUpPageSettingsRepository = createFollowUpPageSettingsRepository();
   }
   return followUpPageSettingsRepository;
 }
@@ -1629,8 +1352,6 @@ function getOutboundMessageRepository() {
 function getUserStateRepository() {
   if (!userStateRepository) {
     userStateRepository = createUserStateRepository({
-      connectDB,
-      dbName: "chatbot",
       runtimeConfig,
     });
   }
@@ -1639,11 +1360,7 @@ function getUserStateRepository() {
 
 function getFeedbackRepository() {
   if (!feedbackRepository) {
-    feedbackRepository = createFeedbackRepository({
-      connectDB,
-      dbName: "chatbot",
-      runtimeConfig,
-    });
+    feedbackRepository = createFeedbackRepository();
   }
   return feedbackRepository;
 }
@@ -1651,8 +1368,6 @@ function getFeedbackRepository() {
 function getProfileRepository() {
   if (!profileRepository) {
     profileRepository = createProfileRepository({
-      connectDB,
-      dbName: "chatbot",
       runtimeConfig,
     });
   }
@@ -1662,8 +1377,6 @@ function getProfileRepository() {
 function getNotificationRepository() {
   if (!notificationRepository) {
     notificationRepository = createNotificationRepository({
-      connectDB,
-      dbName: "chatbot",
       runtimeConfig,
     });
   }
@@ -1672,55 +1385,35 @@ function getNotificationRepository() {
 
 function getConversationThreadRepository() {
   if (!conversationThreadRepository) {
-    conversationThreadRepository = createConversationThreadRepository({
-      connectDB,
-      dbName: "chatbot",
-      runtimeConfig,
-    });
+    conversationThreadRepository = createConversationThreadRepository();
   }
   return conversationThreadRepository;
 }
 
 function getInstructionChatStateRepository() {
   if (!instructionChatStateRepository) {
-    instructionChatStateRepository = createInstructionChatStateRepository({
-      connectDB,
-      dbName: "chatbot",
-      runtimeConfig,
-    });
+    instructionChatStateRepository = createInstructionChatStateRepository();
   }
   return instructionChatStateRepository;
 }
 
 function getLineGroupRepository() {
   if (!lineGroupRepository) {
-    lineGroupRepository = createLineGroupRepository({
-      connectDB,
-      dbName: "chatbot",
-      runtimeConfig,
-    });
+    lineGroupRepository = createLineGroupRepository();
   }
   return lineGroupRepository;
 }
 
 function getCategoryRepository() {
   if (!categoryRepository) {
-    categoryRepository = createCategoryRepository({
-      connectDB,
-      dbName: "chatbot",
-      runtimeConfig,
-    });
+    categoryRepository = createCategoryRepository();
   }
   return categoryRepository;
 }
 
 function getFacebookCommentPolicyRepository() {
   if (!facebookCommentPolicyRepository) {
-    facebookCommentPolicyRepository = createFacebookCommentPolicyRepository({
-      connectDB,
-      dbName: "chatbot",
-      runtimeConfig,
-    });
+    facebookCommentPolicyRepository = createFacebookCommentPolicyRepository();
   }
   return facebookCommentPolicyRepository;
 }
@@ -1728,8 +1421,6 @@ function getFacebookCommentPolicyRepository() {
 function getFacebookCommentAutomationRepository() {
   if (!facebookCommentAutomationRepository) {
     facebookCommentAutomationRepository = createFacebookCommentAutomationRepository({
-      connectDB,
-      dbName: "chatbot",
       runtimeConfig,
     });
   }
@@ -1912,7 +1603,6 @@ async function runOutboundDelivery(meta = {}, operation) {
 }
 
 const notificationService = createNotificationService({
-  connectDB,
   publicBaseUrl: PUBLIC_BASE_URL,
   getBotById: async (botId) =>
     getBotRepository().findById("line", botId, {
@@ -1941,9 +1631,6 @@ function normalizeRoleContent(role, content) {
 }
 
 const sessionStore = createSessionStore({
-  connectDB,
-  dbName: "chatbot",
-  collectionName: "admin_sessions",
   ttl: ADMIN_SESSION_TTL_SECONDS,
 });
 
@@ -2743,7 +2430,7 @@ async function saveChatHistory(
     });
   }
 
-  // Thread summary is maintained inside ChatRepository (Postgres-first when Mongo is off).
+  // Thread summary is maintained inside ChatRepository.
 }
 
 /**
@@ -3616,24 +3303,14 @@ async function getOrderPromptBody(platform = "line", botId = null) {
 
 async function listFollowUpPageSettings() {
   const baseConfig = await getFollowUpBaseConfig();
-  const mongoDb = isMongoRuntimeEnabled()
-    ? (await connectDB()).db("chatbot")
-    : null;
   const botRepo = getBotRepository();
   const [lineBots, facebookBots, instagramBots, whatsappBots] = await Promise.all(
-    mongoDb
-      ? [
-        mongoDb.collection("line_bots").find({}).sort({ createdAt: -1 }).toArray(),
-        mongoDb.collection("facebook_bots").find({}).sort({ createdAt: -1 }).toArray(),
-        mongoDb.collection("instagram_bots").find({}).sort({ createdAt: -1 }).toArray(),
-        mongoDb.collection("whatsapp_bots").find({}).sort({ createdAt: -1 }).toArray(),
-      ]
-      : [
-        botRepo.list("line", { sort: { createdAt: -1 } }),
-        botRepo.list("facebook", { sort: { createdAt: -1 } }),
-        botRepo.list("instagram", { sort: { createdAt: -1 } }),
-        botRepo.list("whatsapp", { sort: { createdAt: -1 } }),
-      ],
+    [
+      botRepo.list("line", { sort: { createdAt: -1 } }),
+      botRepo.list("facebook", { sort: { createdAt: -1 } }),
+      botRepo.list("instagram", { sort: { createdAt: -1 } }),
+      botRepo.list("whatsapp", { sort: { createdAt: -1 } }),
+    ],
   );
   const settingsDocs = await getFollowUpPageSettingsRepository().listAll();
 
@@ -4151,27 +3828,14 @@ async function disableFollowUpForUser(
 }
 
 async function ensureFollowUpIndexes() {
-  if (!isMongoRuntimeEnabled()) {
-    return;
-  }
-  try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_tasks");
-    await coll.createIndex({ userId: 1, platform: 1, botId: 1, dateKey: 1 });
-    await coll.createIndex({ nextScheduledAt: 1, canceled: 1, completed: 1 });
-  } catch (error) {
-    console.error("[FollowUp] ไม่สามารถสร้างดัชนีได้:", error.message);
-  }
+  return;
 }
 
 async function processDueFollowUpTasks(limit = 10) {
   if (followUpProcessing) return;
   followUpProcessing = true;
   try {
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const tasks = await getFollowUpRepository().getDueTasks(limit);
 
     for (const task of tasks) {
@@ -5561,17 +5225,7 @@ function buildDefaultOrderBotConditions() {
 
 
 async function ensureOrderBufferIndexes() {
-  try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const bufferColl = db.collection(ORDER_BUFFER_COLLECTION);
-
-    await bufferColl.createIndex({ pageKey: 1, userId: 1, timestamp: 1 });
-    await bufferColl.createIndex({ pageKey: 1, timestamp: 1 });
-    await bufferColl.createIndex({ chatMessageId: 1 }, { sparse: true });
-  } catch (error) {
-    console.error("[OrderBuffer] ไม่สามารถสร้างดัชนีได้:", error.message);
-  }
+  return;
 }
 
 async function markMessagesAsOrderExtracted(
@@ -7656,8 +7310,8 @@ function buildStarterThreadQuery(userId, platform = "line", botId = null) {
 
   if (normalizedBotId) {
     const botCandidates = [normalizedBotId];
-    const botObjectId = toObjectId(normalizedBotId);
-    if (botObjectId) botCandidates.push(botObjectId);
+    const normalizedHexBotId = normalizeLegacyHexId(normalizedBotId);
+    if (normalizedHexBotId) botCandidates.push(normalizedHexBotId);
     conditions.push({ botId: { $in: botCandidates } });
   } else {
     conditions.push({
@@ -7696,9 +7350,7 @@ async function resolveConversationStarterForQueue(queueContext = {}) {
   );
   if (!objectSelections.length) return null;
 
-  const db = isMongoRuntimeEnabled()
-    ? (await connectDB()).db("chatbot")
-    : null;
+  const db = null;
   const docs = await resolveInstructionSelectionsV2(objectSelections, db);
   if (!Array.isArray(docs) || docs.length === 0) return null;
 
@@ -10301,7 +9953,7 @@ function shouldUsePostgresInstructionsV2() {
 }
 
 function canUseCategoryStorage() {
-  return isPostgresConfigured() || isMongoRuntimeEnabled();
+  return isPostgresConfigured();
 }
 
 function normalizeInstructionV2DataItems(dataValue) {
@@ -10778,28 +10430,16 @@ async function exportPostgresInstructionSheets(instructionIds = []) {
 }
 
 async function getInstructionsV2() {
-  if (shouldUsePostgresInstructionsV2()) {
-    const result = await pgQuery(
-      `
-        ${buildInstructionV2SelectSql("")}
-        ORDER BY updated_at DESC, created_at DESC
-      `,
-    );
-    return result.rows.map((row) => mapPostgresInstructionV2Row(row));
+  if (!shouldUsePostgresInstructionsV2()) {
+    throw new Error("postgres_required_for_instructions_v2");
   }
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("instructions_v2");
-  const cursor = coll.find({}).sort({ createdAt: -1 });
-  const instructions = await cursor.toArray();
-  return instructions.map((instruction) => ({
-    ...instruction,
-    conversationStarter: normalizeConversationStarterConfig(
-      instruction?.conversationStarter,
-    ),
-    _id: instruction._id.toString(),
-  }));
+  const result = await pgQuery(
+    `
+      ${buildInstructionV2SelectSql("")}
+      ORDER BY updated_at DESC, created_at DESC
+    `,
+  );
+  return result.rows.map((row) => mapPostgresInstructionV2Row(row));
 }
 
 // API: List all instructions
@@ -10860,7 +10500,7 @@ app.post("/api/instructions-v2", async (req, res) => {
     const snapshotResult = await createDashboardSnapshotOrThrow(
       createdInstruction._id,
       "create_instruction",
-      shouldUsePostgresInstructionsV2() ? null : (await connectDB()).db("chatbot"),
+      null,
       "dashboard_api",
     );
     createdInstruction.version = snapshotResult.version;
@@ -10916,7 +10556,7 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
     await createDashboardSnapshotOrThrow(
       updated._id,
       "update_instruction",
-      shouldUsePostgresInstructionsV2() ? null : (await connectDB()).db("chatbot"),
+      null,
       "dashboard_api",
     );
 
@@ -10941,7 +10581,7 @@ app.delete("/api/instructions-v2/:id", async (req, res) => {
     await createDashboardSnapshotOrThrow(
       target._id,
       "delete_instruction",
-      shouldUsePostgresInstructionsV2() ? null : (await connectDB()).db("chatbot"),
+      null,
       "dashboard_api",
     );
     const deleted = await deleteInstructionV2ForRuntime(target._id);
@@ -11006,7 +10646,7 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
     const snapshotResult = await createDashboardSnapshotOrThrow(
       duplicate._id,
       "duplicate_instruction",
-      shouldUsePostgresInstructionsV2() ? null : (await connectDB()).db("chatbot"),
+      null,
       "dashboard_api",
     );
     duplicate.version = snapshotResult.version;
@@ -11037,14 +10677,10 @@ app.post(
           .json({ success: false, error: "กรุณาอัพโหลดไฟล์รูปภาพ" });
       }
 
-      const usePostgresFollowUpAssets = canUsePostgresAssets();
-      let db = null;
-      let coll = null;
-      if (!usePostgresFollowUpAssets) {
-        const client = await connectDB();
-        db = client.db("chatbot");
-        coll = db.collection("follow_up_assets");
+      if (!canUsePostgresAssets()) {
+        return sendPostgresRequired(res, "Instruction starter assets");
       }
+      const db = null;
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -11064,9 +10700,7 @@ app.post(
           .update(optimized)
           .digest("hex");
 
-        const existing = usePostgresFollowUpAssets
-          ? await findPostgresFollowUpAssetByChecksum("starter", sha256)
-          : await coll.findOne({ sha256 });
+        const existing = await findPostgresFollowUpAssetByChecksum("starter", sha256);
         if (existing) {
           const urls = resolveScopedFollowUpAssetUrls(existing, urlBase);
           const existingId =
@@ -11107,7 +10741,6 @@ app.post(
         const [mainUpload, thumbUpload] = await Promise.all([
           uploadBufferToAssetStorage({
             db,
-            gridFsBucketName: "followupAssets",
             storagePrefix: "followup",
             filename: fileName,
             buffer: optimized,
@@ -11120,7 +10753,6 @@ app.post(
           }),
           uploadBufferToAssetStorage({
             db,
-            gridFsBucketName: "followupAssets",
             storagePrefix: "followup",
             filename: thumbName,
             buffer: thumb,
@@ -11150,18 +10782,12 @@ app.post(
           createdAt: now,
           updatedAt: now,
         };
-        let assetId = null;
-        if (usePostgresFollowUpAssets) {
-          const saved = await insertPostgresFollowUpAsset("starter", assetDoc);
-          assetId =
-            saved?._id?.toString?.()
-            || saved?.legacyAssetId
-            || saved?.id
-            || null;
-        } else {
-          const insertResult = await coll.insertOne(assetDoc);
-          assetId = insertResult.insertedId?.toString() || null;
-        }
+        const saved = await insertPostgresFollowUpAsset("starter", assetDoc);
+        const assetId =
+          saved?._id?.toString?.()
+          || saved?.legacyAssetId
+          || saved?.id
+          || null;
 
         assets.push({
           id: assetId,
@@ -11407,38 +11033,7 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
 app.get("/api/instructions-v2/:id/preview", async (req, res) => {
   try {
     const { id } = req.params;
-    let instruction = null;
-    if (shouldUsePostgresInstructionsV2()) {
-      const result = await pgQuery(
-        `
-          SELECT
-            id::text AS id,
-            legacy_instruction_id,
-            name,
-            description,
-            type,
-            content,
-            data,
-            conversation_starter,
-            current_version,
-            created_at,
-            updated_at
-          FROM instructions
-          WHERE ${buildInstructionV2SourceCondition("source_kind")}
-            AND (id::text = $1 OR legacy_instruction_id = $1)
-          LIMIT 1
-        `,
-        [String(id || "").trim()],
-      );
-      if (result.rows[0]) {
-        instruction = mapPostgresInstructionV2Row(result.rows[0]);
-      }
-    } else {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instructions_v2");
-      instruction = await coll.findOne({ _id: toObjectId(id) });
-    }
+    const instruction = await loadInstructionForChatRuntime(id);
 
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
@@ -11574,26 +11169,10 @@ app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), as
     const previews = service.previewImportSheets(filePath);
 
     // Get list of existing instructions for mapping
-    const instructions = shouldUsePostgresInstructionsV2()
-      ? (await getInstructionsV2()).map((instruction) => ({
-        _id: instruction._id,
-        name: instruction.name || "",
-      }))
-      : await (async () => {
-        const client = await connectDB();
-        const db = client.db("chatbot");
-        const docs = await db
-          .collection("instructions_v2")
-          .find({}, { projection: { _id: 1, name: 1 } })
-          .toArray();
-        return docs.map((doc) => ({
-          _id:
-            doc?._id && typeof doc._id.toString === "function"
-              ? doc._id.toString()
-              : doc?._id || null,
-          name: doc?.name || "",
-        }));
-      })();
+    const instructions = (await getInstructionsV2()).map((instruction) => ({
+      _id: instruction._id,
+      name: instruction.name || "",
+    }));
 
     res.json({
       success: true,
@@ -11624,29 +11203,7 @@ app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
       return res.status(400).json({ success: false, error: "ไฟล์หมดอายุหรือถูกลบไปแล้ว กรุณาอัพโหลดใหม่" });
     }
 
-    let results = [];
-    if (shouldUsePostgresInstructionsV2()) {
-      results = await executePostgresInstructionSheetImport(mappings, filePath);
-    } else {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const service = new (getInstructionDataServiceClass())(db);
-
-      results = await service.executeImport(mappings, filePath);
-      for (const result of results) {
-        if (!result || result.success !== true) continue;
-        if (!["created", "updated"].includes(result.action)) continue;
-        if (!result.instructionObjectId) continue;
-        const snapshotResult = await createDashboardSnapshotOrThrow(
-          result.instructionObjectId,
-          "import_sheets",
-          db,
-          "dashboard_api",
-        );
-        result.version = snapshotResult.version;
-        result.snapshotAt = snapshotResult.snapshotAt;
-      }
-    }
+    const results = await executePostgresInstructionSheetImport(mappings, filePath);
 
     // Clean up
     try { fs.unlinkSync(filePath); } catch (e) { }
@@ -11668,14 +11225,7 @@ app.post("/api/instructions-v2/export-sheets", async (req, res) => {
       return res.status(400).json({ success: false, error: "กรุณาเลือก Instruction ที่ต้องการส่งออก" });
     }
 
-    const buffer = shouldUsePostgresInstructionsV2()
-      ? await exportPostgresInstructionSheets(instructionIds)
-      : await (async () => {
-        const client = await connectDB();
-        const db = client.db("chatbot");
-        const service = new (getInstructionDataServiceClass())(db);
-        return service.exportInstructions(instructionIds);
-      })();
+    const buffer = await exportPostgresInstructionSheets(instructionIds);
 
     const filename = `instructions_export_${moment().format('YYYYMMDD_HHmm')}.xlsx`;
 
@@ -11713,153 +11263,12 @@ async function migrateToInstructionsV2() {
 // ------------------------
 // Migration: แปลง label เก่า (ภาษาอังกฤษ) ให้มี slug
 async function migrateInstructionAssetsAddSlug() {
-  try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instruction_assets");
-
-    // หา assets ที่ยังไม่มี slug
-    const assetsWithoutSlug = await coll
-      .find({ slug: { $exists: false } })
-      .toArray();
-
-    if (assetsWithoutSlug.length === 0) {
-      console.log("[Migration] ไม่มี assets ที่ต้อง migrate");
-      return;
-    }
-
-    console.log(
-      `[Migration] กำลัง migrate ${assetsWithoutSlug.length} assets...`,
-    );
-
-    for (const asset of assetsWithoutSlug) {
-      const label = asset.label || "";
-      // ถ้า label เดิมเป็นภาษาอังกฤษอยู่แล้ว ให้ใช้เป็น slug ได้เลย
-      const slug = /^[a-z0-9_-]+$/i.test(label)
-        ? label
-        : generateSlugFromLabel(label);
-
-      await coll.updateOne({ _id: asset._id }, { $set: { slug } });
-    }
-
-    console.log(
-      `[Migration] migrate assets สำเร็จ: ${assetsWithoutSlug.length} รายการ`,
-    );
-  } catch (err) {
-    console.error("[Migration] ข้อผิดพลาดในการ migrate assets:", err);
-  }
+  console.log("[Migration] Legacy instruction asset slug migration retired");
 }
 
 // Migration: แปลง assets เดิม → สร้าง Default Collection และ assign ให้ทุกเพจ
 async function migrateAssetsToCollections() {
-  try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const assetsColl = db.collection("instruction_assets");
-    const collectionsColl = db.collection("image_collections");
-    const lineBotsColl = db.collection("line_bots");
-    const facebookBotsColl = db.collection("facebook_bots");
-
-    // เช็คว่ามี default collection อยู่แล้วหรือไม่
-    const existingDefault = await collectionsColl.findOne({ isDefault: true });
-    if (existingDefault) {
-      console.log(
-        "[Migration] มี default collection อยู่แล้ว ข้าม migration นี้",
-      );
-      return;
-    }
-
-    // ดึง assets ทั้งหมดจากระบบเดิม
-    const allAssets = await assetsColl.find({}).toArray();
-
-    if (allAssets.length === 0) {
-      console.log("[Migration] ไม่มี assets ในระบบ ข้าม migration นี้");
-      return;
-    }
-
-    console.log(`[Migration] พบ ${allAssets.length} รูปภาพในระบบเดิม`);
-
-    // สร้าง Default Collection
-    const defaultCollectionId = "default-collection-" + Date.now();
-    const imageList = allAssets.map((asset) => ({
-      label: asset.label,
-      slug: asset.slug || asset.label,
-      url: asset.url,
-      thumbUrl: asset.thumbUrl || asset.url,
-      description: asset.description || asset.alt || "",
-      fileName: asset.fileName,
-      assetId: asset._id.toString(),
-    }));
-
-    const defaultCollection = {
-      _id: defaultCollectionId,
-      name: "รูปภาพทั้งหมด (ระบบเดิม)",
-      description: "รูปภาพทั้งหมดจากระบบเดิม - สร้างอัตโนมัติเมื่อ migrate",
-      images: imageList,
-      isDefault: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    await collectionsColl.insertOne(defaultCollection);
-    console.log(
-      `[Migration] สร้าง default collection สำเร็จ: "${defaultCollection.name}"`,
-    );
-
-    // Assign collection นี้ให้ทุก bot
-    const lineBots = await lineBotsColl.find({}).toArray();
-    const facebookBots = await facebookBotsColl.find({}).toArray();
-
-    let assignedCount = 0;
-
-    // Assign ให้ LINE bots
-    for (const bot of lineBots) {
-      const currentCollections = bot.selectedImageCollections || [];
-      if (!currentCollections.includes(defaultCollectionId)) {
-        await lineBotsColl.updateOne(
-          { _id: bot._id },
-          {
-            $set: {
-              selectedImageCollections: [
-                defaultCollectionId,
-                ...currentCollections,
-              ],
-            },
-          },
-        );
-        assignedCount++;
-      }
-    }
-
-    // Assign ให้ Facebook bots
-    for (const bot of facebookBots) {
-      const currentCollections = bot.selectedImageCollections || [];
-      if (!currentCollections.includes(defaultCollectionId)) {
-        await facebookBotsColl.updateOne(
-          { _id: bot._id },
-          {
-            $set: {
-              selectedImageCollections: [
-                defaultCollectionId,
-                ...currentCollections,
-              ],
-            },
-          },
-        );
-        assignedCount++;
-      }
-    }
-
-    console.log(
-      `[Migration] assign default collection ให้ ${assignedCount} bots สำเร็จ`,
-    );
-    console.log(`[Migration] ระบบ Image Collections พร้อมใช้งาน!`);
-  } catch (err) {
-    console.error(
-      "[Migration] ข้อผิดพลาดในการ migrate assets to collections:",
-      err,
-    );
-  }
+  console.log("[Migration] Legacy asset-to-collection migration retired");
 }
 
 // Error handling middleware - must be defined after all routes
@@ -11883,38 +11292,13 @@ app.use((err, req, res, next) => {
 let runtimeInitializationPromise = null;
 let legacyBackgroundJobsStarted = false;
 
-async function initializeMongoRuntime(options = {}) {
+async function initializeApplicationDataRuntime(options = {}) {
   if (runtimeInitializationPromise) {
     return runtimeInitializationPromise;
   }
 
   runtimeInitializationPromise = (async () => {
-    if (!isMongoRuntimeEnabled()) {
-      console.log("[LOG] MongoDB disabled: skip legacy Mongo runtime initialization");
-      try {
-        await ensureSettings();
-      } catch (settingsError) {
-        console.error("[ERROR] ensureSettings ล้มเหลว (mongo disabled):", settingsError);
-      }
-      return { client: null, db: null, skipped: true };
-    }
-
-    console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
-    const client = await connectDB();
-    console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
-    const db = client.db("chatbot");
-
-    if (options.runMigrations !== false) {
-      try {
-        console.log(`[LOG] กำลังตรวจสอบและ migrate ข้อมูล...`);
-        await migrateChatHistorySenderId(db);
-        await migrateInstructionAssetsAddSlug();
-        await migrateAssetsToCollections();
-        console.log(`[LOG] Migration เสร็จสิ้น`);
-      } catch (migrationError) {
-        console.error(`[ERROR] Migration ล้มเหลว:`, migrationError);
-      }
-    }
+    console.log("[LOG] ข้ามการเริ่มต้น legacy document-store runtime");
 
     if (options.loadLegacyContent !== false) {
       try {
@@ -11939,30 +11323,18 @@ async function initializeMongoRuntime(options = {}) {
     }
 
     try {
-      await ensureInstructionIdentifiers();
-    } catch (settingsError) {
-      console.error(`[ERROR] ensureInstructionIdentifiers ล้มเหลว:`, settingsError);
-    }
-
-    try {
       await ensureSettings();
     } catch (settingsError) {
       console.error(`[ERROR] ensureSettings ล้มเหลว:`, settingsError);
     }
 
     try {
-      await ensureFollowUpIndexes();
-    } catch (followUpIndexError) {
-      console.error(`[ERROR] ensureFollowUpIndexes ล้มเหลว:`, followUpIndexError);
-    }
-
-    try {
-      initTelemetry(db);
+      initTelemetry(null);
     } catch (telemetryError) {
       console.log(`[Telemetry] Init failed (non-critical):`, telemetryError.message);
     }
 
-    return { client, db };
+    return { client: null, db: null, skipped: true };
   })().catch((error) => {
     runtimeInitializationPromise = null;
     throw error;
@@ -12023,7 +11395,7 @@ async function startServer(options = {}) {
       server.off("error", onError);
       console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
       try {
-        await initializeMongoRuntime({
+        await initializeApplicationDataRuntime({
           runMigrations: options.runMigrations !== false,
           loadLegacyContent,
         });
@@ -12051,7 +11423,7 @@ function requirePostgresSupportState(featureName = "support state") {
     return;
   }
   throw new Error(
-    `PostgreSQL ${featureName} storage is required because MongoDB support-state fallback has been removed`,
+    `PostgreSQL ${featureName} storage is required because legacy support-state fallback has been removed`,
   );
 }
 
@@ -12533,16 +11905,7 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
     ? queueContext.selectedImageCollections
     : null;
 
-  const ensureDb = async () => {
-    if (!isMongoRuntimeEnabled()) {
-      return null;
-    }
-    if (!db) {
-      const client = await connectDB();
-      db = client.db("chatbot");
-    }
-    return db;
-  };
+  const ensureDb = async () => db;
 
   const loadSelectedImageCollections = async () => {
     if (
@@ -13707,27 +13070,7 @@ async function setAiEnabled(state) {
 }
 
 async function getInstructions() {
-  if (!isMongoRuntimeEnabled()) {
-    return [];
-  }
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("instructions");
-  const cursor = coll.find({}).sort({ order: 1, createdAt: 1 });
-  const instructions = await cursor.toArray();
-  return instructions.map((instruction) => {
-    const id = instruction?._id;
-    const stringId =
-      id && typeof id.toHexString === "function"
-        ? id.toHexString()
-        : id && typeof id.toString === "function"
-          ? id.toString()
-          : String(id || "");
-    return {
-      ...instruction,
-      _id: stringId,
-    };
-  });
+  return [];
 }
 
 function generateInstructionId() {
@@ -13766,7 +13109,7 @@ function isInstructionUuid(value) {
   );
 }
 
-function isMongoObjectIdLike(value) {
+function isLegacyHexIdLike(value) {
   if (typeof value !== "string") return false;
   return /^[0-9a-f]{24}$/i.test(value.trim());
 }
@@ -13778,7 +13121,7 @@ function shouldTreatStringAsInstructionRef(value) {
   return (
     /^inst_/i.test(normalized)
     || isInstructionUuid(normalized)
-    || isMongoObjectIdLike(normalized)
+    || isLegacyHexIdLike(normalized)
   );
 }
 
@@ -13904,200 +13247,25 @@ async function recordInstructionVersionSnapshot(
   instruction,
   dbInstance = null,
 ) {
-  const snapshot = sanitizeInstructionForSnapshot(instruction);
-  if (!snapshot) return null;
-  let db = dbInstance;
-  let client = null;
-  if (!db) {
-    client = await connectDB();
-    db = client.db("chatbot");
-  }
-  const versionColl = db.collection("instruction_versions");
-  await versionColl.updateOne(
-    { instructionId: snapshot.instructionId, version: snapshot.version },
-    { $set: snapshot },
-    { upsert: true },
-  );
-  invalidateInstructionPromptCaches();
-  return snapshot;
+  return null;
 }
 
 async function ensureInstructionVersionSnapshot(
   instruction,
   dbInstance = null,
 ) {
-  if (!instruction || !instruction.instructionId) return null;
-  let db = dbInstance;
-  let client = null;
-  if (!db) {
-    client = await connectDB();
-    db = client.db("chatbot");
-  }
-  const versionColl = db.collection("instruction_versions");
-  const version = Number.isInteger(instruction.version)
-    ? instruction.version
-    : 1;
-  const existing = await versionColl.findOne({
-    instructionId: instruction.instructionId,
-    version,
-  });
-  if (existing) return existing;
-  return recordInstructionVersionSnapshot(instruction, db);
+  return null;
 }
 
 async function ensureInstructionIdentifiers() {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("instructions");
-  const versionColl = db.collection("instruction_versions");
-
-  try {
-    await versionColl.createIndex(
-      { instructionId: 1, version: -1 },
-      { unique: true },
-    );
-  } catch (err) {
-    console.warn(
-      "[Instructions] createIndex error (instruction/version):",
-      err?.message || err,
-    );
-  }
-  try {
-    await versionColl.createIndex({ instructionId: 1, snapshotAt: -1 });
-  } catch (err) {
-    console.warn(
-      "[Instructions] createIndex error (snapshotAt):",
-      err?.message || err,
-    );
-  }
-
-  const docs = await coll.find({}).toArray();
-  for (const doc of docs) {
-    if (!doc) continue;
-    const instructionId = doc.instructionId || `inst_${doc._id?.toString()}`;
-    const version = Number.isInteger(doc.version) ? doc.version : 1;
-    const createdAtFallback =
-      doc.createdAt ||
-      (typeof doc._id?.getTimestamp === "function"
-        ? doc._id.getTimestamp()
-        : new Date());
-    const updatedAtFallback = doc.updatedAt || createdAtFallback;
-    const updateFields = {};
-    if (doc.instructionId !== instructionId)
-      updateFields.instructionId = instructionId;
-    if (!Number.isInteger(doc.version)) updateFields.version = version;
-    if (!doc.createdAt) updateFields.createdAt = createdAtFallback;
-    if (!doc.updatedAt) updateFields.updatedAt = updatedAtFallback;
-
-    if (Object.keys(updateFields).length > 0) {
-      await coll.updateOne({ _id: doc._id }, { $set: updateFields });
-    }
-
-    const hydratedDoc = {
-      ...doc,
-      ...updateFields,
-      instructionId,
-      version,
-      createdAt: updateFields.createdAt || doc.createdAt || createdAtFallback,
-      updatedAt: updateFields.updatedAt || doc.updatedAt || updatedAtFallback,
-    };
-
-    await ensureInstructionVersionSnapshot(hydratedDoc, db);
-  }
+  return;
 }
 
 async function resolveInstructionSelections(
   selections = [],
   dbInstance = null,
 ) {
-  if (!Array.isArray(selections) || selections.length === 0) return [];
-  const normalized = selections
-    .map((entry) => {
-      if (isInstructionSelectionObject(entry)) {
-        const instructionId = extractInstructionSelectionId(entry);
-        if (!instructionId) return null;
-        const numericVersion = Number(entry.version);
-        return {
-          instructionId,
-          version:
-            Number.isInteger(entry.version) && entry.version > 0
-              ? entry.version
-              : Number.isInteger(numericVersion) && numericVersion > 0
-                ? numericVersion
-                : null,
-        };
-      }
-      return null;
-    })
-    .filter(Boolean);
-
-  if (normalized.length === 0) return [];
-
-  let db = dbInstance;
-  let client = null;
-  if (!db) {
-    client = await connectDB();
-    db = client.db("chatbot");
-  }
-
-  const instructionIds = [
-    ...new Set(normalized.map((item) => item.instructionId)),
-  ];
-  const versionCriteria = normalized
-    .filter((item) => Number.isInteger(item.version))
-    .map((item) => ({
-      instructionId: item.instructionId,
-      version: item.version,
-    }));
-
-  const versionQuery =
-    versionCriteria.length > 0
-      ? { $or: versionCriteria }
-      : { instructionId: { $in: instructionIds } };
-
-  const [currentDocs, versionDocs] = await Promise.all([
-    db
-      .collection("instructions")
-      .find({ instructionId: { $in: instructionIds } })
-      .toArray(),
-    db.collection("instruction_versions").find(versionQuery).toArray(),
-  ]);
-
-  const currentMap = new Map();
-  currentDocs.forEach((doc) => {
-    if (doc && doc.instructionId) currentMap.set(doc.instructionId, doc);
-  });
-
-  const versionMap = new Map();
-  versionDocs.forEach((doc) => {
-    if (!doc || !doc.instructionId) return;
-    const key = `${doc.instructionId}::${doc.version}`;
-    versionMap.set(key, doc);
-  });
-
-  const results = [];
-  const seen = new Set();
-
-  for (const entry of normalized) {
-    const key = `${entry.instructionId}::${entry.version === null ? "latest" : entry.version}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    let doc = null;
-    if (Number.isInteger(entry.version)) {
-      doc = versionMap.get(`${entry.instructionId}::${entry.version}`);
-    }
-    if (!doc) {
-      doc = currentMap.get(entry.instructionId);
-    }
-    if (!doc) continue;
-    if (!doc.instructionId) doc.instructionId = entry.instructionId;
-    if (!Number.isInteger(doc.version))
-      doc.version = entry.version || doc.version || 1;
-    results.push(doc);
-  }
-
-  return results;
+  return [];
 }
 
 async function resolveInstructionSelectionsV2(
@@ -14159,86 +13327,41 @@ async function resolveInstructionSelectionsV2(
     return ordered;
   };
 
-  if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
-    try {
-      const result = await pgQuery(
-        `
-          SELECT
-            id::text,
-            legacy_instruction_id,
-            name,
-            description,
-            data,
-            conversation_starter,
-            current_version,
-            created_at,
-            updated_at
-          FROM instructions
-          WHERE ${buildInstructionV2SourceCondition("source_kind")}
-            AND (
-              legacy_instruction_id = ANY($1::text[])
-              OR id::text = ANY($1::text[])
-            )
-        `,
-        [instructionIds],
-      );
-      const mappedRows = result.rows.map((row) => mapPostgresInstructionV2Row(row));
-      return mapRowsToOrderedDocs(mappedRows);
-    } catch (error) {
-      console.warn(
-        "[InstructionsV2] PostgreSQL read failed:",
-        error?.message || error,
-      );
-      return [];
-    }
+  if (!isPostgresConfigured()) {
+    return [];
   }
 
-  let db = dbInstance;
-  let client = null;
-  if (!db) {
-    client = await connectDB();
-    db = client.db("chatbot");
+  try {
+    const result = await pgQuery(
+      `
+        SELECT
+          id::text,
+          legacy_instruction_id,
+          name,
+          description,
+          data,
+          conversation_starter,
+          current_version,
+          created_at,
+          updated_at
+        FROM instructions
+        WHERE ${buildInstructionV2SourceCondition("source_kind")}
+          AND (
+            legacy_instruction_id = ANY($1::text[])
+            OR id::text = ANY($1::text[])
+          )
+      `,
+      [instructionIds],
+    );
+    const mappedRows = result.rows.map((row) => mapPostgresInstructionV2Row(row));
+    return mapRowsToOrderedDocs(mappedRows);
+  } catch (error) {
+    console.warn(
+      "[InstructionsV2] PostgreSQL read failed:",
+      error?.message || error,
+    );
+    return [];
   }
-
-  const objectIds = instructionIds
-    .map((entry) => toObjectId(entry))
-    .filter(Boolean);
-  const mongoFilters = [{ instructionId: { $in: instructionIds } }];
-  if (objectIds.length > 0) {
-    mongoFilters.push({ _id: { $in: objectIds } });
-  }
-
-  const docs = await db
-    .collection("instructions_v2")
-    .find(
-      mongoFilters.length === 1 ? mongoFilters[0] : { $or: mongoFilters },
-    )
-    .toArray();
-
-  const normalizedDocs = docs.map((doc) => {
-    if (doc && doc._id && typeof doc._id.toString === "function") {
-      const normalizedObjectId = doc._id.toString();
-      return {
-        ...doc,
-        _id: normalizedObjectId,
-        instructionId:
-          typeof doc.instructionId === "string" && doc.instructionId.trim()
-            ? doc.instructionId.trim()
-            : normalizedObjectId,
-      };
-    }
-    const fallbackObjectId =
-      typeof doc?._id === "string" ? doc._id.trim() : "";
-    return {
-      ...doc,
-      instructionId:
-        typeof doc?.instructionId === "string" && doc.instructionId.trim()
-          ? doc.instructionId.trim()
-          : fallbackObjectId,
-    };
-  });
-
-  return mapRowsToOrderedDocs(normalizedDocs);
 }
 
 function buildSystemPromptFromInstructionDocs(instructions = []) {
@@ -14321,37 +13444,9 @@ async function buildSystemPromptFromSelections(
 ) {
   if (!Array.isArray(selectedInstructions) || selectedInstructions.length === 0)
     return "";
-  const hasObjectSelections = selectedInstructions.some(
-    isInstructionSelectionObject,
-  );
-
-  let db = dbInstance;
-  let client = null;
-  if (!db && hasObjectSelections && isMongoRuntimeEnabled()) {
-    client = await connectDB();
-    db = client.db("chatbot");
-  }
-
-  if (hasObjectSelections) {
-    const [legacyDocs, v2Docs] = isMongoRuntimeEnabled()
-      ? await Promise.all([
-        resolveInstructionSelections(selectedInstructions, db),
-        resolveInstructionSelectionsV2(selectedInstructions, db),
-      ])
-      : [[], await resolveInstructionSelectionsV2(selectedInstructions, null)];
-    const promptSegments = [
-      buildSystemPromptFromInstructionDocs(legacyDocs),
-      buildSystemPromptFromInstructionV2Docs(v2Docs),
-    ].filter((segment) => segment && segment.trim());
-
-    if (promptSegments.length > 0) {
-      return promptSegments.join("\n\n");
-    }
-  }
-
   const fallbackV2Docs = await resolveInstructionSelectionsV2(
     selectedInstructions,
-    db,
+    null,
   );
   const fallbackV2Prompt = buildSystemPromptFromInstructionV2Docs(
     fallbackV2Docs,
@@ -14359,31 +13454,13 @@ async function buildSystemPromptFromSelections(
   if (fallbackV2Prompt) {
     return fallbackV2Prompt;
   }
-
-  if (!isMongoRuntimeEnabled()) {
-    return "";
-  }
-
-  let localDb = db;
-  if (!localDb) {
-    client = await connectDB();
-    localDb = client.db("chatbot");
-  }
-
-  const instructionColl = localDb.collection("instruction_library");
-  const instructionDocs = await instructionColl
-    .find({
-      date: { $in: selectedInstructions },
-    })
-    .toArray();
-
-  return buildSystemPromptFromLibraries(instructionDocs);
+  return "";
 }
 
-function toObjectId(id) {
+function normalizeLegacyHexId(id) {
   if (typeof id !== "string") return null;
   const normalized = id.trim();
-  return isMongoObjectIdLike(normalized) ? normalized : null;
+  return isLegacyHexIdLike(normalized) ? normalized : null;
 }
 
 function buildInstructionVersionLabel(versionNumber) {
@@ -14469,30 +13546,7 @@ function normalizeInstructionMetaRecords(metaRecords = [], instructionRefs = [])
 }
 
 async function loadLatestInstruction(instructionRef, dbInstance = null) {
-  let db = dbInstance;
-  let client = null;
-  if (!db) {
-    client = await connectDB();
-    db = client.db("chatbot");
-  }
-  const coll = db.collection("instructions_v2");
-
-  const objectIdCandidate = toObjectId(instructionRef);
-  if (objectIdCandidate) {
-    const byObjectId = await coll.findOne({ _id: objectIdCandidate });
-    if (byObjectId) return byObjectId;
-  }
-
-  const instructionIdCandidate =
-    typeof instructionRef === "string"
-      ? instructionRef.trim()
-      : instructionRef &&
-          typeof instructionRef === "object" &&
-          typeof instructionRef.instructionId === "string"
-        ? instructionRef.instructionId.trim()
-        : "";
-  if (!instructionIdCandidate) return null;
-  return coll.findOne({ instructionId: instructionIdCandidate });
+  return loadInstructionForChatRuntime(instructionRef, dbInstance);
 }
 
 function buildInstructionVersionSnapshotDataItems(dataItems = []) {
@@ -14549,145 +13603,11 @@ async function createSnapshotFromLatest(
   savedBy = "system",
   dbInstance = null,
 ) {
-  let db = dbInstance;
-  let client = null;
-  if (!db) {
-    client = await connectDB();
-    db = client.db("chatbot");
-  }
-
-  const coll = db.collection("instructions_v2");
-  const versionColl = db.collection("instruction_versions");
-  const latestInstruction = await loadLatestInstruction(instructionRef, db);
-  if (!latestInstruction) {
-    incrementInstructionMetric("snapshot_failed_total");
-    console.warn("[InstructionVersion] Snapshot failed: instruction not found", {
-      instructionRef:
-        typeof instructionRef === "string"
-          ? instructionRef
-          : instructionRef?._id || instructionRef?.instructionId || null,
-      snapshot_failed_total: INSTRUCTION_METRICS.snapshot_failed_total,
-    });
-    return { success: false, error: "instruction_not_found" };
-  }
-
-  let instructionId = latestInstruction.instructionId;
-  if (!instructionId || typeof instructionId !== "string" || !instructionId.trim()) {
-    instructionId = generateInstructionId();
-    await coll.updateOne(
-      { _id: latestInstruction._id },
-      { $set: { instructionId } },
-    );
-  }
-
-  const snapshotAt = new Date();
-  const latestSnapshotDoc = await versionColl
-    .find(
-      { instructionId },
-      { projection: { version: 1 } },
-    )
-    .sort({ version: -1 })
-    .limit(1)
-    .toArray();
-  const latestSnapshotVersion =
-    latestSnapshotDoc.length > 0 &&
-      Number.isInteger(latestSnapshotDoc[0]?.version) &&
-      latestSnapshotDoc[0].version > 0
-      ? latestSnapshotDoc[0].version
-      : 0;
-  const currentInstructionVersion =
-    Number.isInteger(latestInstruction.version) && latestInstruction.version > 0
-      ? latestInstruction.version
-      : 0;
-  const versionBaseline = Math.max(
-    latestSnapshotVersion,
-    currentInstructionVersion,
-  );
-
-  try {
-    const updatedInstruction = await coll.findOneAndUpdate(
-      { _id: latestInstruction._id },
-      [
-        {
-          $set: {
-            version: {
-              $add: [
-                { $max: [
-                  {
-                    $cond: [
-                      { $isNumber: "$version" },
-                      "$version",
-                      0,
-                    ],
-                  },
-                  versionBaseline,
-                ] },
-                1,
-              ],
-            },
-            instructionId,
-            updatedAt: snapshotAt,
-          },
-        },
-      ],
-      { returnDocument: "after", includeResultMetadata: false },
-    );
-
-    if (!updatedInstruction) {
-      incrementInstructionMetric("snapshot_failed_total");
-      console.warn(
-        "[InstructionVersion] Snapshot failed: instruction missing after update",
-        {
-          instructionId,
-          snapshot_failed_total: INSTRUCTION_METRICS.snapshot_failed_total,
-        },
-      );
-      return { success: false, error: "instruction_not_found_after_update" };
-    }
-
-    const resolvedVersion = Number.isInteger(updatedInstruction.version)
-      ? updatedInstruction.version
-      : 1;
-
-    const snapshot = buildInstructionVersionSnapshotPayload(
-      { ...updatedInstruction, instructionId },
-      {
-        version: resolvedVersion,
-        note,
-        savedBy,
-        snapshotAt,
-      },
-    );
-
-    await versionColl.updateOne(
-      { instructionId, version: resolvedVersion },
-      { $set: snapshot },
-      { upsert: true },
-    );
-
-    incrementInstructionMetric("snapshot_created_total");
-    console.log("[InstructionVersion] Snapshot created", {
-      instructionId,
-      version: resolvedVersion,
-      note: snapshot.note || "",
-      snapshot_created_total: INSTRUCTION_METRICS.snapshot_created_total,
-    });
-    return {
-      success: true,
-      instructionId,
-      version: resolvedVersion,
-      note: snapshot.note,
-      snapshotAt,
-    };
-  } catch (error) {
-    incrementInstructionMetric("snapshot_failed_total");
-    console.error("[InstructionVersion] Snapshot failed with exception", {
-      instructionId,
-      error: error?.message || error,
-      snapshot_failed_total: INSTRUCTION_METRICS.snapshot_failed_total,
-    });
-    throw error;
-  }
+  return {
+    success: false,
+    retired: true,
+    error: "legacy_snapshot_runtime_retired",
+  };
 }
 
 async function createDashboardSnapshotOrThrow(
@@ -14696,158 +13616,110 @@ async function createDashboardSnapshotOrThrow(
   dbInstance = null,
   savedBy = "dashboard",
 ) {
-  if (shouldUsePostgresInstructionsV2()) {
-    const instruction = await getPostgresInstructionV2ByRef(instructionRef);
-    if (!instruction) {
-      throw new Error("instruction_not_found");
-    }
-
-    const snapshotAt = new Date();
-    const version = Math.max(
-      1,
-      Number.isInteger(instruction.version) ? instruction.version : 1,
-    );
-    const note = `dashboard:${action}`;
-    const snapshot = buildInstructionVersionSnapshotPayload(instruction, {
-      version,
-      note,
-      savedBy,
-      snapshotAt,
-    });
-
-    const existingResult = await pgQuery(
-      `
-        SELECT id::text AS id
-        FROM instruction_versions
-        WHERE version = $1
-          AND (
-            instruction_id = $2::uuid
-            OR legacy_instruction_id = $3
-          )
-        ORDER BY created_at DESC
-        LIMIT 1
-      `,
-      [version, instruction._id, instruction.instructionId],
-    );
-
-    if (existingResult.rowCount > 0) {
-      await pgQuery(
-        `
-          UPDATE instruction_versions
-          SET
-            legacy_instruction_id = $2,
-            instruction_id = $3::uuid,
-            snapshot = $4::jsonb,
-            note = $5,
-            snapshot_at = $6,
-            saved_by = $7
-          WHERE id = $1::uuid
-        `,
-        [
-          existingResult.rows[0].id,
-          instruction.instructionId,
-          instruction._id,
-          JSON.stringify(snapshot),
-          note,
-          snapshotAt,
-          savedBy,
-        ],
-      );
-    } else {
-      await pgQuery(
-        `
-          INSERT INTO instruction_versions (
-            legacy_instruction_id,
-            instruction_id,
-            version,
-            snapshot,
-            note,
-            snapshot_at,
-            saved_by,
-            created_at
-          )
-          VALUES ($1, $2::uuid, $3, $4::jsonb, $5, $6, $7, $6)
-        `,
-        [
-          instruction.instructionId,
-          instruction._id,
-          version,
-          JSON.stringify(snapshot),
-          note,
-          snapshotAt,
-          savedBy,
-        ],
-      );
-    }
-
-    invalidateInstructionPromptCaches();
-    return {
-      success: true,
-      instructionId: instruction.instructionId,
-      version,
-      note,
-      snapshotAt,
-    };
+  if (!shouldUsePostgresInstructionsV2()) {
+    throw new Error("postgres_required_for_instruction_versions");
   }
 
+  const instruction = await getPostgresInstructionV2ByRef(instructionRef);
+  if (!instruction) {
+    throw new Error("instruction_not_found");
+  }
+
+  const snapshotAt = new Date();
+  const version = Math.max(
+    1,
+    Number.isInteger(instruction.version) ? instruction.version : 1,
+  );
   const note = `dashboard:${action}`;
-  const snapshotResult = await createSnapshotFromLatest(
-    instructionRef,
+  const snapshot = buildInstructionVersionSnapshotPayload(instruction, {
+    version,
     note,
     savedBy,
-    dbInstance,
+    snapshotAt,
+  });
+
+  const existingResult = await pgQuery(
+    `
+      SELECT id::text AS id
+      FROM instruction_versions
+      WHERE version = $1
+        AND (
+          instruction_id = $2::uuid
+          OR legacy_instruction_id = $3
+        )
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+    [version, instruction._id, instruction.instructionId],
   );
-  if (!snapshotResult?.success) {
-    throw new Error(
-      snapshotResult?.error || "dashboard_snapshot_failed",
+
+  if (existingResult.rowCount > 0) {
+    await pgQuery(
+      `
+        UPDATE instruction_versions
+        SET
+          legacy_instruction_id = $2,
+          instruction_id = $3::uuid,
+          snapshot = $4::jsonb,
+          note = $5,
+          snapshot_at = $6,
+          saved_by = $7
+        WHERE id = $1::uuid
+      `,
+      [
+        existingResult.rows[0].id,
+        instruction.instructionId,
+        instruction._id,
+        JSON.stringify(snapshot),
+        note,
+        snapshotAt,
+        savedBy,
+      ],
+    );
+  } else {
+    await pgQuery(
+      `
+        INSERT INTO instruction_versions (
+          legacy_instruction_id,
+          instruction_id,
+          version,
+          snapshot,
+          note,
+          snapshot_at,
+          saved_by,
+          created_at
+        )
+        VALUES ($1, $2::uuid, $3, $4::jsonb, $5, $6, $7, $6)
+      `,
+      [
+        instruction.instructionId,
+        instruction._id,
+        version,
+        JSON.stringify(snapshot),
+        note,
+        snapshotAt,
+        savedBy,
+      ],
     );
   }
-  invalidateInstructionPromptCaches();
-  return snapshotResult;
-}
 
-function buildMongoInstructionV2LookupQuery(instructionRef) {
-  const normalizedRef = String(instructionRef || "").trim();
-  if (!normalizedRef) {
-    return { _id: null };
-  }
-  const objectId = toObjectId(normalizedRef);
-  if (objectId) {
-    return { _id: objectId };
-  }
+  invalidateInstructionPromptCaches();
   return {
-    $or: [
-      { instructionId: normalizedRef },
-      { _id: normalizedRef },
-    ],
+    success: true,
+    instructionId: instruction.instructionId,
+    version,
+    note,
+    snapshotAt,
   };
 }
 
 async function loadInstructionForChatRuntime(instructionRef, dbInstance = null) {
   const normalizedRef = String(instructionRef || "").trim();
   if (!normalizedRef) return null;
-
-  if (shouldUsePostgresInstructionsV2()) {
-    return getPostgresInstructionV2ByRef(normalizedRef);
+  if (!shouldUsePostgresInstructionsV2()) {
+    throw new Error("postgres_required_for_instructions_v2");
   }
-
-  let db = dbInstance;
-  if (!db) {
-    const client = await connectDB();
-    db = client.db("chatbot");
-  }
-
-  const doc = await db.collection("instructions_v2").findOne(
-    buildMongoInstructionV2LookupQuery(normalizedRef),
-  );
-  if (!doc) return null;
-  return {
-    ...doc,
-    conversationStarter: normalizeConversationStarterConfig(
-      doc?.conversationStarter,
-    ),
-    _id: doc._id?.toString?.() || doc._id,
-  };
+  return getPostgresInstructionV2ByRef(normalizedRef);
 }
 
 async function saveInstructionForChatRuntime(
@@ -14859,94 +13731,68 @@ async function saveInstructionForChatRuntime(
   if (!normalizedRef || !instructionDoc || typeof instructionDoc !== "object") {
     throw new Error("Invalid instruction payload");
   }
-
-  if (shouldUsePostgresInstructionsV2()) {
-    const existing = await getPostgresInstructionV2ByRef(normalizedRef);
-    if (!existing) {
-      throw new Error("instruction_not_found");
-    }
-
-    const now = instructionDoc.updatedAt || new Date();
-    const result = await pgQuery(
-      `
-        UPDATE instructions
-        SET
-          legacy_instruction_id = $2,
-          name = $3,
-          description = $4,
-          type = $5,
-          content = $6,
-          data = $7::jsonb,
-          conversation_starter = $8::jsonb,
-          current_version = $9,
-          updated_at = $10
-        WHERE id = $1::uuid
-          AND ${buildInstructionV2SourceCondition("source_kind")}
-        RETURNING
-          id::text AS id,
-          legacy_instruction_id,
-          name,
-          description,
-          type,
-          content,
-          data,
-          conversation_starter,
-          current_version,
-          created_at,
-          updated_at
-      `,
-      [
-        existing._id,
-        String(
-          instructionDoc.instructionId || existing.instructionId || normalizedRef,
-        ).trim(),
-        String(instructionDoc.name || "").trim(),
-        String(instructionDoc.description || "").trim(),
-        instructionDoc.type || existing.type || "instruction",
-        instructionDoc.content || "",
-        JSON.stringify(
-          Array.isArray(instructionDoc.dataItems) ? instructionDoc.dataItems : [],
-        ),
-        JSON.stringify(
-          normalizeConversationStarterConfig(instructionDoc.conversationStarter),
-        ),
-        Number.isInteger(instructionDoc.version)
-          ? instructionDoc.version
-          : Number.isInteger(existing.version)
-            ? existing.version
-            : 1,
-        now,
-      ],
-    );
-    return result.rows[0] ? mapPostgresInstructionV2Row(result.rows[0]) : null;
+  if (!shouldUsePostgresInstructionsV2()) {
+    throw new Error("postgres_required_for_instructions_v2");
   }
 
-  let db = dbInstance;
-  if (!db) {
-    const client = await connectDB();
-    db = client.db("chatbot");
+  const existing = await getPostgresInstructionV2ByRef(normalizedRef);
+  if (!existing) {
+    throw new Error("instruction_not_found");
   }
-  const coll = db.collection("instructions_v2");
-  const lookup = buildMongoInstructionV2LookupQuery(normalizedRef);
-  const payload = {
-    ...instructionDoc,
-    updatedAt: instructionDoc.updatedAt || new Date(),
-    conversationStarter: normalizeConversationStarterConfig(
-      instructionDoc.conversationStarter,
-    ),
-  };
-  delete payload._id;
-  await coll.updateOne(lookup, { $set: payload });
-  const saved = await coll.findOne(lookup);
-  return saved
-    ? {
-        ...saved,
-        conversationStarter: normalizeConversationStarterConfig(
-          saved?.conversationStarter,
-        ),
-        _id: saved._id?.toString?.() || saved._id,
-      }
-    : null;
+
+  const now = instructionDoc.updatedAt || new Date();
+  const result = await pgQuery(
+    `
+      UPDATE instructions
+      SET
+        legacy_instruction_id = $2,
+        name = $3,
+        description = $4,
+        type = $5,
+        content = $6,
+        data = $7::jsonb,
+        conversation_starter = $8::jsonb,
+        current_version = $9,
+        updated_at = $10
+      WHERE id = $1::uuid
+        AND ${buildInstructionV2SourceCondition("source_kind")}
+      RETURNING
+        id::text AS id,
+        legacy_instruction_id,
+        name,
+        description,
+        type,
+        content,
+        data,
+        conversation_starter,
+        current_version,
+        created_at,
+        updated_at
+    `,
+    [
+      existing._id,
+      String(
+        instructionDoc.instructionId || existing.instructionId || normalizedRef,
+      ).trim(),
+      String(instructionDoc.name || "").trim(),
+      String(instructionDoc.description || "").trim(),
+      instructionDoc.type || existing.type || "instruction",
+      instructionDoc.content || "",
+      JSON.stringify(
+        Array.isArray(instructionDoc.dataItems) ? instructionDoc.dataItems : [],
+      ),
+      JSON.stringify(
+        normalizeConversationStarterConfig(instructionDoc.conversationStarter),
+      ),
+      Number.isInteger(instructionDoc.version)
+        ? instructionDoc.version
+        : Number.isInteger(existing.version)
+          ? existing.version
+          : 1,
+      now,
+    ],
+  );
+  return result.rows[0] ? mapPostgresInstructionV2Row(result.rows[0]) : null;
 }
 
 async function listInstructionVersionsForChatRuntime(instruction) {
@@ -15145,87 +13991,57 @@ async function saveInstructionVersionForChatRuntime(
 async function getFollowUpAssetForChatRuntime(assetId, dbInstance = null) {
   const normalizedAssetId = String(assetId || "").trim();
   if (!normalizedAssetId) return null;
-
-  if (canUsePostgresAssets()) {
-    const result = await pgQuery(
-      `
-        SELECT
-          id::text AS id,
-          legacy_asset_id,
-          storage_key,
-          thumb_storage_key,
-          metadata,
-          created_at,
-          updated_at
-        FROM instruction_assets
-        WHERE COALESCE(metadata->>'scope', '') = 'followup'
-          AND (
-            legacy_asset_id = $1
-            OR id::text = $1
-          )
-        LIMIT 1
-      `,
-      [normalizedAssetId],
-    );
-    return result.rows[0] ? mapPostgresFollowUpAssetRow(result.rows[0]) : null;
+  if (!canUsePostgresAssets()) {
+    throw new Error("postgres_required_for_followup_assets");
   }
-
-  let db = dbInstance;
-  if (!db) {
-    const client = await connectDB();
-    db = client.db("chatbot");
-  }
-  const coll = db.collection("follow_up_assets");
-  const objectId = toObjectId(normalizedAssetId);
-  const doc = await coll.findOne(objectId ? { _id: objectId } : { _id: normalizedAssetId });
-  return doc
-    ? {
-        ...doc,
-        _id: doc._id?.toString?.() || doc._id,
-      }
-    : null;
+  const result = await pgQuery(
+    `
+      SELECT
+        id::text AS id,
+        legacy_asset_id,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+      FROM instruction_assets
+      WHERE COALESCE(metadata->>'scope', '') = 'followup'
+        AND (
+          legacy_asset_id = $1
+          OR id::text = $1
+        )
+      LIMIT 1
+    `,
+    [normalizedAssetId],
+  );
+  return result.rows[0] ? mapPostgresFollowUpAssetRow(result.rows[0]) : null;
 }
 
 async function listFollowUpAssetsForChatRuntime(options = {}, dbInstance = null) {
   const limit = Number.isFinite(Number(options?.limit))
     ? Math.max(1, Math.min(Number(options.limit), 100))
     : 50;
-
-  if (canUsePostgresAssets()) {
-    const result = await pgQuery(
-      `
-        SELECT
-          id::text AS id,
-          legacy_asset_id,
-          storage_key,
-          thumb_storage_key,
-          metadata,
-          created_at,
-          updated_at
-        FROM instruction_assets
-        WHERE COALESCE(metadata->>'scope', '') = 'followup'
-        ORDER BY updated_at DESC, created_at DESC
-        LIMIT $1
-      `,
-      [limit],
-    );
-    return result.rows.map((row) => mapPostgresFollowUpAssetRow(row));
+  if (!canUsePostgresAssets()) {
+    throw new Error("postgres_required_for_followup_assets");
   }
-
-  let db = dbInstance;
-  if (!db) {
-    const client = await connectDB();
-    db = client.db("chatbot");
-  }
-  const docs = await db.collection("follow_up_assets")
-    .find({})
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .toArray();
-  return docs.map((doc) => ({
-    ...doc,
-    _id: doc._id?.toString?.() || doc._id,
-  }));
+  const result = await pgQuery(
+    `
+      SELECT
+        id::text AS id,
+        legacy_asset_id,
+        storage_key,
+        thumb_storage_key,
+        metadata,
+        created_at,
+        updated_at
+      FROM instruction_assets
+      WHERE COALESCE(metadata->>'scope', '') = 'followup'
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT $1
+    `,
+    [limit],
+  );
+  return result.rows.map((row) => mapPostgresFollowUpAssetRow(row));
 }
 
 function buildInstructionChatServiceOptions(db) {
@@ -15252,7 +14068,6 @@ function buildInstructionChatServiceOptions(db) {
       list: (options) => listFollowUpAssetsForChatRuntime(options, db),
     },
     versionStore,
-    buildMongoInstructionQuery: buildMongoInstructionV2LookupQuery,
     conversationThreadOptions: {
       conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
@@ -15317,36 +14132,21 @@ async function instructionNameExistsForRuntime(
 ) {
   const normalizedName = String(name || "").trim();
   if (!normalizedName) return false;
-
-  if (shouldUsePostgresInstructionsV2()) {
-    const result = await pgQuery(
-      `
-        SELECT 1
-        FROM instructions
-        WHERE ${buildInstructionV2SourceCondition("source_kind")}
-          AND lower(name) = lower($1)
-          AND ($2::uuid IS NULL OR id <> $2::uuid)
-        LIMIT 1
-      `,
-      [normalizedName, options.excludeId || null],
-    );
-    return result.rowCount > 0;
+  if (!shouldUsePostgresInstructionsV2()) {
+    throw new Error("postgres_required_for_instructions_v2");
   }
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("instructions_v2");
-  const escapeRegex = (value) =>
-    String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const query = {
-    name: { $regex: new RegExp(`^${escapeRegex(normalizedName)}$`, "i") },
-  };
-  const excludedId = toObjectId(options.excludeId);
-  if (excludedId) {
-    query._id = { $ne: excludedId };
-  }
-  const existing = await coll.findOne(query);
-  return Boolean(existing);
+  const result = await pgQuery(
+    `
+      SELECT 1
+      FROM instructions
+      WHERE ${buildInstructionV2SourceCondition("source_kind")}
+        AND lower(name) = lower($1)
+        AND ($2::uuid IS NULL OR id <> $2::uuid)
+      LIMIT 1
+    `,
+    [normalizedName, options.excludeId || null],
+  );
+  return result.rowCount > 0;
 }
 
 async function createInstructionV2ForRuntime(
@@ -15375,57 +14175,49 @@ async function createInstructionV2ForRuntime(
     updatedAt: payload.updatedAt || now,
   };
 
-  if (shouldUsePostgresInstructionsV2()) {
-    const result = await pgQuery(
-      `
-        INSERT INTO instructions (
-          legacy_instruction_id,
-          source_kind,
-          name,
-          description,
-          type,
-          content,
-          data,
-          conversation_starter,
-          current_version,
-          created_at,
-          updated_at
-        ) VALUES ($1,'instructions_v2',$2,$3,$4,$5,$6::jsonb,$7::jsonb,1,$8,$8)
-        RETURNING
-          id::text AS id,
-          legacy_instruction_id,
-          name,
-          description,
-          type,
-          content,
-          data,
-          conversation_starter,
-          current_version,
-          created_at,
-          updated_at
-      `,
-      [
-        instruction.instructionId,
-        instruction.name,
-        instruction.description,
-        instruction.type,
-        instruction.content,
-        JSON.stringify(instruction.dataItems),
-        JSON.stringify(instruction.conversationStarter),
-        instruction.createdAt,
-      ],
-    );
-    return result.rows[0] ? mapPostgresInstructionV2Row(result.rows[0]) : null;
+  if (!shouldUsePostgresInstructionsV2()) {
+    throw new Error("postgres_required_for_instructions_v2");
   }
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("instructions_v2");
-  const insertResult = await coll.insertOne(instruction);
-  return {
-    ...instruction,
-    _id: insertResult.insertedId?.toString() || null,
-  };
+  const result = await pgQuery(
+    `
+      INSERT INTO instructions (
+        legacy_instruction_id,
+        source_kind,
+        name,
+        description,
+        type,
+        content,
+        data,
+        conversation_starter,
+        current_version,
+        created_at,
+        updated_at
+      ) VALUES ($1,'instructions_v2',$2,$3,$4,$5,$6::jsonb,$7::jsonb,1,$8,$8)
+      RETURNING
+        id::text AS id,
+        legacy_instruction_id,
+        name,
+        description,
+        type,
+        content,
+        data,
+        conversation_starter,
+        current_version,
+        created_at,
+        updated_at
+    `,
+    [
+      instruction.instructionId,
+      instruction.name,
+      instruction.description,
+      instruction.type,
+      instruction.content,
+      JSON.stringify(instruction.dataItems),
+      JSON.stringify(instruction.conversationStarter),
+      instruction.createdAt,
+    ],
+  );
+  return result.rows[0] ? mapPostgresInstructionV2Row(result.rows[0]) : null;
 }
 
 async function deleteInstructionV2ForRuntime(
@@ -15437,24 +14229,18 @@ async function deleteInstructionV2ForRuntime(
     options.dbInstance || null,
   );
   if (!existing) return false;
-
-  if (shouldUsePostgresInstructionsV2()) {
-    await pgQuery(
-      `
-        DELETE FROM instructions
-        WHERE id = $1::uuid
-          AND ${buildInstructionV2SourceCondition("source_kind")}
-      `,
-      [existing._id],
-    );
-    return true;
+  if (!shouldUsePostgresInstructionsV2()) {
+    throw new Error("postgres_required_for_instructions_v2");
   }
-
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("instructions_v2");
-  const result = await coll.deleteOne(buildMongoInstructionV2LookupQuery(existing._id));
-  return result.deletedCount > 0;
+  await pgQuery(
+    `
+      DELETE FROM instructions
+      WHERE id = $1::uuid
+        AND ${buildInstructionV2SourceCondition("source_kind")}
+    `,
+    [existing._id],
+  );
+  return true;
 }
 
 async function resolveInstructionMetaForRuntime(
@@ -15481,13 +14267,6 @@ async function resolveInstructionMetaForRuntime(
   const metaCandidates = [];
 
   if (objectSelections.length > 0) {
-    let db = dbInstance;
-    let client = null;
-    if (!db && isMongoRuntimeEnabled()) {
-      client = await connectDB();
-      db = client.db("chatbot");
-    }
-
     const instructionIds = [
       ...new Set(
         objectSelections
@@ -15497,27 +14276,10 @@ async function resolveInstructionMetaForRuntime(
     ];
 
     if (instructionIds.length > 0) {
-      const mongoObjectIds = instructionIds
-        .map((id) => toObjectId(id))
-        .filter(Boolean);
-      const mongoInstructionFilters = [{ instructionId: { $in: instructionIds } }];
-      if (mongoObjectIds.length > 0) {
-        mongoInstructionFilters.push({ _id: { $in: mongoObjectIds } });
-      }
-      const docs = isMongoRuntimeEnabled()
-        ? await db
-          .collection("instructions_v2")
-          .find(
-            mongoInstructionFilters.length === 1
-              ? mongoInstructionFilters[0]
-              : { $or: mongoInstructionFilters },
-            { projection: { _id: 1, instructionId: 1, version: 1 } },
-          )
-          .toArray()
-        : await resolveInstructionSelectionsV2(
-          instructionIds.map((instructionId) => ({ instructionId })),
-          null,
-        );
+      const docs = await resolveInstructionSelectionsV2(
+        instructionIds.map((instructionId) => ({ instructionId })),
+        null,
+      );
       const docMap = new Map();
       docs.forEach((doc) => {
         if (!doc || typeof doc !== "object") return;
@@ -15707,50 +14469,8 @@ async function checkBucketObjectCandidates(keys = []) {
   return { exists: false, key: null };
 }
 
-async function checkGridFsVariantCandidates(bucket, fileId, fileNames = []) {
-  return {
-    exists: false,
-    idExists: false,
-    filenameExists: false,
-    fileId: null,
-    fileName: null,
-  };
-}
-
-function checkLocalAssetCandidates(localDir, fileNames = []) {
-  if (!localDir) {
-    return { exists: false, filePath: null, fileName: null };
-  }
-
-  for (const fileName of fileNames) {
-    if (!fileName) continue;
-    const filePath = path.join(localDir, fileName);
-    if (fs.existsSync(filePath)) {
-      return { exists: true, filePath, fileName };
-    }
-  }
-
-  return { exists: false, filePath: null, fileName: null };
-}
-
-function deleteLocalAssetFileInDir(localDir, fileName) {
-  if (!localDir || !fileName) return;
-  try {
-    const filePath = path.join(localDir, fileName);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-  } catch (err) {
-    console.warn(
-      "[Assets] Failed to remove local asset file:",
-      err?.message || err,
-    );
-  }
-}
-
 async function uploadBufferToAssetStorage({
   db,
-  gridFsBucketName,
   storagePrefix,
   filename,
   buffer,
@@ -15759,7 +14479,7 @@ async function uploadBufferToAssetStorage({
 }) {
   if (!isBucketConfigured()) {
     throw new Error(
-      "Bucket/object storage is required because GridFS runtime fallback has been removed",
+      "Bucket/object storage is required because the retired file-store fallback has been removed",
     );
   }
 
@@ -15775,39 +14495,9 @@ async function uploadBufferToAssetStorage({
   };
 }
 
-async function deleteStoredAssetEntries(db, gridFsBucketName, entries = []) {
-  const bucketEntries = entries
-    .map((entry) => entry?.storageKey)
-    .filter(Boolean);
-
-  if (bucketEntries.length > 0 && isBucketConfigured()) {
-    await Promise.all(
-      bucketEntries.map(async (storageKey) => {
-        try {
-          await deleteBucketObject(storageKey);
-        } catch (err) {
-          if (!isBucketNotFoundError(err)) {
-            console.warn("[BucketStorage] delete failed:", err?.message || err);
-          }
-        }
-      }),
-    );
-  }
-
-  return undefined;
-}
-
-async function deleteGridFsEntries(bucket, entries = []) {
-  return undefined;
-}
-
 // ============================ Instruction Assets Helpers ============================
 function canUsePostgresAssets() {
   return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
-}
-
-function shouldAllowGridFsAssetFallback() {
-  return false;
 }
 
 function extractFileNameFromStorageKey(storageKey) {
@@ -16280,27 +14970,14 @@ async function listInstructionFallbackAssetsFromStorage() {
 
 async function getInstructionAssets() {
   try {
-    if (canUsePostgresAssets()) {
-      const pgAssets = await readPostgresInstructionAssets();
-      if (pgAssets.length > 0 || !isMongoRuntimeEnabled()) {
-        if (pgAssets.length > 0) {
-          return pgAssets;
-        }
-        const fallbackAssets = await listInstructionFallbackAssetsFromStorage();
-        return fallbackAssets;
-      }
-    }
-
-    if (!isMongoRuntimeEnabled()) {
+    if (!canUsePostgresAssets()) {
       return await listInstructionFallbackAssetsFromStorage();
     }
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instruction_assets");
-    const assets = await coll.find({}).sort({ createdAt: -1 }).toArray();
-    return assets
-      .map((asset) => normalizeInstructionAssetDocument(asset))
-      .filter(Boolean);
+    const pgAssets = await readPostgresInstructionAssets();
+    if (pgAssets.length > 0) {
+      return pgAssets;
+    }
+    return await listInstructionFallbackAssetsFromStorage();
   } catch (e) {
     console.error("[Assets] Error fetching assets:", e);
     return [];
@@ -16666,7 +15343,7 @@ function sendPostgresMigrationPending(res, featureName) {
   return res.status(503).json({
     success: false,
     migrationPending: true,
-    error: `${featureName} ยังไม่ได้ย้ายไป PostgreSQL ครบถ้วน จึงถูกปิดไว้ใน runtime ที่ปิด MongoDB`,
+    error: `${featureName} ยังไม่ได้ย้ายไป PostgreSQL ครบถ้วน จึงถูกปิดไว้ใน runtime ปัจจุบัน`,
   });
 }
 
@@ -16680,30 +15357,7 @@ function sendPostgresRequired(res, featureName) {
 
 app.get("/admin/instructions/library", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled()) {
-      return sendLegacyInstructionLibraryRetired(res);
-    }
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const libraryColl = db.collection("instruction_library");
-    const libraries = await libraryColl
-      .find(
-        {},
-        {
-          projection: {
-            date: 1,
-            savedAt: 1,
-            type: 1,
-            displayDate: 1,
-            displayTime: 1,
-            name: 1,
-            description: 1,
-          },
-        },
-      )
-      .sort({ date: -1 })
-      .toArray();
-    res.json({ success: true, libraries });
+    return sendLegacyInstructionLibraryRetired(res);
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
@@ -16712,26 +15366,7 @@ app.get("/admin/instructions/library", async (req, res) => {
 // Route: get instruction library by date (YYYY-MM-DD)
 app.get("/admin/instructions/library/:date", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled()) {
-      return sendLegacyInstructionLibraryRetired(res);
-    }
-    const { date } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const libraryColl = db.collection("instruction_library");
-    const doc = await libraryColl.findOne({ date });
-    if (!doc)
-      return res.json({
-        success: false,
-        error: "ไม่พบคลัง instruction ของวันที่ระบุ",
-      });
-    res.json({
-      success: true,
-      instructions: doc.instructions,
-      savedAt: doc.savedAt,
-      name: doc.name,
-      description: doc.description,
-    });
+    return sendLegacyInstructionLibraryRetired(res);
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
@@ -16740,51 +15375,7 @@ app.get("/admin/instructions/library/:date", async (req, res) => {
 // Route: สร้าง instruction library ด้วยตนเอง
 app.post("/admin/instructions/library-now", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled()) {
-      return sendLegacyInstructionLibraryRetired(res);
-    }
-    const { name, description } = req.body;
-    const now = new Date();
-    const thaiNow = new Date(
-      now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }),
-    );
-    const dateStr = thaiNow.toISOString().split("T")[0];
-    const timeStr = thaiNow.toTimeString().split(" ")[0].replace(/:/g, "-");
-    const libraryKey = `${dateStr}_manual_${timeStr}`;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const instrColl = db.collection("instructions");
-    const libraryColl = db.collection("instruction_library");
-
-    const instructions = await instrColl.find({}).toArray();
-    await libraryColl.updateOne(
-      { date: libraryKey },
-      {
-        $set: {
-          date: libraryKey,
-          instructions,
-          savedAt: new Date(),
-          type: "manual",
-          displayDate: dateStr,
-          displayTime: thaiNow.toLocaleTimeString("th-TH"),
-          name: name || `คลัง ${dateStr} ${timeStr}`,
-          description:
-            description ||
-            `คลัง instruction ที่สร้างด้วยตนเองเมื่อวันที่ ${dateStr} เวลา ${timeStr}`,
-        },
-      },
-      { upsert: true },
-    );
-
-    invalidateInstructionPromptCaches();
-
-    res.json({
-      success: true,
-      message: `บันทึก instructions ลงคลังเรียบร้อยแล้ว (${instructions.length} instructions)`,
-      libraryKey: libraryKey,
-      instructionCount: instructions.length,
-    });
+    return sendLegacyInstructionLibraryRetired(res);
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
@@ -16793,36 +15384,7 @@ app.post("/admin/instructions/library-now", async (req, res) => {
 // Route: อัปเดตชื่อหรือคำอธิบายของ instruction library
 app.put("/admin/instructions/library/:date", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled()) {
-      return sendLegacyInstructionLibraryRetired(res);
-    }
-    const { date } = req.params;
-    const { name, description } = req.body;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const libraryColl = db.collection("instruction_library");
-
-    const updateFields = {};
-    if (name !== undefined) updateFields.name = name;
-    if (description !== undefined) updateFields.description = description;
-
-    if (Object.keys(updateFields).length === 0) {
-      return res.json({ success: false, error: "ไม่มีข้อมูลที่ต้องการอัปเดต" });
-    }
-
-    const result = await libraryColl.updateOne(
-      { date },
-      { $set: updateFields },
-    );
-    if (result.matchedCount === 0) {
-      return res.json({
-        success: false,
-        error: "ไม่พบคลัง instruction ของวันที่ระบุ",
-      });
-    }
-    invalidateInstructionPromptCaches();
-    res.json({ success: true });
+    return sendLegacyInstructionLibraryRetired(res);
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
@@ -16831,24 +15393,7 @@ app.put("/admin/instructions/library/:date", async (req, res) => {
 // Route: ลบ instruction library ตามวันที่ระบุ
 app.delete("/admin/instructions/library/:date", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled()) {
-      return sendLegacyInstructionLibraryRetired(res);
-    }
-    const { date } = req.params;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const libraryColl = db.collection("instruction_library");
-
-    const result = await libraryColl.deleteOne({ date });
-    if (result.deletedCount === 0) {
-      return res.json({
-        success: false,
-        error: "ไม่พบคลัง instruction ของวันที่ระบุ",
-      });
-    }
-    invalidateInstructionPromptCaches();
-    res.json({ success: true });
+    return sendLegacyInstructionLibraryRetired(res);
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
@@ -16857,80 +15402,7 @@ app.delete("/admin/instructions/library/:date", async (req, res) => {
 // Route: คืนค่า instruction library
 app.post("/admin/instructions/restore/:date", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled()) {
-      return sendLegacyInstructionLibraryRetired(res);
-    }
-    const { date } = req.params;
-    const { createLibraryBefore } = req.body;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const instrColl = db.collection("instructions");
-    const libraryColl = db.collection("instruction_library");
-
-    // ดึงข้อมูล library ที่ต้องการ restore
-    const library = await libraryColl.findOne({ date });
-    if (!library) {
-      return res.json({
-        success: false,
-        error: "ไม่พบคลัง instruction ของวันที่ระบุ",
-      });
-    }
-
-    // บันทึกข้อมูลปัจจุบันลงคลังก่อน restore (ถ้าต้องการ)
-    if (createLibraryBefore) {
-      const currentInstructions = await instrColl.find({}).toArray();
-      const now = new Date();
-      const thaiNow = new Date(
-        now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }),
-      );
-      const dateStr = thaiNow.toISOString().split("T")[0];
-      const timeStr = thaiNow.toTimeString().split(" ")[0].replace(/:/g, "-");
-      const beforeRestoreKey = `${dateStr}_before_restore_${timeStr}`;
-
-      await libraryColl.updateOne(
-        { date: beforeRestoreKey },
-        {
-          $set: {
-            date: beforeRestoreKey,
-            instructions: currentInstructions,
-            savedAt: new Date(),
-            type: "before_restore",
-            displayDate: dateStr,
-            displayTime: thaiNow.toLocaleTimeString("th-TH"),
-            name: `คลังก่อนคืนค่า ${dateStr}`,
-            description: `คลัง instruction ที่บันทึกก่อนคืนค่าข้อมูลเมื่อวันที่ ${dateStr}`,
-          },
-        },
-        { upsert: true },
-      );
-    }
-
-    // ลบข้อมูลปัจจุบันทั้งหมด
-    await instrColl.deleteMany({});
-
-    // นำเข้าข้อมูลจาก library
-    if (library.instructions && library.instructions.length > 0) {
-      // ลบ _id เก่าและปรับปรุง timestamps
-      const instructionsToInsert = library.instructions.map((instr) => {
-        const { _id, ...instructionData } = instr;
-        return {
-          ...instructionData,
-          restoredAt: new Date(),
-          restoredFrom: date,
-        };
-      });
-
-      await instrColl.insertMany(instructionsToInsert);
-    }
-
-    invalidateInstructionPromptCaches();
-
-    res.json({
-      success: true,
-      message: `คืนค่าข้อมูลจาก ${library.name || library.displayDate || date} เรียบร้อยแล้ว (${library.instructions.length} instructions)`,
-      restoredCount: library.instructions.length,
-    });
+    return sendLegacyInstructionLibraryRetired(res);
   } catch (err) {
     console.error("Restore error:", err);
     res.json({ success: false, error: err.message });
@@ -16945,56 +15417,7 @@ app.post(
   upload.single("excelFile"),
   async (req, res) => {
     try {
-      if (!req.file) {
-        return res
-          .status(400)
-          .json({ success: false, error: "กรุณาเลือกไฟล์ Excel" });
-      }
-
-      console.log(
-        `[Excel] เริ่มประมวลผลไฟล์: ${req.file.originalname} (${req.file.size} bytes)`,
-      );
-
-      // ประมวลผลไฟล์ Excel
-      const instructions = processExcelToInstructions(
-        req.file.buffer,
-        req.file.originalname,
-      );
-
-      if (instructions.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "ไม่พบข้อมูลในไฟล์ Excel หรือข้อมูลไม่ถูกต้อง",
-        });
-      }
-
-      // บันทึก instructions ทั้งหมดลงฐานข้อมูล
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instructions");
-
-      const insertPromises = instructions.map((instruction) => {
-        instruction.createdAt = new Date();
-        instruction.order = Date.now() + Math.random(); // เพื่อให้ไม่ซ้ำกัน
-        return coll.insertOne(instruction);
-      });
-
-      await Promise.all(insertPromises);
-
-      console.log(
-        `[Excel] บันทึก ${instructions.length} instructions เรียบร้อยแล้ว`,
-      );
-
-      res.json({
-        success: true,
-        message: `อัพโหลดและประมวลผลเรียบร้อย! สร้าง ${instructions.length} instruction จาก ${instructions.length} แท็บ`,
-        instructionsCount: instructions.length,
-        sheets: instructions.map((i) => ({
-          title: i.title,
-          type: i.type,
-          sheetName: i.sheetName,
-        })),
-      });
+      return sendLegacyInstructionsRetiredJson(res);
     } catch (error) {
       console.error("[Excel] ข้อผิดพลาดในการอัพโหลด:", error);
 
@@ -17097,9 +15520,7 @@ app.post("/admin/login", loginLimiter, async (req, res) => {
 
     const { passcode } = req.body;
     const verifyResult = await verifyPasscode({
-      db: canUsePostgresAdminPasscodes()
-        ? null
-        : (await connectDB()).db("chatbot"),
+      db: null,
       passcode,
       masterPasscode: ADMIN_MASTER_PASSCODE,
       ipAddress: req.ip,
@@ -17144,10 +15565,7 @@ app.use("/admin", enforceAdminLogin);
 
 app.get("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
   try {
-    const db = canUsePostgresAdminPasscodes()
-      ? null
-      : (await connectDB()).db("chatbot");
-    const passcodes = await listPasscodes(db);
+    const passcodes = await listPasscodes(null);
     res.json({ success: true, passcodes });
   } catch (err) {
     console.error("[Auth] List passcodes error:", err);
@@ -17161,9 +15579,6 @@ app.get("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
 app.post("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
   try {
     const { label, passcode } = req.body || {};
-    const db = canUsePostgresAdminPasscodes()
-      ? null
-      : (await connectDB()).db("chatbot");
 
     const sanitizedPasscode = sanitizePasscodeInput(passcode);
     if (
@@ -17177,7 +15592,7 @@ app.post("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
       });
     }
 
-    const doc = await createPasscode(db, {
+    const doc = await createPasscode(null, {
       label: sanitizeLabelInput(label),
       passcode: sanitizedPasscode,
       createdBy: getAdminUserContext(req)?.role || "superadmin",
@@ -17198,10 +15613,7 @@ app.patch(
     try {
       const { id } = req.params;
       const { isActive } = req.body || {};
-      const db = canUsePostgresAdminPasscodes()
-        ? null
-        : (await connectDB()).db("chatbot");
-      const doc = await togglePasscode(db, id, isActive !== false);
+      const doc = await togglePasscode(null, id, isActive !== false);
       res.json({ success: true, passcode: doc });
     } catch (err) {
       res.status(400).json({
@@ -17215,10 +15627,7 @@ app.patch(
 app.delete("/api/admin-passcodes/:id", requireSuperadmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const db = canUsePostgresAdminPasscodes()
-      ? null
-      : (await connectDB()).db("chatbot");
-    await deletePasscode(db, id);
+    await deletePasscode(null, id);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({
@@ -17242,15 +15651,12 @@ app.get("/s/:code", async (req, res) => {
     if (!isValidShortCode(code)) {
       return res.status(404).send("Not Found");
     }
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
-    const doc = await resolveShortLink(db, code);
+    const doc = await resolveShortLink(code);
     if (!doc?.targetUrl) {
       return res.status(404).send("Not Found");
     }
 
-    registerShortLinkHit(db, code)
+    registerShortLinkHit(code)
       .catch((err) => {
         console.warn("[ShortLink] Update hit count failed:", err?.message || err);
       });
@@ -19258,7 +17664,7 @@ async function readInstructionAssetBuffer(seg) {
       }
     } catch (err) {
       console.warn(
-        "[Assets] read buffer from PostgreSQL failed, fallback to Mongo/filesystem/url:",
+        "[Assets] read buffer from PostgreSQL failed, fallback to bucket/filesystem/url:",
         err?.message || err,
       );
     }
@@ -19467,9 +17873,6 @@ async function processFacebookMessageWithAI(
   facebookBot,
 ) {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     const aiModel = facebookBot.aiModel || "gpt-5";
 
     let systemPrompt = "คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้";
@@ -19484,7 +17887,7 @@ async function processFacebookMessageWithAI(
     if (fbRuntimeInstructionContext.promptSelections.length > 0) {
       const prompt = await buildSystemPromptFromSelections(
         fbRuntimeInstructionContext.promptSelections,
-        db,
+        null,
       );
       if (prompt.trim()) {
         systemPrompt = prompt.trim();
@@ -19631,11 +18034,8 @@ async function processMessageWithAI(message, userId, lineBot) {
   let systemPrompt = "คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้";
 
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     if (lineSelections.length > 0) {
-      const prompt = await buildSystemPromptFromSelections(lineSelections, db);
+      const prompt = await buildSystemPromptFromSelections(lineSelections, null);
       if (prompt.trim()) {
         systemPrompt = prompt.trim();
       }
@@ -21850,51 +20250,7 @@ app.get("/api/instructions/library", async (req, res) => {
     let legacyLibraries = [];
     let instructionV2Docs = [];
 
-    if (isMongoRuntimeEnabled()) {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const libraryColl = db.collection("instruction_library");
-
-      [legacyLibraries, instructionV2Docs] = await Promise.all([
-        libraryColl
-          .find(
-            {},
-            {
-              projection: {
-                date: 1,
-                name: 1,
-                description: 1,
-                displayDate: 1,
-                displayTime: 1,
-                type: 1,
-                savedAt: 1,
-                convertedInstructionId: 1,
-                convertedAt: 1,
-              },
-            },
-          )
-          .sort({ date: -1 })
-          .toArray(),
-        db
-          .collection("instructions_v2")
-          .aggregate([
-            {
-              $project: {
-                instructionId: 1,
-                name: 1,
-                description: 1,
-                createdAt: 1,
-                updatedAt: 1,
-                dataItemCount: {
-                  $size: { $ifNull: ["$dataItems", []] },
-                },
-              },
-            },
-            { $sort: { updatedAt: -1, createdAt: -1 } },
-          ])
-          .toArray(),
-      ]);
-    } else if (isPostgresConfigured()) {
+    if (isPostgresConfigured()) {
       const pgResult = await pgQuery(
         `
           SELECT
@@ -22002,144 +20358,7 @@ app.get("/api/instructions/library", async (req, res) => {
 // Route: แปลง instruction library (legacy) เป็น Instruction V2
 app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
   try {
-    const { date } = req.params;
-    if (!isMongoRuntimeEnabled()) {
-      return sendLegacyInstructionLibraryRetired(res);
-    }
-    if (!date) {
-      return res
-        .status(400)
-        .json({ success: false, error: "กรุณาระบุวันที่ของคลัง instruction" });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const libraryColl = db.collection("instruction_library");
-    const v2Coll = db.collection("instructions_v2");
-
-    const library = await libraryColl.findOne({ date });
-    if (!library) {
-      return res
-        .status(404)
-        .json({ success: false, error: "ไม่พบคลัง instruction ของวันที่ระบุ" });
-    }
-
-    const existingInstruction = await v2Coll.findOne({ libraryDate: date });
-    if (existingInstruction) {
-      return res.json({
-        success: true,
-        alreadyConverted: true,
-        instruction: {
-          ...existingInstruction,
-          _id: existingInstruction._id.toString(),
-        },
-      });
-    }
-
-    const now = new Date();
-    const instructions = Array.isArray(library.instructions)
-      ? library.instructions
-      : [];
-
-    const buildInstructionName = () => {
-      if (library.name) return library.name;
-      if (library.displayDate) return `Library: ${library.displayDate}`;
-      if (library.date) {
-        const match =
-          library.date &&
-          library.date.match(
-            /^(\d{4})-(\d{2})-(\d{2})_(.+?)_(\d{2})-(\d{2})-(\d{2})$/,
-          );
-        if (match) {
-          const [, year, month, day, type, hour, minute] = match;
-          const thaiMonths = [
-            "ม.ค.",
-            "ก.พ.",
-            "มี.ค.",
-            "เม.ย.",
-            "พ.ค.",
-            "มิ.ย.",
-            "ก.ค.",
-            "ส.ค.",
-            "ก.ย.",
-            "ต.ค.",
-            "พ.ย.",
-            "ธ.ค.",
-          ];
-          const monthName = thaiMonths[parseInt(month, 10) - 1] || month;
-          const typeLabel =
-            type === "manual"
-              ? "บันทึกเอง"
-              : type === "auto"
-                ? "อัตโนมัติ"
-                : type;
-          return `Library: ${day} ${monthName} ${year} - ${hour}:${minute} (${typeLabel})`;
-        }
-        return `Library: ${library.date}`;
-      }
-      return "Instruction จาก Library เดิม";
-    };
-
-    const dataItems = instructions.map((oldInstr, index) => {
-      const item = {
-        itemId: generateDataItemId(),
-        title: oldInstr.title || `ชุดข้อมูลที่ ${index + 1}`,
-        type: oldInstr.type || "text",
-        content: "",
-        data: null,
-        order: index + 1,
-        createdAt: oldInstr.createdAt || now,
-        updatedAt: oldInstr.updatedAt || now,
-      };
-
-      if (oldInstr.type === "text") {
-        item.content = oldInstr.content || "";
-      } else if (oldInstr.type === "table") {
-        item.data = oldInstr.data || { columns: [], rows: [] };
-      }
-      return item;
-    });
-
-    const instructionDoc = {
-      instructionId: generateInstructionId(),
-      name: buildInstructionName(),
-      description:
-        library.description ||
-        `Instruction จาก Library: ${library.displayDate || date}`,
-      dataItems,
-      conversationStarter: {
-        enabled: false,
-        messages: [],
-        updatedAt: now,
-      },
-      usageCount: 0,
-      libraryDate: date,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const insertResult = await v2Coll.insertOne(instructionDoc);
-    instructionDoc._id = insertResult.insertedId.toString();
-    const snapshotResult = await createDashboardSnapshotOrThrow(
-      insertResult.insertedId,
-      "create_instruction",
-      db,
-      "dashboard_api",
-    );
-    instructionDoc.version = snapshotResult.version;
-    instructionDoc.updatedAt = snapshotResult.snapshotAt;
-
-    await libraryColl.updateOne(
-      { date },
-      {
-        $set: {
-          convertedInstructionId: instructionDoc.instructionId,
-          convertedAt: now,
-        },
-      },
-    );
-
-    res.json({ success: true, instruction: instructionDoc });
+    return sendLegacyInstructionLibraryRetired(res);
   } catch (err) {
     console.error("Error converting instruction library:", err);
     res.status(500).json({
@@ -22153,69 +20372,45 @@ app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
 app.get("/api/instructions/library/:date/details", async (req, res) => {
   try {
     const { date } = req.params;
-    if (!isMongoRuntimeEnabled()) {
-      if (!isPostgresConfigured()) {
-        return sendLegacyInstructionLibraryRetired(res);
-      }
-      const instruction = await getPostgresInstructionV2ByRef(date);
-      if (!instruction) {
-        return res.status(404).json({ error: "ไม่พบ instruction ที่ระบุ" });
-      }
-
-      const savedAt = instruction.updatedAt || instruction.createdAt || null;
-      const displayDate = savedAt
-        ? new Date(savedAt).toLocaleDateString("th-TH", {
-          timeZone: "Asia/Bangkok",
-          year: "numeric",
-          month: "short",
-          day: "2-digit",
-        })
-        : "";
-      const displayTime = savedAt
-        ? new Date(savedAt).toLocaleTimeString("th-TH", {
-          timeZone: "Asia/Bangkok",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-        : "";
-
-      return res.json({
-        success: true,
-        library: {
-          date: instruction.instructionId || instruction._id,
-          name: instruction.name || "",
-          description: instruction.description || "",
-          displayDate,
-          displayTime,
-          type: "v2",
-          savedAt,
-          instructions: Array.isArray(instruction.dataItems)
-            ? instruction.dataItems
-            : [],
-        },
-      });
+    if (!isPostgresConfigured()) {
+      return sendLegacyInstructionLibraryRetired(res);
     }
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const libraryColl = db.collection("instruction_library");
-
-    const library = await libraryColl.findOne({ date });
-    if (!library) {
-      return res.status(404).json({ error: "ไม่พบคลัง instruction ที่ระบุ" });
+    const instruction = await getPostgresInstructionV2ByRef(date);
+    if (!instruction) {
+      return res.status(404).json({ error: "ไม่พบ instruction ที่ระบุ" });
     }
+
+    const savedAt = instruction.updatedAt || instruction.createdAt || null;
+    const displayDate = savedAt
+      ? new Date(savedAt).toLocaleDateString("th-TH", {
+        timeZone: "Asia/Bangkok",
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+      })
+      : "";
+    const displayTime = savedAt
+      ? new Date(savedAt).toLocaleTimeString("th-TH", {
+        timeZone: "Asia/Bangkok",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+      : "";
 
     res.json({
       success: true,
       library: {
-        date: library.date,
-        name: library.name,
-        description: library.description,
-        displayDate: library.displayDate,
-        displayTime: library.displayTime,
-        type: library.type,
-        savedAt: library.savedAt,
-        instructions: library.instructions || [],
+        date: instruction.instructionId || instruction._id,
+        name: instruction.name || "",
+        description: instruction.description || "",
+        displayDate,
+        displayTime,
+        type: "v2",
+        savedAt,
+        instructions: Array.isArray(instruction.dataItems)
+          ? instruction.dataItems
+          : [],
       },
     });
   } catch (err) {
@@ -22229,83 +20424,12 @@ app.get("/api/instructions/library/:date/details", async (req, res) => {
 // Route: ดึงรายการ instructions พร้อมประวัติเวอร์ชัน
 app.get("/api/instructions", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled()) {
-      return res.status(410).json({
-        success: false,
-        retired: true,
-        error:
-          "Legacy instructions API ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน /api/instructions-v2 และ /api/instruction-ai/versions แทน",
-      });
-    }
-    await ensureInstructionIdentifiers();
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const instrColl = db.collection("instructions");
-    const versionColl = db.collection("instruction_versions");
-
-    const instructions = await instrColl
-      .find({})
-      .sort({ order: 1, title: 1, createdAt: 1 })
-      .toArray();
-    const instructionIds = instructions
-      .map((instr) => instr.instructionId)
-      .filter(Boolean);
-
-    let versionDocs = [];
-    if (instructionIds.length > 0) {
-      versionDocs = await versionColl
-        .find({ instructionId: { $in: instructionIds } })
-        .sort({ instructionId: 1, version: -1 })
-        .toArray();
-    }
-
-    const versionMap = new Map();
-    for (const doc of versionDocs) {
-      if (!doc || !doc.instructionId) continue;
-      if (!versionMap.has(doc.instructionId))
-        versionMap.set(doc.instructionId, []);
-      versionMap.get(doc.instructionId).push(doc);
-    }
-
-    const response = instructions.map((instr) => {
-      const currentType = instr.type || "text";
-      const historyDocs = versionMap.get(instr.instructionId) || [];
-      const versionHistory = historyDocs.map((item) => ({
-        version: item.version,
-        title: item.title || "",
-        type: item.type || "text",
-        updatedAt: item.updatedAt || item.snapshotAt || item.createdAt || null,
-        snapshotAt: item.snapshotAt || null,
-      }));
-
-      let preview = "";
-      if (currentType === "table") {
-        const rowCount = instr?.data?.rows ? instr.data.rows.length : 0;
-        const colCount = instr?.data?.columns ? instr.data.columns.length : 0;
-        preview = `ตาราง ${rowCount} แถว ${colCount} คอลัมน์`;
-      } else {
-        const text = (instr?.content || "").toString();
-        preview = text.length > 160 ? `${text.slice(0, 157)}...` : text;
-      }
-
-      return {
-        _id: instr._id,
-        instructionId: instr.instructionId,
-        version: instr.version || 1,
-        title: instr.title || "",
-        type: currentType,
-        content: instr.content || "",
-        data: currentType === "table" ? instr.data || null : null,
-        createdAt: instr.createdAt || null,
-        updatedAt: instr.updatedAt || null,
-        order: instr.order || null,
-        preview,
-        versionHistory,
-      };
+    return res.status(410).json({
+      success: false,
+      retired: true,
+      error:
+        "Legacy instructions API ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน /api/instructions-v2 และ /api/instruction-ai/versions แทน",
     });
-
-    res.json({ success: true, instructions: response });
   } catch (err) {
     console.error("Error fetching instructions with versions:", err);
     res
@@ -22319,76 +20443,12 @@ app.get(
   "/api/instructions/:instructionId/versions/:version",
   async (req, res) => {
     try {
-      if (!isMongoRuntimeEnabled()) {
-        return res.status(410).json({
-          success: false,
-          retired: true,
-          error:
-            "Legacy instruction version API ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน /api/instruction-ai/versions แทน",
-        });
-      }
-      const { instructionId, version } = req.params;
-      if (!instructionId) {
-        return res
-          .status(400)
-          .json({ success: false, error: "กรุณาระบุ instructionId" });
-      }
-
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const instrColl = db.collection("instructions");
-      const versionColl = db.collection("instruction_versions");
-
-      const versionParam =
-        version?.toLowerCase?.() === "latest" ? "latest" : version;
-      let doc = null;
-      let source = "version";
-
-      if (versionParam === "latest") {
-        doc = await instrColl.findOne({ instructionId });
-        source = "current";
-      } else {
-        const versionNumber = parseInt(versionParam, 10);
-        if (!Number.isInteger(versionNumber) || versionNumber <= 0) {
-          return res
-            .status(400)
-            .json({ success: false, error: "เวอร์ชันไม่ถูกต้อง" });
-        }
-        doc = await versionColl.findOne({
-          instructionId,
-          version: versionNumber,
-        });
-        if (!doc) {
-          // หากไม่พบในคลังเวอร์ชัน ลองดึงเวอร์ชันปัจจุบันใน instructions
-          doc = await instrColl.findOne({
-            instructionId,
-            version: versionNumber,
-          });
-          if (doc) source = "current";
-        }
-      }
-
-      if (!doc) {
-        return res
-          .status(404)
-          .json({ success: false, error: "ไม่พบ instruction เวอร์ชันที่ระบุ" });
-      }
-
-      const payload = {
-        instructionId: doc.instructionId || instructionId,
-        version:
-          doc.version || (source === "current" ? doc.version || 1 : null),
-        title: doc.title || "",
-        type: doc.type || "text",
-        content: doc.content || "",
-        data: doc.type === "table" ? doc.data || null : null,
-        createdAt: doc.createdAt || null,
-        updatedAt: doc.updatedAt || null,
-        snapshotAt: doc.snapshotAt || null,
-        source,
-      };
-
-      res.json({ success: true, instruction: payload });
+      return res.status(410).json({
+        success: false,
+        retired: true,
+        error:
+          "Legacy instruction version API ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน /api/instruction-ai/versions แทน",
+      });
     } catch (err) {
       console.error("Error fetching instruction version detail:", err);
       res.status(500).json({
@@ -23384,119 +21444,11 @@ app.post(
       const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
       let slug = generateSlugFromLabel(label);
 
-      if (canUsePostgresAssets()) {
-        const existing = await readPostgresInstructionAssetByLabel(label);
-        if (existing && !overwrite) {
-          return res.status(409).json({
-            success: false,
-            error: "label นี้มีอยู่แล้ว หากต้องการแทนที่ให้ส่ง overwrite=true",
-          });
-        }
-
-        if (existing?.slug) {
-          slug = existing.slug;
-        } else {
-          slug = await ensureUniqueInstructionSlugPostgres(slug, {
-            excludeLegacyAssetId: existing?._id?.toString?.() || existing?._id || null,
-          });
-        }
-
-        const fileName = `${slug}.jpg`;
-        const thumbName = `${slug}_thumb.jpg`;
-        const url = `${urlBase}/assets/instructions/${fileName}`;
-        const thumbUrl = `${urlBase}/assets/instructions/${thumbName}`;
-
-        if (existing) {
-          const removableKeys = [existing.storageKey, existing.thumbStorageKey].filter(
-            (value) => typeof value === "string" && value.trim(),
-          );
-          await Promise.all(
-            removableKeys.map(async (key) => {
-              try {
-                await deleteBucketObject(key);
-              } catch (err) {
-                if (!isBucketNotFoundError(err)) {
-                  console.warn("[BucketStorage] delete failed:", err?.message || err);
-                }
-              }
-            }),
-          );
-        }
-
-        const [mainUpload, thumbUpload] = await Promise.all([
-          uploadBufferToAssetStorage({
-            db: null,
-            gridFsBucketName: "instructionAssets",
-            storagePrefix: "instructions",
-            filename: fileName,
-            buffer: optimized,
-            contentType: "image/jpeg",
-            metadata: {
-              label,
-              slug,
-              type: "original",
-              width: metadata.width || null,
-              height: metadata.height || null,
-            },
-          }),
-          uploadBufferToAssetStorage({
-            db: null,
-            gridFsBucketName: "instructionAssets",
-            storagePrefix: "instructions",
-            filename: thumbName,
-            buffer: thumb,
-            contentType: "image/jpeg",
-            metadata: { label, slug, type: "thumb" },
-          }),
-        ]);
-
-        const sha256 = crypto
-          .createHash("sha256")
-          .update(optimized)
-          .digest("hex")
-          .slice(0, 16);
-        const doc = {
-          _id: existing?._id?.toString?.() || existing?._id || undefined,
-          label,
-          slug,
-          fileName,
-          thumbFileName: thumbName,
-          fileId: null,
-          thumbFileId: null,
-          storage: mainUpload.storage,
-          storageKey: mainUpload.storageKey || null,
-          thumbStorageKey: thumbUpload.storageKey || null,
-          mime: "image/jpeg",
-          size: optimized.length,
-          width: metadata.width || null,
-          height: metadata.height || null,
-          sha256,
-          alt,
-          description,
-          url,
-          thumbUrl,
-          updatedAt: new Date(),
-          createdAt: existing?.createdAt || new Date(),
-        };
-
-        const savedAsset = await upsertPostgresInstructionAssetDocument(doc, existing);
-        if (!savedAsset) {
-          throw new Error("ไม่สามารถบันทึกข้อมูลรูปภาพได้");
-        }
-
-        invalidateAssetRuntimeCaches();
-        res.json({
-          success: true,
-          asset: mapInstructionAssetResponse(savedAsset),
-        });
-        return;
+      if (!canUsePostgresAssets()) {
+        return sendPostgresRequired(res, "Instruction assets");
       }
 
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instruction_assets");
-
-      const existing = await coll.findOne({ label });
+      const existing = await readPostgresInstructionAssetByLabel(label);
       if (existing && !overwrite) {
         return res.status(409).json({
           success: false,
@@ -23507,8 +21459,8 @@ app.post(
       if (existing?.slug) {
         slug = existing.slug;
       } else {
-        slug = await ensureUniqueInstructionSlug(coll, slug, {
-          excludeLabel: existing ? label : undefined,
+        slug = await ensureUniqueInstructionSlugPostgres(slug, {
+          excludeLegacyAssetId: existing?._id?.toString?.() || existing?._id || null,
         });
       }
 
@@ -23518,21 +21470,25 @@ app.post(
       const thumbUrl = `${urlBase}/assets/instructions/${thumbName}`;
 
       if (existing) {
-        await deleteStoredAssetEntries(db, "instructionAssets", [
-          { storageKey: existing.storageKey, id: existing.fileId },
-          { storageKey: existing.thumbStorageKey, id: existing.thumbFileId },
-          { filename: existing.fileName },
-          {
-            filename:
-              existing.thumbFileName || `${existing.slug}_thumb.jpg`,
-          },
-        ]);
+        const removableKeys = [existing.storageKey, existing.thumbStorageKey].filter(
+          (value) => typeof value === "string" && value.trim(),
+        );
+        await Promise.all(
+          removableKeys.map(async (key) => {
+            try {
+              await deleteBucketObject(key);
+            } catch (err) {
+              if (!isBucketNotFoundError(err)) {
+                console.warn("[BucketStorage] delete failed:", err?.message || err);
+              }
+            }
+          }),
+        );
       }
 
       const [mainUpload, thumbUpload] = await Promise.all([
         uploadBufferToAssetStorage({
-          db,
-          gridFsBucketName: "instructionAssets",
+          db: null,
           storagePrefix: "instructions",
           filename: fileName,
           buffer: optimized,
@@ -23546,8 +21502,7 @@ app.post(
           },
         }),
         uploadBufferToAssetStorage({
-          db,
-          gridFsBucketName: "instructionAssets",
+          db: null,
           storagePrefix: "instructions",
           filename: thumbName,
           buffer: thumb,
@@ -23562,12 +21517,13 @@ app.post(
         .digest("hex")
         .slice(0, 16);
       const doc = {
+        _id: existing?._id?.toString?.() || existing?._id || undefined,
         label,
         slug,
         fileName,
         thumbFileName: thumbName,
-        fileId: mainUpload.fileId,
-        thumbFileId: thumbUpload.fileId,
+        fileId: null,
+        thumbFileId: null,
         storage: mainUpload.storage,
         storageKey: mainUpload.storageKey || null,
         thumbStorageKey: thumbUpload.storageKey || null,
@@ -23584,15 +21540,12 @@ app.post(
         createdAt: existing?.createdAt || new Date(),
       };
 
-      await coll.updateOne({ label }, { $set: doc }, { upsert: true });
-
-      const savedAsset = await coll.findOne({ label });
+      const savedAsset = await upsertPostgresInstructionAssetDocument(doc, existing);
       if (!savedAsset) {
         throw new Error("ไม่สามารถบันทึกข้อมูลรูปภาพได้");
       }
 
-      await syncInstructionAssetToCollections(db, savedAsset);
-
+      invalidateAssetRuntimeCaches();
       res.json({
         success: true,
         asset: mapInstructionAssetResponse(savedAsset),
@@ -23620,47 +21573,10 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
         .json({ success: false, error: "กรุณาระบุชื่อรูปภาพ" });
     }
 
-    if (canUsePostgresAssets()) {
-      const doc = await readPostgresInstructionAssetByLabel(originalLabel);
-      if (!doc) {
-        return res
-          .status(404)
-          .json({ success: false, error: "ไม่พบรูปภาพที่ต้องการแก้ไข" });
-      }
-
-      if (newLabel !== originalLabel) {
-        const exists = await readPostgresInstructionAssetByLabel(newLabel);
-        if (exists) {
-          return res
-            .status(409)
-            .json({ success: false, error: "มีชื่อรูปภาพนี้อยู่แล้ว" });
-        }
-      }
-
-      const updatedDoc = await upsertPostgresInstructionAssetDocument(
-        {
-          ...doc,
-          _id: doc._id?.toString?.() || doc._id,
-          label: newLabel,
-          description,
-          alt: description,
-          updatedAt: new Date(),
-        },
-        doc,
-      );
-
-      invalidateAssetRuntimeCaches();
-      return res.json({
-        success: true,
-        asset: mapInstructionAssetResponse(updatedDoc),
-      });
+    if (!canUsePostgresAssets()) {
+      return sendPostgresRequired(res, "Instruction assets");
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instruction_assets");
-
-    const doc = await coll.findOne({ label: originalLabel });
+    const doc = await readPostgresInstructionAssetByLabel(originalLabel);
     if (!doc) {
       return res
         .status(404)
@@ -23668,7 +21584,7 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
     }
 
     if (newLabel !== originalLabel) {
-      const exists = await coll.findOne({ label: newLabel });
+      const exists = await readPostgresInstructionAssetByLabel(newLabel);
       if (exists) {
         return res
           .status(409)
@@ -23676,17 +21592,19 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
       }
     }
 
-    const update = {
-      label: newLabel,
-      description,
-      alt: description,
-      updatedAt: new Date(),
-    };
+    const updatedDoc = await upsertPostgresInstructionAssetDocument(
+      {
+        ...doc,
+        _id: doc._id?.toString?.() || doc._id,
+        label: newLabel,
+        description,
+        alt: description,
+        updatedAt: new Date(),
+      },
+      doc,
+    );
 
-    await coll.updateOne({ _id: doc._id }, { $set: update });
-    const updatedDoc = await coll.findOne({ _id: doc._id });
-    await syncInstructionAssetToCollections(db, updatedDoc);
-
+    invalidateAssetRuntimeCaches();
     res.json({ success: true, asset: mapInstructionAssetResponse(updatedDoc) });
   } catch (err) {
     console.error("[Assets] update error:", err);
@@ -23698,25 +21616,13 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
 app.delete("/admin/instructions/assets/:label", async (req, res) => {
   try {
     const { label } = req.params;
-
-    if (canUsePostgresAssets()) {
-      const doc = await readPostgresInstructionAssetByLabel(label);
-      if (!doc) {
-        return res.status(404).json({ success: false, error: "ไม่พบ asset" });
-      }
-      await performPostgresInstructionAssetDeletion(doc);
-      return res.json({ success: true });
+    if (!canUsePostgresAssets()) {
+      return sendPostgresRequired(res, "Instruction assets");
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instruction_assets");
-    const doc = await coll.findOne({ label });
+    const doc = await readPostgresInstructionAssetByLabel(label);
     if (!doc)
       return res.status(404).json({ success: false, error: "ไม่พบ asset" });
-
-    await performInstructionAssetDeletion(db, doc);
-
+    await performPostgresInstructionAssetDeletion(doc);
     res.json({ success: true });
   } catch (err) {
     console.error("[Assets] delete error:", err);
@@ -23742,51 +21648,21 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
         .json({ success: false, error: "กรุณาระบุชื่อรูปภาพที่ต้องการลบ" });
     }
 
-    if (canUsePostgresAssets()) {
-      const deleted = [];
-      const failed = [];
-
-      for (const label of labels) {
-        try {
-          const doc = await readPostgresInstructionAssetByLabel(label);
-          if (!doc) {
-            failed.push({ label, error: "ไม่พบรูปภาพ" });
-            continue;
-          }
-          await performPostgresInstructionAssetDeletion(doc);
-          deleted.push(label);
-        } catch (err) {
-          failed.push({ label, error: err.message || "ลบไม่สำเร็จ" });
-        }
-      }
-
-      if (deleted.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "ไม่สามารถลบรูปภาพได้",
-          failed,
-        });
-      }
-
-      return res.json({ success: true, deleted, failed });
+    if (!canUsePostgresAssets()) {
+      return sendPostgresRequired(res, "Instruction assets");
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instruction_assets");
-
     const deleted = [];
     const failed = [];
 
     for (const label of labels) {
       try {
-        const doc = await coll.findOne({ label });
+        const doc = await readPostgresInstructionAssetByLabel(label);
         if (!doc) {
           failed.push({ label, error: "ไม่พบรูปภาพ" });
           continue;
         }
 
-        await performInstructionAssetDeletion(db, doc);
+        await performPostgresInstructionAssetDeletion(doc);
         deleted.push(label);
       } catch (err) {
         failed.push({ label, error: err.message || "ลบไม่สำเร็จ" });
@@ -23814,115 +21690,64 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
 // Check and fix asset data consistency
 app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
   try {
-    if (canUsePostgresAssets()) {
-      const assets = await getInstructionAssets();
-      let okCount = 0;
-      let missingCount = 0;
-      const missingItems = [];
+    if (!canUsePostgresAssets()) {
+      return sendPostgresRequired(res, "Instruction assets");
+    }
+    const assets = await getInstructionAssets();
+    let okCount = 0;
+    let missingCount = 0;
+    const missingItems = [];
 
-      for (const asset of assets) {
-        const mainState = await checkBucketObjectCandidates(
-          buildBucketKeyCandidates("instructions", asset.storageKey, asset.fileName),
-        );
-        const thumbState = await checkBucketObjectCandidates(
-          buildBucketKeyCandidates(
-            "instructions",
-            asset.thumbStorageKey,
-            asset.thumbFileName,
-          ),
-        );
-        if (mainState.exists || thumbState.exists) {
-          okCount += 1;
-        } else {
-          missingCount += 1;
-          missingItems.push({
-            label: asset.label || asset.fileName || asset._id,
-            reason: "No files found in bucket/local",
-          });
-        }
+    for (const asset of assets) {
+      const mainState = await checkBucketObjectCandidates(
+        buildBucketKeyCandidates("instructions", asset.storageKey, asset.fileName),
+      );
+      const thumbState = await checkBucketObjectCandidates(
+        buildBucketKeyCandidates(
+          "instructions",
+          asset.thumbStorageKey,
+          asset.thumbFileName,
+        ),
+      );
+      if (mainState.exists || thumbState.exists) {
+        okCount += 1;
+      } else {
+        missingCount += 1;
+        missingItems.push({
+          label: asset.label || asset.fileName || asset._id,
+          reason: "No files found in bucket/local",
+        });
       }
+    }
 
-      return res.json({
-        success: true,
-        message:
-          missingCount > 0
-            ? `พบรายการที่ไฟล์หาย ${missingCount} รายการ`
-            : "ข้อมูลถูกต้องครบถ้วน",
-        results: {
-          instruction_assets: {
-            total: assets.length,
-            ok: okCount,
-            fixed: 0,
-            deleted: 0,
-            items: [],
-            deletedItems: missingItems,
-          },
-          follow_up_assets: {
-            total: 0,
-            ok: 0,
-            fixed: 0,
-            deleted: 0,
-            items: [],
-            deletedItems: [],
-          },
-        },
-        summary: {
+    return res.json({
+      success: true,
+      message:
+        missingCount > 0
+          ? `พบรายการที่ไฟล์หาย ${missingCount} รายการ`
+          : "ข้อมูลถูกต้องครบถ้วน",
+      results: {
+        instruction_assets: {
+          total: assets.length,
           ok: okCount,
           fixed: 0,
           deleted: 0,
+          items: [],
+          deletedItems: missingItems,
         },
-      });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    const results = {
-      instruction_assets: await checkAndFixAssetConsistency(
-        db,
-        "instruction_assets",
-        "instructionAssets",
-        {
-          storagePrefix: "instructions",
-          localDir: ASSETS_DIR,
-          removeFromCollections: true,
+        follow_up_assets: {
+          total: 0,
+          ok: 0,
+          fixed: 0,
+          deleted: 0,
+          items: [],
+          deletedItems: [],
         },
-      ),
-      follow_up_assets: await checkAndFixAssetConsistency(
-        db,
-        "follow_up_assets",
-        "followupAssets",
-        {
-          storagePrefix: "followup",
-          localDir: FOLLOWUP_ASSETS_DIR,
-          removeFromCollections: false,
-        },
-      ),
-    };
-
-    const totalFixed =
-      results.instruction_assets.fixed + results.follow_up_assets.fixed;
-    const totalDeleted =
-      results.instruction_assets.deleted + results.follow_up_assets.deleted;
-    const totalOk = results.instruction_assets.ok + results.follow_up_assets.ok;
-
-    let message = "ข้อมูลถูกต้องครบถ้วน";
-    if (totalFixed > 0 || totalDeleted > 0) {
-      const parts = [];
-      if (totalFixed > 0) parts.push(`ซ่อมแซม ${totalFixed} รายการ`);
-      if (totalDeleted > 0) parts.push(`ลบ ${totalDeleted} รายการ`);
-      message = parts.join(" และ ");
-      invalidateAssetRuntimeCaches();
-    }
-
-    res.json({
-      success: true,
-      message,
-      results,
+      },
       summary: {
-        ok: totalOk,
-        fixed: totalFixed,
-        deleted: totalDeleted,
+        ok: okCount,
+        fixed: 0,
+        deleted: 0,
       },
     });
   } catch (err) {
@@ -23933,340 +21758,6 @@ app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
     });
   }
 });
-
-async function checkAndFixAssetConsistency(
-  db,
-  collectionName,
-  bucketName,
-  options = {},
-) {
-  const {
-    storagePrefix = "assets",
-    localDir = null,
-    removeFromCollections = false,
-  } = options;
-  const coll = db.collection(collectionName);
-
-  const assets = await coll.find({}).toArray();
-  let fixedCount = 0;
-  let okCount = 0;
-  let deletedCount = 0;
-  const fixedItems = [];
-  const deletedItems = [];
-
-  for (const asset of assets) {
-    const label = asset.label || asset.fileName || asset._id.toString();
-    const baseName = getInstructionAssetBaseName(asset);
-    const mainFileNames = Array.from(
-      new Set(
-        [
-          asset.fileName,
-          ...buildInstructionAssetVariantFilenames(baseName, "main"),
-        ]
-          .filter((name) => typeof name === "string" && name.trim())
-          .map((name) => name.trim()),
-      ),
-    );
-    const thumbFileNames = Array.from(
-      new Set(
-        [
-          asset.thumbFileName,
-          ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
-        ]
-          .filter((name) => typeof name === "string" && name.trim())
-          .map((name) => name.trim()),
-      ),
-    );
-    let needsUpdate = false;
-    let needsDelete = false;
-    const updates = {};
-
-    const thumbId = asset.thumbFileId || asset.thumbId;
-    const thumbPrimaryName =
-      asset.thumbFileName || asset.thumbName || `${asset.label || baseName || "asset"}_thumb.jpg`;
-
-    const mainBucketState = await checkBucketObjectCandidates(
-      buildBucketKeyCandidates(storagePrefix, asset.storageKey, asset.fileName),
-    );
-    const thumbBucketState = await checkBucketObjectCandidates(
-      buildBucketKeyCandidates(storagePrefix, asset.thumbStorageKey, thumbPrimaryName),
-    );
-    const mainGridFsState = await checkGridFsVariantCandidates(
-      null,
-      asset.fileId,
-      mainFileNames,
-    );
-    const thumbGridFsState = await checkGridFsVariantCandidates(
-      null,
-      thumbId,
-      thumbFileNames,
-    );
-    const mainLocalState = checkLocalAssetCandidates(localDir, mainFileNames);
-    const thumbLocalState = checkLocalAssetCandidates(localDir, thumbFileNames);
-
-    const mainFileExists =
-      mainBucketState.exists || mainGridFsState.exists || mainLocalState.exists;
-    const thumbFileExists =
-      thumbBucketState.exists || thumbGridFsState.exists || thumbLocalState.exists;
-
-    if (
-      !asset.storageKey &&
-      mainBucketState.exists &&
-      mainBucketState.key
-    ) {
-      updates.storageKey = mainBucketState.key;
-      needsUpdate = true;
-    } else if (asset.storageKey && !mainBucketState.exists && isBucketConfigured()) {
-      updates.storageKey = null;
-      needsUpdate = true;
-    }
-
-    if (
-      !asset.thumbStorageKey &&
-      thumbBucketState.exists &&
-      thumbBucketState.key
-    ) {
-      updates.thumbStorageKey = thumbBucketState.key;
-      needsUpdate = true;
-    } else if (
-      asset.thumbStorageKey &&
-      !thumbBucketState.exists &&
-      isBucketConfigured()
-    ) {
-      updates.thumbStorageKey = null;
-      needsUpdate = true;
-    }
-
-    if (!asset.fileId && mainGridFsState.fileId) {
-      updates.fileId = mainGridFsState.fileId;
-      needsUpdate = true;
-    } else if (asset.fileId && !mainGridFsState.idExists && !mainBucketState.exists) {
-      console.log(`[Consistency] Missing fileId ${asset.fileId} for ${label}`);
-      updates.fileId = null;
-      needsUpdate = true;
-    }
-
-    if (!thumbId && thumbGridFsState.fileId) {
-      updates.thumbFileId = thumbGridFsState.fileId;
-      if (asset.thumbId) updates.thumbId = thumbGridFsState.fileId;
-      needsUpdate = true;
-    } else if (thumbId && !thumbGridFsState.idExists && !thumbBucketState.exists) {
-      console.log(`[Consistency] Missing thumbFileId ${thumbId} for ${label}`);
-      updates.thumbFileId = null;
-      if (asset.thumbId) updates.thumbId = null;
-      needsUpdate = true;
-    }
-
-    if (!mainFileExists) {
-      updates.fileId = null;
-      updates.storageKey = null;
-      updates.fileName = null;
-      updates.url = null;
-      updates.mime = null;
-      needsUpdate = true;
-      deleteLocalAssetFileInDir(localDir, asset.fileName);
-    }
-
-    if (!thumbFileExists) {
-      updates.thumbFileId = null;
-      if (asset.thumbId) updates.thumbId = null;
-      updates.thumbStorageKey = null;
-      updates.thumbFileName = null;
-      if (asset.thumbName) updates.thumbName = null;
-      updates.thumbUrl = null;
-      updates.thumbMime = null;
-      needsUpdate = true;
-      deleteLocalAssetFileInDir(localDir, thumbPrimaryName);
-    }
-
-    // Delete orphaned records (no files at all)
-    if (!mainFileExists && !thumbFileExists) {
-      console.log(`[Consistency] Deleting orphaned record: ${label}`);
-      if (removeFromCollections) {
-        await removeInstructionAssetFromCollections(db, asset);
-      }
-      await deleteStoredAssetEntries(db, bucketName, [
-        { storageKey: asset.storageKey, id: asset.fileId, filename: asset.fileName },
-        {
-          storageKey: asset.thumbStorageKey,
-          id: asset.thumbFileId || asset.thumbId,
-          filename: thumbPrimaryName,
-        },
-      ]);
-      await coll.deleteOne({ _id: asset._id });
-      deleteLocalAssetFileInDir(localDir, asset.fileName);
-      deleteLocalAssetFileInDir(localDir, thumbPrimaryName);
-      deletedItems.push({
-        label,
-        reason: isBucketConfigured()
-          ? "No files in bucket/GridFS/local"
-          : "No files in GridFS/local",
-      });
-      deletedCount++;
-      needsDelete = true;
-    }
-
-    if (needsDelete) {
-      continue;
-    }
-
-    if (needsUpdate) {
-      await coll.updateOne({ _id: asset._id }, { $set: updates });
-      fixedItems.push({ label, fixes: updates });
-      fixedCount++;
-    } else {
-      okCount++;
-    }
-  }
-
-  return {
-    total: assets.length,
-    ok: okCount,
-    fixed: fixedCount,
-    deleted: deletedCount,
-    items: fixedItems,
-    deletedItems,
-  };
-}
-
-async function resolveInstructionAssetStream(db, asset, { isThumbRequest }) {
-  if (!db || !asset) {
-    return { stream: null, mime: null, missingReferences: {} };
-  }
-
-  const bucketCandidates = isThumbRequest
-    ? [
-      {
-        variant: "thumb",
-        keys: buildBucketKeyCandidates(
-          "instructions",
-          asset.thumbStorageKey,
-          asset.thumbFileName,
-        ),
-      },
-      {
-        variant: "main",
-        keys: buildBucketKeyCandidates(
-          "instructions",
-          asset.storageKey,
-          asset.fileName,
-        ),
-      },
-    ]
-    : [
-      {
-        variant: "main",
-        keys: buildBucketKeyCandidates(
-          "instructions",
-          asset.storageKey,
-          asset.fileName,
-        ),
-      },
-      {
-        variant: "thumb",
-        keys: buildBucketKeyCandidates(
-          "instructions",
-          asset.thumbStorageKey,
-          asset.thumbFileName,
-        ),
-      },
-    ];
-  for (const candidate of bucketCandidates) {
-    const bucketResult = await getFirstBucketObjectStream(candidate.keys);
-    if (bucketResult?.stream) {
-      const isThumbVariant = candidate.variant === "thumb";
-      return {
-        stream: bucketResult.stream,
-        mime: isThumbVariant
-          ? asset.thumbMime || asset.mime || "image/jpeg"
-          : asset.mime || asset.thumbMime || "image/jpeg",
-        missingReferences: {
-          main: { id: false, filename: false },
-          thumb: { id: false, filename: false },
-        },
-        servedVariant: candidate.variant,
-      };
-    }
-  }
-
-  const missingReferences = {
-    main: {
-      id: Boolean(asset.fileId),
-      filename: Boolean(asset.fileName),
-    },
-    thumb: {
-      id: Boolean(asset.thumbFileId),
-      filename: Boolean(asset.thumbFileName),
-    },
-  };
-
-  return { stream: null, mime: null, missingReferences, servedVariant: null };
-}
-
-async function markInstructionAssetMissingVariants(
-  db,
-  asset,
-  missingReferences = {},
-) {
-  if (!db || !asset) return;
-  const coll = db.collection("instruction_assets");
-  const updates = {};
-  let shouldUpdate = false;
-
-  if (missingReferences.main?.id && asset.fileId) {
-    updates.fileId = null;
-    shouldUpdate = true;
-  }
-
-  if (missingReferences.main?.filename && asset.fileName) {
-    updates.fileName = null;
-    updates.url = null;
-    updates.mime = null;
-    shouldUpdate = true;
-    deleteLocalInstructionAssetFile(asset.fileName);
-  }
-
-  if (missingReferences.thumb?.id && asset.thumbFileId) {
-    updates.thumbFileId = null;
-    shouldUpdate = true;
-  }
-
-  if (missingReferences.thumb?.filename && asset.thumbFileName) {
-    updates.thumbFileName = null;
-    updates.thumbUrl = null;
-    updates.thumbMime = null;
-    shouldUpdate = true;
-    const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
-    deleteLocalInstructionAssetFile(thumbName);
-  }
-
-  if (!shouldUpdate) return;
-
-  updates.updatedAt = new Date();
-  try {
-    await coll.updateOne({ _id: asset._id }, { $set: updates });
-  } catch (err) {
-    console.warn(
-      "[Assets] Failed to mark missing instruction asset variants:",
-      err?.message || err,
-    );
-  }
-}
-
-function deleteLocalInstructionAssetFile(fileName) {
-  if (!fileName) return;
-  try {
-    const filePath = path.join(ASSETS_DIR, fileName);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-  } catch (err) {
-    console.warn(
-      "[Assets] Failed to remove local instruction asset file:",
-      err?.message || err,
-    );
-  }
-}
 
 // ==================== IMAGE COLLECTIONS API ====================
 
@@ -24470,21 +21961,11 @@ async function readPostgresImageCollectionsByIdentifiers(identifiers = null) {
 // Helper: ดึง Image Collections ทั้งหมด
 async function getImageCollections() {
   try {
-    if (canUsePostgresAssets()) {
-      const pgCollections = await readPostgresImageCollectionsByIdentifiers();
-      if (pgCollections.length > 0 || !isMongoRuntimeEnabled()) {
-        return pgCollections;
-      }
-    }
-
-    if (!isMongoRuntimeEnabled()) {
+    if (!canUsePostgresAssets()) {
       return [];
     }
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("image_collections");
-    const collections = await coll.find({}).sort({ createdAt: -1 }).toArray();
-    return collections;
+    const pgCollections = await readPostgresImageCollectionsByIdentifiers();
+    return pgCollections;
   } catch (e) {
     console.error("[Collections] Error fetching collections:", e);
     return [];
@@ -24501,33 +21982,11 @@ async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
       return [];
     }
 
-    if (canUsePostgresAssets()) {
-      const pgCollections =
-        await readPostgresImageCollectionsByIdentifiers(selectedCollectionIds);
-      if (pgCollections.length > 0 || !isMongoRuntimeEnabled()) {
-        const allImages = [];
-        const seenLabels = new Set();
-        for (const collection of pgCollections) {
-          for (const img of Array.isArray(collection.images) ? collection.images : []) {
-            if (!img?.label || seenLabels.has(img.label)) continue;
-            allImages.push(img);
-            seenLabels.add(img.label);
-          }
-        }
-        return allImages;
-      }
-    }
-
-    if (!isMongoRuntimeEnabled()) {
+    if (!canUsePostgresAssets()) {
       return [];
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("image_collections");
-    const normalizedIds = normalizeCollectionIdentifiers(selectedCollectionIds);
-    const findQuery = { _id: { $in: normalizedIds } };
-    const collections = await coll.find(findQuery).toArray();
+    const collections =
+      await readPostgresImageCollectionsByIdentifiers(selectedCollectionIds);
 
     const allImages = [];
     const seenLabels = new Set();
@@ -24590,214 +22049,6 @@ function buildCollectionImageEntryFromAsset(asset) {
         ? String(asset.assetId)
         : undefined,
   };
-}
-
-async function syncInstructionAssetToCollections(db, asset) {
-  if (!db || !asset) return;
-  const collectionEntry = buildCollectionImageEntryFromAsset(asset);
-  if (!collectionEntry) return;
-
-  const collectionsColl = db.collection("image_collections");
-  const orConditions = [];
-  if (collectionEntry.assetId) {
-    orConditions.push({ "images.assetId": collectionEntry.assetId });
-  }
-  orConditions.push({ "images.label": collectionEntry.label });
-  orConditions.push({ isDefault: true });
-
-  const query =
-    orConditions.length === 1 ? orConditions[0] : { $or: orConditions };
-  const collections = await collectionsColl.find(query).toArray();
-
-  let defaultUpdated = false;
-
-  for (const collection of collections) {
-    const currentImages = Array.isArray(collection.images)
-      ? [...collection.images]
-      : [];
-    let changed = false;
-    const matchIndex = currentImages.findIndex((img) => {
-      if (!img) return false;
-      if (
-        collectionEntry.assetId &&
-        img.assetId &&
-        String(img.assetId) === collectionEntry.assetId
-      ) {
-        return true;
-      }
-      return img.label === collectionEntry.label;
-    });
-
-    if (matchIndex >= 0) {
-      currentImages[matchIndex] = {
-        ...currentImages[matchIndex],
-        ...collectionEntry,
-      };
-      changed = true;
-    } else if (collection.isDefault) {
-      currentImages.unshift(collectionEntry);
-      changed = true;
-      defaultUpdated = true;
-    }
-
-    if (collection.isDefault) {
-      defaultUpdated = true;
-    }
-
-    if (changed) {
-      await collectionsColl.updateOne(
-        { _id: collection._id },
-        {
-          $set: {
-            images: currentImages,
-            updatedAt: new Date(),
-          },
-        },
-      );
-    }
-  }
-
-  if (!defaultUpdated) {
-    const defaultCollection = await collectionsColl.findOne({
-      isDefault: true,
-    });
-    if (defaultCollection) {
-      const images = Array.isArray(defaultCollection.images)
-        ? [collectionEntry, ...defaultCollection.images.filter(Boolean)]
-        : [collectionEntry];
-      await collectionsColl.updateOne(
-        { _id: defaultCollection._id },
-        {
-          $set: {
-            images,
-            updatedAt: new Date(),
-          },
-        },
-      );
-    } else {
-      const assetsColl = db.collection("instruction_assets");
-      const allAssets = await assetsColl
-        .find({})
-        .sort({ createdAt: -1 })
-        .toArray();
-      const imageEntries = [];
-      for (const assetDoc of allAssets) {
-        const entry = buildCollectionImageEntryFromAsset(assetDoc);
-        if (entry) {
-          imageEntries.push(entry);
-        }
-      }
-      const defaultId = `default-collection-${Date.now()}`;
-      await collectionsColl.insertOne({
-        _id: defaultId,
-        name: "รูปภาพทั้งหมด (สร้างอัตโนมัติ)",
-        description:
-          "ระบบสร้างคอลเลกชันเริ่มต้นขึ้นใหม่ เนื่องจากไม่พบข้อมูลเดิม",
-        images: imageEntries,
-        isDefault: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      console.warn(
-        "[Assets] Default image collection was missing. A new collection has been created automatically.",
-      );
-    }
-  }
-
-  invalidateAssetRuntimeCaches();
-}
-
-async function removeInstructionAssetFromCollections(db, asset) {
-  if (!db || !asset) return;
-  const label =
-    typeof asset.label === "string" && asset.label.trim()
-      ? asset.label.trim()
-      : null;
-  const assetId = asset._id ? asset._id.toString() : asset.assetId || null;
-  if (!label && !assetId) return;
-
-  const collectionsColl = db.collection("image_collections");
-  const filters = [];
-  if (assetId) {
-    filters.push({ "images.assetId": assetId });
-  }
-  if (label) {
-    filters.push({ "images.label": label });
-  }
-  if (filters.length === 0) return;
-
-  const query = filters.length === 1 ? filters[0] : { $or: filters };
-  const collections = await collectionsColl.find(query).toArray();
-
-  for (const collection of collections) {
-    const before = Array.isArray(collection.images) ? collection.images : [];
-    const filtered = before.filter((img) => {
-      if (!img) return false;
-      const matchById =
-        assetId && img.assetId && String(img.assetId) === String(assetId);
-      const matchByLabel = label && img.label === label;
-      return !matchById && !matchByLabel;
-    });
-    if (filtered.length !== before.length) {
-      await collectionsColl.updateOne(
-        { _id: collection._id },
-        {
-          $set: {
-            images: filtered,
-            updatedAt: new Date(),
-          },
-        },
-      );
-    }
-  }
-}
-
-async function performInstructionAssetDeletion(db, asset) {
-  if (!db || !asset) return false;
-  const coll = db.collection("instruction_assets");
-  await coll.deleteOne({ _id: asset._id });
-
-  await removeInstructionAssetFromCollections(db, asset);
-  const baseName = getInstructionAssetBaseName(asset);
-  const mainFileNames = Array.from(
-    new Set(
-      [
-        asset.fileName,
-        ...buildInstructionAssetVariantFilenames(baseName, "main"),
-      ]
-        .filter((name) => typeof name === "string" && name.trim())
-        .map((name) => name.trim()),
-    ),
-  );
-  const thumbFileNames = Array.from(
-    new Set(
-      [
-        asset.thumbFileName,
-        ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
-      ]
-        .filter((name) => typeof name === "string" && name.trim())
-        .map((name) => name.trim()),
-    ),
-  );
-  await deleteStoredAssetEntries(db, "instructionAssets", [
-    { storageKey: asset.storageKey, id: asset.fileId },
-    { storageKey: asset.thumbStorageKey, id: asset.thumbFileId },
-    ...mainFileNames.map((name) => ({ filename: name })),
-    ...thumbFileNames.map((name) => ({ filename: name })),
-  ]);
-
-  const baseDir = ASSETS_DIR;
-  const filePaths = [...mainFileNames, ...thumbFileNames]
-    .filter((name) => typeof name === "string" && name)
-    .map((name) => path.join(baseDir, name));
-  filePaths.forEach((p) => {
-    try {
-      if (fs.existsSync(p)) fs.unlinkSync(p);
-    } catch (_) { }
-  });
-
-  invalidateAssetRuntimeCaches();
-  return true;
 }
 
 function mapInstructionAssetResponse(asset) {
@@ -24864,24 +22115,12 @@ app.get("/admin/image-collections/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (canUsePostgresAssets()) {
-      const collections = await readPostgresImageCollectionsByIdentifiers([id]);
-      const collection = collections[0] || null;
-      if (!collection) {
-        return res.status(404).json({
-          success: false,
-          error: "ไม่พบ Image Collection",
-        });
-      }
-      return res.json({ success: true, collection });
+    if (!canUsePostgresAssets()) {
+      return sendPostgresRequired(res, "Image collections");
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("image_collections");
-
-    const collection = await coll.findOne({ _id: id });
-
+    const collections = await readPostgresImageCollectionsByIdentifiers([id]);
+    const collection = collections[0] || null;
     if (!collection) {
       return res.status(404).json({
         success: false,
@@ -24911,41 +22150,44 @@ app.post("/admin/image-collections", async (req, res) => {
       });
     }
 
-    if (canUsePostgresAssets()) {
-      const assets = await getInstructionAssets();
-      const assetsByLabel = new Map();
-      for (const asset of assets) {
-        if (!asset?.label) continue;
-        assetsByLabel.set(asset.label, asset);
-      }
-      const labels = Array.from(
-        new Set(
-          (Array.isArray(imageLabels) ? imageLabels : [])
-            .map((value) => (typeof value === "string" ? value.trim() : ""))
-            .filter(Boolean),
-        ),
-      );
-      const images = labels
-        .map((label) => buildCollectionImageEntryFromAsset(assetsByLabel.get(label)))
-        .filter(Boolean);
+    if (!canUsePostgresAssets()) {
+      return sendPostgresRequired(res, "Image collections");
+    }
 
-      const now = new Date();
-      const legacyCollectionId =
-        "collection-"
-        + Date.now()
-        + "-"
-        + Math.random().toString(36).slice(2, 9);
-      const metadata = {
-        _id: legacyCollectionId,
-        name: name.trim(),
-        description: (description || "").trim(),
-        images,
-        isDefault: false,
-        createdAt: now,
-        updatedAt: now,
-      };
+    const assets = await getInstructionAssets();
+    const assetsByLabel = new Map();
+    for (const asset of assets) {
+      if (!asset?.label) continue;
+      assetsByLabel.set(asset.label, asset);
+    }
+    const labels = Array.from(
+      new Set(
+        (Array.isArray(imageLabels) ? imageLabels : [])
+          .map((value) => (typeof value === "string" ? value.trim() : ""))
+          .filter(Boolean),
+      ),
+    );
+    const images = labels
+      .map((label) => buildCollectionImageEntryFromAsset(assetsByLabel.get(label)))
+      .filter(Boolean);
 
-      const insertResult = await pgQuery(
+    const now = new Date();
+    const legacyCollectionId =
+      "collection-"
+      + Date.now()
+      + "-"
+      + Math.random().toString(36).slice(2, 9);
+    const metadata = {
+      _id: legacyCollectionId,
+      name: name.trim(),
+      description: (description || "").trim(),
+      images,
+      isDefault: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const insertResult = await pgQuery(
         `
           INSERT INTO image_collections (
             legacy_collection_id,
@@ -24965,11 +22207,11 @@ app.post("/admin/image-collections", async (req, res) => {
           now,
         ],
       );
-      const pgCollectionId = insertResult.rows[0]?.id;
+    const pgCollectionId = insertResult.rows[0]?.id;
 
-      for (let index = 0; index < images.length; index += 1) {
-        const image = images[index];
-        await pgQuery(
+    for (let index = 0; index < images.length; index += 1) {
+      const image = images[index];
+      await pgQuery(
           `
             INSERT INTO image_collection_items (
               collection_id,
@@ -24985,63 +22227,17 @@ app.post("/admin/image-collections", async (req, res) => {
             JSON.stringify(image),
           ],
         );
-      }
-
-      const savedCollectionRows = await readPostgresImageCollectionsByIdentifiers([
-        legacyCollectionId,
-      ]);
-      const savedCollection = savedCollectionRows[0] || metadata;
-      invalidateAssetRuntimeCaches();
-      return res.json({
-        success: true,
-        collection: savedCollection,
-        message: `สร้าง Collection "${savedCollection.name}" สำเร็จ (${images.length} รูป)`,
-      });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const collectionsColl = db.collection("image_collections");
-    const assetsColl = db.collection("instruction_assets");
-
-    // ดึงข้อมูลรูปภาพจาก labels ที่เลือก
-    const selectedAssets = await assetsColl
-      .find({
-        label: { $in: imageLabels || [] },
-      })
-      .toArray();
-
-    const images = selectedAssets.map((asset) => ({
-      label: asset.label,
-      slug: asset.slug || asset.label,
-      url: asset.url,
-      thumbUrl: asset.thumbUrl || asset.url,
-      description: asset.description || asset.alt || "",
-      fileName: asset.fileName,
-      assetId: asset._id.toString(),
-    }));
-
-    const newCollection = {
-      _id:
-        "collection-" +
-        Date.now() +
-        "-" +
-        Math.random().toString(36).slice(2, 9),
-      name: name.trim(),
-      description: (description || "").trim(),
-      images: images,
-      isDefault: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    await collectionsColl.insertOne(newCollection);
+    const savedCollectionRows = await readPostgresImageCollectionsByIdentifiers([
+      legacyCollectionId,
+    ]);
+    const savedCollection = savedCollectionRows[0] || metadata;
     invalidateAssetRuntimeCaches();
-
     res.json({
       success: true,
-      collection: newCollection,
-      message: `สร้าง Collection "${newCollection.name}" สำเร็จ (${images.length} รูป)`,
+      collection: savedCollection,
+      message: `สร้าง Collection "${savedCollection.name}" สำเร็จ (${images.length} รูป)`,
     });
   } catch (err) {
     console.error("[Collections] create error:", err);
@@ -25065,45 +22261,48 @@ app.put("/admin/image-collections/:id", async (req, res) => {
       });
     }
 
-    if (canUsePostgresAssets()) {
-      const existingRows = await readPostgresImageCollectionsByIdentifiers([id]);
-      const existing = existingRows[0] || null;
-      if (!existing || !existing.pgCollectionId) {
-        return res.status(404).json({
-          success: false,
-          error: "ไม่พบ Image Collection",
-        });
-      }
+    if (!canUsePostgresAssets()) {
+      return sendPostgresRequired(res, "Image collections");
+    }
 
-      const assets = await getInstructionAssets();
-      const assetsByLabel = new Map();
-      for (const asset of assets) {
-        if (!asset?.label) continue;
-        assetsByLabel.set(asset.label, asset);
-      }
-      const labels = Array.from(
-        new Set(
-          (Array.isArray(imageLabels) ? imageLabels : [])
-            .map((value) => (typeof value === "string" ? value.trim() : ""))
-            .filter(Boolean),
-        ),
-      );
-      const images = labels
-        .map((label) => buildCollectionImageEntryFromAsset(assetsByLabel.get(label)))
-        .filter(Boolean);
+    const existingRows = await readPostgresImageCollectionsByIdentifiers([id]);
+    const existing = existingRows[0] || null;
+    if (!existing || !existing.pgCollectionId) {
+      return res.status(404).json({
+        success: false,
+        error: "ไม่พบ Image Collection",
+      });
+    }
 
-      const now = new Date();
-      const metadata = {
-        _id: existing._id || id,
-        name: name.trim(),
-        description: (description || "").trim(),
-        images,
-        isDefault: Boolean(existing.isDefault),
-        createdAt: existing.createdAt || now,
-        updatedAt: now,
-      };
+    const assets = await getInstructionAssets();
+    const assetsByLabel = new Map();
+    for (const asset of assets) {
+      if (!asset?.label) continue;
+      assetsByLabel.set(asset.label, asset);
+    }
+    const labels = Array.from(
+      new Set(
+        (Array.isArray(imageLabels) ? imageLabels : [])
+          .map((value) => (typeof value === "string" ? value.trim() : ""))
+          .filter(Boolean),
+      ),
+    );
+    const images = labels
+      .map((label) => buildCollectionImageEntryFromAsset(assetsByLabel.get(label)))
+      .filter(Boolean);
 
-      await pgQuery(
+    const now = new Date();
+    const metadata = {
+      _id: existing._id || id,
+      name: name.trim(),
+      description: (description || "").trim(),
+      images,
+      isDefault: Boolean(existing.isDefault),
+      createdAt: existing.createdAt || now,
+      updatedAt: now,
+    };
+
+    await pgQuery(
         `
           UPDATE image_collections
           SET
@@ -25121,13 +22320,13 @@ app.put("/admin/image-collections/:id", async (req, res) => {
           now,
         ],
       );
+    await pgQuery(
+      "DELETE FROM image_collection_items WHERE collection_id = $1",
+      [existing.pgCollectionId],
+    );
+    for (let index = 0; index < images.length; index += 1) {
+      const image = images[index];
       await pgQuery(
-        "DELETE FROM image_collection_items WHERE collection_id = $1",
-        [existing.pgCollectionId],
-      );
-      for (let index = 0; index < images.length; index += 1) {
-        const image = images[index];
-        await pgQuery(
           `
             INSERT INTO image_collection_items (
               collection_id,
@@ -25143,64 +22342,11 @@ app.put("/admin/image-collections/:id", async (req, res) => {
             JSON.stringify(image),
           ],
         );
-      }
-
-      const updatedRows = await readPostgresImageCollectionsByIdentifiers([id]);
-      const updated = updatedRows[0] || metadata;
-      invalidateAssetRuntimeCaches();
-      return res.json({
-        success: true,
-        collection: updated,
-        message: `แก้ไข Collection "${updated.name}" สำเร็จ (${images.length} รูป)`,
-      });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const collectionsColl = db.collection("image_collections");
-    const assetsColl = db.collection("instruction_assets");
-
-    // ตรวจสอบว่า collection มีอยู่หรือไม่
-    const existing = await collectionsColl.findOne({ _id: id });
-    if (!existing) {
-      return res.status(404).json({
-        success: false,
-        error: "ไม่พบ Image Collection",
-      });
-    }
-
-    // ดึงข้อมูลรูปภาพจาก labels ที่เลือก
-    const selectedAssets = await assetsColl
-      .find({
-        label: { $in: imageLabels || [] },
-      })
-      .toArray();
-
-    const images = selectedAssets.map((asset) => ({
-      label: asset.label,
-      slug: asset.slug || asset.label,
-      url: asset.url,
-      thumbUrl: asset.thumbUrl || asset.url,
-      description: asset.description || asset.alt || "",
-      fileName: asset.fileName,
-      assetId: asset._id.toString(),
-    }));
-
-    await collectionsColl.updateOne(
-      { _id: id },
-      {
-        $set: {
-          name: name.trim(),
-          description: (description || "").trim(),
-          images: images,
-          updatedAt: new Date(),
-        },
-      },
-    );
-
-    const updated = await collectionsColl.findOne({ _id: id });
+    const updatedRows = await readPostgresImageCollectionsByIdentifiers([id]);
+    const updated = updatedRows[0] || metadata;
     invalidateAssetRuntimeCaches();
-
     res.json({
       success: true,
       collection: updated,
@@ -25220,25 +22366,28 @@ app.delete("/admin/image-collections/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (canUsePostgresAssets()) {
-      const collectionRows = await readPostgresImageCollectionsByIdentifiers([id]);
-      const collection = collectionRows[0] || null;
-      if (!collection || !collection.pgCollectionId) {
-        return res.status(404).json({
-          success: false,
-          error: "ไม่พบ Image Collection",
-        });
-      }
+    if (!canUsePostgresAssets()) {
+      return sendPostgresRequired(res, "Image collections");
+    }
 
-      if (collection.isDefault) {
-        return res.status(400).json({
-          success: false,
-          error: "ไม่สามารถลบ Default Collection ได้",
-        });
-      }
+    const collectionRows = await readPostgresImageCollectionsByIdentifiers([id]);
+    const collection = collectionRows[0] || null;
+    if (!collection || !collection.pgCollectionId) {
+      return res.status(404).json({
+        success: false,
+        error: "ไม่พบ Image Collection",
+      });
+    }
 
-      const selectedCollectionId = String(collection._id || id);
-      await pgQuery(
+    if (collection.isDefault) {
+      return res.status(400).json({
+        success: false,
+        error: "ไม่สามารถลบ Default Collection ได้",
+      });
+    }
+
+    const selectedCollectionId = String(collection._id || id);
+    await pgQuery(
         `
           UPDATE bots
           SET
@@ -25261,67 +22410,10 @@ app.delete("/admin/image-collections/:id", async (req, res) => {
         [selectedCollectionId],
       );
 
-      await pgQuery(
-        "DELETE FROM image_collections WHERE id = $1",
-        [collection.pgCollectionId],
-      );
-      invalidateAllRuntimeCaches();
-
-      return res.json({
-        success: true,
-        message: `ลบ Collection "${collection.name}" สำเร็จ`,
-      });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("image_collections");
-
-    // ตรวจสอบว่าเป็น default collection หรือไม่
-    const collection = await coll.findOne({ _id: id });
-    if (!collection) {
-      return res.status(404).json({
-        success: false,
-        error: "ไม่พบ Image Collection",
-      });
-    }
-
-    if (collection.isDefault) {
-      return res.status(400).json({
-        success: false,
-        error: "ไม่สามารถลบ Default Collection ได้",
-      });
-    }
-
-    // ลบ collection reference จาก bots
-    await db
-      .collection("line_bots")
-      .updateMany(
-        { selectedImageCollections: id },
-        { $pull: { selectedImageCollections: id } },
-      );
-
-    await db
-      .collection("facebook_bots")
-      .updateMany(
-        { selectedImageCollections: id },
-        { $pull: { selectedImageCollections: id } },
-      );
-    await db
-      .collection("instagram_bots")
-      .updateMany(
-        { selectedImageCollections: id },
-        { $pull: { selectedImageCollections: id } },
-      );
-    await db
-      .collection("whatsapp_bots")
-      .updateMany(
-        { selectedImageCollections: id },
-        { $pull: { selectedImageCollections: id } },
-      );
-
-    // ลบ collection
-    await coll.deleteOne({ _id: id });
+    await pgQuery(
+      "DELETE FROM image_collections WHERE id = $1",
+      [collection.pgCollectionId],
+    );
     invalidateAllRuntimeCaches();
 
     res.json({
@@ -25832,7 +22924,6 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
 
           await uploadBufferToAssetStorage({
             db: null,
-            gridFsBucketName: "broadcastAssets",
             storagePrefix: "broadcast",
             filename,
             buffer: file.buffer,
@@ -26214,14 +23305,10 @@ app.post(
           .json({ success: false, error: "กรุณาอัพโหลดไฟล์รูปภาพ" });
       }
 
-      const usePostgresFollowUpAssets = canUsePostgresAssets();
-      let db = null;
-      let coll = null;
-      if (!usePostgresFollowUpAssets) {
-        const client = await connectDB();
-        db = client.db("chatbot");
-        coll = db.collection("follow_up_assets");
+      if (!canUsePostgresAssets()) {
+        return sendPostgresRequired(res, "Follow-up assets");
       }
+      const db = null;
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -26240,9 +23327,7 @@ app.post(
           .update(optimized)
           .digest("hex");
 
-        const existing = usePostgresFollowUpAssets
-          ? await findPostgresFollowUpAssetByChecksum("followup", sha256)
-          : await coll.findOne({ sha256 });
+        const existing = await findPostgresFollowUpAssetByChecksum("followup", sha256);
         if (existing) {
           const urls = resolveScopedFollowUpAssetUrls(existing, urlBase);
           const existingId =
@@ -26283,7 +23368,6 @@ app.post(
         const [mainUpload, thumbUpload] = await Promise.all([
           uploadBufferToAssetStorage({
             db,
-            gridFsBucketName: "followupAssets",
             storagePrefix: "followup",
             filename: fileName,
             buffer: optimized,
@@ -26296,7 +23380,6 @@ app.post(
           }),
           uploadBufferToAssetStorage({
             db,
-            gridFsBucketName: "followupAssets",
             storagePrefix: "followup",
             filename: thumbName,
             buffer: thumb,
@@ -26326,18 +23409,12 @@ app.post(
           createdAt: now,
           updatedAt: now,
         };
-        let assetId = null;
-        if (usePostgresFollowUpAssets) {
-          const saved = await insertPostgresFollowUpAsset("followup", assetDoc);
-          assetId =
-            saved?._id?.toString?.()
-            || saved?.legacyAssetId
-            || saved?.id
-            || null;
-        } else {
-          const insertResult = await coll.insertOne(assetDoc);
-          assetId = insertResult.insertedId?.toString() || null;
-        }
+        const saved = await insertPostgresFollowUpAsset("followup", assetDoc);
+        const assetId =
+          saved?._id?.toString?.()
+          || saved?.legacyAssetId
+          || saved?.id
+          || null;
 
         assets.push({
           id: assetId,
@@ -26728,32 +23805,25 @@ function parseInstructionConversationVersionQuery(rawVersion) {
 // Page route — Conversation History viewer
 app.get("/admin/instruction-conversations", requireAdmin, async (req, res) => {
   try {
-    let instructions = [];
-    if (shouldUsePostgresInstructionsV2()) {
-      const result = await pgQuery(
-        `
-          SELECT
-            id::text AS id,
-            legacy_instruction_id,
-            name
-          FROM instructions
-          WHERE ${buildInstructionV2SourceCondition("source_kind")}
-          ORDER BY name ASC, id ASC
-        `,
-      );
-      instructions = result.rows.map((row) => ({
-        _id: row.id,
-        name: row.name || "Untitled",
-        instructionId: row.legacy_instruction_id || row.id,
-      }));
-    } else {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      instructions = await db.collection("instructions_v2")
-        .find({}, { projection: { _id: 1, name: 1, instructionId: 1 } })
-        .sort({ name: 1 })
-        .toArray();
+    if (!shouldUsePostgresInstructionsV2()) {
+      return res.status(503).send("Instruction conversations require PostgreSQL");
     }
+    const result = await pgQuery(
+      `
+        SELECT
+          id::text AS id,
+          legacy_instruction_id,
+          name
+        FROM instructions
+        WHERE ${buildInstructionV2SourceCondition("source_kind")}
+        ORDER BY name ASC, id ASC
+      `,
+    );
+    const instructions = result.rows.map((row) => ({
+      _id: row.id,
+      name: row.name || "Untitled",
+      instructionId: row.legacy_instruction_id || row.id,
+    }));
     res.render("admin-instruction-conversations", {
       username: req.session?.user?.username || "Admin",
       instructions: instructions.map(i => ({
@@ -26779,9 +23849,7 @@ app.get("/api/instruction-conversations/:instructionId", requireAdmin, async (re
       page, limit,
     } = req.query;
 
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const threadService = new (getConversationThreadServiceClass())(db, {
       conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
@@ -26833,9 +23901,7 @@ app.get("/api/instruction-conversations/:instructionId/thread/:threadId", requir
   try {
     const { threadId } = req.params;
     const { page, limit } = req.query;
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const threadService = new (getConversationThreadServiceClass())(db, {
       conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
@@ -26860,9 +23926,7 @@ app.get("/api/instruction-conversations/:instructionId/analytics", requireAdmin,
   try {
     const { instructionId } = req.params;
     const { version, dateFrom, dateTo } = req.query;
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const threadService = new (getConversationThreadServiceClass())(db, {
       conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
@@ -26889,9 +23953,7 @@ app.get("/api/instruction-conversations/:instructionId/filters", requireAdmin, a
   try {
     const { instructionId } = req.params;
     const { version } = req.query;
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const threadService = new (getConversationThreadServiceClass())(db, {
       conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
@@ -26917,9 +23979,7 @@ app.patch("/api/instruction-conversations/thread/:threadId/tags", requireAdmin, 
   try {
     const { threadId } = req.params;
     const { add = [], remove = [] } = req.body;
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const threadService = new (getConversationThreadServiceClass())(db, {
       conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
@@ -26938,9 +23998,7 @@ app.patch("/api/instruction-conversations/thread/:threadId/tags", requireAdmin, 
 // POST rebuild threads (migration)
 app.post("/api/instruction-conversations/:instructionId/rebuild", requireAdmin, async (req, res) => {
   try {
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const threadService = new (getConversationThreadServiceClass())(db, {
       conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
@@ -27338,7 +24396,6 @@ function getRuntimeInstructionToolDefinitions(chatService) {
   const allTools = Array.isArray(chatService?.getToolDefinitions?.())
     ? chatService.getToolDefinitions()
     : [];
-  if (isMongoRuntimeEnabled()) return allTools;
   return allTools.filter((tool) => {
     const toolName =
       typeof tool?.function?.name === "string"
@@ -27447,7 +24504,7 @@ function extractInstructionResponseText(response) {
 // Instruction Chat API — Main chat endpoint with tool loop (Responses API)
 app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled() && !shouldUsePostgresInstructionsV2()) {
+    if (!shouldUsePostgresInstructionsV2()) {
       return sendPostgresMigrationPending(res, "Instruction AI chat state");
     }
     const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], images } = req.body;
@@ -27465,9 +24522,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
     }
 
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     if (!apiKeyToUse.apiKey) {
       return res.json({ error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
@@ -27735,9 +24790,7 @@ app.get("/api/instruction-ai/changelog/:sessionId", requireAdmin, async (req, re
 // Undo API
 app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) => {
   try {
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const changeLog = await getInstructionChatStateRepository().getActiveChange(
       req.params.changeId,
     );
@@ -28054,7 +25107,7 @@ function buildActiveInstructionRequestSnapshot(reqState) {
 app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 6)}`;
   try {
-    if (!isMongoRuntimeEnabled() && !shouldUsePostgresInstructionsV2()) {
+    if (!shouldUsePostgresInstructionsV2()) {
       return sendPostgresMigrationPending(res, "Instruction AI chat state");
     }
     const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], sessionId: clientSessionId, images } = req.body;
@@ -28192,9 +25245,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     sendEvent("session", { sessionId, requestId });
 
-    const db = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
+    const db = null;
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     if (!apiKeyToUse.apiKey) {
       sendEvent("error", { error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
@@ -28991,8 +26042,6 @@ app.get("/admin/customer-stats", async (req, res) => {
 app.get("/admin/customer-stats/data", async (req, res) => {
   try {
     const { pageKey, startDate, endDate } = req.query;
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const chatRepo = getChatRepository();
     const followUpRepo = getFollowUpRepository();
 
@@ -30244,7 +27293,7 @@ app.post("/admin/chat/feedback", async (req, res) => {
 
     const normalizedMessageId =
       typeof messageId === "string" ? messageId.trim() : String(messageId || "").trim();
-    const messageObjectId = toObjectId(normalizedMessageId);
+    const normalizedHexMessageId = normalizeLegacyHexId(normalizedMessageId);
     if (!normalizedMessageId) {
       return res.json({ success: false, error: "รหัสข้อความไม่ถูกต้อง" });
     }
@@ -30282,7 +27331,7 @@ app.post("/admin/chat/feedback", async (req, res) => {
       typeof notes === "string" ? notes.trim().substring(0, 500) : "";
     const now = new Date();
     await getFeedbackRepository().upsertFeedback({
-      messageId: messageObjectId || null,
+      messageId: normalizedHexMessageId || null,
       messageIdString: normalizedMessageId,
       userId: trimmedUserId,
       senderId: messageSenderId || null,
@@ -34533,7 +31582,7 @@ function isFacebookDatasetPermissionError(result = {}) {
 
 /**
  * Process Facebook Conversion for an order when status changes to confirmed
- * @param {Object} order - The order document from MongoDB
+ * @param {Object} order - The normalized order document
  * @returns {Promise<Object>} - Result of the conversion event
  */
 async function processFacebookConversion(order) {
@@ -34914,16 +31963,7 @@ app.get("/api/users/:userId/notes", async (req, res) => {
         updatedAt: row?.updated_at || null,
       });
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_notes");
-
-    const doc = await coll.findOne({ userId });
-    const notes = doc?.notes || "";
-    const updatedAt = doc?.updatedAt || null;
-
-    res.json({ success: true, userId, notes, updatedAt });
+    return sendPostgresRequired(res, "User notes");
   } catch (error) {
     console.error("[UserNotes] ไม่สามารถดึงโน้ตได้:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -34958,27 +31998,7 @@ app.patch("/api/users/:userId/notes", async (req, res) => {
       console.log(`[UserNotes] บันทึกโน้ตสำหรับผู้ใช้ ${userId.substring(0, 8)}...`);
       return res.json({ success: true, userId, notes: sanitizedNotes });
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_notes");
-
-    await coll.updateOne(
-      { userId },
-      {
-        $set: {
-          notes: sanitizedNotes,
-          updatedAt: new Date()
-        },
-        $setOnInsert: {
-          createdAt: new Date()
-        }
-      },
-      { upsert: true }
-    );
-
-    console.log(`[UserNotes] บันทึกโน้ตสำหรับผู้ใช้ ${userId.substring(0, 8)}...`);
-    res.json({ success: true, userId, notes: sanitizedNotes });
+    return sendPostgresRequired(res, "User notes");
   } catch (error) {
     console.error("[UserNotes] ไม่สามารถบันทึกโน้ตได้:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -36302,9 +33322,6 @@ async function getNormalizedChatHistory(userId, options = {}) {
 async function getNormalizedChatUsers(options = {}) {
   try {
     const { applyFilter = false, focusUserId = "" } = options || {};
-    const mongoDb = isMongoRuntimeEnabled()
-      ? (await connectDB()).db("chatbot")
-      : null;
     const followUpRepo = getFollowUpRepository();
     const userStateRepo = getUserStateRepository();
     const profileRepo = getProfileRepository();
@@ -36767,10 +33784,9 @@ if (require.main === module) {
 
 module.exports = {
   app,
-  connectDB,
   evaluateNotificationSummarySchedules,
   FOLLOW_UP_TASK_INTERVAL_MS,
-  initializeMongoRuntime,
+  initializeApplicationDataRuntime,
   processFlushedMessages,
   processDueFollowUpTasks,
   server,

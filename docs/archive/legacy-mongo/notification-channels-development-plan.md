@@ -1,3 +1,5 @@
+> Historical pre-PostgreSQL planning note. Archived after MongoDB runtime removal.
+
 # แผนพัฒนา: ระบบแจ้งเตือนออเดอร์ (Notification Channels)
 
 > **Last updated:** 2025-12-17  

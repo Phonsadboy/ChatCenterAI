@@ -49,9 +49,9 @@ class InstructionDataService {
     constructor(db) {
         this.db = db;
         this.collection =
-            db && typeof db.collection === "function"
-                ? db.collection("instructions_v2")
-                : db;
+            db && typeof db === "object" && typeof db.findOne === "function"
+                ? db
+                : null;
     }
 
     _normalizeInstructionRef(value) {

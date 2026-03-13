@@ -5,49 +5,17 @@ const {
 } = require("./postgresOrderSync");
 const {
   applyProjection,
-  buildMongoIdQuery,
   generateLegacyObjectIdString,
   normalizePlatform,
   safeStringify,
   toLegacyId,
-  toObjectId,
-  warnPrimaryReadFailure,
 } = require("./shared");
 
-function createOrderRepository({
-  connectDB,
-  dbName = "chatbot",
-  runtimeConfig,
-}) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
-  function canUsePostgres() {
-    return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
-  }
-
-  function shouldDualWrite() {
-    return Boolean(runtimeConfig?.features?.postgresDualWrite && canUsePostgres());
-  }
-
-  function shouldShadowRead() {
-    return Boolean(runtimeConfig?.features?.postgresShadowRead && canUsePostgres());
-  }
-
-  function shouldReadPrimary() {
+function createOrderRepository({ runtimeConfig }) {
+  function isStorageReady() {
     return Boolean(
-      canUsePostgres()
-        && (runtimeConfig?.features?.postgresReadPrimaryOrders || !canUseMongo()),
+      runtimeConfig?.features?.postgresEnabled && isPostgresConfigured(),
     );
-  }
-
-  async function getCollection() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
-    }
-    const client = await connectDB();
-    return client.db(dbName).collection("orders");
   }
 
   function hydratePostgresOrder(row = {}) {
@@ -88,7 +56,7 @@ function createOrderRepository({
     return safeStringify(left) === safeStringify(right);
   }
 
-  function normalizeMongoComparable(value) {
+  function normalizeComparableValue(value) {
     if (value instanceof Date) return value.getTime();
     if (value && typeof value === "object" && typeof value.toString === "function") {
       return value.toString();
@@ -103,18 +71,22 @@ function createOrderRepository({
 
     return Object.entries(filter).every(([key, expected]) => {
       if (key === "$or") {
-        return Array.isArray(expected)
-          && expected.some((entry) => matchesFilter(doc, entry));
+        return (
+          Array.isArray(expected)
+          && expected.some((entry) => matchesFilter(doc, entry))
+        );
       }
       if (key === "$and") {
-        return Array.isArray(expected)
-          && expected.every((entry) => matchesFilter(doc, entry));
+        return (
+          Array.isArray(expected)
+          && expected.every((entry) => matchesFilter(doc, entry))
+        );
       }
 
       const actual =
         key === "_id" || key === "botId" || key === "userId"
           ? toLegacyId(getValueByPath(doc, key))
-          : normalizeMongoComparable(getValueByPath(doc, key));
+          : normalizeComparableValue(getValueByPath(doc, key));
 
       if (expected instanceof RegExp) {
         const actualText =
@@ -131,7 +103,7 @@ function createOrderRepository({
               actual,
               key === "_id" || key === "botId" || key === "userId"
                 ? toLegacyId(value)
-                : normalizeMongoComparable(value),
+                : normalizeComparableValue(value),
             ),
           );
         }
@@ -140,18 +112,19 @@ function createOrderRepository({
             actual,
             key === "_id" || key === "botId" || key === "userId"
               ? toLegacyId(expected.$ne)
-              : normalizeMongoComparable(expected.$ne),
+              : normalizeComparableValue(expected.$ne),
           );
         }
         if (Object.prototype.hasOwnProperty.call(expected, "$exists")) {
-          const exists = actual !== null && typeof actual !== "undefined" && actual !== "";
+          const exists =
+            actual !== null && typeof actual !== "undefined" && actual !== "";
           return Boolean(expected.$exists) === exists;
         }
         if (Object.prototype.hasOwnProperty.call(expected, "$gte")) {
-          if (!(actual >= normalizeMongoComparable(expected.$gte))) return false;
+          if (!(actual >= normalizeComparableValue(expected.$gte))) return false;
         }
         if (Object.prototype.hasOwnProperty.call(expected, "$lte")) {
-          if (!(actual <= normalizeMongoComparable(expected.$lte))) return false;
+          if (!(actual <= normalizeComparableValue(expected.$lte))) return false;
         }
         if (Object.prototype.hasOwnProperty.call(expected, "$regex")) {
           const actualText =
@@ -180,14 +153,14 @@ function createOrderRepository({
         actual,
         key === "_id" || key === "botId" || key === "userId"
           ? toLegacyId(expected)
-          : normalizeMongoComparable(expected),
+          : normalizeComparableValue(expected),
       );
     });
   }
 
   function compareValues(left, right) {
-    const normalizedLeft = normalizeMongoComparable(left);
-    const normalizedRight = normalizeMongoComparable(right);
+    const normalizedLeft = normalizeComparableValue(left);
+    const normalizedRight = normalizeComparableValue(right);
 
     if (normalizedLeft === normalizedRight) return 0;
     if (normalizedLeft === null || typeof normalizedLeft === "undefined") return -1;
@@ -203,36 +176,6 @@ function createOrderRepository({
     });
   }
 
-  function normalizeComparableDoc(doc) {
-    if (!doc || typeof doc !== "object") return doc;
-    return {
-      _id: toLegacyId(doc._id),
-      userId: toLegacyId(doc.userId),
-      botId: toLegacyId(doc.botId),
-      platform: normalizePlatform(doc.platform),
-      status: doc.status || "pending",
-      notes: doc.notes || null,
-      extractedAt: doc.extractedAt ? new Date(doc.extractedAt).toISOString() : null,
-      createdAt: doc.createdAt ? new Date(doc.createdAt).toISOString() : null,
-      updatedAt: doc.updatedAt ? new Date(doc.updatedAt).toISOString() : null,
-      orderData: doc.orderData || {},
-    };
-  }
-
-  function startShadowCompare(label, mongoValue, pgValue) {
-    if (!shouldShadowRead() || shouldReadPrimary()) return;
-    const normalizedMongo = Array.isArray(mongoValue)
-      ? mongoValue.map((item) => normalizeComparableDoc(item))
-      : normalizeComparableDoc(mongoValue);
-    const normalizedPg = Array.isArray(pgValue)
-      ? pgValue.map((item) => normalizeComparableDoc(item))
-      : normalizeComparableDoc(pgValue);
-
-    if (safeStringify(normalizedMongo) !== safeStringify(normalizedPg)) {
-      console.warn(`[OrderRepository] Shadow read mismatch for ${label}`);
-    }
-  }
-
   function computeStatusCountsFromDocs(docs = []) {
     const counts = new Map();
     docs.forEach((doc) => {
@@ -241,13 +184,9 @@ function createOrderRepository({
     });
     return Array.from(counts.entries())
       .map(([_id, count]) => ({ _id, count }))
-      .sort((left, right) => String(left._id || "").localeCompare(String(right._id || "")));
-  }
-
-  function normalizeStatusCountsResult(items = []) {
-    return [...items].sort((left, right) =>
-      String(left?._id || "").localeCompare(String(right?._id || "")),
-    );
+      .sort((left, right) =>
+        String(left._id || "").localeCompare(String(right._id || "")),
+      );
   }
 
   function computeTotalsFromDocs(docs = [], confirmedStatuses = []) {
@@ -299,9 +238,10 @@ function createOrderRepository({
       }
       existing.orderCount += 1;
       if (
-        extractedAt &&
-        (!existing.lastOrderAt ||
-          new Date(extractedAt).getTime() > new Date(existing.lastOrderAt).getTime())
+        extractedAt
+        && (!existing.lastOrderAt
+          || new Date(extractedAt).getTime()
+            > new Date(existing.lastOrderAt).getTime())
       ) {
         existing.lastOrderAt = extractedAt;
       }
@@ -309,14 +249,6 @@ function createOrderRepository({
     return Array.from(groups.values()).sort((left, right) => {
       const leftKey = `${left._id?.platform || ""}:${left._id?.botIdText || ""}`;
       const rightKey = `${right._id?.platform || ""}:${right._id?.botIdText || ""}`;
-      return leftKey.localeCompare(rightKey);
-    });
-  }
-
-  function normalizePageSummaryResult(items = []) {
-    return [...items].sort((left, right) => {
-      const leftKey = `${left?._id?.platform || ""}:${left?._id?.botIdText || ""}`;
-      const rightKey = `${right?._id?.platform || ""}:${right?._id?.botIdText || ""}`;
       return leftKey.localeCompare(rightKey);
     });
   }
@@ -398,32 +330,27 @@ function createOrderRepository({
     if (typeof filter.platform === "string" && filter.platform.trim()) {
       push("o.platform =", normalizePlatform(filter.platform));
     }
-
     if (typeof filter.status === "string" && filter.status.trim()) {
       push("o.status =", filter.status.trim());
     }
-
     if (typeof filter.userId === "string" && filter.userId.trim()) {
       push("o.legacy_user_id =", toLegacyId(filter.userId));
     } else if (filter.userId && Array.isArray(filter.userId.$in)) {
       params.push(filter.userId.$in.map((value) => toLegacyId(value)).filter(Boolean));
       conditions.push(`o.legacy_user_id = ANY($${params.length})`);
     }
-
     if (typeof filter._id === "string" && filter._id.trim()) {
       push("o.legacy_order_id =", toLegacyId(filter._id));
     } else if (filter._id && Array.isArray(filter._id.$in)) {
       params.push(filter._id.$in.map((value) => toLegacyId(value)).filter(Boolean));
       conditions.push(`o.legacy_order_id = ANY($${params.length})`);
     }
-
     if (typeof filter.botId === "string" && filter.botId.trim()) {
       push("COALESCE(b.legacy_bot_id, '') =", toLegacyId(filter.botId));
     } else if (filter.botId && Array.isArray(filter.botId.$in)) {
       params.push(filter.botId.$in.map((value) => toLegacyId(value)).filter(Boolean));
       conditions.push(`COALESCE(b.legacy_bot_id, '') = ANY($${params.length})`);
     }
-
     if (filter.extractedAt && typeof filter.extractedAt === "object") {
       if (filter.extractedAt.$gte) {
         push("o.extracted_at >=", filter.extractedAt.$gte);
@@ -475,7 +402,7 @@ function createOrderRepository({
     return hasOperator ? update : { $set: update };
   }
 
-  function applyMongoStyleUpdate(target = {}, normalizedUpdate = {}) {
+  function applyDocumentUpdate(target = {}, normalizedUpdate = {}) {
     const next = target && typeof target === "object" ? { ...target } : {};
     const applyPath = (object, path, value, remove = false) => {
       const parts = String(path || "")
@@ -485,7 +412,11 @@ function createOrderRepository({
       let cursor = object;
       for (let index = 0; index < parts.length - 1; index += 1) {
         const part = parts[index];
-        if (!cursor[part] || typeof cursor[part] !== "object" || Array.isArray(cursor[part])) {
+        if (
+          !cursor[part]
+          || typeof cursor[part] !== "object"
+          || Array.isArray(cursor[part])
+        ) {
           cursor[part] = {};
         }
         cursor = cursor[part];
@@ -518,128 +449,48 @@ function createOrderRepository({
 
   function buildIdsFilter(orderIds = []) {
     const normalizedIds = Array.isArray(orderIds)
-      ? orderIds
-        .map((orderId) => {
-          const objectId = toObjectId(orderId);
-          return objectId || toLegacyId(orderId) || null;
-        })
-        .filter(Boolean)
+      ? orderIds.map((orderId) => toLegacyId(orderId)).filter(Boolean)
       : [];
-
     if (normalizedIds.length === 0) {
       return null;
     }
-
     return { _id: { $in: normalizedIds } };
   }
 
-  async function syncDoc(doc, options = {}) {
+  async function persistOrder(doc) {
     if (!doc) return null;
-    const force = options.force === true;
-    if (!force && !shouldDualWrite()) return null;
     return upsertPostgresOrderDocument({ query }, doc);
   }
 
   async function create(doc) {
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
-      }
-      const prepared = {
-        ...doc,
-        _id: toLegacyId(doc?._id) || generateLegacyObjectIdString(),
-        createdAt: doc?.createdAt || doc?.extractedAt || new Date(),
-        updatedAt: doc?.updatedAt || new Date(),
-      };
-      await syncDoc(prepared, { force: true });
-      return (await findById(prepared._id)) || prepared;
+    if (!isStorageReady()) {
+      throw new Error("order_storage_not_configured");
     }
 
-    const coll = await getCollection();
-    const result = await coll.insertOne(doc);
-    const savedDoc = { ...doc, _id: result.insertedId };
-    await syncDoc(savedDoc).catch((error) => {
-      console.warn("[OrderRepository] Create dual-write failed:", error?.message || error);
-    });
-    return savedDoc;
+    const prepared = {
+      ...doc,
+      _id: toLegacyId(doc?._id) || generateLegacyObjectIdString(),
+      createdAt: doc?.createdAt || doc?.extractedAt || new Date(),
+      updatedAt: doc?.updatedAt || new Date(),
+    };
+    await persistOrder(prepared);
+    return (await findById(prepared._id)) || prepared;
   }
 
   async function findById(orderId) {
-    if (shouldReadPrimary()) {
-      try {
-        const docs = await readPostgresDocs({ _id: orderId });
-        if (docs.length > 0 || !canUseMongo()) return docs[0] || null;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "OrderRepository",
-          operation: "read",
-          identifier: orderId,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
+    if (!isStorageReady()) {
       return null;
     }
-
-    const coll = await getCollection();
-    const mongoDoc = await coll.findOne(buildMongoIdQuery(orderId));
-
-    if (shouldShadowRead()) {
-      void readPostgresDocs({ _id: orderId })
-        .then((pgDocs) => startShadowCompare(`id:${orderId}`, mongoDoc, pgDocs[0] || null))
-        .catch((error) => {
-          console.warn(
-            `[OrderRepository] Shadow read failed for ${orderId}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
+    const docs = await readPostgresDocs({ _id: orderId });
+    return docs[0] || null;
   }
 
   async function findLatestByUser(userId) {
-    if (shouldReadPrimary()) {
-      try {
-        const docs = await readPostgresDocs({ userId });
-        if (docs.length > 0 || !canUseMongo()) {
-          return docs[0] || null;
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "OrderRepository",
-          operation: "latest read",
-          identifier: userId,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
+    if (!isStorageReady()) {
       return null;
     }
-
-    const coll = await getCollection();
-    const mongoDoc = await coll.findOne({ userId }, { sort: { extractedAt: -1 } });
-
-    if (shouldShadowRead()) {
-      void readPostgresDocs({ userId })
-        .then((pgDocs) =>
-          startShadowCompare(`latestByUser:${userId}`, mongoDoc, pgDocs[0] || null),
-        )
-        .catch((error) => {
-          console.warn(
-            `[OrderRepository] Shadow latest read failed for user ${userId}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
+    const docs = await readPostgresDocs({ userId });
+    return docs[0] || null;
   }
 
   async function findByUser(userId, options = {}) {
@@ -665,566 +516,150 @@ function createOrderRepository({
   }
 
   async function list(filter = {}, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const docs = await readPostgresDocs(filter);
-        return applyListOptions(docs, options);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "OrderRepository",
-          operation: "list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
+    if (!isStorageReady()) {
       return [];
     }
-
-    const coll = await getCollection();
-    const findOptions = {};
-    if (options.projection && typeof options.projection === "object") {
-      findOptions.projection = options.projection;
-    }
-    let cursor = coll.find(filter, findOptions);
-    cursor = cursor.sort(options.sort || { extractedAt: -1 });
-    if (Number.isFinite(options.skip) && options.skip > 0) {
-      cursor = cursor.skip(options.skip);
-    }
-    if (Number.isFinite(options.limit) && options.limit > 0) {
-      cursor = cursor.limit(options.limit);
-    }
-    const mongoDocs = await cursor.toArray();
-
-    if (shouldShadowRead()) {
-      void readPostgresDocs(filter)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `list:${safeStringify(filter)}`,
-            mongoDocs,
-            applyListOptions(pgDocs, options),
-          ),
-        )
-        .catch((error) => {
-          console.warn(
-            "[OrderRepository] Shadow list read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    return applyListOptions(await readPostgresDocs(filter), options);
   }
 
   async function count(filter = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const docs = await readPostgresDocs(filter);
-        return docs.length;
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "OrderRepository",
-          operation: "count read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
+    if (!isStorageReady()) {
       return 0;
     }
-
-    const coll = await getCollection();
-    const mongoCount = await coll.countDocuments(filter);
-
-    if (shouldShadowRead()) {
-      void readPostgresDocs(filter)
-        .then((pgDocs) => {
-          if (mongoCount !== pgDocs.length) {
-            console.warn(
-              `[OrderRepository] Shadow count mismatch for ${safeStringify(filter)}`,
-            );
-          }
-        })
-        .catch((error) => {
-          console.warn(
-            "[OrderRepository] Shadow count read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoCount;
+    return (await readPostgresDocs(filter)).length;
   }
 
   async function aggregateStatusCounts(filter = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const docs = await readPostgresDocs(filter);
-        return computeStatusCountsFromDocs(docs);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "OrderRepository",
-          operation: "status aggregate",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
+    if (!isStorageReady()) {
       return [];
     }
-
-    const coll = await getCollection();
-    return coll
-      .aggregate([
-        { $match: filter },
-        { $group: { _id: "$status", count: { $sum: 1 } } },
-      ])
-      .toArray()
-      .then((mongoResult) => {
-        if (shouldShadowRead()) {
-          void readPostgresDocs(filter)
-            .then((pgDocs) => {
-              const pgResult = computeStatusCountsFromDocs(pgDocs);
-              if (
-                safeStringify(normalizeStatusCountsResult(mongoResult))
-                !== safeStringify(normalizeStatusCountsResult(pgResult))
-              ) {
-                console.warn(
-                  `[OrderRepository] Shadow status aggregate mismatch for ${safeStringify(filter)}`,
-                );
-              }
-            })
-            .catch((error) => {
-              console.warn(
-                "[OrderRepository] Shadow status aggregate failed:",
-                error?.message || error,
-              );
-            });
-        }
-        return mongoResult;
-      });
+    return computeStatusCountsFromDocs(await readPostgresDocs(filter));
   }
 
   async function aggregateTotals(filter = {}, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const docs = await readPostgresDocs(filter);
-        return computeTotalsFromDocs(docs, options.confirmedStatuses);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "OrderRepository",
-          operation: "totals aggregate",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return [{ _id: null, totalAmount: 0, totalAmountConfirmed: 0, totalShipping: 0, confirmedOrders: 0 }];
-    }
-
-    const coll = await getCollection();
-    const confirmedStatuses =
-      Array.isArray(options.confirmedStatuses) && options.confirmedStatuses.length > 0
-        ? options.confirmedStatuses
-        : ["confirmed", "shipped", "completed"];
-    const numericTotalAmountExpr = {
-      $convert: {
-        input: "$orderData.totalAmount",
-        to: "double",
-        onError: 0,
-        onNull: 0,
-      },
-    };
-    const numericShippingExpr = {
-      $convert: {
-        input: "$orderData.shippingCost",
-        to: "double",
-        onError: 0,
-        onNull: 0,
-      },
-    };
-
-    return coll
-      .aggregate([
-        { $match: filter },
+    if (!isStorageReady()) {
+      return [
         {
-          $group: {
-            _id: null,
-            totalAmount: {
-              $sum: {
-                $cond: [
-                  { $ne: ["$status", "cancelled"] },
-                  numericTotalAmountExpr,
-                  0,
-                ],
-              },
-            },
-            totalAmountConfirmed: {
-              $sum: {
-                $cond: [
-                  { $in: ["$status", confirmedStatuses] },
-                  numericTotalAmountExpr,
-                  0,
-                ],
-              },
-            },
-            totalShipping: {
-              $sum: {
-                $cond: [
-                  { $ne: ["$status", "cancelled"] },
-                  numericShippingExpr,
-                  0,
-                ],
-              },
-            },
-            confirmedOrders: {
-              $sum: {
-                $cond: [{ $in: ["$status", confirmedStatuses] }, 1, 0],
-              },
-            },
-          },
+          _id: null,
+          totalAmount: 0,
+          totalAmountConfirmed: 0,
+          totalShipping: 0,
+          confirmedOrders: 0,
         },
-      ])
-      .toArray()
-      .then((mongoResult) => {
-        if (shouldShadowRead()) {
-          void readPostgresDocs(filter)
-            .then((pgDocs) => {
-              const pgResult = computeTotalsFromDocs(pgDocs, options.confirmedStatuses);
-              if (safeStringify(mongoResult) !== safeStringify(pgResult)) {
-                console.warn(
-                  `[OrderRepository] Shadow totals aggregate mismatch for ${safeStringify(filter)}`,
-                );
-              }
-            })
-            .catch((error) => {
-              console.warn(
-                "[OrderRepository] Shadow totals aggregate failed:",
-                error?.message || error,
-              );
-            });
-        }
-        return mongoResult;
-      });
+      ];
+    }
+    return computeTotalsFromDocs(
+      await readPostgresDocs(filter),
+      options.confirmedStatuses,
+    );
   }
 
   async function aggregatePageSummaries(filter = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        const docs = await readPostgresDocs(filter);
-        return computePageSummariesFromDocs(docs);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "OrderRepository",
-          operation: "page summary aggregate",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
+    if (!isStorageReady()) {
       return [];
     }
-
-    const coll = await getCollection();
-    const pipeline = [];
-    if (filter && Object.keys(filter).length > 0) {
-      pipeline.push({ $match: filter });
-    }
-    pipeline.push(
-      {
-        $project: {
-          platform: {
-            $toLower: { $ifNull: ["$platform", "line"] },
-          },
-          botIdText: {
-            $trim: {
-              input: {
-                $convert: {
-                  input: "$botId",
-                  to: "string",
-                  onError: "",
-                  onNull: "",
-                },
-              },
-            },
-          },
-          extractedAt: "$extractedAt",
-        },
-      },
-      {
-        $group: {
-          _id: {
-            platform: "$platform",
-            botIdText: "$botIdText",
-          },
-          orderCount: { $sum: 1 },
-          lastOrderAt: { $max: "$extractedAt" },
-        },
-      },
-    );
-    return coll.aggregate(pipeline).toArray().then((mongoResult) => {
-      if (shouldShadowRead()) {
-        void readPostgresDocs(filter)
-          .then((pgDocs) => {
-            const pgResult = computePageSummariesFromDocs(pgDocs);
-            if (
-              safeStringify(normalizePageSummaryResult(mongoResult))
-              !== safeStringify(normalizePageSummaryResult(pgResult))
-            ) {
-              console.warn(
-                `[OrderRepository] Shadow page summary mismatch for ${safeStringify(filter)}`,
-              );
-            }
-          })
-          .catch((error) => {
-            console.warn(
-              "[OrderRepository] Shadow page summary failed:",
-              error?.message || error,
-            );
-          });
-      }
-      return mongoResult;
-    });
+    return computePageSummariesFromDocs(await readPostgresDocs(filter));
   }
 
   async function getFrequentProductNames(filter = {}, limit = 50) {
-    if (shouldReadPrimary()) {
-      try {
-        const docs = await readPostgresDocs(filter);
-        return computeFrequentProductNamesFromDocs(docs, limit);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "OrderRepository",
-          operation: "product aggregate",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
+    if (!isStorageReady()) {
       return [];
     }
-
-    const coll = await getCollection();
-    return coll
-      .aggregate([
-        { $match: filter },
-        { $unwind: { path: "$orderData.items", preserveNullAndEmptyArrays: false } },
-        {
-          $group: {
-            _id: "$orderData.items.product",
-            count: { $sum: 1 },
-            lastUsed: { $max: "$extractedAt" },
-          },
-        },
-        { $match: { _id: { $ne: null, $ne: "", $type: "string" } } },
-        { $sort: { count: -1, lastUsed: -1 } },
-        { $limit: limit },
-      ])
-      .toArray()
-      .then((mongoResult) => {
-        if (shouldShadowRead()) {
-          void readPostgresDocs(filter)
-            .then((pgDocs) => {
-              const pgResult = computeFrequentProductNamesFromDocs(pgDocs, limit);
-              if (safeStringify(mongoResult) !== safeStringify(pgResult)) {
-                console.warn(
-                  `[OrderRepository] Shadow product aggregate mismatch for ${safeStringify(filter)}`,
-                );
-              }
-            })
-            .catch((error) => {
-              console.warn(
-                "[OrderRepository] Shadow product aggregate failed:",
-                error?.message || error,
-              );
-            });
-        }
-        return mongoResult;
-      });
+    return computeFrequentProductNamesFromDocs(
+      await readPostgresDocs(filter),
+      limit,
+    );
   }
 
-  async function updateById(orderId, update, options = {}) {
-    const normalizedUpdate = normalizeUpdateDocument(update);
-    const filter = buildMongoIdQuery(orderId);
-
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
-      }
-      const existing = await findById(orderId);
-      if (!existing) {
-        return { matchedCount: 0, modifiedCount: 0, document: null };
-      }
-      const updatedDoc = applyMongoStyleUpdate(existing, normalizedUpdate);
-      updatedDoc._id = toLegacyId(existing._id) || toLegacyId(orderId);
-      updatedDoc.updatedAt = new Date();
-      await syncDoc(updatedDoc, { force: true });
-      const saved = await findById(updatedDoc._id);
-      return {
-        matchedCount: 1,
-        modifiedCount: 1,
-        document: saved || updatedDoc,
-      };
+  async function updateById(orderId, update) {
+    if (!isStorageReady()) {
+      throw new Error("order_storage_not_configured");
     }
 
-    const coll = await getCollection();
-    const result = await coll.updateOne(filter, normalizedUpdate, options);
-    if (result.matchedCount === 0) {
+    const existing = await findById(orderId);
+    if (!existing) {
       return { matchedCount: 0, modifiedCount: 0, document: null };
     }
-    const updatedDoc = await coll.findOne(filter);
-    await syncDoc(updatedDoc).catch((error) => {
-      console.warn("[OrderRepository] Update dual-write failed:", error?.message || error);
-    });
+    const updatedDoc = applyDocumentUpdate(
+      existing,
+      normalizeUpdateDocument(update),
+    );
+    updatedDoc._id = toLegacyId(existing._id) || toLegacyId(orderId);
+    updatedDoc.updatedAt = new Date();
+    await persistOrder(updatedDoc);
+    const saved = await findById(updatedDoc._id);
     return {
-      matchedCount: result.matchedCount,
-      modifiedCount: result.modifiedCount,
-      document: updatedDoc,
+      matchedCount: 1,
+      modifiedCount: 1,
+      document: saved || updatedDoc,
     };
   }
 
-  async function updateManyByIds(orderIds = [], update, options = {}) {
+  async function updateManyByIds(orderIds = [], update) {
     const filter = buildIdsFilter(orderIds);
     if (!filter) {
       return { matchedCount: 0, modifiedCount: 0, documents: [] };
     }
-
-    const normalizedUpdate = normalizeUpdateDocument(update);
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        throw new Error("MongoDB is disabled and PostgreSQL is not configured");
-      }
-      const docs = await findByIds(orderIds);
-      if (docs.length === 0) {
-        return { matchedCount: 0, modifiedCount: 0, documents: [] };
-      }
-      const updatedDocs = [];
-      for (const doc of docs) {
-        const updatedDoc = applyMongoStyleUpdate(doc, normalizedUpdate);
-        updatedDoc._id = toLegacyId(doc._id);
-        updatedDoc.updatedAt = new Date();
-        await syncDoc(updatedDoc, { force: true });
-        updatedDocs.push((await findById(updatedDoc._id)) || updatedDoc);
-      }
-      return {
-        matchedCount: docs.length,
-        modifiedCount: updatedDocs.length,
-        documents: updatedDocs,
-      };
+    if (!isStorageReady()) {
+      throw new Error("order_storage_not_configured");
     }
 
-    const coll = await getCollection();
-    const matchedDocs = await coll
-      .find(filter, { projection: { _id: 1 } })
-      .toArray();
-
-    if (matchedDocs.length === 0) {
+    const docs = await findByIds(orderIds);
+    if (docs.length === 0) {
       return { matchedCount: 0, modifiedCount: 0, documents: [] };
     }
 
-    const result = await coll.updateMany(filter, normalizedUpdate, options);
-    const updatedDocs = await coll.find(filter).toArray();
-
-    if (shouldDualWrite() && updatedDocs.length > 0) {
-      await Promise.all(
-        updatedDocs.map((doc) =>
-          syncDoc(doc).catch((error) => {
-            console.warn("[OrderRepository] Bulk update dual-write failed:", error?.message || error);
-          }),
-        ),
-      );
+    const normalizedUpdate = normalizeUpdateDocument(update);
+    const updatedDocs = [];
+    for (const doc of docs) {
+      const updatedDoc = applyDocumentUpdate(doc, normalizedUpdate);
+      updatedDoc._id = toLegacyId(doc._id);
+      updatedDoc.updatedAt = new Date();
+      await persistOrder(updatedDoc);
+      updatedDocs.push((await findById(updatedDoc._id)) || updatedDoc);
     }
 
     return {
-      matchedCount: matchedDocs.length,
-      modifiedCount: result.modifiedCount,
+      matchedCount: docs.length,
+      modifiedCount: updatedDocs.length,
       documents: updatedDocs,
     };
   }
 
   async function deleteById(orderId) {
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        return { deletedCount: 0 };
-      }
-      const existing = await findById(orderId);
-      if (!existing) {
-        return { deletedCount: 0 };
-      }
-      await deletePostgresOrderByLegacyId({ query }, orderId).catch((error) => {
-        console.warn("[OrderRepository] Delete failed:", error?.message || error);
-      });
-      return { deletedCount: 1 };
+    if (!isStorageReady()) {
+      return { deletedCount: 0 };
     }
-
-    const coll = await getCollection();
-    const result = await coll.deleteOne(buildMongoIdQuery(orderId));
-    if (result.deletedCount > 0 && shouldDualWrite()) {
-      await deletePostgresOrderByLegacyId({ query }, orderId).catch((error) => {
-        console.warn("[OrderRepository] Delete dual-write failed:", error?.message || error);
-      });
+    const existing = await findById(orderId);
+    if (!existing) {
+      return { deletedCount: 0 };
     }
-    return result;
+    await deletePostgresOrderByLegacyId({ query }, orderId).catch((error) => {
+      console.warn("[OrderRepository] Delete failed:", error?.message || error);
+    });
+    return { deletedCount: 1 };
   }
 
   async function deleteManyByIds(orderIds = []) {
     const filter = buildIdsFilter(orderIds);
-    if (!filter) {
+    if (!filter || !isStorageReady()) {
       return { deletedCount: 0, documents: [] };
     }
 
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        return { deletedCount: 0, documents: [] };
-      }
-      const docs = await findByIds(orderIds);
-      if (docs.length === 0) {
-        return { deletedCount: 0, documents: [] };
-      }
-      await Promise.all(
-        docs.map((doc) =>
-          deletePostgresOrderByLegacyId({ query }, doc?._id).catch((error) => {
-            console.warn("[OrderRepository] Bulk delete failed:", error?.message || error);
-          }),
-        ),
-      );
-      return {
-        deletedCount: docs.length,
-        documents: docs,
-      };
-    }
-
-    const coll = await getCollection();
-    const docs = await coll.find(filter).toArray();
+    const docs = await findByIds(orderIds);
     if (docs.length === 0) {
       return { deletedCount: 0, documents: [] };
     }
 
-    const result = await coll.deleteMany(filter);
-    if (result.deletedCount > 0 && shouldDualWrite()) {
-      await Promise.all(
-        docs.map((doc) =>
-          deletePostgresOrderByLegacyId({ query }, doc?._id).catch((error) => {
-            console.warn("[OrderRepository] Bulk delete dual-write failed:", error?.message || error);
-          }),
-        ),
-      );
-    }
-
+    await Promise.all(
+      docs.map((doc) =>
+        deletePostgresOrderByLegacyId({ query }, doc?._id).catch((error) => {
+          console.warn("[OrderRepository] Bulk delete failed:", error?.message || error);
+        }),
+      ),
+    );
     return {
-      deletedCount: result.deletedCount,
+      deletedCount: docs.length,
       documents: docs,
     };
   }
@@ -1242,8 +677,8 @@ function createOrderRepository({
     findByUser,
     findByUsers,
     findLatestByUser,
-    list,
     getFrequentProductNames,
+    list,
     updateById,
     updateManyByIds,
   };

@@ -8,6 +8,12 @@ const DEFAULT_SALT_ROUNDS = Number(
 );
 let passcodesTableReadyPromise = null;
 
+function requirePostgresPasscodes() {
+  if (!canUsePostgresPasscodes()) {
+    throw new Error("PostgreSQL is required for admin passcodes");
+  }
+}
+
 function isPasscodeFeatureEnabled(masterPasscode) {
   return typeof masterPasscode === "string" && masterPasscode.trim().length > 0;
 }
@@ -121,10 +127,10 @@ async function createPasscode(db, { label, passcode, createdBy }) {
 
   const hashed = await hashPasscode(sanitizedPasscode);
   const now = new Date();
-  if (canUsePostgresPasscodes()) {
-    await ensurePasscodesTable();
-    const legacyPasscodeId = generateLegacyPasscodeId();
-    const result = await query(
+  requirePostgresPasscodes();
+  await ensurePasscodesTable();
+  const legacyPasscodeId = generateLegacyPasscodeId();
+  const result = await query(
       `
         INSERT INTO admin_passcodes (
           legacy_passcode_id,
@@ -149,28 +155,14 @@ async function createPasscode(db, { label, passcode, createdBy }) {
           updated_at
       `,
       [legacyPasscodeId, sanitizedLabel, hashed, createdBy || null, now],
-    );
-    return mapPasscodeDoc(result.rows[0]);
-  }
-
-  const coll = db.collection(PASSCODE_COLLECTION);
-  const doc = {
-    label: sanitizedLabel,
-    codeHash: hashed,
-    isActive: true,
-    createdAt: now,
-    createdBy: createdBy || null,
-    lastUsedAt: null,
-    usageCount: 0,
-  };
-  const { insertedId } = await coll.insertOne(doc);
-  return mapPasscodeDoc({ ...doc, _id: insertedId });
+  );
+  return mapPasscodeDoc(result.rows[0]);
 }
 
 async function listPasscodes(db) {
-  if (canUsePostgresPasscodes()) {
-    await ensurePasscodesTable();
-    const result = await query(
+  requirePostgresPasscodes();
+  await ensurePasscodesTable();
+  const result = await query(
       `
         SELECT
           id::text AS id,
@@ -185,16 +177,8 @@ async function listPasscodes(db) {
         FROM admin_passcodes
         ORDER BY created_at DESC, id DESC
       `,
-    );
-    return result.rows.map(mapPasscodeDoc);
-  }
-
-  const coll = db.collection(PASSCODE_COLLECTION);
-  const docs = await coll
-    .find({})
-    .sort({ createdAt: -1 })
-    .toArray();
-  return docs.map(mapPasscodeDoc);
+  );
+  return result.rows.map(mapPasscodeDoc);
 }
 
 async function togglePasscode(db, id, isActive) {
@@ -202,9 +186,9 @@ async function togglePasscode(db, id, isActive) {
   if (!normalizedId) {
     throw new Error("รหัสรหัสผ่านไม่ถูกต้อง");
   }
-  if (canUsePostgresPasscodes()) {
-    await ensurePasscodesTable();
-    const result = await query(
+  requirePostgresPasscodes();
+  await ensurePasscodesTable();
+  const result = await query(
       `
         UPDATE admin_passcodes
         SET
@@ -223,33 +207,11 @@ async function togglePasscode(db, id, isActive) {
           updated_at
       `,
       [normalizedId, Boolean(isActive)],
-    );
-    if (result.rowCount === 0) {
-      throw new Error("ไม่พบรหัสผ่านที่ต้องการปรับสถานะ");
-    }
-    return mapPasscodeDoc(result.rows[0]);
-  }
-
-  const coll = db.collection(PASSCODE_COLLECTION);
-  const docs = await coll.find({}).project({ _id: 1 }).toArray();
-  const matched = docs.find((doc) => String(doc?._id || "") === normalizedId);
-  if (!matched?._id) {
-    throw new Error("ไม่พบรหัสผ่านที่ต้องการปรับสถานะ");
-  }
-  const { value } = await coll.findOneAndUpdate(
-    { _id: matched._id },
-    {
-      $set: {
-        isActive: !!isActive,
-        updatedAt: new Date(),
-      },
-    },
-    { returnDocument: "after" },
   );
-  if (!value) {
+  if (result.rowCount === 0) {
     throw new Error("ไม่พบรหัสผ่านที่ต้องการปรับสถานะ");
   }
-  return mapPasscodeDoc(value);
+  return mapPasscodeDoc(result.rows[0]);
 }
 
 async function deletePasscode(db, id) {
@@ -257,37 +219,25 @@ async function deletePasscode(db, id) {
   if (!normalizedId) {
     throw new Error("รหัสรหัสผ่านไม่ถูกต้อง");
   }
-  if (canUsePostgresPasscodes()) {
-    await ensurePasscodesTable();
-    const result = await query(
-      `
-        DELETE FROM admin_passcodes
-        WHERE id::text = $1 OR legacy_passcode_id = $1
-      `,
-      [normalizedId],
-    );
-    if (!result.rowCount) {
-      throw new Error("ไม่พบรหัสผ่านที่ต้องการลบ");
-    }
-    return true;
-  }
-  const coll = db.collection(PASSCODE_COLLECTION);
-  const docs = await coll.find({}).project({ _id: 1 }).toArray();
-  const matched = docs.find((doc) => String(doc?._id || "") === normalizedId);
-  if (!matched?._id) {
-    throw new Error("ไม่พบรหัสผ่านที่ต้องการลบ");
-  }
-  const result = await coll.deleteOne({ _id: matched._id });
-  if (!result.deletedCount) {
+  requirePostgresPasscodes();
+  await ensurePasscodesTable();
+  const result = await query(
+    `
+      DELETE FROM admin_passcodes
+      WHERE id::text = $1 OR legacy_passcode_id = $1
+    `,
+    [normalizedId],
+  );
+  if (!result.rowCount) {
     throw new Error("ไม่พบรหัสผ่านที่ต้องการลบ");
   }
   return true;
 }
 
 async function findActivePasscode(db, passcode) {
-  if (canUsePostgresPasscodes()) {
-    await ensurePasscodesTable();
-    const result = await query(
+  requirePostgresPasscodes();
+  await ensurePasscodesTable();
+  const result = await query(
       `
         SELECT
           id::text AS id,
@@ -305,31 +255,15 @@ async function findActivePasscode(db, passcode) {
         WHERE is_active = TRUE
         ORDER BY created_at DESC, id DESC
       `,
-    );
-    for (const row of result.rows) {
-      const matched = await comparePasscode(passcode, row.code_hash);
-      if (matched) {
-        return {
-          ...row,
-          _id: row.legacy_passcode_id || row.id,
-          codeHash: row.code_hash,
-        };
-      }
-    }
-    return null;
-  }
-
-  const coll = db.collection(PASSCODE_COLLECTION);
-  const cursor = coll.find({ isActive: { $ne: false } });
-  // ตรวจรหัสทีละรายการ เพราะเก็บเป็น hash
-  // จำนวนรหัสที่จัดการผ่าน UI มีน้อย จึงไม่กระทบประสิทธิภาพ
-  // ถ้าจำนวนเยอะควรเพิ่ม field fingerprint เพื่อค้นหาได้เร็วขึ้น
-  // แต่ตอนนี้ยังไม่จำเป็น
-  const docs = await cursor.toArray();
-  for (const doc of docs) {
-    const matched = await comparePasscode(passcode, doc.codeHash);
+  );
+  for (const row of result.rows) {
+    const matched = await comparePasscode(passcode, row.code_hash);
     if (matched) {
-      return doc;
+      return {
+        ...row,
+        _id: row.legacy_passcode_id || row.id,
+        codeHash: row.code_hash,
+      };
     }
   }
   return null;
@@ -337,9 +271,9 @@ async function findActivePasscode(db, passcode) {
 
 async function recordPasscodeUsage(db, id, meta = {}) {
   if (!id) return;
-  if (canUsePostgresPasscodes()) {
-    await ensurePasscodesTable();
-    await query(
+  requirePostgresPasscodes();
+  await ensurePasscodesTable();
+  await query(
       `
         UPDATE admin_passcodes
         SET
@@ -350,45 +284,20 @@ async function recordPasscodeUsage(db, id, meta = {}) {
         WHERE id::text = $1 OR legacy_passcode_id = $1
       `,
       [String(id), meta.ipAddress || null],
-    );
-    return;
-  }
-  const coll = db.collection(PASSCODE_COLLECTION);
-  const docs = await coll.find({}).project({ _id: 1 }).toArray();
-  const matched = docs.find((doc) => String(doc?._id || "") === String(id));
-  if (!matched?._id) {
-    return;
-  }
-  const update = {
-    $set: {
-      lastUsedAt: new Date(),
-      lastUsedFrom: meta.ipAddress || null,
-    },
-    $inc: { usageCount: 1 },
-  };
-  await coll.updateOne({ _id: matched._id }, update);
+  );
 }
 
 async function ensurePasscodeIndexes(db) {
-  if (canUsePostgresPasscodes()) {
-    await ensurePasscodesTable();
-    await Promise.all([
-      query(
-        "CREATE INDEX IF NOT EXISTS idx_admin_passcodes_active ON admin_passcodes (is_active)",
-      ),
-      query(
-        "CREATE INDEX IF NOT EXISTS idx_admin_passcodes_created_at ON admin_passcodes (created_at DESC)",
-      ),
-    ]);
-    return;
-  }
-  try {
-    const coll = db.collection(PASSCODE_COLLECTION);
-    await coll.createIndex({ isActive: 1 });
-    await coll.createIndex({ createdAt: -1 });
-  } catch (err) {
-    console.warn("[Auth] cannot ensure passcode indexes:", err?.message || err);
-  }
+  requirePostgresPasscodes();
+  await ensurePasscodesTable();
+  await Promise.all([
+    query(
+      "CREATE INDEX IF NOT EXISTS idx_admin_passcodes_active ON admin_passcodes (is_active)",
+    ),
+    query(
+      "CREATE INDEX IF NOT EXISTS idx_admin_passcodes_created_at ON admin_passcodes (created_at DESC)",
+    ),
+  ]);
 }
 
 async function verifyPasscode({

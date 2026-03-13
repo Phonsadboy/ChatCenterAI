@@ -1,17 +1,13 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
 const {
   applyProjection,
-  buildMongoIdQuery,
   generateLegacyObjectIdString,
-  safeStringify,
   toLegacyId,
-  warnPrimaryReadFailure,
 } = require("./shared");
 
 function normalizeChannelType(value) {
   const type = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (!type) return "line_group";
-  return type;
+  return type || "line_group";
 }
 
 function normalizeChannelDoc(doc = {}) {
@@ -126,42 +122,6 @@ function normalizeLogDoc(doc = {}) {
   };
 }
 
-function buildChannelComparable(doc = {}) {
-  const normalized = normalizeChannelDoc(doc);
-  return {
-    _id: normalized._id,
-    name: normalized.name,
-    type: normalized.type,
-    senderBotId: normalized.senderBotId,
-    groupId: normalized.groupId,
-    receiveFromAllBots: normalized.receiveFromAllBots,
-    sources: normalized.sources,
-    eventTypes: normalized.eventTypes,
-    deliveryMode: normalized.deliveryMode,
-    summaryTimes: normalized.summaryTimes,
-    summaryTimezone: normalized.summaryTimezone,
-    settings: normalized.settings,
-    lastSummaryAt: normalized.lastSummaryAt,
-    lastSummarySlotKey: normalized.lastSummarySlotKey,
-    isActive: normalized.isActive,
-    createdAt: normalized.createdAt,
-    updatedAt: normalized.updatedAt,
-  };
-}
-
-function buildLogComparable(doc = {}) {
-  const normalized = normalizeLogDoc(doc);
-  return {
-    _id: normalized._id,
-    channelId: normalized.channelId,
-    orderId: normalized.orderId,
-    eventType: normalized.eventType,
-    status: normalized.status,
-    errorMessage: normalized.errorMessage,
-    createdAt: normalized.createdAt,
-  };
-}
-
 function buildChannelConfig(doc = {}) {
   const normalized = normalizeChannelDoc(doc);
   return {
@@ -189,116 +149,9 @@ function normalizeSortDirection(sort, field, fallback = -1) {
   return Number(sort[field]) >= 0 ? 1 : -1;
 }
 
-function createNotificationRepository({
-  connectDB,
-  dbName = "chatbot",
-  runtimeConfig,
-}) {
-  function canUseMongo() {
-    return runtimeConfig?.features?.mongoEnabled !== false;
-  }
-
+function createNotificationRepository({ runtimeConfig }) {
   function canUsePostgres() {
     return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
-  }
-
-  function shouldDualWrite() {
-    return Boolean(runtimeConfig?.features?.postgresDualWrite && canUsePostgres());
-  }
-
-  function shouldShadowRead() {
-    return Boolean(runtimeConfig?.features?.postgresShadowRead && canUsePostgres());
-  }
-
-  function shouldReadPrimary() {
-    return Boolean(
-      canUsePostgres()
-        && (runtimeConfig?.features?.postgresReadPrimaryNotifications || !canUseMongo()),
-    );
-  }
-
-  async function getDb() {
-    if (!canUseMongo()) {
-      throw new Error("MongoDB is disabled");
-    }
-    const client = await connectDB();
-    return client.db(dbName);
-  }
-
-  function buildMongoChannelFilter(filter = {}) {
-    const conditions = [];
-    if (filter.id) {
-      conditions.push(buildMongoIdQuery(filter.id));
-    }
-    if (typeof filter.isActive === "boolean") {
-      conditions.push({ isActive: filter.isActive });
-    }
-    if (typeof filter.type === "string" && filter.type.trim()) {
-      conditions.push({ type: normalizeChannelType(filter.type) });
-    }
-    const senderBotId = toLegacyId(filter.senderBotId);
-    if (senderBotId) {
-      conditions.push({
-        $or: [{ senderBotId }, { botId: senderBotId }],
-      });
-    }
-    const groupId = toLegacyId(filter.groupId || filter.lineGroupId);
-    if (groupId) {
-      conditions.push({
-        $or: [{ groupId }, { lineGroupId: groupId }],
-      });
-    }
-    if (typeof filter.eventType === "string" && filter.eventType.trim()) {
-      conditions.push({ eventTypes: filter.eventType.trim() });
-    }
-    if (Array.isArray(filter.eventTypes) && filter.eventTypes.length > 0) {
-      conditions.push({ eventTypes: { $in: filter.eventTypes } });
-    }
-    if (filter.slipOkEnabled === true) {
-      conditions.push({ "settings.slipOkEnabled": true });
-    }
-
-    if (conditions.length === 0) return {};
-    if (conditions.length === 1) return conditions[0];
-    return { $and: conditions };
-  }
-
-  function buildMongoLogFilter(filter = {}) {
-    const query = {};
-    const channelId = toLegacyId(filter.channelId);
-    if (channelId) query.channelId = channelId;
-    if (typeof filter.status === "string" && filter.status.trim()) {
-      query.status = filter.status.trim();
-    }
-
-    if (filter.from || filter.to) {
-      query.createdAt = {};
-      if (filter.from) query.createdAt.$gte = filter.from;
-      if (filter.to) query.createdAt.$lte = filter.to;
-      if (Object.keys(query.createdAt).length === 0) {
-        delete query.createdAt;
-      }
-    }
-    return query;
-  }
-
-  function startShadowCompare(label, mongoValue, pgValue, normalizer) {
-    if (!shouldShadowRead() || shouldReadPrimary()) return;
-    const normalize =
-      typeof normalizer === "function"
-        ? normalizer
-        : (value) => value;
-
-    const normalizedMongo = Array.isArray(mongoValue)
-      ? mongoValue.map((item) => normalize(item))
-      : normalize(mongoValue);
-    const normalizedPg = Array.isArray(pgValue)
-      ? pgValue.map((item) => normalize(item))
-      : normalize(pgValue);
-
-    if (safeStringify(normalizedMongo) !== safeStringify(normalizedPg)) {
-      console.warn(`[NotificationRepository] Shadow read mismatch for ${label}`);
-    }
   }
 
   async function upsertPostgresChannel(doc = {}) {
@@ -530,100 +383,16 @@ function createNotificationRepository({
   }
 
   async function listChannels(filter = {}, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        return await readPostgresChannels(filter, options);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "NotificationRepository",
-          operation: "channel list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return [];
-    }
-
-    const db = await getDb();
-    const coll = db.collection("notification_channels");
-    let cursor = coll.find(buildMongoChannelFilter(filter));
-    cursor = cursor.sort(options.sort || { createdAt: -1 });
-    if (Number.isFinite(options.limit) && options.limit > 0) {
-      cursor = cursor.limit(options.limit);
-    }
-    const mongoDocs = await cursor.toArray();
-
-    if (shouldShadowRead()) {
-      void readPostgresChannels(filter, options)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `channels:list:${safeStringify(filter)}`,
-            mongoDocs,
-            pgDocs,
-            buildChannelComparable,
-          ))
-        .catch((error) => {
-          console.warn(
-            "[NotificationRepository] Shadow channel list read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    if (!canUsePostgres()) return [];
+    return readPostgresChannels(filter, options);
   }
 
   async function findChannelById(channelId, options = {}) {
     const normalizedId = toLegacyId(channelId);
-    if (!normalizedId) return null;
-
-    if (shouldReadPrimary()) {
-      try {
-        const pgDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
-        const pgDoc = pgDocs[0] || null;
-        if (pgDoc || !canUseMongo()) {
-          return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
-        }
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "NotificationRepository",
-          operation: "channel read",
-          identifier: normalizedId,
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return null;
-    }
-
-    const db = await getDb();
-    const mongoDoc = await db.collection("notification_channels")
-      .findOne(buildMongoIdQuery(normalizedId), options);
-
-    if (shouldShadowRead()) {
-      void readPostgresChannels({ id: normalizedId }, { limit: 1 })
-        .then((pgDocs) =>
-          startShadowCompare(
-            `channel:byId:${normalizedId}`,
-            mongoDoc,
-            pgDocs[0] || null,
-            buildChannelComparable,
-          ))
-        .catch((error) => {
-          console.warn(
-            `[NotificationRepository] Shadow channel read failed for ${normalizedId}:`,
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDoc;
+    if (!normalizedId || !canUsePostgres()) return null;
+    const pgDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
+    const pgDoc = pgDocs[0] || null;
+    return options.projection ? applyProjection(pgDoc, options.projection) : pgDoc;
   }
 
   async function findChannel(filter = {}, options = {}) {
@@ -642,67 +411,30 @@ function createNotificationRepository({
       updatedAt: doc.updatedAt || doc.createdAt || new Date(),
     };
 
-    if (canUseMongo()) {
-      const db = await getDb();
-      const result = await db.collection("notification_channels").insertOne(payload);
-      payload._id = result.insertedId;
-    }
+    if (!canUsePostgres()) return payload;
 
-    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
-      await upsertPostgresChannel(payload).catch((error) => {
-        console.warn(
-          `[NotificationRepository] Channel dual-write insert failed for ${toLegacyId(payload._id)}:`,
-          error?.message || error,
-        );
-      });
-    }
-
-    return payload;
+    await upsertPostgresChannel(payload);
+    const stored = await readPostgresChannels({ id: payload._id }, { limit: 1 });
+    return stored[0] || payload;
   }
 
   async function updateChannelById(channelId, setDoc = {}) {
     const normalizedId = toLegacyId(channelId);
-    if (!normalizedId) return null;
+    if (!normalizedId || !canUsePostgres()) return null;
 
-    if (!canUseMongo()) {
-      const existingDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
-      const existing = existingDocs[0] || null;
-      if (!existing) return null;
-      const updatedDoc = {
-        ...existing,
-        ...setDoc,
-        _id: normalizedId,
-        updatedAt: setDoc.updatedAt || new Date(),
-      };
-      await upsertPostgresChannel(updatedDoc).catch((error) => {
-        console.warn(
-          `[NotificationRepository] Channel update failed for ${normalizedId}:`,
-          error?.message || error,
-        );
-      });
-      const refreshed = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
-      return refreshed[0] || updatedDoc;
-    }
+    const existingDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
+    const existing = existingDocs[0] || null;
+    if (!existing) return null;
 
-    const db = await getDb();
-    await db.collection("notification_channels").updateOne(
-      buildMongoIdQuery(normalizedId),
-      { $set: setDoc },
-    );
-    const updated = await db.collection("notification_channels").findOne(
-      buildMongoIdQuery(normalizedId),
-    );
-
-    if (updated && shouldDualWrite()) {
-      await upsertPostgresChannel(updated).catch((error) => {
-        console.warn(
-          `[NotificationRepository] Channel dual-write update failed for ${normalizedId}:`,
-          error?.message || error,
-        );
-      });
-    }
-
-    return updated;
+    const updatedDoc = {
+      ...existing,
+      ...setDoc,
+      _id: normalizedId,
+      updatedAt: setDoc.updatedAt || new Date(),
+    };
+    await upsertPostgresChannel(updatedDoc);
+    const refreshed = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
+    return refreshed[0] || updatedDoc;
   }
 
   async function setChannelSummaryState(channelId, state = {}) {
@@ -720,40 +452,15 @@ function createNotificationRepository({
 
   async function deleteChannelById(channelId) {
     const normalizedId = toLegacyId(channelId);
-    if (!normalizedId) {
+    if (!normalizedId || !canUsePostgres()) {
       return { deletedCount: 0 };
     }
-
-    if (!canUseMongo()) {
-      if (!canUsePostgres()) {
-        return { deletedCount: 0 };
-      }
-      const existingDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
-      if (existingDocs.length === 0) {
-        return { deletedCount: 0 };
-      }
-      await deletePostgresChannel(normalizedId).catch((error) => {
-        console.warn(
-          `[NotificationRepository] Channel delete failed for ${normalizedId}:`,
-          error?.message || error,
-        );
-      });
-      return { deletedCount: 1 };
+    const existingDocs = await readPostgresChannels({ id: normalizedId }, { limit: 1 });
+    if (existingDocs.length === 0) {
+      return { deletedCount: 0 };
     }
-
-    const db = await getDb();
-    const coll = db.collection("notification_channels");
-    const existing = await coll.findOne(buildMongoIdQuery(normalizedId));
-    const result = await coll.deleteOne(buildMongoIdQuery(normalizedId));
-    if (result.deletedCount > 0 && shouldDualWrite()) {
-      await deletePostgresChannel(existing?._id || normalizedId).catch((error) => {
-        console.warn(
-          `[NotificationRepository] Channel dual-write delete failed for ${normalizedId}:`,
-          error?.message || error,
-        );
-      });
-    }
-    return result;
+    await deletePostgresChannel(normalizedId);
+    return { deletedCount: 1 };
   }
 
   async function insertLog(payload = {}) {
@@ -768,69 +475,16 @@ function createNotificationRepository({
       response: payload.response || null,
       createdAt: now,
     };
-    if (canUseMongo()) {
-      const db = await getDb();
-      const result = await db.collection("notification_logs").insertOne(doc);
-      doc._id = result.insertedId;
-    }
 
-    if (canUsePostgres() && (shouldDualWrite() || !canUseMongo())) {
-      await upsertPostgresLog(doc).catch((error) => {
-        console.warn(
-          `[NotificationRepository] Log dual-write failed for ${toLegacyId(doc._id)}:`,
-          error?.message || error,
-        );
-      });
+    if (canUsePostgres()) {
+      await upsertPostgresLog(doc);
     }
-
     return doc;
   }
 
   async function listLogs(filter = {}, options = {}) {
-    if (shouldReadPrimary()) {
-      try {
-        return await readPostgresLogs(filter, options);
-      } catch (error) {
-        warnPrimaryReadFailure({
-          repository: "NotificationRepository",
-          operation: "log list read",
-          canUseMongo: canUseMongo(),
-          error,
-        });
-      }
-    }
-
-    if (!canUseMongo()) {
-      return [];
-    }
-
-    const db = await getDb();
-    const coll = db.collection("notification_logs");
-    let cursor = coll.find(buildMongoLogFilter(filter));
-    cursor = cursor.sort(options.sort || { createdAt: -1 });
-    if (Number.isFinite(options.limit) && options.limit > 0) {
-      cursor = cursor.limit(options.limit);
-    }
-    const mongoDocs = await cursor.toArray();
-
-    if (shouldShadowRead()) {
-      void readPostgresLogs(filter, options)
-        .then((pgDocs) =>
-          startShadowCompare(
-            `logs:list:${safeStringify(filter)}`,
-            mongoDocs,
-            pgDocs,
-            buildLogComparable,
-          ))
-        .catch((error) => {
-          console.warn(
-            "[NotificationRepository] Shadow log list read failed:",
-            error?.message || error,
-          );
-        });
-    }
-
-    return mongoDocs;
+    if (!canUsePostgres()) return [];
+    return readPostgresLogs(filter, options);
   }
 
   return {

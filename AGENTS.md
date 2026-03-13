@@ -28,6 +28,6 @@
 - Keep secrets in `.env` (see `env.example`); check `index.js` for any new endpoints/config needs before sharing.
 
 ## Security & Configuration Tips
-- Never hardcode keys; load via `.env` for OpenAI, Mongo, LINE/Facebook.
+- Never hardcode keys; load via `.env` for OpenAI, PostgreSQL/Redis, LINE/Facebook.
 - Preserve input sanitization, `helmet`, and rate limiting on new routes.
 - If serving assets from a CDN, configure `PUBLIC_BASE_URL` and set SRI/versioning for `public/assets/*`.

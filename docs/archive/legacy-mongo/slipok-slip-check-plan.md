@@ -1,3 +1,5 @@
+> Historical pre-PostgreSQL planning note. Archived after MongoDB runtime removal.
+
 # แผนพัฒนา: ระบบเช็กสลิป SlipOK ในกลุ่มออเดอร์ (LINE)
 
 > **Last updated:** 2025-12-17  
