@@ -14303,13 +14303,56 @@ function incrementInstructionMetric(metric, amount = 1) {
 }
 
 function isInstructionSelectionObject(entry) {
-  return (
-    !!entry &&
-    typeof entry === "object" &&
-    !Array.isArray(entry) &&
-    typeof entry.instructionId === "string" &&
-    entry.instructionId.trim() !== ""
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return false;
+  }
+  return extractInstructionSelectionId(entry) !== "";
+}
+
+function isInstructionUuid(value) {
+  if (typeof value !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value.trim(),
   );
+}
+
+function isMongoObjectIdLike(value) {
+  if (typeof value !== "string") return false;
+  return /^[0-9a-f]{24}$/i.test(value.trim());
+}
+
+function shouldTreatStringAsInstructionRef(value) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim();
+  if (!normalized) return false;
+  return (
+    /^inst_/i.test(normalized)
+    || isInstructionUuid(normalized)
+    || isMongoObjectIdLike(normalized)
+  );
+}
+
+function extractInstructionSelectionId(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return "";
+  const directInstructionId =
+    typeof entry.instructionId === "string" ? entry.instructionId.trim() : "";
+  if (directInstructionId) return directInstructionId;
+
+  const fallbacks = [
+    entry._id,
+    entry.id,
+    entry.legacyInstructionId,
+    entry.legacy_instruction_id,
+  ];
+  for (const candidate of fallbacks) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.trim();
+    if (!normalized) continue;
+    if (shouldTreatStringAsInstructionRef(normalized)) {
+      return normalized;
+    }
+  }
+  return "";
 }
 
 function normalizeInstructionSelections(selections = []) {
@@ -14328,14 +14371,20 @@ function normalizeInstructionSelections(selections = []) {
 
   for (const entry of selections) {
     if (isInstructionSelectionObject(entry)) {
-      const instructionId = entry.instructionId.trim();
+      const instructionId = extractInstructionSelectionId(entry);
       if (!instructionId) continue;
-      const version = Number.isInteger(entry.version) ? entry.version : null;
+      const numericVersion = Number(entry.version);
+      const version =
+        Number.isInteger(entry.version) && entry.version > 0
+          ? entry.version
+          : Number.isInteger(numericVersion) && numericVersion > 0
+            ? numericVersion
+            : null;
       pushInstructionObject(instructionId, version);
     } else if (typeof entry === "string") {
       const value = entry.trim();
       if (!value) continue;
-      if (/^inst_/i.test(value)) {
+      if (shouldTreatStringAsInstructionRef(value)) {
         pushInstructionObject(value);
         continue;
       }
@@ -14521,9 +14570,17 @@ async function resolveInstructionSelections(
   const normalized = selections
     .map((entry) => {
       if (isInstructionSelectionObject(entry)) {
+        const instructionId = extractInstructionSelectionId(entry);
+        if (!instructionId) return null;
+        const numericVersion = Number(entry.version);
         return {
-          instructionId: entry.instructionId.trim(),
-          version: Number.isInteger(entry.version) ? entry.version : null,
+          instructionId,
+          version:
+            Number.isInteger(entry.version) && entry.version > 0
+              ? entry.version
+              : Number.isInteger(numericVersion) && numericVersion > 0
+                ? numericVersion
+                : null,
         };
       }
       return null;
@@ -14609,12 +14666,50 @@ async function resolveInstructionSelectionsV2(
     ...new Set(
       selections
         .filter(isInstructionSelectionObject)
-        .map((entry) => entry.instructionId?.trim())
+        .map((entry) => extractInstructionSelectionId(entry))
         .filter(Boolean),
     ),
   ];
 
   if (instructionIds.length === 0) return [];
+
+  const mapRowsToOrderedDocs = (docs = []) => {
+    const docByRef = new Map();
+    docs.forEach((doc) => {
+      if (!doc || typeof doc !== "object") return;
+      const primaryInstructionId =
+        typeof doc.instructionId === "string" ? doc.instructionId.trim() : "";
+      const primaryObjectId =
+        typeof doc._id === "string"
+          ? doc._id.trim()
+          : doc?._id && typeof doc._id.toString === "function"
+            ? doc._id.toString().trim()
+            : "";
+      if (primaryInstructionId) {
+        docByRef.set(primaryInstructionId, doc);
+      }
+      if (primaryObjectId) {
+        docByRef.set(primaryObjectId, doc);
+      }
+    });
+
+    const ordered = [];
+    const seen = new Set();
+    instructionIds.forEach((ref) => {
+      const doc = docByRef.get(ref);
+      if (!doc) return;
+      const stableKey =
+        typeof doc._id === "string"
+          ? doc._id
+          : typeof doc.instructionId === "string"
+            ? doc.instructionId
+            : ref;
+      if (seen.has(stableKey)) return;
+      seen.add(stableKey);
+      ordered.push(doc);
+    });
+    return ordered;
+  };
 
   if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
     try {
@@ -14632,27 +14727,15 @@ async function resolveInstructionSelectionsV2(
             updated_at
           FROM instructions
           WHERE ${buildInstructionV2SourceCondition("source_kind")}
-            AND legacy_instruction_id = ANY($1::text[])
+            AND (
+              legacy_instruction_id = ANY($1::text[])
+              OR id::text = ANY($1::text[])
+            )
         `,
         [instructionIds],
       );
-      return result.rows.map((row) => ({
-        _id: row.id,
-        instructionId: row.legacy_instruction_id,
-        name: row.name || "",
-        description: row.description || "",
-        dataItems: Array.isArray(row.data) ? row.data : [],
-        conversationStarter:
-          row.conversation_starter && typeof row.conversation_starter === "object"
-            ? row.conversation_starter
-            : {},
-        version:
-          Number.isInteger(row.current_version) && row.current_version > 0
-            ? row.current_version
-            : 1,
-        createdAt: row.created_at || null,
-        updatedAt: row.updated_at || null,
-      }));
+      const mappedRows = result.rows.map((row) => mapPostgresInstructionV2Row(row));
+      return mapRowsToOrderedDocs(mappedRows);
     } catch (error) {
       console.warn(
         "[InstructionsV2] PostgreSQL read failed:",
@@ -14669,17 +14752,45 @@ async function resolveInstructionSelectionsV2(
     db = client.db("chatbot");
   }
 
+  const objectIds = instructionIds
+    .map((entry) => toObjectId(entry))
+    .filter(Boolean);
+  const mongoFilters = [{ instructionId: { $in: instructionIds } }];
+  if (objectIds.length > 0) {
+    mongoFilters.push({ _id: { $in: objectIds } });
+  }
+
   const docs = await db
     .collection("instructions_v2")
-    .find({ instructionId: { $in: instructionIds } })
+    .find(
+      mongoFilters.length === 1 ? mongoFilters[0] : { $or: mongoFilters },
+    )
     .toArray();
 
-  return docs.map((doc) => {
+  const normalizedDocs = docs.map((doc) => {
     if (doc && doc._id && typeof doc._id.toString === "function") {
-      return { ...doc, _id: doc._id.toString() };
+      const normalizedObjectId = doc._id.toString();
+      return {
+        ...doc,
+        _id: normalizedObjectId,
+        instructionId:
+          typeof doc.instructionId === "string" && doc.instructionId.trim()
+            ? doc.instructionId.trim()
+            : normalizedObjectId,
+      };
     }
-    return doc;
+    const fallbackObjectId =
+      typeof doc?._id === "string" ? doc._id.trim() : "";
+    return {
+      ...doc,
+      instructionId:
+        typeof doc?.instructionId === "string" && doc.instructionId.trim()
+          ? doc.instructionId.trim()
+          : fallbackObjectId,
+    };
   });
+
+  return mapRowsToOrderedDocs(normalizedDocs);
 }
 
 function buildSystemPromptFromInstructionDocs(instructions = []) {
@@ -15180,18 +15291,27 @@ async function resolveInstructionMetaForRuntime(
     const instructionIds = [
       ...new Set(
         objectSelections
-          .map((entry) => entry.instructionId)
+          .map((entry) => extractInstructionSelectionId(entry))
           .filter((value) => typeof value === "string" && value.trim())
       ),
     ];
 
     if (instructionIds.length > 0) {
+      const mongoObjectIds = instructionIds
+        .map((id) => toObjectId(id))
+        .filter(Boolean);
+      const mongoInstructionFilters = [{ instructionId: { $in: instructionIds } }];
+      if (mongoObjectIds.length > 0) {
+        mongoInstructionFilters.push({ _id: { $in: mongoObjectIds } });
+      }
       const docs = isMongoRuntimeEnabled()
         ? await db
           .collection("instructions_v2")
           .find(
-            { instructionId: { $in: instructionIds } },
-            { projection: { instructionId: 1, version: 1 } },
+            mongoInstructionFilters.length === 1
+              ? mongoInstructionFilters[0]
+              : { $or: mongoInstructionFilters },
+            { projection: { _id: 1, instructionId: 1, version: 1 } },
           )
           .toArray()
         : await resolveInstructionSelectionsV2(
@@ -15200,24 +15320,43 @@ async function resolveInstructionMetaForRuntime(
         );
       const docMap = new Map();
       docs.forEach((doc) => {
-        if (!doc || !doc.instructionId) return;
-        docMap.set(doc.instructionId, doc);
+        if (!doc || typeof doc !== "object") return;
+        const instructionId =
+          typeof doc.instructionId === "string" ? doc.instructionId.trim() : "";
+        const objectId =
+          typeof doc._id === "string"
+            ? doc._id.trim()
+            : doc?._id && typeof doc._id.toString === "function"
+              ? doc._id.toString().trim()
+              : "";
+        if (instructionId) {
+          docMap.set(instructionId, doc);
+        }
+        if (objectId) {
+          docMap.set(objectId, doc);
+        }
       });
 
       for (const selection of objectSelections) {
-        const doc = docMap.get(selection.instructionId);
+        const selectionInstructionId = extractInstructionSelectionId(selection);
+        if (!selectionInstructionId) continue;
+        const doc = docMap.get(selectionInstructionId);
+        const resolvedInstructionId =
+          doc && typeof doc.instructionId === "string" && doc.instructionId.trim()
+            ? doc.instructionId.trim()
+            : selectionInstructionId;
         const versionNumber =
           doc && Number.isInteger(doc.version) && doc.version > 0
             ? doc.version
             : null;
 
         instructionRefs.push({
-          instructionId: selection.instructionId,
+          instructionId: resolvedInstructionId,
           version: versionNumber,
         });
 
         metaCandidates.push({
-          instructionId: selection.instructionId,
+          instructionId: resolvedInstructionId,
           versionNumber,
           source: versionNumber !== null ? "resolved" : "missing",
         });
@@ -22638,12 +22777,16 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
 app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (req, res) => {
   try {
     const { instructionId, itemId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    // ดึง instruction
-    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    const usingPostgres = shouldUsePostgresInstructionsV2();
+    let instruction = null;
+    if (usingPostgres) {
+      instruction = await getPostgresInstructionV2ByRef(instructionId);
+    } else {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("instructions_v2");
+      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    }
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -22683,11 +22826,16 @@ app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (
 app.get("/admin/instructions-v3/:instructionId/data-items/new", async (req, res) => {
   try {
     const { instructionId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    const usingPostgres = shouldUsePostgresInstructionsV2();
+    let instruction = null;
+    if (usingPostgres) {
+      instruction = await getPostgresInstructionV2ByRef(instructionId);
+    } else {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("instructions_v2");
+      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    }
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -22721,12 +22869,19 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
   try {
     const { instructionId } = req.params;
     let { type = "table", title = "", content = "", tableData } = req.body;
+    const usingPostgres = shouldUsePostgresInstructionsV2();
+    let instruction = null;
+    let coll = null;
+    let db = null;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    if (usingPostgres) {
+      instruction = await getPostgresInstructionV2ByRef(instructionId);
+    } else {
+      const client = await connectDB();
+      db = client.db("chatbot");
+      coll = db.collection("instructions_v2");
+      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    }
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -22767,19 +22922,39 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
       }
     }
 
-    await coll.updateOne(
-      { _id: new ObjectId(instructionId) },
-      {
-        $push: { dataItems: newItem },
-        $set: { updatedAt: now },
-      }
-    );
-    await createDashboardSnapshotOrThrow(
-      instructionId,
-      "add_data_item",
-      db,
-      "dashboard_admin",
-    );
+    if (usingPostgres) {
+      const nextItems = [...items, newItem];
+      const nextVersion = Math.max(
+        1,
+        Number.isInteger(instruction.version) ? instruction.version : 1,
+      ) + 1;
+      await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            data = $2::jsonb,
+            current_version = $3,
+            updated_at = $4
+          WHERE id = $1::uuid
+            AND ${buildInstructionV2SourceCondition("source_kind")}
+        `,
+        [instruction._id, JSON.stringify(nextItems), nextVersion, now],
+      );
+    } else {
+      await coll.updateOne(
+        { _id: new ObjectId(instructionId) },
+        {
+          $push: { dataItems: newItem },
+          $set: { updatedAt: now },
+        }
+      );
+      await createDashboardSnapshotOrThrow(
+        instructionId,
+        "add_data_item",
+        db,
+        "dashboard_admin",
+      );
+    }
 
     res.redirect(
       `/admin/dashboard?success=${encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}`
@@ -22795,13 +22970,20 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
   try {
     const { instructionId, itemId } = req.params;
     const { type, title, content, tableData } = req.body;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
+    const usingPostgres = shouldUsePostgresInstructionsV2();
+    let instruction = null;
+    let coll = null;
+    let db = null;
 
     // ดึง instruction
-    const instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    if (usingPostgres) {
+      instruction = await getPostgresInstructionV2ByRef(instructionId);
+    } else {
+      const client = await connectDB();
+      db = client.db("chatbot");
+      coll = db.collection("instructions_v2");
+      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
+    }
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -22813,19 +22995,22 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
     }
 
     const now = new Date();
-    const updateFields = {};
-
-    // อัปเดต title
+    const items = Array.isArray(instruction.dataItems)
+      ? [...instruction.dataItems]
+      : [];
+    const targetItem = items[itemIndex] ? { ...items[itemIndex] } : null;
+    if (!targetItem) {
+      return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
+    }
     if (title !== undefined) {
-      updateFields[`dataItems.${itemIndex}.title`] = (title || "").trim();
+      targetItem.title = (title || "").trim();
     }
 
-    // อัปเดต table data
     if (tableData && tableData.trim() !== "") {
       try {
         const parsedData = JSON.parse(tableData);
         if (parsedData && typeof parsedData === "object") {
-          updateFields[`dataItems.${itemIndex}.data`] = parsedData;
+          targetItem.data = parsedData;
         }
       } catch (parseErr) {
         console.error("V3: Error parsing table data:", parseErr);
@@ -22834,23 +23019,47 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
         );
       }
     }
+    targetItem.type = "table";
+    targetItem.content = "";
+    targetItem.updatedAt = now;
+    items[itemIndex] = targetItem;
 
-    updateFields[`dataItems.${itemIndex}.type`] = "table";
-    updateFields[`dataItems.${itemIndex}.content`] = "";
-    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
-    updateFields.updatedAt = now;
-
-    // บันทึกลง database
-    await coll.updateOne(
-      { _id: new ObjectId(instructionId) },
-      { $set: updateFields }
-    );
-    await createDashboardSnapshotOrThrow(
-      instructionId,
-      "update_data_item",
-      db,
-      "dashboard_admin",
-    );
+    if (usingPostgres) {
+      const nextVersion = Math.max(
+        1,
+        Number.isInteger(instruction.version) ? instruction.version : 1,
+      ) + 1;
+      await pgQuery(
+        `
+          UPDATE instructions
+          SET
+            data = $2::jsonb,
+            current_version = $3,
+            updated_at = $4
+          WHERE id = $1::uuid
+            AND ${buildInstructionV2SourceCondition("source_kind")}
+        `,
+        [instruction._id, JSON.stringify(items), nextVersion, now],
+      );
+    } else {
+      const updateFields = {};
+      updateFields[`dataItems.${itemIndex}.title`] = targetItem.title || "";
+      updateFields[`dataItems.${itemIndex}.content`] = targetItem.content || "";
+      updateFields[`dataItems.${itemIndex}.data`] = targetItem.data || null;
+      updateFields[`dataItems.${itemIndex}.type`] = targetItem.type;
+      updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
+      updateFields.updatedAt = now;
+      await coll.updateOne(
+        { _id: new ObjectId(instructionId) },
+        { $set: updateFields }
+      );
+      await createDashboardSnapshotOrThrow(
+        instructionId,
+        "update_data_item",
+        db,
+        "dashboard_admin",
+      );
+    }
 
     res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
   } catch (err) {
