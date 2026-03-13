@@ -1118,7 +1118,7 @@
                     body: JSON.stringify({
                         name: collection.name,
                         description: collection.description || '',
-                        images: Array.from(existingLabels).map((label) => ({ label }))
+                        imageLabels: Array.from(existingLabels)
                     })
                 });
                 if (response.ok) successCount += 1;
