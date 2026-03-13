@@ -1,6 +1,6 @@
 const line = require("@line/bot-sdk");
 const moment = require("moment-timezone");
-const { ObjectId } = require("mongodb");
+const { isPostgresConfigured } = require("../infra/postgres");
 const { extractBase64ImagesFromContent } = require("../utils/chatImageUtils");
 const { buildShortLinkUrl, createShortLink } = require("../utils/shortLinks");
 
@@ -84,10 +84,11 @@ async function fetchOrderImageRefs(chatRepository, order) {
   const userMessages = Array.isArray(history)
     ? history.filter((msg) => msg?.role === "user")
     : [];
+  const hasOrderId = Boolean(orderId);
 
   let dayStart = null;
   let dayEnd = null;
-  if (ObjectId.isValid(orderId)) {
+  if (hasOrderId) {
     dayStart = new Date(orderCreatedAt || new Date());
     dayStart.setHours(0, 0, 0, 0);
     dayEnd = new Date(dayStart);
@@ -111,7 +112,7 @@ async function fetchOrderImageRefs(chatRepository, order) {
       if (timestamp < dayStart || timestamp >= dayEnd) continue;
     }
 
-    if (ObjectId.isValid(orderId)) {
+    if (hasOrderId) {
       const messageOrderId = normalizeMessageOrderId(msg);
       if (messageOrderId && messageOrderId !== orderId) {
         continue;
@@ -859,6 +860,9 @@ function createNotificationService({
   const baseUrl =
     typeof publicBaseUrl === "string" ? publicBaseUrl.trim() : "";
   const getMongoDbSafe = async () => {
+    if (isPostgresConfigured()) {
+      return null;
+    }
     if (typeof connectDB !== "function") return null;
     try {
       const client = await connectDB();
@@ -945,18 +949,16 @@ function createNotificationService({
     let shortChatLink = "";
     if (canBuildLinks && orderUserId) {
       const chatUrl = `${normalizedBaseUrl}/admin/chat?userId=${encodeURIComponent(orderUserId)}`;
-      if (db) {
-        try {
-          const code = await createShortLink(db, chatUrl);
-          if (code) {
-            shortChatLink = buildShortLinkUrl(normalizedBaseUrl, code);
-          }
-        } catch (err) {
-          console.warn(
-            "[Notifications] สร้าง short link สำหรับแชทไม่สำเร็จ:",
-            err?.message || err,
-          );
+      try {
+        const code = await createShortLink(db, chatUrl);
+        if (code) {
+          shortChatLink = buildShortLinkUrl(normalizedBaseUrl, code);
         }
+      } catch (err) {
+        console.warn(
+          "[Notifications] สร้าง short link สำหรับแชทไม่สำเร็จ:",
+          err?.message || err,
+        );
       }
     }
 
@@ -1078,7 +1080,7 @@ function createNotificationService({
     const normalizedBaseUrl = normalizePublicBaseUrl(baseUrl);
     const canBuildLinks = isHttpUrl(normalizedBaseUrl);
     const shortChatLinks = {};
-    if (db && canBuildLinks && dedupedOrders.length) {
+    if (canBuildLinks && dedupedOrders.length) {
       for (const order of dedupedOrders) {
         const userId = normalizeIdString(order?.userId);
         if (!userId || shortChatLinks[userId]) continue;
@@ -1144,7 +1146,7 @@ function createNotificationService({
 
   const testChannel = async (channelId, options = {}) => {
     const channelIdString = normalizeIdString(channelId);
-    if (!ObjectId.isValid(channelIdString)) {
+    if (!channelIdString) {
       throw new Error("Invalid channelId");
     }
 

@@ -1,10 +1,10 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
 const { deletePostgresBotByLegacyId, upsertPostgresBotDocument } = require("./postgresBotSync");
-const { ObjectId } = require("mongodb");
 const {
   applyProjection,
   buildMongoIdQuery,
   escapeRegex,
+  generateLegacyObjectIdString,
   getBotCollectionName,
   normalizePlatform,
   safeStringify,
@@ -526,7 +526,7 @@ function createBotRepository({
         || toLegacyId(document?.pageId)
         || toLegacyId(document?.phoneNumberId)
         || toLegacyId(document?.instagramBusinessAccountId)
-        || new ObjectId().toString();
+        || generateLegacyObjectIdString();
       const now = new Date();
       const pgDoc = {
         ...document,

@@ -13,7 +13,8 @@ AI-powered chat center supporting LINE, Facebook Messenger, and multiple AI mode
 docker run -d \
   --name chatcenter-ai \
   -p 3000:3000 \
-  -e MONGODB_URI=your_mongodb_uri \
+  -e DATABASE_URL=your_postgres_url \
+  -e REDIS_URL=your_redis_url \
   -e OPENAI_API_KEY=your_openai_key \
   xianta456/chatcenter-ai:latest
 ```
@@ -34,7 +35,8 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - MONGODB_URI=${MONGODB_URI}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
@@ -64,7 +66,8 @@ docker-compose up -d
 
 | Variable | Description |
 |----------|-------------|
-| `MONGODB_URI` | MongoDB connection string |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_URL` | Redis connection string |
 | `SESSION_SECRET` | Secret for session encryption |
 
 ### Optional AI API Keys
@@ -91,7 +94,8 @@ docker-compose up -d
 Create a `.env` file with your configuration:
 
 ```bash
-MONGODB_URI=mongodb://localhost:27017/chatcenter
+DATABASE_URL=postgresql://user:password@localhost:5432/chatcenter
+REDIS_URL=redis://localhost:6379
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GOOGLE_API_KEY=AI...
@@ -159,7 +163,7 @@ docker logs chatcenter-ai
 
 ### Database connection issues
 
-Ensure MongoDB URI is correct and accessible from the container.
+Ensure `DATABASE_URL` and `REDIS_URL` are correct and accessible from the container.
 
 ### Port already in use
 

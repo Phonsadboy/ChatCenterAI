@@ -6,7 +6,6 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const util = require("util");
 const { google } = require("googleapis");
-const { MongoClient, ObjectId, GridFSBucket } = require("mongodb");
 const { OpenAI } = require("openai");
 const line = require("@line/bot-sdk");
 const sharp = require("sharp"); // <--- เพิ่มตรงนี้ ตามต้นฉบับ
@@ -15,9 +14,6 @@ const path = require("path");
 const os = require("os");
 const http = require("http");
 const socketIo = require("socket.io");
-const InstructionDataService = require("./services/instructionDataService");
-const InstructionChatService = require("./services/instructionChatService");
-const ConversationThreadService = require("./services/conversationThreadService");
 const createNotificationService = require("./services/notificationService");
 const slipOkService = require("./services/slipOkService");
 const { createBotRepository } = require("./services/repositories/botRepository");
@@ -33,6 +29,24 @@ const {
   createNotificationRepository,
 } = require("./services/repositories/notificationRepository");
 const {
+  createLineGroupRepository,
+} = require("./services/repositories/lineGroupRepository");
+const {
+  createCategoryRepository,
+} = require("./services/repositories/categoryRepository");
+const {
+  createConversationThreadRepository,
+} = require("./services/repositories/conversationThreadRepository");
+const {
+  createFacebookCommentPolicyRepository,
+} = require("./services/repositories/facebookCommentPolicyRepository");
+const {
+  createFacebookCommentAutomationRepository,
+} = require("./services/repositories/facebookCommentAutomationRepository");
+const {
+  createInstructionChatStateRepository,
+} = require("./services/repositories/instructionChatStateRepository");
+const {
   createOutboundMessageRepository,
 } = require("./services/repositories/outboundMessageRepository");
 const {
@@ -42,11 +56,6 @@ const {
   createWebhookEventRepository,
 } = require("./services/repositories/webhookEventRepository");
 const { createUserStateRepository } = require("./services/repositories/userStateRepository");
-const { AgentForgeService } = require("./services/agentForgeService");
-const { AgentForgeRunner } = require("./services/agentForgeRunner");
-const { AgentForgeScheduler } = require("./services/agentForgeScheduler");
-const createAgentForgeRouter = require("./routes/agentForge");
-const createAgentForgeAdminRouter = require("./routes/agentForgeAdmin");
 // Middleware & misc packages for UI
 const helmet = require("helmet");
 const cors = require("cors");
@@ -88,6 +97,31 @@ const FOLLOWUP_ASSETS_DIR =
 const DEFAULT_AUDIO_ATTACHMENT_RESPONSE =
   "ขออภัยค่ะ ขณะนี้ระบบยังไม่รองรับไฟล์เสียง กรุณาพิมพ์ข้อความหรือส่งรูปภาพแทน";
 
+let InstructionDataServiceClass = null;
+let InstructionChatServiceClass = null;
+let ConversationThreadServiceClass = null;
+
+function getInstructionDataServiceClass() {
+  if (!InstructionDataServiceClass) {
+    InstructionDataServiceClass = require("./services/instructionDataService");
+  }
+  return InstructionDataServiceClass;
+}
+
+function getInstructionChatServiceClass() {
+  if (!InstructionChatServiceClass) {
+    InstructionChatServiceClass = require("./services/instructionChatService");
+  }
+  return InstructionChatServiceClass;
+}
+
+function getConversationThreadServiceClass() {
+  if (!ConversationThreadServiceClass) {
+    ConversationThreadServiceClass = require("./services/conversationThreadService");
+  }
+  return ConversationThreadServiceClass;
+}
+
 const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
@@ -98,7 +132,6 @@ const OPENROUTER_HTTP_REFERER =
   process.env.OPENROUTER_HTTP_REFERER ||
   (PUBLIC_BASE_URL ? PUBLIC_BASE_URL : "");
 const OPENROUTER_X_TITLE = process.env.OPENROUTER_X_TITLE || "ChatCenterAI";
-const MONGO_URI = process.env.MONGO_URI;
 const ADMIN_MASTER_PASSCODE = (process.env.ADMIN_MASTER_PASSCODE || "").trim();
 const ADMIN_SESSION_SECRET =
   process.env.ADMIN_SESSION_SECRET || "change-me-please-admin-session-secret";
@@ -131,6 +164,7 @@ const BOT_COLLECTION_BY_PLATFORM = {
 const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
 const runtimeConfig = getRuntimeConfig();
+runtimeConfig.features.mongoEnabled = false;
 const WEBHOOK_FORWARD_TIMEOUT_MS = Number(
   process.env.CCAI_WEBHOOK_FORWARD_TIMEOUT_MS || 4000,
 );
@@ -335,6 +369,7 @@ const {
 const {
   SHORT_LINK_COLLECTION,
   isValidShortCode,
+  registerShortLinkHit,
   resolveShortLink,
 } = require("./utils/shortLinks");
 const {
@@ -458,9 +493,6 @@ function getBotCollectionName(platform, fallbackCollection = "line_bots") {
 }
 
 function normalizeRuntimeCacheId(value, fallback = "default") {
-  if (value instanceof ObjectId) {
-    return value.toString();
-  }
   if (typeof value === "string" && value.trim()) {
     return value.trim();
   }
@@ -472,6 +504,10 @@ function normalizeRuntimeCacheId(value, fallback = "default") {
   }
   const normalized = String(value).trim();
   return normalized || fallback;
+}
+
+function generateLegacyObjectIdString() {
+  return crypto.randomBytes(12).toString("hex");
 }
 
 function buildBotRuntimeCacheKey(platform, botId = null) {
@@ -936,7 +972,7 @@ app.get("/assets/instructions/:fileName", async (req, res, next) => {
       }
     }
 
-    if (!isMongoRuntimeEnabled()) return next();
+    if (!shouldAllowGridFsAssetFallback()) return next();
 
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -1084,79 +1120,7 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
       return;
     }
 
-    if (!isMongoRuntimeEnabled()) return next();
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("follow_up_assets");
-    const doc = await coll.findOne({
-      $or: [{ fileName }, { thumbName: fileName }, { thumbFileName: fileName }],
-    });
-
-    if (!doc) return next();
-
-    const bucket = new GridFSBucket(db, { bucketName: "followupAssets" });
-    const isThumb =
-      fileName === doc.thumbName ||
-      fileName === doc.thumbFileName ||
-      fileName.endsWith("_thumb.jpg") ||
-      fileName.endsWith("_thumb.jpeg");
-    const targetName = isThumb
-      ? doc.thumbFileName || doc.thumbName
-      : doc.fileName;
-    const targetId = isThumb ? doc.thumbFileId || null : doc.fileId || null;
-    if (!targetName) return next();
-
-    const bucketStreamResult = await getFirstBucketObjectStream(
-      isThumb
-        ? buildBucketKeyCandidates("followup", doc.thumbStorageKey, targetName)
-        : buildBucketKeyCandidates("followup", doc.storageKey, targetName),
-    );
-    if (bucketStreamResult?.stream) {
-      res.set("Content-Type", doc.mime || "image/jpeg");
-      res.set("Cache-Control", "public, max-age=604800, immutable");
-      bucketStreamResult.stream.on("error", (err) => {
-        console.error(`[Asset Error] Failed to stream followup bucket asset: ${fileName}`, {
-          error: err.message,
-          code: err.code,
-          fileName,
-          storageKey: bucketStreamResult.key,
-        });
-        next(err);
-      });
-      bucketStreamResult.stream.pipe(res);
-      return;
-    }
-
-    let fileObjectId = toObjectId(targetId);
-
-    if (!fileObjectId) {
-      const files = await bucket
-        .find({ filename: targetName })
-        .sort({ uploadDate: -1 })
-        .limit(1)
-        .toArray();
-      if (!files.length) return next();
-      fileObjectId = files[0]._id;
-    }
-
-    const stream = bucket.openDownloadStream(fileObjectId);
-
-    res.set("Content-Type", doc.mime || "image/jpeg");
-    res.set("Cache-Control", "public, max-age=604800, immutable");
-    stream.on("error", (err) => {
-      console.error(`[Asset Error] Failed to stream followup asset: ${fileName}`, {
-        error: err.message,
-        code: err.code,
-        fileName,
-        targetName,
-        targetId,
-        fileObjectId,
-      });
-      if (err.code === "FileNotFound") return next();
-      next(err);
-    });
-    stream.pipe(res);
+    return next();
   } catch (err) {
     console.error(`[Asset Error] Error in followup asset route: ${requestedFileName}`, {
       error: err.message,
@@ -1516,7 +1480,6 @@ async function ensurePerformanceIndexes(db) {
     await db.collection("follow_up_status").createIndex({ senderId: 1 });
     await db.collection("active_user_status").createIndex({ senderId: 1 });
     await db.collection("user_profiles").createIndex({ userId: 1, platform: 1 });
-    await db.collection("user_unread_counts").createIndex({ userId: 1 });
     console.log("[DB] Performance indexes ensured");
   } catch (err) {
     console.warn(
@@ -1543,7 +1506,6 @@ async function ensureUsageLogsTTL(db) {
   }
 }
 
-let mongoClient = null;
 let settingsRepository = null;
 let botRepository = null;
 let chatRepository = null;
@@ -1556,60 +1518,30 @@ let userStateRepository = null;
 let feedbackRepository = null;
 let profileRepository = null;
 let notificationRepository = null;
+let lineGroupRepository = null;
+let categoryRepository = null;
+let conversationThreadRepository = null;
+let facebookCommentPolicyRepository = null;
+let facebookCommentAutomationRepository = null;
+let instructionChatStateRepository = null;
 let mongoDisabledCompatClient = null;
 let mongoDisabledNoticePrinted = false;
 
 function isMongoRuntimeEnabled() {
-  return runtimeConfig?.features?.mongoEnabled !== false;
+  return false;
 }
 
 async function connectDB() {
-  if (!isMongoRuntimeEnabled()) {
-    if (!mongoDisabledCompatClient) {
-      mongoDisabledCompatClient = createMongoDisabledClient();
-    }
-    if (!mongoDisabledNoticePrinted) {
-      console.warn(
-        "[DB] MongoDB runtime is disabled; using compatibility no-op client",
-      );
-      mongoDisabledNoticePrinted = true;
-    }
-    return mongoDisabledCompatClient;
+  if (!mongoDisabledCompatClient) {
+    mongoDisabledCompatClient = createMongoDisabledClient();
   }
-
-  const mongoUri =
-    runtimeConfig?.mongoConnectionString ||
-    MONGO_URI ||
-    "";
-  if (!mongoUri) {
-    throw new Error("MongoDB runtime is enabled but MONGO_URI is missing");
+  if (!mongoDisabledNoticePrinted) {
+    console.warn(
+      "[DB] MongoDB runtime has been removed; using fail-fast compatibility client",
+    );
+    mongoDisabledNoticePrinted = true;
   }
-
-  if (!mongoClient) {
-    mongoClient = new MongoClient(mongoUri, {
-      maxPoolSize: 20,
-      minPoolSize: 5,
-      serverSelectionTimeoutMS: 5000,
-    });
-    await mongoClient.connect();
-    try {
-      const db = mongoClient.db("chatbot");
-      await ensurePasscodeIndexes(db);
-      await ensureFacebookCommentIndexes(db);
-      await ensureCategoryIndexes(db);
-      await ensureNotificationIndexes(db);
-      await ensureShortLinkIndexes(db);
-      await ensureChatHistoryIndexes(db);
-      await ensurePerformanceIndexes(db);
-      await ensureUsageLogsTTL(db);
-    } catch (err) {
-      console.warn(
-        "[DB] ไม่สามารถตั้งค่า index ได้:",
-        err?.message || err,
-      );
-    }
-  }
-  return mongoClient;
+  return mongoDisabledCompatClient;
 }
 
 function getSettingsRepository() {
@@ -1738,6 +1670,72 @@ function getNotificationRepository() {
   return notificationRepository;
 }
 
+function getConversationThreadRepository() {
+  if (!conversationThreadRepository) {
+    conversationThreadRepository = createConversationThreadRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return conversationThreadRepository;
+}
+
+function getInstructionChatStateRepository() {
+  if (!instructionChatStateRepository) {
+    instructionChatStateRepository = createInstructionChatStateRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return instructionChatStateRepository;
+}
+
+function getLineGroupRepository() {
+  if (!lineGroupRepository) {
+    lineGroupRepository = createLineGroupRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return lineGroupRepository;
+}
+
+function getCategoryRepository() {
+  if (!categoryRepository) {
+    categoryRepository = createCategoryRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return categoryRepository;
+}
+
+function getFacebookCommentPolicyRepository() {
+  if (!facebookCommentPolicyRepository) {
+    facebookCommentPolicyRepository = createFacebookCommentPolicyRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return facebookCommentPolicyRepository;
+}
+
+function getFacebookCommentAutomationRepository() {
+  if (!facebookCommentAutomationRepository) {
+    facebookCommentAutomationRepository = createFacebookCommentAutomationRepository({
+      connectDB,
+      dbName: "chatbot",
+      runtimeConfig,
+    });
+  }
+  return facebookCommentAutomationRepository;
+}
+
 function invalidateBotMutationCaches(platform, botId = null) {
   if (normalizeChatPlatform(platform) === "line" && botId) {
     lineBotCredentialCache.delete(normalizeRuntimeCacheId(botId, ""));
@@ -1761,6 +1759,10 @@ function buildWebhookEventIdempotencyKey(platform, botId, eventType, payload) {
     eventType || "webhook",
     hash,
   ].join(":");
+}
+
+function canUsePostgresAdminPasscodes() {
+  return Boolean(isPostgresConfigured());
 }
 
 function buildMessagingEventDedupeKey(platform, botId, messagingEvent = {}) {
@@ -2080,71 +2082,14 @@ function requireAdmin(req, res, next) {
   return next();
 }
 
-const agentForgeService = new AgentForgeService(connectDB, {
-  timezone: "Asia/Bangkok",
-});
-
-const agentForgeRunner = new AgentForgeRunner({
-  connectDB,
-  agentForgeService,
-  openaiClient: null,
-  resolveOpenAIClient: async () => {
-    const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
-    if (!apiKeyToUse.apiKey) return null;
-    const client = buildLLMClientFromKey(apiKeyToUse);
-    if (!client) return null;
-    return {
-      client,
-      provider: apiKeyToUse.provider,
-    };
-  },
-  getChatRepository,
-  normalizeProvider,
-  resolveModelForProvider,
-  timezone: "Asia/Bangkok",
-});
-
-const agentForgeScheduler = new AgentForgeScheduler({
-  agentForgeService,
-  agentForgeRunner,
-  timezone: "Asia/Bangkok",
-});
-
 async function getAgentRuntimeForPage(platform, botId) {
-  if (!platform || !botId) {
-    return {
-      managed: false,
-      agentId: null,
-      agentName: null,
-      mode: null,
-      customerDefaultModel: null,
-    };
-  }
-  if (!isMongoRuntimeEnabled()) {
-    return {
-      managed: false,
-      agentId: null,
-      agentName: null,
-      mode: null,
-      customerDefaultModel: null,
-    };
-  }
-  const pageKey = `${platform}:${botId}`;
-  try {
-    return await agentForgeService.getPageAgentRuntime(pageKey);
-  } catch (error) {
-    console.warn(
-      `[AgentForge] Failed to resolve runtime for ${pageKey}:`,
-      error?.message || error,
-    );
-    return {
-      managed: false,
-      agentId: null,
-      agentName: null,
-      mode: null,
-      customerDefaultModel: null,
-    };
-  }
+  return {
+    managed: false,
+    agentId: null,
+    agentName: null,
+    mode: null,
+    customerDefaultModel: null,
+  };
 }
 
 function buildChatHistoryUserMatch(userId) {
@@ -5562,12 +5507,44 @@ function parseOrderPageKey(pageKey) {
   return { platform, botId };
 }
 
+async function loadOrderPageNameMap(botIdSets = {}) {
+  const pageNameMap = new Map();
+  const botRepo = getBotRepository();
+  const platforms = ["line", "facebook", "instagram", "whatsapp"];
+
+  await Promise.all(
+    platforms.map(async (platform) => {
+      const ids = Array.from(botIdSets?.[platform] || []).filter(Boolean);
+      if (ids.length === 0) return;
+      const bots = await botRepo.list(platform, {
+        filter: { _id: { $in: ids } },
+      });
+      bots.forEach((bot) => {
+        const botId = normalizeOrderBotId(bot?._id);
+        if (!botId) return;
+        const key = buildOrderPageKey(platform, botId);
+        let label = bot.name || bot.displayName || bot.botName || null;
+        if (platform === "facebook") {
+          label = bot.pageName || bot.name || label;
+        } else if (platform === "instagram") {
+          label = bot.name || bot.instagramUsername || bot.instagramUserId || bot.igUserId || label;
+        } else if (platform === "whatsapp") {
+          label = bot.name || bot.phoneNumber || bot.phoneNumberId || label;
+        }
+        if (!label) {
+          label = `${getPlatformLabel(platform)} (${botId.slice(-4)})`;
+        }
+        pageNameMap.set(key, label);
+      });
+    }),
+  );
+
+  return pageNameMap;
+}
+
 function buildOrderBotIdMatchCondition(botId) {
   const normalizedBotId = normalizeOrderBotId(botId);
   if (!normalizedBotId) return null;
-  if (ObjectId.isValid(normalizedBotId)) {
-    return { $in: [normalizedBotId, new ObjectId(normalizedBotId)] };
-  }
   return normalizedBotId;
 }
 
@@ -5701,8 +5678,7 @@ function buildOrderQuery(params = {}) {
     const selectedIds = String(selectedIdsParam)
       .split(",")
       .map((id) => id.trim())
-      .filter((id) => ObjectId.isValid(id))
-      .map((id) => new ObjectId(id));
+      .filter(Boolean);
 
     if (selectedIds.length) {
       query._id = { $in: selectedIds };
@@ -6421,7 +6397,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
   if (args.orderId) {
     const orderIdRaw =
       typeof args.orderId === "string" ? args.orderId.trim() : "";
-    if (!ObjectId.isValid(orderIdRaw)) {
+    if (!orderIdRaw) {
       return { success: false, error: "orderId ไม่ถูกต้อง" };
     }
     orderIdString = orderIdRaw;
@@ -8642,7 +8618,7 @@ async function processFlushedMessages(
     return;
   }
 
-  // agent.mode มี priority เหนือ bot.status สำหรับเพจที่อยู่ภายใต้ Agent Forge
+  // managed page mode มี priority เหนือ bot.status
   if (agentManaged && agentMode === "human-only") {
     logHotPathDebug(
       `[LOG] Agent mode = human-only, บันทึกข้อความโดยไม่ตอบกลับสำหรับผู้ใช้: ${userId}`,
@@ -8660,7 +8636,7 @@ async function processFlushedMessages(
     return;
   }
 
-  // กรณีเพจที่ไม่ได้ถูกจัดการโดย Agent Forge ให้ใช้พฤติกรรมเดิมตาม bot.status
+  // กรณีเพจที่ไม่ได้มี managed runtime ให้ใช้พฤติกรรมเดิมตาม bot.status
   if (disableAiReply) {
     logHotPathDebug(
       `[LOG] Bot ปิดการตอบอัตโนมัติ - บันทึกข้อความโดยไม่ตอบกลับสำหรับผู้ใช้: ${userId}`,
@@ -9050,38 +9026,32 @@ async function captureLineGroupEvent(event, queueOptions = {}) {
   if (!groupId) return null;
 
   const now = new Date();
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("line_bot_groups");
-
-  const filter = { botId: botId.toString(), groupId };
-  const update = {
-    $setOnInsert: {
-      botId: botId.toString(),
-      groupId,
-      sourceType,
-      createdAt: now,
-    },
-    $set: {
-      lastEventAt: now,
-      updatedAt: now,
-    },
+  const normalizedBotId = botId.toString();
+  const lineGroupRepository = getLineGroupRepository();
+  const baseGroupDoc = {
+    botId: normalizedBotId,
+    groupId,
+    sourceType,
+    status: event?.type === "leave" ? "left" : "active",
+    joinedAt: event?.type === "join" ? now : null,
+    leftAt: event?.type === "leave" ? now : null,
+    lastEventAt: now,
+    createdAt: now,
+    updatedAt: now,
   };
 
-  if (event?.type === "leave") {
-    update.$set.status = "left";
-    update.$set.leftAt = now;
-  } else {
-    update.$set.status = "active";
-    if (event?.type === "join") {
-      update.$set.joinedAt = now;
-    }
-  }
-
-  const result = await coll.updateOne(filter, update, { upsert: true });
+  const existingGroup = await lineGroupRepository.findGroup({
+    botId: normalizedBotId,
+    groupId,
+  });
+  await lineGroupRepository.upsertGroup({
+    ...existingGroup,
+    ...baseGroupDoc,
+    createdAt: existingGroup?.createdAt || now,
+  });
 
   const shouldEnrich =
-    result?.upsertedCount > 0 ||
+    !existingGroup ||
     (event?.type === "join" && queueOptions?.lineClient);
 
   if (shouldEnrich && queueOptions?.lineClient) {
@@ -9123,7 +9093,13 @@ async function captureLineGroupEvent(event, queueOptions = {}) {
       if (memberCount !== null) enrich.memberCount = memberCount;
 
       if (Object.keys(enrich).length) {
-        await coll.updateOne(filter, { $set: { ...enrich, updatedAt: new Date() } });
+        await lineGroupRepository.upsertGroup({
+          ...existingGroup,
+          ...baseGroupDoc,
+          ...enrich,
+          createdAt: existingGroup?.createdAt || now,
+          updatedAt: new Date(),
+        });
       }
     } catch (err) {
       console.warn(
@@ -9133,7 +9109,7 @@ async function captureLineGroupEvent(event, queueOptions = {}) {
     }
   }
 
-  return { botId: botId.toString(), sourceType, groupId };
+  return { botId: normalizedBotId, sourceType, groupId };
 }
 
 function formatSlipOkCurrency(amount) {
@@ -9812,11 +9788,6 @@ function isReplyProfileEmpty(profile) {
   );
 }
 
-function normalizeBotIdValue(bot) {
-  const candidate = bot?._id || bot?.botId || bot;
-  return ObjectId.isValid(candidate) ? new ObjectId(candidate) : candidate;
-}
-
 function mapFacebookAttachments(attachments) {
   if (!attachments || !Array.isArray(attachments.data)) return [];
   return attachments.data
@@ -9847,11 +9818,11 @@ async function fetchFacebookPostDetails(postId, accessToken) {
   return response.data;
 }
 
-async function upsertFacebookPost(db, bot, postId, source = "webhook") {
-  const botId = normalizeBotIdValue(bot);
-  const pageId = bot?.pageId || botId?.toString?.() || "";
-  const coll = db.collection("facebook_page_posts");
+async function upsertFacebookPost(bot, postId, source = "webhook") {
+  const botId = toLegacyId(bot?._id || bot?.botId || bot);
+  const pageId = bot?.pageId || botId || "";
   const now = new Date();
+  const automationRepository = getFacebookCommentAutomationRepository();
 
   let fbPost = null;
   try {
@@ -9863,10 +9834,10 @@ async function upsertFacebookPost(db, bot, postId, source = "webhook") {
     );
   }
 
-  const existing = await coll.findOne({ botId, postId });
+  const existing = await automationRepository.findPost({ botId, postId });
   const replyProfile = existing?.replyProfile || buildDefaultReplyProfile();
 
-  const updateDoc = {
+  return automationRepository.upsertPost({
     botId,
     pageId,
     postId,
@@ -9880,25 +9851,22 @@ async function upsertFacebookPost(db, bot, postId, source = "webhook") {
     ),
     statusType: fbPost?.status_type || existing?.statusType || null,
     fullPicture: fbPost?.full_picture || existing?.fullPicture || null,
+    replyProfile,
+    commentCount: Number(existing?.commentCount || 0),
+    pulledToChat: existing?.pulledToChat === true,
+    lastCommentAt: existing?.lastCommentAt || null,
+    lastReplyAt: existing?.lastReplyAt || null,
     capturedFrom: source,
     syncedAt: now,
     updatedAt: now,
-  };
-
-  await coll.updateOne(
-    { botId, postId },
-    {
-      $set: updateDoc,
-      $setOnInsert: {
-        replyProfile,
-        createdAt: now,
-        commentCount: 0,
-      },
+    createdAt: existing?.createdAt || now,
+    metadata: {
+      replyProfile,
+      pageId,
+      postId,
+      source,
     },
-    { upsert: true },
-  );
-
-  return coll.findOne({ botId, postId });
+  });
 }
 
 async function sendCommentReply(commentId, message, accessToken) {
@@ -10035,12 +10003,9 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel, botId = 
   }
 }
 
-async function getPageDefaultPolicy(db, bot) {
-  const botId = normalizeBotIdValue(bot);
-  const policy = await db.collection("facebook_comment_policies").findOne({
-    botId,
-    scope: "page_default",
-  });
+async function getPageDefaultPolicy(bot) {
+  const botId = toLegacyId(bot?._id || bot?.botId || bot);
+  const policy = await getFacebookCommentPolicyRepository().getPageDefaultPolicy(botId);
   if (!policy) return null;
   return {
     ...buildDefaultReplyProfile(),
@@ -10049,8 +10014,8 @@ async function getPageDefaultPolicy(db, bot) {
   };
 }
 
-async function resolveCommentPolicyForPost(db, bot, postDoc) {
-  const pagePolicy = await getPageDefaultPolicy(db, bot);
+async function resolveCommentPolicyForPost(bot, postDoc) {
+  const pagePolicy = await getPageDefaultPolicy(bot);
   const basePolicy = pagePolicy
     ? { ...buildDefaultReplyProfile(), ...pagePolicy }
     : buildDefaultReplyProfile();
@@ -10081,25 +10046,16 @@ async function resolveCommentPolicyForPost(db, bot, postDoc) {
   return merged;
 }
 
-async function recordCommentEvent(db, eventDoc) {
-  const coll = db.collection("facebook_comment_events");
-  await coll.updateOne(
-    { commentId: eventDoc.commentId },
-    { $setOnInsert: eventDoc },
-    { upsert: true },
-  );
+async function recordCommentEvent(eventDoc) {
+  return getFacebookCommentAutomationRepository().recordEvent(eventDoc);
 }
 
 // Admin page to manage Facebook posts/comment policies
 app.get("/admin/facebook-posts", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const facebookBots = await db
-      .collection("facebook_bots")
-      .find({})
-      .sort({ createdAt: -1 })
-      .toArray();
+    const facebookBots = await getBotRepository().list("facebook", {
+      sort: { createdAt: -1 },
+    });
 
     const selectedBotId =
       facebookBots && facebookBots.length > 0
@@ -10130,10 +10086,7 @@ async function handleFacebookComment(
   accessToken,
   bot,
 ) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const eventsColl = db.collection("facebook_comment_events");
-  const postsColl = db.collection("facebook_page_posts");
+  const automationRepository = getFacebookCommentAutomationRepository();
 
   const commentId = commentData.id;
   const commentText = commentData.message || "";
@@ -10141,13 +10094,13 @@ async function handleFacebookComment(
   const commenterName = commentData.from?.name || "ผู้ใช้ Facebook";
 
   // dedupe
-  const existingEvent = await eventsColl.findOne({ commentId });
+  const existingEvent = await automationRepository.findEventByCommentId(commentId);
   if (existingEvent) {
     console.log(`[Facebook Comment] Skip duplicate comment ${commentId}`);
     return;
   }
 
-  const botId = normalizeBotIdValue(bot);
+  const botId = toLegacyId(bot?._id || bot?.botId || bot);
   const baseEvent = {
     commentId,
     postId,
@@ -10161,11 +10114,11 @@ async function handleFacebookComment(
 
   let postDoc = null;
   try {
-    postDoc = await upsertFacebookPost(db, bot, postId, "webhook");
-    if (postDoc?._id) {
-      await postsColl.updateOne(
-        { _id: postDoc._id },
-        { $set: { lastCommentAt: new Date(), updatedAt: new Date() } },
+    postDoc = await upsertFacebookPost(bot, postId, "webhook");
+    if (postDoc?.postId && postDoc?.botId) {
+      await automationRepository.touchPostComment(
+        { botId: postDoc.botId, postId: postDoc.postId },
+        new Date(),
       );
     }
   } catch (err) {
@@ -10192,12 +10145,12 @@ async function handleFacebookComment(
     return;
   }
 
-  const policy = await resolveCommentPolicyForPost(db, bot, postDoc);
+  const policy = await resolveCommentPolicyForPost(bot, postDoc);
   const shouldReply =
     policy?.isActive === true && policy.mode && policy.mode !== "off";
 
   if (!shouldReply) {
-    await recordCommentEvent(db, {
+    await recordCommentEvent({
       ...baseEvent,
       replyMode: policy?.mode || "off",
       action: "skipped",
@@ -10220,7 +10173,7 @@ async function handleFacebookComment(
   replyMessage = (replyMessage || "").trim();
 
   if (!replyMessage) {
-    await recordCommentEvent(db, {
+    await recordCommentEvent({
       ...baseEvent,
       replyMode: policy.mode,
       action: "skipped",
@@ -10306,7 +10259,7 @@ async function handleFacebookComment(
     }
   }
 
-  await recordCommentEvent(db, {
+  await recordCommentEvent({
     ...baseEvent,
     replyMode: policy.mode,
     replyText: replyMessage,
@@ -10314,22 +10267,16 @@ async function handleFacebookComment(
     reason,
   });
 
-  if (postDoc?._id) {
-    const updatePayload = {
-      $set: { updatedAt: new Date() },
-      $inc: { commentCount: 1 },
-    };
-
-    if (action === "replied") {
-      updatePayload.$set.lastReplyAt = new Date();
-      updatePayload.$set.lastCommentAt = new Date();
-      if (privateSent) {
-        updatePayload.$set.pulledToChat = true;
-      }
-    }
-
+  if (postDoc?.postId && postDoc?.botId) {
     try {
-      await postsColl.updateOne({ _id: postDoc._id }, updatePayload);
+      await automationRepository.applyCommentResult(
+        { botId: postDoc.botId, postId: postDoc.postId },
+        {
+          action,
+          privateSent,
+          occurredAt: new Date(),
+        },
+      );
     } catch (err) {
       console.error(
         "[Facebook Comment] ไม่สามารถอัปเดตสถิติโพสต์:",
@@ -10350,7 +10297,11 @@ function generateDataItemId() {
 
 // Helper: Get all instructions v2
 function shouldUsePostgresInstructionsV2() {
-  return !isMongoRuntimeEnabled() && isPostgresConfigured();
+  return isPostgresConfigured();
+}
+
+function canUseCategoryStorage() {
+  return isPostgresConfigured() || isMongoRuntimeEnabled();
 }
 
 function normalizeInstructionV2DataItems(dataValue) {
@@ -10866,45 +10817,7 @@ app.get("/api/instructions-v2", async (req, res) => {
 app.get("/api/instructions-v2/:id", async (req, res) => {
   try {
     const { id } = req.params;
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const result = await pgQuery(
-        `
-          SELECT
-            id::text AS id,
-            legacy_instruction_id,
-            name,
-            description,
-            type,
-            content,
-            data,
-            conversation_starter,
-            current_version,
-            created_at,
-            updated_at
-          FROM instructions
-          WHERE ${buildInstructionV2SourceCondition("source_kind")}
-            AND (id::text = $1 OR legacy_instruction_id = $1)
-          LIMIT 1
-        `,
-        [String(id || "").trim()],
-      );
-      const row = result.rows[0] || null;
-      if (!row) {
-        return res
-          .status(404)
-          .json({ success: false, error: "ไม่พบ Instruction" });
-      }
-      return res.json({
-        success: true,
-        instruction: mapPostgresInstructionV2Row(row),
-      });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-    const instruction = await coll.findOne({ _id: toObjectId(id) });
+    const instruction = await loadInstructionForChatRuntime(id);
 
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
@@ -10912,13 +10825,7 @@ app.get("/api/instructions-v2/:id", async (req, res) => {
 
     res.json({
       success: true,
-      instruction: {
-        ...instruction,
-        conversationStarter: normalizeConversationStarterConfig(
-          instruction?.conversationStarter,
-        ),
-        _id: instruction._id.toString(),
-      },
+      instruction,
     });
   } catch (err) {
     console.error("Error fetching instruction v2:", err);
@@ -10934,91 +10841,32 @@ app.post("/api/instructions-v2", async (req, res) => {
     if (!name || name.trim() === "") {
       return res.status(400).json({ success: false, error: "กรุณาระบุชื่อ Instruction" });
     }
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const now = new Date();
-      const instructionId = generateInstructionId();
-      const conversationStarter = {
-        enabled: false,
-        messages: [],
-        updatedAt: now,
-      };
-      const result = await pgQuery(
-        `
-          INSERT INTO instructions (
-            legacy_instruction_id,
-            source_kind,
-            name,
-            description,
-            type,
-            content,
-            data,
-            conversation_starter,
-            current_version,
-            created_at,
-            updated_at
-          ) VALUES ($1,'instructions_v2',$2,$3,'instruction','',$4::jsonb,$5::jsonb,1,$6,$6)
-          RETURNING
-            id::text AS id,
-            legacy_instruction_id,
-            name,
-            description,
-            type,
-            content,
-            data,
-            conversation_starter,
-            current_version,
-            created_at,
-            updated_at
-        `,
-        [
-          instructionId,
-          name.trim(),
-          (description || "").trim(),
-          JSON.stringify([]),
-          JSON.stringify(conversationStarter),
-          now,
-        ],
-      );
-      return res.json({
-        success: true,
-        instruction: mapPostgresInstructionV2Row(result.rows[0]),
-      });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
     const now = new Date();
-    const instruction = {
+    const createdInstruction = await createInstructionV2ForRuntime({
       instructionId: generateInstructionId(),
       name: name.trim(),
       description: (description || "").trim(),
-      dataItems: [],
       conversationStarter: {
         enabled: false,
         messages: [],
         updatedAt: now,
       },
-      usageCount: 0,
       createdAt: now,
-      updatedAt: now
-    };
-
-    const result = await coll.insertOne(instruction);
-    const createdId = result.insertedId;
-    instruction._id = createdId.toString();
+      updatedAt: now,
+    });
+    if (!createdInstruction) {
+      throw new Error("create_instruction_failed");
+    }
     const snapshotResult = await createDashboardSnapshotOrThrow(
-      createdId,
+      createdInstruction._id,
       "create_instruction",
-      db,
+      shouldUsePostgresInstructionsV2() ? null : (await connectDB()).db("chatbot"),
       "dashboard_api",
     );
-    instruction.version = snapshotResult.version;
-    instruction.updatedAt = snapshotResult.snapshotAt;
+    createdInstruction.version = snapshotResult.version;
+    createdInstruction.updatedAt = snapshotResult.snapshotAt;
 
-    res.json({ success: true, instruction });
+    res.json({ success: true, instruction: createdInstruction });
   } catch (err) {
     console.error("Error creating instruction v2:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -11030,119 +10878,51 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, conversationStarter } = req.body || {};
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const existing = await getPostgresInstructionV2ByRef(id);
-      if (!existing) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-      }
-
-      const now = new Date();
-      const normalizedStarter =
-        conversationStarter !== undefined
-          ? normalizeConversationStarterConfig(conversationStarter)
-          : existing.conversationStarter || {};
-      const nextVersion = Math.max(
-        1,
-        Number.isInteger(existing.version) ? existing.version : 1,
-      ) + 1;
-
-      const result = await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            name = $2,
-            description = $3,
-            conversation_starter = $4::jsonb,
-            current_version = $5,
-            updated_at = $6
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-          RETURNING
-            id::text AS id,
-            legacy_instruction_id,
-            name,
-            description,
-            type,
-            content,
-            data,
-            conversation_starter,
-            current_version,
-            created_at,
-            updated_at
-        `,
-        [
-          existing._id,
-          name !== undefined ? String(name || "").trim() : existing.name || "",
+    const existing = await loadInstructionForChatRuntime(id);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+    const now = new Date();
+    const normalizedStarter =
+      conversationStarter !== undefined
+        ? normalizeConversationStarterConfig(conversationStarter)
+        : existing.conversationStarter || {};
+    const updated = await saveInstructionForChatRuntime(
+      existing._id || id,
+      {
+        ...existing,
+        name: name !== undefined ? String(name || "").trim() : existing.name || "",
+        description:
           description !== undefined
             ? String(description || "").trim()
             : existing.description || "",
-          JSON.stringify({
-            enabled: !!normalizedStarter.enabled,
-            messages: Array.isArray(normalizedStarter.messages)
-              ? normalizedStarter.messages
-              : [],
-            updatedAt: now,
-          }),
-          nextVersion,
-          now,
-        ],
-      );
-
-      const updated = result.rows[0] ? mapPostgresInstructionV2Row(result.rows[0]) : null;
-      if (!updated) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-      }
-
-      return res.json({
-        success: true,
-        instruction: updated,
-      });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const updateData = { updatedAt: new Date() };
-    if (name !== undefined) updateData.name = name.trim();
-    if (description !== undefined) updateData.description = description.trim();
-    if (conversationStarter !== undefined) {
-      const normalizedStarter = normalizeConversationStarterConfig(
-        conversationStarter,
-      );
-      updateData.conversationStarter = {
-        enabled: !!normalizedStarter.enabled,
-        messages: normalizedStarter.messages,
-        updatedAt: new Date(),
-      };
-    }
-
-    const result = await coll.updateOne(
-      { _id: toObjectId(id) },
-      { $set: updateData }
+        conversationStarter: {
+          enabled: !!normalizedStarter.enabled,
+          messages: Array.isArray(normalizedStarter.messages)
+            ? normalizedStarter.messages
+            : [],
+          updatedAt: now,
+        },
+        version: Math.max(
+          1,
+          Number.isInteger(existing.version) ? existing.version : 1,
+        ) + 1,
+        updatedAt: now,
+      },
     );
-
-    if (result.matchedCount === 0) {
+    if (!updated) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
     await createDashboardSnapshotOrThrow(
-      id,
+      updated._id,
       "update_instruction",
-      db,
+      shouldUsePostgresInstructionsV2() ? null : (await connectDB()).db("chatbot"),
       "dashboard_api",
     );
 
-    const instruction = await coll.findOne({ _id: toObjectId(id) });
     res.json({
       success: true,
-      instruction: {
-        ...instruction,
-        conversationStarter: normalizeConversationStarterConfig(
-          instruction?.conversationStarter,
-        ),
-        _id: instruction._id.toString(),
-      },
+      instruction: updated,
     });
   } catch (err) {
     console.error("Error updating instruction v2:", err);
@@ -11154,42 +10934,19 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
 app.delete("/api/instructions-v2/:id", async (req, res) => {
   try {
     const { id } = req.params;
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const existing = await getPostgresInstructionV2ByRef(id);
-      if (!existing) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-      }
-
-      await pgQuery(
-        `
-          DELETE FROM instructions
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [existing._id],
-      );
-
-      return res.json({ success: true });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const target = await coll.findOne({ _id: toObjectId(id) });
+    const target = await loadInstructionForChatRuntime(id);
     if (!target) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
     await createDashboardSnapshotOrThrow(
-      id,
+      target._id,
       "delete_instruction",
-      db,
+      shouldUsePostgresInstructionsV2() ? null : (await connectDB()).db("chatbot"),
       "dashboard_api",
     );
-    const result = await coll.deleteOne({ _id: toObjectId(id) });
+    const deleted = await deleteInstructionV2ForRuntime(target._id);
 
-    if (result.deletedCount === 0) {
+    if (!deleted) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
 
@@ -11205,115 +10962,10 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const original = await getPostgresInstructionV2ByRef(id);
-      if (!original) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction ต้นฉบับ" });
-      }
-
-      const requestedName = typeof name === "string" ? name.trim() : "";
-      const baseName = (original.name || "").trim() || "ไม่มีชื่อ";
-      const finalName = (requestedName || `${baseName} (สำเนา)`).trim();
-
-      if (!finalName) {
-        return res.status(400).json({
-          success: false,
-          error: "กรุณาระบุชื่อ Instruction ใหม่",
-        });
-      }
-
-      const duplicatedName = await pgQuery(
-        `
-          SELECT 1
-          FROM instructions
-          WHERE ${buildInstructionV2SourceCondition("source_kind")}
-            AND lower(name) = lower($1)
-          LIMIT 1
-        `,
-        [finalName],
-      );
-      if (duplicatedName.rowCount > 0) {
-        return res.status(409).json({
-          success: false,
-          error: "ชื่อ Instruction นี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น",
-        });
-      }
-
-      const now = new Date();
-      const duplicatedItems = (Array.isArray(original.dataItems)
-        ? original.dataItems
-        : []
-      ).map((item) => ({
-        ...item,
-        itemId: generateDataItemId(),
-        createdAt: now,
-        updatedAt: now,
-      }));
-
-      const result = await pgQuery(
-        `
-          INSERT INTO instructions (
-            legacy_instruction_id,
-            source_kind,
-            name,
-            description,
-            type,
-            content,
-            data,
-            conversation_starter,
-            current_version,
-            created_at,
-            updated_at
-          ) VALUES ($1,'instructions_v2',$2,$3,$4,$5,$6::jsonb,$7::jsonb,1,$8,$8)
-          RETURNING
-            id::text AS id,
-            legacy_instruction_id,
-            name,
-            description,
-            type,
-            content,
-            data,
-            conversation_starter,
-            current_version,
-            created_at,
-            updated_at
-        `,
-        [
-          generateInstructionId(),
-          finalName,
-          original.description || "",
-          original.type || "instruction",
-          original.content || "",
-          JSON.stringify(duplicatedItems),
-          JSON.stringify(
-            cloneConversationStarterConfigForStorage(
-              original?.conversationStarter || {},
-              now,
-            ),
-          ),
-          now,
-        ],
-      );
-
-      return res.json({
-        success: true,
-        instruction: mapPostgresInstructionV2Row(result.rows[0]),
-      });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const original = await coll.findOne({ _id: toObjectId(id) });
+    const original = await loadInstructionForChatRuntime(id);
     if (!original) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction ต้นฉบับ" });
     }
-
-    const escapeRegex = (value) =>
-      String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
     const requestedName = typeof name === "string" ? name.trim() : "";
     const baseName = (original.name || "").trim() || "ไม่มีชื่อ";
     const finalName = (requestedName || `${baseName} (สำเนา)`).trim();
@@ -11324,19 +10976,14 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
         error: "กรุณาระบุชื่อ Instruction ใหม่",
       });
     }
-
-    const existingByName = await coll.findOne({
-      name: { $regex: new RegExp(`^${escapeRegex(finalName)}$`, "i") },
-    });
-    if (existingByName) {
+    if (await instructionNameExistsForRuntime(finalName)) {
       return res.status(409).json({
         success: false,
         error: "ชื่อ Instruction นี้ถูกใช้แล้ว กรุณาใช้ชื่ออื่น",
       });
     }
-
     const now = new Date();
-    const duplicate = {
+    const duplicate = await createInstructionV2ForRuntime({
       instructionId: generateInstructionId(),
       name: finalName,
       description: original.description || "",
@@ -11344,24 +10991,22 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
         ...item,
         itemId: generateDataItemId(),
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
       })),
       conversationStarter: cloneConversationStarterConfigForStorage(
         original?.conversationStarter || {},
         now,
       ),
-      usageCount: 0,
       createdAt: now,
-      updatedAt: now
-    };
-
-    const result = await coll.insertOne(duplicate);
-    const duplicateId = result.insertedId;
-    duplicate._id = duplicateId.toString();
+      updatedAt: now,
+    });
+    if (!duplicate) {
+      throw new Error("duplicate_instruction_failed");
+    }
     const snapshotResult = await createDashboardSnapshotOrThrow(
-      duplicateId,
+      duplicate._id,
       "duplicate_instruction",
-      db,
+      shouldUsePostgresInstructionsV2() ? null : (await connectDB()).db("chatbot"),
       "dashboard_api",
     );
     duplicate.version = snapshotResult.version;
@@ -11392,13 +11037,14 @@ app.post(
           .json({ success: false, error: "กรุณาอัพโหลดไฟล์รูปภาพ" });
       }
 
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const usePostgresFollowUpAssets =
-        !isMongoRuntimeEnabled() && canUsePostgresAssets();
-      const coll = usePostgresFollowUpAssets
-        ? null
-        : db.collection("follow_up_assets");
+      const usePostgresFollowUpAssets = canUsePostgresAssets();
+      let db = null;
+      let coll = null;
+      if (!usePostgresFollowUpAssets) {
+        const client = await connectDB();
+        db = client.db("chatbot");
+        coll = db.collection("follow_up_assets");
+      }
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -11557,90 +11203,33 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
     if (!type || !["text", "table"].includes(type)) {
       return res.status(400).json({ success: false, error: "ประเภทไม่ถูกต้อง" });
     }
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const instruction = await getPostgresInstructionV2ByRef(id);
-      if (!instruction) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-      }
-
-      const now = new Date();
-      const dataItems = Array.isArray(instruction.dataItems)
-        ? [...instruction.dataItems]
-        : [];
-      const newItem = {
-        itemId: generateDataItemId(),
-        title: title.trim(),
-        type,
-        content: type === "text" ? (content || "") : "",
-        data: type === "table" ? (data || { columns: [], rows: [] }) : null,
-        order: dataItems.length + 1,
-        createdAt: now,
-        updatedAt: now,
-      };
-      dataItems.push(newItem);
-
-      await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            data = $2::jsonb,
-            current_version = $3,
-            updated_at = $4
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [
-          instruction._id,
-          JSON.stringify(dataItems),
-          Math.max(
-            1,
-            Number.isInteger(instruction.version) ? instruction.version : 1,
-          ) + 1,
-          now,
-        ],
-      );
-
-      return res.json({ success: true, dataItem: newItem });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instruction = await coll.findOne({ _id: toObjectId(id) });
+    const instruction = await loadInstructionForChatRuntime(id);
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
 
     const now = new Date();
+    const dataItems = Array.isArray(instruction.dataItems)
+      ? [...instruction.dataItems]
+      : [];
     const newItem = {
       itemId: generateDataItemId(),
       title: title.trim(),
       type,
       content: type === "text" ? (content || "") : "",
       data: type === "table" ? (data || { columns: [], rows: [] }) : null,
-      order: (instruction.dataItems || []).length + 1,
+      order: dataItems.length + 1,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
-
-    const result = await coll.updateOne(
-      { _id: toObjectId(id) },
+    await persistInstructionDataItemsForDashboard(
+      instruction,
+      [...dataItems, newItem],
       {
-        $push: { dataItems: newItem },
-        $set: { updatedAt: now }
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-    }
-    await createDashboardSnapshotOrThrow(
-      id,
-      "add_data_item",
-      db,
-      "dashboard_api",
+        action: "add_data_item",
+        savedBy: "dashboard_api",
+        updatedAt: now,
+      },
     );
 
     res.json({ success: true, dataItem: newItem });
@@ -11660,94 +11249,39 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
     if (!Array.isArray(itemIds)) {
       return res.status(400).json({ success: false, error: "itemIds ต้องเป็น array" });
     }
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const instruction = await getPostgresInstructionV2ByRef(id);
-      if (!instruction) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-      }
-
-      const existingItems = Array.isArray(instruction.dataItems)
-        ? instruction.dataItems
-        : [];
-      const byId = new Map(
-        existingItems
-          .filter((item) => item && item.itemId)
-          .map((item) => [item.itemId, item]),
-      );
-      const reorderedItems = itemIds
-        .map((itemId, index) => {
-          const item = byId.get(itemId);
-          if (!item) return null;
-          return { ...item, order: index + 1 };
-        })
-        .filter(Boolean);
-
-      if (reorderedItems.length !== existingItems.length) {
-        return res.status(400).json({
-          success: false,
-          error: "รายการ itemIds ไม่ครบหรือไม่ถูกต้อง",
-        });
-      }
-
-      const now = new Date();
-      await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            data = $2::jsonb,
-            current_version = $3,
-            updated_at = $4
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [
-          instruction._id,
-          JSON.stringify(reorderedItems),
-          Math.max(
-            1,
-            Number.isInteger(instruction.version) ? instruction.version : 1,
-          ) + 1,
-          now,
-        ],
-      );
-
-      return res.json({ success: true });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instruction = await coll.findOne({ _id: toObjectId(id) });
+    const instruction = await loadInstructionForChatRuntime(id);
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
 
-    // Reorder dataItems based on itemIds array
-    const reorderedItems = itemIds.map((itemId, index) => {
-      const item = (instruction.dataItems || []).find(i => i.itemId === itemId);
-      if (item) {
+    const existingItems = Array.isArray(instruction.dataItems)
+      ? instruction.dataItems
+      : [];
+    const byId = new Map(
+      existingItems
+        .filter((item) => item && item.itemId)
+        .map((item) => [item.itemId, item]),
+    );
+    const reorderedItems = itemIds
+      .map((itemId, index) => {
+        const item = byId.get(itemId);
+        if (!item) return null;
         return { ...item, order: index + 1 };
-      }
-      return null;
-    }).filter(Boolean);
+      })
+      .filter(Boolean);
 
-    await coll.updateOne(
-      { _id: toObjectId(id) },
-      {
-        $set: {
-          dataItems: reorderedItems,
-          updatedAt: new Date()
-        }
-      }
-    );
-    await createDashboardSnapshotOrThrow(
-      id,
-      "reorder_data_items",
-      db,
-      "dashboard_api",
-    );
+    if (reorderedItems.length !== existingItems.length) {
+      return res.status(400).json({
+        success: false,
+        error: "รายการ itemIds ไม่ครบหรือไม่ถูกต้อง",
+      });
+    }
+
+    await persistInstructionDataItemsForDashboard(instruction, reorderedItems, {
+      action: "reorder_data_items",
+      savedBy: "dashboard_api",
+      updatedAt: new Date(),
+    });
 
     res.json({ success: true });
   } catch (err) {
@@ -11761,90 +11295,32 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
   try {
     const { id, itemId } = req.params;
     const { title, content, data } = req.body;
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const instruction = await getPostgresInstructionV2ByRef(id);
-      if (!instruction) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-      }
-
-      const dataItems = Array.isArray(instruction.dataItems)
-        ? [...instruction.dataItems]
-        : [];
-      const itemIndex = dataItems.findIndex((item) => item.itemId === itemId);
-      if (itemIndex === -1) {
-        return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
-      }
-
-      const now = new Date();
-      const targetItem = { ...dataItems[itemIndex] };
-      if (title !== undefined) targetItem.title = String(title || "").trim();
-      if (content !== undefined) targetItem.content = content;
-      if (data !== undefined) targetItem.data = data;
-      targetItem.updatedAt = now;
-      dataItems[itemIndex] = targetItem;
-
-      await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            data = $2::jsonb,
-            current_version = $3,
-            updated_at = $4
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [
-          instruction._id,
-          JSON.stringify(dataItems),
-          Math.max(
-            1,
-            Number.isInteger(instruction.version) ? instruction.version : 1,
-          ) + 1,
-          now,
-        ],
-      );
-
-      return res.json({ success: true, dataItem: targetItem });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instruction = await coll.findOne({ _id: toObjectId(id) });
+    const instruction = await loadInstructionForChatRuntime(id);
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
-
-    const itemIndex = (instruction.dataItems || []).findIndex(item => item.itemId === itemId);
+    const dataItems = Array.isArray(instruction.dataItems)
+      ? [...instruction.dataItems]
+      : [];
+    const itemIndex = dataItems.findIndex((item) => item.itemId === itemId);
     if (itemIndex === -1) {
       return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
     }
 
     const now = new Date();
-    const updateFields = {};
-    if (title !== undefined) updateFields[`dataItems.${itemIndex}.title`] = title.trim();
-    if (content !== undefined) updateFields[`dataItems.${itemIndex}.content`] = content;
-    if (data !== undefined) updateFields[`dataItems.${itemIndex}.data`] = data;
-    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
-    updateFields.updatedAt = now;
+    const targetItem = { ...dataItems[itemIndex] };
+    if (title !== undefined) targetItem.title = String(title || "").trim();
+    if (content !== undefined) targetItem.content = content;
+    if (data !== undefined) targetItem.data = data;
+    targetItem.updatedAt = now;
+    dataItems[itemIndex] = targetItem;
+    await persistInstructionDataItemsForDashboard(instruction, dataItems, {
+      action: "update_data_item",
+      savedBy: "dashboard_api",
+      updatedAt: now,
+    });
 
-    await coll.updateOne(
-      { _id: toObjectId(id) },
-      { $set: updateFields }
-    );
-    await createDashboardSnapshotOrThrow(
-      id,
-      "update_data_item",
-      db,
-      "dashboard_api",
-    );
-
-    const updatedInstruction = await coll.findOne({ _id: toObjectId(id) });
-    const updatedItem = updatedInstruction.dataItems[itemIndex];
-
-    res.json({ success: true, dataItem: updatedItem });
+    res.json({ success: true, dataItem: targetItem });
   } catch (err) {
     console.error("Error updating data item:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -11855,72 +11331,28 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
 app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
   try {
     const { id, itemId } = req.params;
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const instruction = await getPostgresInstructionV2ByRef(id);
-      if (!instruction) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-      }
-
-      const dataItems = Array.isArray(instruction.dataItems)
-        ? [...instruction.dataItems]
-        : [];
-      const nextItems = dataItems.filter((item) => item?.itemId !== itemId);
-      if (nextItems.length === dataItems.length) {
-        return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
-      }
-
-      nextItems.forEach((item, index) => {
-        if (!item || typeof item !== "object") return;
-        item.order = index + 1;
-      });
-
-      const now = new Date();
-      await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            data = $2::jsonb,
-            current_version = $3,
-            updated_at = $4
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [
-          instruction._id,
-          JSON.stringify(nextItems),
-          Math.max(
-            1,
-            Number.isInteger(instruction.version) ? instruction.version : 1,
-          ) + 1,
-          now,
-        ],
-      );
-
-      return res.json({ success: true });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const result = await coll.updateOne(
-      { _id: toObjectId(id) },
-      {
-        $pull: { dataItems: { itemId } },
-        $set: { updatedAt: new Date() }
-      }
-    );
-
-    if (result.matchedCount === 0) {
+    const instruction = await loadInstructionForChatRuntime(id);
+    if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
-    await createDashboardSnapshotOrThrow(
-      id,
-      "delete_data_item",
-      db,
-      "dashboard_api",
-    );
+
+    const dataItems = Array.isArray(instruction.dataItems)
+      ? [...instruction.dataItems]
+      : [];
+    const nextItems = dataItems.filter((item) => item?.itemId !== itemId);
+    if (nextItems.length === dataItems.length) {
+      return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
+    }
+
+    nextItems.forEach((item, index) => {
+      if (!item || typeof item !== "object") return;
+      item.order = index + 1;
+    });
+    await persistInstructionDataItemsForDashboard(instruction, nextItems, {
+      action: "delete_data_item",
+      savedBy: "dashboard_api",
+      updatedAt: new Date(),
+    });
 
     res.json({ success: true });
   } catch (err) {
@@ -11933,66 +11365,14 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
 app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, res) => {
   try {
     const { id, itemId } = req.params;
-
-    if (shouldUsePostgresInstructionsV2()) {
-      const instruction = await getPostgresInstructionV2ByRef(id);
-      if (!instruction) {
-        return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
-      }
-
-      const dataItems = Array.isArray(instruction.dataItems)
-        ? [...instruction.dataItems]
-        : [];
-      const originalItem = dataItems.find((item) => item?.itemId === itemId);
-      if (!originalItem) {
-        return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
-      }
-
-      const now = new Date();
-      const duplicateItem = {
-        ...originalItem,
-        itemId: generateDataItemId(),
-        title: `${originalItem.title} (สำเนา)`,
-        order: dataItems.length + 1,
-        createdAt: now,
-        updatedAt: now,
-      };
-      dataItems.push(duplicateItem);
-
-      await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            data = $2::jsonb,
-            current_version = $3,
-            updated_at = $4
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [
-          instruction._id,
-          JSON.stringify(dataItems),
-          Math.max(
-            1,
-            Number.isInteger(instruction.version) ? instruction.version : 1,
-          ) + 1,
-          now,
-        ],
-      );
-
-      return res.json({ success: true, dataItem: duplicateItem });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions_v2");
-
-    const instruction = await coll.findOne({ _id: toObjectId(id) });
+    const instruction = await loadInstructionForChatRuntime(id);
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
-
-    const originalItem = (instruction.dataItems || []).find(item => item.itemId === itemId);
+    const dataItems = Array.isArray(instruction.dataItems)
+      ? [...instruction.dataItems]
+      : [];
+    const originalItem = dataItems.find((item) => item.itemId === itemId);
     if (!originalItem) {
       return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
     }
@@ -12002,23 +11382,18 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
       ...originalItem,
       itemId: generateDataItemId(),
       title: `${originalItem.title} (สำเนา)`,
-      order: (instruction.dataItems || []).length + 1,
+      order: dataItems.length + 1,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
-
-    await coll.updateOne(
-      { _id: toObjectId(id) },
+    await persistInstructionDataItemsForDashboard(
+      instruction,
+      [...dataItems, duplicateItem],
       {
-        $push: { dataItems: duplicateItem },
-        $set: { updatedAt: now }
-      }
-    );
-    await createDashboardSnapshotOrThrow(
-      id,
-      "duplicate_data_item",
-      db,
-      "dashboard_api",
+        action: "duplicate_data_item",
+        savedBy: "dashboard_api",
+        updatedAt: now,
+      },
     );
 
     res.json({ success: true, dataItem: duplicateItem });
@@ -12183,7 +11558,7 @@ app.post("/api/instructions-v2/import/preview-sheets", upload.single("file"), as
       return res.status(400).json({ success: false, error: "กรุณาอัพโหลดไฟล์ Excel" });
     }
 
-    const service = new InstructionDataService({
+    const service = new (getInstructionDataServiceClass())({
       collection() {
         return {};
       },
@@ -12255,7 +11630,7 @@ app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
     } else {
       const client = await connectDB();
       const db = client.db("chatbot");
-      const service = new InstructionDataService(db);
+      const service = new (getInstructionDataServiceClass())(db);
 
       results = await service.executeImport(mappings, filePath);
       for (const result of results) {
@@ -12298,7 +11673,7 @@ app.post("/api/instructions-v2/export-sheets", async (req, res) => {
       : await (async () => {
         const client = await connectDB();
         const db = client.db("chatbot");
-        const service = new InstructionDataService(db);
+        const service = new (getInstructionDataServiceClass())(db);
         return service.exportInstructions(instructionIds);
       })();
 
@@ -12323,192 +11698,10 @@ app.post("/api/instructions-v2/export-sheets", async (req, res) => {
 // ============================================================================
 
 async function migrateToInstructionsV2() {
-  try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    const migrationLogsColl = db.collection("migration_logs");
-    const libraryColl = db.collection("instruction_library");
-    const newColl = db.collection("instructions_v2");
-
-    // ตรวจสอบว่า migrate แล้วหรือยัง
-    const migrationLog = await migrationLogsColl.findOne({
-      migration: "instructions_to_v2"
-    });
-
-    if (migrationLog && migrationLog.completed) {
-      console.log("[Migration] Instructions V2: Already migrated ✓");
-      return;
-    }
-
-    console.log("\n" + "=".repeat(60));
-    console.log("🔄 Starting Auto-Migration: Instruction Library → Instructions V2");
-    console.log("=".repeat(60));
-
-    // ตรวจสอบว่ามีข้อมูลใน instructions_v2 อยู่แล้วหรือไม่
-    const v2Count = await newColl.countDocuments();
-    if (v2Count > 0) {
-      console.log(`[Migration] Instructions V2 already has ${v2Count} documents`);
-      console.log("[Migration] Skipping migration to avoid data loss");
-
-      // บันทึกว่า migrate แล้ว
-      await migrationLogsColl.updateOne(
-        { migration: "instructions_to_v2" },
-        {
-          $set: {
-            migration: "instructions_to_v2",
-            completed: true,
-            skipped: true,
-            reason: "instructions_v2 already has data",
-            completedAt: new Date()
-          }
-        },
-        { upsert: true }
-      );
-
-      console.log("=".repeat(60) + "\n");
-      return;
-    }
-
-    // ดึงข้อมูลจาก instruction_library
-    const libraries = await libraryColl.find({}).toArray();
-
-    if (libraries.length === 0) {
-      console.log("[Migration] No instruction libraries found. Nothing to migrate.");
-
-      // บันทึกว่า migrate แล้ว (แต่ไม่มีข้อมูล)
-      await migrationLogsColl.updateOne(
-        { migration: "instructions_to_v2" },
-        {
-          $set: {
-            migration: "instructions_to_v2",
-            completed: true,
-            skipped: true,
-            reason: "no data to migrate",
-            completedAt: new Date()
-          }
-        },
-        { upsert: true }
-      );
-
-      console.log("=".repeat(60) + "\n");
-      return;
-    }
-
-    console.log(`[Migration] Found ${libraries.length} instruction libraries to migrate`);
-
-    // สร้าง Instruction ใหม่สำหรับแต่ละ library
-    const now = new Date();
-    const createdInstructions = [];
-    let totalDataItems = 0;
-
-    for (const library of libraries) {
-      // สร้างชื่อจาก library.name หรือ library.date
-      let instructionName = library.name || library.displayDate || library.date;
-
-      // ถ้าไม่มี name ให้สร้างชื่อจาก date
-      if (!library.name && library.date) {
-        // แปลง date จาก "2024-01-15_manual_14-30-00" เป็นรูปแบบที่อ่านง่าย
-        const dateMatch = library.date.match(/^(\d{4})-(\d{2})-(\d{2})_(.+?)_(\d{2})-(\d{2})-(\d{2})$/);
-        if (dateMatch) {
-          const [, year, month, day, type, hour, min, sec] = dateMatch;
-          const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-            'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
-          const monthName = thaiMonths[parseInt(month) - 1] || month;
-          const typeLabel = type === 'manual' ? 'บันทึกเอง' : type === 'auto' ? 'อัตโนมัติ' : type;
-          instructionName = `Library: ${day} ${monthName} ${year} - ${hour}:${min} (${typeLabel})`;
-        } else {
-          instructionName = `Library: ${library.date}`;
-        }
-      }
-
-      // แปลง library.instructions เป็น dataItems
-      const instructions = library.instructions || [];
-      const dataItems = instructions.map((old, index) => {
-        const item = {
-          itemId: generateDataItemId(),
-          title: old.title || `ชุดข้อมูลที่ ${index + 1}`,
-          type: old.type || "text",
-          content: "",
-          data: null,
-          order: index + 1,
-          createdAt: old.createdAt || now,
-          updatedAt: old.updatedAt || now
-        };
-
-        if (old.type === "text") {
-          item.content = old.content || "";
-        } else if (old.type === "table") {
-          item.data = old.data || { columns: [], rows: [] };
-        }
-
-        return item;
-      });
-
-      // สร้าง Instruction ใหม่
-      const newInstruction = {
-        instructionId: generateInstructionId(),
-        name: instructionName,
-        description: library.description || `Instruction จาก Library: ${library.date}`,
-        dataItems: dataItems,
-        conversationStarter: {
-          enabled: false,
-          messages: [],
-          updatedAt: now,
-        },
-        usageCount: 0,
-        libraryDate: library.date, // เก็บ reference ไว้
-        createdAt: now,
-        updatedAt: now
-      };
-
-      // Insert ลง instructions_v2
-      const result = await newColl.insertOne(newInstruction);
-      createdInstructions.push({
-        id: result.insertedId.toString(),
-        name: newInstruction.name,
-        dataItemCount: dataItems.length
-      });
-      totalDataItems += dataItems.length;
-
-      console.log(`[Migration] ✓ Created: "${newInstruction.name}"`);
-      console.log(`[Migration]   ID: ${result.insertedId}`);
-      console.log(`[Migration]   Data Items: ${dataItems.length}`);
-    }
-
-    // Backup collection เดิม
-    try {
-      const backupName = `instruction_library_backup_${Date.now()}`;
-      await db.collection("instruction_library").rename(backupName);
-      console.log(`[Migration] ✓ Backed up old library as: ${backupName}`);
-    } catch (err) {
-      console.warn(`[Migration] Could not backup old library:`, err.message);
-    }
-
-    // บันทึก migration log
-    await migrationLogsColl.insertOne({
-      migration: "instructions_to_v2",
-      completed: true,
-      instructionsCreated: createdInstructions,
-      totalInstructions: createdInstructions.length,
-      totalDataItems: totalDataItems,
-      startedAt: now,
-      completedAt: new Date()
-    });
-
-    console.log(`\n[Migration] ✓ Migration completed successfully!`);
-    console.log(`[Migration] Created ${createdInstructions.length} Instructions with ${totalDataItems} total data items`);
-    console.log("\n📝 Next Steps:");
-    console.log("   1. Visit /admin/dashboard to see the new interface");
-    console.log("   2. Edit or organize instructions as needed");
-    console.log("   3. Configure bots to use the new instruction system");
-    console.log("=".repeat(60) + "\n");
-
-  } catch (err) {
-    console.error("\n❌ [Migration] Failed to migrate instructions:", err);
-    console.error("   The old data is still safe in 'instruction_library' collection");
-    console.error("=".repeat(60) + "\n");
-  }
+  console.log(
+    "[Migration] Legacy instruction_library auto-migration retired; runtime stays on instructions_v2 only.",
+  );
+  return { skipped: true, retired: true };
 }
 
 // ============================================================================
@@ -12717,7 +11910,6 @@ async function initializeMongoRuntime(options = {}) {
         await migrateChatHistorySenderId(db);
         await migrateInstructionAssetsAddSlug();
         await migrateAssetsToCollections();
-        await migrateToInstructionsV2();
         console.log(`[LOG] Migration เสร็จสิ้น`);
       } catch (migrationError) {
         console.error(`[ERROR] Migration ล้มเหลว:`, migrationError);
@@ -12756,15 +11948,6 @@ async function initializeMongoRuntime(options = {}) {
       await ensureSettings();
     } catch (settingsError) {
       console.error(`[ERROR] ensureSettings ล้มเหลว:`, settingsError);
-    }
-
-    try {
-      await agentForgeService.ensureIndexes();
-    } catch (agentForgeIndexError) {
-      console.error(
-        `[ERROR] agentForgeService.ensureIndexes ล้มเหลว:`,
-        agentForgeIndexError,
-      );
     }
 
     try {
@@ -12815,15 +11998,6 @@ async function startLegacyBackgroundJobs(options = {}) {
     console.error(`[ERROR] startNotificationSummaryScheduler ล้มเหลว:`, summaryError);
   }
 
-  try {
-    agentForgeScheduler.start();
-  } catch (agentForgeSchedulerError) {
-    console.error(
-      `[ERROR] agentForgeScheduler.start ล้มเหลว:`,
-      agentForgeSchedulerError,
-    );
-  }
-
   legacyBackgroundJobsStarted = true;
 }
 
@@ -12868,13 +12042,111 @@ async function startServer(options = {}) {
   });
 }
 
+function canUsePostgresSupportState() {
+  return Boolean(isPostgresConfigured());
+}
+
+function requirePostgresSupportState(featureName = "support state") {
+  if (canUsePostgresSupportState()) {
+    return;
+  }
+  throw new Error(
+    `PostgreSQL ${featureName} storage is required because MongoDB support-state fallback has been removed`,
+  );
+}
+
+let userFlowHistoryTableReadyPromise = null;
+let userUnreadCountsTableReadyPromise = null;
+let broadcastHistoryTableReadyPromise = null;
+
+async function ensurePostgresUserFlowHistoryTable() {
+  if (!canUsePostgresSupportState()) return;
+  if (!userFlowHistoryTableReadyPromise) {
+    userFlowHistoryTableReadyPromise = pgQuery(
+      `
+        CREATE TABLE IF NOT EXISTS user_flow_history (
+          sender_id TEXT PRIMARY KEY,
+          flow TEXT,
+          product_service_type TEXT,
+          existing_info JSONB NOT NULL DEFAULT '{}'::jsonb,
+          missing_info JSONB NOT NULL DEFAULT '[]'::jsonb,
+          next_steps TEXT,
+          last_analyzed TIMESTAMPTZ,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    ).catch((error) => {
+      userFlowHistoryTableReadyPromise = null;
+      throw error;
+    });
+  }
+  await userFlowHistoryTableReadyPromise;
+}
+
+async function ensurePostgresUserUnreadCountsTable() {
+  if (!canUsePostgresSupportState()) return;
+  if (!userUnreadCountsTableReadyPromise) {
+    userUnreadCountsTableReadyPromise = pgQuery(
+      `
+        CREATE TABLE IF NOT EXISTS user_unread_counts (
+          user_id TEXT PRIMARY KEY,
+          unread_count INTEGER NOT NULL DEFAULT 0,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    ).catch((error) => {
+      userUnreadCountsTableReadyPromise = null;
+      throw error;
+    });
+  }
+  await userUnreadCountsTableReadyPromise;
+}
+
+async function ensurePostgresBroadcastHistoryTable() {
+  if (!canUsePostgresSupportState()) return;
+  if (!broadcastHistoryTableReadyPromise) {
+    broadcastHistoryTableReadyPromise = pgQuery(
+      `
+        CREATE TABLE IF NOT EXISTS broadcast_history (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          legacy_job_id TEXT NOT NULL UNIQUE,
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+          status TEXT NOT NULL DEFAULT 'queued',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    ).catch((error) => {
+      broadcastHistoryTableReadyPromise = null;
+      throw error;
+    });
+  }
+  await broadcastHistoryTableReadyPromise;
+}
+
 // เพิ่มฟังก์ชันเพื่อเก็บและดึงประวัติการวิเคราะห์ Flow ของผู้ใช้
 async function getUserFlowHistory(userId) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
-  const coll = db.collection("user_flow_history");
-  const flowHistory = await coll.findOne({ senderId: userId });
-  if (!flowHistory) {
+  requirePostgresSupportState("user flow history");
+  await ensurePostgresUserFlowHistoryTable();
+  const result = await pgQuery(
+    `
+      SELECT
+        sender_id,
+        flow,
+        product_service_type,
+        existing_info,
+        missing_info,
+        next_steps,
+        last_analyzed
+      FROM user_flow_history
+      WHERE sender_id = $1
+      LIMIT 1
+    `,
+    [userId],
+  );
+  const row = result.rows[0] || null;
+  if (!row) {
     return {
       senderId: userId,
       flow: null,
@@ -12883,7 +12155,18 @@ async function getUserFlowHistory(userId) {
       last_analyzed: null,
     };
   }
-  return flowHistory;
+  return {
+    senderId: row.sender_id,
+    flow: row.flow || null,
+    product_service_type: row.product_service_type || null,
+    existing_info:
+      row.existing_info && typeof row.existing_info === "object"
+        ? row.existing_info
+        : {},
+    missing_info: Array.isArray(row.missing_info) ? row.missing_info : [],
+    next_steps: row.next_steps || null,
+    last_analyzed: row.last_analyzed || null,
+  };
 }
 
 /**
@@ -13022,16 +12305,39 @@ async function saveUserFlowHistory(userId, flowAnalysis) {
       last_analyzed: new Date(),
     };
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_flow_history");
-
-    // ถ้ามีข้อมูลเดิมให้อัพเดต ถ้าไม่มีให้เพิ่มใหม่
-    if (oldFlowHistory && oldFlowHistory.senderId) {
-      await coll.updateOne({ senderId: userId }, { $set: newFlowHistory });
-    } else {
-      await coll.insertOne(newFlowHistory);
-    }
+    requirePostgresSupportState("user flow history");
+    await ensurePostgresUserFlowHistoryTable();
+    await pgQuery(
+      `
+        INSERT INTO user_flow_history (
+          sender_id,
+          flow,
+          product_service_type,
+          existing_info,
+          missing_info,
+          next_steps,
+          last_analyzed,
+          updated_at
+        ) VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,NOW())
+        ON CONFLICT (sender_id) DO UPDATE SET
+          flow = EXCLUDED.flow,
+          product_service_type = EXCLUDED.product_service_type,
+          existing_info = EXCLUDED.existing_info,
+          missing_info = EXCLUDED.missing_info,
+          next_steps = EXCLUDED.next_steps,
+          last_analyzed = EXCLUDED.last_analyzed,
+          updated_at = NOW()
+      `,
+      [
+        userId,
+        newFlowHistory.flow || null,
+        newFlowHistory.product_service_type || null,
+        JSON.stringify(newFlowHistory.existing_info || {}),
+        JSON.stringify(newFlowHistory.missing_info || []),
+        newFlowHistory.next_steps || null,
+        newFlowHistory.last_analyzed || null,
+      ],
+    );
   } catch (err) {
     console.error("Error saving flow history:", err);
   }
@@ -13660,7 +12966,7 @@ async function getAssistantResponseTextOnly(
       }
     ];
 
-    const enabledTools = isMongoRuntimeEnabled()
+    const enabledTools = canUseCategoryStorage()
       ? tools
       : tools.filter(
         (toolDef) =>
@@ -13717,14 +13023,6 @@ async function getAssistantResponseTextOnly(
           `[LOG] AI ต้องการใช้ Tool: ${responseMessage.tool_calls.length} calls`,
         );
 
-        let db = null;
-        const ensureMongoDb = async () => {
-          if (db) return db;
-          const client = await connectDB();
-          db = client.db("chatbot");
-          return db;
-        };
-
         let isFirstToolCall = true;
 
         for (const toolCall of responseMessage.tool_calls) {
@@ -13736,10 +13034,9 @@ async function getAssistantResponseTextOnly(
           let toolResult = { error: "Unknown tool" };
 
           if (functionName === "get_categories") {
-            toolResult = await getCategories(await ensureMongoDb(), botId, platform);
+            toolResult = await getCategories({ botId, platform });
           } else if (functionName === "search_item_by_category") {
             toolResult = await searchItemByCategory(
-              await ensureMongoDb(),
               functionArgs.category,
               functionArgs.keyword,
               botId,
@@ -13747,7 +13044,6 @@ async function getAssistantResponseTextOnly(
             );
           } else if (functionName === "search_item_broad") {
             toolResult = await searchItemBroad(
-              await ensureMongoDb(),
               functionArgs.category,
               functionArgs.keyword,
               botId,
@@ -14170,6 +13466,17 @@ async function getAssistantResponseMultimodal(
       }
     ];
 
+    const enabledTools = canUseCategoryStorage()
+      ? tools
+      : tools.filter(
+        (toolDef) =>
+          ![
+            "get_categories",
+            "search_item_by_category",
+            "search_item_broad",
+          ].includes(toolDef?.function?.name),
+      );
+
     let finalResponse = null;
     let toolLoopCount = 0;
     const MAX_TOOL_LOOPS = 5;
@@ -14179,7 +13486,7 @@ async function getAssistantResponseMultimodal(
       const response = await openai.chat.completions.create({
         model: resolvedVisionModel.model,
         messages,
-        tools,
+        tools: enabledTools,
         tool_choice: "auto",
       });
 
@@ -14190,9 +13497,6 @@ async function getAssistantResponseMultimodal(
         console.log(
           `[LOG] AI ต้องการใช้ Tool (multimodal): ${responseMessage.tool_calls.length} calls`,
         );
-
-        const client = await connectDB();
-        const db = client.db("chatbot");
 
         let isFirstToolCall = true;
 
@@ -14205,10 +13509,9 @@ async function getAssistantResponseMultimodal(
           let toolResult = { error: "Unknown tool" };
 
           if (functionName === "get_categories") {
-            toolResult = await getCategories(db, botId, platform);
+            toolResult = await getCategories({ botId, platform });
           } else if (functionName === "search_item_by_category") {
             toolResult = await searchItemByCategory(
-              db,
               functionArgs.category,
               functionArgs.keyword,
               botId,
@@ -14216,7 +13519,6 @@ async function getAssistantResponseMultimodal(
             );
           } else if (functionName === "search_item_broad") {
             toolResult = await searchItemBroad(
-              db,
               functionArgs.category,
               functionArgs.keyword,
               botId,
@@ -14564,20 +13866,14 @@ function normalizeImageCollectionSelections(collectionIds = []) {
     if (!entry) continue;
     if (typeof entry === "string") {
       value = entry.trim();
-    } else if (entry instanceof ObjectId) {
-      value = entry.toHexString();
     } else if (
       typeof entry === "object" &&
       entry._id &&
       typeof entry._id === "string"
     ) {
       value = entry._id.trim();
-    } else if (
-      typeof entry === "object" &&
-      entry._id &&
-      entry._id instanceof ObjectId
-    ) {
-      value = entry._id.toHexString();
+    } else if (entry && typeof entry.toString === "function") {
+      value = entry.toString().trim();
     }
     if (!value) continue;
     if (!seen.has(value)) {
@@ -14813,8 +14109,12 @@ async function resolveInstructionSelectionsV2(
   const instructionIds = [
     ...new Set(
       selections
-        .filter(isInstructionSelectionObject)
-        .map((entry) => extractInstructionSelectionId(entry))
+        .map((entry) => {
+          if (isInstructionSelectionObject(entry)) {
+            return extractInstructionSelectionId(entry);
+          }
+          return typeof entry === "string" ? entry.trim() : "";
+        })
         .filter(Boolean),
     ),
   ];
@@ -15049,6 +14349,17 @@ async function buildSystemPromptFromSelections(
     }
   }
 
+  const fallbackV2Docs = await resolveInstructionSelectionsV2(
+    selectedInstructions,
+    db,
+  );
+  const fallbackV2Prompt = buildSystemPromptFromInstructionV2Docs(
+    fallbackV2Docs,
+  );
+  if (fallbackV2Prompt) {
+    return fallbackV2Prompt;
+  }
+
   if (!isMongoRuntimeEnabled()) {
     return "";
   }
@@ -15070,13 +14381,9 @@ async function buildSystemPromptFromSelections(
 }
 
 function toObjectId(id) {
-  if (!id) return null;
-  if (id instanceof ObjectId) return id;
-  try {
-    return new ObjectId(id);
-  } catch (e) {
-    return null;
-  }
+  if (typeof id !== "string") return null;
+  const normalized = id.trim();
+  return isMongoObjectIdLike(normalized) ? normalized : null;
 }
 
 function buildInstructionVersionLabel(versionNumber) {
@@ -15389,6 +14696,100 @@ async function createDashboardSnapshotOrThrow(
   dbInstance = null,
   savedBy = "dashboard",
 ) {
+  if (shouldUsePostgresInstructionsV2()) {
+    const instruction = await getPostgresInstructionV2ByRef(instructionRef);
+    if (!instruction) {
+      throw new Error("instruction_not_found");
+    }
+
+    const snapshotAt = new Date();
+    const version = Math.max(
+      1,
+      Number.isInteger(instruction.version) ? instruction.version : 1,
+    );
+    const note = `dashboard:${action}`;
+    const snapshot = buildInstructionVersionSnapshotPayload(instruction, {
+      version,
+      note,
+      savedBy,
+      snapshotAt,
+    });
+
+    const existingResult = await pgQuery(
+      `
+        SELECT id::text AS id
+        FROM instruction_versions
+        WHERE version = $1
+          AND (
+            instruction_id = $2::uuid
+            OR legacy_instruction_id = $3
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [version, instruction._id, instruction.instructionId],
+    );
+
+    if (existingResult.rowCount > 0) {
+      await pgQuery(
+        `
+          UPDATE instruction_versions
+          SET
+            legacy_instruction_id = $2,
+            instruction_id = $3::uuid,
+            snapshot = $4::jsonb,
+            note = $5,
+            snapshot_at = $6,
+            saved_by = $7
+          WHERE id = $1::uuid
+        `,
+        [
+          existingResult.rows[0].id,
+          instruction.instructionId,
+          instruction._id,
+          JSON.stringify(snapshot),
+          note,
+          snapshotAt,
+          savedBy,
+        ],
+      );
+    } else {
+      await pgQuery(
+        `
+          INSERT INTO instruction_versions (
+            legacy_instruction_id,
+            instruction_id,
+            version,
+            snapshot,
+            note,
+            snapshot_at,
+            saved_by,
+            created_at
+          )
+          VALUES ($1, $2::uuid, $3, $4::jsonb, $5, $6, $7, $6)
+        `,
+        [
+          instruction.instructionId,
+          instruction._id,
+          version,
+          JSON.stringify(snapshot),
+          note,
+          snapshotAt,
+          savedBy,
+        ],
+      );
+    }
+
+    invalidateInstructionPromptCaches();
+    return {
+      success: true,
+      instructionId: instruction.instructionId,
+      version,
+      note,
+      snapshotAt,
+    };
+  }
+
   const note = `dashboard:${action}`;
   const snapshotResult = await createSnapshotFromLatest(
     instructionRef,
@@ -15403,6 +14804,657 @@ async function createDashboardSnapshotOrThrow(
   }
   invalidateInstructionPromptCaches();
   return snapshotResult;
+}
+
+function buildMongoInstructionV2LookupQuery(instructionRef) {
+  const normalizedRef = String(instructionRef || "").trim();
+  if (!normalizedRef) {
+    return { _id: null };
+  }
+  const objectId = toObjectId(normalizedRef);
+  if (objectId) {
+    return { _id: objectId };
+  }
+  return {
+    $or: [
+      { instructionId: normalizedRef },
+      { _id: normalizedRef },
+    ],
+  };
+}
+
+async function loadInstructionForChatRuntime(instructionRef, dbInstance = null) {
+  const normalizedRef = String(instructionRef || "").trim();
+  if (!normalizedRef) return null;
+
+  if (shouldUsePostgresInstructionsV2()) {
+    return getPostgresInstructionV2ByRef(normalizedRef);
+  }
+
+  let db = dbInstance;
+  if (!db) {
+    const client = await connectDB();
+    db = client.db("chatbot");
+  }
+
+  const doc = await db.collection("instructions_v2").findOne(
+    buildMongoInstructionV2LookupQuery(normalizedRef),
+  );
+  if (!doc) return null;
+  return {
+    ...doc,
+    conversationStarter: normalizeConversationStarterConfig(
+      doc?.conversationStarter,
+    ),
+    _id: doc._id?.toString?.() || doc._id,
+  };
+}
+
+async function saveInstructionForChatRuntime(
+  instructionRef,
+  instructionDoc,
+  dbInstance = null,
+) {
+  const normalizedRef = String(instructionRef || instructionDoc?._id || "").trim();
+  if (!normalizedRef || !instructionDoc || typeof instructionDoc !== "object") {
+    throw new Error("Invalid instruction payload");
+  }
+
+  if (shouldUsePostgresInstructionsV2()) {
+    const existing = await getPostgresInstructionV2ByRef(normalizedRef);
+    if (!existing) {
+      throw new Error("instruction_not_found");
+    }
+
+    const now = instructionDoc.updatedAt || new Date();
+    const result = await pgQuery(
+      `
+        UPDATE instructions
+        SET
+          legacy_instruction_id = $2,
+          name = $3,
+          description = $4,
+          type = $5,
+          content = $6,
+          data = $7::jsonb,
+          conversation_starter = $8::jsonb,
+          current_version = $9,
+          updated_at = $10
+        WHERE id = $1::uuid
+          AND ${buildInstructionV2SourceCondition("source_kind")}
+        RETURNING
+          id::text AS id,
+          legacy_instruction_id,
+          name,
+          description,
+          type,
+          content,
+          data,
+          conversation_starter,
+          current_version,
+          created_at,
+          updated_at
+      `,
+      [
+        existing._id,
+        String(
+          instructionDoc.instructionId || existing.instructionId || normalizedRef,
+        ).trim(),
+        String(instructionDoc.name || "").trim(),
+        String(instructionDoc.description || "").trim(),
+        instructionDoc.type || existing.type || "instruction",
+        instructionDoc.content || "",
+        JSON.stringify(
+          Array.isArray(instructionDoc.dataItems) ? instructionDoc.dataItems : [],
+        ),
+        JSON.stringify(
+          normalizeConversationStarterConfig(instructionDoc.conversationStarter),
+        ),
+        Number.isInteger(instructionDoc.version)
+          ? instructionDoc.version
+          : Number.isInteger(existing.version)
+            ? existing.version
+            : 1,
+        now,
+      ],
+    );
+    return result.rows[0] ? mapPostgresInstructionV2Row(result.rows[0]) : null;
+  }
+
+  let db = dbInstance;
+  if (!db) {
+    const client = await connectDB();
+    db = client.db("chatbot");
+  }
+  const coll = db.collection("instructions_v2");
+  const lookup = buildMongoInstructionV2LookupQuery(normalizedRef);
+  const payload = {
+    ...instructionDoc,
+    updatedAt: instructionDoc.updatedAt || new Date(),
+    conversationStarter: normalizeConversationStarterConfig(
+      instructionDoc.conversationStarter,
+    ),
+  };
+  delete payload._id;
+  await coll.updateOne(lookup, { $set: payload });
+  const saved = await coll.findOne(lookup);
+  return saved
+    ? {
+        ...saved,
+        conversationStarter: normalizeConversationStarterConfig(
+          saved?.conversationStarter,
+        ),
+        _id: saved._id?.toString?.() || saved._id,
+      }
+    : null;
+}
+
+async function listInstructionVersionsForChatRuntime(instruction) {
+  if (!instruction || typeof instruction !== "object") return [];
+  if (!shouldUsePostgresInstructionsV2()) {
+    return [];
+  }
+
+  const result = await pgQuery(
+    `
+      SELECT version, note, snapshot_at
+      FROM instruction_versions
+      WHERE instruction_id = $1::uuid
+         OR legacy_instruction_id = $2
+      ORDER BY version DESC, snapshot_at DESC
+    `,
+    [instruction._id, instruction.instructionId || instruction._id],
+  );
+
+  return result.rows.map((row) => ({
+    version: row.version,
+    note: row.note || "",
+    snapshotAt: row.snapshot_at,
+  }));
+}
+
+async function getInstructionVersionForChatRuntime(instruction, version) {
+  if (!instruction || typeof instruction !== "object") return null;
+  if (!shouldUsePostgresInstructionsV2()) {
+    return null;
+  }
+
+  const result = await pgQuery(
+    `
+      SELECT version, note, snapshot_at, snapshot
+      FROM instruction_versions
+      WHERE version = $1
+        AND (
+          instruction_id = $2::uuid
+          OR legacy_instruction_id = $3
+        )
+      ORDER BY snapshot_at DESC, created_at DESC
+      LIMIT 1
+    `,
+    [Number(version), instruction._id, instruction.instructionId || instruction._id],
+  );
+  const row = result.rows[0] || null;
+  if (!row) return null;
+  const snapshot =
+    row.snapshot && typeof row.snapshot === "object" ? row.snapshot : {};
+  return {
+    ...snapshot,
+    instructionId:
+      snapshot.instructionId || instruction.instructionId || instruction._id,
+    version: row.version,
+    note: row.note || snapshot.note || "",
+    snapshotAt: row.snapshot_at || snapshot.snapshotAt || null,
+  };
+}
+
+async function saveInstructionVersionForChatRuntime(
+  instruction,
+  options = {},
+) {
+  if (!instruction || typeof instruction !== "object") {
+    throw new Error("Invalid instruction payload");
+  }
+  if (!shouldUsePostgresInstructionsV2()) {
+    return null;
+  }
+
+  const latestInstruction = await getPostgresInstructionV2ByRef(
+    instruction._id || instruction.instructionId,
+  );
+  if (!latestInstruction) {
+    throw new Error("instruction_not_found");
+  }
+
+  const latestVersionResult = await pgQuery(
+    `
+      SELECT COALESCE(MAX(version), 0) AS latest_version
+      FROM instruction_versions
+      WHERE instruction_id = $1::uuid
+         OR legacy_instruction_id = $2
+    `,
+    [latestInstruction._id, latestInstruction.instructionId],
+  );
+  const latestVersion = Number(
+    latestVersionResult.rows[0]?.latest_version || 0,
+  );
+  const nextVersion =
+    Math.max(
+      latestVersion,
+      Number.isInteger(latestInstruction.version) ? latestInstruction.version : 0,
+    ) + 1;
+  const snapshotAt = new Date();
+  const trimmedNote = String(options.note || "").trim().slice(0, 500);
+  const savedBy = String(options.savedBy || "instructionAI").trim() || "instructionAI";
+
+  const updatedInstructionResult = await pgQuery(
+    `
+      UPDATE instructions
+      SET
+        legacy_instruction_id = $2,
+        name = $3,
+        description = $4,
+        type = $5,
+        content = $6,
+        data = $7::jsonb,
+        conversation_starter = $8::jsonb,
+        current_version = $9,
+        updated_at = $10
+      WHERE id = $1::uuid
+        AND ${buildInstructionV2SourceCondition("source_kind")}
+      RETURNING
+        id::text AS id,
+        legacy_instruction_id,
+        name,
+        description,
+        type,
+        content,
+        data,
+        conversation_starter,
+        current_version,
+        created_at,
+        updated_at
+    `,
+    [
+      latestInstruction._id,
+      String(
+        instruction.instructionId || latestInstruction.instructionId || latestInstruction._id,
+      ).trim(),
+      String(instruction.name || latestInstruction.name || "").trim(),
+      String(instruction.description || latestInstruction.description || "").trim(),
+      instruction.type || latestInstruction.type || "instruction",
+      instruction.content || latestInstruction.content || "",
+      JSON.stringify(
+        Array.isArray(instruction.dataItems) ? instruction.dataItems : [],
+      ),
+      JSON.stringify(
+        normalizeConversationStarterConfig(
+          instruction.conversationStarter || latestInstruction.conversationStarter,
+        ),
+      ),
+      nextVersion,
+      snapshotAt,
+    ],
+  );
+  const updatedInstruction = updatedInstructionResult.rows[0]
+    ? mapPostgresInstructionV2Row(updatedInstructionResult.rows[0])
+    : null;
+  if (!updatedInstruction) {
+    throw new Error("instruction_not_found");
+  }
+
+  const snapshot = buildInstructionVersionSnapshotPayload(updatedInstruction, {
+    version: nextVersion,
+    note: trimmedNote,
+    savedBy,
+    snapshotAt,
+  });
+  await pgQuery(
+    `
+      INSERT INTO instruction_versions (
+        legacy_instruction_id,
+        instruction_id,
+        version,
+        snapshot,
+        note,
+        snapshot_at,
+        saved_by,
+        created_at
+      )
+      VALUES ($1,$2::uuid,$3,$4::jsonb,$5,$6,$7,$6)
+    `,
+    [
+      updatedInstruction.instructionId,
+      updatedInstruction._id,
+      nextVersion,
+      JSON.stringify(snapshot),
+      trimmedNote,
+      snapshotAt,
+      savedBy,
+    ],
+  );
+
+  invalidateInstructionPromptCaches();
+  return {
+    version: nextVersion,
+    note: trimmedNote,
+    snapshotAt,
+    instruction: updatedInstruction,
+  };
+}
+
+async function getFollowUpAssetForChatRuntime(assetId, dbInstance = null) {
+  const normalizedAssetId = String(assetId || "").trim();
+  if (!normalizedAssetId) return null;
+
+  if (canUsePostgresAssets()) {
+    const result = await pgQuery(
+      `
+        SELECT
+          id::text AS id,
+          legacy_asset_id,
+          storage_key,
+          thumb_storage_key,
+          metadata,
+          created_at,
+          updated_at
+        FROM instruction_assets
+        WHERE COALESCE(metadata->>'scope', '') = 'followup'
+          AND (
+            legacy_asset_id = $1
+            OR id::text = $1
+          )
+        LIMIT 1
+      `,
+      [normalizedAssetId],
+    );
+    return result.rows[0] ? mapPostgresFollowUpAssetRow(result.rows[0]) : null;
+  }
+
+  let db = dbInstance;
+  if (!db) {
+    const client = await connectDB();
+    db = client.db("chatbot");
+  }
+  const coll = db.collection("follow_up_assets");
+  const objectId = toObjectId(normalizedAssetId);
+  const doc = await coll.findOne(objectId ? { _id: objectId } : { _id: normalizedAssetId });
+  return doc
+    ? {
+        ...doc,
+        _id: doc._id?.toString?.() || doc._id,
+      }
+    : null;
+}
+
+async function listFollowUpAssetsForChatRuntime(options = {}, dbInstance = null) {
+  const limit = Number.isFinite(Number(options?.limit))
+    ? Math.max(1, Math.min(Number(options.limit), 100))
+    : 50;
+
+  if (canUsePostgresAssets()) {
+    const result = await pgQuery(
+      `
+        SELECT
+          id::text AS id,
+          legacy_asset_id,
+          storage_key,
+          thumb_storage_key,
+          metadata,
+          created_at,
+          updated_at
+        FROM instruction_assets
+        WHERE COALESCE(metadata->>'scope', '') = 'followup'
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT $1
+      `,
+      [limit],
+    );
+    return result.rows.map((row) => mapPostgresFollowUpAssetRow(row));
+  }
+
+  let db = dbInstance;
+  if (!db) {
+    const client = await connectDB();
+    db = client.db("chatbot");
+  }
+  const docs = await db.collection("follow_up_assets")
+    .find({})
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+  return docs.map((doc) => ({
+    ...doc,
+    _id: doc._id?.toString?.() || doc._id,
+  }));
+}
+
+function buildInstructionChatServiceOptions(db) {
+  const versionStore = shouldUsePostgresInstructionsV2()
+    ? {
+        list: listInstructionVersionsForChatRuntime,
+        save: saveInstructionVersionForChatRuntime,
+        get: getInstructionVersionForChatRuntime,
+      }
+    : null;
+
+  return {
+    followUpPageSettingsRepository: getFollowUpPageSettingsRepository(),
+    instructionChatStateRepository: getInstructionChatStateRepository(),
+    instructionStore: {
+      load: (instructionRef) => loadInstructionForChatRuntime(instructionRef, db),
+      save: (instructionRef, instructionDoc) =>
+        saveInstructionForChatRuntime(instructionRef, instructionDoc, db),
+    },
+    settingsStore: getSettingsRepository(),
+    botStore: getBotRepository(),
+    followUpAssetStore: {
+      getById: (assetId) => getFollowUpAssetForChatRuntime(assetId, db),
+      list: (options) => listFollowUpAssetsForChatRuntime(options, db),
+    },
+    versionStore,
+    buildMongoInstructionQuery: buildMongoInstructionV2LookupQuery,
+    conversationThreadOptions: {
+      conversationThreadRepository: getConversationThreadRepository(),
+      chatRepository: getChatRepository(),
+      orderRepository: getOrderRepository(),
+      botRepository: getBotRepository(),
+    },
+    resetFollowUpConfigCache,
+    invalidateInstructionPromptCaches,
+    invalidateAllRuntimeCaches,
+  };
+}
+
+async function persistInstructionDataItemsForDashboard(
+  instruction,
+  nextItems,
+  options = {},
+) {
+  if (!instruction || typeof instruction !== "object") {
+    throw new Error("instruction_not_found");
+  }
+
+  const action =
+    typeof options.action === "string" && options.action.trim()
+      ? options.action.trim()
+      : "update_data_item";
+  const savedBy =
+    typeof options.savedBy === "string" && options.savedBy.trim()
+      ? options.savedBy.trim()
+      : "dashboard_admin";
+  const dbInstance = options.dbInstance || null;
+  const instructionRef = instruction._id || instruction.instructionId;
+  const updatedAt = options.updatedAt || new Date();
+  const usingPostgres = shouldUsePostgresInstructionsV2();
+
+  await saveInstructionForChatRuntime(
+    instructionRef,
+    {
+      ...instruction,
+      dataItems: Array.isArray(nextItems) ? nextItems : [],
+      version: usingPostgres
+        ? Math.max(
+            1,
+            Number.isInteger(instruction.version) ? instruction.version : 1,
+          ) + 1
+        : instruction.version,
+      updatedAt,
+    },
+    dbInstance,
+  );
+
+  await createDashboardSnapshotOrThrow(
+    instructionRef,
+    action,
+    usingPostgres ? null : dbInstance,
+    savedBy,
+  );
+}
+
+async function instructionNameExistsForRuntime(
+  name,
+  options = {},
+) {
+  const normalizedName = String(name || "").trim();
+  if (!normalizedName) return false;
+
+  if (shouldUsePostgresInstructionsV2()) {
+    const result = await pgQuery(
+      `
+        SELECT 1
+        FROM instructions
+        WHERE ${buildInstructionV2SourceCondition("source_kind")}
+          AND lower(name) = lower($1)
+          AND ($2::uuid IS NULL OR id <> $2::uuid)
+        LIMIT 1
+      `,
+      [normalizedName, options.excludeId || null],
+    );
+    return result.rowCount > 0;
+  }
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("instructions_v2");
+  const escapeRegex = (value) =>
+    String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const query = {
+    name: { $regex: new RegExp(`^${escapeRegex(normalizedName)}$`, "i") },
+  };
+  const excludedId = toObjectId(options.excludeId);
+  if (excludedId) {
+    query._id = { $ne: excludedId };
+  }
+  const existing = await coll.findOne(query);
+  return Boolean(existing);
+}
+
+async function createInstructionV2ForRuntime(
+  payload = {},
+  options = {},
+) {
+  const now = options.now || new Date();
+  const instruction = {
+    instructionId:
+      typeof payload.instructionId === "string" && payload.instructionId.trim()
+        ? payload.instructionId.trim()
+        : generateInstructionId(),
+    name: String(payload.name || "").trim(),
+    description: String(payload.description || "").trim(),
+    type: payload.type || "instruction",
+    content: payload.content || "",
+    dataItems: Array.isArray(payload.dataItems) ? payload.dataItems : [],
+    conversationStarter: cloneConversationStarterConfigForStorage(
+      payload.conversationStarter || {},
+      now,
+    ),
+    usageCount: Number.isFinite(Number(payload.usageCount))
+      ? Number(payload.usageCount)
+      : 0,
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+  };
+
+  if (shouldUsePostgresInstructionsV2()) {
+    const result = await pgQuery(
+      `
+        INSERT INTO instructions (
+          legacy_instruction_id,
+          source_kind,
+          name,
+          description,
+          type,
+          content,
+          data,
+          conversation_starter,
+          current_version,
+          created_at,
+          updated_at
+        ) VALUES ($1,'instructions_v2',$2,$3,$4,$5,$6::jsonb,$7::jsonb,1,$8,$8)
+        RETURNING
+          id::text AS id,
+          legacy_instruction_id,
+          name,
+          description,
+          type,
+          content,
+          data,
+          conversation_starter,
+          current_version,
+          created_at,
+          updated_at
+      `,
+      [
+        instruction.instructionId,
+        instruction.name,
+        instruction.description,
+        instruction.type,
+        instruction.content,
+        JSON.stringify(instruction.dataItems),
+        JSON.stringify(instruction.conversationStarter),
+        instruction.createdAt,
+      ],
+    );
+    return result.rows[0] ? mapPostgresInstructionV2Row(result.rows[0]) : null;
+  }
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("instructions_v2");
+  const insertResult = await coll.insertOne(instruction);
+  return {
+    ...instruction,
+    _id: insertResult.insertedId?.toString() || null,
+  };
+}
+
+async function deleteInstructionV2ForRuntime(
+  instructionRef,
+  options = {},
+) {
+  const existing = await loadInstructionForChatRuntime(
+    instructionRef,
+    options.dbInstance || null,
+  );
+  if (!existing) return false;
+
+  if (shouldUsePostgresInstructionsV2()) {
+    await pgQuery(
+      `
+        DELETE FROM instructions
+        WHERE id = $1::uuid
+          AND ${buildInstructionV2SourceCondition("source_kind")}
+      `,
+      [existing._id],
+    );
+    return true;
+  }
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("instructions_v2");
+  const result = await coll.deleteOne(buildMongoInstructionV2LookupQuery(existing._id));
+  return result.deletedCount > 0;
 }
 
 async function resolveInstructionMetaForRuntime(
@@ -15572,15 +15624,6 @@ function streamToBuffer(stream) {
   });
 }
 
-async function uploadBufferToGridFS(bucket, filename, buffer, options = {}) {
-  return new Promise((resolve, reject) => {
-    const uploadStream = bucket.openUploadStream(filename, options);
-    uploadStream.on("error", reject);
-    uploadStream.on("finish", () => resolve(uploadStream.id));
-    uploadStream.end(buffer);
-  });
-}
-
 function normalizeStorageMetadata(metadata = {}) {
   const normalized = {};
   Object.entries(metadata || {}).forEach(([key, value]) => {
@@ -15665,46 +15708,6 @@ async function checkBucketObjectCandidates(keys = []) {
 }
 
 async function checkGridFsVariantCandidates(bucket, fileId, fileNames = []) {
-  const objectId = toObjectId(fileId);
-  if (objectId) {
-    try {
-      const files = await bucket.find({ _id: objectId }).limit(1).toArray();
-      if (files.length > 0) {
-        return {
-          exists: true,
-          idExists: true,
-          filenameExists: true,
-          fileId: files[0]._id,
-          fileName: files[0].filename || null,
-        };
-      }
-    } catch (err) {
-      console.warn("[GridFS] check by id failed:", err?.message || err);
-    }
-  }
-
-  for (const fileName of fileNames) {
-    if (!fileName) continue;
-    try {
-      const files = await bucket
-        .find({ filename: fileName })
-        .sort({ uploadDate: -1 })
-        .limit(1)
-        .toArray();
-      if (files.length > 0) {
-        return {
-          exists: true,
-          idExists: false,
-          filenameExists: true,
-          fileId: files[0]._id,
-          fileName: files[0].filename || fileName,
-        };
-      }
-    } catch (err) {
-      console.warn("[GridFS] check by filename failed:", err?.message || err);
-    }
-  }
-
   return {
     exists: false,
     idExists: false,
@@ -15754,28 +15757,21 @@ async function uploadBufferToAssetStorage({
   contentType,
   metadata = {},
 }) {
-  if (isBucketConfigured()) {
-    const storageKey = buildAssetStorageKey(storagePrefix, filename);
-    await putBucketObject(storageKey, buffer, {
-      contentType,
-      metadata: normalizeStorageMetadata(metadata),
-    });
-    return {
-      storage: "bucket",
-      storageKey,
-      fileId: null,
-    };
+  if (!isBucketConfigured()) {
+    throw new Error(
+      "Bucket/object storage is required because GridFS runtime fallback has been removed",
+    );
   }
 
-  const bucket = new GridFSBucket(db, { bucketName: gridFsBucketName });
-  const fileId = await uploadBufferToGridFS(bucket, filename, buffer, {
+  const storageKey = buildAssetStorageKey(storagePrefix, filename);
+  await putBucketObject(storageKey, buffer, {
     contentType,
-    metadata,
+    metadata: normalizeStorageMetadata(metadata),
   });
   return {
-    storage: "mongo",
-    storageKey: null,
-    fileId,
+    storage: "bucket",
+    storageKey,
+    fileId: null,
   };
 }
 
@@ -15798,80 +15794,20 @@ async function deleteStoredAssetEntries(db, gridFsBucketName, entries = []) {
     );
   }
 
-  const gridEntries = entries
-    .map((entry) => {
-      if (!entry) return null;
-      if (entry.id) return { id: entry.id };
-      if (entry.filename) return { filename: entry.filename };
-      return null;
-    })
-    .filter(Boolean);
-
-  if (gridEntries.length > 0) {
-    const bucket = new GridFSBucket(db, { bucketName: gridFsBucketName });
-    await deleteGridFsEntries(bucket, gridEntries);
-  }
+  return undefined;
 }
 
 async function deleteGridFsEntries(bucket, entries = []) {
-  for (const entry of entries) {
-    if (!entry) continue;
-    if (entry.id) {
-      const objectId = toObjectId(entry.id);
-      if (!objectId) continue;
-      try {
-        // Check if file exists before attempting delete
-        const files = await bucket.find({ _id: objectId }).toArray();
-        if (files.length === 0) {
-          // File doesn't exist, skip silently
-          continue;
-        }
-        await bucket.delete(objectId);
-      } catch (err) {
-        // Only log unexpected errors (not FileNotFound)
-        const isFileNotFound =
-          err.code === "FileNotFound" ||
-          err.code === 26 ||
-          err.message?.includes("File not found") ||
-          err.message?.includes("FileNotFound");
-
-        if (!isFileNotFound) {
-          console.warn("[GridFS] delete by id failed:", err?.message || err);
-        }
-      }
-      continue;
-    }
-    if (entry.filename) {
-      try {
-        const files = await bucket.find({ filename: entry.filename }).toArray();
-        for (const file of files) {
-          try {
-            await bucket.delete(file._id);
-          } catch (err) {
-            const isFileNotFound =
-              err.code === "FileNotFound" ||
-              err.code === 26 ||
-              err.message?.includes("File not found") ||
-              err.message?.includes("FileNotFound");
-
-            if (!isFileNotFound) {
-              console.warn(
-                "[GridFS] delete by filename failed:",
-                err?.message || err,
-              );
-            }
-          }
-        }
-      } catch (err) {
-        console.warn("[GridFS] find for delete failed:", err?.message || err);
-      }
-    }
-  }
+  return undefined;
 }
 
 // ============================ Instruction Assets Helpers ============================
 function canUsePostgresAssets() {
   return Boolean(runtimeConfig?.features?.postgresEnabled && isPostgresConfigured());
+}
+
+function shouldAllowGridFsAssetFallback() {
+  return false;
 }
 
 function extractFileNameFromStorageKey(storageKey) {
@@ -16702,8 +16638,51 @@ app.get("/", (req, res) => {
 });
 
 // Route: list all instruction libraries
+function sendLegacyInstructionLibraryRetired(res) {
+  return res.status(410).json({
+    success: false,
+    retired: true,
+    error:
+      "Legacy instruction library ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน /admin/dashboard และ /api/instructions-v2 แทน",
+  });
+}
+
+function sendLegacyInstructionsRetiredJson(res) {
+  return res.status(410).json({
+    success: false,
+    retired: true,
+    error:
+      "Legacy instructions ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน /admin/dashboard, /api/instructions-v2 และ /api/instruction-ai แทน",
+  });
+}
+
+function redirectLegacyInstructionsRetired(res) {
+  return res.redirect(
+    "/admin/dashboard?error=Legacy instructions ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน Instruction V2 แทน",
+  );
+}
+
+function sendPostgresMigrationPending(res, featureName) {
+  return res.status(503).json({
+    success: false,
+    migrationPending: true,
+    error: `${featureName} ยังไม่ได้ย้ายไป PostgreSQL ครบถ้วน จึงถูกปิดไว้ใน runtime ที่ปิด MongoDB`,
+  });
+}
+
+function sendPostgresRequired(res, featureName) {
+  return res.status(503).json({
+    success: false,
+    postgresRequired: true,
+    error: `${featureName} ต้องใช้ PostgreSQL runtime เท่านั้น`,
+  });
+}
+
 app.get("/admin/instructions/library", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return sendLegacyInstructionLibraryRetired(res);
+    }
     const client = await connectDB();
     const db = client.db("chatbot");
     const libraryColl = db.collection("instruction_library");
@@ -16733,6 +16712,9 @@ app.get("/admin/instructions/library", async (req, res) => {
 // Route: get instruction library by date (YYYY-MM-DD)
 app.get("/admin/instructions/library/:date", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return sendLegacyInstructionLibraryRetired(res);
+    }
     const { date } = req.params;
     const client = await connectDB();
     const db = client.db("chatbot");
@@ -16758,6 +16740,9 @@ app.get("/admin/instructions/library/:date", async (req, res) => {
 // Route: สร้าง instruction library ด้วยตนเอง
 app.post("/admin/instructions/library-now", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return sendLegacyInstructionLibraryRetired(res);
+    }
     const { name, description } = req.body;
     const now = new Date();
     const thaiNow = new Date(
@@ -16808,6 +16793,9 @@ app.post("/admin/instructions/library-now", async (req, res) => {
 // Route: อัปเดตชื่อหรือคำอธิบายของ instruction library
 app.put("/admin/instructions/library/:date", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return sendLegacyInstructionLibraryRetired(res);
+    }
     const { date } = req.params;
     const { name, description } = req.body;
 
@@ -16843,6 +16831,9 @@ app.put("/admin/instructions/library/:date", async (req, res) => {
 // Route: ลบ instruction library ตามวันที่ระบุ
 app.delete("/admin/instructions/library/:date", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return sendLegacyInstructionLibraryRetired(res);
+    }
     const { date } = req.params;
 
     const client = await connectDB();
@@ -16866,6 +16857,9 @@ app.delete("/admin/instructions/library/:date", async (req, res) => {
 // Route: คืนค่า instruction library
 app.post("/admin/instructions/restore/:date", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return sendLegacyInstructionLibraryRetired(res);
+    }
     const { date } = req.params;
     const { createLibraryBefore } = req.body;
 
@@ -17102,10 +17096,10 @@ app.post("/admin/login", loginLimiter, async (req, res) => {
     }
 
     const { passcode } = req.body;
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const verifyResult = await verifyPasscode({
-      db,
+      db: canUsePostgresAdminPasscodes()
+        ? null
+        : (await connectDB()).db("chatbot"),
       passcode,
       masterPasscode: ADMIN_MASTER_PASSCODE,
       ipAddress: req.ip,
@@ -17146,33 +17140,13 @@ app.post("/admin/logout", async (req, res) => {
 
 app.use("/admin", enforceAdminLogin);
 
-app.use(
-  "/api/agent-forge",
-  createAgentForgeRouter({
-    connectDB,
-    requireAdmin,
-    getAdminUserContext,
-    getChatRepository,
-    agentForgeService,
-    agentForgeRunner,
-    agentForgeScheduler,
-  }),
-);
-
-app.use(
-  "/admin/agent-forge",
-  createAgentForgeAdminRouter({
-    requireAdmin,
-    agentForgeService,
-  }),
-);
-
 // ============================ Admin Passcode Management API ============================
 
 app.get("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = canUsePostgresAdminPasscodes()
+      ? null
+      : (await connectDB()).db("chatbot");
     const passcodes = await listPasscodes(db);
     res.json({ success: true, passcodes });
   } catch (err) {
@@ -17187,8 +17161,9 @@ app.get("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
 app.post("/api/admin-passcodes", requireSuperadmin, async (req, res) => {
   try {
     const { label, passcode } = req.body || {};
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = canUsePostgresAdminPasscodes()
+      ? null
+      : (await connectDB()).db("chatbot");
 
     const sanitizedPasscode = sanitizePasscodeInput(passcode);
     if (
@@ -17223,8 +17198,9 @@ app.patch(
     try {
       const { id } = req.params;
       const { isActive } = req.body || {};
-      const client = await connectDB();
-      const db = client.db("chatbot");
+      const db = canUsePostgresAdminPasscodes()
+        ? null
+        : (await connectDB()).db("chatbot");
       const doc = await togglePasscode(db, id, isActive !== false);
       res.json({ success: true, passcode: doc });
     } catch (err) {
@@ -17239,8 +17215,9 @@ app.patch(
 app.delete("/api/admin-passcodes/:id", requireSuperadmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = canUsePostgresAdminPasscodes()
+      ? null
+      : (await connectDB()).db("chatbot");
     await deletePasscode(db, id);
     res.json({ success: true });
   } catch (err) {
@@ -17265,18 +17242,15 @@ app.get("/s/:code", async (req, res) => {
     if (!isValidShortCode(code)) {
       return res.status(404).send("Not Found");
     }
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
     const doc = await resolveShortLink(db, code);
     if (!doc?.targetUrl) {
       return res.status(404).send("Not Found");
     }
 
-    db.collection(SHORT_LINK_COLLECTION)
-      .updateOne(
-        { _id: doc._id },
-        { $inc: { hitCount: 1 }, $set: { lastAccessedAt: new Date() } },
-      )
+    registerShortLinkHit(db, code)
       .catch((err) => {
         console.warn("[ShortLink] Update hit count failed:", err?.message || err);
       });
@@ -17555,7 +17529,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
             // Upsert post whenever we see feed change (post/comment/share)
             if (postId) {
-              upsertFacebookPost(db, facebookBot, postId, "webhook").catch(
+              upsertFacebookPost(facebookBot, postId, "webhook").catch(
                 (err) => {
                   console.error(
                     "[Facebook Webhook] Error upserting post:",
@@ -19290,154 +19264,6 @@ async function readInstructionAssetBuffer(seg) {
     }
   }
 
-  if (isMongoRuntimeEnabled()) {
-    try {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instruction_assets");
-
-      if (label) {
-        // ค้นหาด้วย label ก่อน (รองรับทั้งภาษาไทยและอังกฤษ)
-        assetDoc = await coll.findOne({ label });
-
-        // ถ้าไม่เจอ ลองค้นหาด้วย slug (กรณีที่ส่ง slug มาแทน label)
-        if (!assetDoc) {
-          assetDoc = await coll.findOne({ slug: label });
-        }
-      }
-      if (!assetDoc && requestedFileName) {
-        assetDoc = await coll.findOne({
-          $or: [
-            { fileName: requestedFileName },
-            { thumbFileName: requestedFileName },
-          ],
-        });
-      }
-
-      if (assetDoc) {
-        const baseName = getInstructionAssetBaseName(assetDoc);
-        const mainFileNames = Array.from(
-          new Set(
-            [
-              assetDoc.fileName,
-              ...buildInstructionAssetVariantFilenames(baseName, "main"),
-            ]
-              .filter((name) => typeof name === "string" && name.trim())
-              .map((name) => name.trim()),
-          ),
-        );
-        const thumbFileNames = Array.from(
-          new Set(
-            [
-              assetDoc.thumbFileName,
-              ...buildInstructionAssetVariantFilenames(baseName, "thumb"),
-            ]
-              .filter((name) => typeof name === "string" && name.trim())
-              .map((name) => name.trim()),
-          ),
-        );
-        const useThumb =
-          requestedFileName &&
-          (requestedFileName === assetDoc.thumbFileName ||
-            /_thumb\.(jpe?g)$/i.test(requestedFileName));
-        const candidateFileNames = useThumb ? thumbFileNames : mainFileNames;
-        const bucketCandidates = useThumb
-          ? [
-            ...buildBucketKeyCandidates(
-              "instructions",
-              assetDoc.thumbStorageKey,
-              assetDoc.thumbFileName,
-            ),
-            ...buildBucketKeyCandidates(
-              "instructions",
-              assetDoc.storageKey,
-              assetDoc.fileName,
-            ),
-          ]
-          : [
-            ...buildBucketKeyCandidates(
-              "instructions",
-              assetDoc.storageKey,
-              assetDoc.fileName,
-            ),
-            ...buildBucketKeyCandidates(
-              "instructions",
-              assetDoc.thumbStorageKey,
-              assetDoc.thumbFileName,
-            ),
-          ];
-        const bucketAsset = await getFirstBucketObjectStream(bucketCandidates);
-        if (bucketAsset?.stream) {
-          const buffer = await streamToBuffer(bucketAsset.stream);
-          return {
-            buffer,
-            filename:
-              candidateFileNames[0] ||
-              path.basename(bucketAsset.key || "") ||
-              requestedFileName,
-            contentType: assetDoc.mime || "image/jpeg",
-          };
-        }
-
-        const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
-        const targetId = useThumb ? assetDoc.thumbFileId : assetDoc.fileId;
-        if (!candidateFileNames.length) {
-          throw new Error("ไม่พบชื่อไฟล์ของรูปภาพที่ต้องการใช้งาน");
-        }
-        let resolvedFileName = candidateFileNames[0];
-        let downloadStream = null;
-
-        if (targetId) {
-          const objectId = toObjectId(targetId);
-          if (objectId) {
-            downloadStream = bucket.openDownloadStream(objectId);
-          }
-        }
-
-        if (!downloadStream) {
-          for (const name of candidateFileNames) {
-            try {
-              downloadStream = bucket.openDownloadStreamByName(name);
-              resolvedFileName = name;
-              break;
-            } catch (err) {
-              const isFileNotFound =
-                err?.code === "FileNotFound" ||
-                err?.code === 26 ||
-                err?.message?.includes("File not found") ||
-                err?.message?.includes("FileNotFound");
-              if (!isFileNotFound) {
-                throw err;
-              }
-            }
-          }
-          if (!downloadStream) {
-            throw new Error("ไม่พบไฟล์รูปภาพในระบบจัดเก็บ");
-          }
-        }
-
-        const buffer = await streamToBuffer(downloadStream);
-        let contentType = assetDoc.mime || "image/jpeg";
-        if (!assetDoc.mime) {
-          const ext = path.extname(resolvedFileName).toLowerCase();
-          if (ext === ".png") contentType = "image/png";
-          else if (ext === ".webp") contentType = "image/webp";
-        }
-
-        return {
-          buffer,
-          filename: resolvedFileName,
-          contentType,
-        };
-      }
-    } catch (err) {
-      console.warn(
-        "[Assets] read buffer from MongoDB failed, fallback to filesystem/url:",
-        err?.message || err,
-      );
-    }
-  }
-
   const baseDir = ASSETS_DIR;
   const tryFilesSet = new Set();
   const addFileName = (name) => {
@@ -20665,7 +20491,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
 app.post("/api/facebook-bots/:id/dataset", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Facebook Bot ไม่ถูกต้อง" });
     }
 
@@ -20891,21 +20717,10 @@ app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
 app.get("/api/facebook-posts", requireAdmin, async (req, res) => {
   try {
     const { botId, limit = 50 } = req.query;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("facebook_page_posts");
-
-    const query = {};
-    if (botId) {
-      const botRef = toObjectId(botId) || botId;
-      query.botId = botRef;
-    }
-
-    const posts = await coll
-      .find(query)
-      .sort({ createdTime: -1, syncedAt: -1 })
-      .limit(Math.min(Number(limit) || 50, 200))
-      .toArray();
+    const posts = await getFacebookCommentAutomationRepository().listPosts(
+      botId ? { botId } : {},
+      { limit: Math.min(Number(limit) || 50, 200) },
+    );
 
     res.json({ posts });
   } catch (err) {
@@ -20941,11 +20756,7 @@ app.post("/api/facebook-posts/fetch", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Bot ID is required" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const bot = await db
-      .collection("facebook_bots")
-      .findOne({ _id: new ObjectId(botId) });
+    const bot = await getBotRepository().findById("facebook", botId);
 
     if (!bot) {
       return res.status(404).json({ error: "Facebook Bot not found" });
@@ -20975,7 +20786,7 @@ app.post("/api/facebook-posts/fetch", requireAdmin, async (req, res) => {
         // For safety and consistency, let's just use the ID to upsert,
         // although it's N+1 calls, it ensures we get the full details consistently.
         // Optimization: upsertFacebookPost already fetches details.
-        await upsertFacebookPost(db, bot, post.id, "manual_fetch");
+        await upsertFacebookPost(bot, post.id, "manual_fetch");
         upsertCount++;
       } catch (err) {
         console.error(
@@ -21023,16 +20834,10 @@ app.patch(
         return res.status(400).json({ error: "ต้องระบุ postId" });
       }
 
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("facebook_page_posts");
-
-      const query = { postId };
-      if (botId) {
-        query.botId = toObjectId(botId) || botId;
-      }
-
-      const existing = await coll.findOne(query);
+      const existing = await getFacebookCommentAutomationRepository().findPost({
+        postId,
+        ...(botId ? { botId } : {}),
+      });
       if (!existing) {
         return res.status(404).json({ error: "ไม่พบโพสต์" });
       }
@@ -21069,17 +20874,13 @@ app.patch(
             : Boolean(overridePageDefault),
       };
 
-      await coll.updateOne(
-        query,
+      const updated = await getFacebookCommentAutomationRepository().updateReplyProfile(
         {
-          $set: {
-            replyProfile: mergedProfile,
-            updatedAt: new Date(),
-          },
+          postId,
+          ...(botId ? { botId } : {}),
         },
+        mergedProfile,
       );
-
-      const updated = await coll.findOne(query);
       res.json({ success: true, post: updated });
     } catch (err) {
       console.error("Error updating reply profile:", err);
@@ -21095,14 +20896,7 @@ app.get(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("facebook_comment_policies");
-
-      const policy = await coll.findOne({
-        botId: toObjectId(id) || id,
-        scope: "page_default",
-      });
+      const policy = await getFacebookCommentPolicyRepository().getPageDefaultPolicy(id);
 
       res.json({ policy: policy || buildDefaultReplyProfile() });
     } catch (err) {
@@ -21134,21 +20928,14 @@ app.put(
         return res.status(400).json({ error: "mode ต้องเป็น off | template | ai" });
       }
 
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const policiesColl = db.collection("facebook_comment_policies");
-
-      const botId = toObjectId(id) || id;
-      const bot = await getBotRepository().findById("facebook", botId);
+      const bot = await getBotRepository().findById("facebook", id);
       if (!bot) {
         return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
       }
 
-      const policy = {
+      const policy = await getFacebookCommentPolicyRepository().upsertPageDefaultPolicy(id, {
         ...buildDefaultReplyProfile(),
-        botId,
         pageId: bot.pageId || "",
-        scope: "page_default",
         mode,
         templateMessage: templateMessage || "",
         aiModel: aiModel || "",
@@ -21159,16 +20946,7 @@ app.put(
         isActive: Boolean(isActive),
         status: isActive ? "active" : "off",
         updatedAt: new Date(),
-      };
-
-      await policiesColl.updateOne(
-        { botId, scope: "page_default" },
-        {
-          $set: policy,
-          $setOnInsert: { createdAt: new Date() },
-        },
-        { upsert: true },
-      );
+      });
 
       res.json({ success: true, policy });
     } catch (err) {
@@ -21257,7 +21035,7 @@ app.get("/api/instagram-bots", async (req, res) => {
 app.get("/api/instagram-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
@@ -21356,7 +21134,7 @@ app.post("/api/instagram-bots", async (req, res) => {
 app.put("/api/instagram-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
@@ -21436,7 +21214,7 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
 app.delete("/api/instagram-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
@@ -21455,7 +21233,7 @@ app.delete("/api/instagram-bots/:id", async (req, res) => {
 app.patch("/api/instagram-bots/:id/toggle-status", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
@@ -21481,7 +21259,7 @@ app.patch("/api/instagram-bots/:id/toggle-status", async (req, res) => {
 app.post("/api/instagram-bots/:id/test", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
@@ -21524,7 +21302,7 @@ app.put("/api/instagram-bots/:id/instructions", async (req, res) => {
   try {
     const { id } = req.params;
     const { selectedInstructions } = req.body || {};
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
     if (!Array.isArray(selectedInstructions)) {
@@ -21554,7 +21332,7 @@ app.put("/api/instagram-bots/:id/image-collections", async (req, res) => {
   try {
     const { id } = req.params;
     let { selectedImageCollections } = req.body || {};
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
 
@@ -21597,7 +21375,7 @@ app.put("/api/instagram-bots/:id/keywords", async (req, res) => {
   try {
     const { id } = req.params;
     const { keywordSettings } = req.body || {};
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส Instagram Bot ไม่ถูกต้อง" });
     }
     if (!keywordSettings || typeof keywordSettings !== "object") {
@@ -21670,7 +21448,7 @@ app.get("/api/whatsapp-bots", async (req, res) => {
 app.get("/api/whatsapp-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
@@ -21768,7 +21546,7 @@ app.post("/api/whatsapp-bots", async (req, res) => {
 app.put("/api/whatsapp-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
@@ -21847,7 +21625,7 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
 app.delete("/api/whatsapp-bots/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
@@ -21866,7 +21644,7 @@ app.delete("/api/whatsapp-bots/:id", async (req, res) => {
 app.patch("/api/whatsapp-bots/:id/toggle-status", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
@@ -21892,7 +21670,7 @@ app.patch("/api/whatsapp-bots/:id/toggle-status", async (req, res) => {
 app.post("/api/whatsapp-bots/:id/test", async (req, res) => {
   try {
     const { id } = req.params;
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
@@ -21937,7 +21715,7 @@ app.put("/api/whatsapp-bots/:id/instructions", async (req, res) => {
   try {
     const { id } = req.params;
     const { selectedInstructions } = req.body || {};
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
     if (!Array.isArray(selectedInstructions)) {
@@ -21967,7 +21745,7 @@ app.put("/api/whatsapp-bots/:id/image-collections", async (req, res) => {
   try {
     const { id } = req.params;
     let { selectedImageCollections } = req.body || {};
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
 
@@ -22010,7 +21788,7 @@ app.put("/api/whatsapp-bots/:id/keywords", async (req, res) => {
   try {
     const { id } = req.params;
     const { keywordSettings } = req.body || {};
-    if (!ObjectId.isValid(id)) {
+    if (!id || typeof id !== "string" || !id.trim()) {
       return res.status(400).json({ error: "รหัส WhatsApp Bot ไม่ถูกต้อง" });
     }
     if (!keywordSettings || typeof keywordSettings !== "object") {
@@ -22225,6 +22003,9 @@ app.get("/api/instructions/library", async (req, res) => {
 app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
   try {
     const { date } = req.params;
+    if (!isMongoRuntimeEnabled()) {
+      return sendLegacyInstructionLibraryRetired(res);
+    }
     if (!date) {
       return res
         .status(400)
@@ -22372,6 +22153,49 @@ app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
 app.get("/api/instructions/library/:date/details", async (req, res) => {
   try {
     const { date } = req.params;
+    if (!isMongoRuntimeEnabled()) {
+      if (!isPostgresConfigured()) {
+        return sendLegacyInstructionLibraryRetired(res);
+      }
+      const instruction = await getPostgresInstructionV2ByRef(date);
+      if (!instruction) {
+        return res.status(404).json({ error: "ไม่พบ instruction ที่ระบุ" });
+      }
+
+      const savedAt = instruction.updatedAt || instruction.createdAt || null;
+      const displayDate = savedAt
+        ? new Date(savedAt).toLocaleDateString("th-TH", {
+          timeZone: "Asia/Bangkok",
+          year: "numeric",
+          month: "short",
+          day: "2-digit",
+        })
+        : "";
+      const displayTime = savedAt
+        ? new Date(savedAt).toLocaleTimeString("th-TH", {
+          timeZone: "Asia/Bangkok",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+        : "";
+
+      return res.json({
+        success: true,
+        library: {
+          date: instruction.instructionId || instruction._id,
+          name: instruction.name || "",
+          description: instruction.description || "",
+          displayDate,
+          displayTime,
+          type: "v2",
+          savedAt,
+          instructions: Array.isArray(instruction.dataItems)
+            ? instruction.dataItems
+            : [],
+        },
+      });
+    }
     const client = await connectDB();
     const db = client.db("chatbot");
     const libraryColl = db.collection("instruction_library");
@@ -22405,6 +22229,14 @@ app.get("/api/instructions/library/:date/details", async (req, res) => {
 // Route: ดึงรายการ instructions พร้อมประวัติเวอร์ชัน
 app.get("/api/instructions", async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled()) {
+      return res.status(410).json({
+        success: false,
+        retired: true,
+        error:
+          "Legacy instructions API ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน /api/instructions-v2 และ /api/instruction-ai/versions แทน",
+      });
+    }
     await ensureInstructionIdentifiers();
 
     const client = await connectDB();
@@ -22487,6 +22319,14 @@ app.get(
   "/api/instructions/:instructionId/versions/:version",
   async (req, res) => {
     try {
+      if (!isMongoRuntimeEnabled()) {
+        return res.status(410).json({
+          success: false,
+          retired: true,
+          error:
+            "Legacy instruction version API ถูกปิดถาวรแล้ว ให้ใช้งานผ่าน /api/instruction-ai/versions แทน",
+        });
+      }
       const { instructionId, version } = req.params;
       if (!instructionId) {
         return res
@@ -22585,17 +22425,7 @@ app.get(
   async (req, res) => {
     try {
       const { instructionId } = req.params;
-      let instruction = null;
-      if (shouldUsePostgresInstructionsV2()) {
-        instruction = await getPostgresInstructionV2ByRef(instructionId);
-      } else {
-        const client = await connectDB();
-        const db = client.db("chatbot");
-        const coll = db.collection("instructions_v2");
-        instruction = await coll.findOne({
-          _id: new ObjectId(instructionId),
-        });
-      }
+      const instruction = await loadInstructionForChatRuntime(instructionId);
       if (!instruction) {
         return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
       }
@@ -22631,15 +22461,7 @@ app.get(
 app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (req, res) => {
   try {
     const { instructionId, itemId } = req.params;
-    let instruction = null;
-    if (shouldUsePostgresInstructionsV2()) {
-      instruction = await getPostgresInstructionV2ByRef(instructionId);
-    } else {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instructions_v2");
-      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
-    }
+    const instruction = await loadInstructionForChatRuntime(instructionId);
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -22682,20 +22504,7 @@ app.post(
     try {
       const { instructionId } = req.params;
       let { type = "text", title = "", content = "", tableData } = req.body;
-      const usingPostgres = shouldUsePostgresInstructionsV2();
-      let instruction = null;
-      let coll = null;
-      let db = null;
-      if (usingPostgres) {
-        instruction = await getPostgresInstructionV2ByRef(instructionId);
-      } else {
-        const client = await connectDB();
-        db = client.db("chatbot");
-        coll = db.collection("instructions_v2");
-        instruction = await coll.findOne({
-          _id: new ObjectId(instructionId),
-        });
-      }
+      const instruction = await loadInstructionForChatRuntime(instructionId);
       if (!instruction) {
         return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
       }
@@ -22714,7 +22523,7 @@ app.post(
       }
 
       const items = Array.isArray(instruction.dataItems)
-        ? instruction.dataItems
+        ? [...instruction.dataItems]
         : [];
       const now = new Date();
       const newItem = {
@@ -22754,39 +22563,14 @@ app.post(
         newItem.data = null;
       }
 
-      if (usingPostgres) {
-        const nextItems = [...items, newItem];
-        const nextVersion = Math.max(
-          1,
-          Number.isInteger(instruction.version) ? instruction.version : 1,
-        ) + 1;
-        await pgQuery(
-          `
-            UPDATE instructions
-            SET
-              data = $2::jsonb,
-              current_version = $3,
-              updated_at = $4
-            WHERE id = $1::uuid
-              AND ${buildInstructionV2SourceCondition("source_kind")}
-          `,
-          [instruction._id, JSON.stringify(nextItems), nextVersion, now],
-        );
-      } else {
-        await coll.updateOne(
-          { _id: new ObjectId(instructionId) },
-          {
-            $push: { dataItems: newItem },
-            $set: { updatedAt: now },
-          },
-        );
-        await createDashboardSnapshotOrThrow(
-          instructionId,
-          "add_data_item",
-          db,
-          "dashboard_admin",
-        );
-      }
+      await persistInstructionDataItemsForDashboard(
+        instruction,
+        [...items, newItem],
+        {
+          action: "add_data_item",
+          updatedAt: now,
+        },
+      );
 
       res.redirect(
         `/admin/dashboard?success=${encodeURIComponent(
@@ -22807,18 +22591,7 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
   try {
     const { instructionId, itemId } = req.params;
     const { type, title, content, tableData } = req.body;
-    const usingPostgres = shouldUsePostgresInstructionsV2();
-    let instruction = null;
-    let coll = null;
-    let db = null;
-    if (usingPostgres) {
-      instruction = await getPostgresInstructionV2ByRef(instructionId);
-    } else {
-      const client = await connectDB();
-      db = client.db("chatbot");
-      coll = db.collection("instructions_v2");
-      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
-    }
+    const instruction = await loadInstructionForChatRuntime(instructionId);
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -22873,42 +22646,10 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
     targetItem.updatedAt = now;
     items[itemIndex] = targetItem;
 
-    if (usingPostgres) {
-      const nextVersion = Math.max(
-        1,
-        Number.isInteger(instruction.version) ? instruction.version : 1,
-      ) + 1;
-      await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            data = $2::jsonb,
-            current_version = $3,
-            updated_at = $4
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [instruction._id, JSON.stringify(items), nextVersion, now],
-      );
-    } else {
-      const updateFields = {};
-      updateFields[`dataItems.${itemIndex}.title`] = targetItem.title || "";
-      updateFields[`dataItems.${itemIndex}.content`] = targetItem.content || "";
-      updateFields[`dataItems.${itemIndex}.data`] = targetItem.data || null;
-      updateFields[`dataItems.${itemIndex}.type`] = targetItem.type;
-      updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
-      updateFields.updatedAt = now;
-      await coll.updateOne(
-        { _id: new ObjectId(instructionId) },
-        { $set: updateFields }
-      );
-      await createDashboardSnapshotOrThrow(
-        instructionId,
-        "update_data_item",
-        db,
-        "dashboard_admin",
-      );
-    }
+    await persistInstructionDataItemsForDashboard(instruction, items, {
+      action: "update_data_item",
+      updatedAt: now,
+    });
 
     res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
   } catch (err) {
@@ -22925,16 +22666,7 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
 app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (req, res) => {
   try {
     const { instructionId, itemId } = req.params;
-    const usingPostgres = shouldUsePostgresInstructionsV2();
-    let instruction = null;
-    if (usingPostgres) {
-      instruction = await getPostgresInstructionV2ByRef(instructionId);
-    } else {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instructions_v2");
-      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
-    }
+    const instruction = await loadInstructionForChatRuntime(instructionId);
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -22974,16 +22706,7 @@ app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (
 app.get("/admin/instructions-v3/:instructionId/data-items/new", async (req, res) => {
   try {
     const { instructionId } = req.params;
-    const usingPostgres = shouldUsePostgresInstructionsV2();
-    let instruction = null;
-    if (usingPostgres) {
-      instruction = await getPostgresInstructionV2ByRef(instructionId);
-    } else {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("instructions_v2");
-      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
-    }
+    const instruction = await loadInstructionForChatRuntime(instructionId);
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -23017,19 +22740,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
   try {
     const { instructionId } = req.params;
     let { type = "table", title = "", content = "", tableData } = req.body;
-    const usingPostgres = shouldUsePostgresInstructionsV2();
-    let instruction = null;
-    let coll = null;
-    let db = null;
-
-    if (usingPostgres) {
-      instruction = await getPostgresInstructionV2ByRef(instructionId);
-    } else {
-      const client = await connectDB();
-      db = client.db("chatbot");
-      coll = db.collection("instructions_v2");
-      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
-    }
+    const instruction = await loadInstructionForChatRuntime(instructionId);
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -23042,7 +22753,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
       );
     }
 
-    const items = Array.isArray(instruction.dataItems) ? instruction.dataItems : [];
+    const items = Array.isArray(instruction.dataItems) ? [...instruction.dataItems] : [];
     const now = new Date();
     const newItem = {
       itemId: generateDataItemId(),
@@ -23070,39 +22781,14 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
       }
     }
 
-    if (usingPostgres) {
-      const nextItems = [...items, newItem];
-      const nextVersion = Math.max(
-        1,
-        Number.isInteger(instruction.version) ? instruction.version : 1,
-      ) + 1;
-      await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            data = $2::jsonb,
-            current_version = $3,
-            updated_at = $4
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [instruction._id, JSON.stringify(nextItems), nextVersion, now],
-      );
-    } else {
-      await coll.updateOne(
-        { _id: new ObjectId(instructionId) },
-        {
-          $push: { dataItems: newItem },
-          $set: { updatedAt: now },
-        }
-      );
-      await createDashboardSnapshotOrThrow(
-        instructionId,
-        "add_data_item",
-        db,
-        "dashboard_admin",
-      );
-    }
+    await persistInstructionDataItemsForDashboard(
+      instruction,
+      [...items, newItem],
+      {
+        action: "add_data_item",
+        updatedAt: now,
+      },
+    );
 
     res.redirect(
       `/admin/dashboard?success=${encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}`
@@ -23118,20 +22804,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
   try {
     const { instructionId, itemId } = req.params;
     const { type, title, content, tableData } = req.body;
-    const usingPostgres = shouldUsePostgresInstructionsV2();
-    let instruction = null;
-    let coll = null;
-    let db = null;
-
-    // ดึง instruction
-    if (usingPostgres) {
-      instruction = await getPostgresInstructionV2ByRef(instructionId);
-    } else {
-      const client = await connectDB();
-      db = client.db("chatbot");
-      coll = db.collection("instructions_v2");
-      instruction = await coll.findOne({ _id: new ObjectId(instructionId) });
-    }
+    const instruction = await loadInstructionForChatRuntime(instructionId);
     if (!instruction) {
       return res.redirect("/admin/dashboard?error=ไม่พบ Instruction");
     }
@@ -23172,42 +22845,10 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
     targetItem.updatedAt = now;
     items[itemIndex] = targetItem;
 
-    if (usingPostgres) {
-      const nextVersion = Math.max(
-        1,
-        Number.isInteger(instruction.version) ? instruction.version : 1,
-      ) + 1;
-      await pgQuery(
-        `
-          UPDATE instructions
-          SET
-            data = $2::jsonb,
-            current_version = $3,
-            updated_at = $4
-          WHERE id = $1::uuid
-            AND ${buildInstructionV2SourceCondition("source_kind")}
-        `,
-        [instruction._id, JSON.stringify(items), nextVersion, now],
-      );
-    } else {
-      const updateFields = {};
-      updateFields[`dataItems.${itemIndex}.title`] = targetItem.title || "";
-      updateFields[`dataItems.${itemIndex}.content`] = targetItem.content || "";
-      updateFields[`dataItems.${itemIndex}.data`] = targetItem.data || null;
-      updateFields[`dataItems.${itemIndex}.type`] = targetItem.type;
-      updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
-      updateFields.updatedAt = now;
-      await coll.updateOne(
-        { _id: new ObjectId(instructionId) },
-        { $set: updateFields }
-      );
-      await createDashboardSnapshotOrThrow(
-        instructionId,
-        "update_data_item",
-        db,
-        "dashboard_admin",
-      );
-    }
+    await persistInstructionDataItemsForDashboard(instruction, items, {
+      action: "update_data_item",
+      updatedAt: now,
+    });
 
     res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
   } catch (err) {
@@ -23312,503 +22953,54 @@ app.post("/admin/ai-toggle", async (req, res) => {
 
 // Add new instruction
 app.post("/admin/instructions", async (req, res) => {
-  try {
-    const { type, title, content, tableData } = req.body;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions");
-
-    const now = new Date();
-    const instr = {
-      instructionId: generateInstructionId(),
-      version: 1,
-      type,
-      title: title || "",
-      content: content || "",
-      createdAt: now,
-      updatedAt: now,
-      order: Date.now(),
-    };
-
-    if (type === "table" && tableData) {
-      try {
-        instr.data = JSON.parse(tableData);
-      } catch {
-        instr.data = [];
-      }
-    } else {
-      delete instr.data;
-    }
-
-    const result = await coll.insertOne(instr);
-    await recordInstructionVersionSnapshot(
-      { ...instr, _id: result.insertedId },
-      db,
-    );
-    res.redirect("/admin/dashboard");
-  } catch (err) {
-    res.redirect("/admin/dashboard?error=ไม่สามารถเพิ่มข้อมูลได้");
-  }
+  return redirectLegacyInstructionsRetired(res);
 });
 
 // Delete instruction
 app.post("/admin/instructions/:id/delete", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions");
-    await coll.deleteOne({ _id: new ObjectId(id) });
-    invalidateInstructionPromptCaches();
-    res.redirect("/admin/dashboard");
-  } catch (err) {
-    res.redirect("/admin/dashboard?error=ไม่สามารถลบข้อมูลได้");
-  }
+  return redirectLegacyInstructionsRetired(res);
 });
 
 // Edit instruction form
 app.get("/admin/instructions/:id/edit", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions");
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
-    res.render("edit-instruction", { instruction });
-  } catch (err) {
-    res.redirect("/admin/dashboard?error=ไม่พบข้อมูลที่ต้องการแก้ไข");
-  }
+  return redirectLegacyInstructionsRetired(res);
 });
 
 // Handle edit submission
 app.post("/admin/instructions/:id/edit", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { type, title, content, tableData } = req.body;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions");
-
-    // ดึงข้อมูลเดิมก่อนเพื่อเป็น fallback
-    const existingInstruction = await coll.findOne({ _id: new ObjectId(id) });
-    if (!existingInstruction) {
-      return res.redirect("/admin/dashboard?error=ไม่พบข้อมูลที่ต้องการแก้ไข");
-    }
-
-    const now = new Date();
-    const baseInstructionId =
-      existingInstruction.instructionId || generateInstructionId();
-    const currentVersion = Number.isInteger(existingInstruction.version)
-      ? existingInstruction.version
-      : 1;
-    const newVersion = currentVersion + 1;
-
-    const updateData = {
-      instructionId: baseInstructionId,
-      version: newVersion,
-      type,
-      title: title || "",
-      content: content || "",
-      updatedAt: now,
-    };
-
-    console.log("[Edit] Request body keys:", Object.keys(req.body));
-    console.log(
-      "[Edit] Table data received length:",
-      tableData ? tableData.length : 0,
-    );
-
-    let unsetData = null;
-
-    if (type === "table") {
-      if (tableData && tableData.trim() !== "") {
-        try {
-          const parsedData = JSON.parse(tableData);
-          if (parsedData && typeof parsedData === "object") {
-            updateData.data = parsedData;
-            console.log("[Edit] Table data parsed successfully");
-            console.log(
-              "[Edit] Parsed data columns:",
-              parsedData.columns ? parsedData.columns.length : 0,
-            );
-            console.log(
-              "[Edit] Parsed data rows:",
-              parsedData.rows ? parsedData.rows.length : 0,
-            );
-          } else {
-            console.warn(
-              "[Edit] Invalid table data structure, keeping existing data",
-            );
-            updateData.data = existingInstruction.data || {
-              columns: [],
-              rows: [],
-            };
-          }
-        } catch (parseError) {
-          console.error("[Edit] JSON parse error:", parseError);
-          console.log(
-            "[Edit] Raw table data preview:",
-            tableData.substring(0, 200),
-          );
-          console.log("[Edit] Keeping existing table data due to parse error");
-          updateData.data = existingInstruction.data || {
-            columns: [],
-            rows: [],
-          };
-        }
-      } else {
-        console.warn("[Edit] Empty table data received, keeping existing data");
-        updateData.data = existingInstruction.data || { columns: [], rows: [] };
-      }
-    } else {
-      unsetData = { data: "" };
-    }
-
-    console.log("[Edit] Updating instruction:", id, "Type:", type);
-    console.log("[Edit] Update data keys:", Object.keys(updateData));
-
-    const mongoUpdate = unsetData
-      ? { $set: updateData, $unset: unsetData }
-      : { $set: updateData };
-
-    console.log(
-      "[Edit] MongoDB update operation:",
-      JSON.stringify(mongoUpdate, null, 2),
-    );
-
-    const updateResult = await coll.updateOne(
-      { _id: new ObjectId(id) },
-      mongoUpdate,
-    );
-    console.log("[Edit] Update result:", updateResult);
-
-    if (updateResult.modifiedCount === 1) {
-      console.log("[Edit] Instruction updated successfully");
-    } else {
-      console.warn("[Edit] No documents were modified");
-    }
-
-    const updatedInstruction = {
-      ...existingInstruction,
-      ...updateData,
-    };
-    if (unsetData) {
-      delete updatedInstruction.data;
-    }
-
-    await recordInstructionVersionSnapshot(updatedInstruction, db);
-
-    res.redirect("/admin/dashboard");
-  } catch (err) {
-    console.error("[Edit] Error updating instruction:", err);
-    console.error("[Edit] Error stack:", err.stack);
-    res.redirect("/admin/dashboard?error=ไม่สามารถแก้ไขข้อมูลได้");
-  }
+  return redirectLegacyInstructionsRetired(res);
 });
 
 // Instruction export endpoints
 app.get("/admin/instructions/export/json", async (req, res) => {
-  try {
-    const instructions = await getInstructions();
-    const exportedAt = new Date().toISOString();
-    const previewText = buildInstructionText(instructions, {
-      tableMode: "placeholder",
-      emptyText: "",
-    });
-    const detailedText = buildInstructionText(instructions, {
-      tableMode: "json",
-      emptyText: "_ไม่มีเนื้อหา_",
-    });
-    const sanitizedInstructions = instructions.map((instruction) => {
-      const { _id, ...rest } = instruction;
-      return {
-        id: _id ? _id.toString() : null,
-        ...rest,
-      };
-    });
-
-    const payload = {
-      exportedAt,
-      total: instructions.length,
-      preview: previewText,
-      detailed: detailedText,
-      instructions: sanitizedInstructions,
-    };
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .replace("T", "_")
-      .replace("Z", "");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="instructions-${timestamp}.json"`,
-    );
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.send(JSON.stringify(payload, null, 2));
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: "ไม่สามารถส่งออกข้อมูล JSON ได้",
-      details: err.message,
-    });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 app.get("/admin/instructions/export/markdown", async (req, res) => {
-  try {
-    const instructions = await getInstructions();
-    const markdown =
-      instructions.length === 0
-        ? "ไม่มีข้อมูล instructions"
-        : buildInstructionText(instructions, {
-          tableMode: "json",
-          emptyText: "_ไม่มีเนื้อหา_",
-        });
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .replace("T", "_")
-      .replace("Z", "");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="instructions-${timestamp}.md"`,
-    );
-    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
-    res.send(markdown);
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: "ไม่สามารถส่งออกข้อมูล Markdown ได้",
-      details: err.message,
-    });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 app.get("/admin/instructions/export/excel", async (req, res) => {
-  try {
-    const instructions = await getInstructions();
-    const workbook = XLSX.utils.book_new();
-    const usedNames = new Set();
-
-    const reserveSheetName = (title, index) => {
-      const fallback = `Instruction_${index + 1}`;
-      const baseName = sanitizeSheetName(title, fallback);
-      let candidate = baseName;
-      let counter = 1;
-      while (usedNames.has(candidate)) {
-        const suffix = `_${counter++}`;
-        const maxLength = Math.max(31 - suffix.length, 1);
-        candidate = `${baseName.substring(0, maxLength)}${suffix}`;
-      }
-      usedNames.add(candidate);
-      return candidate;
-    };
-
-    if (instructions.length === 0) {
-      const sheetName = sanitizeSheetName("Instructions", "Instructions");
-      const worksheet = XLSX.utils.aoa_to_sheet([["ไม่มีข้อมูล instructions"]]);
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-    } else {
-      instructions.forEach((instruction, idx) => {
-        const sheetName = reserveSheetName(instruction.title, idx);
-        let sheetData = [];
-
-        if (instruction.type === "table" && instruction.data) {
-          const columns =
-            Array.isArray(instruction.data.columns) &&
-              instruction.data.columns.length > 0
-              ? instruction.data.columns
-              : Array.from(
-                new Set(
-                  (instruction.data.rows || []).flatMap((row) =>
-                    Object.keys(row),
-                  ),
-                ),
-              );
-          const rows = Array.isArray(instruction.data.rows)
-            ? instruction.data.rows
-            : [];
-
-          if (columns.length === 0) {
-            sheetData = [["ไม่มีข้อมูลตาราง"]];
-          } else {
-            sheetData.push(columns);
-            if (rows.length === 0) {
-              sheetData.push(new Array(columns.length).fill(""));
-            } else {
-              rows.forEach((row) => {
-                sheetData.push(
-                  columns.map((col) => {
-                    const value = row[col];
-                    return value === undefined || value === null
-                      ? ""
-                      : String(value);
-                  }),
-                );
-              });
-            }
-          }
-        } else {
-          const text = instruction.content ? String(instruction.content) : "";
-          sheetData = [[text]];
-        }
-
-        if (sheetData.length === 0) {
-          sheetData = [[""]];
-        }
-
-        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-        XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-      });
-    }
-
-    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .replace("T", "_")
-      .replace("Z", "");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="instructions-${timestamp}.xlsx"`,
-    );
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
-    res.send(buffer);
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: "ไม่สามารถส่งออกไฟล์ Excel ได้",
-      details: err.message,
-    });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 // Preview combined instructions (simple implementation)
 app.get("/admin/instructions/preview", async (req, res) => {
-  try {
-    const instructions = await getInstructions();
-    const preview =
-      instructions.length === 0
-        ? ""
-        : buildInstructionText(instructions, {
-          tableMode: "placeholder",
-          emptyText: "",
-        });
-    res.json({ success: true, instructions: preview });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 // Simple reorder (up/down)
 app.post("/admin/instructions/reorder", async (req, res) => {
-  try {
-    const { instructionId, direction } = req.body;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions");
-
-    const current = await coll.findOne({ _id: new ObjectId(instructionId) });
-    if (!current)
-      return res.json({ success: false, error: "ไม่พบ instruction" });
-
-    const all = await coll.find({}).sort({ order: 1, createdAt: 1 }).toArray();
-    const idx = all.findIndex((x) => x._id.toString() === instructionId);
-    let targetIdx = idx;
-    if (direction === "up" && idx > 0) targetIdx = idx - 1;
-    if (direction === "down" && idx < all.length - 1) targetIdx = idx + 1;
-
-    if (idx === targetIdx)
-      return res.json({ success: false, error: "ไม่สามารถเลื่อนได้" });
-
-    const target = all[targetIdx];
-    await coll.updateOne(
-      { _id: current._id },
-      { $set: { order: target.order || targetIdx } },
-    );
-    await coll.updateOne(
-      { _id: target._id },
-      { $set: { order: current.order || idx } },
-    );
-    invalidateInstructionPromptCaches();
-    res.json({ success: true });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 app.post("/admin/instructions/reorder/drag", async (req, res) => {
-  try {
-    const { orderedIds } = req.body || {};
-    if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
-      return res.json({ success: false, error: "รูปแบบข้อมูลไม่ถูกต้อง" });
-    }
-
-    const objectIds = orderedIds.map((id) => {
-      const objectId = toObjectId(id);
-      if (!objectId) {
-        throw new Error("พบรหัส instruction ที่ไม่ถูกต้อง");
-      }
-      return objectId;
-    });
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions");
-
-    const total = await coll.countDocuments();
-    if (total !== objectIds.length) {
-      return res.json({
-        success: false,
-        error: "จำนวนนับไม่ตรงกับในระบบ กรุณารีเฟรชแล้วลองอีกครั้ง",
-      });
-    }
-
-    const bulkOps = objectIds.map((objectId, index) => ({
-      updateOne: {
-        filter: { _id: objectId },
-        update: { $set: { order: index } },
-      },
-    }));
-
-    if (bulkOps.length > 0) {
-      await coll.bulkWrite(bulkOps, { ordered: true });
-    }
-
-    invalidateInstructionPromptCaches();
-    res.json({ success: true });
-  } catch (err) {
-    console.error("[Instructions] drag reorder error:", err);
-    res.json({
-      success: false,
-      error: err.message || "ไม่สามารถจัดลำดับใหม่ได้",
-    });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 // API endpoint สำหรับดึงรายการ instructions (สำหรับ dynamic updates)
 app.get("/admin/instructions/list", async (req, res) => {
-  try {
-    const instructions = await getInstructions();
-    res.json({
-      success: true,
-      instructions: instructions.map((instruction) => ({
-        _id: instruction._id,
-        type: instruction.type,
-        title: instruction.title,
-        content: instruction.content,
-        data: instruction.data,
-        order: instruction.order,
-        createdAt: instruction.createdAt,
-        updatedAt: instruction.updatedAt,
-      })),
-    });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 // ============================ Instruction Assets API ============================
@@ -23993,7 +23185,7 @@ async function upsertPostgresInstructionAssetDocument(asset = {}, existingAsset 
   const legacyAssetId =
     normalized._id?.toString?.()
     || existingLegacyId
-    || new ObjectId().toString();
+    || generateLegacyObjectIdString();
   const createdAt = existingAsset?.createdAt || normalized.createdAt || new Date();
   const updatedAt = normalized.updatedAt || new Date();
   const metadata = {
@@ -24192,7 +23384,7 @@ app.post(
       const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
       let slug = generateSlugFromLabel(label);
 
-      if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+      if (canUsePostgresAssets()) {
         const existing = await readPostgresInstructionAssetByLabel(label);
         if (existing && !overwrite) {
           return res.status(409).json({
@@ -24428,7 +23620,7 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
         .json({ success: false, error: "กรุณาระบุชื่อรูปภาพ" });
     }
 
-    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+    if (canUsePostgresAssets()) {
       const doc = await readPostgresInstructionAssetByLabel(originalLabel);
       if (!doc) {
         return res
@@ -24507,7 +23699,7 @@ app.delete("/admin/instructions/assets/:label", async (req, res) => {
   try {
     const { label } = req.params;
 
-    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+    if (canUsePostgresAssets()) {
       const doc = await readPostgresInstructionAssetByLabel(label);
       if (!doc) {
         return res.status(404).json({ success: false, error: "ไม่พบ asset" });
@@ -24550,7 +23742,7 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
         .json({ success: false, error: "กรุณาระบุชื่อรูปภาพที่ต้องการลบ" });
     }
 
-    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+    if (canUsePostgresAssets()) {
       const deleted = [];
       const failed = [];
 
@@ -24622,7 +23814,7 @@ app.post("/admin/instructions/assets/bulk-delete", async (req, res) => {
 // Check and fix asset data consistency
 app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+    if (canUsePostgresAssets()) {
       const assets = await getInstructionAssets();
       let okCount = 0;
       let missingCount = 0;
@@ -24754,7 +23946,6 @@ async function checkAndFixAssetConsistency(
     removeFromCollections = false,
   } = options;
   const coll = db.collection(collectionName);
-  const bucket = new GridFSBucket(db, { bucketName });
 
   const assets = await coll.find({}).toArray();
   let fixedCount = 0;
@@ -24801,12 +23992,12 @@ async function checkAndFixAssetConsistency(
       buildBucketKeyCandidates(storagePrefix, asset.thumbStorageKey, thumbPrimaryName),
     );
     const mainGridFsState = await checkGridFsVariantCandidates(
-      bucket,
+      null,
       asset.fileId,
       mainFileNames,
     );
     const thumbGridFsState = await checkGridFsVariantCandidates(
-      bucket,
+      null,
       thumbId,
       thumbFileNames,
     );
@@ -24998,129 +24189,16 @@ async function resolveInstructionAssetStream(db, asset, { isThumbRequest }) {
     }
   }
 
-  const bucket = new GridFSBucket(db, { bucketName: "instructionAssets" });
-  const docHasThumb = Boolean(
-    asset.thumbFileId || asset.thumbFileName || asset.thumbUrl,
-  );
-  const docHasMain = Boolean(asset.fileId || asset.fileName || asset.url);
-
-  const seen = new Set();
-  const candidates = [];
-  const addCandidate = (variant, type, value) => {
-    if (!value) return;
-    const key = `${variant}:${type}:${value}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    candidates.push({ variant, type, value });
-  };
-
-  if (isThumbRequest) {
-    if (docHasThumb) {
-      addCandidate("thumb", "id", asset.thumbFileId);
-      addCandidate("thumb", "filename", asset.thumbFileName);
-      if (asset.label) {
-        addCandidate("thumb", "filename", `${asset.label}_thumb.jpg`);
-      }
-    }
-    if (docHasMain) {
-      addCandidate("main", "id", asset.fileId);
-      addCandidate("main", "filename", asset.fileName);
-      if (asset.label) {
-        addCandidate("main", "filename", `${asset.label}.jpg`);
-      }
-    }
-  } else {
-    if (docHasMain) {
-      addCandidate("main", "id", asset.fileId);
-      addCandidate("main", "filename", asset.fileName);
-      if (asset.label) {
-        addCandidate("main", "filename", `${asset.label}.jpg`);
-      }
-    }
-    if (docHasThumb) {
-      addCandidate("thumb", "id", asset.thumbFileId);
-      addCandidate("thumb", "filename", asset.thumbFileName);
-      if (asset.label) {
-        addCandidate("thumb", "filename", `${asset.label}_thumb.jpg`);
-      }
-    }
-  }
-
   const missingReferences = {
-    main: { id: false, filename: false },
-    thumb: { id: false, filename: false },
+    main: {
+      id: Boolean(asset.fileId),
+      filename: Boolean(asset.fileName),
+    },
+    thumb: {
+      id: Boolean(asset.thumbFileId),
+      filename: Boolean(asset.thumbFileName),
+    },
   };
-
-  for (const candidate of candidates) {
-    const isThumbVariant = candidate.variant === "thumb";
-    const shouldTrackMissing = isThumbVariant ? docHasThumb : docHasMain;
-    const refKey = isThumbVariant ? "thumb" : "main";
-
-    try {
-      if (candidate.type === "id") {
-        const objectId = toObjectId(candidate.value);
-        if (!objectId) {
-          if (shouldTrackMissing) {
-            missingReferences[refKey].id = true;
-          }
-          continue;
-        }
-        const exists = await checkGridFsFileExists(bucket, objectId);
-        if (!exists) {
-          if (shouldTrackMissing) {
-            missingReferences[refKey].id = true;
-          }
-          continue;
-        }
-        const stream = bucket.openDownloadStream(objectId);
-        const mime = isThumbVariant
-          ? asset.thumbMime || asset.mime || "image/jpeg"
-          : asset.mime || asset.thumbMime || "image/jpeg";
-        return {
-          stream,
-          mime,
-          missingReferences,
-          servedVariant: refKey,
-        };
-      }
-
-      if (candidate.type === "filename") {
-        const files = await bucket
-          .find({ filename: candidate.value })
-          .sort({ uploadDate: -1 })
-          .limit(1)
-          .toArray();
-        if (!files.length) {
-          if (shouldTrackMissing) {
-            missingReferences[refKey].filename = true;
-          }
-          continue;
-        }
-        const stream = bucket.openDownloadStream(files[0]._id);
-        const mime = isThumbVariant
-          ? asset.thumbMime || asset.mime || "image/jpeg"
-          : asset.mime || asset.thumbMime || "image/jpeg";
-        return {
-          stream,
-          mime,
-          missingReferences,
-          servedVariant: refKey,
-        };
-      }
-    } catch (err) {
-      console.warn(
-        "[Assets] Failed to resolve instruction asset stream:",
-        err?.message || err,
-      );
-      if (shouldTrackMissing) {
-        if (candidate.type === "id") {
-          missingReferences[refKey].id = true;
-        } else if (candidate.type === "filename") {
-          missingReferences[refKey].filename = true;
-        }
-      }
-    }
-  }
 
   return { stream: null, mime: null, missingReferences, servedVariant: null };
 }
@@ -25190,18 +24268,6 @@ function deleteLocalInstructionAssetFile(fileName) {
   }
 }
 
-async function checkGridFsFileExists(bucket, fileId) {
-  try {
-    const objectId = toObjectId(fileId);
-    if (!objectId) return false;
-
-    const files = await bucket.find({ _id: objectId }).toArray();
-    return files.length > 0;
-  } catch (err) {
-    return false;
-  }
-}
-
 // ==================== IMAGE COLLECTIONS API ====================
 
 function normalizeCollectionIdentifiers(selectedCollectionIds = []) {
@@ -25217,12 +24283,14 @@ function normalizeCollectionIdentifiers(selectedCollectionIds = []) {
 
   for (const rawId of Array.isArray(selectedCollectionIds) ? selectedCollectionIds : []) {
     if (!rawId) continue;
-    if (typeof rawId === "string" || rawId instanceof ObjectId) {
+    if (typeof rawId === "string") {
       addValue(String(rawId));
       continue;
     }
     if (rawId && typeof rawId === "object" && rawId._id) {
       addValue(String(rawId._id));
+    } else if (rawId && typeof rawId.toString === "function") {
+      addValue(String(rawId));
     }
   }
 
@@ -25458,22 +24526,7 @@ async function getImagesFromSelectedCollections(selectedCollectionIds = []) {
     const db = client.db("chatbot");
     const coll = db.collection("image_collections");
     const normalizedIds = normalizeCollectionIdentifiers(selectedCollectionIds);
-    const objectIds = normalizedIds
-      .filter((id) => ObjectId.isValid(id))
-      .map((id) => new ObjectId(id));
-    const queries = [];
-    if (normalizedIds.length > 0) {
-      queries.push({ _id: { $in: normalizedIds } });
-    }
-    if (objectIds.length > 0) {
-      queries.push({ _id: { $in: objectIds } });
-    }
-    const findQuery =
-      queries.length === 0
-        ? { _id: { $in: normalizedIds } }
-        : queries.length === 1
-          ? queries[0]
-          : { $or: queries };
+    const findQuery = { _id: { $in: normalizedIds } };
     const collections = await coll.find(findQuery).toArray();
 
     const allImages = [];
@@ -25811,7 +24864,7 @@ app.get("/admin/image-collections/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+    if (canUsePostgresAssets()) {
       const collections = await readPostgresImageCollectionsByIdentifiers([id]);
       const collection = collections[0] || null;
       if (!collection) {
@@ -25858,7 +24911,7 @@ app.post("/admin/image-collections", async (req, res) => {
       });
     }
 
-    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+    if (canUsePostgresAssets()) {
       const assets = await getInstructionAssets();
       const assetsByLabel = new Map();
       for (const asset of assets) {
@@ -26012,7 +25065,7 @@ app.put("/admin/image-collections/:id", async (req, res) => {
       });
     }
 
-    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+    if (canUsePostgresAssets()) {
       const existingRows = await readPostgresImageCollectionsByIdentifiers([id]);
       const existing = existingRows[0] || null;
       if (!existing || !existing.pgCollectionId) {
@@ -26167,7 +25220,7 @@ app.delete("/admin/image-collections/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!isMongoRuntimeEnabled() && canUsePostgresAssets()) {
+    if (canUsePostgresAssets()) {
       const collectionRows = await readPostgresImageCollectionsByIdentifiers([id]);
       const collection = collectionRows[0] || null;
       if (!collection || !collection.pgCollectionId) {
@@ -26288,62 +25341,12 @@ app.delete("/admin/image-collections/:id", async (req, res) => {
 
 // Enhanced delete instruction with JSON response
 app.delete("/admin/instructions/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions");
-
-    const deleteQueries = [];
-    if (ObjectId.isValid(id)) {
-      deleteQueries.push({ _id: new ObjectId(id) });
-    }
-    deleteQueries.push({ _id: id }); // กรณีที่ _id ถูกเก็บเป็นสตริง
-    deleteQueries.push({ instructionId: id });
-
-    let deleted = 0;
-    for (const condition of deleteQueries) {
-      const result = await coll.deleteOne(condition);
-      if (result.deletedCount > 0) {
-        deleted = result.deletedCount;
-        break;
-      }
-    }
-
-    if (deleted > 0) {
-      invalidateInstructionPromptCaches();
-      res.json({ success: true, message: "ลบข้อมูลเรียบร้อยแล้ว" });
-    } else {
-      res.json({ success: false, error: "ไม่พบข้อมูลที่ต้องการลบ" });
-    }
-  } catch (err) {
-    console.error("Delete instruction error:", err);
-    res.json({ success: false, error: "ไม่สามารถลบข้อมูลได้" });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 // Show JSON for a table instruction
 app.get("/admin/instructions/:id/json", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("instructions");
-    const instruction = await coll.findOne({ _id: new ObjectId(id) });
-    if (!instruction || instruction.type !== "table") {
-      return res.json({
-        success: false,
-        error: "ไม่พบ instruction หรือตรงประเภท",
-      });
-    }
-    res.json({
-      success: true,
-      tableData: instruction.data,
-      title: instruction.title || "",
-    });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
+  return sendLegacyInstructionsRetiredJson(res);
 });
 
 // ==========================================
@@ -26570,24 +25573,14 @@ class BroadcastQueue {
   }
 
   async loadBots() {
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const botRepository = getBotRepository();
     const botKeys = new Set(this.data.targets.map(t => `${t.platform}:${t.botId}`));
 
     for (const key of botKeys) {
       const [platform, botId] = key.split(":");
-      if (!botId || !ObjectId.isValid(botId)) continue;
+      if (!botId) continue;
 
-      let bot;
-      if (platform === 'facebook') {
-        bot = await db.collection("facebook_bots").findOne({ _id: new ObjectId(botId) });
-      } else if (platform === 'line') {
-        bot = await db.collection("line_bots").findOne({ _id: new ObjectId(botId) });
-      } else if (platform === "instagram") {
-        bot = await db.collection("instagram_bots").findOne({ _id: new ObjectId(botId) });
-      } else if (platform === "whatsapp") {
-        bot = await db.collection("whatsapp_bots").findOne({ _id: new ObjectId(botId) });
-      }
+      const bot = await botRepository.findById(platform, botId).catch(() => null);
 
       if (bot) {
         this.botsCache.set(key, bot);
@@ -26597,13 +25590,31 @@ class BroadcastQueue {
 
   async saveHistory() {
     try {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const coll = db.collection("broadcast_history");
-      await coll.updateOne(
-        { _id: new ObjectId(this.jobId) },
-        { $set: { stats: this.stats, updatedAt: new Date() } },
-        { upsert: true }
+      requirePostgresSupportState("broadcast history");
+      await ensurePostgresBroadcastHistoryTable();
+      await pgQuery(
+        `
+          INSERT INTO broadcast_history (
+            legacy_job_id,
+            payload,
+            stats,
+            status,
+            created_at,
+            updated_at
+          ) VALUES ($1,$2::jsonb,$3::jsonb,$4,$5,NOW())
+          ON CONFLICT (legacy_job_id) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            stats = EXCLUDED.stats,
+            status = EXCLUDED.status,
+            updated_at = NOW()
+        `,
+        [
+          this.jobId,
+          JSON.stringify(this.data || {}),
+          JSON.stringify(this.stats || {}),
+          this.stats?.status || "queued",
+          this.stats?.startTime || new Date(),
+        ],
       );
     } catch (e) {
       console.error("[Broadcast] Failed to save history:", e);
@@ -26619,8 +25630,6 @@ class BroadcastQueue {
 }
 
 async function getBroadcastAudience(channels, audienceType) {
-  const client = await connectDB();
-  const db = client.db("chatbot");
   const followUpRepo = getFollowUpRepository();
   const chatRepo = getChatRepository();
 
@@ -26677,14 +25686,12 @@ async function getBroadcastAudience(channels, audienceType) {
 // Broadcast page
 app.get("/admin/broadcast", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const [lineBots, facebookBots, instagramBots, whatsappBots] =
       await Promise.all([
-      db.collection("line_bots").find({}).toArray(),
-      db.collection("facebook_bots").find({}).toArray(),
-      db.collection("instagram_bots").find({}).toArray(),
-      db.collection("whatsapp_bots").find({}).toArray(),
+      getBotRepository().list("line"),
+      getBotRepository().list("facebook"),
+      getBotRepository().list("instagram"),
+      getBotRepository().list("whatsapp"),
       ]);
     res.render("admin-broadcast", {
       lineBots,
@@ -26727,17 +25734,14 @@ app.post("/admin/broadcast/preview", async (req, res) => {
       channelMap[key].count++;
     }
 
-    const client2 = await connectDB();
-    const db2 = client2.db("chatbot");
-    const collMap = { line: "line_bots", facebook: "facebook_bots", instagram: "instagram_bots", whatsapp: "whatsapp_bots" };
-
     const perChannel = [];
     for (const entry of Object.values(channelMap)) {
-      const collName = collMap[entry.platform];
       let name = entry.channel;
-      if (collName && ObjectId.isValid(entry.botId)) {
-        const bot = await db2.collection(collName).findOne({ _id: new ObjectId(entry.botId) });
-        if (bot) name = bot.name || bot.pageName || entry.channel;
+      if (entry.botId) {
+        const bot = await getBotRepository().findById(entry.platform, entry.botId).catch(() => null);
+        if (bot) {
+          name = bot.name || bot.pageName || bot.phoneNumber || bot.instagramUsername || entry.channel;
+        }
       }
       perChannel.push({ channel: entry.channel, name, platform: entry.platform, count: entry.count });
     }
@@ -26815,9 +25819,6 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
 
     // Process uploaded images
     if (req.files && req.files.length > 0) {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-
       let fileIndex = 0;
       for (let i = 0; i < messages.length; i++) {
         if (
@@ -26830,7 +25831,7 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
           const filename = `broadcast-${Date.now()}-${safeName}`;
 
           await uploadBufferToAssetStorage({
-            db,
+            db: null,
             gridFsBucketName: "broadcastAssets",
             storagePrefix: "broadcast",
             filename,
@@ -26854,22 +25855,21 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
 
     // Build channelInfo (bot names for per-channel progress display)
     const channelInfoMap = {};
-    const collMap2 = { line: "line_bots", facebook: "facebook_bots", instagram: "instagram_bots", whatsapp: "whatsapp_bots" };
-    const dbForInfo = (await connectDB()).db("chatbot");
     const uniqueChannels = new Set(users.map(u => `${u.platform}:${u.botId}`));
     for (const chKey of uniqueChannels) {
       const [plat, bId] = chKey.split(":");
-      const collName = collMap2[plat];
       let name = chKey;
-      if (collName && ObjectId.isValid(bId)) {
-        const b = await dbForInfo.collection(collName).findOne({ _id: new ObjectId(bId) });
-        if (b) name = b.name || b.pageName || chKey;
+      if (bId) {
+        const b = await getBotRepository().findById(plat, bId).catch(() => null);
+        if (b) {
+          name = b.name || b.pageName || b.phoneNumber || b.instagramUsername || chKey;
+        }
       }
       channelInfoMap[chKey] = { name, platform: plat };
     }
 
     // Create Job
-    const jobId = new ObjectId().toString();
+    const jobId = crypto.randomBytes(12).toString("hex");
     const job = new BroadcastQueue(
       jobId,
       { messages, targets: users, channels },
@@ -26911,29 +25911,25 @@ app.delete("/admin/broadcast/cancel/:jobId", (req, res) => {
 // Serve Broadcast Assets
 app.get("/broadcast/assets/:filename", async (req, res) => {
   try {
+    const fileName =
+      typeof req?.params?.filename === "string" ? req.params.filename : "";
     const bucketStreamResult = await getFirstBucketObjectStream(
-      buildBucketKeyCandidates("broadcast", null, req.params.filename),
+      buildBucketKeyCandidates("broadcast", null, fileName),
     );
     if (bucketStreamResult?.stream) {
-      res.set("Content-Type", "image/jpeg");
+      const ext = path.extname(fileName).toLowerCase();
+      const contentType =
+        ext === ".png"
+          ? "image/png"
+          : ext === ".webp"
+            ? "image/webp"
+            : "image/jpeg";
+      res.set("Content-Type", contentType);
       res.set("Cache-Control", "public, max-age=604800, immutable");
       bucketStreamResult.stream.pipe(res);
       return;
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const bucket = new GridFSBucket(db, { bucketName: "broadcastAssets" });
-
-    const files = await bucket
-      .find({ filename: req.params.filename })
-      .toArray();
-    if (!files || files.length === 0)
-      return res.status(404).send("File not found");
-
-    const downloadStream = bucket.openDownloadStreamByName(req.params.filename);
-    res.set("Content-Type", files[0].contentType || "image/jpeg");
-    downloadStream.pipe(res);
+    return res.status(404).send("File not found");
   } catch (e) {
     res.status(500).send("Error");
   }
@@ -27218,13 +26214,14 @@ app.post(
           .json({ success: false, error: "กรุณาอัพโหลดไฟล์รูปภาพ" });
       }
 
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const usePostgresFollowUpAssets =
-        !isMongoRuntimeEnabled() && canUsePostgresAssets();
-      const coll = usePostgresFollowUpAssets
-        ? null
-        : db.collection("follow_up_assets");
+      const usePostgresFollowUpAssets = canUsePostgresAssets();
+      let db = null;
+      let coll = null;
+      if (!usePostgresFollowUpAssets) {
+        const client = await connectDB();
+        db = client.db("chatbot");
+        coll = db.collection("follow_up_assets");
+      }
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -27731,15 +26728,38 @@ function parseInstructionConversationVersionQuery(rawVersion) {
 // Page route — Conversation History viewer
 app.get("/admin/instruction-conversations", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const instructions = await db.collection("instructions_v2").find({}, { projection: { _id: 1, name: 1, instructionId: 1 } }).sort({ name: 1 }).toArray();
+    let instructions = [];
+    if (shouldUsePostgresInstructionsV2()) {
+      const result = await pgQuery(
+        `
+          SELECT
+            id::text AS id,
+            legacy_instruction_id,
+            name
+          FROM instructions
+          WHERE ${buildInstructionV2SourceCondition("source_kind")}
+          ORDER BY name ASC, id ASC
+        `,
+      );
+      instructions = result.rows.map((row) => ({
+        _id: row.id,
+        name: row.name || "Untitled",
+        instructionId: row.legacy_instruction_id || row.id,
+      }));
+    } else {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      instructions = await db.collection("instructions_v2")
+        .find({}, { projection: { _id: 1, name: 1, instructionId: 1 } })
+        .sort({ name: 1 })
+        .toArray();
+    }
     res.render("admin-instruction-conversations", {
       username: req.session?.user?.username || "Admin",
       instructions: instructions.map(i => ({
-        _id: i._id.toString(),
+        _id: String(i._id || ""),
         name: i.name || "Untitled",
-        instructionId: i.instructionId || i._id.toString(),
+        instructionId: i.instructionId || String(i._id || ""),
       })),
     });
   } catch (error) {
@@ -27759,9 +26779,11 @@ app.get("/api/instruction-conversations/:instructionId", requireAdmin, async (re
       page, limit,
     } = req.query;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db, {
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
+    const threadService = new (getConversationThreadServiceClass())(db, {
+      conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
       orderRepository: getOrderRepository(),
       botRepository: getBotRepository(),
@@ -27811,9 +26833,11 @@ app.get("/api/instruction-conversations/:instructionId/thread/:threadId", requir
   try {
     const { threadId } = req.params;
     const { page, limit } = req.query;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db, {
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
+    const threadService = new (getConversationThreadServiceClass())(db, {
+      conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
       orderRepository: getOrderRepository(),
       botRepository: getBotRepository(),
@@ -27836,9 +26860,11 @@ app.get("/api/instruction-conversations/:instructionId/analytics", requireAdmin,
   try {
     const { instructionId } = req.params;
     const { version, dateFrom, dateTo } = req.query;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db, {
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
+    const threadService = new (getConversationThreadServiceClass())(db, {
+      conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
       orderRepository: getOrderRepository(),
       botRepository: getBotRepository(),
@@ -27863,9 +26889,11 @@ app.get("/api/instruction-conversations/:instructionId/filters", requireAdmin, a
   try {
     const { instructionId } = req.params;
     const { version } = req.query;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db, {
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
+    const threadService = new (getConversationThreadServiceClass())(db, {
+      conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
       orderRepository: getOrderRepository(),
       botRepository: getBotRepository(),
@@ -27889,9 +26917,11 @@ app.patch("/api/instruction-conversations/thread/:threadId/tags", requireAdmin, 
   try {
     const { threadId } = req.params;
     const { add = [], remove = [] } = req.body;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db, {
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
+    const threadService = new (getConversationThreadServiceClass())(db, {
+      conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
       orderRepository: getOrderRepository(),
       botRepository: getBotRepository(),
@@ -27908,9 +26938,11 @@ app.patch("/api/instruction-conversations/thread/:threadId/tags", requireAdmin, 
 // POST rebuild threads (migration)
 app.post("/api/instruction-conversations/:instructionId/rebuild", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const threadService = new ConversationThreadService(db, {
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
+    const threadService = new (getConversationThreadServiceClass())(db, {
+      conversationThreadRepository: getConversationThreadRepository(),
       chatRepository: getChatRepository(),
       orderRepository: getOrderRepository(),
       botRepository: getBotRepository(),
@@ -27936,32 +26968,35 @@ app.post("/api/instruction-conversations/:instructionId/rebuild", requireAdmin, 
 app.get("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req, res) => {
   try {
     const { instructionId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
 
-    // Get current instruction
-    const inst = ObjectId.isValid(instructionId)
-      ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) })
-      : null;
+    if (shouldUsePostgresInstructionsV2()) {
+      const inst = await getPostgresInstructionV2ByRef(instructionId);
+      if (!inst) {
+        return res.status(404).json({ error: "ไม่พบ Instruction" });
+      }
 
-    const instId = inst?.instructionId || instructionId;
-    const currentVersion = Number.isInteger(inst?.version) ? inst.version : 0;
+      const versionResult = await pgQuery(
+        `
+          SELECT version, snapshot_at, note
+          FROM instruction_versions
+          WHERE instruction_id = $1::uuid
+             OR legacy_instruction_id = $2
+          ORDER BY version DESC, snapshot_at DESC
+        `,
+        [inst._id, inst.instructionId],
+      );
 
-    // Get all version snapshots
-    const versions = await db.collection("instruction_versions")
-      .find({ instructionId: instId })
-      .sort({ version: -1 })
-      .project({ version: 1, snapshotAt: 1, note: 1 })
-      .toArray();
+      return res.json({
+        currentVersion: Number.isInteger(inst.version) ? inst.version : 0,
+        versions: versionResult.rows.map((row) => ({
+          version: row.version,
+          snapshotAt: row.snapshot_at,
+          note: row.note || "",
+        })),
+      });
+    }
 
-    res.json({
-      currentVersion,
-      versions: versions.map(v => ({
-        version: v.version,
-        snapshotAt: v.snapshotAt,
-        note: v.note || "",
-      })),
-    });
+    return sendPostgresRequired(res, "Instruction versions");
   } catch (error) {
     console.error("[Versions] List error:", error);
     res.status(500).json({ error: error.message });
@@ -27973,69 +27008,27 @@ app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req
   try {
     const { instructionId } = req.params;
     const { note = "" } = req.body;
-    const client = await connectDB();
-    const db = client.db("chatbot");
 
-    const inst = ObjectId.isValid(instructionId)
-      ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) })
-      : null;
+    if (shouldUsePostgresInstructionsV2()) {
+      const inst = await getPostgresInstructionV2ByRef(instructionId);
+      if (!inst) {
+        return res.status(404).json({ error: "ไม่พบ Instruction" });
+      }
 
-    if (!inst) return res.status(404).json({ error: "ไม่พบ Instruction" });
+      const snapshotResult = await saveInstructionVersionForChatRuntime(inst, {
+        note,
+        savedBy: "admin_ui",
+      });
 
-    const instId = inst.instructionId || instructionId;
-    const versionColl = db.collection("instruction_versions");
+      return res.json({
+        success: true,
+        version: snapshotResult.version,
+        note: snapshotResult.note || "",
+        snapshotAt: snapshotResult.snapshotAt,
+      });
+    }
 
-    // Find next version number
-    const latest = await versionColl.find({ instructionId: instId })
-      .sort({ version: -1 }).limit(1).toArray();
-    const nextVersion = latest.length > 0 ? (latest[0].version || 0) + 1 : 1;
-
-    // Create snapshot
-    const snapshot = {
-      instructionId: instId,
-      version: nextVersion,
-      name: inst.name || "",
-      description: inst.description || "",
-      dataItems: (inst.dataItems || []).map(item => {
-        const copy = { itemId: item.itemId, title: item.title, type: item.type };
-        if (item.type === "table" && item.data) {
-          copy.data = {
-            columns: item.data.columns || [],
-            rows: item.data.rows || [],
-            rowCount: Array.isArray(item.data.rows) ? item.data.rows.length : 0,
-          };
-        } else if (item.type === "text") {
-          copy.content = item.content || "";
-        }
-        return copy;
-      }),
-      conversationStarter: normalizeConversationStarterConfig(
-        inst.conversationStarter,
-      ),
-      note: (note || "").substring(0, 500),
-      snapshotAt: new Date(),
-      savedBy: "admin_ui",
-    };
-
-    await versionColl.updateOne(
-      { instructionId: instId, version: nextVersion },
-      { $set: snapshot },
-      { upsert: true }
-    );
-
-    // Update instruction's version number
-    await db.collection("instructions_v2").updateOne(
-      { _id: new ObjectId(instructionId) },
-      { $set: { version: nextVersion, updatedAt: new Date() } }
-    );
-    invalidateInstructionPromptCaches();
-
-    res.json({
-      success: true,
-      version: nextVersion,
-      note: snapshot.note,
-      snapshotAt: snapshot.snapshotAt,
-    });
+    return sendPostgresRequired(res, "Instruction versions");
   } catch (error) {
     console.error("[Versions] Save error:", error);
     res.status(500).json({ error: error.message });
@@ -28307,6 +27300,38 @@ const POSTGRES_SAFE_INSTRUCTION_TOOL_NAMES = new Set([
   "search_in_table",
   "search_content",
   "get_conversation_starter",
+  "update_cell",
+  "update_rows_bulk",
+  "add_row",
+  "delete_row",
+  "update_text_content",
+  "add_column",
+  "delete_column",
+  "delete_rows_bulk_confirm",
+  "delete_rows_bulk",
+  "delete_data_item",
+  "create_table_item",
+  "create_text_item",
+  "set_conversation_starter_enabled",
+  "add_conversation_starter_message",
+  "update_conversation_starter_message",
+  "remove_conversation_starter_message",
+  "reorder_conversation_starter_message",
+  "list_followup_pages",
+  "get_followup_config",
+  "get_followup_round_detail",
+  "update_followup_settings",
+  "update_followup_round",
+  "manage_followup_images",
+  "list_followup_assets",
+  "update_page_model",
+  "get_conversation_stats",
+  "search_conversations",
+  "get_conversation_detail",
+  "list_versions",
+  "save_version",
+  "view_version_detail",
+  "compare_version_stats",
 ]);
 
 function getRuntimeInstructionToolDefinitions(chatService) {
@@ -28422,6 +27447,9 @@ function extractInstructionResponseText(response) {
 // Instruction Chat API — Main chat endpoint with tool loop (Responses API)
 app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
   try {
+    if (!isMongoRuntimeEnabled() && !shouldUsePostgresInstructionsV2()) {
+      return sendPostgresMigrationPending(res, "Instruction AI chat state");
+    }
     const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
     const normalizedInstructionRef = String(instructionId || "").trim();
@@ -28437,8 +27465,9 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     if (!apiKeyToUse.apiKey) {
       return res.json({ error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
@@ -28457,35 +27486,17 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     const usePreviousResponseId = canUseInstructionPreviousResponseId(
       apiKeyToUse.provider,
     );
-    const chatService = new InstructionChatService(db, openai, {
-      followUpPageSettingsRepository: getFollowUpPageSettingsRepository(),
-      conversationThreadOptions: {
-        chatRepository: getChatRepository(),
-        orderRepository: getOrderRepository(),
-        botRepository: getBotRepository(),
-      },
-      resetFollowUpConfigCache,
-      invalidateInstructionPromptCaches,
-      invalidateAllRuntimeCaches,
-    });
+    const chatService = new (getInstructionChatServiceClass())(
+      db,
+      openai,
+      buildInstructionChatServiceOptions(db),
+    );
 
     // Get instruction for system prompt
-    let instruction = null;
-    if (shouldUsePostgresInstructionsV2()) {
-      instruction = await getPostgresInstructionV2ByRef(normalizedInstructionRef);
-    } else {
-      if (!ObjectId.isValid(normalizedInstructionRef)) {
-        incrementInstructionMetric("instruction_id_invalid_total");
-        console.warn("[InstructionChat] Invalid Mongo instructionId", {
-          instructionId: normalizedInstructionRef,
-          instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
-        });
-        return res.status(400).json({ error: "instructionId ไม่ถูกต้อง" });
-      }
-      instruction = await db
-        .collection("instructions_v2")
-        .findOne({ _id: new ObjectId(normalizedInstructionRef) });
-    }
+    const instruction = await loadInstructionForChatRuntime(
+      normalizedInstructionRef,
+      db,
+    );
     if (!instruction) return res.json({ error: "ไม่พบ Instruction" });
     chatService.primeInstructionCache(normalizedInstructionRef, instruction);
 
@@ -28712,12 +27723,9 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
 // Changelog API
 app.get("/api/instruction-ai/changelog/:sessionId", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const logs = await db.collection("instruction_chat_changelog")
-      .find({ sessionId: req.params.sessionId })
-      .sort({ timestamp: -1 })
-      .toArray();
+    const logs = await getInstructionChatStateRepository().listChangelog(
+      req.params.sessionId,
+    );
     res.json({ success: true, changelog: logs });
   } catch (error) {
     res.json({ error: error.message });
@@ -28727,24 +27735,21 @@ app.get("/api/instruction-ai/changelog/:sessionId", requireAdmin, async (req, re
 // Undo API
 app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const changeLog = await db.collection("instruction_chat_changelog").findOne({ changeId: req.params.changeId, undone: false });
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
+    const changeLog = await getInstructionChatStateRepository().getActiveChange(
+      req.params.changeId,
+    );
     if (!changeLog) return res.json({ error: "ไม่พบหรือยกเลิกแล้ว" });
 
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     const openaiClient = buildLLMClientFromKey(apiKeyToUse);
-    const chatService = new InstructionChatService(db, openaiClient, {
-      followUpPageSettingsRepository: getFollowUpPageSettingsRepository(),
-      conversationThreadOptions: {
-        chatRepository: getChatRepository(),
-        orderRepository: getOrderRepository(),
-        botRepository: getBotRepository(),
-      },
-      resetFollowUpConfigCache,
-      invalidateInstructionPromptCaches,
-      invalidateAllRuntimeCaches,
-    });
+    const chatService = new (getInstructionChatServiceClass())(
+      db,
+      openaiClient,
+      buildInstructionChatServiceOptions(db),
+    );
     let instructionMutated = false;
 
     // Reverse the operation
@@ -28774,23 +27779,13 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
       if (undoResult?.error) return res.json({ error: undoResult.error });
       instructionMutated = true;
     } else if (changeLog.tool === "update_text_content" && changeLog.before) {
-      const inst = await db.collection("instructions_v2").findOne({ _id: new ObjectId(changeLog.instructionId) });
-      if (inst) {
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === changeLog.params.itemId);
-        if (itemIndex !== -1) {
-          const updateResult = await db.collection("instructions_v2").updateOne(
-            { _id: new ObjectId(changeLog.instructionId) },
-            {
-              $set: {
-                [`dataItems.${itemIndex}.content`]: changeLog.before.content,
-                [`dataItems.${itemIndex}.updatedAt`]: new Date(),
-                updatedAt: new Date(),
-              },
-            }
-          );
-          if (updateResult.matchedCount > 0) instructionMutated = true;
-        }
-      }
+      const undoResult = await chatService.update_text_content(changeLog.instructionId, {
+        itemId: changeLog.params.itemId,
+        mode: "replace_all",
+        content: changeLog.before.content || "",
+      }, "undo");
+      if (undoResult?.error) return res.json({ error: undoResult.error });
+      instructionMutated = true;
     } else if (changeLog.tool === "update_rows_bulk" && changeLog.before?.changes) {
       // Reverse each cell update
       for (const c of changeLog.before.changes) {
@@ -28804,65 +27799,31 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
         instructionMutated = true;
       }
     } else if (changeLog.tool === "add_column" && changeLog.after) {
-      // Remove the added column
-      const inst = await db.collection("instructions_v2").findOne({ _id: new ObjectId(changeLog.instructionId) });
-      if (inst) {
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === changeLog.params.itemId);
-        if (itemIndex !== -1) {
-          const item = inst.dataItems[itemIndex];
-          const cols = item.data?.columns || [];
-          const rows = item.data?.rows || [];
-          const ci = cols.indexOf(changeLog.params.columnName);
-          if (ci !== -1) {
-            cols.splice(ci, 1);
-            rows.forEach(row => { if (Array.isArray(row)) row.splice(ci, 1); });
-            const updateResult = await db.collection("instructions_v2").updateOne(
-              { _id: new ObjectId(changeLog.instructionId) },
-              {
-                $set: {
-                  [`dataItems.${itemIndex}.data`]: { columns: cols, rows },
-                  [`dataItems.${itemIndex}.updatedAt`]: new Date(),
-                  updatedAt: new Date(),
-                },
-              }
-            );
-            if (updateResult.matchedCount > 0) instructionMutated = true;
-          }
-        }
-      }
+      const undoResult = await chatService.delete_column(changeLog.instructionId, {
+        itemId: changeLog.params.itemId,
+        columnName: changeLog.params.columnName,
+      }, "undo");
+      if (undoResult?.error) return res.json({ error: undoResult.error });
+      instructionMutated = true;
     } else if (changeLog.tool === "delete_rows_bulk" && changeLog.before?.deletedRows) {
-      // Re-insert deleted rows at original positions (ascending order)
       const sorted = [...changeLog.before.deletedRows].sort((a, b) => a.rowIndex - b.rowIndex);
-      const inst = await db.collection("instructions_v2").findOne({ _id: new ObjectId(changeLog.instructionId) });
-      if (inst) {
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === changeLog.params.itemId);
-        if (itemIndex !== -1) {
-          const item = inst.dataItems[itemIndex];
-          const cols = item.data?.columns || [];
-          const rows = item.data?.rows || [];
-          for (const deleted of sorted) {
-            const rowArr = cols.map(c => deleted[c] !== undefined ? String(deleted[c]) : "");
-            const idx = Math.min(deleted.rowIndex, rows.length);
-            rows.splice(idx, 0, rowArr);
-          }
-          const updateResult = await db.collection("instructions_v2").updateOne(
-            { _id: new ObjectId(changeLog.instructionId) },
-            {
-              $set: {
-                [`dataItems.${itemIndex}.data.rows`]: rows,
-                [`dataItems.${itemIndex}.updatedAt`]: new Date(),
-                updatedAt: new Date(),
-              },
-            }
-          );
-          if (updateResult.matchedCount > 0) instructionMutated = true;
-        }
+      for (const deleted of sorted) {
+        const rowData = { ...deleted };
+        delete rowData.rowIndex;
+        const undoResult = await chatService.add_row(changeLog.instructionId, {
+          itemId: changeLog.params.itemId,
+          rowData,
+          position: "after",
+          afterRowIndex: Math.max(-1, Number(deleted.rowIndex) - 1),
+        }, "undo");
+        if (undoResult?.error) return res.json({ error: undoResult.error });
+        instructionMutated = true;
       }
     }
 
-    await db.collection("instruction_chat_changelog").updateOne(
-      { changeId: req.params.changeId },
-      { $set: { undone: true, undoneAt: new Date() } }
+    await getInstructionChatStateRepository().markChangeUndone(
+      req.params.changeId,
+      new Date(),
     );
     if (instructionMutated) {
       invalidateInstructionPromptCaches();
@@ -29093,6 +28054,9 @@ function buildActiveInstructionRequestSnapshot(reqState) {
 app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 6)}`;
   try {
+    if (!isMongoRuntimeEnabled() && !shouldUsePostgresInstructionsV2()) {
+      return sendPostgresMigrationPending(res, "Instruction AI chat state");
+    }
     const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], sessionId: clientSessionId, images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
     const normalizedInstructionRef = String(instructionId || "").trim();
@@ -29228,8 +28192,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     sendEvent("session", { sessionId, requestId });
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
+    const db = isMongoRuntimeEnabled()
+      ? (await connectDB()).db("chatbot")
+      : null;
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     if (!apiKeyToUse.apiKey) {
       sendEvent("error", { error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
@@ -29263,38 +28228,15 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const usePreviousResponseId = canUseInstructionPreviousResponseId(
       apiKeyToUse.provider,
     );
-    const chatService = new InstructionChatService(db, openai, {
-      followUpPageSettingsRepository: getFollowUpPageSettingsRepository(),
-      conversationThreadOptions: {
-        chatRepository: getChatRepository(),
-        orderRepository: getOrderRepository(),
-        botRepository: getBotRepository(),
-      },
-      resetFollowUpConfigCache,
-      invalidateInstructionPromptCaches,
-      invalidateAllRuntimeCaches,
-    });
-    let instruction = null;
-    if (shouldUsePostgresInstructionsV2()) {
-      instruction = await getPostgresInstructionV2ByRef(normalizedInstructionRef);
-    } else {
-      if (!ObjectId.isValid(normalizedInstructionRef)) {
-        incrementInstructionMetric("instruction_id_invalid_total");
-        console.warn("[InstructionChat SSE] Invalid Mongo instructionId", {
-          instructionId: normalizedInstructionRef,
-          instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
-        });
-        sendEvent("error", { error: "instructionId ไม่ถูกต้อง" });
-        requestState.status = "error";
-        requestState.error = "instructionId ไม่ถูกต้อง";
-        requestState.updatedAt = Date.now();
-        finishRequest();
-        return;
-      }
-      instruction = await db
-        .collection("instructions_v2")
-        .findOne({ _id: new ObjectId(normalizedInstructionRef) });
-    }
+    const chatService = new (getInstructionChatServiceClass())(
+      db,
+      openai,
+      buildInstructionChatServiceOptions(db),
+    );
+    const instruction = await loadInstructionForChatRuntime(
+      normalizedInstructionRef,
+      db,
+    );
     if (!instruction) {
       sendEvent("error", { error: "ไม่พบ Instruction" });
       requestState.status = "error";
@@ -29804,7 +28746,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       functionName: "instruction-chat",
     });
 
-    await db.collection("instruction_chat_audit").insertOne({
+    await getInstructionChatStateRepository().createAuditLog({
       sessionId,
       instructionId: normalizedInstructionRef,
       username,
@@ -29831,24 +28773,18 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       const fullHistory = isDuplicatedUserMessage
         ? [...safeHistory, ...assistantMessages]
         : [...safeHistory, ...(userHistoryText ? [{ role: "user", content: userHistoryText }] : []), ...assistantMessages];
-      await db.collection("instruction_chat_sessions").updateOne(
-        { sessionId },
-        {
-          $set: {
-            sessionId,
-            instructionId: normalizedInstructionRef,
-            instructionName: instruction.name || "",
-            history: fullHistory,
-            model: resolvedInstructionModel.model,
-            thinking,
-            totalTokens: totalUsage.total_tokens,
-            totalChanges: changes.length,
-            username, updatedAt: new Date(),
-          },
-          $setOnInsert: { createdAt: new Date() }
-        },
-        { upsert: true }
-      );
+      await getInstructionChatStateRepository().saveSession({
+        sessionId,
+        instructionId: normalizedInstructionRef,
+        instructionName: instruction.name || "",
+        history: fullHistory,
+        model: resolvedInstructionModel.model,
+        thinking,
+        totalTokens: totalUsage.total_tokens,
+        totalChanges: changes.length,
+        username,
+        updatedAt: new Date(),
+      });
     } catch (saveErr) {
       console.warn("[InstructionChat] Auto-save session failed:", saveErr.message);
     }
@@ -29937,22 +28873,20 @@ app.post("/api/instruction-ai/sessions", requireAdmin, async (req, res) => {
     const { sessionId, instructionId, instructionName, history, model, thinking, totalTokens, totalChanges } = req.body;
     if (!sessionId || !instructionId) return res.json({ error: "Missing sessionId or instructionId" });
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const username = req.session?.user?.username || "admin";
 
-    await db.collection("instruction_chat_sessions").updateOne(
-      { sessionId },
-      {
-        $set: {
-          sessionId, instructionId, instructionName: instructionName || "",
-          history: (history || []),
-          model, thinking, totalTokens: totalTokens || 0, totalChanges: totalChanges || 0,
-          username, updatedAt: new Date(),
-        }, $setOnInsert: { createdAt: new Date() }
-      },
-      { upsert: true }
-    );
+    await getInstructionChatStateRepository().saveSession({
+      sessionId,
+      instructionId,
+      instructionName: instructionName || "",
+      history: history || [],
+      model,
+      thinking,
+      totalTokens: totalTokens || 0,
+      totalChanges: totalChanges || 0,
+      username,
+      updatedAt: new Date(),
+    });
 
     res.json({ success: true, sessionId });
   } catch (error) {
@@ -29964,15 +28898,10 @@ app.post("/api/instruction-ai/sessions", requireAdmin, async (req, res) => {
 app.get("/api/instruction-ai/sessions", requireAdmin, async (req, res) => {
   try {
     const { instructionId } = req.query;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const filter = instructionId ? { instructionId } : {};
-    const sessions = await db.collection("instruction_chat_sessions")
-      .find(filter)
-      .project({ sessionId: 1, instructionId: 1, instructionName: 1, model: 1, thinking: 1, totalTokens: 1, totalChanges: 1, history: 1, updatedAt: 1, username: 1, _id: 0 })
-      .sort({ updatedAt: -1 })
-      .limit(50)
-      .toArray();
+    const sessions = await getInstructionChatStateRepository().listSessions(
+      { instructionId },
+      { limit: 50 },
+    );
     res.json({ success: true, sessions });
   } catch (error) {
     res.json({ error: error.message });
@@ -29982,9 +28911,9 @@ app.get("/api/instruction-ai/sessions", requireAdmin, async (req, res) => {
 // Load session
 app.get("/api/instruction-ai/sessions/:sessionId", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const session = await db.collection("instruction_chat_sessions").findOne({ sessionId: req.params.sessionId });
+    const session = await getInstructionChatStateRepository().getSession(
+      req.params.sessionId,
+    );
     if (!session) return res.json({ error: "ไม่พบ session" });
     res.json({ success: true, session });
   } catch (error) {
@@ -29995,19 +28924,13 @@ app.get("/api/instruction-ai/sessions/:sessionId", requireAdmin, async (req, res
 // Delete session(s)
 app.delete("/api/instruction-ai/sessions/:sessionId", requireAdmin, async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const { instructionId } = req.query;
 
-    if (instructionId) {
-      // Delete ALL sessions for this instruction
-      const result = await db.collection("instruction_chat_sessions").deleteMany({ instructionId });
-      res.json({ success: true, deletedCount: result.deletedCount });
-    } else {
-      // Delete single session
-      await db.collection("instruction_chat_sessions").deleteOne({ sessionId: req.params.sessionId });
-      res.json({ success: true });
-    }
+    const result = await getInstructionChatStateRepository().deleteSessions({
+      sessionId: req.params.sessionId,
+      instructionId,
+    });
+    res.json({ success: true, deletedCount: result.deletedCount || 0 });
   } catch (error) {
     res.json({ error: error.message });
   }
@@ -30017,14 +28940,10 @@ app.delete("/api/instruction-ai/sessions/:sessionId", requireAdmin, async (req, 
 app.get("/api/instruction-ai/audit", requireAdmin, async (req, res) => {
   try {
     const { instructionId, limit = 50 } = req.query;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const filter = instructionId ? { instructionId } : {};
-    const logs = await db.collection("instruction_chat_audit")
-      .find(filter)
-      .sort({ timestamp: -1 })
-      .limit(Math.min(parseInt(limit) || 50, 200))
-      .toArray();
+    const logs = await getInstructionChatStateRepository().listAuditLogs({
+      instructionId,
+      limit: Math.min(parseInt(limit) || 50, 200),
+    });
     res.json({ success: true, logs });
   } catch (error) {
     res.json({ error: error.message });
@@ -31412,7 +30331,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
     const { orderId } = req.params;
     const { orderData, status, notes } = req.body;
 
-    if (!ObjectId.isValid(orderId)) {
+    if (!orderId || typeof orderId !== "string" || !orderId.trim()) {
       return res.json({ success: false, error: "orderId ไม่ถูกต้อง" });
     }
 
@@ -31505,7 +30424,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
   try {
     const { orderId } = req.params;
 
-    if (!ObjectId.isValid(orderId)) {
+    if (!orderId || typeof orderId !== "string" || !orderId.trim()) {
       return res.json({ success: false, error: "orderId ไม่ถูกต้อง" });
     }
 
@@ -31897,10 +30816,6 @@ async function startNotificationSummaryScheduler() {
   );
 }
 
-async function runAgentForgeScheduledTick() {
-  return agentForgeScheduler.tick();
-}
-
 function normalizeNotificationSourcesInput(sources) {
   if (!Array.isArray(sources)) return [];
   const seen = new Set();
@@ -31953,6 +30868,8 @@ function mapNotificationChannelDoc(doc, ctx = {}) {
 app.get("/admin/api/notification-channels", requireAdmin, async (req, res) => {
   try {
     const notificationRepo = getNotificationRepository();
+    const lineGroupRepo = getLineGroupRepository();
+    const botRepository = getBotRepository();
 
     const channels = await notificationRepo.listChannels({}, {
       sort: { createdAt: -1 },
@@ -31969,58 +30886,35 @@ app.get("/admin/api/notification-channels", requireAdmin, async (req, res) => {
 
     const botMap = new Map();
     const groupMap = new Map();
-
-    if (isMongoRuntimeEnabled()) {
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const mongoSenderBotIds = senderBotIds.filter((id) => ObjectId.isValid(id));
-
-      const botDocs = mongoSenderBotIds.length
-        ? await db
-          .collection("line_bots")
-          .find({ _id: { $in: mongoSenderBotIds.map((id) => new ObjectId(id)) } })
-          .project({ name: 1, displayName: 1, botName: 1 })
-          .toArray()
-        : [];
-
-      botDocs.forEach((bot) => {
-        const label =
-          bot.displayName ||
-          bot.name ||
-          bot.botName ||
-          `LINE Bot (${bot._id.toString().slice(-4)})`;
-        botMap.set(bot._id.toString(), label);
-      });
-
-      const groupDocs = mongoSenderBotIds.length
-        ? await db
-          .collection("line_bot_groups")
-          .find({ botId: { $in: mongoSenderBotIds } })
-          .project({ botId: 1, groupId: 1, groupName: 1, status: 1, sourceType: 1 })
-          .toArray()
-        : [];
-
-      groupDocs.forEach((group) => {
-        if (!group?.botId || !group?.groupId) return;
-        groupMap.set(`${group.botId}:${group.groupId}`, group);
-      });
-    } else {
-      const lineBots = await getBotRepository().list(
+    const [lineBots, groupDocs] = await Promise.all([
+      botRepository.list(
         "line",
         {},
         { projection: { _id: 1, name: 1, displayName: 1, botName: 1 } },
-      );
-      lineBots.forEach((bot) => {
-        const id = bot?._id ? String(bot._id) : "";
-        if (!id || !senderBotIds.includes(id)) return;
-        const label =
-          bot.displayName ||
-          bot.name ||
-          bot.botName ||
-          `LINE Bot (${id.slice(-4)})`;
-        botMap.set(id, label);
-      });
-    }
+      ),
+      senderBotIds.length > 0
+        ? lineGroupRepo.listGroups(
+          { botIds: senderBotIds, excludeStatus: "left" },
+          { sort: { lastEventAt: -1 } },
+        )
+        : Promise.resolve([]),
+    ]);
+
+    lineBots.forEach((bot) => {
+      const id = bot?._id ? String(bot._id) : "";
+      if (!id || !senderBotIds.includes(id)) return;
+      const label =
+        bot.displayName ||
+        bot.name ||
+        bot.botName ||
+        `LINE Bot (${id.slice(-4)})`;
+      botMap.set(id, label);
+    });
+
+    groupDocs.forEach((group) => {
+      if (!group?.botId || !group?.groupId) return;
+      groupMap.set(`${group.botId}:${group.groupId}`, group);
+    });
 
     res.json({
       success: true,
@@ -32040,7 +30934,7 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
     const groupId =
       typeof req.body?.groupId === "string" ? req.body.groupId.trim() : "";
 
-    if (!name || !ObjectId.isValid(senderBotId) || !groupId) {
+    if (!name || !senderBotId || !groupId) {
       return res.status(400).json({
         success: false,
         error: "กรุณากรอก name, senderBotId และ groupId ให้ถูกต้อง",
@@ -32073,34 +30967,22 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
       });
     }
 
-    if (isMongoRuntimeEnabled()) {
-      const client = await connectDB();
-      const db = client.db("chatbot");
+    const senderBot = await getBotRepository().findById("line", senderBotId);
+    if (!senderBot) {
+      return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
+    }
 
-      const senderBot = await db
-        .collection("line_bots")
-        .findOne({ _id: new ObjectId(senderBotId) }, { projection: { _id: 1 } });
-      if (!senderBot) {
-        return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
-      }
-
-      const group = await db.collection("line_bot_groups").findOne({
-        botId: senderBotId,
-        groupId,
-        status: { $ne: "left" },
+    const group = await getLineGroupRepository().findGroup({
+      botId: senderBotId,
+      groupId,
+      excludeStatus: "left",
+    });
+    if (!group) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
       });
-      if (!group) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
-        });
-      }
-    } else {
-      const senderBot = await getBotRepository().findById("line", senderBotId);
-      if (!senderBot) {
-        return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
-      }
     }
 
     const now = new Date();
@@ -32132,8 +31014,8 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
 
 app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) => {
   try {
-    const channelId = req.params.id;
-    if (!ObjectId.isValid(channelId)) {
+    const channelId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+    if (!channelId) {
       return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
     }
 
@@ -32143,7 +31025,7 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
     const groupId =
       typeof req.body?.groupId === "string" ? req.body.groupId.trim() : "";
 
-    if (!name || !ObjectId.isValid(senderBotId) || !groupId) {
+    if (!name || !senderBotId || !groupId) {
       return res.status(400).json({
         success: false,
         error: "กรุณากรอก name, senderBotId และ groupId ให้ถูกต้อง",
@@ -32183,27 +31065,22 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
     }
 
-    if (isMongoRuntimeEnabled()) {
-      const client = await connectDB();
-      const db = client.db("chatbot");
+    const senderBot = await getBotRepository().findById("line", senderBotId);
+    if (!senderBot) {
+      return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
+    }
 
-      const group = await db.collection("line_bot_groups").findOne({
-        botId: senderBotId,
-        groupId,
-        status: { $ne: "left" },
+    const group = await getLineGroupRepository().findGroup({
+      botId: senderBotId,
+      groupId,
+      excludeStatus: "left",
+    });
+    if (!group) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
       });
-      if (!group) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
-        });
-      }
-    } else {
-      const senderBot = await getBotRepository().findById("line", senderBotId);
-      if (!senderBot) {
-        return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
-      }
     }
 
     const update = {
@@ -32240,8 +31117,8 @@ app.patch(
   requireAdmin,
   async (req, res) => {
     try {
-      const channelId = req.params.id;
-      if (!ObjectId.isValid(channelId)) {
+      const channelId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+      if (!channelId) {
         return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
       }
 
@@ -32272,8 +31149,8 @@ app.delete(
   requireAdmin,
   async (req, res) => {
     try {
-      const channelId = req.params.id;
-      if (!ObjectId.isValid(channelId)) {
+      const channelId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+      if (!channelId) {
         return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
       }
 
@@ -32296,8 +31173,8 @@ app.post(
   requireAdmin,
   async (req, res) => {
     try {
-      const channelId = req.params.id;
-      if (!ObjectId.isValid(channelId)) {
+      const channelId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+      if (!channelId) {
         return res.status(400).json({ success: false, error: "Channel ID ไม่ถูกต้อง" });
       }
 
@@ -32324,18 +31201,10 @@ app.get(
       if (!botId) {
         return res.status(400).json({ success: false, error: "botId ไม่ถูกต้อง" });
       }
-
-      if (!isMongoRuntimeEnabled()) {
-        return res.json({ success: true, groups: [] });
-      }
-
-      const client = await connectDB();
-      const db = client.db("chatbot");
-      const groups = await db
-        .collection("line_bot_groups")
-        .find({ botId, status: { $ne: "left" } })
-        .sort({ lastEventAt: -1 })
-        .toArray();
+      const groups = await getLineGroupRepository().listGroups(
+        { botId, excludeStatus: "left" },
+        { sort: { lastEventAt: -1 } },
+      );
 
       res.json({
         success: true,
@@ -32411,22 +31280,62 @@ app.get("/admin/api/notification-logs", requireAdmin, async (req, res) => {
 
 // ============================ Category Management APIs ============================
 
+function normalizeCategoryColumnsInput(columns = []) {
+  const repository = getCategoryRepository();
+  const normalized = repository.normalizeCategoryColumns(columns);
+  return normalized.filter(
+    (column) => typeof column.name === "string" && column.name.trim(),
+  );
+}
+
+function mapCategoryRowsForExport(category = {}, rows = []) {
+  const safeColumns = Array.isArray(category?.columns) ? category.columns : [];
+  const safeRows = Array.isArray(rows) ? rows : [];
+  return safeRows.map((row) => {
+    const rowObj = {};
+    safeColumns.forEach((column) => {
+      rowObj[column.name] = row?.values?.[column.id] || "";
+    });
+    return rowObj;
+  });
+}
+
+function buildCategoryRowsFromSheet(category = {}, rows = []) {
+  const columnMap = new Map();
+  const safeColumns = Array.isArray(category?.columns) ? category.columns : [];
+  safeColumns.forEach((column) => {
+    const key =
+      typeof column?.name === "string" && column.name.trim()
+        ? column.name.trim()
+        : "";
+    if (key) {
+      columnMap.set(key, column.id);
+    }
+  });
+
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const values = {};
+    Object.keys(row || {}).forEach((header) => {
+      const columnId = columnMap.get(String(header || "").trim());
+      if (!columnId) return;
+      values[columnId] = String(row[header]);
+    });
+    return getCategoryRepository().normalizeCategoryRow({ values });
+  });
+}
+
 // GET: List all categories (filtered by botId and platform)
 app.get("/admin/api/categories", requireAdmin, async (req, res) => {
   try {
     const { botId, platform } = req.query;
-    const query = { isActive: true };
-
-    if (botId) query.botId = botId;
-    if (platform) query.platform = platform;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const categories = await db
-      .collection("categories")
-      .find(query)
-      .sort({ createdAt: -1 })
-      .toArray();
+    const categories = await getCategoryRepository().list(
+      {
+        isActive: true,
+        ...(botId ? { botId } : {}),
+        ...(platform ? { platform } : {}),
+      },
+      { sort: { createdAt: -1 } },
+    );
 
     res.json({ success: true, categories });
   } catch (err) {
@@ -32440,119 +31349,83 @@ app.post("/admin/api/categories", requireAdmin, async (req, res) => {
   try {
     const { name, description, columns, botId, platform } = req.body;
 
-    if (!name || !columns || !Array.isArray(columns) || !botId || !platform) {
+    const normalizedColumns = normalizeCategoryColumnsInput(columns);
+
+    if (!name || !botId || !platform || normalizedColumns.length === 0) {
       return res.status(400).json({ success: false, error: "Missing required fields" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    // Check for duplicate name in the same bot
-    const existing = await db.collection("categories").findOne({
-      name,
-      botId,
-      platform,
-      isActive: true
-    });
-
-    if (existing) {
-      return res.status(400).json({ success: false, error: "Category name already exists for this bot" });
-    }
-
-    const categoryId = `cat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    // Ensure columns have IDs
-    const columnsWithIds = columns.map((col, index) => ({
-      id: col.id || `col_${Math.random().toString(36).substr(2, 9)}`,
-      index: index,
-      name: col.name,
-      type: col.type || "text",
-    }));
-
-    const newCategory = {
-      categoryId,
-      botId,
-      platform,
+    const newCategory = await getCategoryRepository().createCategory({
       name,
       description,
-      columns: columnsWithIds,
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    await db.collection("categories").insertOne(newCategory);
-
-    // Create empty table for this category
-    await db.collection("category_tables").insertOne({
-      categoryId,
+      columns: normalizedColumns,
       botId,
       platform,
-      data: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
     });
 
     res.json({ success: true, category: newCategory });
   } catch (err) {
     console.error("Error creating category:", err);
+    if (err?.message === "category_name_already_exists") {
+      return res.status(400).json({
+        success: false,
+        error: "Category name already exists for this bot",
+      });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // 3. Update category
-app.put("/admin/api/categories/:categoryId", async (req, res) => {
+app.put("/admin/api/categories/:categoryId", requireAdmin, async (req, res) => {
   try {
     const { categoryId } = req.params;
     const { name, description, columns } = req.body;
+    const payload = {};
+    if (typeof name === "string" && name.trim()) {
+      payload.name = name.trim();
+    }
+    if (typeof description === "string") {
+      payload.description = description;
+    }
+    if (Array.isArray(columns)) {
+      const normalizedColumns = normalizeCategoryColumnsInput(columns);
+      if (normalizedColumns.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Category must have at least one valid column",
+        });
+      }
+      payload.columns = normalizedColumns;
+    }
 
-    const client = await connectDB();
-    const db = client.collection("chatbot");
+    const updated = await getCategoryRepository().updateCategory(categoryId, payload);
 
-    // Process columns: preserve IDs for existing columns, generate for new ones
-    const processedColumns = (columns || []).map((col, index) => ({
-      id: col.id || new ObjectId().toString(),
-      index: index,
-      name: col.name,
-      type: col.type || "text"
-    }));
-
-    const updateDoc = {
-      updatedAt: new Date()
-    };
-    if (name) updateDoc.name = name;
-    if (description !== undefined) updateDoc.description = description;
-    if (columns) updateDoc.columns = processedColumns;
-
-    const result = await db.collection("categories").findOneAndUpdate(
-      { categoryId },
-      { $set: updateDoc },
-      { returnDocument: 'after' }
-    );
-
-    if (!result) {
+    if (!updated) {
       return res.status(404).json({ success: false, error: "Category not found" });
     }
 
-    res.json({ success: true, category: result });
+    res.json({ success: true, category: updated });
   } catch (err) {
     console.error("Error updating category:", err);
+    if (err?.message === "category_name_already_exists") {
+      return res.status(400).json({
+        success: false,
+        error: "Category name already exists for this bot",
+      });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // 4. Delete category
-app.delete("/admin/api/categories/:categoryId", async (req, res) => {
+app.delete("/admin/api/categories/:categoryId", requireAdmin, async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    // Delete category
-    await db.collection("categories").deleteOne({ categoryId });
-
-    // Delete associated table data
-    await db.collection("category_tables").deleteOne({ categoryId });
+    const deleted = await getCategoryRepository().deleteCategory(categoryId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: "Category not found" });
+    }
 
     res.json({ success: true, message: "Category deleted successfully" });
   } catch (err) {
@@ -32562,13 +31435,10 @@ app.delete("/admin/api/categories/:categoryId", async (req, res) => {
 });
 
 // 5. Get category data
-app.get("/admin/api/categories/:categoryId/data", async (req, res) => {
+app.get("/admin/api/categories/:categoryId/data", requireAdmin, async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    const table = await db.collection("category_tables").findOne({ categoryId });
+    const table = await getCategoryRepository().getTable(categoryId);
 
     if (!table) {
       return res.json({ success: true, data: [] });
@@ -32582,30 +31452,13 @@ app.get("/admin/api/categories/:categoryId/data", async (req, res) => {
 });
 
 // 6. Add row
-app.post("/admin/api/categories/:categoryId/data", async (req, res) => {
+app.post("/admin/api/categories/:categoryId/data", requireAdmin, async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const { values } = req.body; // values should be keyed by columnId
+    const { values } = req.body;
+    const newRow = await getCategoryRepository().addRow(categoryId, values || {});
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    const newRow = {
-      rowId: new ObjectId().toString(),
-      values: values || {},
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-
-    const result = await db.collection("category_tables").updateOne(
-      { categoryId },
-      {
-        $push: { data: newRow },
-        $set: { updatedAt: new Date() }
-      }
-    );
-
-    if (result.matchedCount === 0) {
+    if (!newRow) {
       return res.status(404).json({ success: false, error: "Category table not found" });
     }
 
@@ -32617,30 +31470,21 @@ app.post("/admin/api/categories/:categoryId/data", async (req, res) => {
 });
 
 // 7. Update row
-app.put("/admin/api/categories/:categoryId/data/:rowId", async (req, res) => {
+app.put("/admin/api/categories/:categoryId/data/:rowId", requireAdmin, async (req, res) => {
   try {
     const { categoryId, rowId } = req.params;
     const { values } = req.body;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    const result = await db.collection("category_tables").updateOne(
-      { categoryId, "data.rowId": rowId },
-      {
-        $set: {
-          "data.$.values": values,
-          "data.$.updatedAt": new Date(),
-          updatedAt: new Date()
-        }
-      }
+    const updatedRow = await getCategoryRepository().updateRow(
+      categoryId,
+      rowId,
+      values || {},
     );
 
-    if (result.matchedCount === 0) {
+    if (!updatedRow) {
       return res.status(404).json({ success: false, error: "Row not found" });
     }
 
-    res.json({ success: true, message: "Row updated successfully" });
+    res.json({ success: true, row: updatedRow, message: "Row updated successfully" });
   } catch (err) {
     console.error("Error updating row:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -32648,22 +31492,12 @@ app.put("/admin/api/categories/:categoryId/data/:rowId", async (req, res) => {
 });
 
 // 8. Delete row
-app.delete("/admin/api/categories/:categoryId/data/:rowId", async (req, res) => {
+app.delete("/admin/api/categories/:categoryId/data/:rowId", requireAdmin, async (req, res) => {
   try {
     const { categoryId, rowId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    const result = await db.collection("category_tables").updateOne(
-      { categoryId },
-      {
-        $pull: { data: { rowId: rowId } },
-        $set: { updatedAt: new Date() }
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ success: false, error: "Category table not found" });
+    const deleted = await getCategoryRepository().deleteRow(categoryId, rowId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: "Row not found" });
     }
 
     res.json({ success: true, message: "Row deleted successfully" });
@@ -32674,7 +31508,11 @@ app.delete("/admin/api/categories/:categoryId/data/:rowId", async (req, res) => 
 });
 
 // 9. Import Excel
-app.post("/admin/api/categories/:categoryId/import-excel", upload.single("file"), async (req, res) => {
+app.post(
+  "/admin/api/categories/:categoryId/import-excel",
+  requireAdmin,
+  upload.single("file"),
+  async (req, res) => {
   try {
     const { categoryId } = req.params;
     const file = req.file;
@@ -32683,50 +31521,20 @@ app.post("/admin/api/categories/:categoryId/import-excel", upload.single("file")
       return res.status(400).json({ success: false, error: "No file uploaded" });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    // Get category to map columns
-    const category = await db.collection("categories").findOne({ categoryId });
+    const category = await getCategoryRepository().findByCategoryId(categoryId);
     if (!category) {
       return res.status(404).json({ success: false, error: "Category not found" });
     }
-
-    // Create a map of Column Name -> Column ID
-    const columnMap = {};
-    category.columns.forEach(col => {
-      columnMap[col.name.trim()] = col.id;
-    });
 
     const workbook = XLSX.read(file.buffer, { type: "buffer" });
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(sheet);
 
-    const newRows = rows.map(row => {
-      const values = {};
-      Object.keys(row).forEach(header => {
-        const colId = columnMap[header.trim()];
-        if (colId) {
-          values[colId] = String(row[header]);
-        }
-      });
-      return {
-        rowId: new ObjectId().toString(),
-        values,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-    });
+    const newRows = buildCategoryRowsFromSheet(category, rows);
 
     if (newRows.length > 0) {
-      await db.collection("category_tables").updateOne(
-        { categoryId },
-        {
-          $push: { data: { $each: newRows } },
-          $set: { updatedAt: new Date() }
-        }
-      );
+      await getCategoryRepository().appendRows(categoryId, newRows);
     }
 
     res.json({ success: true, importedCount: newRows.length });
@@ -32737,28 +31545,16 @@ app.post("/admin/api/categories/:categoryId/import-excel", upload.single("file")
 });
 
 // 10. Export Excel
-app.get("/admin/api/categories/:categoryId/export-excel", async (req, res) => {
+app.get("/admin/api/categories/:categoryId/export-excel", requireAdmin, async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    const category = await db.collection("categories").findOne({ categoryId });
+    const category = await getCategoryRepository().findByCategoryId(categoryId);
     if (!category) {
       return res.status(404).json({ success: false, error: "Category not found" });
     }
 
-    const table = await db.collection("category_tables").findOne({ categoryId });
-    const data = table ? table.data : [];
-
-    // Map data back to Column Names
-    const exportData = data.map(row => {
-      const rowObj = {};
-      category.columns.forEach(col => {
-        rowObj[col.name] = row.values[col.id] || "";
-      });
-      return rowObj;
-    });
+    const data = await getCategoryRepository().listRows(categoryId);
+    const exportData = mapCategoryRowsForExport(category, data);
 
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.json_to_sheet(exportData);
@@ -32777,46 +31573,46 @@ app.get("/admin/api/categories/:categoryId/export-excel", async (req, res) => {
 
 // ============================ AI Tools for Categories ============================
 
-async function getCategories(db, botId, platform) {
-  const query = { isActive: true };
-  if (botId) query.botId = botId;
-  if (platform) query.platform = platform;
-
-  const categories = await db.collection('categories')
-    .find(query)
-    .project({ name: 1, description: 1 })
-    .toArray();
+async function getCategories({ botId, platform } = {}) {
+  const categories = await getCategoryRepository().list(
+    {
+      isActive: true,
+      ...(botId ? { botId } : {}),
+      ...(platform ? { platform } : {}),
+    },
+    { sort: { createdAt: -1 } },
+  );
 
   // Return both name and description for better AI context
   return {
-    categories: categories.map(c => ({
+    categories: categories.map((c) => ({
       name: c.name,
-      description: c.description || ""
-    }))
+      description: c.description || "",
+    })),
   };
 }
 
-async function searchItemByCategory(db, categoryName, keyword, botId, platform) {
-  const query = { name: categoryName, isActive: true };
-  if (botId) query.botId = botId;
-  if (platform) query.platform = platform;
-
-  const categoryDoc = await db.collection('categories').findOne(query);
+async function searchItemByCategory(categoryName, keyword, botId, platform) {
+  const categoryDoc = await getCategoryRepository().findActiveByName(
+    categoryName,
+    { botId, platform },
+  );
   if (!categoryDoc) return { error: "Category not found" };
 
-  const firstColId = categoryDoc.columns[0].id;
-  const tableDoc = await db.collection('category_tables').findOne({ categoryId: categoryDoc.categoryId });
-  if (!tableDoc) return { data: [] };
+  const firstColId = categoryDoc.columns?.[0]?.id;
+  if (!firstColId) return { data: [] };
+  const rows = await getCategoryRepository().listRows(categoryDoc.categoryId);
+  if (!rows.length) return { data: [] };
 
-  const results = tableDoc.data.filter(row => {
+  const results = rows.filter((row) => {
     const val = row.values[firstColId];
     return val && String(val).toLowerCase().includes(keyword.toLowerCase());
   });
 
   // Map results to column names for AI readability
-  const mappedResults = results.slice(0, 20).map(row => {
+  const mappedResults = results.slice(0, 20).map((row) => {
     const rowObj = {};
-    categoryDoc.columns.forEach(col => {
+    categoryDoc.columns.forEach((col) => {
       rowObj[col.name] = row.values[col.id] || "";
     });
     return rowObj;
@@ -32825,27 +31621,26 @@ async function searchItemByCategory(db, categoryName, keyword, botId, platform) 
   return { data: mappedResults };
 }
 
-async function searchItemBroad(db, categoryName, keyword, botId, platform) {
-  const query = { name: categoryName, isActive: true };
-  if (botId) query.botId = botId;
-  if (platform) query.platform = platform;
-
-  const categoryDoc = await db.collection('categories').findOne(query);
+async function searchItemBroad(categoryName, keyword, botId, platform) {
+  const categoryDoc = await getCategoryRepository().findActiveByName(
+    categoryName,
+    { botId, platform },
+  );
   if (!categoryDoc) return { error: "Category not found" };
 
-  const tableDoc = await db.collection('category_tables').findOne({ categoryId: categoryDoc.categoryId });
-  if (!tableDoc) return { data: [] };
+  const rows = await getCategoryRepository().listRows(categoryDoc.categoryId);
+  if (!rows.length) return { data: [] };
 
-  const results = tableDoc.data.filter(row => {
-    return Object.values(row.values).some(val =>
-      val && String(val).toLowerCase().includes(keyword.toLowerCase())
+  const results = rows.filter((row) => {
+    return Object.values(row.values).some(
+      (val) => val && String(val).toLowerCase().includes(keyword.toLowerCase()),
     );
   });
 
   // Map results to column names for AI readability
-  const mappedResults = results.slice(0, 20).map(row => {
+  const mappedResults = results.slice(0, 20).map((row) => {
     const rowObj = {};
-    categoryDoc.columns.forEach(col => {
+    categoryDoc.columns.forEach((col) => {
       rowObj[col.name] = row.values[col.id] || "";
     });
     return rowObj;
@@ -32898,24 +31693,18 @@ app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
 // Get total unread count for all users
 app.get("/admin/chat/unread-count", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_unread_counts");
-
-    const result = await coll
-      .aggregate([
-        {
-          $group: {
-            _id: null,
-            totalUnread: { $sum: "$unreadCount" },
-          },
-        },
-      ])
-      .toArray();
-
-    const totalUnread = result.length > 0 ? result[0].totalUnread : 0;
-
-    res.json({ success: true, totalUnread });
+    requirePostgresSupportState("user unread counts");
+    await ensurePostgresUserUnreadCountsTable();
+    const result = await pgQuery(
+      `
+        SELECT COALESCE(SUM(unread_count), 0)::int AS total_unread
+        FROM user_unread_counts
+      `,
+    );
+    res.json({
+      success: true,
+      totalUnread: Number(result.rows[0]?.total_unread || 0),
+    });
   } catch (err) {
     console.error("Error getting unread count:", err);
     res.json({ success: false, error: err.message });
@@ -33380,7 +32169,7 @@ async function getOpenAIApiKeyForBot(botId, platform) {
       return runtimeOpenAIKeyCache.get(runtimeKey);
     }
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+    if (isPostgresConfigured()) {
       const readPgKeyByIdentifier = async (identifier) => {
         const normalized = typeof identifier === "string" ? identifier.trim() : "";
         if (!normalized) return null;
@@ -33467,66 +32256,7 @@ async function getOpenAIApiKeyForBot(botId, platform) {
       return emptyPayload;
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
-    // First, check if bot has a specific key assigned
-    const botSnapshot = botId
-      ? await getBotRuntimeSnapshot(botId, platform)
-      : null;
-
-    if (botSnapshot?.openaiApiKeyId) {
-      const keyObjectId = toObjectId(botSnapshot.openaiApiKeyId);
-      if (keyObjectId) {
-        const keyDoc = await db.collection("openai_api_keys").findOne({
-          _id: keyObjectId,
-          isActive: true,
-        });
-        if (keyDoc && keyDoc.apiKey) {
-          const payload = normalizeKeyPayload(
-            keyDoc.apiKey,
-            keyDoc._id.toString(),
-            keyDoc.name,
-            keyDoc.provider,
-          );
-          runtimeOpenAIKeyCache.set(runtimeKey, payload);
-          return payload;
-        }
-      }
-    }
-
-    // Fallback to default key
-    const defaultKey = await db.collection("openai_api_keys").findOne({
-      isDefault: true,
-      isActive: true,
-    });
-    if (defaultKey && defaultKey.apiKey) {
-      const payload = normalizeKeyPayload(
-        defaultKey.apiKey,
-        defaultKey._id.toString(),
-        defaultKey.name,
-        defaultKey.provider,
-      );
-      runtimeOpenAIKeyCache.set(runtimeKey, payload);
-      return payload;
-    }
-
-    // Fallback to any active key
-    const anyKey = await db.collection("openai_api_keys").findOne({
-      isActive: true,
-    });
-    if (anyKey && anyKey.apiKey) {
-      const payload = normalizeKeyPayload(
-        anyKey.apiKey,
-        anyKey._id.toString(),
-        anyKey.name,
-        anyKey.provider,
-      );
-      runtimeOpenAIKeyCache.set(runtimeKey, payload);
-      return payload;
-    }
-
-    // Final fallback to environment variable
+    // Final fallback to environment variable when PostgreSQL runtime is unavailable
     if (OPENAI_API_KEY) {
       const payload = normalizeKeyPayload(
         OPENAI_API_KEY,
@@ -33570,7 +32300,7 @@ async function logOpenAIUsage(data) {
         ? null
         : calculateOpenAICost(model, promptCount, completionCount);
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+    if (isPostgresConfigured()) {
       let resolvedPgApiKeyId = null;
       let resolvedPgBotId = null;
       const normalizedApiKeyId =
@@ -33655,34 +32385,9 @@ async function logOpenAIUsage(data) {
       return;
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const apiKeyObjectId = toObjectId(apiKeyId);
-
-    await db.collection("openai_usage_logs").insertOne({
-      apiKeyId: apiKeyObjectId || null,
-      botId: botId || null,
-      platform: platform || null,
-      provider: normalizedProvider,
-      model: model || "unknown",
-      promptTokens: promptCount,
-      completionTokens: completionCount,
-      totalTokens: totalCount,
-      estimatedCost,
-      functionName: functionName || null,
-      timestamp: new Date(),
-    });
-
-    // Update usage count on API key
-    if (apiKeyObjectId) {
-      await db.collection("openai_api_keys").updateOne(
-        { _id: apiKeyObjectId },
-        {
-          $inc: { usageCount: 1 },
-          $set: { lastUsedAt: new Date() }
-        }
-      );
-    }
+    console.warn(
+      "[OpenAI Usage] PostgreSQL runtime is unavailable; usage log was skipped",
+    );
   } catch (err) {
     console.error("[OpenAI Usage] Error logging usage:", err);
   }
@@ -33806,35 +32511,15 @@ async function unsetPostgresDefaultApiKeys(excludedRowId = null) {
 // GET: List all API keys (masked)
 app.get("/api/openai-keys", async (req, res) => {
   try {
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
-      const keys = await listPostgresApiKeys();
-      const maskedKeys = keys.map((key) => ({
-        id: key.id,
-        name: key.name,
-        provider: normalizeProvider(key.provider),
-        maskedKey: key.maskedKey || maskApiKey(key.apiKey || ""),
-        isActive: key.isActive !== false,
-        isDefault: key.isDefault === true,
-        usageCount: key.usageCount || 0,
-        lastUsedAt: key.lastUsedAt || null,
-        createdAt: key.createdAt,
-        updatedAt: key.updatedAt,
-      }));
-      return res.json({ success: true, keys: maskedKeys });
+    if (!isPostgresConfigured()) {
+      return sendPostgresRequired(res, "OpenAI API keys");
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const keys = await db.collection("openai_api_keys")
-      .find({})
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    const maskedKeys = keys.map(key => ({
-      id: key._id.toString(),
+    const keys = await listPostgresApiKeys();
+    const maskedKeys = keys.map((key) => ({
+      id: key.id,
       name: key.name,
       provider: normalizeProvider(key.provider),
-      maskedKey: key.maskedKey || maskApiKey(key.apiKey),
+      maskedKey: key.maskedKey || maskApiKey(key.apiKey || ""),
       isActive: key.isActive !== false,
       isDefault: key.isDefault === true,
       usageCount: key.usageCount || 0,
@@ -33842,7 +32527,6 @@ app.get("/api/openai-keys", async (req, res) => {
       createdAt: key.createdAt,
       updatedAt: key.updatedAt,
     }));
-
     res.json({ success: true, keys: maskedKeys });
   } catch (err) {
     console.error("[OpenAI Keys] Error listing keys:", err);
@@ -33869,99 +32553,60 @@ app.post("/api/openai-keys", async (req, res) => {
       });
     }
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
-      if (isDefault) {
-        await unsetPostgresDefaultApiKeys(null);
-      }
-
-      const now = new Date();
-      const normalizedApiKey = apiKey.trim();
-      const legacyKeyId = new ObjectId().toString();
-      const metadata = {
-        apiKey: normalizedApiKey,
-        maskedKey: maskApiKey(normalizedApiKey),
-        usageCount: 0,
-        lastUsedAt: null,
-        provider: normalizedProvider,
-      };
-
-      await pgQuery(
-        `
-          INSERT INTO api_keys (
-            legacy_key_id,
-            provider,
-            name,
-            is_active,
-            is_default,
-            metadata,
-            created_at,
-            updated_at
-          ) VALUES ($1,$2,$3,TRUE,$4,$5::jsonb,$6,$6)
-        `,
-        [
-          legacyKeyId,
-          normalizedProvider,
-          name.trim(),
-          isDefault === true,
-          JSON.stringify(metadata),
-          now,
-        ],
-      );
-
-      invalidateAllRuntimeCaches();
-
-      return res.json({
-        success: true,
-        key: {
-          id: legacyKeyId,
-          name: name.trim(),
-          provider: normalizedProvider,
-          maskedKey: metadata.maskedKey,
-          isActive: true,
-          isDefault: isDefault === true,
-          createdAt: now,
-        },
-      });
+    if (!isPostgresConfigured()) {
+      return sendPostgresRequired(res, "OpenAI API keys");
     }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("openai_api_keys");
-
-    // If setting as default, unset other defaults
     if (isDefault) {
-      await coll.updateMany({}, { $set: { isDefault: false } });
+      await unsetPostgresDefaultApiKeys(null);
     }
 
     const now = new Date();
-    const keyDoc = {
-      name: name.trim(),
-      apiKey: apiKey.trim(),
-      provider: normalizedProvider,
-      maskedKey: maskApiKey(apiKey.trim()),
-      isActive: true,
-      isDefault: isDefault === true,
+    const normalizedApiKey = apiKey.trim();
+    const legacyKeyId = generateLegacyObjectIdString();
+    const metadata = {
+      apiKey: normalizedApiKey,
+      maskedKey: maskApiKey(normalizedApiKey),
       usageCount: 0,
       lastUsedAt: null,
-      createdAt: now,
-      updatedAt: now,
+      provider: normalizedProvider,
     };
 
-    const result = await coll.insertOne(keyDoc);
+    await pgQuery(
+      `
+        INSERT INTO api_keys (
+          legacy_key_id,
+          provider,
+          name,
+          is_active,
+          is_default,
+          metadata,
+          created_at,
+          updated_at
+        ) VALUES ($1,$2,$3,TRUE,$4,$5::jsonb,$6,$6)
+      `,
+      [
+        legacyKeyId,
+        normalizedProvider,
+        name.trim(),
+        isDefault === true,
+        JSON.stringify(metadata),
+        now,
+      ],
+    );
 
     invalidateAllRuntimeCaches();
 
-    res.json({
+    return res.json({
       success: true,
       key: {
-        id: result.insertedId.toString(),
-        name: keyDoc.name,
-        provider: keyDoc.provider,
-        maskedKey: keyDoc.maskedKey,
-        isActive: keyDoc.isActive,
-        isDefault: keyDoc.isDefault,
-        createdAt: keyDoc.createdAt,
-      }
+        id: legacyKeyId,
+        name: name.trim(),
+        provider: normalizedProvider,
+        maskedKey: metadata.maskedKey,
+        isActive: true,
+        isDefault: isDefault === true,
+        createdAt: now,
+      },
     });
   } catch (err) {
     console.error("[OpenAI Keys] Error creating key:", err);
@@ -33975,193 +32620,116 @@ app.put("/api/openai-keys/:id", async (req, res) => {
     const { id } = req.params;
     const { name, apiKey, isActive, isDefault, provider } = req.body;
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
-      const existing = await readPostgresApiKeyByRef(id);
-      if (!existing) {
-        return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
-      }
-
-      const updatePayload = {};
-      if (name !== undefined) {
-        updatePayload.name = String(name || "").trim();
-      } else {
-        updatePayload.name = existing.name || "";
-      }
-
-      const nextProvider =
-        provider !== undefined
-          ? normalizeProvider(provider)
-          : normalizeProvider(existing.provider);
-      updatePayload.provider = nextProvider;
-
-      const normalizedApiKey =
-        typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : "";
-      const metadata =
-        existing.metadata && typeof existing.metadata === "object"
-          ? { ...existing.metadata }
-          : {};
-      const previousKey = existing.apiKey || "";
-      const effectiveKey = normalizedApiKey || previousKey;
-
-      if (!effectiveKey) {
-        return res.status(400).json({
-          success: false,
-          error: "API Key ไม่ถูกต้องหรือว่างเปล่า",
-        });
-      }
-      if (!validateApiKeyForProvider(effectiveKey, nextProvider)) {
-        return res.status(400).json({
-          success: false,
-          error: getApiKeyFormatHint(nextProvider),
-        });
-      }
-
-      if (normalizedApiKey) {
-        metadata.apiKey = normalizedApiKey;
-        metadata.maskedKey = maskApiKey(normalizedApiKey);
-      } else if (!metadata.maskedKey && previousKey) {
-        metadata.maskedKey = maskApiKey(previousKey);
-      }
-      metadata.provider = nextProvider;
-
-      if (isActive !== undefined) {
-        updatePayload.isActive = Boolean(isActive);
-      } else {
-        updatePayload.isActive = existing.isActive !== false;
-      }
-
-      if (isDefault === true) {
-        await unsetPostgresDefaultApiKeys(existing.rowId || existing.id);
-        updatePayload.isDefault = true;
-      } else if (isDefault === false) {
-        updatePayload.isDefault = false;
-      } else {
-        updatePayload.isDefault = existing.isDefault === true;
-      }
-
-      const now = new Date();
-      const result = await pgQuery(
-        `
-          UPDATE api_keys
-          SET
-            name = $2,
-            provider = $3,
-            is_active = $4,
-            is_default = $5,
-            metadata = $6::jsonb,
-            updated_at = $7
-          WHERE id::text = $1 OR legacy_key_id = $1
-          RETURNING
-            id::text AS id,
-            legacy_key_id,
-            provider,
-            name,
-            is_active,
-            is_default,
-            metadata,
-            created_at,
-            updated_at
-        `,
-        [
-          String(id || "").trim(),
-          updatePayload.name,
-          updatePayload.provider,
-          updatePayload.isActive,
-          updatePayload.isDefault,
-          JSON.stringify(metadata),
-          now,
-        ],
-      );
-
-      const updated = result.rows[0] ? mapPostgresApiKeyRow(result.rows[0]) : null;
-      if (!updated) {
-        return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
-      }
-
-      invalidateAllRuntimeCaches();
-      return res.json({
-        success: true,
-        key: {
-          id: updated.id,
-          name: updated.name,
-          provider: normalizeProvider(updated.provider),
-          maskedKey: updated.maskedKey,
-          isActive: updated.isActive,
-          isDefault: updated.isDefault,
-          usageCount: updated.usageCount,
-          lastUsedAt: updated.lastUsedAt,
-          updatedAt: updated.updatedAt,
-        },
-      });
+    if (!isPostgresConfigured()) {
+      return sendPostgresRequired(res, "OpenAI API keys");
     }
-
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("openai_api_keys");
-
-    const existing = await coll.findOne({ _id: new ObjectId(id) });
+    const existing = await readPostgresApiKeyByRef(id);
     if (!existing) {
       return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
     }
 
-    const updateData = { updatedAt: new Date() };
+    const updatePayload = {};
+    if (name !== undefined) {
+      updatePayload.name = String(name || "").trim();
+    } else {
+      updatePayload.name = existing.name || "";
+    }
+
     const nextProvider =
       provider !== undefined
         ? normalizeProvider(provider)
         : normalizeProvider(existing.provider);
-
-    if (name !== undefined) updateData.name = name.trim();
-    if (isActive !== undefined) updateData.isActive = isActive;
-    if (provider !== undefined) {
-      updateData.provider = nextProvider;
-    } else if (!existing.provider) {
-      updateData.provider = nextProvider;
-    }
+    updatePayload.provider = nextProvider;
 
     const normalizedApiKey =
       typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : "";
-    const isApiKeyChanged =
-      normalizedApiKey && normalizedApiKey !== existing.maskedKey;
+    const metadata =
+      existing.metadata && typeof existing.metadata === "object"
+        ? { ...existing.metadata }
+        : {};
+    const previousKey = existing.apiKey || "";
+    const effectiveKey = normalizedApiKey || previousKey;
 
-    if (isApiKeyChanged) {
-      if (!validateApiKeyForProvider(normalizedApiKey, nextProvider)) {
-        return res.status(400).json({
-          success: false,
-          error: getApiKeyFormatHint(nextProvider),
-        });
-      }
-      updateData.apiKey = normalizedApiKey;
-      updateData.maskedKey = maskApiKey(normalizedApiKey);
-    } else if (provider !== undefined) {
-      if (!validateApiKeyForProvider(existing.apiKey, nextProvider)) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "Provider ใหม่ไม่ตรงกับรูปแบบ key ปัจจุบัน กรุณากรอก API Key ใหม่ให้ตรง provider",
-        });
-      }
+    if (!effectiveKey) {
+      return res.status(400).json({
+        success: false,
+        error: "API Key ไม่ถูกต้องหรือว่างเปล่า",
+      });
+    }
+    if (!validateApiKeyForProvider(effectiveKey, nextProvider)) {
+      return res.status(400).json({
+        success: false,
+        error: getApiKeyFormatHint(nextProvider),
+      });
+    }
+
+    if (normalizedApiKey) {
+      metadata.apiKey = normalizedApiKey;
+      metadata.maskedKey = maskApiKey(normalizedApiKey);
+    } else if (!metadata.maskedKey && previousKey) {
+      metadata.maskedKey = maskApiKey(previousKey);
+    }
+    metadata.provider = nextProvider;
+
+    if (isActive !== undefined) {
+      updatePayload.isActive = Boolean(isActive);
+    } else {
+      updatePayload.isActive = existing.isActive !== false;
     }
 
     if (isDefault === true) {
-      await coll.updateMany({ _id: { $ne: new ObjectId(id) } }, { $set: { isDefault: false } });
-      updateData.isDefault = true;
+      await unsetPostgresDefaultApiKeys(existing.rowId || existing.id);
+      updatePayload.isDefault = true;
     } else if (isDefault === false) {
-      updateData.isDefault = false;
+      updatePayload.isDefault = false;
+    } else {
+      updatePayload.isDefault = existing.isDefault === true;
     }
 
-    await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+    const now = new Date();
+    const result = await pgQuery(
+      `
+        UPDATE api_keys
+        SET
+          name = $2,
+          provider = $3,
+          is_active = $4,
+          is_default = $5,
+          metadata = $6::jsonb,
+          updated_at = $7
+        WHERE id::text = $1 OR legacy_key_id = $1
+        RETURNING
+          id::text AS id,
+          legacy_key_id,
+          provider,
+          name,
+          is_active,
+          is_default,
+          metadata,
+          created_at,
+          updated_at
+      `,
+      [
+        String(id || "").trim(),
+        updatePayload.name,
+        updatePayload.provider,
+        updatePayload.isActive,
+        updatePayload.isDefault,
+        JSON.stringify(metadata),
+        now,
+      ],
+    );
 
-    const updated = await coll.findOne({ _id: new ObjectId(id) });
+    const updated = result.rows[0] ? mapPostgresApiKeyRow(result.rows[0]) : null;
+    if (!updated) {
+      return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+    }
+
     invalidateAllRuntimeCaches();
-
-    res.json({
+    return res.json({
       success: true,
       key: {
-        id: updated._id.toString(),
+        id: updated.id,
         name: updated.name,
         provider: normalizeProvider(updated.provider),
         maskedKey: updated.maskedKey,
@@ -34183,20 +32751,34 @@ app.delete("/api/openai-keys/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
-      const existing = await readPostgresApiKeyByRef(id);
-      if (!existing) {
-        return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
-      }
+    if (!isPostgresConfigured()) {
+      return sendPostgresRequired(res, "OpenAI API keys");
+    }
+    const existing = await readPostgresApiKeyByRef(id);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+    }
 
-      await pgQuery(
-        `
-          DELETE FROM api_keys
-          WHERE id::text = $1 OR legacy_key_id = $1
-        `,
-        [String(id || "").trim()],
-      );
+    await pgQuery(
+      `
+        DELETE FROM api_keys
+        WHERE id::text = $1 OR legacy_key_id = $1
+      `,
+      [String(id || "").trim()],
+    );
 
+    await pgQuery(
+      `
+        UPDATE bots
+        SET
+          config = config - 'openaiApiKeyId',
+          updated_at = NOW()
+        WHERE COALESCE(config->>'openaiApiKeyId', '') = $1
+      `,
+      [String(existing.id || "").trim()],
+    ).catch(() => null);
+
+    if (existing.legacyKeyId) {
       await pgQuery(
         `
           UPDATE bots
@@ -34205,60 +32787,10 @@ app.delete("/api/openai-keys/:id", async (req, res) => {
             updated_at = NOW()
           WHERE COALESCE(config->>'openaiApiKeyId', '') = $1
         `,
-        [String(existing.id || "").trim()],
+        [String(existing.legacyKeyId).trim()],
       ).catch(() => null);
-
-      if (existing.legacyKeyId) {
-        await pgQuery(
-          `
-            UPDATE bots
-            SET
-              config = config - 'openaiApiKeyId',
-              updated_at = NOW()
-            WHERE COALESCE(config->>'openaiApiKeyId', '') = $1
-          `,
-          [String(existing.legacyKeyId).trim()],
-        ).catch(() => null);
-      }
-
-      invalidateAllRuntimeCaches();
-      return res.json({ success: true, message: "ลบ API Key เรียบร้อยแล้ว" });
     }
-
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("openai_api_keys");
-
-    const result = await coll.deleteOne({ _id: new ObjectId(id) });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
-    }
-
-    // Remove references from bots
-    await db.collection("line_bots").updateMany(
-      { openaiApiKeyId: id },
-      { $unset: { openaiApiKeyId: "" } }
-    );
-    await db.collection("facebook_bots").updateMany(
-      { openaiApiKeyId: id },
-      { $unset: { openaiApiKeyId: "" } }
-    );
-    await db.collection("instagram_bots").updateMany(
-      { openaiApiKeyId: id },
-      { $unset: { openaiApiKeyId: "" } }
-    );
-    await db.collection("whatsapp_bots").updateMany(
-      { openaiApiKeyId: id },
-      { $unset: { openaiApiKeyId: "" } }
-    );
-
     invalidateAllRuntimeCaches();
-
     res.json({ success: true, message: "ลบ API Key เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("[OpenAI Keys] Error deleting key:", err);
@@ -34312,55 +32844,18 @@ app.post("/api/openai-keys/:id/test", async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
-      const keyDoc = await readPostgresApiKeyByRef(id);
-      if (!keyDoc) {
-        return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
-      }
-      if (!keyDoc.apiKey) {
-        return res.status(400).json({
-          success: false,
-          error: "API Key นี้ไม่มีข้อมูล key สำหรับทดสอบ",
-        });
-      }
-
-      try {
-        const provider = normalizeProvider(keyDoc.provider);
-        const testOpenai = buildLLMClientFromKey({
-          apiKey: keyDoc.apiKey,
-          provider,
-        });
-        if (!testOpenai) {
-          return res.status(400).json({
-            success: false,
-            error: "ไม่สามารถสร้าง client สำหรับทดสอบ API Key ได้",
-          });
-        }
-        const response = await testOpenai.models.list();
-        return res.json({
-          success: true,
-          message: `API Key ใช้งานได้! พบ ${response.data?.length || 0} โมเดล`,
-          modelsCount: response.data?.length || 0,
-          provider,
-        });
-      } catch (apiError) {
-        return res.status(400).json({
-          success: false,
-          error: `API Key ไม่ถูกต้องหรือหมดอายุ: ${apiError.message}`,
-        });
-      }
+    if (!isPostgresConfigured()) {
+      return sendPostgresRequired(res, "OpenAI API keys");
     }
-
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, error: "รหัส API Key ไม่ถูกต้อง" });
-    }
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const keyDoc = await db.collection("openai_api_keys").findOne({ _id: new ObjectId(id) });
-
+    const keyDoc = await readPostgresApiKeyByRef(id);
     if (!keyDoc) {
       return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
+    }
+    if (!keyDoc.apiKey) {
+      return res.status(400).json({
+        success: false,
+        error: "API Key นี้ไม่มีข้อมูล key สำหรับทดสอบ",
+      });
     }
 
     try {
@@ -34505,7 +33000,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
       endDate,
     );
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+    if (isPostgresConfigured()) {
       const normalizedPlatform =
         typeof platform === "string" && platform.trim()
           ? normalizeChatPlatform(platform)
@@ -34671,232 +33166,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
       });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const match = {
-      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
-    };
-
-    if (keyId && ObjectId.isValid(keyId)) {
-      match.apiKeyId = new ObjectId(keyId);
-    }
-    if (botId) match.botId = botId;
-    if (platform) match.platform = platform;
-    if (provider) match.provider = normalizeProvider(provider);
-
-    const [totals, byModel, byBot, byKey, daily] = await Promise.all([
-      // Overall totals
-      db.collection("openai_usage_logs").aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: null,
-            totalCalls: { $sum: 1 },
-            totalPromptTokens: { $sum: "$promptTokens" },
-            totalCompletionTokens: { $sum: "$completionTokens" },
-            totalTokens: { $sum: "$totalTokens" },
-            totalCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-            pricedCalls: {
-              $sum: {
-                $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-              },
-            },
-            unpricedCalls: {
-              $sum: {
-                $cond: [{ $eq: ["$estimatedCost", null] }, 1, 0],
-              },
-            },
-          }
-        }
-      ]).toArray(),
-
-      // By model
-      db.collection("openai_usage_logs").aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: { model: "$model", provider: "$provider" },
-            calls: { $sum: 1 },
-            tokens: { $sum: "$totalTokens" },
-            cost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-            pricedCalls: {
-              $sum: {
-                $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-              },
-            },
-          }
-        },
-        { $sort: { cost: -1 } },
-        { $limit: 10 }
-      ]).toArray(),
-
-      // By bot
-      db.collection("openai_usage_logs").aggregate([
-        {
-          $match: {
-            ...match,
-            ...(match.botId ? {} : { botId: { $ne: null } }),
-          },
-        },
-        {
-          $group: {
-            _id: { botId: "$botId", platform: "$platform" },
-            calls: { $sum: 1 },
-            tokens: { $sum: "$totalTokens" },
-            cost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-            pricedCalls: {
-              $sum: {
-                $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-              },
-            },
-          }
-        },
-        { $sort: { cost: -1 } },
-        { $limit: 20 }
-      ]).toArray(),
-
-      // By key
-      db.collection("openai_usage_logs").aggregate([
-        {
-          $match: {
-            ...match,
-            ...(match.apiKeyId ? {} : { apiKeyId: { $ne: null } }),
-          },
-        },
-        {
-          $group: {
-            _id: "$apiKeyId",
-            calls: { $sum: 1 },
-            tokens: { $sum: "$totalTokens" },
-            cost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-            pricedCalls: {
-              $sum: {
-                $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-              },
-            },
-          }
-        },
-        { $sort: { cost: -1 } }
-      ]).toArray(),
-
-      // Daily usage (last 30 days)
-      db.collection("openai_usage_logs").aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: {
-              $dateToString: {
-                format: "%Y-%m-%d",
-                date: "$timestamp",
-                timezone: BANGKOK_TZ,
-              },
-            },
-            calls: { $sum: 1 },
-            tokens: { $sum: "$totalTokens" },
-            cost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-            pricedCalls: {
-              $sum: {
-                $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-              },
-            },
-          }
-        },
-        { $sort: { _id: 1 } }
-      ]).toArray(),
-    ]);
-
-    // Enrich bot data with names
-    const botIds = byBot.map(b => b._id.botId).filter(Boolean);
-    const validBotIds = botIds.filter(id => ObjectId.isValid(id));
-    const [lineBots, facebookBots, instagramBots, whatsappBots] =
-      await Promise.all([
-      validBotIds.length > 0
-        ? db.collection("line_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
-        : [],
-      validBotIds.length > 0
-        ? db.collection("facebook_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
-        : [],
-      validBotIds.length > 0
-        ? db.collection("instagram_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
-        : [],
-      validBotIds.length > 0
-        ? db.collection("whatsapp_bots").find({ _id: { $in: validBotIds.map(id => new ObjectId(id)) } }).toArray()
-        : [],
-      ]);
-
-    const botNameMap = {
-      'instruction-chat': 'Instruction Chat (Admin)',
-    };
-    [...lineBots, ...facebookBots, ...instagramBots, ...whatsappBots].forEach(b => {
-      botNameMap[b._id.toString()] = b.name || b.pageName || b._id.toString();
-    });
-
-    // Enrich key data with names
-    const keyIds = byKey.map(k => k._id).filter(id => id && ObjectId.isValid(id));
-    const keys = keyIds.length > 0
-      ? await db.collection("openai_api_keys").find({ _id: { $in: keyIds } }).toArray()
-      : [];
-
-    const keyNameMap = {};
-    const keyProviderMap = {};
-    keys.forEach(k => {
-      keyNameMap[k._id.toString()] = k.name;
-      keyProviderMap[k._id.toString()] = normalizeProvider(k.provider);
-    });
-
-    const summary = totals[0] || {
-      totalCalls: 0,
-      totalPromptTokens: 0,
-      totalCompletionTokens: 0,
-      totalTokens: 0,
-      totalCost: 0,
-      pricedCalls: 0,
-      unpricedCalls: 0,
-    };
-
-    res.json({
-      success: true,
-      summary: {
-        totalCalls: summary.totalCalls,
-        totalPromptTokens: summary.totalPromptTokens,
-        totalCompletionTokens: summary.totalCompletionTokens,
-        totalTokens: summary.totalTokens,
-        totalCostUSD: summary.totalCost,
-        totalCostTHB: summary.totalCost * 33, // Approximate USD to THB (33 THB/USD)
-        pricedCalls: summary.pricedCalls || 0,
-        unpricedCalls: summary.unpricedCalls || 0,
-      },
-      byModel: byModel.map(m => ({
-        model: m._id?.model || "unknown",
-        provider: normalizeProvider(m._id?.provider),
-        calls: m.calls,
-        tokens: m.tokens,
-        costUSD: m.cost,
-        pricedCalls: m.pricedCalls || 0,
-      })),
-      byBot: byBot.map(b => ({
-        botId: b._id.botId,
-        platform: b._id.platform,
-        name: botNameMap[b._id.botId] || b._id.botId,
-        calls: b.calls,
-        tokens: b.tokens,
-        costUSD: b.cost,
-        pricedCalls: b.pricedCalls || 0,
-      })),
-      byKey: byKey.map(k => ({
-        keyId: k._id?.toString(),
-        name: keyNameMap[k._id?.toString()] || "Unknown Key",
-        provider: keyProviderMap[k._id?.toString()] || LLM_PROVIDER_OPENAI,
-        calls: k.calls,
-        tokens: k.tokens,
-        costUSD: k.cost,
-        pricedCalls: k.pricedCalls || 0,
-      })),
-      daily: daily.map(d => ({
-        ...d,
-        pricedCalls: d.pricedCalls || 0,
-      })),
-    });
+    return sendPostgresRequired(res, "OpenAI usage analytics");
   } catch (err) {
     console.error("[OpenAI Usage] Error getting summary:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -34921,7 +33191,7 @@ app.get("/api/openai-usage", async (req, res) => {
       endDate,
     );
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+    if (isPostgresConfigured()) {
       const normalizedPlatform =
         typeof platform === "string" && platform.trim()
           ? normalizeChatPlatform(platform)
@@ -35008,53 +33278,7 @@ app.get("/api/openai-usage", async (req, res) => {
       });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const match = {
-      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
-    };
-    if (keyId && ObjectId.isValid(keyId)) {
-      match.apiKeyId = new ObjectId(keyId);
-    }
-    if (botId) match.botId = botId;
-    if (platform) match.platform = platform;
-    if (provider) match.provider = normalizeProvider(provider);
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const [logs, total] = await Promise.all([
-      db.collection("openai_usage_logs")
-        .find(match)
-        .sort({ timestamp: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .toArray(),
-      db.collection("openai_usage_logs").countDocuments(match),
-    ]);
-
-    res.json({
-      success: true,
-      logs: logs.map(l => ({
-        id: l._id.toString(),
-        apiKeyId: l.apiKeyId?.toString(),
-        botId: l.botId,
-        platform: l.platform,
-        provider: normalizeProvider(l.provider),
-        model: l.model,
-        promptTokens: l.promptTokens,
-        completionTokens: l.completionTokens,
-        totalTokens: l.totalTokens,
-        estimatedCostUSD: l.estimatedCost ?? null,
-        functionName: l.functionName,
-        timestamp: l.timestamp,
-      })),
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit)),
-      },
-    });
+    return sendPostgresRequired(res, "OpenAI usage analytics");
   } catch (err) {
     console.error("[OpenAI Usage] Error getting logs:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -35071,7 +33295,7 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
       endDate,
     );
 
-    if (!isMongoRuntimeEnabled() && isPostgresConfigured()) {
+    if (isPostgresConfigured()) {
       const { whereSql, params } = buildPostgresUsageFilter({
         startDate: startMoment.toDate(),
         endDate: endMoment.toDate(),
@@ -35224,142 +33448,7 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
       });
     }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const match = {
-      botId,
-      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
-    };
-
-    // Get usage breakdown by model
-    const byModel = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: { model: "$model", provider: "$provider" },
-          count: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          promptTokens: { $sum: "$promptTokens" },
-          completionTokens: { $sum: "$completionTokens" },
-          estimatedCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      },
-      { $sort: { count: -1 } }
-    ]).toArray();
-
-    // Get usage breakdown by API key
-    const byKey = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: "$apiKeyId",
-          count: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          estimatedCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      },
-      { $sort: { count: -1 } }
-    ]).toArray();
-
-    // Get daily trend
-    const byDay = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: "$timestamp",
-              timezone: BANGKOK_TZ,
-            },
-          },
-          count: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          estimatedCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      },
-      { $sort: { _id: -1 } },
-      { $limit: 30 }
-    ]).toArray();
-
-    // Get recent logs
-    const recentLogs = await db.collection("openai_usage_logs")
-      .find(match)
-      .sort({ timestamp: -1 })
-      .limit(20)
-      .toArray();
-
-    // Get totals
-    const totals = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: null,
-          totalCalls: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          totalCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      }
-    ]).toArray();
-
-    // Get API key names
-    const keyIds = byKey.map(k => k._id).filter(id => id);
-    const keyDocs = keyIds.length > 0 ? await db.collection("openai_api_keys")
-      .find({ _id: { $in: keyIds.map(id => new ObjectId(id)) } })
-      .toArray() : [];
-    const keyMap = Object.fromEntries(
-      keyDocs.map(k => [
-        k._id.toString(),
-        { name: k.name, provider: normalizeProvider(k.provider) },
-      ]),
-    );
-
-    res.json({
-      success: true,
-      botId,
-      totals: totals[0] || { totalCalls: 0, totalTokens: 0, totalCost: 0, pricedCalls: 0 },
-      byModel: byModel.map(m => ({
-        ...m,
-        model: m._id?.model || "unknown",
-        provider: normalizeProvider(m._id?.provider),
-      })),
-      byKey: byKey.map(k => ({
-        ...k,
-        keyId: k._id?.toString(),
-        keyName: keyMap[k._id?.toString()]?.name || "Env Variable",
-        provider: keyMap[k._id?.toString()]?.provider || LLM_PROVIDER_OPENAI,
-      })),
-      byDay: byDay.map(d => ({ date: d._id, ...d })),
-      recentLogs: recentLogs.map(l => ({
-        id: l._id.toString(),
-        model: l.model,
-        provider: normalizeProvider(l.provider),
-        totalTokens: l.totalTokens,
-        estimatedCost: l.estimatedCost ?? null,
-        timestamp: l.timestamp,
-        functionName: l.functionName
-      }))
-    });
+    return sendPostgresRequired(res, "OpenAI usage analytics");
   } catch (err) {
     console.error("[OpenAI Usage] Error getting bot drill-down:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -35371,115 +33460,115 @@ app.get("/api/openai-usage/by-model/:model", async (req, res) => {
   try {
     const { model } = req.params;
     const { startDate, endDate } = req.query;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
       endDate,
     );
-    const match = {
-      model,
-      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
-    };
 
-    // Get usage breakdown by bot
-    const byBot = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: { botId: "$botId", platform: "$platform" },
-          count: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          estimatedCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      },
-      { $sort: { count: -1 } }
-    ]).toArray();
+    if (isPostgresConfigured()) {
+      const normalizedModel = typeof model === "string" ? model.trim() : "";
+      const baseFilter = buildPostgresUsageFilter({
+        startDate: startMoment.toDate(),
+        endDate: endMoment.toDate(),
+      });
+      const params = [...baseFilter.params, normalizedModel];
+      const modelWhereSql = baseFilter.whereSql
+        ? `${baseFilter.whereSql} AND COALESCE(NULLIF(u.model, ''), 'unknown') = $${params.length}`
+        : `WHERE COALESCE(NULLIF(u.model, ''), 'unknown') = $${params.length}`;
 
-    // Get daily trend
-    const byDay = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: "$timestamp",
-              timezone: BANGKOK_TZ,
-            },
-          },
-          count: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          estimatedCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      },
-      { $sort: { _id: -1 } },
-      { $limit: 30 }
-    ]).toArray();
+      const byBotResult = await pgQuery(
+        `
+          SELECT
+            ${PG_USAGE_BOT_REF_SQL} AS bot_id,
+            u.platform,
+            MAX(
+              COALESCE(
+                NULLIF(b.name, ''),
+                NULLIF(b.config->>'name', ''),
+                NULLIF(b.config->>'pageName', ''),
+                NULLIF(b.config->>'displayName', ''),
+                ${PG_USAGE_BOT_REF_SQL},
+                'Unknown'
+              )
+            ) AS bot_name,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS estimated_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${modelWhereSql}
+          GROUP BY ${PG_USAGE_BOT_REF_SQL}, u.platform
+          ORDER BY count DESC, estimated_cost DESC
+        `,
+        params,
+      );
 
-    // Get totals
-    const totals = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: null,
-          totalCalls: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          totalCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      }
-    ]).toArray();
+      const byDayResult = await pgQuery(
+        `
+          SELECT
+            TO_CHAR((u.created_at AT TIME ZONE '${BANGKOK_TZ}'), 'YYYY-MM-DD') AS day_key,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS estimated_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${modelWhereSql}
+          GROUP BY day_key
+          ORDER BY day_key DESC
+          LIMIT 30
+        `,
+        params,
+      );
 
-    // Enrich bot names
-    const botIds = byBot.map(b => b._id.botId).filter(id => id);
-    const validBotObjectIds = botIds
-      .filter(id => ObjectId.isValid(id))
-      .map(id => new ObjectId(id));
-    const [lineBots, fbBots, instagramBots, whatsappBots] = await Promise.all([
-      db.collection("line_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
-      db.collection("facebook_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
-      db.collection("instagram_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
-      db.collection("whatsapp_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
-    ]);
-    const botMap = Object.fromEntries(
-      [...lineBots, ...fbBots, ...instagramBots, ...whatsappBots].map((b) => [
-        b._id.toString(),
-        b.name || b.pageName || b.phoneNumber || b.instagramUsername || b._id.toString(),
-      ]),
-    );
+      const totalsResult = await pgQuery(
+        `
+          SELECT
+            COUNT(*)::int AS total_calls,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS total_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${modelWhereSql}
+        `,
+        params,
+      );
 
-    res.json({
-      success: true,
-      model,
-      totals: totals[0] || { totalCalls: 0, totalTokens: 0, totalCost: 0, pricedCalls: 0 },
-      byBot: byBot.map(b => ({
-        botId: b._id.botId,
-        botName: botMap[b._id.botId] || b._id.botId || 'Unknown',
-        platform: b._id.platform,
-        count: b.count,
-        totalTokens: b.totalTokens,
-        estimatedCost: b.estimatedCost,
-        pricedCalls: b.pricedCalls || 0,
-      })),
-      byDay: byDay.map(d => ({ date: d._id, ...d }))
-    });
+      const totals = totalsResult.rows[0] || {};
+      return res.json({
+        success: true,
+        model: normalizedModel,
+        totals: {
+          totalCalls: Number(totals.total_calls || 0),
+          totalTokens: Number(totals.total_tokens || 0),
+          totalCost: Number(totals.total_cost || 0),
+          pricedCalls: Number(totals.priced_calls || 0),
+        },
+        byBot: byBotResult.rows.map((row) => ({
+          botId: row.bot_id || null,
+          botName: row.bot_name || row.bot_id || "Unknown",
+          platform: row.platform || null,
+          count: Number(row.count || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCost: Number(row.estimated_cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        byDay: byDayResult.rows.map((row) => ({
+          date: row.day_key,
+          count: Number(row.count || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCost: Number(row.estimated_cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+      });
+    }
+
+    return sendPostgresRequired(res, "OpenAI usage analytics");
   } catch (err) {
     console.error("[OpenAI Usage] Error getting model drill-down:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -35491,153 +33580,153 @@ app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
   try {
     const { keyId } = req.params;
     const { startDate, endDate } = req.query;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
       endDate,
     );
-    const match = {
-      timestamp: { $gte: startMoment.toDate(), $lte: endMoment.toDate() },
-    };
-    if (keyId === "env") {
-      match.apiKeyId = null;
-    } else if (ObjectId.isValid(keyId)) {
-      match.apiKeyId = new ObjectId(keyId);
-    }
 
-    // Get usage breakdown by bot
-    const byBot = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: { botId: "$botId", platform: "$platform" },
-          count: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          estimatedCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      },
-      { $sort: { count: -1 } }
-    ]).toArray();
+    if (isPostgresConfigured()) {
+      const normalizedKeyId = typeof keyId === "string" ? keyId.trim() : "";
+      const { whereSql, params } = buildPostgresUsageFilter({
+        startDate: startMoment.toDate(),
+        endDate: endMoment.toDate(),
+        keyId: normalizedKeyId,
+      });
 
-    // Get usage breakdown by model
-    const byModel = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: "$model",
-          count: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          estimatedCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      },
-      { $sort: { count: -1 } }
-    ]).toArray();
+      const byBotResult = await pgQuery(
+        `
+          SELECT
+            ${PG_USAGE_BOT_REF_SQL} AS bot_id,
+            u.platform,
+            MAX(
+              COALESCE(
+                NULLIF(b.name, ''),
+                NULLIF(b.config->>'name', ''),
+                NULLIF(b.config->>'pageName', ''),
+                NULLIF(b.config->>'displayName', ''),
+                ${PG_USAGE_BOT_REF_SQL},
+                'Unknown'
+              )
+            ) AS bot_name,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS estimated_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY ${PG_USAGE_BOT_REF_SQL}, u.platform
+          ORDER BY count DESC, estimated_cost DESC
+        `,
+        params,
+      );
 
-    // Get daily trend
-    const byDay = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: "$timestamp",
-              timezone: BANGKOK_TZ,
-            },
-          },
-          count: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          estimatedCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
-        }
-      },
-      { $sort: { _id: -1 } },
-      { $limit: 30 }
-    ]).toArray();
+      const byModelResult = await pgQuery(
+        `
+          SELECT
+            COALESCE(NULLIF(u.model, ''), 'unknown') AS model,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS estimated_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY model
+          ORDER BY count DESC, estimated_cost DESC
+        `,
+        params,
+      );
 
-    // Get totals
-    const totals = await db.collection("openai_usage_logs").aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: null,
-          totalCalls: { $sum: 1 },
-          totalTokens: { $sum: "$totalTokens" },
-          totalCost: { $sum: { $ifNull: ["$estimatedCost", 0] } },
-          pricedCalls: {
-            $sum: {
-              $cond: [{ $ne: ["$estimatedCost", null] }, 1, 0],
-            },
-          },
+      const byDayResult = await pgQuery(
+        `
+          SELECT
+            TO_CHAR((u.created_at AT TIME ZONE '${BANGKOK_TZ}'), 'YYYY-MM-DD') AS day_key,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS estimated_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+          GROUP BY day_key
+          ORDER BY day_key DESC
+          LIMIT 30
+        `,
+        params,
+      );
+
+      const totalsResult = await pgQuery(
+        `
+          SELECT
+            COUNT(*)::int AS total_calls,
+            COALESCE(SUM(COALESCE(u.total_tokens, 0)), 0)::bigint AS total_tokens,
+            COALESCE(SUM(COALESCE(${PG_USAGE_COST_SQL}, 0)), 0)::numeric AS total_cost,
+            COALESCE(SUM(CASE WHEN ${PG_USAGE_COST_SQL} IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS priced_calls
+          FROM usage_logs u
+          LEFT JOIN bots b ON b.id = u.bot_id
+          LEFT JOIN api_keys ak ON ak.id = u.api_key_id
+          ${whereSql}
+        `,
+        params,
+      );
+
+      let keyInfo = {
+        name: "Environment Variable",
+        provider: LLM_PROVIDER_OPENAI,
+      };
+      if (normalizedKeyId && normalizedKeyId !== "env") {
+        const keyDoc = await readPostgresApiKeyByRef(normalizedKeyId);
+        if (keyDoc) {
+          keyInfo = {
+            name: keyDoc.name || "API Key",
+            maskedKey: keyDoc.maskedKey || "",
+            provider: normalizeProvider(keyDoc.provider),
+          };
         }
       }
-    ]).toArray();
 
-    // Get key info
-    let keyInfo = { name: 'Environment Variable', provider: LLM_PROVIDER_OPENAI };
-    if (keyId !== 'env' && ObjectId.isValid(keyId)) {
-      const keyDoc = await db.collection("openai_api_keys").findOne({ _id: new ObjectId(keyId) });
-      if (keyDoc) {
-        keyInfo = {
-          name: keyDoc.name,
-          maskedKey: maskApiKey(keyDoc.apiKey),
-          provider: normalizeProvider(keyDoc.provider),
-        };
-      }
+      const totals = totalsResult.rows[0] || {};
+      return res.json({
+        success: true,
+        keyId: normalizedKeyId,
+        keyInfo,
+        totals: {
+          totalCalls: Number(totals.total_calls || 0),
+          totalTokens: Number(totals.total_tokens || 0),
+          totalCost: Number(totals.total_cost || 0),
+          pricedCalls: Number(totals.priced_calls || 0),
+        },
+        byBot: byBotResult.rows.map((row) => ({
+          botId: row.bot_id || null,
+          botName: row.bot_name || row.bot_id || "Unknown",
+          platform: row.platform || null,
+          count: Number(row.count || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCost: Number(row.estimated_cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        byModel: byModelResult.rows.map((row) => ({
+          model: row.model || "unknown",
+          count: Number(row.count || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCost: Number(row.estimated_cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+        byDay: byDayResult.rows.map((row) => ({
+          date: row.day_key,
+          count: Number(row.count || 0),
+          totalTokens: Number(row.total_tokens || 0),
+          estimatedCost: Number(row.estimated_cost || 0),
+          pricedCalls: Number(row.priced_calls || 0),
+        })),
+      });
     }
 
-    // Enrich bot names
-    const botIds = byBot.map(b => b._id.botId).filter(id => id);
-    const validBotObjectIds = botIds
-      .filter(id => ObjectId.isValid(id))
-      .map(id => new ObjectId(id));
-    const [lineBots, fbBots, instagramBots, whatsappBots] = await Promise.all([
-      db.collection("line_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
-      db.collection("facebook_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
-      db.collection("instagram_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
-      db.collection("whatsapp_bots").find({ _id: { $in: validBotObjectIds } }).toArray(),
-    ]);
-    const botMap = Object.fromEntries(
-      [...lineBots, ...fbBots, ...instagramBots, ...whatsappBots].map((b) => [
-        b._id.toString(),
-        b.name || b.pageName || b.phoneNumber || b.instagramUsername || b._id.toString(),
-      ]),
-    );
-
-    res.json({
-      success: true,
-      keyId,
-      keyInfo,
-      totals: totals[0] || { totalCalls: 0, totalTokens: 0, totalCost: 0, pricedCalls: 0 },
-      byBot: byBot.map(b => ({
-        botId: b._id.botId,
-        botName: botMap[b._id.botId] || b._id.botId || 'Unknown',
-        platform: b._id.platform,
-        count: b.count,
-        totalTokens: b.totalTokens,
-        estimatedCost: b.estimatedCost,
-        pricedCalls: b.pricedCalls || 0,
-      })),
-      byModel: byModel.map(m => ({ model: m._id || 'unknown', ...m })),
-      byDay: byDay.map(d => ({ date: d._id, ...d }))
-    });
+    return sendPostgresRequired(res, "OpenAI usage analytics");
   } catch (err) {
     console.error("[OpenAI Usage] Error getting key drill-down:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -35664,8 +33753,6 @@ app.get("/admin/orders/data", async (req, res) => {
     }
 
     const orderRepo = getOrderRepository();
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const confirmedStatuses = ["confirmed", "shipped", "completed"];
 
     const [orders, totalCount, statusAgg, totalsAgg] = await Promise.all([
@@ -35715,90 +33802,7 @@ app.get("/admin/orders/data", async (req, res) => {
       }
     });
 
-    let lineBotDocs = [];
-    let facebookBotDocs = [];
-    let instagramBotDocs = [];
-    let whatsappBotDocs = [];
-
-    const lineBotIds = [...botIdSets.line].filter((id) => ObjectId.isValid(id));
-    if (lineBotIds.length) {
-      lineBotDocs = await db
-        .collection("line_bots")
-        .find({ _id: { $in: lineBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, displayName: 1, botName: 1 })
-        .toArray();
-    }
-
-    const facebookBotIds = [...botIdSets.facebook].filter((id) =>
-      ObjectId.isValid(id),
-    );
-    if (facebookBotIds.length) {
-      facebookBotDocs = await db
-        .collection("facebook_bots")
-        .find({ _id: { $in: facebookBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, pageName: 1 })
-        .toArray();
-    }
-
-    const instagramBotIds = [...botIdSets.instagram].filter((id) =>
-      ObjectId.isValid(id),
-    );
-    if (instagramBotIds.length) {
-      instagramBotDocs = await db
-        .collection("instagram_bots")
-        .find({ _id: { $in: instagramBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, instagramUsername: 1, instagramUserId: 1, igUserId: 1 })
-        .toArray();
-    }
-
-    const whatsappBotIds = [...botIdSets.whatsapp].filter((id) =>
-      ObjectId.isValid(id),
-    );
-    if (whatsappBotIds.length) {
-      whatsappBotDocs = await db
-        .collection("whatsapp_bots")
-        .find({ _id: { $in: whatsappBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, phoneNumber: 1, phoneNumberId: 1 })
-        .toArray();
-    }
-
-    const pageNameMap = new Map();
-    lineBotDocs.forEach((bot) => {
-      const key = buildOrderPageKey("line", bot._id.toString());
-      const label =
-        bot.displayName ||
-        bot.name ||
-        bot.botName ||
-        `LINE Bot (${bot._id.toString().slice(-4)})`;
-      pageNameMap.set(key, label);
-    });
-    facebookBotDocs.forEach((bot) => {
-      const key = buildOrderPageKey("facebook", bot._id.toString());
-      const label =
-        bot.pageName ||
-        bot.name ||
-        `Facebook Page (${bot._id.toString().slice(-4)})`;
-      pageNameMap.set(key, label);
-    });
-    instagramBotDocs.forEach((bot) => {
-      const key = buildOrderPageKey("instagram", bot._id.toString());
-      const label =
-        bot.name ||
-        bot.instagramUsername ||
-        bot.instagramUserId ||
-        bot.igUserId ||
-        `Instagram (${bot._id.toString().slice(-4)})`;
-      pageNameMap.set(key, label);
-    });
-    whatsappBotDocs.forEach((bot) => {
-      const key = buildOrderPageKey("whatsapp", bot._id.toString());
-      const label =
-        bot.name ||
-        bot.phoneNumber ||
-        bot.phoneNumberId ||
-        `WhatsApp (${bot._id.toString().slice(-4)})`;
-      pageNameMap.set(key, label);
-    });
+    const pageNameMap = await loadOrderPageNameMap(botIdSets);
 
     const parseNumeric = (value) => {
       const numeric = Number(value);
@@ -35911,8 +33915,6 @@ app.get("/admin/orders/export", async (req, res) => {
   try {
     const { query } = buildOrderQuery(req.query || {});
     const orderRepo = getOrderRepository();
-    const client = await connectDB();
-    const db = client.db("chatbot");
 
     const orders = await orderRepo.list(query, {
       sort: { extractedAt: -1 },
@@ -35959,90 +33961,7 @@ app.get("/admin/orders/export", async (req, res) => {
       }
     });
 
-    let lineBotDocs = [];
-    let facebookBotDocs = [];
-    let instagramBotDocs = [];
-    let whatsappBotDocs = [];
-
-    const lineBotIds = [...botIdSets.line].filter((id) => ObjectId.isValid(id));
-    if (lineBotIds.length) {
-      lineBotDocs = await db
-        .collection("line_bots")
-        .find({ _id: { $in: lineBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, displayName: 1, botName: 1 })
-        .toArray();
-    }
-
-    const facebookBotIds = [...botIdSets.facebook].filter((id) =>
-      ObjectId.isValid(id),
-    );
-    if (facebookBotIds.length) {
-      facebookBotDocs = await db
-        .collection("facebook_bots")
-        .find({ _id: { $in: facebookBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, pageName: 1 })
-        .toArray();
-    }
-
-    const instagramBotIds = [...botIdSets.instagram].filter((id) =>
-      ObjectId.isValid(id),
-    );
-    if (instagramBotIds.length) {
-      instagramBotDocs = await db
-        .collection("instagram_bots")
-        .find({ _id: { $in: instagramBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, instagramUsername: 1, instagramUserId: 1, igUserId: 1 })
-        .toArray();
-    }
-
-    const whatsappBotIds = [...botIdSets.whatsapp].filter((id) =>
-      ObjectId.isValid(id),
-    );
-    if (whatsappBotIds.length) {
-      whatsappBotDocs = await db
-        .collection("whatsapp_bots")
-        .find({ _id: { $in: whatsappBotIds.map((id) => new ObjectId(id)) } })
-        .project({ name: 1, phoneNumber: 1, phoneNumberId: 1 })
-        .toArray();
-    }
-
-    const pageNameMap = new Map();
-    lineBotDocs.forEach((bot) => {
-      const key = buildOrderPageKey("line", bot._id.toString());
-      const label =
-        bot.displayName ||
-        bot.name ||
-        bot.botName ||
-        `LINE Bot (${bot._id.toString().slice(-4)})`;
-      pageNameMap.set(key, label);
-    });
-    facebookBotDocs.forEach((bot) => {
-      const key = buildOrderPageKey("facebook", bot._id.toString());
-      const label =
-        bot.pageName ||
-        bot.name ||
-        `Facebook Page (${bot._id.toString().slice(-4)})`;
-      pageNameMap.set(key, label);
-    });
-    instagramBotDocs.forEach((bot) => {
-      const key = buildOrderPageKey("instagram", bot._id.toString());
-      const label =
-        bot.name ||
-        bot.instagramUsername ||
-        bot.instagramUserId ||
-        bot.igUserId ||
-        `Instagram (${bot._id.toString().slice(-4)})`;
-      pageNameMap.set(key, label);
-    });
-    whatsappBotDocs.forEach((bot) => {
-      const key = buildOrderPageKey("whatsapp", bot._id.toString());
-      const label =
-        bot.name ||
-        bot.phoneNumber ||
-        bot.phoneNumberId ||
-        `WhatsApp (${bot._id.toString().slice(-4)})`;
-      pageNameMap.set(key, label);
-    });
+    const pageNameMap = await loadOrderPageNameMap(botIdSets);
 
     const supportedFormats = new Set(["myorder", "kex"]);
     const requestFormat =
@@ -36702,7 +34621,9 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
       return res.status(400).json({ success: false, error: "สามารถอัปเดตได้สูงสุด 100 รายการต่อครั้ง" });
     }
 
-    const validIds = orderIds.filter((id) => ObjectId.isValid(id));
+    const validIds = orderIds
+      .map((id) => (typeof id === "string" ? id.trim() : String(id || "").trim()))
+      .filter(Boolean);
     if (validIds.length === 0) {
       return res.status(400).json({ success: false, error: "ไม่พบรหัสออเดอร์ที่ถูกต้อง" });
     }
@@ -36739,7 +34660,7 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
 
     const validIds = orderIds
       .map((id) => (typeof id === "string" ? id.trim() : String(id || "").trim()))
-      .filter((id) => ObjectId.isValid(id));
+      .filter(Boolean);
 
     if (validIds.length === 0) {
       return res.status(400).json({ success: false, error: "ไม่พบรหัสออเดอร์ที่ถูกต้อง" });
@@ -36809,7 +34730,7 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
       });
     }
 
-    if (!ObjectId.isValid(orderId)) {
+    if (!orderId || typeof orderId !== "string" || !orderId.trim()) {
       return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
     }
 
@@ -36869,7 +34790,7 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
     const { orderId } = req.params;
     const { notes } = req.body || {};
 
-    if (!ObjectId.isValid(orderId)) {
+    if (!orderId || typeof orderId !== "string" || !orderId.trim()) {
       return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
     }
 
@@ -36896,7 +34817,7 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
   try {
     const { orderId } = req.params;
 
-    if (!ObjectId.isValid(orderId)) {
+    if (!orderId || typeof orderId !== "string" || !orderId.trim()) {
       return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
     }
 
@@ -37069,7 +34990,7 @@ app.get("/admin/orders/:orderId/print-label", async (req, res) => {
   try {
     const { orderId } = req.params;
 
-    if (!ObjectId.isValid(orderId)) {
+    if (!orderId || typeof orderId !== "string" || !orderId.trim()) {
       return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
     }
 
@@ -37214,19 +35135,18 @@ io.on("connection", (socket) => {
 
 // Function to notify admins of new user messages
 async function notifyAdminsNewMessage(userId, message) {
-  if (!isMongoRuntimeEnabled()) {
-    return;
-  }
-  // อัปเดต unread count สำหรับผู้ใช้
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_unread_counts");
-
-    await coll.updateOne(
-      { userId: userId },
-      { $inc: { unreadCount: 1 } },
-      { upsert: true },
+    requirePostgresSupportState("user unread counts");
+    await ensurePostgresUserUnreadCountsTable();
+    await pgQuery(
+      `
+        INSERT INTO user_unread_counts (user_id, unread_count, updated_at)
+        VALUES ($1, 1, NOW())
+        ON CONFLICT (user_id) DO UPDATE SET
+          unread_count = COALESCE(user_unread_counts.unread_count, 0) + 1,
+          updated_at = NOW()
+      `,
+      [userId],
     );
   } catch (error) {
     console.error("ไม่สามารถอัปเดต unread count ได้:", error);
@@ -37235,16 +35155,19 @@ async function notifyAdminsNewMessage(userId, message) {
 
 // ฟังก์ชันสำหรับดึง unread count ของผู้ใช้
 async function getUserUnreadCount(userId) {
-  if (!isMongoRuntimeEnabled()) {
-    return 0;
-  }
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_unread_counts");
-
-    const doc = await coll.findOne({ userId: userId });
-    return doc ? doc.unreadCount : 0;
+    requirePostgresSupportState("user unread counts");
+    await ensurePostgresUserUnreadCountsTable();
+    const result = await pgQuery(
+      `
+        SELECT unread_count
+        FROM user_unread_counts
+        WHERE user_id = $1
+        LIMIT 1
+      `,
+      [userId],
+    );
+    return Number(result.rows[0]?.unread_count || 0);
   } catch (error) {
     console.error("ไม่สามารถดึง unread count ได้:", error);
     return 0;
@@ -37253,18 +35176,18 @@ async function getUserUnreadCount(userId) {
 
 // ฟังก์ชันสำหรับรีเซ็ต unread count ของผู้ใช้
 async function resetUserUnreadCount(userId) {
-  if (!isMongoRuntimeEnabled()) {
-    return;
-  }
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_unread_counts");
-
-    await coll.updateOne(
-      { userId: userId },
-      { $set: { unreadCount: 0 } },
-      { upsert: true },
+    requirePostgresSupportState("user unread counts");
+    await ensurePostgresUserUnreadCountsTable();
+    await pgQuery(
+      `
+        INSERT INTO user_unread_counts (user_id, unread_count, updated_at)
+        VALUES ($1, 0, NOW())
+        ON CONFLICT (user_id) DO UPDATE SET
+          unread_count = 0,
+          updated_at = NOW()
+      `,
+      [userId],
     );
   } catch (error) {
     console.error("ไม่สามารถรีเซ็ต unread count ได้:", error);
@@ -38415,91 +36338,38 @@ async function getNormalizedChatUsers(options = {}) {
     });
 
     const [lineBotDocs, facebookBotDocs, instagramBotDocs, whatsappBotDocs] =
-      await Promise.all(
-        mongoDb
-          ? (() => {
-            const lineBotObjectIds = [...botIdsByPlatform.line]
-              .filter((id) => ObjectId.isValid(id))
-              .map((id) => new ObjectId(id));
-            const facebookBotObjectIds = [...botIdsByPlatform.facebook]
-              .filter((id) => ObjectId.isValid(id))
-              .map((id) => new ObjectId(id));
-            const instagramBotObjectIds = [...botIdsByPlatform.instagram]
-              .filter((id) => ObjectId.isValid(id))
-              .map((id) => new ObjectId(id));
-            const whatsappBotObjectIds = [...botIdsByPlatform.whatsapp]
-              .filter((id) => ObjectId.isValid(id))
-              .map((id) => new ObjectId(id));
-            return [
-              lineBotObjectIds.length > 0
-                ? mongoDb
-                  .collection("line_bots")
-                  .find({ _id: { $in: lineBotObjectIds } })
-                  .project({ _id: 1, name: 1, displayName: 1, botName: 1 })
-                  .toArray()
-                : [],
-              facebookBotObjectIds.length > 0
-                ? mongoDb
-                  .collection("facebook_bots")
-                  .find({ _id: { $in: facebookBotObjectIds } })
-                  .project({ _id: 1, name: 1, pageName: 1, pageId: 1 })
-                  .toArray()
-                : [],
-              instagramBotObjectIds.length > 0
-                ? mongoDb
-                  .collection("instagram_bots")
-                  .find({ _id: { $in: instagramBotObjectIds } })
-                  .project({
-                    _id: 1,
-                    name: 1,
-                    instagramUsername: 1,
-                    instagramUserId: 1,
-                    igUserId: 1,
-                  })
-                  .toArray()
-                : [],
-              whatsappBotObjectIds.length > 0
-                ? mongoDb
-                  .collection("whatsapp_bots")
-                  .find({ _id: { $in: whatsappBotObjectIds } })
-                  .project({ _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 })
-                  .toArray()
-                : [],
-            ];
-          })()
-          : [
-            botIdsByPlatform.line.size > 0
-              ? botRepo.list("line", {
-                filter: { _id: { $in: [...botIdsByPlatform.line] } },
-                projection: { _id: 1, name: 1, displayName: 1, botName: 1 },
-              })
-              : [],
-            botIdsByPlatform.facebook.size > 0
-              ? botRepo.list("facebook", {
-                filter: { _id: { $in: [...botIdsByPlatform.facebook] } },
-                projection: { _id: 1, name: 1, pageName: 1, pageId: 1 },
-              })
-              : [],
-            botIdsByPlatform.instagram.size > 0
-              ? botRepo.list("instagram", {
-                filter: { _id: { $in: [...botIdsByPlatform.instagram] } },
-                projection: {
-                  _id: 1,
-                  name: 1,
-                  instagramUsername: 1,
-                  instagramUserId: 1,
-                  igUserId: 1,
-                },
-              })
-              : [],
-            botIdsByPlatform.whatsapp.size > 0
-              ? botRepo.list("whatsapp", {
-                filter: { _id: { $in: [...botIdsByPlatform.whatsapp] } },
-                projection: { _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 },
-              })
-              : [],
-          ],
-      );
+      await Promise.all([
+        botIdsByPlatform.line.size > 0
+          ? botRepo.list("line", {
+            filter: { _id: { $in: [...botIdsByPlatform.line] } },
+            projection: { _id: 1, name: 1, displayName: 1, botName: 1 },
+          })
+          : [],
+        botIdsByPlatform.facebook.size > 0
+          ? botRepo.list("facebook", {
+            filter: { _id: { $in: [...botIdsByPlatform.facebook] } },
+            projection: { _id: 1, name: 1, pageName: 1, pageId: 1 },
+          })
+          : [],
+        botIdsByPlatform.instagram.size > 0
+          ? botRepo.list("instagram", {
+            filter: { _id: { $in: [...botIdsByPlatform.instagram] } },
+            projection: {
+              _id: 1,
+              name: 1,
+              instagramUsername: 1,
+              instagramUserId: 1,
+              igUserId: 1,
+            },
+          })
+          : [],
+        botIdsByPlatform.whatsapp.size > 0
+          ? botRepo.list("whatsapp", {
+            filter: { _id: { $in: [...botIdsByPlatform.whatsapp] } },
+            projection: { _id: 1, name: 1, phoneNumber: 1, phoneNumberId: 1 },
+          })
+          : [],
+      ]);
 
     const botNameMap = {
       line: new Map(),
@@ -38903,7 +36773,6 @@ module.exports = {
   initializeMongoRuntime,
   processFlushedMessages,
   processDueFollowUpTasks,
-  runAgentForgeScheduledTick,
   server,
   startLegacyBackgroundJobs,
   NOTIFICATION_SUMMARY_INTERVAL_MS,

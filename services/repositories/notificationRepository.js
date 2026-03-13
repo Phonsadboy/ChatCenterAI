@@ -1,8 +1,8 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
-const { ObjectId } = require("mongodb");
 const {
   applyProjection,
   buildMongoIdQuery,
+  generateLegacyObjectIdString,
   safeStringify,
   toLegacyId,
   warnPrimaryReadFailure,
@@ -637,7 +637,7 @@ function createNotificationRepository({
   async function insertChannel(doc = {}) {
     const payload = {
       ...doc,
-      _id: toLegacyId(doc?._id) || new ObjectId().toString(),
+      _id: toLegacyId(doc?._id) || generateLegacyObjectIdString(),
       createdAt: doc.createdAt || new Date(),
       updatedAt: doc.updatedAt || doc.createdAt || new Date(),
     };
@@ -759,7 +759,7 @@ function createNotificationRepository({
   async function insertLog(payload = {}) {
     const now = payload.createdAt || new Date();
     const doc = {
-      _id: toLegacyId(payload._id) || new ObjectId().toString(),
+      _id: toLegacyId(payload._id) || generateLegacyObjectIdString(),
       channelId: payload.channelId || null,
       orderId: payload.orderId || null,
       eventType: payload.eventType || null,

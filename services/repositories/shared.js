@@ -1,4 +1,4 @@
-const { ObjectId } = require("mongodb");
+const crypto = require("crypto");
 
 const BOT_COLLECTION_BY_PLATFORM = {
   line: "line_bots",
@@ -21,22 +21,20 @@ function getBotCollectionName(platform, fallbackCollection = "line_bots") {
   return BOT_COLLECTION_BY_PLATFORM[normalized] || fallbackCollection;
 }
 
+function isMongoObjectIdLike(id) {
+  if (typeof id !== "string") return false;
+  return /^[0-9a-f]{24}$/i.test(id.trim());
+}
+
 function toObjectId(id) {
-  if (!id) return null;
-  if (id instanceof ObjectId) return id;
-  try {
-    return new ObjectId(id);
-  } catch (_) {
-    return null;
-  }
+  const legacyId = toLegacyId(id);
+  if (!legacyId || !isMongoObjectIdLike(legacyId)) return null;
+  return legacyId;
 }
 
 function buildMongoIdQuery(id) {
-  const objectId = toObjectId(id);
-  if (objectId) {
-    return { _id: objectId };
-  }
-  return { _id: id };
+  const legacyId = toLegacyId(id);
+  return { _id: toObjectId(legacyId) || legacyId || null };
 }
 
 function toLegacyId(value) {
@@ -46,6 +44,10 @@ function toLegacyId(value) {
     return value.toString().trim();
   }
   return String(value).trim();
+}
+
+function generateLegacyObjectIdString() {
+  return crypto.randomBytes(12).toString("hex");
 }
 
 function escapeRegex(value = "") {
@@ -152,7 +154,9 @@ module.exports = {
   applyProjection,
   buildMongoIdQuery,
   escapeRegex,
+  generateLegacyObjectIdString,
   getBotCollectionName,
+  isMongoObjectIdLike,
   normalizeJson,
   normalizePlatform,
   safeStringify,

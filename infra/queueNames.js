@@ -15,7 +15,6 @@ const JOB_NAMES = {
   BROADCAST_SEND: "broadcast-send",
   STATS_ROLLUP: "stats-rollup",
   NOTIFICATION_SUMMARY_TICK: "notification-summary-tick",
-  AGENT_FORGE_TICK: "agent-forge-tick",
   MIGRATION_BATCH: "migration-batch",
 };
 

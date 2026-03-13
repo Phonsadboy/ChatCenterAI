@@ -1,154 +1,77 @@
-const { ObjectId } = require("mongodb");
+class MongoRuntimeDisabledError extends Error {
+  constructor(target = "MongoDB") {
+    super(
+      `MongoDB runtime is disabled, but code attempted to access ${target}. Migrate this path to PostgreSQL before cutover.`,
+    );
+    this.name = "MongoRuntimeDisabledError";
+    this.code = "MONGO_RUNTIME_DISABLED";
+  }
+}
 
-function createEmptyCursor() {
-  return {
-    sort() {
-      return this;
-    },
-    project() {
-      return this;
-    },
-    limit() {
-      return this;
-    },
-    skip() {
-      return this;
-    },
-    hint() {
-      return this;
-    },
-    allowDiskUse() {
-      return this;
-    },
-    async toArray() {
-      return [];
-    },
-    async next() {
-      return null;
-    },
-    async hasNext() {
-      return false;
-    },
-    async close() {},
-    [Symbol.asyncIterator]: async function* asyncIterator() {
-      return;
-    },
+function createThrower(target) {
+  return () => {
+    throw new MongoRuntimeDisabledError(target);
   };
 }
 
-function createNoopCollection() {
-  return {
-    find() {
-      return createEmptyCursor();
+function createMongoDisabledCollection(collectionName = "unknown_collection") {
+  const methodProxy = new Proxy(
+    {},
+    {
+      get(_, methodName) {
+        if (methodName === Symbol.toStringTag) {
+          return "MongoDisabledCollection";
+        }
+        return createThrower(
+          `MongoDB collection "${collectionName}" via ${String(methodName)}()`,
+        );
+      },
     },
-    aggregate() {
-      return createEmptyCursor();
+  );
+  return methodProxy;
+}
+
+function createMongoDisabledDb(dbName = "unknown_db") {
+  const dbProxy = new Proxy(
+    {},
+    {
+      get(_, propertyName) {
+        if (propertyName === "collection") {
+          return (collectionName) =>
+            createMongoDisabledCollection(collectionName || "unknown_collection");
+        }
+        if (propertyName === Symbol.toStringTag) {
+          return "MongoDisabledDb";
+        }
+        return createThrower(`MongoDB database "${dbName}" property ${String(propertyName)}`);
+      },
     },
-    async findOne() {
-      return null;
-    },
-    async countDocuments() {
-      return 0;
-    },
-    async distinct() {
-      return [];
-    },
-    async insertOne() {
-      return {
-        acknowledged: true,
-        insertedId: new ObjectId(),
-      };
-    },
-    async insertMany(docs = []) {
-      const insertedIds = {};
-      docs.forEach((_, index) => {
-        insertedIds[index] = new ObjectId();
-      });
-      return {
-        acknowledged: true,
-        insertedCount: Array.isArray(docs) ? docs.length : 0,
-        insertedIds,
-      };
-    },
-    async updateOne() {
-      return {
-        acknowledged: true,
-        matchedCount: 0,
-        modifiedCount: 0,
-        upsertedCount: 0,
-        upsertedId: null,
-      };
-    },
-    async updateMany() {
-      return {
-        acknowledged: true,
-        matchedCount: 0,
-        modifiedCount: 0,
-        upsertedCount: 0,
-        upsertedId: null,
-      };
-    },
-    async deleteOne() {
-      return {
-        acknowledged: true,
-        deletedCount: 0,
-      };
-    },
-    async deleteMany() {
-      return {
-        acknowledged: true,
-        deletedCount: 0,
-      };
-    },
-    async findOneAndUpdate() {
-      return {
-        ok: 1,
-        value: null,
-      };
-    },
-    async findOneAndDelete() {
-      return {
-        ok: 1,
-        value: null,
-      };
-    },
-    async createIndex() {
-      return "noop_index";
-    },
-    async createIndexes() {
-      return [];
-    },
-    async dropIndex() {
-      return undefined;
-    },
-    async bulkWrite() {
-      return {
-        acknowledged: true,
-        insertedCount: 0,
-        matchedCount: 0,
-        modifiedCount: 0,
-        deletedCount: 0,
-        upsertedCount: 0,
-      };
-    },
-    async rename() {
-      return this;
-    },
-  };
+  );
+  return dbProxy;
 }
 
 function createMongoDisabledClient() {
-  return {
-    db() {
-      return {
-        collection() {
-          return createNoopCollection();
-        },
-      };
+  return new Proxy(
+    {},
+    {
+      get(_, propertyName) {
+        if (propertyName === "db") {
+          return (dbName) => createMongoDisabledDb(dbName || "unknown_db");
+        }
+        if (propertyName === "collection") {
+          return (collectionName) =>
+            createMongoDisabledCollection(collectionName || "unknown_collection");
+        }
+        if (propertyName === Symbol.toStringTag) {
+          return "MongoDisabledClient";
+        }
+        return createThrower(`MongoDB client property ${String(propertyName)}`);
+      },
     },
-  };
+  );
 }
 
 module.exports = {
+  MongoRuntimeDisabledError,
   createMongoDisabledClient,
 };

@@ -4,7 +4,6 @@
  *************************************************/
 
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "XianTA1234";
@@ -18,7 +17,6 @@ const SHEET_ID = process.env.SHEET_ID || "1uaOCSFvqr2FSzs3C4tg-gJd7HZInsWvlOZtE3
 
 module.exports = {
   PORT,
-  MONGO_URI,
   PAGE_ACCESS_TOKEN,
   OPENAI_API_KEY,
   VERIFY_TOKEN,

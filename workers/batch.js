@@ -10,10 +10,7 @@ const {
   initializeMongoRuntime,
   NOTIFICATION_SUMMARY_INTERVAL_MS,
   processDueFollowUpTasks,
-  runAgentForgeScheduledTick,
 } = require("../index");
-
-const AGENT_FORGE_TICK_INTERVAL_MS = 60 * 1000;
 
 async function registerBatchSchedulers() {
   const followUpQueue = getQueue(QUEUE_NAMES.FOLLOWUP);
@@ -47,19 +44,6 @@ async function registerBatchSchedulers() {
     },
   );
 
-  await statsQueue.upsertJobScheduler(
-    "agent-forge-scheduler",
-    {
-      every: AGENT_FORGE_TICK_INTERVAL_MS,
-    },
-    {
-      name: JOB_NAMES.AGENT_FORGE_TICK,
-      data: {},
-      opts: {
-        jobId: JOB_NAMES.AGENT_FORGE_TICK,
-      },
-    },
-  );
 }
 
 async function startBatchWorkers() {
@@ -98,10 +82,6 @@ async function startBatchWorkers() {
     async (job) => {
       if (job.name === JOB_NAMES.NOTIFICATION_SUMMARY_TICK) {
         await evaluateNotificationSummarySchedules();
-        return { processed: true, job: job.name };
-      }
-      if (job.name === JOB_NAMES.AGENT_FORGE_TICK) {
-        await runAgentForgeScheduledTick();
         return { processed: true, job: job.name };
       }
       return { skipped: true, reason: "unknown_job" };

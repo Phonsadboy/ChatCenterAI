@@ -1,8 +1,8 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
-const { ObjectId } = require("mongodb");
 const { resolvePgBotId } = require("./postgresRefs");
 const {
   buildMongoIdQuery,
+  generateLegacyObjectIdString,
   normalizeJson,
   normalizePlatform,
   safeStringify,
@@ -119,23 +119,30 @@ function createFollowUpRepository({
       typeof doc?.platform === "string" && doc.platform.trim()
         ? normalizePlatform(doc.platform)
         : null;
+    const legacyBotId = toLegacyId(doc?.botId) || null;
     const pgBotId = await resolvePgBotId({ query }, platform, doc?.botId);
     await query(
       `
         INSERT INTO follow_up_status (
           platform,
           bot_id,
+          legacy_bot_id,
+          bot_scope,
           legacy_contact_id,
           status,
           updated_at
-        ) VALUES ($1,$2,$3,$4::jsonb,$5)
-        ON CONFLICT (platform, bot_id, legacy_contact_id) DO UPDATE SET
+        ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)
+        ON CONFLICT (platform, bot_scope, legacy_contact_id) DO UPDATE SET
           status = EXCLUDED.status,
+          bot_id = EXCLUDED.bot_id,
+          legacy_bot_id = EXCLUDED.legacy_bot_id,
           updated_at = EXCLUDED.updated_at
       `,
       [
         platform,
         pgBotId,
+        legacyBotId,
+        legacyBotId || "",
         toLegacyId(doc?.senderId),
         JSON.stringify(normalizeJson(doc, {})),
         doc?.lastAnalyzedAt || doc?.followUpUpdatedAt || doc?.updatedAt || new Date(),
@@ -410,9 +417,9 @@ function createFollowUpRepository({
 
     const normalizedBot = normalizeBotFilter(filter.botId, Boolean(filter.defaultBotOnly));
     if (normalizedBot.defaultBotOnly) {
-      conditions.push("s.bot_id IS NULL");
+      conditions.push("COALESCE(s.bot_scope, '') = ''");
     } else if (normalizedBot.botId) {
-      push("COALESCE(b.legacy_bot_id, '') =", normalizedBot.botId);
+      push("COALESCE(s.bot_scope, '') =", normalizedBot.botId);
     }
 
     if (typeof filter.hasFollowUp === "boolean") {
@@ -516,7 +523,7 @@ function createFollowUpRepository({
           s.legacy_contact_id,
           s.status,
           s.updated_at,
-          b.legacy_bot_id
+          COALESCE(s.legacy_bot_id, b.legacy_bot_id) AS legacy_bot_id
         FROM follow_up_status s
         LEFT JOIN bots b ON b.id = s.bot_id
         ${whereSql}
@@ -860,7 +867,7 @@ function createFollowUpRepository({
     if (!canUseMongo()) {
       const preparedDoc = {
         ...taskDoc,
-        _id: toLegacyId(taskDoc?._id) || new ObjectId().toString(),
+        _id: toLegacyId(taskDoc?._id) || generateLegacyObjectIdString(),
         createdAt: taskDoc?.createdAt || new Date(),
         updatedAt: taskDoc?.updatedAt || new Date(),
       };

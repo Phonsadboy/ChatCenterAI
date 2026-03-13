@@ -14,15 +14,9 @@
     "start:migration-runner": "node runtime/migration-runner.js",
     "dev": "nodemon runtime/admin-app.js",
     "build": "echo 'No build step required'",
-    "cleanup:legacy-facebook-comment": "node scripts/drop-legacy-facebook-comment.js",
     "migrate:pg": "node scripts/run-postgres-migrations.js",
-    "migrate:mongodb-to-pg": "node scripts/migrate-mongo-to-postgres.js",
-    "migrate:gridfs-to-bucket": "node scripts/migrate-gridfs-to-bucket.js",
     "migrate:all": "node runtime/migration-runner.js",
-    "migrate:thread-stats": "node scripts/backfill-thread-stats.js",
-    "ops:disable-followup": "node scripts/disable-followup-globally.js",
-    "verify:bucket-assets": "node scripts/verify-bucket-assets.js",
-    "verify:pg-parity": "node scripts/verify-postgres-parity.js"
+    "migrate:thread-stats": "node scripts/backfill-thread-stats.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1006.0",
@@ -32,7 +26,6 @@
     "bcryptjs": "^3.0.2",
     "body-parser": "^1.20.3",
     "bullmq": "^5.70.4",
-    "connect-mongo": "^5.1.0",
     "connect-redis": "^9.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
@@ -47,7 +40,6 @@
     "jspreadsheet-ce": "^5.0.4",
     "jsuites": "^5.13.4",
     "moment-timezone": "^0.5.43",
-    "mongodb": "^6.21.0",
     "multer": "^1.4.5-lts.1",
     "openai": "^4.0.0",
     "p-queue": "^8.0.1",

@@ -14,8 +14,6 @@ services:
       - CCAI_ENABLE_LEGACY_BACKGROUND_JOBS=false
       
       # Database
-      - MONGO_URI=${MONGO_URI}
-      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       
@@ -66,8 +64,6 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - CCAI_RUNTIME_MODE=public-ingest
-      - MONGO_URI=${MONGO_URI}
-      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -86,8 +82,6 @@ services:
     environment:
       - NODE_ENV=production
       - CCAI_RUNTIME_MODE=worker-realtime
-      - MONGO_URI=${MONGO_URI}
-      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -107,8 +101,6 @@ services:
       - NODE_ENV=production
       - CCAI_RUNTIME_MODE=worker-batch
       - CCAI_ENABLE_LEGACY_BACKGROUND_JOBS=true
-      - MONGO_URI=${MONGO_URI}
-      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -127,16 +119,9 @@ services:
     environment:
       - NODE_ENV=production
       - CCAI_RUNTIME_MODE=migration-runner
-      - MONGO_URI=${MONGO_URI}
-      - MONGO_DB_NAME=${MONGO_DB_NAME:-chatbot}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - CCAI_MIGRATION_RUN_SQL_MIGRATIONS=${CCAI_MIGRATION_RUN_SQL_MIGRATIONS:-true}
-      - CCAI_MIGRATION_RUN_MONGO_TO_PG=${CCAI_MIGRATION_RUN_MONGO_TO_PG:-true}
-      - CCAI_MIGRATION_RUN_GRIDFS_TO_BUCKET=${CCAI_MIGRATION_RUN_GRIDFS_TO_BUCKET:-true}
-      - CCAI_MIGRATION_VERIFY_PARITY=${CCAI_MIGRATION_VERIFY_PARITY:-false}
-      - CCAI_MIGRATION_VERIFY_BUCKET=${CCAI_MIGRATION_VERIFY_BUCKET:-false}
-      - CCAI_MIGRATION_FAIL_ON_VERIFY_MISMATCH=${CCAI_MIGRATION_FAIL_ON_VERIFY_MISMATCH:-true}
     command: npm run start:migration-runner
     depends_on:
       - postgres

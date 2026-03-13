@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Entry point `index.js` runs Express/Socket.IO, wires MongoDB, OpenAI, and LINE/Facebook, and renders admin UI via EJS under `views/`.
+- Entry point `index.js` runs Express/Socket.IO, wires PostgreSQL/Redis, OpenAI, and LINE/Facebook, and renders admin UI via EJS under `views/`.
 - Static assets live in `public/` (`css`, `js`, `assets/`); shared colors and variables in `public/css/theme.css`, base components in `public/css/components.css`, page-specific CSS can live alongside.
 - External integrations stay in `services/`; cross-cutting helpers in `utils/`; maintenance scripts (e.g., cleanups) in `scripts/`.
 - Design notes and theme specs sit in `docs/`.

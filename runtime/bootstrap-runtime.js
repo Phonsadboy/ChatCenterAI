@@ -5,10 +5,6 @@ const {
   isPostgresConfigured,
   runSqlMigrationsWithLock,
 } = require("../infra/postgres");
-const {
-  resolveMigrationPipelineOptions,
-  runDataMigrationPipeline,
-} = require("./migration-pipeline");
 
 const DEFAULT_DEPLOY_MIGRATION_LOCK_ID = 7482302;
 
@@ -138,6 +134,10 @@ async function ensureAutoDeployMigration(runtimeLabel, runtimeConfig) {
       return { skipped: true, reason: "already_completed", deployId };
     }
 
+    const {
+      resolveMigrationPipelineOptions,
+      runDataMigrationPipeline,
+    } = require("./migration-pipeline");
     const pipelineOptions = resolveMigrationPipelineOptions();
     console.log(
       `[${runtimeLabel}] Auto deploy migration started for deploy ${deployId}`,

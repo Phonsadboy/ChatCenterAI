@@ -8,6 +8,7 @@
 const axios = require("axios");
 const crypto = require("crypto");
 const pkg = require("../package.json");
+const { isPostgresConfigured, query } = require("../infra/postgres");
 
 // ── Configuration ──────────────────────────────────────────────────────
 const TELEMETRY_ENABLED = process.env.TELEMETRY_ENABLED !== "false";
@@ -25,15 +26,52 @@ const STARTUP_DELAY_MS = 30 * 1000;
 let intervalRef = null;
 
 // ── Instance ID ────────────────────────────────────────────────────────
-// สร้าง instance ID จาก MONGO_URI + PUBLIC_BASE_URL (hash ไม่เปิดเผยข้อมูลจริง)
+// สร้าง instance ID จาก DATABASE_URL + PUBLIC_BASE_URL (hash ไม่เปิดเผยข้อมูลจริง)
 function getInstanceId() {
     const seed =
-        (process.env.MONGO_URI || "") + "|" + (process.env.PUBLIC_BASE_URL || "");
+        (process.env.DATABASE_URL || process.env.POSTGRES_URL || "") + "|" + (process.env.PUBLIC_BASE_URL || "");
     return crypto.createHash("sha256").update(seed).digest("hex").slice(0, 12);
 }
 
 // ── Collect Stats ──────────────────────────────────────────────────────
 async function collectStats(db) {
+    if (isPostgresConfigured()) {
+        try {
+            const [lineBotCount, facebookBotCount, userCount, conversationCount24h] =
+                await Promise.all([
+                    query("SELECT COUNT(*)::int AS count FROM bots WHERE platform = 'line'"),
+                    query("SELECT COUNT(*)::int AS count FROM bots WHERE platform = 'facebook'"),
+                    query("SELECT COUNT(*)::int AS count FROM contacts"),
+                    query(
+                        `
+                          SELECT COUNT(*)::int AS count
+                          FROM messages
+                          WHERE role = 'user'
+                            AND created_at >= NOW() - INTERVAL '24 hours'
+                        `,
+                    ),
+                ]);
+
+            const lineBots = Number(lineBotCount.rows[0]?.count || 0);
+            const facebookBots = Number(facebookBotCount.rows[0]?.count || 0);
+            return {
+                lineBots,
+                facebookBots,
+                totalBots: lineBots + facebookBots,
+                users: Number(userCount.rows[0]?.count || 0),
+                conversations24h: Number(conversationCount24h.rows[0]?.count || 0),
+            };
+        } catch (err) {
+            return {
+                lineBots: "?",
+                facebookBots: "?",
+                totalBots: "?",
+                users: "?",
+                conversations24h: "?",
+            };
+        }
+    }
+
     try {
         const [
             lineBotCount,

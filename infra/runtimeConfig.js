@@ -57,18 +57,13 @@ function isMongoConnectionStringDisabled(value) {
 }
 
 function resolveMongoConnectionString() {
-  const raw =
-    process.env.MONGO_URI ||
-    process.env.MONGODB_URI ||
-    "";
-  return isMongoConnectionStringDisabled(raw) ? "" : String(raw).trim();
+  return "";
 }
 
 function getRuntimeConfig() {
   const runtimeMode = resolveRuntimeMode();
   const redisUrl = resolveRedisUrl();
   const postgresConnectionString = resolvePostgresConnectionString();
-  const mongoConnectionString = resolveMongoConnectionString();
   const runtimeId =
     process.env.CCAI_RUNTIME_ID ||
     process.env.RAILWAY_DEPLOYMENT_ID ||
@@ -78,14 +73,11 @@ function getRuntimeConfig() {
     runtimeMode,
     runtimeId,
     mongoDatabaseName: (process.env.MONGO_DB_NAME || "chatbot").trim() || "chatbot",
-    mongoConnectionString,
     redisUrl,
     postgresConnectionString,
     features: {
-      mongoEnabled: parseBoolean(
-        process.env.CCAI_MONGO_ENABLED,
-        Boolean(mongoConnectionString),
-      ),
+      // MongoDB runtime support has been removed from the application.
+      mongoEnabled: false,
       redisInfra: parseBoolean(
         process.env.CCAI_USE_REDIS_INFRA,
         Boolean(redisUrl),

@@ -1,5 +1,4 @@
 const { isPostgresConfigured, query } = require("../../infra/postgres");
-const { ObjectId } = require("mongodb");
 const {
   deletePostgresOrderByLegacyId,
   upsertPostgresOrderDocument,
@@ -7,6 +6,7 @@ const {
 const {
   applyProjection,
   buildMongoIdQuery,
+  generateLegacyObjectIdString,
   normalizePlatform,
   safeStringify,
   toLegacyId,
@@ -547,7 +547,7 @@ function createOrderRepository({
       }
       const prepared = {
         ...doc,
-        _id: toLegacyId(doc?._id) || new ObjectId().toString(),
+        _id: toLegacyId(doc?._id) || generateLegacyObjectIdString(),
         createdAt: doc?.createdAt || doc?.extractedAt || new Date(),
         updatedAt: doc?.updatedAt || new Date(),
       };

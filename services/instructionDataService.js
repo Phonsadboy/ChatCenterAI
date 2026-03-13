@@ -1,5 +1,4 @@
 const XLSX = require("xlsx");
-const { ObjectId } = require("mongodb");
 const fs = require("fs");
 const crypto = require("crypto");
 
@@ -49,7 +48,102 @@ function convertToColumnsRowsFormat(data) {
 class InstructionDataService {
     constructor(db) {
         this.db = db;
-        this.collection = db.collection("instructions_v2");
+        this.collection =
+            db && typeof db.collection === "function"
+                ? db.collection("instructions_v2")
+                : db;
+    }
+
+    _normalizeInstructionRef(value) {
+        if (value === null || typeof value === "undefined") return "";
+        if (typeof value === "string") return value.trim();
+        if (value && typeof value.toString === "function") {
+            return value.toString().trim();
+        }
+        return String(value).trim();
+    }
+
+    async _loadAllInstructions() {
+        if (!this.collection || typeof this.collection.find !== "function") {
+            return [];
+        }
+        const cursor = this.collection.find({});
+        if (cursor && typeof cursor.toArray === "function") {
+            return cursor.toArray();
+        }
+        return [];
+    }
+
+    async _findInstructionByRef(targetRef) {
+        const normalizedRef = this._normalizeInstructionRef(targetRef);
+        if (!normalizedRef) return null;
+
+        if (this.collection && typeof this.collection.findOne === "function") {
+            try {
+                const byInstructionId = await this.collection.findOne({
+                    instructionId: normalizedRef,
+                });
+                if (byInstructionId) return byInstructionId;
+            } catch (_) {
+                // Fall through to a full scan for non-standard collection adapters.
+            }
+        }
+
+        const docs = await this._loadAllInstructions();
+        return (
+            docs.find((doc) => {
+                const objectIdRef = this._normalizeInstructionRef(doc?._id);
+                const instructionIdRef = this._normalizeInstructionRef(
+                    doc?.instructionId,
+                );
+                return (
+                    objectIdRef === normalizedRef || instructionIdRef === normalizedRef
+                );
+            }) || null
+        );
+    }
+
+    async _findInstructionsByRefs(instructionRefs = []) {
+        const normalizedRefs = Array.from(
+            new Set(
+                (Array.isArray(instructionRefs) ? instructionRefs : [])
+                    .map((entry) => this._normalizeInstructionRef(entry))
+                    .filter(Boolean),
+            ),
+        );
+
+        if (normalizedRefs.length === 0) {
+            return [];
+        }
+
+        const docs = await this._loadAllInstructions();
+        const docByRef = new Map();
+        docs.forEach((doc) => {
+            const objectIdRef = this._normalizeInstructionRef(doc?._id);
+            const instructionIdRef = this._normalizeInstructionRef(doc?.instructionId);
+            if (objectIdRef) {
+                docByRef.set(objectIdRef, doc);
+            }
+            if (instructionIdRef) {
+                docByRef.set(instructionIdRef, doc);
+            }
+        });
+
+        const orderedDocs = [];
+        const seen = new Set();
+        normalizedRefs.forEach((ref) => {
+            const doc = docByRef.get(ref);
+            if (!doc) return;
+            const stableKey =
+                this._normalizeInstructionRef(doc?._id)
+                || this._normalizeInstructionRef(doc?.instructionId)
+                || ref;
+            if (seen.has(stableKey)) return;
+            seen.add(stableKey);
+            orderedDocs.push(doc);
+        });
+
+        return orderedDocs;
     }
 
     normalizeTableRows(item) {
@@ -227,12 +321,7 @@ class InstructionDataService {
                     });
 
                 } else if (action === 'update') {
-                    if (!ObjectId.isValid(targetId)) {
-                        results.push({ sheetName, success: false, error: "Invalid Target ID" });
-                        continue;
-                    }
-
-                    const instruction = await this.collection.findOne({ _id: new ObjectId(targetId) });
+                    const instruction = await this._findInstructionByRef(targetId);
                     if (!instruction) {
                         results.push({ sheetName, success: false, error: "Target instruction not found" });
                         continue;
@@ -290,16 +379,21 @@ class InstructionDataService {
                         if (index !== -1) newItems[index] = targetItem;
                     }
 
-                    await this.collection.updateOne(
-                        { _id: new ObjectId(targetId) },
-                        { $set: { dataItems: newItems, updatedAt: new Date() } }
-                    );
+                    const updateFilter =
+                        instruction && typeof instruction === "object" && instruction._id !== undefined
+                            ? { _id: instruction._id }
+                            : { instructionId: instruction.instructionId };
+
+                    await this.collection.updateOne(updateFilter, {
+                        $set: { dataItems: newItems, updatedAt: new Date() }
+                    });
                     results.push({
                         sheetName,
                         success: true,
                         action: 'updated',
                         targetName: instruction.name,
-                        instructionObjectId: targetId,
+                        instructionObjectId:
+                            this._normalizeInstructionRef(instruction?._id) || targetId,
                         instructionId: instruction.instructionId || null,
                     });
                 }
@@ -320,16 +414,10 @@ class InstructionDataService {
     async exportInstructions(instructionIds) {
         const workbook = XLSX.utils.book_new();
 
-        const ids = instructionIds.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id));
-
-        if (ids.length === 0) {
-            throw new Error("No valid instruction IDs provided.");
-        }
-
-        const instructions = await this.collection.find({ _id: { $in: ids } }).toArray();
+        const instructions = await this._findInstructionsByRefs(instructionIds);
 
         if (instructions.length === 0) {
-            throw new Error("No instructions found to export.");
+            throw new Error("No valid instruction IDs provided.");
         }
 
         for (const inst of instructions) {
