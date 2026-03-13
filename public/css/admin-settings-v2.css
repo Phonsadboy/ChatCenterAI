@@ -1066,7 +1066,6 @@ input:checked+.toggle-slider:before {
     padding: 0.6rem;
     background: #ffffff;
     align-items: flex-start;
-    overflow: hidden;
 }
 
 .upload-queue-item.status-uploading {
@@ -1103,7 +1102,6 @@ input:checked+.toggle-slider:before {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-    overflow: hidden;
 }
 
 .queue-header {
@@ -3395,11 +3393,12 @@ input:checked+.toggle-slider:before {
 }
 
 .imglib-queue-list {
-    max-height: 340px;
+    max-height: 55vh;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    padding-right: 4px;
 }
 
 /* ── Queue Collection Picker (compact sidebar) ───────────── */
