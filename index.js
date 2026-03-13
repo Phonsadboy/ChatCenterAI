@@ -28139,6 +28139,32 @@ function mapInstructionToolsForResponses(tools) {
     .filter(Boolean);
 }
 
+const POSTGRES_SAFE_INSTRUCTION_TOOL_NAMES = new Set([
+  "get_instruction_overview",
+  "get_data_item_detail",
+  "get_rows",
+  "get_text_content",
+  "search_in_table",
+  "search_content",
+  "get_conversation_starter",
+]);
+
+function getRuntimeInstructionToolDefinitions(chatService) {
+  const allTools = Array.isArray(chatService?.getToolDefinitions?.())
+    ? chatService.getToolDefinitions()
+    : [];
+  if (isMongoRuntimeEnabled()) return allTools;
+  return allTools.filter((tool) => {
+    const toolName =
+      typeof tool?.function?.name === "string"
+        ? tool.function.name
+        : typeof tool?.name === "string"
+          ? tool.name
+          : "";
+    return !!toolName && POSTGRES_SAFE_INSTRUCTION_TOOL_NAMES.has(toolName);
+  });
+}
+
 function normalizeInstructionHistoryForResponses(history) {
   const safeHistory = Array.isArray(history) ? history : [];
   const normalized = [];
@@ -28238,21 +28264,14 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
   try {
     const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
+    const normalizedInstructionRef = String(instructionId || "").trim();
 
-    if (!instructionId || (typeof instructionId === "string" && !instructionId.trim())) {
+    if (!normalizedInstructionRef) {
       incrementInstructionMetric("instruction_id_invalid_total");
       console.warn("[InstructionChat] Missing instructionId", {
         instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
       });
       return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
-    }
-    if (!ObjectId.isValid(instructionId)) {
-      incrementInstructionMetric("instruction_id_invalid_total");
-      console.warn("[InstructionChat] Invalid instructionId", {
-        instructionId,
-        instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
-      });
-      return res.status(400).json({ error: "instructionId ไม่ถูกต้อง" });
     }
     if ((!message || !message.trim()) && !hasIncomingImages) {
       return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
@@ -28291,12 +28310,32 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     });
 
     // Get instruction for system prompt
-    const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
+    let instruction = null;
+    if (shouldUsePostgresInstructionsV2()) {
+      instruction = await getPostgresInstructionV2ByRef(normalizedInstructionRef);
+    } else {
+      if (!ObjectId.isValid(normalizedInstructionRef)) {
+        incrementInstructionMetric("instruction_id_invalid_total");
+        console.warn("[InstructionChat] Invalid Mongo instructionId", {
+          instructionId: normalizedInstructionRef,
+          instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
+        });
+        return res.status(400).json({ error: "instructionId ไม่ถูกต้อง" });
+      }
+      instruction = await db
+        .collection("instructions_v2")
+        .findOne({ _id: new ObjectId(normalizedInstructionRef) });
+    }
     if (!instruction) return res.json({ error: "ไม่พบ Instruction" });
+    chatService.primeInstructionCache(normalizedInstructionRef, instruction);
 
     const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
     const sessionId = `ses_${Date.now().toString(36)}`;
-    const systemPrompt = buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsSummary);
+    const systemPrompt = buildInstructionChatSystemPrompt(
+      normalizedInstructionRef,
+      instruction,
+      dataItemsSummary,
+    );
 
     const safeHistory = normalizeInstructionHistoryForResponses(history);
     const lastHistoryMsg = safeHistory[safeHistory.length - 1];
@@ -28307,7 +28346,13 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       typeof lastHistoryMsg.content === "string" &&
       lastHistoryMsg.content.trim() === String(message).trim();
 
-    const tools = mapInstructionToolsForResponses(chatService.getToolDefinitions());
+    const runtimeToolDefinitions = getRuntimeInstructionToolDefinitions(chatService);
+    const tools = mapInstructionToolsForResponses(runtimeToolDefinitions);
+    const allowedToolNames = new Set(
+      tools
+        .map((tool) => String(tool?.name || "").trim())
+        .filter(Boolean),
+    );
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
     let nextInput = [{ role: "system", content: systemPrompt }, ...safeHistory];
@@ -28354,7 +28399,17 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
         let args = {};
         try { args = JSON.parse(toolCall.arguments || "{}"); } catch (e) { }
 
-        const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
+        const result = allowedToolNames.has(toolName)
+          ? await chatService.executeTool(
+            toolName,
+            args,
+            normalizedInstructionRef,
+            sessionId,
+          )
+          : {
+            error: `tool_disabled_in_runtime:${toolName}`,
+            message: "เครื่องมือนี้ยังไม่พร้อมใน runtime ปัจจุบัน",
+          };
         if (toolName === "save_version" && result?.success && Number.isInteger(result?.version)) {
           versionSnapshot = {
             auto: false,
@@ -28445,7 +28500,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       }
       try {
         const autoVersion = await chatService.save_version(
-          instructionId,
+          normalizedInstructionRef,
           { note: autoNote },
           sessionId,
         );
@@ -29088,6 +29143,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       finishRequest();
       return;
     }
+    chatService.primeInstructionCache(normalizedInstructionRef, instruction);
 
     const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
 
@@ -29109,10 +29165,13 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       lastHistoryMsg.content.trim() === String(message).trim();
     const userHistoryText = buildInstructionUserHistoryText(message, images);
 
-    const toolsDisabledByRuntime = !isMongoRuntimeEnabled();
-    const tools = toolsDisabledByRuntime
-      ? []
-      : mapInstructionToolsForResponses(chatService.getToolDefinitions());
+    const runtimeToolDefinitions = getRuntimeInstructionToolDefinitions(chatService);
+    const tools = mapInstructionToolsForResponses(runtimeToolDefinitions);
+    const allowedToolNames = new Set(
+      tools
+        .map((tool) => String(tool?.name || "").trim())
+        .filter(Boolean),
+    );
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
     let nextInput = [{ role: "system", content: systemPrompt }, ...safeHistory];
@@ -29397,12 +29456,17 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             args,
             iteration: i + 1,
           });
-          const result = await chatService.executeTool(
-            toolName,
-            args,
-            normalizedInstructionRef,
-            sessionId,
-          );
+          const result = allowedToolNames.has(toolName)
+            ? await chatService.executeTool(
+              toolName,
+              args,
+              normalizedInstructionRef,
+              sessionId,
+            )
+            : {
+              error: `tool_disabled_in_runtime:${toolName}`,
+              message: "เครื่องมือนี้ยังไม่พร้อมใน runtime ปัจจุบัน",
+            };
           if (toolName === "save_version" && result?.success && Number.isInteger(result?.version)) {
             versionSnapshot = {
               auto: false,

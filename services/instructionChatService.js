@@ -53,6 +53,17 @@ class InstructionChatService {
         this._cachedId = null;
     }
 
+    primeInstructionCache(instructionRef, instructionDoc) {
+        const normalizedRef = typeof instructionRef === "string"
+            ? instructionRef.trim()
+            : instructionRef !== undefined && instructionRef !== null
+                ? String(instructionRef).trim()
+                : "";
+        if (!normalizedRef || !instructionDoc || typeof instructionDoc !== "object") return;
+        this._cachedId = normalizedRef;
+        this._cachedInstruction = instructionDoc;
+    }
+
     _runOptionalCallback(callback, label) {
         if (typeof callback !== "function") return;
         try {
