@@ -3073,6 +3073,7 @@ async function clearUserChatHistory(userId) {
 
 const BANGKOK_TZ = "Asia/Bangkok";
 const FOLLOW_UP_BASE_CACHE_TTL = 60 * 1000;
+const FOLLOW_UP_CONTEXT_CACHE_TTL = 60 * 1000;
 let followUpBaseConfigCache = null;
 let followUpBaseCacheTimestamp = 0;
 const followUpContextCache = new Map();
@@ -3490,6 +3491,36 @@ function resetFollowUpConfigCache() {
   followUpContextCache.clear();
 }
 
+function getCachedFollowUpContextConfig(cacheKey) {
+  const cached = followUpContextCache.get(cacheKey);
+  if (!cached) return null;
+
+  // Backward compatibility: older cache shape stored config directly.
+  if (typeof cached === "object" && cached && !cached.config && !cached.cachedAt) {
+    followUpContextCache.set(cacheKey, {
+      config: cached,
+      cachedAt: Date.now(),
+    });
+    return cached;
+  }
+
+  const cachedAt =
+    cached && Number.isFinite(cached.cachedAt) ? cached.cachedAt : 0;
+  if (!cachedAt || Date.now() - cachedAt > FOLLOW_UP_CONTEXT_CACHE_TTL) {
+    followUpContextCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached.config || null;
+}
+
+function setCachedFollowUpContextConfig(cacheKey, config) {
+  followUpContextCache.set(cacheKey, {
+    config,
+    cachedAt: Date.now(),
+  });
+}
+
 async function getFollowUpBaseConfig() {
   const now = Date.now();
   if (
@@ -3558,8 +3589,9 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
   const normalizedPlatform = platform || "line";
   const normalizedBotId = normalizeFollowUpBotId(botId);
   const cacheKey = `${normalizedPlatform}:${normalizedBotId || "default"}`;
-  if (followUpContextCache.has(cacheKey)) {
-    return followUpContextCache.get(cacheKey);
+  const cachedConfig = getCachedFollowUpContextConfig(cacheKey);
+  if (cachedConfig) {
+    return cachedConfig;
   }
 
   const baseConfig = await getFollowUpBaseConfig();
@@ -3613,7 +3645,7 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
       : "";
   merged.orderPromptInstructions = promptText || DEFAULT_ORDER_PROMPT_BODY;
 
-  followUpContextCache.set(cacheKey, merged);
+  setCachedFollowUpContextConfig(cacheKey, merged);
   return merged;
 }
 
@@ -3871,14 +3903,20 @@ async function scheduleFollowUpForUser(userId, options = {}) {
     if (roundsConfig.length === 0) return null;
 
     // ข้ามหากลูกค้าซื้อแล้ว - ตรวจสอบทั้ง follow_up_status และ orders collection
-    const status = await getFollowUpStatus(userId);
+    const status = await getFollowUpStatus(userId, {
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+    });
     if (status?.hasFollowUp) {
       return null;
     }
 
     // ตรวจสอบ orders collection โดยตรง เพื่อป้องกัน race condition
     // กรณีที่ follow_up_status ยังไม่ถูก update แต่มีออเดอร์แล้วจริง
-    const latestOrder = await getLatestOrderForUser(userId);
+    const latestOrder = await getLatestOrderForUser(userId, {
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+    });
     if (latestOrder) {
       const reasonCandidate =
         typeof latestOrder.notes === "string" ? latestOrder.notes.trim() : "";
@@ -4235,7 +4273,10 @@ async function handleFollowUpTask(task, db) {
   }
 
   // ตรวจสอบ follow_up_status ก่อน (กรณีถูก mark ว่าซื้อแล้วจากที่อื่น)
-  const followUpStatus = await getFollowUpStatus(task.userId);
+  const followUpStatus = await getFollowUpStatus(task.userId, {
+    platform: task.platform || "line",
+    botId: normalizeFollowUpBotId(task.botId),
+  });
   if (followUpStatus?.hasFollowUp) {
     console.log(
       `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - ถูก mark ว่าซื้อแล้ว`,
@@ -4261,7 +4302,10 @@ async function handleFollowUpTask(task, db) {
 
   // ตรวจสอบออเดอร์ก่อนส่งข้อความติดตาม
   // ป้องกันกรณีลูกค้าสร้างออเดอร์หลังจาก task ถูก schedule
-  const latestOrder = await getLatestOrderForUser(task.userId);
+  const latestOrder = await getLatestOrderForUser(task.userId, {
+    platform: task.platform || "line",
+    botId: normalizeFollowUpBotId(task.botId),
+  });
   if (latestOrder) {
     const reasonCandidate =
       typeof latestOrder.notes === "string" ? latestOrder.notes.trim() : "";
@@ -4692,7 +4736,34 @@ function sanitizeContentForFollowUp(rawContent) {
   return trimmed;
 }
 
-async function getFollowUpStatus(userId) {
+async function getFollowUpStatus(userId, options = {}) {
+  const {
+    platform = null,
+    botId = undefined,
+  } = options && typeof options === "object" ? options : {};
+  const normalizedPlatform = platform || null;
+  const normalizedBotId =
+    botId === undefined ? undefined : normalizeFollowUpBotId(botId);
+
+  if (normalizedPlatform || normalizedBotId !== undefined) {
+    const filter = {
+      userId,
+      ...(normalizedPlatform ? { platform: normalizedPlatform } : {}),
+    };
+    if (normalizedBotId !== undefined) {
+      if (normalizedBotId) {
+        filter.botId = normalizedBotId;
+      } else {
+        filter.defaultBotOnly = true;
+      }
+    }
+    const docs = await getFollowUpRepository().listStatuses(filter, { limit: 1 });
+    if (docs.length > 0) {
+      return docs[0];
+    }
+    return null;
+  }
+
   return getFollowUpRepository().getStatus(userId);
 }
 
@@ -4740,13 +4811,19 @@ async function maybeAnalyzeFollowUp(
       return;
     }
 
-    const status = await getFollowUpStatus(userId);
+    const status = await getFollowUpStatus(userId, {
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+    });
     const payloadBase = {
       platform: normalizedPlatform,
       botId: normalizedBotId,
     };
 
-    const existingOrders = await getUserOrders(userId);
+    const existingOrders = await getUserOrders(userId, {
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+    });
     const latestOrder =
       existingOrders && existingOrders.length > 0 ? existingOrders[0] : null;
     const hasOrders = !!latestOrder;
@@ -6458,8 +6535,30 @@ async function triggerOrderNotification(orderId) {
   }
 }
 
-async function getLatestOrderForUser(userId) {
+async function getLatestOrderForUser(userId, options = {}) {
   try {
+    const {
+      platform = null,
+      botId = null,
+    } = options && typeof options === "object" ? options : {};
+    const normalizedPlatform =
+      typeof platform === "string" && platform.trim() ? platform.trim() : null;
+    const normalizedBotId = normalizeFollowUpBotId(botId);
+
+    if (normalizedPlatform || normalizedBotId) {
+      const docs = await getOrderRepository().list(
+        {
+          userId,
+          ...(normalizedPlatform ? { platform: normalizedPlatform } : {}),
+          ...(normalizedBotId ? { botId: normalizedBotId } : {}),
+        },
+        {
+          sort: { extractedAt: -1 },
+          limit: 1,
+        },
+      );
+      return docs[0] || null;
+    }
     return await getOrderRepository().findLatestByUser(userId);
   } catch (error) {
     console.error("[Order] ดึงออเดอร์ล่าสุดไม่สำเร็จ:", error.message);
@@ -6467,8 +6566,28 @@ async function getLatestOrderForUser(userId) {
   }
 }
 
-async function getUserOrders(userId) {
+async function getUserOrders(userId, options = {}) {
   try {
+    const {
+      platform = null,
+      botId = null,
+      sort = { extractedAt: -1 },
+    } = options && typeof options === "object" ? options : {};
+    const normalizedPlatform =
+      typeof platform === "string" && platform.trim() ? platform.trim() : null;
+    const normalizedBotId = normalizeFollowUpBotId(botId);
+
+    if (normalizedPlatform || normalizedBotId) {
+      return await getOrderRepository().list(
+        {
+          userId,
+          ...(normalizedPlatform ? { platform: normalizedPlatform } : {}),
+          ...(normalizedBotId ? { botId: normalizedBotId } : {}),
+        },
+        { sort: sort && typeof sort === "object" ? sort : { extractedAt: -1 } },
+      );
+    }
+
     return await getOrderRepository().findByUser(userId, {
       sort: { extractedAt: -1 },
     });
