@@ -18,7 +18,9 @@
         uploadQueue: [],
         isUploading: false,
         selectedAssetLabels: new Set(),
-        assetEdits: new Map()
+        assetEdits: new Map(),
+        // New: collection IDs selected in the upload queue picker
+        uploadTargetCollectionIds: new Set()
     };
 
     const elements = {
@@ -273,19 +275,15 @@
         elements.botCollectionsList = document.getElementById('botImageCollectionsList');
         elements.saveBotCollectionsBtn = document.getElementById('saveBotImageCollectionsBtn');
 
-        // New UI Elements for Enhanced Gallery
-        elements.mobileTabs = document.getElementById('galleryMobileTabs');
-        elements.uploadPanel = document.getElementById('uploadPanel');
-        elements.collectionsPanel = document.getElementById('collectionsPanel');
+        // Redesigned UI Elements (3-tab layout)
+        elements.imglibTabs = document.querySelectorAll('.imglib-tab');
+        elements.imglibPanels = document.querySelectorAll('.imglib-panel');
+        elements.queueArea = document.getElementById('imglibQueueArea');
+        elements.uploadCollectionPicker = document.getElementById('imglibUploadCollectionPicker');
         elements.overallProgress = document.getElementById('galleryOverallProgress');
         elements.overallProgressBar = document.getElementById('overallProgressBar');
         elements.overallProgressCount = document.getElementById('overallProgressCount');
         elements.viewToggleGroup = document.getElementById('viewToggleGroup');
-        elements.fab = document.getElementById('galleryFab');
-        elements.fabMainBtn = document.getElementById('fabMainBtn');
-        elements.fabUploadAction = document.getElementById('fabUploadAction');
-        elements.fabCreateCollectionAction = document.getElementById('fabCreateCollectionAction');
-        elements.fabRefreshAction = document.getElementById('fabRefreshAction');
         elements.collectionFilterControl = document.getElementById('collectionFilterControl');
     };
 
@@ -360,6 +358,20 @@
             elements.uploadQueueList.addEventListener('input', handleQueueListInput);
             elements.uploadQueueList.addEventListener('change', handleQueueListChange);
             elements.uploadQueueList.addEventListener('click', handleQueueListClick);
+        }
+
+        // Collection picker checkboxes in upload queue
+        if (elements.uploadCollectionPicker) {
+            elements.uploadCollectionPicker.addEventListener('change', (event) => {
+                const cb = event.target.closest('.upload-coll-checkbox');
+                if (!cb) return;
+                const collId = cb.value;
+                if (cb.checked) {
+                    state.uploadTargetCollectionIds.add(collId);
+                } else {
+                    state.uploadTargetCollectionIds.delete(collId);
+                }
+            });
         }
 
         if (elements.bulkDeleteAssetsBtn) {
@@ -452,7 +464,43 @@
             });
         }
 
-        // Secret data consistency fix button (triple click on "ขั้นตอนที่ 1")
+        // 3-Tab navigation
+        if (elements.imglibTabs && elements.imglibTabs.length > 0) {
+            elements.imglibTabs.forEach((tab) => {
+                tab.addEventListener('click', () => {
+                    const targetPanelId = tab.dataset.imglibTab;
+                    if (!targetPanelId) return;
+
+                    // Update tab active state
+                    elements.imglibTabs.forEach((t) => {
+                        t.classList.toggle('active', t === tab);
+                        t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+                    });
+
+                    // Show matching panel
+                    elements.imglibPanels.forEach((panel) => {
+                        const matches = panel.id === `imglibPanel${targetPanelId.charAt(0).toUpperCase() + targetPanelId.slice(1)}`;
+                        panel.classList.toggle('active', matches);
+                    });
+
+                    // Persist tab selection
+                    try {
+                        localStorage.setItem('adminSettingsV2.activeImglibTab', targetPanelId);
+                    } catch (e) { /* ignore */ }
+                });
+            });
+
+            // Restore saved tab
+            try {
+                const savedTab = localStorage.getItem('adminSettingsV2.activeImglibTab');
+                if (savedTab) {
+                    const savedTabEl = document.querySelector(`.imglib-tab[data-imglib-tab="${savedTab}"]`);
+                    if (savedTabEl) savedTabEl.click();
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        // Secret data consistency fix button (triple click on hidden #secretFixBtn)
         const secretFixBtn = document.getElementById('secretFixBtn');
         if (secretFixBtn) {
             let clickCount = 0;
@@ -478,85 +526,6 @@
                     }, 1000);
                 }
             });
-        }
-
-        // Mobile Tabs Navigation
-        if (elements.mobileTabs) {
-            elements.mobileTabs.addEventListener('click', (event) => {
-                const tabBtn = event.target.closest('.tab-btn');
-                if (!tabBtn) return;
-
-                const panel = tabBtn.dataset.panel;
-                if (!panel) return;
-
-                // Update tab buttons
-                elements.mobileTabs.querySelectorAll('.tab-btn').forEach(btn => {
-                    btn.classList.toggle('active', btn === tabBtn);
-                });
-
-                // Show/hide panels
-                if (elements.uploadPanel && elements.collectionsPanel) {
-                    if (panel === 'upload') {
-                        elements.uploadPanel.classList.remove('hidden');
-                        elements.collectionsPanel.classList.add('hidden');
-                    } else {
-                        elements.uploadPanel.classList.add('hidden');
-                        elements.collectionsPanel.classList.remove('hidden');
-                    }
-                }
-            });
-        }
-
-        // Floating Action Button
-        if (elements.fab && elements.fabMainBtn) {
-            elements.fabMainBtn.addEventListener('click', () => {
-                elements.fab.classList.toggle('open');
-            });
-
-            // Close FAB when clicking outside
-            document.addEventListener('click', (event) => {
-                if (!elements.fab.contains(event.target)) {
-                    elements.fab.classList.remove('open');
-                }
-            });
-
-            // FAB Actions
-            if (elements.fabUploadAction) {
-                elements.fabUploadAction.addEventListener('click', () => {
-                    elements.fab.classList.remove('open');
-                    // Switch to upload tab on mobile
-                    if (elements.mobileTabs) {
-                        const uploadTab = elements.mobileTabs.querySelector('[data-panel="upload"]');
-                        if (uploadTab) uploadTab.click();
-                    }
-                    // Trigger file select
-                    setTimeout(() => {
-                        elements.assetFile?.click();
-                    }, 100);
-                });
-            }
-
-            if (elements.fabCreateCollectionAction) {
-                elements.fabCreateCollectionAction.addEventListener('click', () => {
-                    elements.fab.classList.remove('open');
-                    // Switch to collections tab on mobile
-                    if (elements.mobileTabs) {
-                        const collectionsTab = elements.mobileTabs.querySelector('[data-panel="collections"]');
-                        if (collectionsTab) collectionsTab.click();
-                    }
-                    // Open create collection modal
-                    setTimeout(() => {
-                        openCollectionModal();
-                    }, 100);
-                });
-            }
-
-            if (elements.fabRefreshAction) {
-                elements.fabRefreshAction.addEventListener('click', () => {
-                    elements.fab.classList.remove('open');
-                    refreshAll();
-                });
-            }
         }
 
         // View Toggle (List/Grid)
@@ -775,7 +744,7 @@
     const updateAssetsCount = () => {
         if (!elements.assetsCount) return;
         const total = Array.isArray(state.assets) ? state.assets.length : 0;
-        elements.assetsCount.textContent = `${total} รูป`;
+        elements.assetsCount.textContent = `${total}`;
     };
 
     const getLabelsUsedInCollections = () => {
@@ -928,16 +897,42 @@
         }
     };
 
-    const renderUploadQueue = () => {
-        if (!elements.uploadQueueList) return;
-        if (state.uploadQueue.length === 0) {
-            elements.uploadQueueList.innerHTML = `
-                <div class="empty-state small text-muted text-center py-3">
-                    <i class="fas fa-images me-1"></i>เพิ่มรูปภาพเพื่อเตรียมตั้งชื่อและคำอธิบายได้ที่นี่
-                </div>
-            `;
+    const renderUploadCollectionPicker = () => {
+        if (!elements.uploadCollectionPicker) return;
+        const collections = Array.isArray(state.collections) ? state.collections : [];
+        if (collections.length === 0) {
+            elements.uploadCollectionPicker.innerHTML = '<div class="imglib-qcol-empty">ยังไม่มีคลัง</div>';
             return;
         }
+        const html = collections.map((col) => {
+            const id = `upload-col-${col._id}`;
+            const name = escapeHtml(col.name || col._id);
+            const checked = state.uploadTargetCollectionIds.has(col._id) ? 'checked' : '';
+            return `
+                <label class="imglib-qcol-item" for="${id}">
+                    <input type="checkbox" id="${id}" value="${escapeAttribute(col._id)}" ${checked}
+                        class="upload-coll-checkbox">
+                    <span class="imglib-qcol-item-name" title="${name}">${name}</span>
+                </label>
+            `;
+        }).join('');
+        elements.uploadCollectionPicker.innerHTML = html;
+    };
+
+    const renderUploadQueue = () => {
+        if (!elements.uploadQueueList) return;
+
+        // Show/hide the queue area
+        if (elements.queueArea) {
+            elements.queueArea.classList.toggle('visible', state.uploadQueue.length > 0);
+        }
+
+        if (state.uploadQueue.length === 0) {
+            elements.uploadQueueList.innerHTML = '';
+            return;
+        }
+
+        renderUploadCollectionPicker();
 
         const html = state.uploadQueue
             .map((item) => {
@@ -1074,8 +1069,15 @@
         }
 
         if (hasSuccess) {
+            // Collect successfully uploaded labels before clearing queue
+            const successLabels = state.uploadQueue
+                .filter((item) => item.status === 'success')
+                .map((item) => item.label?.trim())
+                .filter(Boolean);
+
             await fetchAssets();
             await fetchCollections();
+
             const remaining = [];
             let successCount = 0;
             state.uploadQueue.forEach((item) => {
@@ -1091,6 +1093,50 @@
             if (successCount > 0) {
                 showAlert(`อัปโหลดรูปภาพสำเร็จ ${successCount} ไฟล์`, 'success');
             }
+
+            // Add new assets to selected collections
+            if (state.uploadTargetCollectionIds.size > 0 && successLabels.length > 0) {
+                await addAssetsToSelectedCollections(successLabels);
+                state.uploadTargetCollectionIds.clear();
+            }
+        }
+    };
+
+    const addAssetsToSelectedCollections = async (newLabels) => {
+        const targetIds = Array.from(state.uploadTargetCollectionIds);
+        if (targetIds.length === 0 || newLabels.length === 0) return;
+
+        let successCount = 0;
+        for (const collectionId of targetIds) {
+            const collection = getCollectionById(collectionId);
+            if (!collection) continue;
+
+            const existingLabels = new Set(
+                Array.isArray(collection.images)
+                    ? collection.images.map((img) => img?.label).filter(Boolean)
+                    : []
+            );
+            newLabels.forEach((label) => existingLabels.add(label));
+
+            try {
+                const response = await fetch(`/admin/image-collections/${collectionId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: collection.name,
+                        description: collection.description || '',
+                        images: Array.from(existingLabels).map((label) => ({ label }))
+                    })
+                });
+                if (response.ok) successCount += 1;
+            } catch (err) {
+                console.error('addAssetsToCollection error:', err);
+            }
+        }
+
+        if (successCount > 0) {
+            await fetchCollections();
+            showAlert(`เพิ่มรูปภาพเข้าคลังเรียบร้อย ${successCount} คลัง`, 'success');
         }
     };
 
@@ -1614,7 +1660,7 @@
     const updateCollectionsCount = () => {
         if (!elements.collectionsCount) return;
         const total = state.collections.length;
-        elements.collectionsCount.textContent = `${total} ชุด`;
+        elements.collectionsCount.textContent = `${total}`;
     };
 
     const handleCollectionAction = (event) => {
@@ -1747,6 +1793,9 @@
             .join('');
 
         elements.collectionsList.innerHTML = html;
+
+        // Keep upload collection picker in sync
+        renderUploadCollectionPicker();
     };
 
     const openCollectionModal = (collectionId = null, options = {}) => {
