@@ -960,10 +960,6 @@
                             <div class="queue-header">
                                 <input type="text" class="form-control form-control-sm queue-label-input" placeholder="ชื่อรูปภาพ" value="${escapedLabel}" data-queue-id="${item.id}" ${disableInputs ? 'disabled' : ''}>
                                 <div class="queue-actions">
-                                    <div class="form-check form-switch form-switch-sm">
-                                        <input class="form-check-input queue-overwrite-checkbox" type="checkbox" data-queue-id="${item.id}" ${item.overwrite ? 'checked' : ''} ${disableInputs ? 'disabled' : ''}>
-                                        <label class="form-check-label small">แทนที่</label>
-                                    </div>
                                     <button type="button" class="btn btn-sm btn-outline-danger queue-remove-btn" data-queue-id="${item.id}" ${state.isUploading ? 'disabled' : ''}>
                                         <i class="fas fa-trash"></i>
                                     </button>
@@ -1009,9 +1005,6 @@
         if (!queueId) return;
         const item = state.uploadQueue.find((entry) => entry.id === queueId);
         if (!item) return;
-        if (event.target.classList.contains('queue-overwrite-checkbox')) {
-            item.overwrite = !!event.target.checked;
-        }
     };
 
     const handleQueueListClick = (event) => {
@@ -1145,7 +1138,8 @@
         form.append('image', item.file, item.file.name);
         form.append('label', item.label?.trim() || '');
         form.append('description', item.description?.trim() || '');
-        form.append('overwrite', item.overwrite ? 'true' : 'false');
+        const globalOverwrite = document.getElementById('globalOverwriteCheckbox')?.checked ?? false;
+        form.append('overwrite', globalOverwrite ? 'true' : 'false');
 
         try {
             const response = await fetch('/admin/instructions/assets', {
