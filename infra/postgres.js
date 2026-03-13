@@ -48,8 +48,9 @@ function getPgPool() {
 
     pool = new Pool({
       connectionString: config.postgresConnectionString,
-      max: Number(process.env.CCAI_PG_POOL_MAX || 20),
-      idleTimeoutMillis: Number(process.env.CCAI_PG_IDLE_TIMEOUT_MS || 30000),
+      // Keep defaults conservative for Railway-sized instances; tune up via env if needed.
+      max: Number(process.env.CCAI_PG_POOL_MAX || 8),
+      idleTimeoutMillis: Number(process.env.CCAI_PG_IDLE_TIMEOUT_MS || 10000),
       connectionTimeoutMillis: Number(
         process.env.CCAI_PG_CONNECTION_TIMEOUT_MS || 5000,
       ),
