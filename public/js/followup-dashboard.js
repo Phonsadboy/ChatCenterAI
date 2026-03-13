@@ -245,6 +245,16 @@
         return state.overview.groups.find(group => group.contextKey === pageId) || null;
     };
 
+    const isHardStopEnabled = (config) => {
+        return !!(config && config.hardStopEnabled === true);
+    };
+
+    const isAutoFollowUpEffectiveEnabled = (config) => {
+        if (!config) return false;
+        if (isHardStopEnabled(config)) return false;
+        return config.autoFollowUpEnabled !== false;
+    };
+
     const getStatusBadge = (status) => {
         switch (status) {
             case 'completed':
@@ -594,6 +604,14 @@
     };
 
     const handleAutoSendToggle = () => {
+        const cfg = state.currentContextConfig || state.currentPage?.settings || null;
+        const hardStopEnabled = isHardStopEnabled(cfg);
+        if (el.modalAutoSend) {
+            if (hardStopEnabled && el.modalAutoSend.checked) {
+                el.modalAutoSend.checked = false;
+            }
+            el.modalAutoSend.disabled = hardStopEnabled;
+        }
         const enabled = el.modalAutoSend && el.modalAutoSend.checked;
         setRoundsDisabled(!enabled);
     };
@@ -604,7 +622,11 @@
             el.schedulePreview.innerHTML = '<div class="text-muted small">เลือกหน้าเพจเพื่อดูแผนการส่งข้อความ</div>';
             return;
         }
-        if (config.autoFollowUpEnabled === false) {
+        if (isHardStopEnabled(config)) {
+            el.schedulePreview.innerHTML = '<div class="text-muted small">ระบบติดตามถูกหยุดชั่วคราว (Emergency Stop) กรุณาปิด Emergency Stop ก่อนเปิดส่งอัตโนมัติ</div>';
+            return;
+        }
+        if (!isAutoFollowUpEffectiveEnabled(config)) {
             el.schedulePreview.innerHTML = '<div class="text-muted small">ระบบจะไม่ส่งข้อความอัตโนมัติสำหรับเพจนี้</div>';
             return;
         }
@@ -647,15 +669,22 @@
             el.analysisLabel.textContent = analysisOn ? 'วิเคราะห์ด้วย AI (เปิด)' : 'วิเคราะห์ด้วย AI (ปิด)';
         }
         if (el.autoStatusBadge) {
-            const autoOn = config && config.autoFollowUpEnabled !== false;
-            el.autoStatusBadge.textContent = autoOn ? 'ส่งข้อความอัตโนมัติ (เปิด)' : 'ส่งข้อความอัตโนมัติ (ปิด)';
+            const hardStopEnabled = isHardStopEnabled(config);
+            const autoOn = isAutoFollowUpEffectiveEnabled(config);
+            el.autoStatusBadge.textContent = hardStopEnabled
+                ? 'หยุดชั่วคราว (Emergency Stop)'
+                : autoOn
+                    ? 'ส่งข้อความอัตโนมัติ (เปิด)'
+                    : 'ส่งข้อความอัตโนมัติ (ปิด)';
             el.autoStatusBadge.classList.remove('bg-success', 'bg-secondary');
             el.autoStatusBadge.classList.add(autoOn ? 'bg-success' : 'bg-secondary');
         }
         if (el.analysisSubtitle) {
             if (!config) {
                 el.analysisSubtitle.textContent = 'เลือกหน้าเพจเพื่อดูรายละเอียดการติดตาม';
-            } else if (config.autoFollowUpEnabled === false) {
+            } else if (isHardStopEnabled(config)) {
+                el.analysisSubtitle.textContent = 'ระบบถูกหยุดแบบฉุกเฉิน (Emergency Stop) จึงยังไม่สามารถเปิดส่งอัตโนมัติได้';
+            } else if (!isAutoFollowUpEffectiveEnabled(config)) {
                 el.analysisSubtitle.textContent = 'ระบบจะไม่ส่งข้อความอัตโนมัติจนกว่าจะเปิดใช้งาน';
             } else {
                 const parts = ['AI จะวิเคราะห์ว่าลูกค้าซื้อแล้วหรือยัง ถ้าซื้อแล้วจะหยุดส่งข้อความติดตามอัตโนมัติ'];
@@ -840,7 +869,8 @@
                 const diff = time - now;
                 return diff >= 0 && diff <= 30 * 60000;
             }).length;
-            const autoEnabled = page.settings && page.settings.autoFollowUpEnabled !== false;
+            const hardStopEnabled = isHardStopEnabled(page.settings || {});
+            const autoEnabled = isAutoFollowUpEffectiveEnabled(page.settings || {});
             const analysisEnabled = page.settings && page.settings.analysisEnabled !== false;
             const platformLabel = page.platform === 'facebook' ? 'Facebook' : 'LINE';
             const subtitle = page.platform === 'facebook'
@@ -858,6 +888,9 @@
                 `<span class="badge ${showInDashboard ? 'bg-primary-soft text-primary' : 'bg-warning text-dark'}">${showInDashboard ? 'แสดงในแดชบอร์ด' : 'ซ่อนจากแดชบอร์ด'}</span>`,
                 `<span class="badge ${showInChat ? 'bg-light text-dark' : 'bg-secondary'}">ป้ายหน้าแชท: ${showInChat ? 'เปิด' : 'ปิด'}</span>`
             ];
+            if (hardStopEnabled) {
+                badges.push('<span class="badge bg-danger-subtle text-danger">Emergency Stop</span>');
+            }
 
             return `
                 <tr class="${rowClasses.join(' ')}" data-page-id="${page.id}">
@@ -892,7 +925,7 @@
                     </td>
                     <td class="followup-page-control text-center" data-label="ส่งอัตโนมัติ">
                         <div class="form-check form-switch justify-content-center">
-                            <input class="form-check-input followup-auto-toggle" type="checkbox" data-page-id="${page.id}" ${autoEnabled ? 'checked' : ''} aria-label="สลับการส่งอัตโนมัติสำหรับ ${escapeHtml(page.name)}">
+                            <input class="form-check-input followup-auto-toggle" type="checkbox" data-page-id="${page.id}" ${autoEnabled ? 'checked' : ''} ${hardStopEnabled ? 'disabled' : ''} aria-label="สลับการส่งอัตโนมัติสำหรับ ${escapeHtml(page.name)}">
                         </div>
                     </td>
                     <td class="followup-page-actions text-end" data-label="การจัดการ">
@@ -1001,6 +1034,12 @@
             showAlert('danger', 'ไม่พบข้อมูลเพจที่เลือก');
             return;
         }
+        const hardStopEnabled = isHardStopEnabled(page.settings || state.currentContextConfig || {});
+        if (enabled && hardStopEnabled) {
+            if (inputEl) inputEl.checked = false;
+            showAlert('warning', 'ระบบถูกหยุดแบบฉุกเฉิน (Emergency Stop) กรุณาปิด Emergency Stop ก่อนจึงจะเปิดติดตามอัตโนมัติได้');
+            return;
+        }
         if (inputEl) inputEl.disabled = true;
         try {
             await savePageSettingsQuick(page, { autoFollowUpEnabled: !!enabled });
@@ -1076,8 +1115,13 @@
         }
 
         if (el.autoStatusBadge) {
-            const autoOn = cfg.autoFollowUpEnabled !== false;
-            el.autoStatusBadge.textContent = autoOn ? 'ส่งอัตโนมัติ: เปิด' : 'ส่งอัตโนมัติ: ปิด';
+            const hardStopEnabled = isHardStopEnabled(cfg);
+            const autoOn = isAutoFollowUpEffectiveEnabled(cfg);
+            el.autoStatusBadge.textContent = hardStopEnabled
+                ? 'หยุดชั่วคราว (Emergency Stop)'
+                : autoOn
+                    ? 'ส่งอัตโนมัติ: เปิด'
+                    : 'ส่งอัตโนมัติ: ปิด';
             el.autoStatusBadge.classList.toggle('active', autoOn);
         }
 
@@ -1512,7 +1556,9 @@
         if (el.modalTitle) {
             el.modalTitle.textContent = `ตั้งค่าเพจ: ${state.currentPage.name}`;
         }
-        if (el.modalAutoSend) el.modalAutoSend.checked = cfg.autoFollowUpEnabled !== false;
+        if (el.modalAutoSend) {
+            el.modalAutoSend.checked = isAutoFollowUpEffectiveEnabled(cfg);
+        }
         state.modalRounds = Array.isArray(cfg.rounds)
             ? cfg.rounds.map(round => {
                 let items;

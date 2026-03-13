@@ -27002,6 +27002,18 @@ app.post("/admin/followup/page-settings", async (req, res) => {
       sanitized.rounds = normalizeFollowUpRounds(settings.rounds);
     }
 
+    const baseFollowUpConfig = await getFollowUpBaseConfig();
+    if (
+      baseFollowUpConfig?.hardStopEnabled === true &&
+      sanitized.autoFollowUpEnabled === true
+    ) {
+      return res.status(409).json({
+        success: false,
+        error:
+          "ระบบติดตามถูกหยุดแบบฉุกเฉิน (Emergency Stop) กรุณาปิด Emergency Stop ก่อนจึงจะเปิดส่งอัตโนมัติได้",
+      });
+    }
+
     await getFollowUpPageSettingsRepository().upsert(
       normalizedPlatform,
       normalizedBotId,
