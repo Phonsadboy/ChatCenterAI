@@ -11,6 +11,41 @@ const { getRuntimeConfig } = require("../runtimeConfig");
 
 let s3Client = null;
 
+function sanitizeMetadataKey(key) {
+  const normalized = String(key || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized;
+}
+
+function sanitizeMetadataValue(value) {
+  const rawValue =
+    typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const singleLine = rawValue.replace(/[\r\n\t]+/g, " ").trim();
+  if (!singleLine) return "";
+  const hasUnsafeHeaderChar = /[^\x20-\x7E]/.test(singleLine);
+  const safeValue = hasUnsafeHeaderChar
+    ? encodeURIComponent(singleLine)
+    : singleLine;
+  return safeValue.slice(0, 1024);
+}
+
+function sanitizeObjectMetadata(metadata = {}) {
+  const sanitized = {};
+  Object.entries(metadata || {}).forEach(([key, value]) => {
+    if (value === null || typeof value === "undefined") return;
+    const safeKey = sanitizeMetadataKey(key);
+    if (!safeKey) return;
+    const safeValue = sanitizeMetadataValue(value);
+    if (!safeValue) return;
+    sanitized[safeKey] = safeValue;
+  });
+  return sanitized;
+}
+
 function isBucketConfigured() {
   const config = getRuntimeConfig();
   return Boolean(
@@ -45,7 +80,7 @@ async function putObject(key, body, options = {}) {
       Key: key,
       Body: body,
       ContentType: options.contentType || "application/octet-stream",
-      Metadata: options.metadata || {},
+      Metadata: sanitizeObjectMetadata(options.metadata || {}),
     }),
   );
 }
