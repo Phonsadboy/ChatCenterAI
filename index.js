@@ -28880,21 +28880,14 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
   try {
     const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], sessionId: clientSessionId, images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
+    const normalizedInstructionRef = String(instructionId || "").trim();
 
-    if (!instructionId || (typeof instructionId === "string" && !instructionId.trim())) {
+    if (!normalizedInstructionRef) {
       incrementInstructionMetric("instruction_id_invalid_total");
       console.warn("[InstructionChat SSE] Missing instructionId", {
         instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
       });
       return res.status(400).json({ error: "ต้องเลือก Instruction ก่อน" });
-    }
-    if (!ObjectId.isValid(instructionId)) {
-      incrementInstructionMetric("instruction_id_invalid_total");
-      console.warn("[InstructionChat SSE] Invalid instructionId", {
-        instructionId,
-        instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
-      });
-      return res.status(400).json({ error: "instructionId ไม่ถูกต้อง" });
     }
     if ((!message || !message.trim()) && !hasIncomingImages) return res.status(400).json({ error: "ต้องพิมพ์ข้อความ" });
 
@@ -28918,7 +28911,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     // Initialize active request buffer
     const requestState = {
       events: [], status: "processing", sessionId, requestId,
-      instructionId, username, model, thinking,
+      instructionId: normalizedInstructionRef, username, model, thinking,
       listeners: new Set(), createdAt: Date.now(),
       updatedAt: Date.now(),
       lastStatus: { phase: "thinking", iteration: 1, tool: null, elapsedSec: 0 },
@@ -29066,7 +29059,27 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       invalidateInstructionPromptCaches,
       invalidateAllRuntimeCaches,
     });
-    const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
+    let instruction = null;
+    if (shouldUsePostgresInstructionsV2()) {
+      instruction = await getPostgresInstructionV2ByRef(normalizedInstructionRef);
+    } else {
+      if (!ObjectId.isValid(normalizedInstructionRef)) {
+        incrementInstructionMetric("instruction_id_invalid_total");
+        console.warn("[InstructionChat SSE] Invalid Mongo instructionId", {
+          instructionId: normalizedInstructionRef,
+          instruction_id_invalid_total: INSTRUCTION_METRICS.instruction_id_invalid_total,
+        });
+        sendEvent("error", { error: "instructionId ไม่ถูกต้อง" });
+        requestState.status = "error";
+        requestState.error = "instructionId ไม่ถูกต้อง";
+        requestState.updatedAt = Date.now();
+        finishRequest();
+        return;
+      }
+      instruction = await db
+        .collection("instructions_v2")
+        .findOne({ _id: new ObjectId(normalizedInstructionRef) });
+    }
     if (!instruction) {
       sendEvent("error", { error: "ไม่พบ Instruction" });
       requestState.status = "error";
@@ -29081,7 +29094,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     // Telemetry: แจ้งว่ามีคนกำลังใช้งาน InstructionAI
     notifyInstructionAIUsage(username, instruction.name, model).catch(() => { });
 
-    const systemPrompt = buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsSummary);
+    const systemPrompt = buildInstructionChatSystemPrompt(
+      normalizedInstructionRef,
+      instruction,
+      dataItemsSummary,
+    );
     const safeHistory = normalizeInstructionHistoryForResponses(history);
     const lastHistoryMsg = safeHistory[safeHistory.length - 1];
     const isDuplicatedUserMessage =
@@ -29092,7 +29109,10 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       lastHistoryMsg.content.trim() === String(message).trim();
     const userHistoryText = buildInstructionUserHistoryText(message, images);
 
-    const tools = mapInstructionToolsForResponses(chatService.getToolDefinitions());
+    const toolsDisabledByRuntime = !isMongoRuntimeEnabled();
+    const tools = toolsDisabledByRuntime
+      ? []
+      : mapInstructionToolsForResponses(chatService.getToolDefinitions());
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
     let nextInput = [{ role: "system", content: systemPrompt }, ...safeHistory];
@@ -29377,7 +29397,12 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             args,
             iteration: i + 1,
           });
-          const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
+          const result = await chatService.executeTool(
+            toolName,
+            args,
+            normalizedInstructionRef,
+            sessionId,
+          );
           if (toolName === "save_version" && result?.success && Number.isInteger(result?.version)) {
             versionSnapshot = {
               auto: false,
@@ -29506,7 +29531,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       }
       try {
         const autoVersion = await chatService.save_version(
-          instructionId,
+          normalizedInstructionRef,
           { note: autoNote },
           sessionId,
         );
@@ -29556,7 +29581,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     });
 
     await db.collection("instruction_chat_audit").insertOne({
-      sessionId, instructionId, username,
+      sessionId,
+      instructionId: normalizedInstructionRef,
+      username,
       timestamp: new Date(),
       message,
       model: resolvedInstructionModel.model,
@@ -29584,7 +29611,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         { sessionId },
         {
           $set: {
-            sessionId, instructionId, instructionName: instruction.name || "",
+            sessionId,
+            instructionId: normalizedInstructionRef,
+            instructionName: instruction.name || "",
             history: fullHistory,
             model: resolvedInstructionModel.model,
             thinking,
