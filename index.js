@@ -3601,9 +3601,9 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
   }
   if (baseConfig.hardStopEnabled) {
     merged.hardStopEnabled = true;
+    // Emergency stop should pause automation, but still allow dashboard visibility
+    // so admins can inspect data and adjust settings safely.
     merged.analysisEnabled = false;
-    merged.showInChat = false;
-    merged.showInDashboard = false;
     merged.autoFollowUpEnabled = false;
   }
 
