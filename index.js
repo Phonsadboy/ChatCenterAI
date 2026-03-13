@@ -3022,9 +3022,12 @@ async function detectKeywordAction(
     // ยกเลิก follow-up เฉพาะเมื่อ alsoDisableFollowUp เปิดอยู่ (default: true)
     if (disableAI.alsoDisableFollowUp !== false) {
       try {
-        await cancelFollowUpTasksForUser(userId, platform, botId, {
-          reason: "disable_ai_keyword",
-        });
+        await disableFollowUpForUser(
+          userId,
+          platform,
+          botId,
+          "disable_ai_keyword",
+        );
       } catch (followUpError) {
         console.error(
           `[Keyword] ไม่สามารถยกเลิกงานติดตามสำหรับผู้ใช้ ${userId} หลังจากปิด AI:`,
@@ -3046,9 +3049,7 @@ async function detectKeywordAction(
 
   // ตรวจสอบ keyword สำหรับปิดระบบติดตาม
   if (matchesKeyword(trimmedMessage, disableFollowUp)) {
-    await cancelFollowUpTasksForUser(userId, platform, botId, {
-      reason: "keyword_cancel",
-    });
+    await disableFollowUpForUser(userId, platform, botId, "keyword_cancel");
     console.log(
       `[Keyword] ปิดระบบติดตามสำหรับผู้ใช้ ${userId} ด้วย keyword: "${trimmedMessage}"`,
     );
@@ -3907,7 +3908,7 @@ async function scheduleFollowUpForUser(userId, options = {}) {
       platform: normalizedPlatform,
       botId: normalizedBotId,
     });
-    if (status?.hasFollowUp) {
+    if (status?.hasFollowUp || status?.followUpDisabled) {
       return null;
     }
 
@@ -4182,6 +4183,28 @@ async function cancelFollowUpTasksForUser(
   }
 }
 
+async function disableFollowUpForUser(
+  userId,
+  platform = null,
+  botId = null,
+  reason = "manual_disable",
+) {
+  const now = new Date();
+  const normalizedPlatform = platform || null;
+  const normalizedBotId = normalizeFollowUpBotId(botId);
+  await cancelFollowUpTasksForUser(userId, normalizedPlatform, normalizedBotId, {
+    reason,
+  });
+  await updateFollowUpStatus(userId, {
+    platform: normalizedPlatform,
+    botId: normalizedBotId,
+    followUpDisabled: true,
+    followUpDisabledAt: now,
+    followUpReason: reason,
+    followUpUpdatedAt: now,
+  });
+}
+
 async function ensureFollowUpIndexes() {
   if (!isMongoRuntimeEnabled()) {
     return;
@@ -4277,14 +4300,16 @@ async function handleFollowUpTask(task, db) {
     platform: task.platform || "line",
     botId: normalizeFollowUpBotId(task.botId),
   });
-  if (followUpStatus?.hasFollowUp) {
+  if (followUpStatus?.hasFollowUp || followUpStatus?.followUpDisabled) {
     console.log(
-      `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - ถูก mark ว่าซื้อแล้ว`,
+      `[FollowUp] ยกเลิกการส่งติดตาม ${task.userId} - ถูก mark ว่าซื้อแล้วหรือปิดติดตาม`,
     );
     await followUpRepo.updateTaskById(task._id, {
       $set: {
         canceled: true,
-        cancelReason: "already_purchased",
+        cancelReason: followUpStatus?.followUpDisabled
+          ? "manual_disable"
+          : "already_purchased",
         canceledAt: now,
         updatedAt: now,
       },
@@ -4295,7 +4320,9 @@ async function handleFollowUpTask(task, db) {
       botId: task.botId,
       contextKey: derivedContextKey,
       status: "canceled",
-      reason: "already_purchased",
+      reason: followUpStatus?.followUpDisabled
+        ? "manual_disable"
+        : "already_purchased",
     });
     return;
   }
@@ -4834,9 +4861,9 @@ async function maybeAnalyzeFollowUp(
       // 1. Race condition ระหว่างการวิเคราะห์หลายข้อความพร้อมกัน
       // 2. การส่ง follow-up ไปหาลูกค้าที่ซื้อแล้วโดยไม่ตั้งใจ
       // 3. กรณี order ถูกลบ แต่ยังไม่ต้องการให้ระบบส่ง follow-up อีก
-      if (status?.hasFollowUp === true) {
+      if (status?.hasFollowUp === true || status?.followUpDisabled === true) {
         console.log(
-          `[FollowUp] ข้าม reset hasFollowUp สำหรับ ${userId} - เคยถูก mark ว่าซื้อแล้ว`,
+          `[FollowUp] ข้าม reset follow-up status สำหรับ ${userId} - เคยถูก mark ว่าซื้อแล้วหรือปิดติดตาม`,
         );
         return;
       }
@@ -6864,6 +6891,8 @@ async function clearFollowUpStatus(userId) {
   const existing = (await followUpRepo.getStatus(userId)) || {};
   await followUpRepo.upsertStatus(userId, {
     hasFollowUp: false,
+    followUpDisabled: false,
+    followUpDisabledAt: null,
     followUpReason: "",
     followUpUpdatedAt: now,
     lastAnalyzedAt: now,
@@ -30870,21 +30899,16 @@ app.post("/admin/chat/send", async (req, res) => {
 
     // Determine platform and bot from latest chat
     const lastChat = await getChatRepository().getLatestContext(userId);
-    const client = await connectDB();
-    const db = client.db("chatbot");
     const platform = lastChat?.platform || "line";
     const botId = lastChat?.botId || null;
 
     // ดึงข้อมูล bot เพื่อตรวจสอบ keyword settings
+    let contextBot = null;
     let keywordSettings = {};
     if (botId) {
-      const botColl = db.collection(getBotCollectionName(platform));
-      const botQuery = ObjectId.isValid(botId)
-        ? { _id: new ObjectId(botId) }
-        : { _id: botId };
-      const bot = await botColl.findOne(botQuery);
-      if (bot && bot.keywordSettings) {
-        keywordSettings = bot.keywordSettings;
+      contextBot = await findBotById(null, platform, botId);
+      if (contextBot && contextBot.keywordSettings) {
+        keywordSettings = contextBot.keywordSettings;
       }
     }
 
@@ -30904,7 +30928,10 @@ app.post("/admin/chat/send", async (req, res) => {
         if (platform === "facebook") {
           try {
             if (botId) {
-              const fbBot = await findBotById(db, "facebook", botId);
+              const fbBot =
+                platform === "facebook" && contextBot
+                  ? contextBot
+                  : await findBotById(null, "facebook", botId);
               if (fbBot?.accessToken) {
                 await sendFacebookMessage(
                   userId,
@@ -31042,7 +31069,10 @@ app.post("/admin/chat/send", async (req, res) => {
     if (platform === "facebook") {
       try {
         if (botId) {
-          const fbBot = await findBotById(db, "facebook", botId);
+          const fbBot =
+            platform === "facebook" && contextBot
+              ? contextBot
+              : await findBotById(null, "facebook", botId);
           if (fbBot) {
             await sendFacebookMessage(userId, message, fbBot.accessToken, {
               metadata: "admin_manual",
@@ -31078,7 +31108,10 @@ app.post("/admin/chat/send", async (req, res) => {
             error: "ไม่พบ Instagram Bot สำหรับผู้ใช้นี้",
           });
         }
-        const igBot = await findBotById(db, "instagram", botId);
+        const igBot =
+          platform === "instagram" && contextBot
+            ? contextBot
+            : await findBotById(null, "instagram", botId);
         const accessToken = resolveMetaAccessToken(igBot || {});
         const instagramSenderId = resolveInstagramSenderId(igBot || {});
         if (!igBot || !accessToken || !instagramSenderId) {
@@ -31119,7 +31152,10 @@ app.post("/admin/chat/send", async (req, res) => {
             error: "ไม่พบ WhatsApp Bot สำหรับผู้ใช้นี้",
           });
         }
-        const waBot = await findBotById(db, "whatsapp", botId);
+        const waBot =
+          platform === "whatsapp" && contextBot
+            ? contextBot
+            : await findBotById(null, "whatsapp", botId);
         const accessToken = resolveMetaAccessToken(waBot || {});
         const phoneNumberId = resolveWhatsAppPhoneNumberId(waBot || {});
         if (!waBot || !accessToken || !phoneNumberId) {
@@ -31155,7 +31191,10 @@ app.post("/admin/chat/send", async (req, res) => {
       let selectedImageCollections = null;
 
       if (botId) {
-        const lineBot = await findBotById(db, "line", botId);
+        const lineBot =
+          platform === "line" && contextBot
+            ? contextBot
+            : await findBotById(null, "line", botId);
         if (lineBot) {
           if (lineBot.channelAccessToken && lineBot.channelSecret) {
             lineClientForSend = createLineClient(
