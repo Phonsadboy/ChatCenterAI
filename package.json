@@ -17,6 +17,7 @@
     "migrate:pg": "node scripts/run-postgres-migrations.js",
     "migrate:all": "node runtime/migration-runner.js",
     "migrate:thread-stats": "node scripts/backfill-thread-stats.js",
+    "repair:asset-mojibake": "node scripts/repair-asset-mojibake.js",
     "verify:no-mongo": "node scripts/verify-no-mongo.js",
     "verify:pg-safety": "node scripts/verify-pg-safety.js"
   },

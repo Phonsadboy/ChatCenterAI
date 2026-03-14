@@ -14759,11 +14759,20 @@ async function insertPostgresFollowUpAsset(scope, assetDoc = {}) {
   }
   const normalizedScope = String(scope || "").trim();
   const now = assetDoc.createdAt || assetDoc.updatedAt || new Date();
+  const normalizedOriginalName = normalizeUploadText(
+    typeof assetDoc.originalName === "string" ? assetDoc.originalName : "",
+  ).trim();
+  const normalizedFileName = normalizeUploadText(
+    typeof assetDoc.fileName === "string" ? assetDoc.fileName : "",
+  ).trim();
+  const normalizedDescription = normalizeUploadText(
+    typeof assetDoc.description === "string" ? assetDoc.description : "",
+  ).trim();
   const labelCandidate =
-    typeof assetDoc.originalName === "string" && assetDoc.originalName.trim()
-      ? assetDoc.originalName.trim()
-      : typeof assetDoc.fileName === "string" && assetDoc.fileName.trim()
-        ? assetDoc.fileName.trim()
+    normalizedOriginalName
+      ? normalizedOriginalName
+      : normalizedFileName
+        ? normalizedFileName
         : `${normalizedScope || "asset"}_${Date.now()}`;
   const slugBase = generateSlugFromLabel(labelCandidate) || `${normalizedScope || "asset"}_${Date.now()}`;
   const legacyAssetId = `${normalizedScope || "asset"}_${Date.now()}_${crypto
@@ -14783,7 +14792,7 @@ async function insertPostgresFollowUpAsset(scope, assetDoc = {}) {
     height: assetDoc.height || null,
     url: assetDoc.url || null,
     thumbUrl: assetDoc.thumbUrl || null,
-    originalName: assetDoc.originalName || "",
+    originalName: normalizedOriginalName,
     createdAt: assetDoc.createdAt || now,
     updatedAt: assetDoc.updatedAt || now,
   };
@@ -14814,7 +14823,7 @@ async function insertPostgresFollowUpAsset(scope, assetDoc = {}) {
       legacyAssetId,
       labelCandidate.slice(0, 255),
       slugBase.slice(0, 255),
-      "",
+      normalizedDescription.slice(0, 1000),
       assetDoc.storageKey || null,
       assetDoc.thumbStorageKey || null,
       JSON.stringify(metadata),
@@ -22604,6 +22613,7 @@ class BroadcastQueue {
     const { userId, platform, botId } = target;
     const { messages } = this.data;
     const bot = this.botsCache.get(`${platform}:${botId}`);
+    let deliveredCount = 0;
 
     if (!bot) {
       throw new Error("Bot not found");
@@ -22613,6 +22623,7 @@ class BroadcastQueue {
       for (const msg of messages) {
         if (msg.type === 'text') {
           await sendFacebookMessage(userId, msg.content, bot.accessToken, { metadata: "broadcast_auto" });
+          deliveredCount++;
         } else if (msg.type === 'image') {
           await axios.post(
             `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
@@ -22631,6 +22642,7 @@ class BroadcastQueue {
               headers: { "Content-Type": "application/json" }
             }
           );
+          deliveredCount++;
         }
       }
     } else if (platform === "line") {
@@ -22645,6 +22657,7 @@ class BroadcastQueue {
 
       if (lineMessages.length > 0) {
         await client.pushMessage(userId, lineMessages);
+        deliveredCount += lineMessages.length;
       }
     } else if (platform === "instagram") {
       const accessToken = resolveMetaAccessToken(bot || {});
@@ -22655,6 +22668,7 @@ class BroadcastQueue {
       for (const msg of messages) {
         if (msg.type === "text") {
           await sendInstagramMessage(userId, msg.content, accessToken, senderId);
+          deliveredCount++;
         } else if (msg.type === "image" && msg.url) {
           const label = msg.alt || msg.caption || "Broadcast image";
           const assetsMap = buildAssetsLookup([
@@ -22664,6 +22678,7 @@ class BroadcastQueue {
             userId, `#[IMAGE:${label}]`, accessToken, senderId,
             { selectedImageCollections: null }, assetsMap,
           );
+          deliveredCount++;
         }
       }
     } else if (platform === "whatsapp") {
@@ -22675,10 +22690,18 @@ class BroadcastQueue {
       for (const msg of messages) {
         if (msg.type === "text") {
           await sendWhatsAppMessage(userId, msg.content, accessToken, phoneNumberId);
+          deliveredCount++;
         } else if (msg.type === "image" && msg.url) {
           await sendWhatsAppImageByUrl(userId, msg.url, accessToken, phoneNumberId, msg.alt || "");
+          deliveredCount++;
         }
       }
+    } else {
+      throw new Error(`Unsupported platform for broadcast: ${platform}`);
+    }
+
+    if (deliveredCount <= 0) {
+      throw new Error("No valid messages delivered");
     }
   }
 
@@ -22819,12 +22842,83 @@ function parseBroadcastDateFilter(rawFilter = {}, timezone = BANGKOK_TZ) {
   };
 }
 
+function isAbsoluteHttpUrl(value) {
+  return /^https?:\/\/.+/i.test(String(value || "").trim());
+}
+
+function resolveBroadcastPublicBaseUrl(req) {
+  if (typeof PUBLIC_BASE_URL === "string" && PUBLIC_BASE_URL.trim()) {
+    return PUBLIC_BASE_URL.replace(/\/$/, "");
+  }
+
+  const forwardedProto = String(req.get("x-forwarded-proto") || "")
+    .split(",")[0]
+    .trim();
+  const forwardedHost = String(req.get("x-forwarded-host") || "")
+    .split(",")[0]
+    .trim();
+  const host = forwardedHost || String(req.get("host") || "").trim();
+  if (!host) return "";
+  const protocol = forwardedProto || req.protocol || "https";
+  return `${protocol}://${host}`.replace(/\/$/, "");
+}
+
+function normalizeBroadcastMessages(rawMessages) {
+  let messages = rawMessages;
+  if (typeof messages === "string") {
+    messages = [{ type: "text", content: messages }];
+  }
+  if (!Array.isArray(messages) || messages.length === 0) {
+    throw createBroadcastFilterError("กรุณาเพิ่มข้อความอย่างน้อย 1 รายการ");
+  }
+  if (messages.length > 5) {
+    throw createBroadcastFilterError("ส่งได้สูงสุด 5 ข้อความ");
+  }
+
+  return messages.map((message, index) => {
+    const type = typeof message?.type === "string"
+      ? message.type.trim().toLowerCase()
+      : "";
+
+    if (type === "text") {
+      const content =
+        typeof message?.content === "string" ? message.content.trim() : "";
+      if (!content) {
+        throw createBroadcastFilterError(
+          `ข้อความลำดับที่ ${index + 1} ยังไม่ได้กรอกเนื้อหา`,
+        );
+      }
+      return { type: "text", content };
+    }
+
+    if (type === "image") {
+      const url = typeof message?.url === "string" ? message.url.trim() : "";
+      return url ? { type: "image", url } : { type: "image" };
+    }
+
+    throw createBroadcastFilterError(
+      `ประเภทข้อความลำดับที่ ${index + 1} ไม่ถูกต้อง`,
+    );
+  });
+}
+
 async function getBroadcastAudience(channels, audienceType, options = {}) {
   const followUpRepo = getFollowUpRepository();
   const chatRepo = getChatRepository();
   const orderRepo = getOrderRepository();
   const orderFilter = normalizeBroadcastOrderFilter(options.orderFilter);
   const dateFilter = parseBroadcastDateFilter(options.dateFilter || {});
+  const normalizedAudience = ["all", "tagged", "untagged"].includes(audienceType)
+    ? audienceType
+    : "all";
+  const normalizedChannels = Array.isArray(channels)
+    ? channels
+      .map((channel) => (typeof channel === "string" ? channel.trim() : ""))
+      .filter(Boolean)
+    : [];
+  if (normalizedChannels.length === 0) {
+    return [];
+  }
 
   let users = [];
   const getChatUserIdsForChannel = async (platform, botId) => {
@@ -22845,15 +22939,15 @@ async function getBroadcastAudience(channels, audienceType, options = {}) {
     return chatRepo.listDistinctUserIds(filter);
   };
 
-  for (const ch of channels) {
+  for (const ch of normalizedChannels) {
     const [platform, botId] = ch.split(":");
 
     // Base query: all users for this bot
     let userIds = await getChatUserIdsForChannel(platform, botId);
 
-    if (audienceType === 'all') {
+    if (normalizedAudience === 'all') {
       // No filter
-    } else if (audienceType === 'tagged') {
+    } else if (normalizedAudience === 'tagged') {
       // Filter only those with hasFollowUp: true
       const taggedUsers = await followUpRepo.listStatuses({
         userIds,
@@ -22861,7 +22955,7 @@ async function getBroadcastAudience(channels, audienceType, options = {}) {
       });
       const taggedSet = new Set(taggedUsers.map((u) => u.senderId));
       userIds = userIds.filter(id => taggedSet.has(id));
-    } else if (audienceType === 'untagged') {
+    } else if (normalizedAudience === 'untagged') {
       // Filter exclude hasFollowUp: true
       const taggedUsers = await followUpRepo.listStatuses({
         userIds,
@@ -22948,10 +23042,17 @@ app.post("/admin/broadcast/preview", async (req, res) => {
       orderFilter = "all",
       dateFilter = { mode: "all" },
     } = req.body || {};
-    if (!channels.length) {
+    const normalizedChannels = Array.isArray(channels)
+      ? channels
+        .map((channel) =>
+          typeof channel === "string" ? channel.trim() : "",
+        )
+        .filter(Boolean)
+      : [];
+    if (normalizedChannels.length === 0) {
       return res.json({ success: true, count: 0, counts: { total: 0, line: 0, facebook: 0, instagram: 0, whatsapp: 0 }, perChannel: [] });
     }
-    const users = await getBroadcastAudience(channels, audience, {
+    const users = await getBroadcastAudience(normalizedChannels, audience, {
       orderFilter,
       dateFilter,
     });
@@ -23039,20 +23140,50 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
     dateFilter = parseJSON(dateFilter);
     settings = parseJSON(settings);
 
+    const normalizedChannels = Array.isArray(channels)
+      ? channels
+        .map((channel) =>
+          typeof channel === "string" ? channel.trim() : "",
+        )
+        .filter(Boolean)
+      : [];
+
+    channels = Array.from(new Set(normalizedChannels));
+    messages = normalizeBroadcastMessages(messages);
+
     // Default settings if not provided
+    const parsedBatchSize = Number.parseInt(settings?.batchSize, 10);
+    const parsedBatchDelay = Number.parseInt(settings?.batchDelay, 10);
+    const parsedMessageDelay = Number.parseFloat(settings?.messageDelay);
     settings = {
-      batchSize: parseInt(settings?.batchSize || 10),
-      batchDelay: parseInt(settings?.batchDelay || 60),
-      messageDelay: parseFloat(settings?.messageDelay || 1)
+      batchSize:
+        Number.isFinite(parsedBatchSize) && parsedBatchSize > 0
+          ? parsedBatchSize
+          : 10,
+      batchDelay:
+        Number.isFinite(parsedBatchDelay) && parsedBatchDelay >= 0
+          ? parsedBatchDelay
+          : 60,
+      messageDelay:
+        Number.isFinite(parsedMessageDelay) && parsedMessageDelay >= 0
+          ? parsedMessageDelay
+          : 1,
     };
 
-    if (!messages || !channels || channels.length === 0) {
+    if (channels.length === 0) {
       throw new Error("กรุณากรอกข้อความและเลือกช่องทาง");
     }
 
-    // Wrap single message if legacy format (string)
-    if (typeof messages === 'string') {
-      messages = [{ type: 'text', content: messages }];
+    const hasPendingImageUploads = messages.some(
+      (message) => message.type === "image" && !message.url,
+    );
+    const urlBase = hasPendingImageUploads
+      ? resolveBroadcastPublicBaseUrl(req)
+      : "";
+    if (hasPendingImageUploads && !urlBase) {
+      throw createBroadcastFilterError(
+        "ไม่พบโดเมนสำหรับสร้างลิงก์รูปภาพ (กรุณาตั้งค่า PUBLIC_BASE_URL)",
+      );
     }
 
     // Process uploaded images
@@ -23078,10 +23209,18 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
               originalName: file.originalname || "",
             },
           });
-          const urlBase = PUBLIC_BASE_URL ? PUBLIC_BASE_URL.replace(/\/$/, "") : "";
           messages[i].url = `${urlBase}/broadcast/assets/${filename}`;
         }
       }
+    }
+
+    const hasInvalidImageUrl = messages.some(
+      (message) => message.type === "image" && !isAbsoluteHttpUrl(message.url),
+    );
+    if (hasInvalidImageUrl) {
+      throw createBroadcastFilterError(
+        "รูปภาพบรอดแคสต์ต้องมี URL แบบ http/https ที่เข้าถึงได้สาธารณะ",
+      );
     }
 
     // Get targets

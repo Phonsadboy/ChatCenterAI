@@ -16,6 +16,8 @@
   const audienceTotal = document.getElementById('audienceTotal');
   const audienceLine = document.getElementById('audienceLine');
   const audienceFb = document.getElementById('audienceFb');
+  const audienceIg = document.getElementById('audienceIg');
+  const audienceWa = document.getElementById('audienceWa');
   const audienceCountChip = document.getElementById('audienceCount');
   const progressModal = new bootstrap.Modal(document.getElementById('progressModal'));
   const toastContainer = document.getElementById('broadcastToastContainer');
@@ -297,6 +299,8 @@
         audienceTotal.textContent = data.counts.total.toLocaleString();
         audienceLine.textContent = data.counts.line.toLocaleString();
         audienceFb.textContent = data.counts.facebook.toLocaleString();
+        if (audienceIg) audienceIg.textContent = (data.counts.instagram || 0).toLocaleString();
+        if (audienceWa) audienceWa.textContent = (data.counts.whatsapp || 0).toLocaleString();
         if (audienceCountChip) {
           audienceCountChip.innerHTML = `<i class="fas fa-users text-primary"></i> กลุ่มเป้าหมาย <strong>${data.counts.total.toLocaleString()}</strong> คน`;
         }
@@ -304,6 +308,10 @@
         updateTimeEstimate();
       } else {
         audienceTotal.textContent = '-';
+        if (audienceLine) audienceLine.textContent = '-';
+        if (audienceFb) audienceFb.textContent = '-';
+        if (audienceIg) audienceIg.textContent = '-';
+        if (audienceWa) audienceWa.textContent = '-';
         if (audienceCountChip) audienceCountChip.innerHTML = '<i class="fas fa-users"></i> เลือกกลุ่มเป้าหมาย';
         cachedPerChannel = null;
         updateTimeEstimate();
@@ -311,6 +319,10 @@
     } catch (e) {
       console.error("Preview error", e);
       audienceTotal.textContent = '?';
+      if (audienceLine) audienceLine.textContent = '?';
+      if (audienceFb) audienceFb.textContent = '?';
+      if (audienceIg) audienceIg.textContent = '?';
+      if (audienceWa) audienceWa.textContent = '?';
     } finally {
       updatePreview();
     }
