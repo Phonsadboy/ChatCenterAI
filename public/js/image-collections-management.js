@@ -761,10 +761,27 @@
         return labels;
     };
 
+    const decodePotentialUtf8Mojibake = (value = '') => {
+        if (typeof value !== 'string' || !value) return value;
+        const looksMojibake = /(?:Ã.|Â|à¸|à¹|ðŸ|â€|ã.)/.test(value);
+        if (!looksMojibake) return value;
+        try {
+            const bytes = Uint8Array.from(value, (ch) => ch.charCodeAt(0) & 0xff);
+            const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+            if (!decoded || decoded.includes('�') || /[\u0080-\u009f]/.test(decoded)) {
+                return value;
+            }
+            return decoded;
+        } catch (_) {
+            return value;
+        }
+    };
+
     const deriveLabelFromFilename = (name = '') => {
         if (!name) return '';
-        const dotIndex = name.lastIndexOf('.');
-        const withoutExt = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+        const normalizedName = decodePotentialUtf8Mojibake(name);
+        const dotIndex = normalizedName.lastIndexOf('.');
+        const withoutExt = dotIndex > 0 ? normalizedName.slice(0, dotIndex) : normalizedName;
         return withoutExt
             .replace(/[_\-]+/g, ' ')
             .replace(/\s+/g, ' ')
@@ -777,6 +794,7 @@
         return {
             id,
             file,
+            displayFileName: decodePotentialUtf8Mojibake(file.name || ''),
             previewUrl,
             label: deriveLabelFromFilename(file.name),
             description: '',
@@ -967,7 +985,7 @@
                             </div>
                             <textarea class="form-control form-control-sm queue-description-input" rows="2" placeholder="คำอธิบาย (ไม่บังคับ)" data-queue-id="${item.id}" ${disableInputs ? 'disabled' : ''}>${escapedDescription}</textarea>
                             <div class="queue-meta small text-muted">
-                                <span><i class="fas fa-file me-1"></i>${escapeHtml(item.file.name)}</span>
+                                <span><i class="fas fa-file me-1"></i>${escapeHtml(item.displayFileName || item.file.name)}</span>
                                 <span class="dot">•</span>
                                 <span>${sizeText}</span>
                                 ${item.status === 'error' ? '<span class="dot">•</span><span class="text-danger">โปรดแก้ไขแล้วลองใหม่</span>' : ''}

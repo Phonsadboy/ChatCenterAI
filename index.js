@@ -1050,15 +1050,39 @@ app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
 // ============================ Multer Configuration ============================
+function decodePotentialUtf8Mojibake(value) {
+  if (typeof value !== "string" || !value) return value;
+  const looksMojibake = /(?:Ã.|Â|à¸|à¹|ðŸ|â€|ã.)/.test(value);
+  if (!looksMojibake) return value;
+  try {
+    const decoded = Buffer.from(value, "latin1").toString("utf8");
+    if (!decoded || decoded.includes("�")) return value;
+    if (/[\u0080-\u009f]/.test(decoded)) return value;
+    return decoded;
+  } catch (_) {
+    return value;
+  }
+}
+
+function normalizeUploadText(value) {
+  if (typeof value !== "string") return "";
+  return decodePotentialUtf8Mojibake(value);
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
+    const originalName = normalizeUploadText(file.originalname || "");
+    if (originalName && originalName !== file.originalname) {
+      file.originalname = originalName;
+    }
+
     // ตรวจสอบว่าเป็นไฟล์ Excel หรือไม่
     if (
       file.mimetype ===
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
       file.mimetype === "application/vnd.ms-excel" ||
-      file.originalname.match(/\.(xlsx|xls)$/)
+      originalName.match(/\.(xlsx|xls)$/)
     ) {
       cb(null, true);
     } else {
@@ -1074,10 +1098,15 @@ const upload = multer({
 const imageUpload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
+    const originalName = normalizeUploadText(file.originalname || "");
+    if (originalName && originalName !== file.originalname) {
+      file.originalname = originalName;
+    }
+
     const allowed = ["image/jpeg", "image/png", "image/webp"];
     if (
       allowed.includes(file.mimetype) ||
-      file.originalname.match(/\.(jpe?g|png|webp)$/i)
+      originalName.match(/\.(jpe?g|png|webp)$/i)
     ) {
       cb(null, true);
     } else {
@@ -21405,9 +21434,9 @@ app.post(
   imageUpload.single("image"),
   async (req, res) => {
     try {
-      const label = (req.body.label || "").trim();
-      const alt = (req.body.alt || "").trim();
-      const description = (req.body.description || "").trim();
+      const label = normalizeUploadText(req.body.label || "").trim();
+      const alt = normalizeUploadText(req.body.alt || "").trim();
+      const description = normalizeUploadText(req.body.description || "").trim();
       const overwrite =
         String(req.body.overwrite || "").toLowerCase() === "true";
 
@@ -21564,8 +21593,12 @@ app.put("/admin/instructions/assets/:label", async (req, res) => {
   try {
     const originalLabel = req.params.label;
     let { label: newLabel, description } = req.body || {};
-    newLabel = typeof newLabel === "string" ? newLabel.trim() : "";
-    description = typeof description === "string" ? description.trim() : "";
+    newLabel =
+      typeof newLabel === "string" ? normalizeUploadText(newLabel).trim() : "";
+    description =
+      typeof description === "string"
+        ? normalizeUploadText(description).trim()
+        : "";
 
     if (!newLabel) {
       return res
