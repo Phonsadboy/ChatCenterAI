@@ -28,6 +28,9 @@
   const previewBtn = document.getElementById('previewBtn');
   const previewBtnInline = document.getElementById('previewBtnInline');
   const previewCard = document.getElementById('broadcastPreview');
+  const dateRangeFields = document.getElementById('dateRangeFields');
+  const dateStartInput = document.getElementById('dateStartInput');
+  const dateEndInput = document.getElementById('dateEndInput');
 
   // Progress Elements
   const progressBar = document.querySelector('#progressModal .progress-bar');
@@ -134,7 +137,69 @@
   const getSelectedAudienceLabel = () => {
     const selectedCard = document.querySelector('.audience-card.active');
     const title = selectedCard?.querySelector('.audience-title');
-    return (title?.textContent || '').trim() || 'ไม่ระบุ';
+    const audienceLabel = (title?.textContent || '').trim() || 'ไม่ระบุ';
+    const orderLabel = getSelectedOrderFilterLabel();
+    const dateLabel = getDateFilterLabel();
+    const parts = [audienceLabel];
+    if (orderLabel) parts.push(orderLabel);
+    if (dateLabel) parts.push(dateLabel);
+    return parts.join(' • ');
+  };
+
+  const getSelectedOrderFilter = () => (
+    document.querySelector('input[name="orderFilter"]:checked')?.value || 'all'
+  );
+
+  const getSelectedOrderFilterLabel = () => {
+    const value = getSelectedOrderFilter();
+    if (value === 'with_order') return 'มีออเดอร์';
+    if (value === 'without_order') return 'ไม่มีออเดอร์';
+    return '';
+  };
+
+  const getDateFilterMode = () => (
+    document.querySelector('input[name="dateFilterMode"]:checked')?.value || 'all'
+  );
+
+  const getDateFilterPayload = () => {
+    const mode = getDateFilterMode();
+    if (mode === 'today') return { mode: 'today' };
+    if (mode === 'custom') {
+      return {
+        mode: 'custom',
+        startDate: (dateStartInput?.value || '').trim(),
+        endDate: (dateEndInput?.value || '').trim(),
+      };
+    }
+    return { mode: 'all' };
+  };
+
+  const validateDateFilterPayload = (payload = {}) => {
+    if (!payload || payload.mode !== 'custom') return null;
+    if (!payload.startDate || !payload.endDate) {
+      return 'กรุณาเลือกวันที่เริ่มต้นและวันที่สิ้นสุด';
+    }
+    if (payload.startDate > payload.endDate) {
+      return 'วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด';
+    }
+    return null;
+  };
+
+  const getDateFilterLabel = () => {
+    const payload = getDateFilterPayload();
+    if (payload.mode === 'today') {
+      return 'ทักวันนี้';
+    }
+    if (payload.mode === 'custom' && payload.startDate && payload.endDate) {
+      return `ทักช่วง ${payload.startDate} ถึง ${payload.endDate}`;
+    }
+    return '';
+  };
+
+  const syncDateFilterFieldsVisibility = () => {
+    if (!dateRangeFields) return;
+    const mode = getDateFilterMode();
+    dateRangeFields.style.display = mode === 'custom' ? 'flex' : 'none';
   };
 
   const getSelectedChannelsLabel = () => {
@@ -196,10 +261,21 @@
   const updateAudiencePreview = async () => {
     const channels = Array.from(document.querySelectorAll('input[name="channels"]:checked')).map(c => c.value);
     const audience = document.querySelector('input[name="audience"]:checked')?.value || 'all';
+    const orderFilter = getSelectedOrderFilter();
+    const dateFilter = getDateFilterPayload();
+    const dateFilterError = validateDateFilterPayload(dateFilter);
 
     if (channels.length === 0) {
       audienceStats.style.display = 'none';
       if (audienceCountChip) audienceCountChip.innerHTML = '<i class="fas fa-users"></i> เลือกกลุ่มเป้าหมาย';
+      cachedPerChannel = null;
+      updateTimeEstimate();
+      updatePreview();
+      return;
+    }
+    if (dateFilterError) {
+      audienceStats.style.display = 'none';
+      if (audienceCountChip) audienceCountChip.innerHTML = '<i class="fas fa-users"></i> ระบุช่วงวันที่';
       cachedPerChannel = null;
       updateTimeEstimate();
       updatePreview();
@@ -213,7 +289,7 @@
       const res = await fetch('/admin/broadcast/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channels, audience })
+        body: JSON.stringify({ channels, audience, orderFilter, dateFilter })
       });
       const data = await res.json();
 
@@ -243,6 +319,17 @@
   // Listeners for Audience & Channels
   document.querySelectorAll('input[name="channels"], input[name="audience"]').forEach(input => {
     input.addEventListener('change', updateAudiencePreview);
+  });
+  document.querySelectorAll('input[name="orderFilter"], input[name="dateFilterMode"]').forEach(input => {
+    input.addEventListener('change', () => {
+      syncDateFilterFieldsVisibility();
+      updateAudiencePreview();
+    });
+  });
+  [dateStartInput, dateEndInput].forEach((input) => {
+    if (!input) return;
+    input.addEventListener('change', updateAudiencePreview);
+    input.addEventListener('input', updateAudiencePreview);
   });
 
   // Recalculate estimate when rate settings change
@@ -416,6 +503,9 @@
 
     const channels = document.querySelectorAll('input[name="channels"]:checked');
     if (channels.length === 0) return showToast('กรุณาเลือกช่องทาง', 'warning');
+    const dateFilter = getDateFilterPayload();
+    const dateFilterError = validateDateFilterPayload(dateFilter);
+    if (dateFilterError) return showToast(dateFilterError, 'warning');
 
     isSubmitting = true;
     submitBtn.disabled = true;
@@ -436,6 +526,8 @@
     const channelsArr = Array.from(channels).map(c => c.value);
     formData.set('channels', JSON.stringify(channelsArr));
     formData.set('audience', JSON.stringify(document.querySelector('input[name="audience"]:checked')?.value || 'all'));
+    formData.set('orderFilter', JSON.stringify(getSelectedOrderFilter()));
+    formData.set('dateFilter', JSON.stringify(dateFilter));
 
     const settings = getCurrentSettings();
     formData.set('settings', JSON.stringify(settings));
@@ -621,6 +713,7 @@
   if (previewBtn) previewBtn.addEventListener('click', handlePreviewClick);
   if (previewBtnInline) previewBtnInline.addEventListener('click', handlePreviewClick);
 
+  syncDateFilterFieldsVisibility();
   updateAudiencePreview();
   updatePreview();
 

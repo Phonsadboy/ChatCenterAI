@@ -22754,18 +22754,95 @@ class BroadcastQueue {
   }
 }
 
-async function getBroadcastAudience(channels, audienceType) {
+function normalizeBroadcastOrderFilter(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "with_order" || normalized === "withorder") {
+    return "with_order";
+  }
+  if (normalized === "without_order" || normalized === "withoutorder") {
+    return "without_order";
+  }
+  return "all";
+}
+
+function createBroadcastFilterError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+function parseBroadcastDateFilter(rawFilter = {}, timezone = BANGKOK_TZ) {
+  const payload =
+    rawFilter && typeof rawFilter === "object" && !Array.isArray(rawFilter)
+      ? rawFilter
+      : {};
+  const rawMode =
+    typeof payload.mode === "string"
+      ? payload.mode.trim().toLowerCase()
+      : "all";
+  const mode = ["all", "today", "custom"].includes(rawMode) ? rawMode : "all";
+
+  if (mode === "all") {
+    return { mode: "all", start: null, end: null };
+  }
+
+  if (mode === "today") {
+    const now = moment().tz(timezone);
+    return {
+      mode: "today",
+      start: now.clone().startOf("day").toDate(),
+      end: now.clone().endOf("day").toDate(),
+    };
+  }
+
+  const startDate =
+    typeof payload.startDate === "string" ? payload.startDate.trim() : "";
+  const endDate =
+    typeof payload.endDate === "string" ? payload.endDate.trim() : "";
+  if (!startDate || !endDate) {
+    throw createBroadcastFilterError("กรุณาระบุวันที่เริ่มต้นและวันที่สิ้นสุด");
+  }
+
+  const startMoment = moment.tz(startDate, "YYYY-MM-DD", true, timezone);
+  const endMoment = moment.tz(endDate, "YYYY-MM-DD", true, timezone);
+  if (!startMoment.isValid() || !endMoment.isValid()) {
+    throw createBroadcastFilterError("รูปแบบวันที่ไม่ถูกต้อง");
+  }
+  if (startMoment.isAfter(endMoment, "day")) {
+    throw createBroadcastFilterError("วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด");
+  }
+
+  return {
+    mode: "custom",
+    start: startMoment.clone().startOf("day").toDate(),
+    end: endMoment.clone().endOf("day").toDate(),
+  };
+}
+
+async function getBroadcastAudience(channels, audienceType, options = {}) {
   const followUpRepo = getFollowUpRepository();
   const chatRepo = getChatRepository();
+  const orderRepo = getOrderRepository();
+  const orderFilter = normalizeBroadcastOrderFilter(options.orderFilter);
+  const dateFilter = parseBroadcastDateFilter(options.dateFilter || {});
 
   let users = [];
   const getChatUserIdsForChannel = async (platform, botId) => {
-    return chatRepo.listDistinctUserIds({
+    const filter = {
       platform,
       botId,
       defaultBotOnly: !botId || botId === "default",
       role: "user",
-    });
+    };
+
+    if (dateFilter.start) {
+      filter.start = dateFilter.start;
+    }
+    if (dateFilter.end) {
+      filter.end = dateFilter.end;
+    }
+
+    return chatRepo.listDistinctUserIds(filter);
   };
 
   for (const ch of channels) {
@@ -22792,6 +22869,31 @@ async function getBroadcastAudience(channels, audienceType) {
       });
       const taggedSet = new Set(taggedUsers.map((u) => u.senderId));
       userIds = userIds.filter(id => !taggedSet.has(id));
+    }
+
+    if (orderFilter !== "all" && userIds.length > 0) {
+      const orderQuery = {
+        platform,
+        userId: { $in: userIds },
+      };
+      if (botId && botId !== "default") {
+        orderQuery.botId = botId;
+      }
+
+      const orders = await orderRepo.list(orderQuery);
+      const orderedUserSet = new Set(
+        orders
+          .map((order) =>
+            typeof order?.userId === "string" ? order.userId.trim() : "",
+          )
+          .filter(Boolean),
+      );
+
+      if (orderFilter === "with_order") {
+        userIds = userIds.filter((id) => orderedUserSet.has(id));
+      } else if (orderFilter === "without_order") {
+        userIds = userIds.filter((id) => !orderedUserSet.has(id));
+      }
     }
 
     // Map to target objects
@@ -22840,11 +22942,19 @@ app.get("/admin/broadcast", async (req, res) => {
 // Preview Audience
 app.post("/admin/broadcast/preview", async (req, res) => {
   try {
-    const { channels = [], audience = "all" } = req.body;
+    const {
+      channels = [],
+      audience = "all",
+      orderFilter = "all",
+      dateFilter = { mode: "all" },
+    } = req.body || {};
     if (!channels.length) {
       return res.json({ success: true, count: 0, counts: { total: 0, line: 0, facebook: 0, instagram: 0, whatsapp: 0 }, perChannel: [] });
     }
-    const users = await getBroadcastAudience(channels, audience);
+    const users = await getBroadcastAudience(channels, audience, {
+      orderFilter,
+      dateFilter,
+    });
 
     const lineCount = users.filter((u) => u.platform === "line").length;
     const fbCount = users.filter((u) => u.platform === "facebook").length;
@@ -22878,7 +22988,8 @@ app.post("/admin/broadcast/preview", async (req, res) => {
       perChannel,
     });
   } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
+    const statusCode = Number.isInteger(e?.statusCode) ? e.statusCode : 500;
+    res.status(statusCode).json({ success: false, error: e.message });
   }
 });
 
@@ -22907,7 +23018,7 @@ const broadcastUpload = (req, res, next) => {
 
 app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
   try {
-    let { messages, audience, channels, settings } = req.body;
+    let { messages, audience, channels, settings, orderFilter, dateFilter } = req.body;
 
     // Parse JSON fields if multipart
     const parseJSON = (val) => {
@@ -22924,6 +23035,8 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
     messages = parseJSON(messages);
     channels = parseJSON(channels);
     audience = parseJSON(audience);
+    orderFilter = parseJSON(orderFilter);
+    dateFilter = parseJSON(dateFilter);
     settings = parseJSON(settings);
 
     // Default settings if not provided
@@ -22972,7 +23085,10 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
     }
 
     // Get targets
-    const users = await getBroadcastAudience(channels, audience);
+    const users = await getBroadcastAudience(channels, audience, {
+      orderFilter,
+      dateFilter,
+    });
     if (users.length === 0) {
       return res.json({ success: false, error: "ไม่พบกลุ่มเป้าหมายตามเงื่อนไขที่เลือก" });
     }
@@ -23009,7 +23125,8 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
     res.json({ success: true, broadcastId: jobId, count: users.length });
   } catch (err) {
     console.error("Broadcast failed:", err);
-    res.status(500).json({ success: false, error: err.message });
+    const statusCode = Number.isInteger(err?.statusCode) ? err.statusCode : 500;
+    res.status(statusCode).json({ success: false, error: err.message });
   }
 });
 

@@ -164,6 +164,83 @@
                                 </button>
                               </div>
 
+                              <div class="mt-3">
+                                <label class="form-label mb-2">สถานะออเดอร์</label>
+                                <div class="row g-2">
+                                  <div class="col-md-4">
+                                    <div class="form-check border rounded p-2 bg-white">
+                                      <input class="form-check-input" type="radio" name="orderFilter" id="orderFilterAll"
+                                        value="all" checked>
+                                      <label class="form-check-label" for="orderFilterAll">
+                                        ทั้งหมด
+                                      </label>
+                                    </div>
+                                  </div>
+                                  <div class="col-md-4">
+                                    <div class="form-check border rounded p-2 bg-white">
+                                      <input class="form-check-input" type="radio" name="orderFilter" id="orderFilterWith"
+                                        value="with_order">
+                                      <label class="form-check-label" for="orderFilterWith">
+                                        มีออเดอร์
+                                      </label>
+                                    </div>
+                                  </div>
+                                  <div class="col-md-4">
+                                    <div class="form-check border rounded p-2 bg-white">
+                                      <input class="form-check-input" type="radio" name="orderFilter" id="orderFilterWithout"
+                                        value="without_order">
+                                      <label class="form-check-label" for="orderFilterWithout">
+                                        ไม่มีออเดอร์
+                                      </label>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div class="mt-3">
+                                <label class="form-label mb-2">ช่วงวันที่ลูกค้าทักเข้ามา</label>
+                                <div class="row g-2">
+                                  <div class="col-md-4">
+                                    <div class="form-check border rounded p-2 bg-white">
+                                      <input class="form-check-input" type="radio" name="dateFilterMode" id="dateModeAll"
+                                        value="all" checked>
+                                      <label class="form-check-label" for="dateModeAll">
+                                        ทั้งหมด
+                                      </label>
+                                    </div>
+                                  </div>
+                                  <div class="col-md-4">
+                                    <div class="form-check border rounded p-2 bg-white">
+                                      <input class="form-check-input" type="radio" name="dateFilterMode" id="dateModeToday"
+                                        value="today">
+                                      <label class="form-check-label" for="dateModeToday">
+                                        วันนี้
+                                      </label>
+                                    </div>
+                                  </div>
+                                  <div class="col-md-4">
+                                    <div class="form-check border rounded p-2 bg-white">
+                                      <input class="form-check-input" type="radio" name="dateFilterMode" id="dateModeCustom"
+                                        value="custom">
+                                      <label class="form-check-label" for="dateModeCustom">
+                                        กำหนดช่วงวันที่
+                                      </label>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div id="dateRangeFields" class="row g-2 mt-1" style="display:none;">
+                                  <div class="col-md-6">
+                                    <label for="dateStartInput" class="form-label small text-muted mb-1">วันที่เริ่ม</label>
+                                    <input type="date" id="dateStartInput" class="form-control form-control-sm">
+                                  </div>
+                                  <div class="col-md-6">
+                                    <label for="dateEndInput" class="form-label small text-muted mb-1">วันที่สิ้นสุด</label>
+                                    <input type="date" id="dateEndInput" class="form-control form-control-sm">
+                                  </div>
+                                </div>
+                              </div>
+
                               <!-- Audience Preview Stats -->
                               <div id="audienceStats" class="mt-2 text-muted small" style="display: none;">
                                 <i class="fas fa-info-circle me-1"></i>
