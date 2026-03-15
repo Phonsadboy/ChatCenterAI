@@ -137,8 +137,8 @@
 
   // --- Preview Helpers ---
   const getSelectedAudienceLabel = () => {
-    const selectedCard = document.querySelector('.audience-card.active');
-    const title = selectedCard?.querySelector('.audience-title');
+    const selectedCard = document.querySelector('.bc-audience-card.active');
+    const title = selectedCard?.querySelector('.bc-audience-card__title');
     const audienceLabel = (title?.textContent || '').trim() || 'ไม่ระบุ';
     const orderLabel = getSelectedOrderFilterLabel();
     const dateLabel = getDateFilterLabel();
@@ -230,13 +230,22 @@
     if (previewChannelsLabel) previewChannelsLabel.textContent = getSelectedChannelsLabel();
     if (!previewMessage) return;
     if (!messageItems.length) {
-      previewMessage.textContent = 'พิมพ์ข้อความเพื่อดูตัวอย่าง...';
+      previewMessage.innerHTML = `<div class="bc-preview-placeholder"><i class="fas fa-comment-dots"></i><span>พิมพ์ข้อความเพื่อดูตัวอย่าง</span></div>`;
       if (previewStatus) previewStatus.textContent = 'ยังไม่มีข้อความ';
       return;
     }
-    const lines = messageItems.map((item, index) => formatPreviewItem(item, index, messageItems.length));
-    previewMessage.textContent = lines.join('\n\n');
-    if (previewStatus) previewStatus.textContent = `มีข้อความ ${messageItems.length} รายการ`;
+    const bubblesHtml = messageItems.map(item => {
+      if (item.type === 'image') {
+        if (item.previewUrl) {
+          return `<div class="bc-bubble-image"><img src="${item.previewUrl}" alt="รูปภาพ"></div>`;
+        }
+        return `<div class="bc-bubble"><i class="fas fa-image me-1 text-muted"></i>${escapeHtml(item.file ? item.file.name : 'รูปภาพ')}</div>`;
+      }
+      const text = (item.content || '').trim() || '(ข้อความว่าง)';
+      return `<div class="bc-bubble">${escapeHtml(text)}</div>`;
+    }).join('');
+    previewMessage.innerHTML = bubblesHtml;
+    if (previewStatus) previewStatus.textContent = `${messageItems.length} บอลลูน`;
   };
 
   const handlePreviewClick = () => {
@@ -244,6 +253,30 @@
     if (previewCard && previewCard.scrollIntoView) {
       previewCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
+  };
+
+  // --- Audience Stats Panel (sidebar) ---
+  const updateAudienceStatsPanel = (counts) => {
+    const panel = document.getElementById('audienceStatsPanel');
+    const grid = document.getElementById('audienceStatsGrid');
+    if (!panel || !grid) return;
+    if (!counts) { panel.style.display = 'none'; return; }
+    const platforms = [
+      { key: 'line', icon: 'fab fa-line', cls: 'bc-stat-item__icon--line', label: 'LINE' },
+      { key: 'facebook', icon: 'fab fa-facebook', cls: 'bc-stat-item__icon--fb', label: 'Facebook' },
+      { key: 'instagram', icon: 'fab fa-instagram', cls: 'bc-stat-item__icon--ig', label: 'Instagram' },
+      { key: 'whatsapp', icon: 'fab fa-whatsapp', cls: 'bc-stat-item__icon--wa', label: 'WhatsApp' },
+    ];
+    const items = platforms.filter(p => (counts[p.key] || 0) > 0).map(p => `
+      <div class="bc-stat-item">
+        <div class="bc-stat-item__icon ${p.cls}"><i class="${p.icon}"></i></div>
+        <div>
+          <div class="bc-stat-item__num">${(counts[p.key] || 0).toLocaleString()}</div>
+          <div class="bc-stat-item__label">${p.label}</div>
+        </div>
+      </div>`).join('');
+    grid.innerHTML = items || '<div class="text-muted small p-1">ไม่มีผู้รับในช่องทางที่เลือก</div>';
+    panel.style.display = items ? 'block' : 'none';
   };
 
   // --- Time Estimate Display ---
@@ -268,16 +301,18 @@
     const dateFilterError = validateDateFilterPayload(dateFilter);
 
     if (channels.length === 0) {
-      audienceStats.style.display = 'none';
+      if (audienceStats) audienceStats.style.display = 'none';
       if (audienceCountChip) audienceCountChip.innerHTML = '<i class="fas fa-users"></i> เลือกกลุ่มเป้าหมาย';
+      updateAudienceStatsPanel(null);
       cachedPerChannel = null;
       updateTimeEstimate();
       updatePreview();
       return;
     }
     if (dateFilterError) {
-      audienceStats.style.display = 'none';
+      if (audienceStats) audienceStats.style.display = 'none';
       if (audienceCountChip) audienceCountChip.innerHTML = '<i class="fas fa-users"></i> ระบุช่วงวันที่';
+      updateAudienceStatsPanel(null);
       cachedPerChannel = null;
       updateTimeEstimate();
       updatePreview();
@@ -285,8 +320,8 @@
     }
 
     try {
-      audienceTotal.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-      audienceStats.style.display = 'block';
+      if (audienceTotal) audienceTotal.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      if (audienceStats) audienceStats.style.display = 'block';
 
       const res = await fetch('/admin/broadcast/preview', {
         method: 'POST',
@@ -297,22 +332,24 @@
 
       if (data.success) {
         audienceTotal.textContent = data.counts.total.toLocaleString();
-        audienceLine.textContent = data.counts.line.toLocaleString();
-        audienceFb.textContent = data.counts.facebook.toLocaleString();
+        if (audienceLine) audienceLine.textContent = data.counts.line.toLocaleString();
+        if (audienceFb) audienceFb.textContent = data.counts.facebook.toLocaleString();
         if (audienceIg) audienceIg.textContent = (data.counts.instagram || 0).toLocaleString();
         if (audienceWa) audienceWa.textContent = (data.counts.whatsapp || 0).toLocaleString();
         if (audienceCountChip) {
           audienceCountChip.innerHTML = `<i class="fas fa-users text-primary"></i> กลุ่มเป้าหมาย <strong>${data.counts.total.toLocaleString()}</strong> คน`;
         }
+        updateAudienceStatsPanel(data.counts);
         cachedPerChannel = data.perChannel || null;
         updateTimeEstimate();
       } else {
-        audienceTotal.textContent = '-';
+        if (audienceTotal) audienceTotal.textContent = '-';
         if (audienceLine) audienceLine.textContent = '-';
         if (audienceFb) audienceFb.textContent = '-';
         if (audienceIg) audienceIg.textContent = '-';
         if (audienceWa) audienceWa.textContent = '-';
         if (audienceCountChip) audienceCountChip.innerHTML = '<i class="fas fa-users"></i> เลือกกลุ่มเป้าหมาย';
+        updateAudienceStatsPanel(null);
         cachedPerChannel = null;
         updateTimeEstimate();
       }
@@ -351,9 +388,9 @@
   });
 
   // Audience Card clicks
-  document.querySelectorAll('.audience-card').forEach(btn => {
+  document.querySelectorAll('.bc-audience-card').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.audience-card').forEach(b => {
+      document.querySelectorAll('.bc-audience-card').forEach(b => {
         b.classList.remove('active');
         b.setAttribute('aria-pressed', 'false');
       });
@@ -381,7 +418,7 @@
     messageList.innerHTML = '';
 
     if (messageItems.length === 0) {
-      messageList.innerHTML = `<div class="message-item empty-state text-center p-3 border rounded border-dashed bg-light text-muted">ยังไม่มีข้อความ กดปุ่มด้านล่างเพื่อเพิ่ม</div>`;
+      messageList.innerHTML = `<div class="bc-message-empty"><i class="fas fa-comment-dots"></i><span>ยังไม่มีข้อความ กดปุ่มด้านล่างเพื่อเพิ่ม</span></div>`;
       updatePreview();
       return;
     }
