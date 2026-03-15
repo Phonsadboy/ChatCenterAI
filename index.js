@@ -4833,6 +4833,16 @@ function normalizeOrderBotId(botId) {
   }
 }
 
+function normalizeIdString(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  try {
+    return String(value).trim();
+  } catch {
+    return "";
+  }
+}
+
 function buildOrderPageKey(platform, botId = null) {
   const normalizedPlatform = normalizeOrderPlatform(platform);
   const normalizedBotId = normalizeOrderBotId(botId);
