@@ -8,77 +8,99 @@
   <link href="/css/telesales.css" rel="stylesheet">
 </head>
 <body>
-  <div class="ts-shell" id="tsApp">
-    <!-- Mobile toggle -->
-    <button class="ts-mobile-toggle" id="tsMobileToggle">
-      <i class="fas fa-bars"></i>
-    </button>
-    <div class="ts-sidebar-overlay" id="tsSidebarOverlay"></div>
+  <% const role = (salesUser && (salesUser.role === 'sales_manager' || salesUser.role === 'admin')) ? 'manager' : 'sales'; %>
 
-    <!-- Sidebar -->
-    <aside class="ts-sidebar" id="tsSidebar">
-      <div class="ts-sidebar-brand">
-        <div class="ts-brand-dot"><i class="fas fa-headset"></i></div>
-        <span>TeleSales</span>
+  <% if (role === 'sales') { %>
+  <!-- ═══════════════════ SALES WORKSPACE (Split Panel) ═══════════════════ -->
+  <div class="ts-workspace" id="tsApp">
+    <!-- Top bar -->
+    <header class="ts-topbar">
+      <div class="ts-topbar-left">
+        <button class="ts-mobile-toggle" id="tsMobileToggle"><i class="fas fa-bars"></i></button>
+        <div class="ts-brand-mini"><i class="fas fa-headset"></i> TeleSales</div>
       </div>
-
-      <nav class="ts-sidebar-nav" id="tsSidebarNav">
-        <div class="ts-nav-section">
-          <div class="ts-nav-section-label">งานของฉัน</div>
-          <div class="ts-nav-item active" data-view="my-queue">
-            <i class="fas fa-list-check"></i>
-            <span>คิวของฉัน</span>
-            <span class="ts-nav-badge" id="navBadgeOverdue" style="display:none">0</span>
-          </div>
+      <div class="ts-topbar-stats" id="tsTopbarStats"></div>
+      <div class="ts-topbar-right">
+        <div class="ts-user-chip" id="tsUserChip">
+          <span class="ts-user-chip-name" id="tsUserName"><%= salesUser ? salesUser.name : '-' %></span>
+          <i class="fas fa-right-from-bracket ts-logout-icon" id="tsLogoutBtn" title="ออกจากระบบ"></i>
         </div>
+      </div>
+    </header>
 
-        <div class="ts-nav-section" id="navManagerSection" style="display:none">
-          <div class="ts-nav-section-label">จัดการทีม</div>
-          <div class="ts-nav-item" data-view="manager-queue">
-            <i class="fas fa-users-line"></i>
-            <span>คิวทั้งทีม</span>
-          </div>
-          <div class="ts-nav-item" data-view="manager-leads">
-            <i class="fas fa-address-book"></i>
-            <span>Lead ทั้งหมด</span>
-          </div>
-          <div class="ts-nav-item" data-view="sales-users">
-            <i class="fas fa-user-gear"></i>
-            <span>จัดการพนักงาน</span>
-          </div>
-          <div class="ts-nav-item" data-view="reports">
-            <i class="fas fa-chart-pie"></i>
-            <span>รายงานประจำวัน</span>
-          </div>
+    <!-- Split panels -->
+    <div class="ts-split">
+      <!-- LEFT: Queue panel -->
+      <aside class="ts-queue-panel" id="tsQueuePanel">
+        <div class="ts-day-tabs" id="tsDayTabs">
+          <button class="ts-day-tab" data-tab="overdue"><span class="ts-tab-dot overdue"></span>เลยกำหนด <span class="ts-tab-badge" id="tabBadgeOverdue">0</span></button>
+          <button class="ts-day-tab active" data-tab="today"><span class="ts-tab-dot today"></span>วันนี้ <span class="ts-tab-badge" id="tabBadgeToday">0</span></button>
+          <button class="ts-day-tab" data-tab="tomorrow"><span class="ts-tab-dot tomorrow"></span>พรุ่งนี้ <span class="ts-tab-badge" id="tabBadgeTomorrow">0</span></button>
+          <button class="ts-day-tab" data-tab="all"><span class="ts-tab-dot all"></span>ทั้งหมด <span class="ts-tab-badge" id="tabBadgeAll">0</span></button>
         </div>
+        <div class="ts-queue-search">
+          <i class="fas fa-search"></i>
+          <input type="text" id="tsQueueSearch" placeholder="ค้นหาชื่อ / เบอร์...">
+        </div>
+        <div class="ts-queue-list" id="tsQueueList">
+          <div class="ts-empty-small"><i class="fas fa-spinner fa-spin"></i> กำลังโหลด...</div>
+        </div>
+        <div class="ts-queue-footer" id="tsQueueFooter"></div>
+      </aside>
+
+      <!-- Drag handle for resize -->
+      <div class="ts-split-handle" id="tsSplitHandle"></div>
+
+      <!-- RIGHT: Detail panel -->
+      <main class="ts-detail-panel" id="tsDetailPanel">
+        <div class="ts-detail-placeholder">
+          <i class="fas fa-hand-pointer"></i>
+          <p>เลือกลูกค้าจากรายการด้านซ้าย</p>
+        </div>
+      </main>
+    </div>
+
+    <!-- Mobile overlay for queue -->
+    <div class="ts-panel-overlay" id="tsPanelOverlay"></div>
+  </div>
+
+  <% } else { %>
+  <!-- ═══════════════════ MANAGER DASHBOARD (Tab Layout) ═══════════════════ -->
+  <div class="ts-manager" id="tsApp">
+    <!-- Top bar -->
+    <header class="ts-topbar ts-topbar-manager">
+      <div class="ts-topbar-left">
+        <div class="ts-brand-mini"><i class="fas fa-chart-pie"></i> TeleSales Manager</div>
+      </div>
+      <nav class="ts-manager-tabs" id="tsManagerTabs">
+        <button class="ts-mgr-tab active" data-tab="dashboard"><i class="fas fa-tachometer-alt"></i> <span>Dashboard</span></button>
+        <button class="ts-mgr-tab" data-tab="leads"><i class="fas fa-address-book"></i> <span>Leads</span></button>
+        <button class="ts-mgr-tab" data-tab="team"><i class="fas fa-user-gear"></i> <span>ทีม</span></button>
+        <button class="ts-mgr-tab" data-tab="reports"><i class="fas fa-chart-line"></i> <span>รายงาน</span></button>
       </nav>
-
-      <div class="ts-sidebar-footer">
-        <div class="ts-user-pill" id="tsUserPill">
-          <div class="ts-user-avatar" id="tsUserAvatar">?</div>
-          <div class="ts-user-info">
-            <div class="ts-user-name" id="tsUserName">-</div>
-            <div class="ts-user-role" id="tsUserRole">-</div>
-          </div>
-          <i class="fas fa-right-from-bracket" style="opacity:0.4; cursor:pointer;" id="tsLogoutBtn" title="ออกจากระบบ"></i>
+      <div class="ts-topbar-right">
+        <div class="ts-user-chip" id="tsUserChip">
+          <span class="ts-user-chip-name" id="tsUserName"><%= salesUser ? salesUser.name : '-' %></span>
+          <span class="ts-role-badge">Manager</span>
+          <i class="fas fa-right-from-bracket ts-logout-icon" id="tsLogoutBtn" title="ออกจากระบบ"></i>
         </div>
       </div>
-    </aside>
+    </header>
 
-    <!-- Main Content -->
-    <div class="ts-main">
-      <div class="ts-content" id="tsContent">
-        <div class="ts-loading"><div class="ts-spinner"></div> กำลังโหลด...</div>
-      </div>
+    <!-- Tab content -->
+    <div class="ts-manager-content" id="tsContent">
+      <div class="ts-loading"><div class="ts-spinner"></div> กำลังโหลด...</div>
     </div>
   </div>
+  <% } %>
 
   <!-- Toast container -->
   <div class="ts-toast-container" id="tsToastContainer"></div>
 
-  <!-- Inject user data from server -->
+  <!-- Inject user data -->
   <script>
     window.__SALES_USER__ = <%- JSON.stringify(salesUser || null).replace(/</g, '\\u003c') %>;
+    window.__SALES_ROLE__ = '<%= role %>';
   </script>
   <script src="/js/telesales-app.js"></script>
 </body>

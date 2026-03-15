@@ -454,7 +454,6 @@ class TeleSalesService {
           currentCheckpointId: null,
           nextDueAt: null,
           overdueSince: null,
-          sourceOrderIds: [],
           dueReasons: [],
           needsCycle: false,
           needsCycleOrderIds: [],

@@ -1559,6 +1559,45 @@ function getSalesUserContext(req) {
   };
 }
 
+async function syncSalesSessionUser(req) {
+  if (!isSalesAuthenticated(req)) return null;
+  const sessionUser = req.session?.salesUser;
+  if (!sessionUser?.id) return null;
+
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const latestUser = await getSalesUserById(db, sessionUser.id);
+
+  if (!latestUser || latestUser.isActive === false) {
+    await destroySalesSession(req);
+    return null;
+  }
+
+  const nextSessionUser = {
+    id: latestUser.id,
+    name: latestUser.name || "",
+    code: latestUser.code || "",
+    role: latestUser.role || "sales",
+    teamId: latestUser.teamId || null,
+    loggedInAt: sessionUser.loggedInAt || new Date().toISOString(),
+  };
+
+  const changed =
+    sessionUser.name !== nextSessionUser.name ||
+    sessionUser.code !== nextSessionUser.code ||
+    sessionUser.role !== nextSessionUser.role ||
+    (sessionUser.teamId || null) !== nextSessionUser.teamId;
+
+  if (changed) {
+    req.session.salesUser = nextSessionUser;
+    await new Promise((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+  }
+
+  return nextSessionUser;
+}
+
 async function destroySalesSession(req) {
   if (!req.session) return;
   delete req.session.salesUser;
@@ -1641,28 +1680,45 @@ function requireAdmin(req, res, next) {
   return next();
 }
 
-function requireSalesAuth(req, res, next) {
-  if (isSalesAuthenticated(req)) {
-    return next();
+async function requireSalesAuth(req, res, next) {
+  try {
+    const salesUser = await syncSalesSessionUser(req);
+    if (salesUser) {
+      return next();
+    }
+    return res.status(401).json({
+      success: false,
+      error: "กรุณาล็อกอินฝ่ายขายก่อนใช้งาน",
+    });
+  } catch (err) {
+    console.error("[SalesAuth] requireSalesAuth error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "ไม่สามารถตรวจสอบสิทธิ์ฝ่ายขายได้",
+    });
   }
-  return res.status(401).json({
-    success: false,
-    error: "กรุณาล็อกอินฝ่ายขายก่อนใช้งาน",
-  });
 }
 
-function requireSalesManager(req, res, next) {
-  if (isAdminAuthenticated(req)) {
-    return next();
+async function requireSalesManager(req, res, next) {
+  try {
+    if (isAdminAuthenticated(req)) {
+      return next();
+    }
+    const salesUser = await syncSalesSessionUser(req);
+    if (salesUser && salesUser.role === "sales_manager") {
+      return next();
+    }
+    return res.status(403).json({
+      success: false,
+      error: "สิทธิ์ไม่เพียงพอ",
+    });
+  } catch (err) {
+    console.error("[SalesAuth] requireSalesManager error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "ไม่สามารถตรวจสอบสิทธิ์ผู้จัดการฝ่ายขายได้",
+    });
   }
-  const salesUser = getSalesUserContext(req);
-  if (salesUser && salesUser.role === "sales_manager") {
-    return next();
-  }
-  return res.status(403).json({
-    success: false,
-    error: "สิทธิ์ไม่เพียงพอ",
-  });
 }
 
 const agentForgeService = new AgentForgeService(connectDB, {
@@ -14664,11 +14720,20 @@ app.post("/admin/logout", async (req, res) => {
   }
 });
 
-app.get("/api/sales/me", (req, res) => {
-  res.json({
-    success: true,
-    user: getSalesUserContext(req),
-  });
+app.get("/api/sales/me", async (req, res) => {
+  try {
+    const user = await syncSalesSessionUser(req);
+    res.json({
+      success: true,
+      user: user || null,
+    });
+  } catch (err) {
+    console.error("[SalesAuth] /api/sales/me error:", err);
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถโหลดข้อมูลผู้ใช้ฝ่ายขายได้",
+    });
+  }
 });
 
 app.post("/sales/login", loginLimiter, async (req, res) => {
@@ -14719,10 +14784,16 @@ app.get("/sales/login", (req, res) => {
   res.render("sales-login");
 });
 
-app.get("/sales/app", (req, res) => {
-  if (!isSalesAuthenticated(req)) return res.redirect("/sales/login");
-  const salesUser = getSalesUserContext(req);
-  res.render("sales-app", { salesUser });
+app.get("/sales/app", async (req, res) => {
+  try {
+    if (!isSalesAuthenticated(req)) return res.redirect("/sales/login");
+    const salesUser = await syncSalesSessionUser(req);
+    if (!salesUser) return res.redirect("/sales/login");
+    res.render("sales-app", { salesUser });
+  } catch (err) {
+    console.error("[SalesAuth] /sales/app error:", err);
+    res.redirect("/sales/login");
+  }
 });
 
 app.use("/admin", enforceAdminLogin);
