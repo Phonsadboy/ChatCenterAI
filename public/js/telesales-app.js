@@ -1325,32 +1325,32 @@
         </div>
         <div class="ts-form-group">
           <label class="ts-label">ชื่อ</label>
-          <input class="ts-input" type="text" id="tsUserName" value="${esc(existingUser?.name || "")}" required>
+          <input class="ts-input" type="text" id="tsUserFormName" value="${esc(existingUser?.name || "")}" required>
         </div>
         <div class="ts-form-group">
           <label class="ts-label">รหัสพนักงาน</label>
-          <input class="ts-input" type="text" id="tsUserCode" value="${esc(existingUser?.code || "")}" ${isEdit ? "readonly" : ""} required>
+          <input class="ts-input" type="text" id="tsUserFormCode" value="${esc(existingUser?.code || "")}" ${isEdit ? "readonly" : ""} required>
         </div>
         ${!isEdit ? `
         <div class="ts-form-group">
           <label class="ts-label">รหัสผ่าน</label>
-          <input class="ts-input" type="password" id="tsUserPassword" required minlength="4">
+          <input class="ts-input" type="password" id="tsUserFormPassword" required minlength="4">
         </div>` : ""}
         <div class="ts-form-group">
           <label class="ts-label">Role</label>
-          <select class="ts-input" id="tsUserRole">
+          <select class="ts-input" id="tsUserFormRole">
             <option value="sales" ${existingUser?.role === "sales" ? "selected" : ""}>Sales</option>
             <option value="sales_manager" ${existingUser?.role === "sales_manager" ? "selected" : ""}>Manager</option>
           </select>
         </div>
         <div class="ts-form-group">
           <label class="ts-label">เบอร์โทร</label>
-          <input class="ts-input" type="text" id="tsUserPhone" value="${esc(existingUser?.phone || "")}">
+          <input class="ts-input" type="text" id="tsUserFormPhone" value="${esc(existingUser?.phone || "")}">
         </div>
         ${isEdit ? `
         <div class="ts-form-group">
           <label class="ts-label">สถานะ</label>
-          <select class="ts-input" id="tsUserActive">
+          <select class="ts-input" id="tsUserFormActive">
             <option value="true" ${existingUser?.isActive !== false ? "selected" : ""}>Active</option>
             <option value="false" ${existingUser?.isActive === false ? "selected" : ""}>Inactive</option>
           </select>
@@ -1369,22 +1369,22 @@
     modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
 
     document.getElementById("tsUserSaveBtn").addEventListener("click", async () => {
-      const name = document.getElementById("tsUserName").value.trim();
-      const code = document.getElementById("tsUserCode").value.trim();
-      const role = document.getElementById("tsUserRole").value;
-      const phone = document.getElementById("tsUserPhone").value.trim();
+      const name = document.getElementById("tsUserFormName")?.value?.trim() || "";
+      const code = document.getElementById("tsUserFormCode")?.value?.trim() || "";
+      const role = document.getElementById("tsUserFormRole")?.value || "sales";
+      const phone = document.getElementById("tsUserFormPhone")?.value?.trim() || "";
 
       if (!name || !code) { toast("กรุณากรอกชื่อและรหัส", "warning"); return; }
 
       try {
         if (isEdit) {
           const body = { name, role, phone };
-          const activeEl = document.getElementById("tsUserActive");
+          const activeEl = document.getElementById("tsUserFormActive");
           if (activeEl) body.isActive = activeEl.value === "true";
           await api.patch(`/api/telesales/sales-users/${existingUser.id || existingUser._id}`, body);
           toast("แก้ไขพนักงานสำเร็จ");
         } else {
-          const password = document.getElementById("tsUserPassword")?.value;
+          const password = document.getElementById("tsUserFormPassword")?.value;
           if (!password || password.length < 4) { toast("รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร", "warning"); return; }
           await api.post("/api/telesales/sales-users", { name, code, password, role, phone, isActive: true });
           toast("เพิ่มพนักงานสำเร็จ");
