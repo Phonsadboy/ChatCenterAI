@@ -14923,6 +14923,10 @@ app.get("/api/telesales/manager/leads", requireSalesManager, async (req, res) =>
         typeof req.query?.ownerSalesUserId === "string"
           ? req.query.ownerSalesUserId
           : undefined,
+      assignmentState:
+        typeof req.query?.assignmentState === "string"
+          ? req.query.assignmentState
+          : undefined,
       needsCycle:
         typeof req.query?.needsCycle === "string"
           ? req.query.needsCycle === "true"
@@ -14933,6 +14937,38 @@ app.get("/api/telesales/manager/leads", requireSalesManager, async (req, res) =>
   } catch (err) {
     console.error("[TeleSales] manager-leads error:", err);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/telesales/leads/bulk-assign", requireSalesManager, async (req, res) => {
+  try {
+    const salesUserId = normalizeIdString(req.body?.salesUserId);
+    const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+    if (!salesUserId) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุ salesUserId" });
+    }
+    if (!leadIds.length) {
+      return res.status(400).json({ success: false, error: "กรุณาเลือก lead อย่างน้อย 1 รายการ" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const assignee = await getSalesUserById(db, salesUserId);
+    if (!assignee || assignee.isActive === false) {
+      return res.status(400).json({ success: false, error: "ไม่พบพนักงานขายที่ใช้งานได้" });
+    }
+
+    const result = await teleSalesService.bulkAssignLeads({
+      leadIds,
+      salesUserId,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || "bulk assign lead ไม่สำเร็จ",
+    });
   }
 });
 

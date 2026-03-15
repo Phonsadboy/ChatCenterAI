@@ -19,11 +19,14 @@
     leadDetail: null,
     salesUsers: [],
     reportsData: null,
+    selectedLeadIds: [],
+    pendingAssignLeadIds: [],
     filters: {
       managerQueueSalesUser: "",
       managerLeadStatus: "",
       managerLeadOwner: "",
       managerLeadNeedsCycle: false,
+      managerLeadAssignmentState: "",
     },
   };
 
@@ -101,6 +104,25 @@
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     });
+  }
+
+  function leadIdOf(lead) {
+    return lead?.id || lead?._id || "";
+  }
+
+  function getSelectedLeadIds() {
+    if (!Array.isArray(state.selectedLeadIds)) return [];
+    return Array.from(new Set(state.selectedLeadIds.filter(Boolean)));
+  }
+
+  function setSelectedLeadIds(leadIds) {
+    state.selectedLeadIds = Array.from(
+      new Set(Array.isArray(leadIds) ? leadIds.filter(Boolean) : []),
+    );
+  }
+
+  function clearLeadSelection() {
+    setSelectedLeadIds([]);
   }
 
   const OUTCOME_LABELS = {
@@ -675,6 +697,136 @@
   /* ================================================================
      VIEW: MANAGER LEADS
      ================================================================ */
+  function renderManagerLeadsContent() {
+    const content = document.getElementById("tsContent");
+    const data = state.managerLeadsData || {};
+    const leads = data.leads || [];
+    const visibleLeadIds = leads.map((lead) => leadIdOf(lead)).filter(Boolean);
+    setSelectedLeadIds(
+      getSelectedLeadIds().filter((leadId) => visibleLeadIds.includes(leadId)),
+    );
+
+    const selectedLeadIds = getSelectedLeadIds();
+    const allSelected =
+      visibleLeadIds.length > 0 &&
+      visibleLeadIds.every((leadId) => selectedLeadIds.includes(leadId));
+
+    content.innerHTML = `
+      <div class="ts-fade-in">
+        <h2 style="font-size:1.25rem; font-weight:700; margin-bottom:1.25rem;">Lead ทั้งหมด (${leads.length})</h2>
+        ${
+          selectedLeadIds.length
+            ? `
+          <div class="ts-bulk-bar">
+            <div class="ts-bulk-bar-info">
+              <i class="fas fa-check-double"></i> เลือกแล้ว ${selectedLeadIds.length} รายการ
+            </div>
+            <div class="ts-bulk-bar-actions">
+              <button class="ts-btn ts-btn-primary ts-btn-sm" onclick="window.__TS__.showAssignModal()">
+                <i class="fas fa-user-plus"></i> Assign ที่เลือก
+              </button>
+              <button class="ts-btn ts-btn-ghost ts-btn-sm" onclick="window.__TS__.clearLeadSelection()">
+                <i class="fas fa-xmark"></i> ล้างการเลือก
+              </button>
+            </div>
+          </div>
+        `
+            : ""
+        }
+        <div class="ts-filter-bar">
+          <span style="font-size:0.8rem; font-weight:600; color:var(--ts-text-sub);">สถานะ:</span>
+          <span class="ts-filter-pill ${!state.filters.managerLeadStatus ? "active" : ""}"
+                onclick="window.__TS__.filterLeads('status','')">ทั้งหมด</span>
+          <span class="ts-filter-pill ${state.filters.managerLeadStatus === "active" ? "active" : ""}"
+                onclick="window.__TS__.filterLeads('status','active')">Active</span>
+          <span class="ts-filter-pill ${state.filters.managerLeadStatus === "paused" ? "active" : ""}"
+                onclick="window.__TS__.filterLeads('status','paused')">Paused</span>
+          <span class="ts-filter-pill ${state.filters.managerLeadNeedsCycle ? "active" : ""}"
+                onclick="window.__TS__.filterLeads('needsCycle',!${state.filters.managerLeadNeedsCycle})">ต้องตั้ง Cycle</span>
+          <span class="ts-filter-pill ${state.filters.managerLeadAssignmentState === "unassigned" ? "active" : ""}"
+                onclick="window.__TS__.filterLeads('assignmentState','${state.filters.managerLeadAssignmentState === "unassigned" ? "" : "unassigned"}')">ยังไม่มอบหมาย</span>
+        </div>
+        <div class="ts-filter-bar">
+          <span style="font-size:0.8rem; font-weight:600; color:var(--ts-text-sub);">เจ้าของ:</span>
+          <span class="ts-filter-pill ${!state.filters.managerLeadOwner ? "active" : ""}"
+                onclick="window.__TS__.filterLeads('owner','')">ทั้งหมด</span>
+          ${state.salesUsers
+            .map(
+              (u) => `
+            <span class="ts-filter-pill ${state.filters.managerLeadOwner === u.id ? "active" : ""}"
+                  onclick="window.__TS__.filterLeads('owner','${esc(u.id)}')">${esc(u.name)}</span>
+          `,
+            )
+            .join("")}
+        </div>
+        <div class="ts-card">
+          <div class="ts-table-wrap">
+            <table class="ts-table">
+              <thead>
+                <tr>
+                  <th style="width:42px;">
+                    <input
+                      type="checkbox"
+                      class="ts-checkbox"
+                      ${allSelected ? "checked" : ""}
+                      onclick="event.stopPropagation()"
+                      onchange="window.__TS__.toggleAllLeadSelections(this.checked)"
+                      aria-label="เลือกทุก lead"
+                    >
+                  </th>
+                  <th>ชื่อ</th>
+                  <th>เบอร์</th>
+                  <th>สถานะ</th>
+                  <th>เจ้าของ</th>
+                  <th>กำหนดถัดไป</th>
+                  <th>ออเดอร์</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${
+                  leads.length
+                    ? leads
+                        .map((lead) => {
+                          const leadId = leadIdOf(lead);
+                          const isSelected = selectedLeadIds.includes(leadId);
+                          return `
+                    <tr class="${isSelected ? "ts-row-selected" : ""}" style="cursor:pointer;" onclick="window.__TS__.openLead('${esc(leadId)}')">
+                      <td>
+                        <input
+                          type="checkbox"
+                          class="ts-checkbox"
+                          ${isSelected ? "checked" : ""}
+                          onclick="event.stopPropagation()"
+                          onchange="window.__TS__.toggleLeadSelection('${esc(leadId)}', this.checked)"
+                          aria-label="เลือก lead ${esc(lead.displayName || leadId)}"
+                        >
+                      </td>
+                      <td><strong>${esc(lead.displayName || "-")}</strong></td>
+                      <td>${esc(lead.phone || "-")}</td>
+                      <td><span class="ts-badge ts-badge-${lead.status}">${esc(lead.status)}</span>
+                        ${lead.needsCycle ? '<span class="ts-badge ts-badge-paused" style="margin-left:0.25rem;">Cycle</span>' : ""}
+                      </td>
+                      <td>${esc(ownerName(lead.ownerSalesUserId))}</td>
+                      <td class="${dueClass(lead.nextDueAt)}" style="font-weight:600; font-size:0.8rem;">${formatDate(lead.nextDueAt)}</td>
+                      <td>${(lead.sourceOrderIds || []).length}</td>
+                      <td>
+                        <button class="ts-btn-icon" title="Assign" onclick="event.stopPropagation(); window.__TS__.showAssignModal('${esc(leadId)}')">
+                          <i class="fas fa-user-plus"></i>
+                        </button>
+                      </td>
+                    </tr>`;
+                        })
+                        .join("")
+                    : '<tr><td colspan="8" style="text-align:center; color:var(--ts-text-muted); padding:2rem;">ไม่มีข้อมูล</td></tr>'
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+  }
+
   async function renderManagerLeads() {
     const content = document.getElementById("tsContent");
     try {
@@ -689,82 +841,12 @@
       if (state.filters.managerLeadOwner)
         url += `&ownerSalesUserId=${encodeURIComponent(state.filters.managerLeadOwner)}`;
       if (state.filters.managerLeadNeedsCycle) url += "&needsCycle=true";
+      if (state.filters.managerLeadAssignmentState)
+        url += `&assignmentState=${encodeURIComponent(state.filters.managerLeadAssignmentState)}`;
 
       const data = await api.get(url);
       state.managerLeadsData = data;
-      const leads = data.leads || [];
-
-      content.innerHTML = `
-        <div class="ts-fade-in">
-          <h2 style="font-size:1.25rem; font-weight:700; margin-bottom:1.25rem;">Lead ทั้งหมด (${leads.length})</h2>
-          <div class="ts-filter-bar">
-            <span style="font-size:0.8rem; font-weight:600; color:var(--ts-text-sub);">สถานะ:</span>
-            <span class="ts-filter-pill ${!state.filters.managerLeadStatus ? "active" : ""}"
-                  onclick="window.__TS__.filterLeads('status','')">ทั้งหมด</span>
-            <span class="ts-filter-pill ${state.filters.managerLeadStatus === "active" ? "active" : ""}"
-                  onclick="window.__TS__.filterLeads('status','active')">Active</span>
-            <span class="ts-filter-pill ${state.filters.managerLeadStatus === "paused" ? "active" : ""}"
-                  onclick="window.__TS__.filterLeads('status','paused')">Paused</span>
-            <span class="ts-filter-pill ${state.filters.managerLeadNeedsCycle ? "active" : ""}"
-                  onclick="window.__TS__.filterLeads('needsCycle',!${state.filters.managerLeadNeedsCycle})">ต้องตั้ง Cycle</span>
-          </div>
-          <div class="ts-filter-bar">
-            <span style="font-size:0.8rem; font-weight:600; color:var(--ts-text-sub);">เจ้าของ:</span>
-            <span class="ts-filter-pill ${!state.filters.managerLeadOwner ? "active" : ""}"
-                  onclick="window.__TS__.filterLeads('owner','')">ทั้งหมด</span>
-            ${state.salesUsers
-              .map(
-                (u) => `
-              <span class="ts-filter-pill ${state.filters.managerLeadOwner === u.id ? "active" : ""}"
-                    onclick="window.__TS__.filterLeads('owner','${esc(u.id)}')">${esc(u.name)}</span>
-            `,
-              )
-              .join("")}
-          </div>
-          <div class="ts-card">
-            <div class="ts-table-wrap">
-              <table class="ts-table">
-                <thead>
-                  <tr>
-                    <th>ชื่อ</th>
-                    <th>เบอร์</th>
-                    <th>สถานะ</th>
-                    <th>เจ้าของ</th>
-                    <th>กำหนดถัดไป</th>
-                    <th>ออเดอร์</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${
-                    leads.length
-                      ? leads
-                          .map(
-                            (lead) => `
-                    <tr style="cursor:pointer;" onclick="window.__TS__.openLead('${esc(lead.id || lead._id)}')">
-                      <td><strong>${esc(lead.displayName || "-")}</strong></td>
-                      <td>${esc(lead.phone || "-")}</td>
-                      <td><span class="ts-badge ts-badge-${lead.status}">${esc(lead.status)}</span>
-                        ${lead.needsCycle ? '<span class="ts-badge ts-badge-paused" style="margin-left:0.25rem;">Cycle</span>' : ""}
-                      </td>
-                      <td>${esc(ownerName(lead.ownerSalesUserId))}</td>
-                      <td class="${dueClass(lead.nextDueAt)}" style="font-weight:600; font-size:0.8rem;">${formatDate(lead.nextDueAt)}</td>
-                      <td>${(lead.sourceOrderIds || []).length}</td>
-                      <td>
-                        <button class="ts-btn-icon" title="Assign" onclick="event.stopPropagation(); window.__TS__.showAssignModal('${esc(lead.id || lead._id)}')">
-                          <i class="fas fa-user-plus"></i>
-                        </button>
-                      </td>
-                    </tr>`,
-                          )
-                          .join("")
-                      : '<tr><td colspan="7" style="text-align:center; color:var(--ts-text-muted); padding:2rem;">ไม่มีข้อมูล</td></tr>'
-                  }
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>`;
+      renderManagerLeadsContent();
     } catch (err) {
       content.innerHTML = `<div class="ts-empty"><i class="fas fa-circle-exclamation"></i><p>${esc(err.message)}</p></div>`;
     }
@@ -962,6 +1044,7 @@
 
   function closeModal() {
     const overlay = document.querySelector(".ts-modal-overlay");
+    state.pendingAssignLeadIds = [];
     if (overlay) {
       overlay.classList.remove("show");
       setTimeout(() => overlay.remove(), 200);
@@ -1243,13 +1326,50 @@
   }
 
   /* ==================== ASSIGN MODAL ==================== */
-  async function showAssignModal(leadId) {
+  function toggleLeadSelection(leadId, checked) {
+    const selected = new Set(getSelectedLeadIds());
+    if (checked) selected.add(leadId);
+    else selected.delete(leadId);
+    setSelectedLeadIds(Array.from(selected));
+    renderManagerLeadsContent();
+  }
+
+  function toggleAllLeadSelections(checked) {
+    const visibleLeadIds = (state.managerLeadsData?.leads || [])
+      .map((lead) => leadIdOf(lead))
+      .filter(Boolean);
+    if (checked) {
+      setSelectedLeadIds(visibleLeadIds);
+    } else {
+      clearLeadSelection();
+    }
+    renderManagerLeadsContent();
+  }
+
+  async function showAssignModal(leadIdOrLeadIds) {
     if (!state.salesUsers.length) {
       const data = await api.get("/api/telesales/sales-users");
       state.salesUsers = data.salesUsers || [];
     }
 
+    const targetLeadIds = Array.isArray(leadIdOrLeadIds)
+      ? leadIdOrLeadIds
+      : leadIdOrLeadIds
+        ? [leadIdOrLeadIds]
+        : getSelectedLeadIds();
+
+    if (!targetLeadIds.length) {
+      return toast("กรุณาเลือก lead ก่อน assign", "warning");
+    }
+
+    state.pendingAssignLeadIds = Array.from(new Set(targetLeadIds.filter(Boolean)));
+    const assignCount = state.pendingAssignLeadIds.length;
+
     const body = `
+      <div class="ts-form-group">
+        <label class="ts-form-label">Lead ที่เลือก</label>
+        <div class="ts-form-hint">${assignCount} รายการ</div>
+      </div>
       <div class="ts-form-group">
         <label class="ts-form-label">เลือกพนักงาน</label>
         <select class="ts-form-select" id="assignSalesUserId">
@@ -1266,11 +1386,11 @@
 
     const footer = `
       <button class="ts-btn ts-btn-ghost" onclick="window.__TS__.closeModal()">ยกเลิก</button>
-      <button class="ts-btn ts-btn-primary" id="assignSubmitBtn" onclick="window.__TS__.submitAssign('${esc(leadId)}')">
-        <i class="fas fa-user-plus"></i> Assign
+      <button class="ts-btn ts-btn-primary" id="assignSubmitBtn" onclick="window.__TS__.submitAssign()">
+        <i class="fas fa-user-plus"></i> ${assignCount === 1 ? "Assign" : `Assign ${assignCount} รายการ`}
       </button>`;
 
-    showModal("Assign Lead", body, footer);
+    showModal(assignCount === 1 ? "Assign Lead" : "Assign Leads", body, footer);
   }
 
   async function submitAssign(leadId) {
@@ -1278,10 +1398,35 @@
     const btn = document.getElementById("assignSubmitBtn");
     if (!salesUserId) return toast("กรุณาเลือกพนักงาน", "warning");
 
+    const targetLeadIds = Array.isArray(state.pendingAssignLeadIds) &&
+      state.pendingAssignLeadIds.length
+      ? Array.from(new Set(state.pendingAssignLeadIds.filter(Boolean)))
+      : leadId
+        ? [leadId]
+        : [];
+    if (!targetLeadIds.length) return toast("ไม่พบ lead ที่ต้องการ assign", "warning");
+
     btn.disabled = true;
     try {
-      await api.post(`/api/telesales/leads/${leadId}/assign`, { salesUserId });
-      toast("Assign สำเร็จ");
+      if (targetLeadIds.length === 1) {
+        await api.post(`/api/telesales/leads/${targetLeadIds[0]}/assign`, { salesUserId });
+        toast("Assign สำเร็จ");
+      } else {
+        const result = await api.post("/api/telesales/leads/bulk-assign", {
+          salesUserId,
+          leadIds: targetLeadIds,
+        });
+        if (result.failedCount > 0) {
+          toast(
+            `Assign สำเร็จ ${result.assignedCount}/${result.total} รายการ`,
+            result.assignedCount > 0 ? "warning" : "error",
+          );
+        } else {
+          toast(`Assign สำเร็จ ${result.assignedCount} รายการ`);
+        }
+      }
+      clearLeadSelection();
+      state.pendingAssignLeadIds = [];
       closeModal();
       if (state.currentView === "lead-detail")
         renderLeadDetail(state.currentLeadId);
@@ -1686,10 +1831,23 @@
     },
     filterLeads: (type, val) => {
       if (type === "status") state.filters.managerLeadStatus = val;
-      else if (type === "owner") state.filters.managerLeadOwner = val;
+      else if (type === "owner") {
+        state.filters.managerLeadOwner = val;
+        if (val) state.filters.managerLeadAssignmentState = "";
+      } else if (type === "assignmentState") {
+        state.filters.managerLeadAssignmentState = val;
+        if (val === "unassigned") state.filters.managerLeadOwner = "";
+      }
       else if (type === "needsCycle")
         state.filters.managerLeadNeedsCycle = val;
+      clearLeadSelection();
       renderManagerLeads();
+    },
+    toggleLeadSelection,
+    toggleAllLeadSelections,
+    clearLeadSelection: () => {
+      clearLeadSelection();
+      if (state.currentView === "manager-leads") renderManagerLeadsContent();
     },
     showLogCallModal,
     selectOutcome,

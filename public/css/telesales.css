@@ -1224,6 +1224,17 @@
   background: rgba(var(--ts-primary-rgb), 0.02);
 }
 
+.ts-row-selected td {
+  background: rgba(var(--ts-primary-rgb), 0.08);
+}
+
+.ts-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--ts-primary);
+  cursor: pointer;
+}
+
 /* ==================== FILTER BAR ==================== */
 .ts-filter-bar {
   display: flex;
@@ -1256,6 +1267,35 @@
   background: var(--ts-primary);
   border-color: var(--ts-primary);
   color: white;
+}
+
+.ts-bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(var(--ts-primary-rgb), 0.16);
+  background: rgba(var(--ts-primary-rgb), 0.08);
+  border-radius: var(--ts-radius);
+}
+
+.ts-bulk-bar-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ts-primary-dark);
+}
+
+.ts-bulk-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 /* ==================== EMPTY STATE ==================== */

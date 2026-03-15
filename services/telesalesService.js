@@ -978,7 +978,13 @@ class TeleSalesService {
     };
   }
 
-  async listLeads({ status, ownerSalesUserId, needsCycle, limit = 100 } = {}) {
+  async listLeads({
+    status,
+    ownerSalesUserId,
+    needsCycle,
+    assignmentState,
+    limit = 100,
+  } = {}) {
     const db = await this._db();
     const query = {};
     if (status) {
@@ -986,6 +992,15 @@ class TeleSalesService {
     }
     if (ownerSalesUserId) {
       query.ownerSalesUserId = normalizeIdString(ownerSalesUserId);
+    }
+    if (assignmentState === "unassigned") {
+      query.$or = [
+        { ownerSalesUserId: { $exists: false } },
+        { ownerSalesUserId: null },
+        { ownerSalesUserId: "" },
+      ];
+    } else if (assignmentState === "assigned") {
+      query.ownerSalesUserId = { $nin: [null, ""] };
     }
     if (typeof needsCycle === "boolean") {
       query.needsCycle = needsCycle;
@@ -998,6 +1013,53 @@ class TeleSalesService {
       .toArray();
 
     return leads.map(mapLeadDoc);
+  }
+
+  async bulkAssignLeads({ leadIds, salesUserId } = {}) {
+    const normalizedSalesUserId = normalizeIdString(salesUserId);
+    if (!normalizedSalesUserId) {
+      throw new Error("กรุณาระบุ salesUserId");
+    }
+
+    const uniqueLeadIds = Array.from(
+      new Set(
+        Array.isArray(leadIds)
+          ? leadIds.map((value) => normalizeIdString(value)).filter(Boolean)
+          : [],
+      ),
+    );
+
+    if (!uniqueLeadIds.length) {
+      throw new Error("กรุณาระบุ leadIds");
+    }
+
+    const results = [];
+    for (const leadId of uniqueLeadIds) {
+      try {
+        const lead = await this.assignLead({
+          leadId,
+          salesUserId: normalizedSalesUserId,
+        });
+        results.push({
+          leadId,
+          ok: true,
+          lead,
+        });
+      } catch (err) {
+        results.push({
+          leadId,
+          ok: false,
+          error: err?.message || "assign lead ไม่สำเร็จ",
+        });
+      }
+    }
+
+    return {
+      total: uniqueLeadIds.length,
+      assignedCount: results.filter((item) => item.ok).length,
+      failedCount: results.filter((item) => !item.ok).length,
+      results,
+    };
   }
 
   async handleOrderDeleted(order) {

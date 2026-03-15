@@ -8,7 +8,10 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "build": "echo 'No build step required'",
-    "cleanup:legacy-facebook-comment": "node scripts/drop-legacy-facebook-comment.js"
+    "cleanup:legacy-facebook-comment": "node scripts/drop-legacy-facebook-comment.js",
+    "sales-user:create": "node scripts/manage-sales-user.js create",
+    "sales-user:list": "node scripts/manage-sales-user.js list",
+    "sales-user:update": "node scripts/manage-sales-user.js update"
   },
   "dependencies": {
     "@line/bot-sdk": "^7.5.3",
