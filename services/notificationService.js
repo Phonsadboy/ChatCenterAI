@@ -1364,10 +1364,111 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     }
   };
 
+  const sendTextToChannelDoc = async (db, channel, text, eventType = "custom") => {
+    const channelIdString = normalizeIdString(channel?._id);
+    const channelType = normalizeNotificationChannelType(channel?.type);
+    const senderBotId =
+      normalizeIdString(channel?.senderBotId) || normalizeIdString(channel?.botId);
+    const targetId = normalizeIdString(channel?.groupId || channel?.lineGroupId);
+    const telegramBotId = normalizeIdString(channel?.telegramBotId);
+    const telegramChatId = normalizeTelegramChatId(channel?.telegramChatId);
+
+    if (channelType === "line_group" && (!senderBotId || !targetId)) {
+      return { success: false, error: "CHANNEL_MISCONFIGURED", channelId: channelIdString };
+    }
+    if (channelType === "telegram_group" && (!telegramBotId || !telegramChatId)) {
+      return { success: false, error: "CHANNEL_MISCONFIGURED", channelId: channelIdString };
+    }
+
+    try {
+      const response =
+        channelType === "telegram_group"
+          ? await sendTelegramMessagesInOrder(db, telegramBotId, telegramChatId, [
+            { type: "text", text },
+          ])
+          : await sendToLineTarget(senderBotId, targetId, {
+            type: "text",
+            text,
+          });
+
+      await insertNotificationLog(db, {
+        channelId: channelIdString,
+        orderId: null,
+        eventType,
+        status: "success",
+        response: response || null,
+      });
+
+      return { success: true, channelId: channelIdString };
+    } catch (err) {
+      await insertNotificationLog(db, {
+        channelId: channelIdString,
+        orderId: null,
+        eventType,
+        status: "failed",
+        errorMessage: err?.message || String(err),
+      });
+      return {
+        success: false,
+        channelId: channelIdString,
+        error: err?.message || String(err),
+      };
+    }
+  };
+
+  const sendEventMessage = async (eventType, text, options = {}) => {
+    const normalizedEventType = normalizeIdString(eventType);
+    const normalizedText =
+      typeof text === "string" && text.trim()
+        ? text.trim()
+        : "";
+    if (!normalizedEventType) {
+      throw new Error("eventType is required");
+    }
+    if (!normalizedText) {
+      throw new Error("text is required");
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const query = {
+      isActive: true,
+      eventTypes: normalizedEventType,
+    };
+    if (options.channelIds && Array.isArray(options.channelIds) && options.channelIds.length > 0) {
+      const validIds = options.channelIds
+        .map((id) => normalizeIdString(id))
+        .filter((id) => ObjectId.isValid(id))
+        .map((id) => new ObjectId(id));
+      if (validIds.length > 0) {
+        query._id = { $in: validIds };
+      }
+    }
+
+    const channels = await db.collection("notification_channels").find(query).toArray();
+    if (!channels.length) {
+      return { success: false, error: "NO_CHANNELS_MATCHED", results: [], channelIds: [] };
+    }
+
+    const results = [];
+    for (const channel of channels) {
+      results.push(
+        await sendTextToChannelDoc(db, channel, normalizedText, normalizedEventType),
+      );
+    }
+
+    return {
+      success: results.some((item) => item.success),
+      results,
+      channelIds: results.filter((item) => item.success).map((item) => item.channelId),
+    };
+  };
+
   return {
     sendNewOrder,
     sendOrderSummary,
     testChannel,
+    sendEventMessage,
   };
 }
 

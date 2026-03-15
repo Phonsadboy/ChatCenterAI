@@ -20,6 +20,12 @@ const InstructionChatService = require("./services/instructionChatService");
 const ConversationThreadService = require("./services/conversationThreadService");
 const createNotificationService = require("./services/notificationService");
 const slipOkService = require("./services/slipOkService");
+const {
+  TeleSalesService,
+  LEAD_COLLECTION,
+  CHECKPOINT_COLLECTION,
+  parseCycleDays,
+} = require("./services/telesalesService");
 const { AgentForgeService } = require("./services/agentForgeService");
 const { AgentForgeRunner } = require("./services/agentForgeRunner");
 const { AgentForgeScheduler } = require("./services/agentForgeScheduler");
@@ -251,6 +257,14 @@ const {
   sanitizeLabelInput,
   mapPasscodeDoc,
 } = require("./utils/auth");
+const {
+  createSalesUser,
+  listSalesUsers,
+  getSalesUserById,
+  updateSalesUser,
+  verifySalesUser,
+  ensureSalesUserIndexes,
+} = require("./utils/salesAuth");
 const {
   extractBase64ImagesFromContent,
   detectImageMimeType,
@@ -1350,6 +1364,7 @@ async function connectDB() {
       try {
         const db = mongoClient.db("chatbot");
         await ensurePasscodeIndexes(db);
+        await ensureSalesUserIndexes(db);
         await ensureFacebookCommentIndexes(db);
         await ensureCategoryIndexes(db);
         await ensureNotificationIndexes(db);
@@ -1395,6 +1410,13 @@ function guardPromiseRejection(promise, logPrefix) {
 const notificationService = createNotificationService({
   connectDB,
   publicBaseUrl: PUBLIC_BASE_URL,
+});
+
+const teleSalesService = new TeleSalesService({
+  connectDB,
+  timezone: "Asia/Bangkok",
+  notificationService,
+  openaiClient: openaiSingleton,
 });
 
 /**
@@ -1508,6 +1530,43 @@ function getAdminUserContext(req) {
   };
 }
 
+function isSalesAuthenticated(req) {
+  return Boolean(req.session && req.session.salesUser);
+}
+
+function registerSalesSession(req, salesUser) {
+  const safeUser = salesUser && typeof salesUser === "object" ? salesUser : {};
+  req.session.salesUser = {
+    id: safeUser.id || safeUser._id?.toString?.() || null,
+    name: safeUser.name || "",
+    code: safeUser.code || "",
+    role: safeUser.role || "sales",
+    teamId: safeUser.teamId || null,
+    loggedInAt: new Date().toISOString(),
+  };
+}
+
+function getSalesUserContext(req) {
+  if (!isSalesAuthenticated(req)) return null;
+  const { id, name, code, role, teamId, loggedInAt } = req.session.salesUser;
+  return {
+    id,
+    name,
+    code,
+    role,
+    teamId,
+    loggedInAt,
+  };
+}
+
+async function destroySalesSession(req) {
+  if (!req.session) return;
+  delete req.session.salesUser;
+  await new Promise((resolve, reject) => {
+    req.session.save((err) => (err ? reject(err) : resolve()));
+  });
+}
+
 function enforceAdminLogin(req, res, next) {
   if (!isPasscodeFeatureEnabled(ADMIN_MASTER_PASSCODE)) {
     return next();
@@ -1580,6 +1639,30 @@ function requireAdmin(req, res, next) {
     });
   }
   return next();
+}
+
+function requireSalesAuth(req, res, next) {
+  if (isSalesAuthenticated(req)) {
+    return next();
+  }
+  return res.status(401).json({
+    success: false,
+    error: "กรุณาล็อกอินฝ่ายขายก่อนใช้งาน",
+  });
+}
+
+function requireSalesManager(req, res, next) {
+  if (isAdminAuthenticated(req)) {
+    return next();
+  }
+  const salesUser = getSalesUserContext(req);
+  if (salesUser && salesUser.role === "sales_manager") {
+    return next();
+  }
+  return res.status(403).json({
+    success: false,
+    error: "สิทธิ์ไม่เพียงพอ",
+  });
 }
 
 const agentForgeService = new AgentForgeService(connectDB, {
@@ -4616,6 +4699,23 @@ function sanitizeOrderNotes(value) {
   return value.trim().slice(0, 1000);
 }
 
+function normalizeOrderSourceValue(value, fallback = "manual") {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "ai_chat") return "ai_chat";
+  if (normalized === "telesales") return "telesales";
+  if (normalized === "manual") return "manual";
+  return fallback;
+}
+
+function normalizeTeleSalesEnabledValue(value, fallback = true) {
+  if (typeof value === "boolean") return value;
+  return fallback;
+}
+
+function normalizeTeleSalesCycleDaysValue(value) {
+  return parseCycleDays(value);
+}
+
 function normalizeOrderItemsInput(rawItems = []) {
   if (!Array.isArray(rawItems)) return [];
   const normalized = [];
@@ -5577,6 +5677,21 @@ async function saveOrderToDatabase(
       safeOptions.extractedAt instanceof Date
         ? safeOptions.extractedAt
         : new Date();
+    const orderSource = normalizeOrderSourceValue(
+      safeOptions.orderSource,
+      extractedFrom === "ai_tool" ? "ai_chat" : "manual",
+    );
+    const teleSalesEnabled = normalizeTeleSalesEnabledValue(
+      safeOptions.teleSalesEnabled,
+      true,
+    );
+    const teleSalesCycleDays = normalizeTeleSalesCycleDaysValue(
+      safeOptions.teleSalesCycleDays,
+    );
+    const sourceSalesUserId = normalizeIdString(safeOptions.sourceSalesUserId) || null;
+    const sourceLeadId = normalizeIdString(safeOptions.sourceLeadId) || null;
+    const sourceCheckpointId =
+      normalizeIdString(safeOptions.sourceCheckpointId) || null;
 
     const normalizedOrderData = {
       ...(orderData || {}),
@@ -5594,12 +5709,30 @@ async function saveOrderToDatabase(
       extractedFrom,
       isManualExtraction,
       updatedAt: new Date(),
+      createdAt: extractedAt,
       notes,
       notificationStatus: safeOptions.notificationStatus || "pending",
+      orderSource,
+      teleSalesEnabled,
+      teleSalesCycleDays,
+      sourceSalesUserId,
+      sourceLeadId,
+      sourceCheckpointId,
     };
 
     const result = await coll.insertOne(orderDoc);
     console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
+
+    if (safeOptions.skipTeleSalesSync !== true) {
+      teleSalesService
+        .syncOrderDocument({ ...orderDoc, _id: result.insertedId })
+        .catch((syncError) => {
+          console.warn(
+            "[TeleSales] syncOrderDocument after saveOrderToDatabase failed:",
+            syncError?.message || syncError,
+          );
+        });
+    }
 
     return result.insertedId;
   } catch (error) {
@@ -5929,6 +6062,10 @@ async function updateOrderFromTool(args = {}, context = {}) {
     forceUpdate: true,
   });
 
+  syncTeleSalesOrderById(orderIdString).catch((syncError) => {
+    console.warn("[TeleSales] sync after updateOrderFromTool failed:", syncError?.message || syncError);
+  });
+
   return {
     success: true,
     orderId: orderIdString,
@@ -5995,6 +6132,52 @@ async function getUserOrders(userId) {
     console.error("[Order] ดึงออเดอร์ไม่สำเร็จ:", error.message);
     return [];
   }
+}
+
+async function syncTeleSalesOrderById(orderId) {
+  if (!ObjectId.isValid(orderId)) return null;
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const order = await db.collection("orders").findOne({ _id: new ObjectId(orderId) });
+  if (!order) return null;
+  return teleSalesService.syncOrderDocument(order);
+}
+
+function resolveActingSalesUserId(req) {
+  const salesUser = getSalesUserContext(req);
+  if (salesUser?.id) return salesUser.id;
+  if (isAdminAuthenticated(req)) {
+    return normalizeIdString(req.body?.salesUserId || req.query?.salesUserId) || null;
+  }
+  return null;
+}
+
+async function getTeleSalesLeadDocById(leadId) {
+  if (!ObjectId.isValid(leadId)) return null;
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  return db.collection(LEAD_COLLECTION).findOne({ _id: new ObjectId(leadId) });
+}
+
+async function getTeleSalesCheckpointContext(checkpointId) {
+  if (!ObjectId.isValid(checkpointId)) return null;
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const checkpoint = await db.collection(CHECKPOINT_COLLECTION).findOne({
+    _id: new ObjectId(checkpointId),
+  });
+  if (!checkpoint) return null;
+  const lead = checkpoint.leadId
+    ? await db.collection(LEAD_COLLECTION).findOne({
+      _id: new ObjectId(checkpoint.leadId),
+    })
+    : null;
+  return { checkpoint, lead };
+}
+
+function canSalesUserAccessLead(lead, salesUserId) {
+  if (!lead || !salesUserId) return false;
+  return normalizeIdString(lead.ownerSalesUserId) === normalizeIdString(salesUserId);
 }
 
 async function maybeAnalyzeOrder(
@@ -11031,9 +11214,21 @@ async function runStartupRuntime(client) {
   }
 
   try {
+    await teleSalesService.ensureIndexes();
+  } catch (teleSalesIndexError) {
+    console.error(`[ERROR] teleSalesService.ensureIndexes ล้มเหลว:`, teleSalesIndexError);
+  }
+
+  try {
     startFollowUpTaskWorker();
   } catch (followUpWorkerError) {
     console.error(`[ERROR] startFollowUpTaskWorker ล้มเหลว:`, followUpWorkerError);
+  }
+
+  try {
+    teleSalesService.startDailyReportScheduler();
+  } catch (teleSalesSchedulerError) {
+    console.error(`[ERROR] teleSalesService.startDailyReportScheduler ล้มเหลว:`, teleSalesSchedulerError);
   }
 
   try {
@@ -14469,6 +14664,67 @@ app.post("/admin/logout", async (req, res) => {
   }
 });
 
+app.get("/api/sales/me", (req, res) => {
+  res.json({
+    success: true,
+    user: getSalesUserContext(req),
+  });
+});
+
+app.post("/sales/login", loginLimiter, async (req, res) => {
+  try {
+    const { code, password } = req.body || {};
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const verifyResult = await verifySalesUser(db, { code, password });
+
+    if (!verifyResult.valid || !verifyResult.salesUser) {
+      return res.status(401).json({
+        success: false,
+        error: "รหัสล็อกอินหรือรหัสผ่านไม่ถูกต้อง",
+      });
+    }
+
+    registerSalesSession(req, verifyResult.salesUser);
+    res.json({
+      success: true,
+      user: getSalesUserContext(req),
+    });
+  } catch (err) {
+    console.error("[SalesAuth] Login error:", err);
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถเข้าสู่ระบบฝ่ายขายได้",
+    });
+  }
+});
+
+app.post("/sales/logout", async (req, res) => {
+  try {
+    await destroySalesSession(req);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("[SalesAuth] Logout error:", err);
+    res.status(500).json({
+      success: false,
+      error: "ออกจากระบบฝ่ายขายไม่สำเร็จ",
+    });
+  }
+});
+
+// ============================ Sales UI Pages ============================
+
+app.get("/sales/login", (req, res) => {
+  if (isSalesAuthenticated(req)) return res.redirect("/sales/app");
+  res.render("sales-login");
+});
+
+app.get("/sales/app", (req, res) => {
+  if (!isSalesAuthenticated(req)) return res.redirect("/sales/login");
+  const salesUser = getSalesUserContext(req);
+  res.render("sales-app", { salesUser });
+});
+
 app.use("/admin", enforceAdminLogin);
 
 app.use(
@@ -14572,6 +14828,414 @@ app.delete("/api/admin-passcodes/:id", requireSuperadmin, async (req, res) => {
       success: false,
       error: err?.message || "ไม่สามารถลบรหัสผ่านได้",
     });
+  }
+});
+
+// ============================ Sales User Management API ============================
+
+app.get("/api/telesales/sales-users", requireSalesManager, async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const salesUsers = await listSalesUsers(db, {
+      isActive:
+        typeof req.query?.isActive === "string"
+          ? req.query.isActive === "true"
+          : undefined,
+      role: typeof req.query?.role === "string" ? req.query.role : undefined,
+    });
+    res.json({ success: true, salesUsers });
+  } catch (err) {
+    console.error("[TeleSales] list sales users error:", err);
+    res.status(500).json({
+      success: false,
+      error: "ไม่สามารถโหลดรายการพนักงานขายได้",
+    });
+  }
+});
+
+app.post("/api/telesales/sales-users", requireSalesManager, async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const salesUser = await createSalesUser(db, req.body || {});
+    res.status(201).json({ success: true, salesUser });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || "ไม่สามารถสร้างพนักงานขายได้",
+    });
+  }
+});
+
+app.patch("/api/telesales/sales-users/:id", requireSalesManager, async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const salesUser = await updateSalesUser(db, req.params.id, req.body || {});
+    res.json({ success: true, salesUser });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || "ไม่สามารถอัปเดตพนักงานขายได้",
+    });
+  }
+});
+
+// ============================ TeleSales API ============================
+
+app.get("/api/telesales/my-queue", requireSalesAuth, async (req, res) => {
+  try {
+    const salesUser = getSalesUserContext(req);
+    const data = await teleSalesService.listQueue({
+      salesUserId: salesUser.id,
+      scope: "my",
+      status: typeof req.query?.status === "string" ? req.query.status : "open",
+      limit: req.query?.limit,
+    });
+    res.json({ success: true, ...data });
+  } catch (err) {
+    console.error("[TeleSales] my-queue error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/telesales/manager/queue", requireSalesManager, async (req, res) => {
+  try {
+    const data = await teleSalesService.listQueue({
+      salesUserId: typeof req.query?.salesUserId === "string" ? req.query.salesUserId : null,
+      scope: typeof req.query?.salesUserId === "string" ? "my" : "all",
+      status: typeof req.query?.status === "string" ? req.query.status : "open",
+      limit: req.query?.limit,
+    });
+    res.json({ success: true, ...data });
+  } catch (err) {
+    console.error("[TeleSales] manager-queue error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/telesales/manager/leads", requireSalesManager, async (req, res) => {
+  try {
+    const leads = await teleSalesService.listLeads({
+      status: typeof req.query?.status === "string" ? req.query.status : undefined,
+      ownerSalesUserId:
+        typeof req.query?.ownerSalesUserId === "string"
+          ? req.query.ownerSalesUserId
+          : undefined,
+      needsCycle:
+        typeof req.query?.needsCycle === "string"
+          ? req.query.needsCycle === "true"
+          : undefined,
+      limit: req.query?.limit,
+    });
+    res.json({ success: true, leads });
+  } catch (err) {
+    console.error("[TeleSales] manager-leads error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/telesales/leads/:leadId", async (req, res) => {
+  try {
+    const lead = await getTeleSalesLeadDocById(req.params.leadId);
+    if (!lead) {
+      return res.status(404).json({ success: false, error: "ไม่พบ lead" });
+    }
+
+    const salesUser = getSalesUserContext(req);
+    const isManager = isAdminAuthenticated(req) || salesUser?.role === "sales_manager";
+    if (!isManager) {
+      if (!salesUser?.id) {
+        return res.status(401).json({ success: false, error: "กรุณาล็อกอินก่อน" });
+      }
+      if (!canSalesUserAccessLead(lead, salesUser.id)) {
+        return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์ดู lead นี้" });
+      }
+    }
+
+    const data = await teleSalesService.getLeadDetails(req.params.leadId);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    console.error("[TeleSales] lead detail error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/telesales/leads/:leadId/assign", requireSalesManager, async (req, res) => {
+  try {
+    const salesUserId = normalizeIdString(req.body?.salesUserId);
+    if (!salesUserId) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุ salesUserId" });
+    }
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const assignee = await getSalesUserById(db, salesUserId);
+    if (!assignee || assignee.isActive === false) {
+      return res.status(400).json({ success: false, error: "ไม่พบพนักงานขายที่ใช้งานได้" });
+    }
+    const lead = await teleSalesService.assignLead({
+      leadId: req.params.leadId,
+      salesUserId,
+    });
+    res.json({ success: true, lead });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err?.message || "assign lead ไม่สำเร็จ" });
+  }
+});
+
+app.post("/api/telesales/leads/:leadId/pause", requireSalesManager, async (req, res) => {
+  try {
+    const lead = await teleSalesService.pauseLead({
+      leadId: req.params.leadId,
+      reason: req.body?.reason,
+      status: req.body?.status || "paused",
+    });
+    res.json({ success: true, lead });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err?.message || "pause lead ไม่สำเร็จ" });
+  }
+});
+
+app.post("/api/telesales/leads/:leadId/reopen", requireSalesManager, async (req, res) => {
+  try {
+    const lead = await teleSalesService.reopenLead({
+      leadId: req.params.leadId,
+      dueAt: req.body?.dueAt,
+      assignedToSalesUserId: req.body?.assignedToSalesUserId,
+    });
+    res.json({ success: true, lead });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err?.message || "reopen lead ไม่สำเร็จ" });
+  }
+});
+
+app.post("/api/telesales/checkpoints/:checkpointId/log-call", async (req, res) => {
+  try {
+    const salesUserId = resolveActingSalesUserId(req);
+    if (!salesUserId) {
+      return res.status(401).json({ success: false, error: "กรุณาล็อกอินฝ่ายขายก่อน" });
+    }
+
+    const checkpointContext = await getTeleSalesCheckpointContext(req.params.checkpointId);
+    if (!checkpointContext?.checkpoint || !checkpointContext?.lead) {
+      return res.status(404).json({ success: false, error: "ไม่พบ checkpoint" });
+    }
+
+    const salesUser = getSalesUserContext(req);
+    const isManager = isAdminAuthenticated(req) || salesUser?.role === "sales_manager";
+    if (!isManager && !canSalesUserAccessLead(checkpointContext.lead, salesUserId)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการ checkpoint นี้" });
+    }
+
+    const lead = await teleSalesService.logCallOutcome({
+      checkpointId: req.params.checkpointId,
+      salesUserId,
+      outcome: req.body?.outcome,
+      note: req.body?.note,
+      nextCheckpointAt: req.body?.nextCheckpointAt,
+    });
+    res.json({ success: true, lead });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err?.message || "log call ไม่สำเร็จ" });
+  }
+});
+
+app.post("/api/telesales/checkpoints/:checkpointId/create-order", async (req, res) => {
+  try {
+    const salesUserId = resolveActingSalesUserId(req);
+    if (!salesUserId) {
+      return res.status(401).json({ success: false, error: "กรุณาล็อกอินฝ่ายขายก่อน" });
+    }
+
+    const checkpointContext = await getTeleSalesCheckpointContext(req.params.checkpointId);
+    if (!checkpointContext?.checkpoint || !checkpointContext?.lead) {
+      return res.status(404).json({ success: false, error: "ไม่พบ checkpoint" });
+    }
+
+    const salesUser = getSalesUserContext(req);
+    const isManager = isAdminAuthenticated(req) || salesUser?.role === "sales_manager";
+    if (!isManager && !canSalesUserAccessLead(checkpointContext.lead, salesUserId)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการ checkpoint นี้" });
+    }
+
+    const callNote = sanitizeOrderNotes(req.body?.callNote || req.body?.note);
+    if (!callNote) {
+      return res.status(400).json({ success: false, error: "กรุณาระบุ callNote" });
+    }
+
+    const requiredFields = await getOrderRequiredFieldsSetting();
+    const orderDataPayload =
+      req.body && typeof req.body.orderData === "object" ? req.body.orderData : null;
+    if (!orderDataPayload) {
+      return res.status(400).json({ success: false, error: "orderData จำเป็น" });
+    }
+
+    const normalized = buildOrderDataForTool(orderDataPayload, requiredFields);
+    if (!normalized.ok) {
+      return res.status(400).json({ success: false, error: normalized.error });
+    }
+
+    const requirementCheck = validateOrderRequirements(
+      normalized.orderData,
+      requiredFields,
+    );
+    if (!requirementCheck.ok) {
+      return res.status(400).json({
+        success: false,
+        error: `ข้อมูลออเดอร์ยังไม่ครบ: ${formatMissingOrderFields(requirementCheck.missing)}`,
+        missingFields: requirementCheck.missing,
+      });
+    }
+
+    let status = "pending";
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "status")) {
+      const normalizedStatus = normalizeOrderStatus(req.body?.status);
+      if (!normalizedStatus) {
+        return res.status(400).json({ success: false, error: "สถานะไม่ถูกต้อง" });
+      }
+      status = normalizedStatus;
+    }
+
+    const orderId = await saveOrderToDatabase(
+      checkpointContext.lead.userId,
+      checkpointContext.lead.platform,
+      checkpointContext.lead.botId,
+      normalized.orderData,
+      "telesales",
+      true,
+      {
+        status,
+        notes: req.body?.notes,
+        orderSource: "telesales",
+        sourceSalesUserId: salesUserId,
+        sourceLeadId: checkpointContext.lead._id.toString(),
+        sourceCheckpointId: checkpointContext.checkpoint._id.toString(),
+        teleSalesEnabled: Object.prototype.hasOwnProperty.call(req.body || {}, "teleSalesEnabled")
+          ? req.body.teleSalesEnabled !== false
+          : true,
+        teleSalesCycleDays: req.body?.teleSalesCycleDays,
+        skipTeleSalesSync: true,
+      },
+    );
+
+    if (!orderId) {
+      return res.status(500).json({ success: false, error: "ไม่สามารถบันทึกออเดอร์ได้" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const createdOrder = await db.collection("orders").findOne({
+      _id: new ObjectId(orderId),
+    });
+
+    await teleSalesService.finalizeClosedWon({
+      checkpointId: req.params.checkpointId,
+      salesUserId,
+      note: callNote,
+      order: createdOrder,
+    });
+
+    triggerOrderNotification(orderId);
+    await maybeAnalyzeFollowUp(
+      checkpointContext.lead.userId,
+      checkpointContext.lead.platform,
+      checkpointContext.lead.botId,
+      { forceUpdate: true },
+    );
+
+    try {
+      if (io) {
+        io.to("admin").emit("orderExtracted", {
+          userId: checkpointContext.lead.userId,
+          orderId: orderId.toString(),
+          orderData: normalized.orderData,
+          isManualExtraction: true,
+          extractedAt: createdOrder?.extractedAt || new Date(),
+          source: "telesales",
+        });
+      }
+    } catch (_) { }
+
+    res.status(201).json({
+      success: true,
+      orderId: orderId.toString(),
+      order: createdOrder,
+    });
+  } catch (err) {
+    console.error("[TeleSales] create-order error:", err);
+    res.status(400).json({ success: false, error: err?.message || "สร้างออเดอร์จาก checkpoint ไม่สำเร็จ" });
+  }
+});
+
+app.get("/api/telesales/reports/daily", requireSalesManager, async (req, res) => {
+  try {
+    const reports = await teleSalesService.listDailyReports({
+      dateKey: typeof req.query?.dateKey === "string" ? req.query.dateKey : undefined,
+      scopeType: typeof req.query?.scopeType === "string" ? req.query.scopeType : undefined,
+    });
+    res.json({ success: true, reports });
+  } catch (err) {
+    console.error("[TeleSales] list reports error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/telesales/reports/daily/run", requireSalesManager, async (req, res) => {
+  try {
+    const reports = await teleSalesService.runDailyReports({
+      dateKey:
+        typeof req.body?.dateKey === "string"
+          ? req.body.dateKey
+          : getDateKey(new Date()),
+      send: req.body?.send !== false,
+    });
+    res.json({ success: true, reports });
+  } catch (err) {
+    console.error("[TeleSales] run reports error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.patch("/admin/orders/:orderId/telesales-settings", requireSalesManager, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    if (!ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, error: "รหัสออเดอร์ไม่ถูกต้อง" });
+    }
+
+    const update = {};
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "teleSalesEnabled")) {
+      update.teleSalesEnabled = req.body.teleSalesEnabled !== false;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "teleSalesCycleDays")) {
+      const cycleDays = normalizeTeleSalesCycleDaysValue(req.body.teleSalesCycleDays);
+      update.teleSalesCycleDays = cycleDays;
+    }
+    if (!Object.keys(update).length) {
+      return res.status(400).json({ success: false, error: "ไม่มีข้อมูลสำหรับอัปเดต" });
+    }
+    update.updatedAt = new Date();
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("orders");
+    const updated = await coll.findOneAndUpdate(
+      { _id: new ObjectId(orderId) },
+      { $set: update },
+      { returnDocument: "after" },
+    );
+    if (!updated) {
+      return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
+    }
+
+    syncTeleSalesOrderById(orderId).catch((syncError) => {
+      console.warn("[TeleSales] sync after telesales-settings update failed:", syncError?.message || syncError);
+    });
+
+    res.json({ success: true, order: updated });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err?.message || "อัปเดต tele-sales setting ไม่สำเร็จ" });
   }
 });
 
@@ -27440,6 +28104,10 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
       }
     } catch (_) { }
 
+    syncTeleSalesOrderById(orderId).catch((syncError) => {
+      console.warn("[TeleSales] sync after /admin/chat/orders update failed:", syncError?.message || syncError);
+    });
+
     res.json({
       success: true,
       order: updatedOrder,
@@ -27487,6 +28155,10 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
 
     await maybeAnalyzeFollowUp(order.userId, order.platform, order.botId, {
       forceUpdate: true,
+    });
+
+    teleSalesService.handleOrderDeleted(order).catch((syncError) => {
+      console.warn("[TeleSales] handleOrderDeleted after /admin/chat/orders delete failed:", syncError?.message || syncError);
     });
 
     res.json({
@@ -28097,6 +28769,10 @@ function normalizeNotificationChannelSettings(settings, options = {}) {
 
 const NOTIFICATION_DELIVERY_MODES = new Set(["realtime", "scheduled"]);
 const NOTIFICATION_SUMMARY_TIME_REGEX = /^([0-1]?\d|2[0-3])[:.]([0-5]\d)$/;
+const NOTIFICATION_EVENT_TYPES = new Set([
+  "new_order",
+  "telesales_daily_summary",
+]);
 
 function normalizeNotificationDeliveryMode(value) {
   if (typeof value !== "string") return "realtime";
@@ -28141,6 +28817,26 @@ function normalizeNotificationSummaryTimes(values) {
   });
 
   return normalized;
+}
+
+function normalizeNotificationEventTypes(values) {
+  const list = [];
+  if (Array.isArray(values)) {
+    list.push(...values);
+  } else if (typeof values === "string") {
+    list.push(...values.split(/[,\s]+/));
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  list.forEach((value) => {
+    const parsed = normalizeIdString(value).toLowerCase();
+    if (!parsed || !NOTIFICATION_EVENT_TYPES.has(parsed) || seen.has(parsed)) return;
+    seen.add(parsed);
+    normalized.push(parsed);
+  });
+
+  return normalized.length > 0 ? normalized : ["new_order"];
 }
 
 const NOTIFICATION_SUMMARY_INTERVAL_MS = 60 * 1000;
@@ -28400,7 +29096,7 @@ function mapNotificationChannelDoc(doc, ctx = {}) {
     telegramChatStatus: type === "telegram_group" ? telegramGroup?.status || null : null,
     receiveFromAllBots: doc.receiveFromAllBots === true,
     sources: normalizeNotificationSourcesInput(doc.sources || []),
-    eventTypes: Array.isArray(doc.eventTypes) ? doc.eventTypes : ["new_order"],
+    eventTypes: normalizeNotificationEventTypes(doc.eventTypes || ["new_order"]),
     deliveryMode: normalizeNotificationDeliveryMode(doc.deliveryMode),
     summaryTimes: normalizeNotificationSummaryTimes(doc.summaryTimes || []),
     summaryTimezone: doc.summaryTimezone || BANGKOK_TZ,
@@ -28576,6 +29272,7 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
     const settings = normalizeNotificationChannelSettings(req.body?.settings || {}, {
       channelType,
     });
+    const eventTypes = normalizeNotificationEventTypes(req.body?.eventTypes || ["new_order"]);
     const isActive = parseOptionalBoolean(req.body?.isActive);
     const receiveAll = receiveFromAllBots !== false;
     const deliveryMode = normalizeNotificationDeliveryMode(
@@ -28660,7 +29357,7 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
       telegramChatId: channelType === "telegram_group" ? telegramChatId : null,
       receiveFromAllBots: receiveAll,
       sources: receiveAll ? [] : sources,
-      eventTypes: ["new_order"],
+      eventTypes,
       deliveryMode,
       summaryTimes,
       summaryTimezone: BANGKOK_TZ,
@@ -28733,6 +29430,7 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
     const settings = normalizeNotificationChannelSettings(req.body?.settings || {}, {
       channelType,
     });
+    const eventTypes = normalizeNotificationEventTypes(req.body?.eventTypes || ["new_order"]);
     const isActive = parseOptionalBoolean(req.body?.isActive);
     const receiveAll = receiveFromAllBots !== false;
     const deliveryMode = normalizeNotificationDeliveryMode(
@@ -28823,7 +29521,7 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       telegramChatId: channelType === "telegram_group" ? telegramChatId : null,
       receiveFromAllBots: receiveAll,
       sources: receiveAll ? [] : sources,
-      eventTypes: ["new_order"],
+      eventTypes,
       deliveryMode,
       summaryTimes,
       summaryTimezone: BANGKOK_TZ,
@@ -32618,6 +33316,10 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
       fbConversionSent: fbConversionResult?.success || false,
       fbConversionError: fbConversionResult?.error || fbConversionResult?.reason || null,
     });
+
+    syncTeleSalesOrderById(orderId).catch((syncError) => {
+      console.warn("[TeleSales] sync after /admin/orders/:orderId/status failed:", syncError?.message || syncError);
+    });
   } catch (error) {
     console.error("[Orders] ไม่สามารถอัปเดตสถานะได้:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -32650,6 +33352,9 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
     }
 
     console.log(`[Orders] อัปเดต notes ออเดอร์ ${orderId}`);
+    syncTeleSalesOrderById(orderId).catch((syncError) => {
+      console.warn("[TeleSales] sync after /admin/orders/:orderId/notes failed:", syncError?.message || syncError);
+    });
     res.json({ success: true, orderId, notes: sanitizedNotes });
   } catch (error) {
     console.error("[Orders] ไม่สามารถอัปเดต notes ได้:", error);
@@ -32691,6 +33396,10 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
 
     await maybeAnalyzeFollowUp(order.userId, order.platform, order.botId, {
       forceUpdate: true,
+    });
+
+    teleSalesService.handleOrderDeleted(order).catch((syncError) => {
+      console.warn("[TeleSales] handleOrderDeleted after /admin/orders/:orderId delete failed:", syncError?.message || syncError);
     });
 
     console.log(`[Orders] ลบออเดอร์สำเร็จ ${orderId}`);

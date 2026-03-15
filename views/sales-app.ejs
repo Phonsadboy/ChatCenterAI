@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>TeleSales</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link href="/css/telesales.css" rel="stylesheet">
+</head>
+<body>
+  <div class="ts-shell" id="tsApp">
+    <!-- Mobile toggle -->
+    <button class="ts-mobile-toggle" id="tsMobileToggle">
+      <i class="fas fa-bars"></i>
+    </button>
+    <div class="ts-sidebar-overlay" id="tsSidebarOverlay"></div>
+
+    <!-- Sidebar -->
+    <aside class="ts-sidebar" id="tsSidebar">
+      <div class="ts-sidebar-brand">
+        <div class="ts-brand-dot"><i class="fas fa-headset"></i></div>
+        <span>TeleSales</span>
+      </div>
+
+      <nav class="ts-sidebar-nav" id="tsSidebarNav">
+        <div class="ts-nav-section">
+          <div class="ts-nav-section-label">งานของฉัน</div>
+          <div class="ts-nav-item active" data-view="my-queue">
+            <i class="fas fa-list-check"></i>
+            <span>คิวของฉัน</span>
+            <span class="ts-nav-badge" id="navBadgeOverdue" style="display:none">0</span>
+          </div>
+        </div>
+
+        <div class="ts-nav-section" id="navManagerSection" style="display:none">
+          <div class="ts-nav-section-label">จัดการทีม</div>
+          <div class="ts-nav-item" data-view="manager-queue">
+            <i class="fas fa-users-line"></i>
+            <span>คิวทั้งทีม</span>
+          </div>
+          <div class="ts-nav-item" data-view="manager-leads">
+            <i class="fas fa-address-book"></i>
+            <span>Lead ทั้งหมด</span>
+          </div>
+          <div class="ts-nav-item" data-view="sales-users">
+            <i class="fas fa-user-gear"></i>
+            <span>จัดการพนักงาน</span>
+          </div>
+          <div class="ts-nav-item" data-view="reports">
+            <i class="fas fa-chart-pie"></i>
+            <span>รายงานประจำวัน</span>
+          </div>
+        </div>
+      </nav>
+
+      <div class="ts-sidebar-footer">
+        <div class="ts-user-pill" id="tsUserPill">
+          <div class="ts-user-avatar" id="tsUserAvatar">?</div>
+          <div class="ts-user-info">
+            <div class="ts-user-name" id="tsUserName">-</div>
+            <div class="ts-user-role" id="tsUserRole">-</div>
+          </div>
+          <i class="fas fa-right-from-bracket" style="opacity:0.4; cursor:pointer;" id="tsLogoutBtn" title="ออกจากระบบ"></i>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="ts-main">
+      <div class="ts-content" id="tsContent">
+        <div class="ts-loading"><div class="ts-spinner"></div> กำลังโหลด...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div class="ts-toast-container" id="tsToastContainer"></div>
+
+  <!-- Inject user data from server -->
+  <script>
+    window.__SALES_USER__ = <%- JSON.stringify(salesUser || null).replace(/</g, '\\u003c') %>;
+  </script>
+  <script src="/js/telesales-app.js"></script>
+</body>
+</html>
