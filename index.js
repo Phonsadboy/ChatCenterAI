@@ -169,8 +169,36 @@ const WEBHOOK_FORWARD_TIMEOUT_MS = Number(
 const ADMIN_CHAT_USERS_CACHE_TTL_MS = Number(
   process.env.CCAI_ADMIN_CHAT_USERS_CACHE_MS || 2500,
 );
+const BUCKET_TRANSIENT_READ_RETRIES = Math.max(
+  0,
+  Number(process.env.CCAI_BUCKET_TRANSIENT_READ_RETRIES || 1),
+);
+const BUCKET_TRANSIENT_READ_RETRY_DELAY_MS = Math.max(
+  0,
+  Number(process.env.CCAI_BUCKET_TRANSIENT_READ_RETRY_DELAY_MS || 1500),
+);
+const ASSET_HTTP_FETCH_TIMEOUT_MS = Math.max(
+  5000,
+  Number(process.env.CCAI_ASSET_HTTP_FETCH_TIMEOUT_MS || 30000),
+);
+const ASSET_HTTP_FETCH_RETRIES = Math.max(
+  0,
+  Number(process.env.CCAI_ASSET_HTTP_FETCH_RETRIES || 1),
+);
+const ASSET_HTTP_FETCH_RETRY_DELAY_MS = Math.max(
+  0,
+  Number(process.env.CCAI_ASSET_HTTP_FETCH_RETRY_DELAY_MS || 1500),
+);
 const adminChatUsersCache = new Map();
 const adminChatUsersInflight = new Map();
+
+function sleep(ms) {
+  const normalizedMs = Number(ms);
+  if (!Number.isFinite(normalizedMs) || normalizedMs <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, normalizedMs));
+}
 
 function normalizeBaseUrl(value) {
   if (typeof value !== "string") return "";
@@ -797,6 +825,17 @@ try {
   console.log("[Static] Serving follow-up assets from:", FOLLOWUP_ASSETS_DIR);
 } catch (e) {
   console.warn("[Static] Could not ensure asset directories:", e?.message || e);
+}
+
+if (isBucketConfigured() && typeof listBucketObjects === "function") {
+  setTimeout(() => {
+    warmFollowUpLocalCacheFromBucket().catch((error) => {
+      console.warn(
+        "[Assets] Follow-up local cache warmup failed:",
+        error?.message || error,
+      );
+    });
+  }, 1500);
 }
 
 const buildInstructionLookupNames = (fileName) => {
@@ -4099,6 +4138,15 @@ async function sendFollowUpMessage(task, round, db) {
     let combinedMessage = "";
     const followUpAssets = [];
     let imgCounter = 0;
+    const deriveFileNameFromUrl = (value) => {
+      if (typeof value !== "string") return "";
+      const trimmed = value.trim();
+      if (!trimmed) return "";
+      const sanitized = trimmed.split("?")[0].split("#")[0].trim();
+      if (!sanitized) return "";
+      const fileName = path.basename(sanitized);
+      return isLikelyImageFileName(fileName) ? fileName : "";
+    };
     for (const item of items) {
       if (item.type === "text") {
         if (combinedMessage) combinedMessage += "[cut]";
@@ -4118,7 +4166,11 @@ async function sendFollowUpMessage(task, round, db) {
       followUpAssets.map((asset) => ({
         ...asset,
         thumbUrl: asset.previewUrl || asset.thumbUrl || asset.url,
-        fileName: asset.fileName || "",
+        fileName:
+          asset.fileName
+          || deriveFileNameFromUrl(asset.url)
+          || deriveFileNameFromUrl(asset.previewUrl)
+          || "",
       }))
     );
     return { combinedMessage, assetsMap };
@@ -10731,6 +10783,10 @@ app.post(
 
         const existing = await findPostgresFollowUpAssetByChecksum("starter", sha256);
         if (existing) {
+          persistFollowUpLocalAssetCopies({
+            fileName: existing.fileName,
+            mainBuffer: optimized,
+          });
           const urls = resolveScopedFollowUpAssetUrls(existing, urlBase);
           const existingId =
             existing._id?.toString?.()
@@ -10811,6 +10867,12 @@ app.post(
           createdAt: now,
           updatedAt: now,
         };
+        persistFollowUpLocalAssetCopies({
+          fileName,
+          mainBuffer: optimized,
+          thumbFileName: thumbName,
+          thumbBuffer: thumb,
+        });
         const saved = await insertPostgresFollowUpAsset("starter", assetDoc);
         const assetId =
           saved?._id?.toString?.()
@@ -14440,6 +14502,156 @@ function buildAssetStorageKey(prefix, filename) {
     : normalizedFileName;
 }
 
+function writeLocalFollowUpAssetFile(fileName, buffer) {
+  if (!fileName || !Buffer.isBuffer(buffer) || buffer.length === 0) return false;
+  const safeFileName = path.basename(String(fileName || "").trim());
+  if (!safeFileName) return false;
+  const targetPath = path.join(FOLLOWUP_ASSETS_DIR, safeFileName);
+  try {
+    if (!fs.existsSync(FOLLOWUP_ASSETS_DIR)) {
+      fs.mkdirSync(FOLLOWUP_ASSETS_DIR, { recursive: true });
+    }
+    fs.writeFileSync(targetPath, buffer);
+    return true;
+  } catch (error) {
+    console.warn("[Assets] Unable to persist follow-up asset to local storage:", {
+      fileName: safeFileName,
+      error: error?.message || error,
+    });
+    return false;
+  }
+}
+
+function persistFollowUpLocalAssetCopies({
+  fileName,
+  mainBuffer,
+  thumbFileName,
+  thumbBuffer,
+} = {}) {
+  if (fileName && Buffer.isBuffer(mainBuffer) && mainBuffer.length > 0) {
+    writeLocalFollowUpAssetFile(fileName, mainBuffer);
+  }
+  if (thumbFileName && Buffer.isBuffer(thumbBuffer) && thumbBuffer.length > 0) {
+    writeLocalFollowUpAssetFile(thumbFileName, thumbBuffer);
+  }
+}
+
+async function warmFollowUpLocalCacheFromBucket() {
+  if (!isBucketConfigured() || typeof listBucketObjects !== "function") {
+    return;
+  }
+
+  const warmupLimit = Math.max(
+    0,
+    Number(process.env.CCAI_FOLLOWUP_LOCAL_WARMUP_LIMIT || 200),
+  );
+  if (warmupLimit <= 0) {
+    return;
+  }
+
+  try {
+    if (!fs.existsSync(FOLLOWUP_ASSETS_DIR)) {
+      fs.mkdirSync(FOLLOWUP_ASSETS_DIR, { recursive: true });
+    }
+  } catch (error) {
+    console.warn(
+      "[Assets] Could not prepare follow-up local cache directory:",
+      error?.message || error,
+    );
+    return;
+  }
+
+  const candidates = [];
+  let continuationToken = null;
+  let pageCount = 0;
+  const maxPages = 6;
+
+  do {
+    const page = await listBucketObjects("followup/", {
+      maxKeys: 1000,
+      continuationToken,
+    });
+    const objects = Array.isArray(page?.objects) ? page.objects : [];
+    objects.forEach((object) => {
+      const key = String(object?.Key || "").trim();
+      if (!key) return;
+      const fileName = path.basename(key);
+      if (!isLikelyImageFileName(fileName)) return;
+      candidates.push({
+        key,
+        fileName,
+        lastModified: object?.LastModified ? new Date(object.LastModified) : null,
+      });
+    });
+    continuationToken = page?.isTruncated ? page?.nextContinuationToken : null;
+    pageCount += 1;
+  } while (continuationToken && pageCount < maxPages && candidates.length < warmupLimit * 2);
+
+  if (!candidates.length) {
+    return;
+  }
+
+  candidates.sort((a, b) => {
+    const aTime = a?.lastModified instanceof Date ? a.lastModified.getTime() : 0;
+    const bTime = b?.lastModified instanceof Date ? b.lastModified.getTime() : 0;
+    return bTime - aTime;
+  });
+
+  const unique = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const key = candidate?.key;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+    if (unique.length >= warmupLimit) break;
+  }
+
+  let synced = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const candidate of unique) {
+    const fileName = candidate.fileName;
+    if (!fileName) continue;
+    const targetPath = path.join(FOLLOWUP_ASSETS_DIR, fileName);
+    if (fs.existsSync(targetPath)) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const stream = await getBucketObjectStream(candidate.key);
+      const buffer = await streamToBuffer(stream);
+      if (writeLocalFollowUpAssetFile(fileName, buffer)) {
+        synced += 1;
+      } else {
+        failed += 1;
+      }
+    } catch (error) {
+      failed += 1;
+      const isTransient = isBucketTransientReadError(error);
+      console.warn(
+        `[Assets] Follow-up warmup read failed (${isTransient ? "transient" : "non-transient"})`,
+        {
+          key: candidate.key,
+          fileName,
+          error: error?.message || error,
+          code: error?.code || error?.cause?.code || error?.name || null,
+        },
+      );
+    }
+  }
+
+  console.log("[Assets] Follow-up local cache warmup completed", {
+    limit: warmupLimit,
+    selected: unique.length,
+    synced,
+    skipped,
+    failed,
+  });
+}
+
 function isBucketNotFoundError(err) {
   const statusCode = err?.$metadata?.httpStatusCode;
   const errorName = err?.name || err?.Code || err?.code || "";
@@ -14448,6 +14660,72 @@ function isBucketNotFoundError(err) {
     errorName === "NotFound" ||
     errorName === "NoSuchKey" ||
     errorName === "NoSuchBucket"
+  );
+}
+
+function isBucketTransientReadError(err) {
+  const statusCode = Number(err?.$metadata?.httpStatusCode || 0);
+  if (statusCode >= 500 && statusCode < 600) {
+    return true;
+  }
+
+  const codeCandidates = [
+    err?.code,
+    err?.name,
+    err?.errno,
+    err?.cause?.code,
+    err?.cause?.name,
+    err?.cause?.errno,
+  ]
+    .filter((value) => typeof value === "string")
+    .map((value) => value.toUpperCase());
+
+  const transientCodes = new Set([
+    "ETIMEDOUT",
+    "ECONNRESET",
+    "ECONNREFUSED",
+    "EHOSTUNREACH",
+    "ENETUNREACH",
+    "EPIPE",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_HEADERS_TIMEOUT",
+    "UND_ERR_SOCKET",
+    "TIMEOUTERROR",
+    "REQUEST_TIMEOUT",
+  ]);
+
+  if (codeCandidates.some((code) => transientCodes.has(code))) {
+    return true;
+  }
+
+  const message = [err?.message, err?.cause?.message]
+    .filter((value) => typeof value === "string" && value.trim())
+    .join(" ")
+    .toLowerCase();
+
+  if (!message) return false;
+  return (
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("socket hang up") ||
+    message.includes("network error")
+  );
+}
+
+let lastBucketTransientReadWarningAt = 0;
+function logBucketTransientReadWarning(key, err) {
+  const now = Date.now();
+  if (now - lastBucketTransientReadWarningAt < 60 * 1000) {
+    return;
+  }
+  lastBucketTransientReadWarningAt = now;
+  console.warn(
+    "[Asset Storage] Bucket read temporarily unavailable, fallback route will be used",
+    {
+      key,
+      error: err?.message || err,
+      code: err?.code || err?.cause?.code || err?.name || null,
+    },
   );
 }
 
@@ -14464,14 +14742,37 @@ async function getFirstBucketObjectStream(keys = []) {
   if (!isBucketConfigured()) return null;
 
   for (const key of keys) {
-    try {
-      const stream = await getBucketObjectStream(key);
-      return { key, stream };
-    } catch (err) {
-      if (isBucketNotFoundError(err)) {
-        continue;
+    let transientRetryCount = 0;
+    while (true) {
+      try {
+        const stream = await getBucketObjectStream(key);
+        return { key, stream };
+      } catch (err) {
+        if (isBucketNotFoundError(err)) {
+          break;
+        }
+        if (isBucketTransientReadError(err)) {
+          if (transientRetryCount < BUCKET_TRANSIENT_READ_RETRIES) {
+            transientRetryCount += 1;
+            console.warn(
+              "[Asset Storage] transient read error, retrying bucket read",
+              {
+                key,
+                retry: transientRetryCount,
+                maxRetries: BUCKET_TRANSIENT_READ_RETRIES,
+                delayMs: BUCKET_TRANSIENT_READ_RETRY_DELAY_MS,
+                error: err?.message || err,
+                code: err?.code || err?.cause?.code || err?.name || null,
+              },
+            );
+            await sleep(BUCKET_TRANSIENT_READ_RETRY_DELAY_MS);
+            continue;
+          }
+          logBucketTransientReadWarning(key, err);
+          return null;
+        }
+        throw err;
       }
-      throw err;
     }
   }
 
@@ -16913,6 +17214,14 @@ function isHttpOrHttpsUrl(value) {
   return /^https?:\/\//i.test(value.trim());
 }
 
+function detectImageContentTypeFromFileName(fileName = "") {
+  const ext = path.extname(String(fileName || "")).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  return "image/jpeg";
+}
+
 async function buildLineMessagesFromTemplate(
   message,
   selectedImageCollections = null,
@@ -16951,8 +17260,10 @@ async function buildLineMessagesFromTemplate(
         const originalContentUrl =
           typeof seg.url === "string" ? seg.url.trim() : "";
         if (!isHttpOrHttpsUrl(originalContentUrl)) {
-          const fallbackText = `[ไม่สามารถส่งรูป ${seg.label || "image"} ได้]`;
-          payloads.push({ type: "text", text: fallbackText });
+          console.warn(
+            "[LINE] Skip image segment because URL is not http/https:",
+            seg.label || seg.fileName || originalContentUrl,
+          );
           continue;
         }
 
@@ -17164,33 +17475,10 @@ async function sendFacebookMessage(
                   "Facebook image both modes failed:",
                   secondErr?.message || secondErr,
                 );
-                const alt = seg.alt ? `\n(รูป: ${seg.alt})` : "";
-                try {
-                  const fallbackPayload = {
-                    text: `[ไม่สามารถส่งรูป ${seg.label}]${alt}`,
-                  };
-                  if (metadata) {
-                    fallbackPayload.metadata = metadata;
-                  }
-                  const body = {
-                    recipient: { id: recipientId },
-                    message: fallbackPayload,
-                  };
-                  if (messagingType) {
-                    body.messaging_type = messagingType;
-                  }
-                  if (tag) {
-                    body.tag = tag;
-                  }
-                  await axios.post(
-                    `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`,
-                    body,
-                    {
-                      params: { access_token: accessToken },
-                      headers: { "Content-Type": "application/json" },
-                    },
-                  );
-                } catch (_) { }
+                console.warn(
+                  "[Facebook] Skip image segment after both send modes failed:",
+                  seg.label || seg.fileName || seg.url || "unknown-image",
+                );
               }
             }
           }
@@ -17519,27 +17807,8 @@ async function sendWhatsAppMessage(
                 seg.alt || "",
               );
             } catch (imageError) {
-              const fallback = `[ไม่สามารถส่งรูป ${seg.label || "image"}]`;
-              const response = await axios.post(
-                `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${phoneNumberId}/messages`,
-                {
-                  messaging_product: "whatsapp",
-                  recipient_type: "individual",
-                  to: recipientId,
-                  type: "text",
-                  text: { body: fallback },
-                },
-                {
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    "Content-Type": "application/json",
-                  },
-                },
-              );
-              lastProviderMessageId =
-                response.data?.messages?.[0]?.id || lastProviderMessageId;
               console.warn(
-                "[WhatsApp] ส่งรูปไม่สำเร็จ:",
+                "[WhatsApp] Skip image segment because send failed:",
                 imageError?.response?.data || imageError?.message || imageError,
               );
             }
@@ -17616,6 +17885,8 @@ async function fetchWhatsAppMediaAsBase64(mediaId, accessToken) {
 async function readInstructionAssetBuffer(seg) {
   const label = seg.label || "";
   const requestedFileName = seg.fileName || "";
+  const requestedImageUrl =
+    typeof seg.url === "string" ? seg.url.trim() : "";
   let assetDoc = null;
 
   if (canUsePostgresAssets()) {
@@ -17708,6 +17979,84 @@ async function readInstructionAssetBuffer(seg) {
     }
   }
 
+  const followUpFileCandidates = new Set();
+  const registerFollowUpFileCandidate = (value) => {
+    if (!value || typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (!trimmed) return;
+
+    const variants = [trimmed];
+    try {
+      variants.push(decodeURIComponent(trimmed));
+    } catch (_) {
+      // ignore malformed URI component
+    }
+
+    for (const variant of variants) {
+      const sanitized = variant.split("?")[0].split("#")[0].trim();
+      if (!sanitized) continue;
+      const marker = "/assets/followup/";
+      const lowerSanitized = sanitized.toLowerCase();
+      const markerIndex = lowerSanitized.indexOf(marker);
+      if (markerIndex >= 0) {
+        const extracted = sanitized.slice(markerIndex + marker.length).trim();
+        if (extracted) {
+          const extractedBaseName = path.basename(extracted);
+          if (isLikelyImageFileName(extractedBaseName)) {
+            followUpFileCandidates.add(extractedBaseName);
+          }
+        }
+      }
+      const baseName = path.basename(sanitized);
+      if (isLikelyImageFileName(baseName)) {
+        followUpFileCandidates.add(baseName);
+      }
+    }
+  };
+
+  registerFollowUpFileCandidate(requestedFileName);
+  registerFollowUpFileCandidate(label);
+  registerFollowUpFileCandidate(requestedImageUrl);
+
+  const followUpNames = Array.from(followUpFileCandidates);
+  for (const name of followUpNames) {
+    const localFollowupPath = path.join(FOLLOWUP_ASSETS_DIR, name);
+    try {
+      if (!fs.existsSync(localFollowupPath)) continue;
+      const buffer = fs.readFileSync(localFollowupPath);
+      return {
+        buffer,
+        filename: name,
+        contentType: detectImageContentTypeFromFileName(name),
+      };
+    } catch (_) {
+      // ignore and continue fallback chain
+    }
+  }
+
+  if (followUpNames.length > 0) {
+    const followUpBucketCandidates = [];
+    for (const name of followUpNames) {
+      followUpBucketCandidates.push(
+        ...buildBucketKeyCandidates("followup", null, name),
+      );
+    }
+    const followUpBucketAsset = await getFirstBucketObjectStream(
+      followUpBucketCandidates,
+    );
+    if (followUpBucketAsset?.stream) {
+      const fallbackFileName =
+        followUpNames[0]
+        || path.basename(followUpBucketAsset.key || "")
+        || `${label || "image"}.jpg`;
+      return {
+        buffer: await streamToBuffer(followUpBucketAsset.stream),
+        filename: fallbackFileName,
+        contentType: detectImageContentTypeFromFileName(fallbackFileName),
+      };
+    }
+  }
+
   const baseDir = ASSETS_DIR;
   const tryFilesSet = new Set();
   const addFileName = (name) => {
@@ -17744,13 +18093,7 @@ async function readInstructionAssetBuffer(seg) {
     try {
       if (fs.existsSync(p)) {
         const b = fs.readFileSync(p);
-        const ext = path.extname(p).toLowerCase().replace(".", "") || "jpg";
-        const ct =
-          ext === "png"
-            ? "image/png"
-            : ext === "webp"
-              ? "image/webp"
-              : "image/jpeg";
+        const ct = detectImageContentTypeFromFileName(name);
         return { buffer: b, filename: name, contentType: ct };
       }
     } catch (_) {
@@ -17758,20 +18101,40 @@ async function readInstructionAssetBuffer(seg) {
     }
   }
 
-  if (seg.url) {
-    const resp = await axios.get(seg.url, { responseType: "arraybuffer" });
-    const b = Buffer.from(resp.data);
-    const urlExt = (seg.url.split(".").pop() || "jpg").toLowerCase();
-    const ct = urlExt.startsWith("png")
-      ? "image/png"
-      : urlExt.startsWith("webp")
-        ? "image/webp"
-        : "image/jpeg";
-    return {
-      buffer: b,
-      filename: seg.fileName || `${label || "image"}.jpg`,
-      contentType: ct,
-    };
+  if (requestedImageUrl && isHttpOrHttpsUrl(requestedImageUrl)) {
+    let lastHttpFetchError = null;
+    const totalAttempts = ASSET_HTTP_FETCH_RETRIES + 1;
+    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+      try {
+        const resp = await axios.get(requestedImageUrl, {
+          responseType: "arraybuffer",
+          timeout: ASSET_HTTP_FETCH_TIMEOUT_MS,
+        });
+        const b = Buffer.from(resp.data);
+        const ct = detectImageContentTypeFromFileName(requestedImageUrl);
+        return {
+          buffer: b,
+          filename: seg.fileName || `${label || "image"}.jpg`,
+          contentType: ct,
+        };
+      } catch (err) {
+        lastHttpFetchError = err;
+        if (attempt < totalAttempts) {
+          console.warn("[Assets] HTTP image fetch failed, retrying", {
+            url: requestedImageUrl,
+            attempt,
+            totalAttempts,
+            timeoutMs: ASSET_HTTP_FETCH_TIMEOUT_MS,
+            delayMs: ASSET_HTTP_FETCH_RETRY_DELAY_MS,
+            error: err?.message || err,
+            code: err?.code || err?.cause?.code || err?.name || null,
+          });
+          await sleep(ASSET_HTTP_FETCH_RETRY_DELAY_MS);
+          continue;
+        }
+      }
+    }
+    throw lastHttpFetchError || new Error("asset_http_fetch_failed");
   }
 
   throw new Error(
@@ -23618,6 +23981,10 @@ app.post(
 
         const existing = await findPostgresFollowUpAssetByChecksum("followup", sha256);
         if (existing) {
+          persistFollowUpLocalAssetCopies({
+            fileName: existing.fileName,
+            mainBuffer: optimized,
+          });
           const urls = resolveScopedFollowUpAssetUrls(existing, urlBase);
           const existingId =
             existing._id?.toString?.()
@@ -23698,6 +24065,12 @@ app.post(
           createdAt: now,
           updatedAt: now,
         };
+        persistFollowUpLocalAssetCopies({
+          fileName,
+          mainBuffer: optimized,
+          thumbFileName: thumbName,
+          thumbBuffer: thumb,
+        });
         const saved = await insertPostgresFollowUpAsset("followup", assetDoc);
         const assetId =
           saved?._id?.toString?.()
