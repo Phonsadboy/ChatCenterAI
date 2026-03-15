@@ -1385,20 +1385,40 @@ function normalizeRoleContent(role, content) {
   }
 }
 
-const sessionStore = MongoStore.create({
-  clientPromise: connectDB(),
-  dbName: "chatbot",
-  collectionName: "admin_sessions",
-  stringify: false,
-  ttl: ADMIN_SESSION_TTL_SECONDS,
-});
+let sessionStore = null;
+if (MONGO_URI) {
+  sessionStore = MongoStore.create({
+    mongoUrl: MONGO_URI,
+    mongoOptions: {
+      maxPoolSize: MONGO_MAX_POOL_SIZE,
+      minPoolSize: MONGO_MIN_POOL_SIZE,
+      serverSelectionTimeoutMS: MONGO_SERVER_SELECTION_TIMEOUT_MS,
+      connectTimeoutMS: MONGO_CONNECT_TIMEOUT_MS,
+      socketTimeoutMS: MONGO_SOCKET_TIMEOUT_MS,
+    },
+    dbName: "chatbot",
+    collectionName: "admin_sessions",
+    stringify: false,
+    ttl: ADMIN_SESSION_TTL_SECONDS,
+  });
+  sessionStore.on("error", (err) => {
+    console.error(
+      "[SessionStore] MongoDB session store error. Falling back to in-memory sessions for current process:",
+      err?.message || err,
+    );
+  });
+} else {
+  console.warn(
+    "[SessionStore] MONGO_URI/MONGODB_URI ไม่ถูกตั้งค่า: ใช้ in-memory sessions (ไม่เหมาะกับ production)",
+  );
+}
 
 const sessionMiddleware = session({
   name: SESSION_COOKIE_NAME,
   secret: ADMIN_SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: sessionStore,
+  ...(sessionStore ? { store: sessionStore } : {}),
   cookie: {
     httpOnly: true,
     sameSite: "lax",
