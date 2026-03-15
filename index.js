@@ -67,8 +67,13 @@ function parsePositiveIntEnv(rawValue, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseNonNegativeIntEnv(rawValue, fallback) {
+  const parsed = Number.parseInt(rawValue || "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 const MONGO_MAX_POOL_SIZE = parsePositiveIntEnv(process.env.MONGO_MAX_POOL_SIZE, 20);
-const MONGO_MIN_POOL_SIZE = parsePositiveIntEnv(process.env.MONGO_MIN_POOL_SIZE, 5);
+const MONGO_MIN_POOL_SIZE = parseNonNegativeIntEnv(process.env.MONGO_MIN_POOL_SIZE, 0);
 const MONGO_SERVER_SELECTION_TIMEOUT_MS = parsePositiveIntEnv(
   process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS,
   5000,
@@ -80,6 +85,14 @@ const MONGO_CONNECT_TIMEOUT_MS = parsePositiveIntEnv(
 const MONGO_SOCKET_TIMEOUT_MS = parsePositiveIntEnv(
   process.env.MONGO_SOCKET_TIMEOUT_MS,
   30000,
+);
+const MONGO_BOOTSTRAP_RETRY_DELAY_MS = parsePositiveIntEnv(
+  process.env.MONGO_BOOTSTRAP_RETRY_DELAY_MS,
+  5000,
+);
+const MONGO_BOOTSTRAP_MAX_RETRY_DELAY_MS = parsePositiveIntEnv(
+  process.env.MONGO_BOOTSTRAP_MAX_RETRY_DELAY_MS,
+  60000,
 );
 const ADMIN_MASTER_PASSCODE = (process.env.ADMIN_MASTER_PASSCODE || "").trim();
 const ADMIN_SESSION_SECRET =
@@ -1368,6 +1381,17 @@ async function connectDB() {
   return mongoConnectPromise;
 }
 
+function guardPromiseRejection(promise, logPrefix) {
+  if (!promise || typeof promise.catch !== "function") {
+    return;
+  }
+
+  promise.catch((err) => {
+    console.error(logPrefix, err?.message || err);
+    return null;
+  });
+}
+
 const notificationService = createNotificationService({
   connectDB,
   publicBaseUrl: PUBLIC_BASE_URL,
@@ -1401,9 +1425,19 @@ if (MONGO_URI) {
     stringify: false,
     ttl: ADMIN_SESSION_TTL_SECONDS,
   });
+  // connect-mongo keeps internal promises that can reject before any request
+  // touches the store. Guard them so Mongo outages do not crash the process.
+  guardPromiseRejection(
+    sessionStore.clientP,
+    "[SessionStore] MongoDB client connection failed:",
+  );
+  guardPromiseRejection(
+    sessionStore.collectionP,
+    "[SessionStore] MongoDB session collection init failed:",
+  );
   sessionStore.on("error", (err) => {
     console.error(
-      "[SessionStore] MongoDB session store error. Falling back to in-memory sessions for current process:",
+      "[SessionStore] MongoDB session store error. Admin sessions will not persist until MongoDB is reachable:",
       err?.message || err,
     );
   });
@@ -10887,25 +10921,43 @@ app.use((err, req, res, next) => {
   });
 });
 
-server.listen(PORT, async () => {
-  console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
-  let dbReady = false;
-  let client = null;
-  try {
-    console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
-    client = await connectDB();
-    dbReady = true;
-    console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
-  } catch (err) {
-    console.error(`[ERROR] ไม่สามารถเชื่อมต่อฐานข้อมูล MongoDB ได้:`, err);
-  }
+let startupDbReady = false;
+let startupInitializationComplete = false;
+let startupInitializationInProgress = false;
+let startupInitializationRetryTimer = null;
+let startupInitializationRetryCount = 0;
 
-  if (!dbReady) {
-    console.error(
-      `[ERROR] ข้ามการเริ่มระบบพื้นหลัง เนื่องจากเชื่อมต่อฐานข้อมูลไม่สำเร็จ`,
-    );
+function getStartupRetryDelayMs(attemptNumber) {
+  const normalizedAttempt = Math.max(1, attemptNumber);
+  const exponentialDelay =
+    MONGO_BOOTSTRAP_RETRY_DELAY_MS * 2 ** (normalizedAttempt - 1);
+  return Math.min(exponentialDelay, MONGO_BOOTSTRAP_MAX_RETRY_DELAY_MS);
+}
+
+function scheduleStartupInitializationRetry() {
+  if (startupInitializationComplete || startupInitializationRetryTimer) {
     return;
   }
+
+  const nextAttempt = startupInitializationRetryCount + 1;
+  const delayMs = getStartupRetryDelayMs(nextAttempt);
+  startupInitializationRetryCount = nextAttempt;
+
+  console.warn(
+    `[WARN] MongoDB ยังไม่พร้อม จะลองเชื่อมต่อใหม่อีกครั้งใน ${delayMs} ms (attempt ${nextAttempt})`,
+  );
+
+  startupInitializationRetryTimer = setTimeout(() => {
+    startupInitializationRetryTimer = null;
+    void initializeStartupRuntime();
+  }, delayMs);
+
+  if (typeof startupInitializationRetryTimer.unref === "function") {
+    startupInitializationRetryTimer.unref();
+  }
+}
+
+async function runStartupRuntime(client) {
   const db = client.db("chatbot");
 
   // รัน migration อัตโนมัติ (ไม่ให้บล็อกระบบพื้นหลังหากล้มเหลว)
@@ -11005,8 +11057,43 @@ server.listen(PORT, async () => {
   } catch (telemetryError) {
     console.log(`[Telemetry] Init failed (non-critical):`, telemetryError.message);
   }
+}
 
-  console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
+async function initializeStartupRuntime() {
+  if (startupInitializationComplete || startupInitializationInProgress) {
+    return;
+  }
+
+  startupInitializationInProgress = true;
+
+  try {
+    console.log(`[LOG] กำลังเชื่อมต่อฐานข้อมูล MongoDB...`);
+    const client = await connectDB();
+    startupDbReady = true;
+    startupInitializationRetryCount = 0;
+    console.log(`[LOG] เชื่อมต่อฐานข้อมูลสำเร็จ`);
+
+    await runStartupRuntime(client);
+
+    startupInitializationComplete = true;
+    console.log(`[LOG] เซิร์ฟเวอร์พร้อมให้บริการที่พอร์ต ${PORT}`);
+  } catch (err) {
+    startupDbReady = false;
+    console.error(
+      `[ERROR] ไม่สามารถเชื่อมต่อฐานข้อมูล MongoDB ได้: ${err?.message || err}`,
+    );
+    console.error(
+      `[ERROR] ระบบพื้นหลังยังไม่พร้อม แต่ HTTP server จะยังทำงานต่อและจะ retry อัตโนมัติ`,
+    );
+    scheduleStartupInitializationRetry();
+  } finally {
+    startupInitializationInProgress = false;
+  }
+}
+
+server.listen(PORT, () => {
+  console.log(`[LOG] เริ่มต้นเซิร์ฟเวอร์ที่พอร์ต ${PORT}...`);
+  void initializeStartupRuntime();
 });
 
 // เพิ่มฟังก์ชันเพื่อเก็บและดึงประวัติการวิเคราะห์ Flow ของผู้ใช้
@@ -13925,10 +14012,12 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
 // Health check endpoint for Railway
 app.get("/health", (req, res) => {
   res.json({
-    status: "OK",
+    status: startupInitializationComplete ? "OK" : "DEGRADED",
     timestamp: new Date().toISOString(),
     service: "ChatCenter AI",
     version: "1.0.0",
+    mongo: startupDbReady ? "connected" : "retrying",
+    startupReady: startupInitializationComplete,
   });
 });
 
