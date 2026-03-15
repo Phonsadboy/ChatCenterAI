@@ -340,6 +340,10 @@ input:checked+.toggle-slider:before {
     background: linear-gradient(135deg, #25d366, #128c7e);
 }
 
+.bot-channel.telegram {
+    background: linear-gradient(135deg, #2aabee, #1f6fab);
+}
+
 .bot-channel.notification {
     background: linear-gradient(135deg, #f2994a, #eb5757);
 }

@@ -1,13 +1,27 @@
 const line = require("@line/bot-sdk");
+const axios = require("axios");
 const moment = require("moment-timezone");
 const { ObjectId } = require("mongodb");
 const { extractBase64ImagesFromContent } = require("../utils/chatImageUtils");
 const { buildShortLinkUrl, createShortLink } = require("../utils/shortLinks");
 
+const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+
 function normalizePlatform(value) {
   const platform = typeof value === "string" ? value.trim().toLowerCase() : "";
   if (platform === "facebook") return "facebook";
   return "line";
+}
+
+function normalizeNotificationChannelType(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "telegram_group" ? "telegram_group" : "line_group";
+}
+
+function normalizeTelegramChatId(value) {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
 }
 
 function normalizeIdString(value) {
@@ -35,6 +49,13 @@ function isHttpUrl(value) {
 function buildChatImageUrl(baseUrl, messageId, imageIndex) {
   if (!baseUrl || !messageId) return "";
   return `${baseUrl}/assets/chat-images/${messageId}/${imageIndex}`;
+}
+
+function buildTelegramApiUrl(botToken, method) {
+  const token = typeof botToken === "string" ? botToken.trim() : "";
+  const methodName = typeof method === "string" ? method.trim() : "";
+  if (!token || !methodName) return "";
+  return `${TELEGRAM_API_BASE_URL}/bot${token}/${methodName}`;
 }
 
 function chunkLineMessages(messages, chunkSize = 5) {
@@ -145,6 +166,23 @@ function buildLineImageMessages(baseUrl, imageRefs) {
       };
     })
     .filter(Boolean);
+}
+
+function extractImageUrlFromPayload(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const candidates = [
+    payload.originalContentUrl,
+    payload.previewImageUrl,
+    payload.url,
+    payload.photo,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.trim();
+    if (!isHttpUrl(normalized)) continue;
+    return normalized;
+  }
+  return "";
 }
 
 async function buildOrderImageMessagesForSummary(
@@ -891,6 +929,104 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
     return responses;
   };
 
+  const sendTelegramApiRequest = async (botToken, method, payload) => {
+    const url = buildTelegramApiUrl(botToken, method);
+    if (!url) throw new Error("TELEGRAM_API_URL_INVALID");
+    const response = await axios.post(url, payload, { timeout: 20000 });
+    if (response?.data?.ok !== true) {
+      const description =
+        response?.data?.description || `Telegram API ${method} failed`;
+      throw new Error(description);
+    }
+    return response.data.result || null;
+  };
+
+  const resolveTelegramSenderBot = async (db, telegramBotId) => {
+    if (!ObjectId.isValid(telegramBotId)) {
+      throw new Error("Invalid telegramBotId");
+    }
+    const bot = await db.collection("telegram_notification_bots").findOne(
+      { _id: new ObjectId(telegramBotId) },
+      {
+        projection: {
+          botToken: 1,
+          status: 1,
+          isActive: 1,
+          name: 1,
+        },
+      },
+    );
+    if (!bot?.botToken) {
+      throw new Error("Telegram sender bot credentials missing");
+    }
+    const status = typeof bot.status === "string" ? bot.status.trim().toLowerCase() : "";
+    if (status === "inactive" || bot.isActive === false) {
+      throw new Error("Telegram sender bot disabled");
+    }
+    return {
+      id: telegramBotId,
+      token: bot.botToken,
+      name: bot.name || "Telegram Bot",
+    };
+  };
+
+  const sendTelegramPayloadWithToken = async (botToken, targetId, payload) => {
+    const normalizedTargetId = normalizeTelegramChatId(targetId);
+    if (!normalizedTargetId) throw new Error("Invalid telegram chat id");
+    if (!payload || typeof payload !== "object") return null;
+
+    if (payload.type === "text") {
+      const text = typeof payload.text === "string" ? payload.text.trim() : "";
+      if (!text) return null;
+      return sendTelegramApiRequest(botToken, "sendMessage", {
+        chat_id: normalizedTargetId,
+        text,
+        disable_web_page_preview: true,
+      });
+    }
+
+    if (payload.type === "image") {
+      const photoUrl = extractImageUrlFromPayload(payload);
+      if (!photoUrl) return null;
+      const caption =
+        typeof payload.caption === "string" ? payload.caption.trim() : "";
+      const body = {
+        chat_id: normalizedTargetId,
+        photo: photoUrl,
+      };
+      if (caption) body.caption = caption.slice(0, 1024);
+      return sendTelegramApiRequest(botToken, "sendPhoto", body);
+    }
+
+    return null;
+  };
+
+  const sendTelegramMessagesInOrder = async (
+    db,
+    telegramBotId,
+    targetId,
+    messages,
+  ) => {
+    const normalized = Array.isArray(messages)
+      ? messages.filter(Boolean)
+      : messages
+        ? [messages]
+        : [];
+    if (!normalized.length) return [];
+
+    const bot = await resolveTelegramSenderBot(db, telegramBotId);
+    const responses = [];
+    for (const payload of normalized) {
+      const response = await sendTelegramPayloadWithToken(
+        bot.token,
+        targetId,
+        payload,
+      );
+      responses.push(response || null);
+    }
+    return responses;
+  };
+
   const sendNewOrder = async (orderId) => {
     const orderIdString = normalizeIdString(orderId);
     if (!ObjectId.isValid(orderIdString)) {
@@ -911,7 +1047,6 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       .collection("notification_channels")
       .find({
         isActive: true,
-        type: "line_group",
         eventTypes: "new_order",
       })
       .toArray();
@@ -947,10 +1082,7 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       if (!shouldNotifyChannelForOrder(channel, order)) continue;
 
       const channelId = normalizeIdString(channel?._id);
-      const senderBotId =
-        normalizeIdString(channel.senderBotId) || normalizeIdString(channel.botId);
-      const targetId = normalizeIdString(channel.groupId || channel.lineGroupId);
-      if (!senderBotId || !targetId) continue;
+      const channelType = normalizeNotificationChannelType(channel?.type);
 
       const message = formatNewOrderMessage(order, channel.settings, baseUrl, {
         chatLink: shortChatLink,
@@ -966,6 +1098,42 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
         orderImageMessages.length > 0
           ? [message, ...orderImageMessages]
           : [message];
+
+      if (channelType === "telegram_group") {
+        const telegramBotId = normalizeIdString(channel.telegramBotId);
+        const telegramChatId = normalizeTelegramChatId(channel.telegramChatId);
+        if (!telegramBotId || !telegramChatId) continue;
+        try {
+          const response = await sendTelegramMessagesInOrder(
+            db,
+            telegramBotId,
+            telegramChatId,
+            payloads,
+          );
+          sentCount += 1;
+          await insertNotificationLog(db, {
+            channelId,
+            orderId: orderIdString,
+            eventType: "new_order",
+            status: "success",
+            response: response || null,
+          });
+        } catch (err) {
+          await insertNotificationLog(db, {
+            channelId,
+            orderId: orderIdString,
+            eventType: "new_order",
+            status: "failed",
+            errorMessage: err?.message || String(err),
+          });
+        }
+        continue;
+      }
+
+      const senderBotId =
+        normalizeIdString(channel.senderBotId) || normalizeIdString(channel.botId);
+      const targetId = normalizeIdString(channel.groupId || channel.lineGroupId);
+      if (!senderBotId || !targetId) continue;
 
       try {
         const response = await sendLineMessagesInChunks(
@@ -1001,10 +1169,16 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       return { success: false, error: "CHANNEL_INACTIVE" };
     }
 
+    const channelType = normalizeNotificationChannelType(channelDoc.type);
     const senderBotId =
       normalizeIdString(channelDoc.senderBotId) || normalizeIdString(channelDoc.botId);
     const targetId = normalizeIdString(channelDoc.groupId || channelDoc.lineGroupId);
-    if (!senderBotId || !targetId) {
+    const telegramBotId = normalizeIdString(channelDoc.telegramBotId);
+    const telegramChatId = normalizeTelegramChatId(channelDoc.telegramChatId);
+    if (channelType === "line_group" && (!senderBotId || !targetId)) {
+      return { success: false, error: "CHANNEL_MISCONFIGURED" };
+    }
+    if (channelType === "telegram_group" && (!telegramBotId || !telegramChatId)) {
       return { success: false, error: "CHANNEL_MISCONFIGURED" };
     }
 
@@ -1093,11 +1267,19 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       );
       const payloads =
         imageMessages.length > 0 ? [...messages, ...imageMessages] : messages;
-      const response = await sendLineMessagesInChunks(
-        senderBotId,
-        targetId,
-        payloads,
-      );
+      const response =
+        channelType === "telegram_group"
+          ? await sendTelegramMessagesInOrder(
+            db,
+            telegramBotId,
+            telegramChatId,
+            payloads,
+          )
+          : await sendLineMessagesInChunks(
+            senderBotId,
+            targetId,
+            payloads,
+          );
       await insertNotificationLog(db, {
         channelId,
         orderId: null,
@@ -1139,18 +1321,29 @@ function createNotificationService({ connectDB, publicBaseUrl = "" } = {}) {
       return { success: false, error: "CHANNEL_NOT_FOUND" };
     }
 
+    const channelType = normalizeNotificationChannelType(channel?.type);
     const senderBotId =
       normalizeIdString(channel.senderBotId) || normalizeIdString(channel.botId);
     const targetId = normalizeIdString(channel.groupId || channel.lineGroupId);
-    if (!senderBotId || !targetId) {
+    const telegramBotId = normalizeIdString(channel.telegramBotId);
+    const telegramChatId = normalizeTelegramChatId(channel.telegramChatId);
+    if (channelType === "line_group" && (!senderBotId || !targetId)) {
+      return { success: false, error: "CHANNEL_MISCONFIGURED" };
+    }
+    if (channelType === "telegram_group" && (!telegramBotId || !telegramChatId)) {
       return { success: false, error: "CHANNEL_MISCONFIGURED" };
     }
 
     try {
-      const response = await sendToLineTarget(senderBotId, targetId, {
-        type: "text",
-        text,
-      });
+      const response =
+        channelType === "telegram_group"
+          ? await sendTelegramMessagesInOrder(db, telegramBotId, telegramChatId, [
+            { type: "text", text },
+          ])
+          : await sendToLineTarget(senderBotId, targetId, {
+            type: "text",
+            text,
+          });
       await insertNotificationLog(db, {
         channelId: channelIdString,
         orderId: null,

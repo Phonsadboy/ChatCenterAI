@@ -1177,9 +1177,21 @@ async function ensureNotificationIndexes(db) {
       { key: { botId: 1, status: 1, lastEventAt: -1 } },
     ]);
 
+    await db.collection("telegram_notification_bots").createIndexes([
+      { key: { status: 1, updatedAt: -1 } },
+      { key: { isActive: 1, updatedAt: -1 } },
+      { key: { botUserId: 1 } },
+    ]);
+
+    await db.collection("telegram_bot_groups").createIndexes([
+      { key: { botId: 1, chatId: 1 }, unique: true },
+      { key: { botId: 1, status: 1, lastEventAt: -1 } },
+    ]);
+
     await db.collection("notification_channels").createIndexes([
       { key: { isActive: 1, type: 1 } },
       { key: { senderBotId: 1, groupId: 1 } },
+      { key: { telegramBotId: 1, telegramChatId: 1 } },
       { key: { "sources.platform": 1, "sources.botId": 1 } },
     ]);
 
@@ -8166,6 +8178,146 @@ async function captureLineGroupEvent(event, queueOptions = {}) {
   return { botId: botId.toString(), sourceType, groupId };
 }
 
+function timingSafeStringEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  try {
+    return crypto.timingSafeEqual(left, right);
+  } catch (_) {
+    return false;
+  }
+}
+
+function normalizeTelegramGroupCaptureStatus(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!normalized) return "active";
+  if (normalized === "left" || normalized === "kicked") return "left";
+  return "active";
+}
+
+function extractTelegramGroupCapturePayload(update) {
+  if (!update || typeof update !== "object") return null;
+
+  const message = update.message && typeof update.message === "object"
+    ? update.message
+    : null;
+  if (message?.chat) {
+    return {
+      eventType: "message",
+      chat: message.chat,
+      status: "active",
+      memberStatus: null,
+    };
+  }
+
+  const editedMessage =
+    update.edited_message && typeof update.edited_message === "object"
+      ? update.edited_message
+      : null;
+  if (editedMessage?.chat) {
+    return {
+      eventType: "edited_message",
+      chat: editedMessage.chat,
+      status: "active",
+      memberStatus: null,
+    };
+  }
+
+  const channelPost =
+    update.channel_post && typeof update.channel_post === "object"
+      ? update.channel_post
+      : null;
+  if (channelPost?.chat) {
+    return {
+      eventType: "channel_post",
+      chat: channelPost.chat,
+      status: "active",
+      memberStatus: null,
+    };
+  }
+
+  const chatMemberUpdate =
+    update.my_chat_member && typeof update.my_chat_member === "object"
+      ? update.my_chat_member
+      : null;
+  if (chatMemberUpdate?.chat) {
+    const nextMemberStatus = normalizeIdString(chatMemberUpdate?.new_chat_member?.status)
+      .toLowerCase();
+    return {
+      eventType: "my_chat_member",
+      chat: chatMemberUpdate.chat,
+      status: normalizeTelegramGroupCaptureStatus(nextMemberStatus),
+      memberStatus: nextMemberStatus || null,
+    };
+  }
+
+  return null;
+}
+
+async function captureTelegramGroupUpdate(update, options = {}) {
+  const botId = normalizeIdString(options.botId || options.telegramBotId);
+  if (!botId) return null;
+
+  const capturePayload = extractTelegramGroupCapturePayload(update);
+  if (!capturePayload) return null;
+
+  const chat = capturePayload.chat || {};
+  const chatType = normalizeIdString(chat.type).toLowerCase();
+  if (!["group", "supergroup", "channel"].includes(chatType)) return null;
+
+  const chatId = normalizeTelegramChatId(chat.id);
+  if (!chatId) return null;
+
+  const username = normalizeTelegramUsername(chat.username || "");
+  const title =
+    normalizeIdString(chat.title) || (username ? `@${username}` : `Chat ${chatId}`);
+  const status = capturePayload.status === "left" ? "left" : "active";
+
+  const now = new Date();
+  const client = await connectDB();
+  const db = client.db("chatbot");
+  const coll = db.collection("telegram_bot_groups");
+
+  const filter = { botId, chatId };
+  const updateDoc = {
+    $setOnInsert: {
+      botId,
+      chatId,
+      createdAt: now,
+    },
+    $set: {
+      chatType,
+      title,
+      username: username || null,
+      status,
+      memberStatus: capturePayload.memberStatus || null,
+      lastEventType: capturePayload.eventType,
+      lastEventAt: now,
+      updatedAt: now,
+    },
+  };
+
+  if (status === "left") {
+    updateDoc.$set.leftAt = now;
+  } else if (capturePayload.eventType === "my_chat_member") {
+    updateDoc.$set.joinedAt = now;
+    updateDoc.$unset = { leftAt: "" };
+  }
+
+  await coll.updateOne(filter, updateDoc, { upsert: true });
+
+  return {
+    botId,
+    chatId,
+    chatType,
+    title,
+    status,
+    eventType: capturePayload.eventType,
+  };
+}
+
 function formatSlipOkCurrency(amount) {
   const value =
     typeof amount === "number"
@@ -8321,7 +8473,9 @@ async function handleLineGroupSlipOkImage(event, queueOptions = {}) {
 
   if (!channel) return;
 
-  const settings = normalizeNotificationChannelSettings(channel.settings || {});
+  const settings = normalizeNotificationChannelSettings(channel.settings || {}, {
+    channelType: normalizeNotificationChannelType(channel.type),
+  });
   if (settings.slipOkEnabled !== true) return;
 
   const apiUrl = typeof settings.slipOkApiUrl === "string" ? settings.slipOkApiUrl.trim() : "";
@@ -14380,6 +14534,46 @@ app.post("/webhook/line/:botId", async (req, res) => {
   } catch (err) {
     console.error("Error handling Line webhook:", err);
     res.status(500).json({ error: "เกิดข้อผิดพลาดในการประมวลผล webhook" });
+  }
+});
+
+app.post("/webhook/telegram/:botId", async (req, res) => {
+  try {
+    const botId = typeof req.params.botId === "string" ? req.params.botId.trim() : "";
+    if (!ObjectId.isValid(botId)) {
+      return res.status(404).json({ ok: false, error: "BOT_NOT_FOUND" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const bot = await db.collection("telegram_notification_bots").findOne(
+      { _id: new ObjectId(botId) },
+      { projection: { webhookSecretToken: 1, isActive: 1, status: 1 } },
+    );
+    if (!bot) {
+      return res.status(404).json({ ok: false, error: "BOT_NOT_FOUND" });
+    }
+
+    const expectedSecret = normalizeIdString(bot.webhookSecretToken);
+    const receivedSecret = normalizeIdString(
+      req.get("X-Telegram-Bot-Api-Secret-Token") || req.get("x-telegram-bot-api-secret-token"),
+    );
+    if (!expectedSecret || !timingSafeStringEqual(expectedSecret, receivedSecret)) {
+      return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+    }
+
+    const update = req.body && typeof req.body === "object" ? req.body : {};
+    const captured = await captureTelegramGroupUpdate(update, { botId });
+    if (captured?.chatId) {
+      console.log(
+        `[Telegram Group] Captured ${captured.chatType} ${captured.chatId} (${captured.status}) for bot ${captured.botId}`,
+      );
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[Telegram Webhook] Error handling webhook:", err?.message || err);
+    return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
   }
 });
 
@@ -27209,8 +27403,492 @@ app.get("/admin/api/all-bots", requireAdmin, async (req, res) => {
 
 // ============================ Notification Channels APIs ============================
 
-function normalizeNotificationChannelSettings(settings) {
+function mapTelegramNotificationBotDoc(doc) {
+  if (!doc || typeof doc !== "object") return null;
+  const normalizedStatus = normalizeTelegramBotStatus(doc.status);
+  const isActive = normalizedStatus === "active" && doc.isActive !== false;
+  const username = normalizeTelegramUsername(doc.botUsername || "");
+  return {
+    id: doc?._id?.toString?.() || null,
+    name: normalizeTelegramBotName(doc.name, "Telegram Bot"),
+    status: isActive ? "active" : "inactive",
+    botUsername: username || null,
+    botUserId:
+      typeof doc.botUserId === "number" && Number.isFinite(doc.botUserId)
+        ? doc.botUserId
+        : null,
+    tokenMasked: maskTelegramBotToken(doc.botToken),
+    webhookUrl: doc.webhookUrl || null,
+    webhookSetAt: doc.webhookSetAt || null,
+    isActive,
+    createdAt: doc.createdAt || null,
+    updatedAt: doc.updatedAt || null,
+  };
+}
+
+app.get("/admin/api/telegram-notification-bots", requireAdmin, async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const bots = await db
+      .collection("telegram_notification_bots")
+      .find({})
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .toArray();
+
+    res.json({
+      success: true,
+      bots: bots.map((bot) => mapTelegramNotificationBotDoc(bot)).filter(Boolean),
+    });
+  } catch (err) {
+    console.error("[Telegram Notification Bot] list error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/admin/api/telegram-notification-bots", requireAdmin, async (req, res) => {
+  try {
+    const name = normalizeTelegramBotName(req.body?.name, "");
+    const botToken = typeof req.body?.botToken === "string" ? req.body.botToken.trim() : "";
+    if (!name || !botToken) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณากรอกชื่อบอทและ Bot Token ให้ครบถ้วน",
+      });
+    }
+
+    const botProfile = await fetchTelegramBotProfile(botToken);
+
+    const botId = new ObjectId();
+    const webhookUrl = buildTelegramWebhookUrl(req, botId.toString());
+    if (!webhookUrl) {
+      return res.status(400).json({
+        success: false,
+        error: "PUBLIC_BASE_URL ไม่ถูกต้องหรือไม่สามารถสร้าง Webhook URL ได้",
+      });
+    }
+
+    const webhookSecretToken = generateTelegramWebhookSecret();
+    try {
+      await setTelegramWebhook({
+        botToken,
+        webhookUrl,
+        secretToken: webhookSecretToken,
+      });
+    } catch (webhookErr) {
+      return res.status(400).json({
+        success: false,
+        error: `ตั้งค่า Telegram webhook ไม่สำเร็จ: ${webhookErr?.message || webhookErr}`,
+      });
+    }
+
+    const requestedIsActive = parseOptionalBoolean(req.body?.isActive);
+    const requestedStatus = normalizeTelegramBotStatus(req.body?.status);
+    const resolvedStatus = resolveTelegramBotStatus({
+      requestedStatus,
+      requestedIsActive,
+      fallbackStatus: "active",
+    });
+
+    const now = new Date();
+    const doc = {
+      _id: botId,
+      name,
+      botToken,
+      botUsername: normalizeTelegramUsername(botProfile?.username || ""),
+      botUserId:
+        typeof botProfile?.id === "number" && Number.isFinite(botProfile.id)
+          ? botProfile.id
+          : null,
+      webhookUrl,
+      webhookSecretToken,
+      webhookSetAt: now,
+      status: resolvedStatus,
+      isActive: resolvedStatus === "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    await db.collection("telegram_notification_bots").insertOne(doc);
+
+    res.status(201).json({
+      success: true,
+      bot: mapTelegramNotificationBotDoc(doc),
+    });
+  } catch (err) {
+    console.error("[Telegram Notification Bot] create error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put("/admin/api/telegram-notification-bots/:id", requireAdmin, async (req, res) => {
+  try {
+    const botId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+    if (!ObjectId.isValid(botId)) {
+      return res.status(400).json({ success: false, error: "botId ไม่ถูกต้อง" });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("telegram_notification_bots");
+    const existing = await coll.findOne({ _id: new ObjectId(botId) });
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Telegram Bot ที่ระบุ" });
+    }
+
+    const name = normalizeTelegramBotName(req.body?.name, "");
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณากรอกชื่อ Telegram Bot",
+      });
+    }
+
+    const nextToken =
+      typeof req.body?.botToken === "string" && req.body.botToken.trim()
+        ? req.body.botToken.trim()
+        : existing.botToken || "";
+    if (!nextToken) {
+      return res.status(400).json({
+        success: false,
+        error: "ไม่พบ Bot Token สำหรับอัปเดต",
+      });
+    }
+
+    const botProfile = await fetchTelegramBotProfile(nextToken);
+    const webhookUrl = buildTelegramWebhookUrl(req, botId);
+    if (!webhookUrl) {
+      return res.status(400).json({
+        success: false,
+        error: "PUBLIC_BASE_URL ไม่ถูกต้องหรือไม่สามารถสร้าง Webhook URL ได้",
+      });
+    }
+
+    const webhookSecretToken = generateTelegramWebhookSecret();
+    try {
+      await setTelegramWebhook({
+        botToken: nextToken,
+        webhookUrl,
+        secretToken: webhookSecretToken,
+      });
+    } catch (webhookErr) {
+      return res.status(400).json({
+        success: false,
+        error: `ตั้งค่า Telegram webhook ไม่สำเร็จ: ${webhookErr?.message || webhookErr}`,
+      });
+    }
+
+    const requestedIsActive = parseOptionalBoolean(req.body?.isActive);
+    const requestedStatus = normalizeTelegramBotStatus(req.body?.status);
+    const existingStatus =
+      typeof existing.status === "string"
+        ? normalizeTelegramBotStatus(existing.status)
+        : existing.isActive === false
+          ? "inactive"
+          : "active";
+    const resolvedStatus = resolveTelegramBotStatus({
+      requestedStatus,
+      requestedIsActive,
+      fallbackStatus: existingStatus,
+    });
+    const updateDoc = {
+      name,
+      botToken: nextToken,
+      botUsername: normalizeTelegramUsername(botProfile?.username || ""),
+      botUserId:
+        typeof botProfile?.id === "number" && Number.isFinite(botProfile.id)
+          ? botProfile.id
+          : null,
+      webhookUrl,
+      webhookSecretToken,
+      webhookSetAt: new Date(),
+      status: resolvedStatus,
+      isActive: resolvedStatus === "active",
+      updatedAt: new Date(),
+    };
+
+    await coll.updateOne({ _id: new ObjectId(botId) }, { $set: updateDoc });
+    const updated = await coll.findOne({ _id: new ObjectId(botId) });
+
+    res.json({
+      success: true,
+      bot: mapTelegramNotificationBotDoc(updated),
+    });
+  } catch (err) {
+    console.error("[Telegram Notification Bot] update error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.patch(
+  "/admin/api/telegram-notification-bots/:id/toggle",
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const botId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+      if (!ObjectId.isValid(botId)) {
+        return res.status(400).json({ success: false, error: "botId ไม่ถูกต้อง" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("telegram_notification_bots");
+      const existing = await coll.findOne({ _id: new ObjectId(botId) });
+      if (!existing) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Telegram Bot ที่ระบุ" });
+      }
+
+      const requested = parseOptionalBoolean(req.body?.isActive);
+      const currentStatus = normalizeTelegramBotStatus(existing.status);
+      const currentIsActive = currentStatus === "active" && existing.isActive !== false;
+      const nextValue = typeof requested === "boolean" ? requested : !currentIsActive;
+      const nextStatus = nextValue ? "active" : "inactive";
+
+      await coll.updateOne(
+        { _id: new ObjectId(botId) },
+        { $set: { status: nextStatus, isActive: nextValue, updatedAt: new Date() } },
+      );
+
+      res.json({ success: true, isActive: nextValue });
+    } catch (err) {
+      console.error("[Telegram Notification Bot] toggle error:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.delete(
+  "/admin/api/telegram-notification-bots/:id",
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const botId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+      if (!ObjectId.isValid(botId)) {
+        return res.status(400).json({ success: false, error: "botId ไม่ถูกต้อง" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("telegram_notification_bots");
+      const existing = await coll.findOne({ _id: new ObjectId(botId) });
+      if (!existing) {
+        return res.status(404).json({ success: false, error: "ไม่พบ Telegram Bot ที่ระบุ" });
+      }
+
+      await coll.deleteOne({ _id: new ObjectId(botId) });
+      await db.collection("telegram_bot_groups").deleteMany({ botId });
+
+      const tokenToDelete =
+        typeof existing?.botToken === "string" ? existing.botToken.trim() : "";
+      if (tokenToDelete) {
+        deleteTelegramWebhook(tokenToDelete).catch(() => { });
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error("[Telegram Notification Bot] delete error:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.get(
+  "/admin/api/telegram-notification-bots/:botId/groups",
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const botId = typeof req.params.botId === "string" ? req.params.botId.trim() : "";
+      if (!ObjectId.isValid(botId)) {
+        return res.status(400).json({ success: false, error: "botId ไม่ถูกต้อง" });
+      }
+
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const groups = await db
+        .collection("telegram_bot_groups")
+        .find({ botId, status: { $ne: "left" } })
+        .sort({ lastEventAt: -1 })
+        .toArray();
+
+      res.json({
+        success: true,
+        groups: groups.map((group) => ({
+          botId: group.botId || null,
+          chatId: group.chatId || null,
+          chatType: group.chatType || null,
+          title: group.title || null,
+          username: group.username || null,
+          status: group.status || null,
+          joinedAt: group.joinedAt || null,
+          leftAt: group.leftAt || null,
+          lastEventAt: group.lastEventAt || null,
+        })),
+      });
+    } catch (err) {
+      console.error("[Telegram Group] Error listing groups:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+
+function normalizeUrlBase(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\/$/, "");
+}
+
+function isHttpsUrl(value) {
+  if (typeof value !== "string") return false;
+  return /^https:\/\//i.test(value);
+}
+
+function buildTelegramApiUrl(botToken, method) {
+  const token = typeof botToken === "string" ? botToken.trim() : "";
+  const methodName = typeof method === "string" ? method.trim() : "";
+  if (!token || !methodName) return "";
+  return `${TELEGRAM_API_BASE_URL}/bot${token}/${methodName}`;
+}
+
+function buildTelegramWebhookUrl(req, botId) {
+  const base = normalizeUrlBase(
+    process.env.PUBLIC_BASE_URL || `https://${req.get("host")}`,
+  );
+  if (!isHttpsUrl(base)) return "";
+  return `${base}/webhook/telegram/${encodeURIComponent(botId)}`;
+}
+
+function generateTelegramWebhookSecret() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
+function normalizeTelegramBotName(value, fallback = "Telegram Bot") {
+  const raw = typeof value === "string" ? value.trim() : "";
+  return raw || fallback;
+}
+
+function normalizeTelegramBotStatus(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "inactive" ? "inactive" : "active";
+}
+
+function resolveTelegramBotStatus({
+  requestedStatus,
+  requestedIsActive,
+  fallbackStatus = "active",
+} = {}) {
+  if (typeof requestedIsActive === "boolean") {
+    return requestedIsActive ? "active" : "inactive";
+  }
+  if (requestedStatus === "inactive" || requestedStatus === "active") {
+    return requestedStatus;
+  }
+  return normalizeTelegramBotStatus(fallbackStatus);
+}
+
+function maskTelegramBotToken(token) {
+  const normalized = typeof token === "string" ? token.trim() : "";
+  if (!normalized) return "";
+  if (normalized.length <= 6) return "••••";
+  return `••••${normalized.slice(-6)}`;
+}
+
+function normalizeTelegramUsername(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/^@+/, "").trim();
+}
+
+function normalizeTelegramChatId(value) {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+async function fetchTelegramBotProfile(botToken) {
+  const url = buildTelegramApiUrl(botToken, "getMe");
+  if (!url) throw new Error("INVALID_BOT_TOKEN");
+  const response = await axios.post(
+    url,
+    {},
+    {
+      timeout: 15000,
+    },
+  );
+  if (response?.data?.ok !== true || !response?.data?.result) {
+    const description =
+      response?.data?.description || "ไม่สามารถดึงข้อมูล Telegram Bot ได้";
+    throw new Error(description);
+  }
+  return response.data.result;
+}
+
+async function setTelegramWebhook({
+  botToken,
+  webhookUrl,
+  secretToken,
+}) {
+  const url = buildTelegramApiUrl(botToken, "setWebhook");
+  if (!url || !webhookUrl || !secretToken) {
+    throw new Error("SET_WEBHOOK_INPUT_INVALID");
+  }
+
+  const response = await axios.post(
+    url,
+    {
+      url: webhookUrl,
+      secret_token: secretToken,
+      allowed_updates: [
+        "message",
+        "edited_message",
+        "channel_post",
+        "my_chat_member",
+      ],
+      drop_pending_updates: false,
+    },
+    { timeout: 20000 },
+  );
+
+  if (response?.data?.ok !== true) {
+    const description =
+      response?.data?.description || "ตั้งค่า Telegram webhook ไม่สำเร็จ";
+    throw new Error(description);
+  }
+
+  return response.data.result || true;
+}
+
+async function deleteTelegramWebhook(botToken) {
+  const url = buildTelegramApiUrl(botToken, "deleteWebhook");
+  if (!url) return false;
+  try {
+    const response = await axios.post(
+      url,
+      { drop_pending_updates: false },
+      { timeout: 10000 },
+    );
+    return response?.data?.ok === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+const NOTIFICATION_CHANNEL_TYPES = new Set(["line_group", "telegram_group"]);
+
+function normalizeNotificationChannelType(value) {
+  if (typeof value !== "string") return "line_group";
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return "line_group";
+  return NOTIFICATION_CHANNEL_TYPES.has(normalized) ? normalized : "line_group";
+}
+
+function normalizeNotificationChannelSettings(settings, options = {}) {
   const raw = settings && typeof settings === "object" ? settings : {};
+  const channelType = normalizeNotificationChannelType(options.channelType);
+  const isLineGroup = channelType === "line_group";
   const includeCustomer = parseOptionalBoolean(raw.includeCustomer);
   const includeItemsCount = parseOptionalBoolean(raw.includeItemsCount);
   const includeItemsDetail = parseOptionalBoolean(raw.includeItemsDetail);
@@ -27236,9 +27914,9 @@ function normalizeNotificationChannelSettings(settings) {
     includePaymentMethod: includePaymentMethod !== false,
     includeTotalAmount: includeTotalAmount !== false,
     includeOrderLink: includeOrderLink === true,
-    slipOkEnabled: slipOkEnabled === true,
-    slipOkApiUrl,
-    slipOkApiKey,
+    slipOkEnabled: isLineGroup && slipOkEnabled === true,
+    slipOkApiUrl: isLineGroup ? slipOkApiUrl : "",
+    slipOkApiKey: isLineGroup ? slipOkApiKey : "",
   };
 }
 
@@ -27251,12 +27929,6 @@ function normalizeNotificationDeliveryMode(value) {
   return NOTIFICATION_DELIVERY_MODES.has(normalized)
     ? normalized
     : "realtime";
-}
-
-function normalizeNotificationChannelType(value) {
-  if (typeof value !== "string") return "line_group";
-  const normalized = value.trim().toLowerCase();
-  return normalized || "line_group";
 }
 
 function normalizeNotificationSummaryTime(value) {
@@ -27379,7 +28051,7 @@ async function evaluateNotificationSummarySchedules() {
     for (const channel of channels) {
       try {
         const channelType = normalizeNotificationChannelType(channel.type);
-        if (channelType !== "line_group") continue;
+        if (!NOTIFICATION_CHANNEL_TYPES.has(channelType)) continue;
         const deliveryMode = normalizeNotificationDeliveryMode(
           channel.deliveryMode,
         );
@@ -27514,29 +28186,50 @@ function normalizeNotificationSourcesInput(sources) {
 
 function mapNotificationChannelDoc(doc, ctx = {}) {
   const channelId = doc?._id?.toString?.() || "";
-  const senderBotId =
-    (doc.senderBotId && doc.senderBotId.toString) ? doc.senderBotId.toString() : (doc.senderBotId || doc.botId || "");
-  const groupId = doc.groupId || doc.lineGroupId || null;
-  const groupKey = senderBotId && groupId ? `${senderBotId}:${groupId}` : null;
-  const group = groupKey ? ctx.groupMap?.get(groupKey) : null;
+  const type = normalizeNotificationChannelType(doc?.type);
+
+  const senderBotId = normalizeIdString(doc?.senderBotId || doc?.botId || "");
+  const groupId = normalizeIdString(doc?.groupId || doc?.lineGroupId || "");
+  const lineGroupKey = senderBotId && groupId ? `${senderBotId}:${groupId}` : null;
+  const lineGroup = lineGroupKey ? ctx.lineGroupMap?.get(lineGroupKey) : null;
+
+  const telegramBotId = normalizeIdString(doc?.telegramBotId || "");
+  const telegramChatId = normalizeIdString(doc?.telegramChatId || "");
+  const telegramGroupKey =
+    telegramBotId && telegramChatId ? `${telegramBotId}:${telegramChatId}` : null;
+  const telegramGroup = telegramGroupKey
+    ? ctx.telegramGroupMap?.get(telegramGroupKey)
+    : null;
 
   return {
     id: channelId,
     name: doc.name || "",
-    type: doc.type || "line_group",
-    senderBotId: senderBotId || null,
-    senderBotName: senderBotId ? ctx.botMap?.get(senderBotId) || null : null,
-    groupId,
-    groupName: group?.groupName || null,
-    groupStatus: group?.status || null,
-    sourceType: group?.sourceType || null,
+    type,
+    senderBotId: type === "line_group" ? senderBotId || null : null,
+    senderBotName:
+      type === "line_group" && senderBotId
+        ? ctx.lineBotMap?.get(senderBotId) || null
+        : null,
+    groupId: type === "line_group" ? groupId || null : null,
+    groupName: type === "line_group" ? lineGroup?.groupName || null : null,
+    groupStatus: type === "line_group" ? lineGroup?.status || null : null,
+    sourceType: type === "line_group" ? lineGroup?.sourceType || null : null,
+    telegramBotId: type === "telegram_group" ? telegramBotId || null : null,
+    telegramBotName: type === "telegram_group" && telegramBotId
+      ? ctx.telegramBotMap?.get(telegramBotId) || null
+      : null,
+    telegramChatId: type === "telegram_group" ? telegramChatId || null : null,
+    telegramChatTitle: type === "telegram_group" ? telegramGroup?.title || null : null,
+    telegramChatUsername:
+      type === "telegram_group" ? telegramGroup?.username || null : null,
+    telegramChatStatus: type === "telegram_group" ? telegramGroup?.status || null : null,
     receiveFromAllBots: doc.receiveFromAllBots === true,
     sources: normalizeNotificationSourcesInput(doc.sources || []),
     eventTypes: Array.isArray(doc.eventTypes) ? doc.eventTypes : ["new_order"],
     deliveryMode: normalizeNotificationDeliveryMode(doc.deliveryMode),
     summaryTimes: normalizeNotificationSummaryTimes(doc.summaryTimes || []),
     summaryTimezone: doc.summaryTimezone || BANGKOK_TZ,
-    settings: normalizeNotificationChannelSettings(doc.settings || {}),
+    settings: normalizeNotificationChannelSettings(doc.settings || {}, { channelType: type }),
     isActive: doc.isActive === true,
     createdAt: doc.createdAt || null,
     updatedAt: doc.updatedAt || null,
@@ -27554,50 +28247,105 @@ app.get("/admin/api/notification-channels", requireAdmin, async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
-    const senderBotIds = Array.from(
+    const lineSenderBotIds = Array.from(
       new Set(
         channels
+          .filter((ch) => normalizeNotificationChannelType(ch?.type) === "line_group")
           .map((ch) => ch.senderBotId || ch.botId || null)
           .filter(Boolean)
           .map((id) => String(id)),
       ),
     ).filter((id) => ObjectId.isValid(id));
 
-    const botDocs = senderBotIds.length
+    const telegramSenderBotIds = Array.from(
+      new Set(
+        channels
+          .filter(
+            (ch) => normalizeNotificationChannelType(ch?.type) === "telegram_group",
+          )
+          .map((ch) => ch.telegramBotId || null)
+          .filter(Boolean)
+          .map((id) => String(id)),
+      ),
+    ).filter((id) => ObjectId.isValid(id));
+
+    const lineBotDocs = lineSenderBotIds.length
       ? await db
         .collection("line_bots")
-        .find({ _id: { $in: senderBotIds.map((id) => new ObjectId(id)) } })
+        .find({ _id: { $in: lineSenderBotIds.map((id) => new ObjectId(id)) } })
         .project({ name: 1, displayName: 1, botName: 1 })
         .toArray()
       : [];
 
-    const botMap = new Map();
-    botDocs.forEach((bot) => {
+    const lineBotMap = new Map();
+    lineBotDocs.forEach((bot) => {
       const label =
         bot.displayName ||
         bot.name ||
         bot.botName ||
         `LINE Bot (${bot._id.toString().slice(-4)})`;
-      botMap.set(bot._id.toString(), label);
+      lineBotMap.set(bot._id.toString(), label);
     });
 
-    const groupDocs = senderBotIds.length
+    const telegramBotDocs = telegramSenderBotIds.length
+      ? await db
+        .collection("telegram_notification_bots")
+        .find({ _id: { $in: telegramSenderBotIds.map((id) => new ObjectId(id)) } })
+        .project({ name: 1, botUsername: 1 })
+        .toArray()
+      : [];
+
+    const telegramBotMap = new Map();
+    telegramBotDocs.forEach((bot) => {
+      const username =
+        typeof bot?.botUsername === "string" && bot.botUsername.trim()
+          ? `@${bot.botUsername.trim()}`
+          : null;
+      const label =
+        bot.name ||
+        username ||
+        `Telegram Bot (${bot._id.toString().slice(-4)})`;
+      telegramBotMap.set(bot._id.toString(), label);
+    });
+
+    const lineGroupDocs = lineSenderBotIds.length
       ? await db
         .collection("line_bot_groups")
-        .find({ botId: { $in: senderBotIds } })
+        .find({ botId: { $in: lineSenderBotIds } })
         .project({ botId: 1, groupId: 1, groupName: 1, status: 1, sourceType: 1 })
         .toArray()
       : [];
 
-    const groupMap = new Map();
-    groupDocs.forEach((group) => {
+    const lineGroupMap = new Map();
+    lineGroupDocs.forEach((group) => {
       if (!group?.botId || !group?.groupId) return;
-      groupMap.set(`${group.botId}:${group.groupId}`, group);
+      lineGroupMap.set(`${group.botId}:${group.groupId}`, group);
+    });
+
+    const telegramGroupDocs = telegramSenderBotIds.length
+      ? await db
+        .collection("telegram_bot_groups")
+        .find({ botId: { $in: telegramSenderBotIds } })
+        .project({ botId: 1, chatId: 1, title: 1, username: 1, status: 1 })
+        .toArray()
+      : [];
+
+    const telegramGroupMap = new Map();
+    telegramGroupDocs.forEach((group) => {
+      if (!group?.botId || !group?.chatId) return;
+      telegramGroupMap.set(`${group.botId}:${group.chatId}`, group);
     });
 
     res.json({
       success: true,
-      channels: channels.map((doc) => mapNotificationChannelDoc(doc, { botMap, groupMap })),
+      channels: channels.map((doc) =>
+        mapNotificationChannelDoc(doc, {
+          lineBotMap,
+          lineGroupMap,
+          telegramBotMap,
+          telegramGroupMap,
+        }),
+      ),
     });
   } catch (err) {
     console.error("[Notifications] Error listing channels:", err);
@@ -27608,21 +28356,51 @@ app.get("/admin/api/notification-channels", requireAdmin, async (req, res) => {
 app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
   try {
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const channelType = normalizeNotificationChannelType(req.body?.type);
     const senderBotId =
-      typeof req.body?.senderBotId === "string" ? req.body.senderBotId.trim() : "";
+      typeof req.body?.senderBotId === "string"
+        ? req.body.senderBotId.trim()
+        : "";
     const groupId =
       typeof req.body?.groupId === "string" ? req.body.groupId.trim() : "";
+    const telegramBotId =
+      typeof req.body?.telegramBotId === "string"
+        ? req.body.telegramBotId.trim()
+        : "";
+    const telegramChatId =
+      typeof req.body?.telegramChatId === "string"
+        ? req.body.telegramChatId.trim()
+        : "";
 
-    if (!name || !ObjectId.isValid(senderBotId) || !groupId) {
+    if (!name) {
       return res.status(400).json({
         success: false,
-        error: "กรุณากรอก name, senderBotId และ groupId ให้ถูกต้อง",
+        error: "กรุณากรอกชื่อช่องทางแจ้งเตือน",
+      });
+    }
+
+    if (channelType === "line_group" && (!ObjectId.isValid(senderBotId) || !groupId)) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณากรอก senderBotId และ groupId ให้ถูกต้องสำหรับ LINE",
+      });
+    }
+
+    if (
+      channelType === "telegram_group" &&
+      (!ObjectId.isValid(telegramBotId) || !telegramChatId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณากรอก telegramBotId และ telegramChatId ให้ถูกต้อง",
       });
     }
 
     const receiveFromAllBots = parseOptionalBoolean(req.body?.receiveFromAllBots);
     const sources = normalizeNotificationSourcesInput(req.body?.sources || []);
-    const settings = normalizeNotificationChannelSettings(req.body?.settings || {});
+    const settings = normalizeNotificationChannelSettings(req.body?.settings || {}, {
+      channelType,
+    });
     const isActive = parseOptionalBoolean(req.body?.isActive);
     const receiveAll = receiveFromAllBots !== false;
     const deliveryMode = normalizeNotificationDeliveryMode(
@@ -27649,32 +28427,62 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
     const client = await connectDB();
     const db = client.db("chatbot");
 
-    const senderBot = await db
-      .collection("line_bots")
-      .findOne({ _id: new ObjectId(senderBotId) }, { projection: { _id: 1 } });
-    if (!senderBot) {
-      return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
-    }
+    if (channelType === "line_group") {
+      const senderBot = await db
+        .collection("line_bots")
+        .findOne({ _id: new ObjectId(senderBotId) }, { projection: { _id: 1 } });
+      if (!senderBot) {
+        return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
+      }
 
-    const group = await db.collection("line_bot_groups").findOne({
-      botId: senderBotId,
-      groupId,
-      status: { $ne: "left" },
-    });
-    if (!group) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+      const group = await db.collection("line_bot_groups").findOne({
+        botId: senderBotId,
+        groupId,
+        status: { $ne: "left" },
       });
+      if (!group) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "ยังไม่พบกลุ่ม LINE นี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+        });
+      }
+    } else {
+      const telegramBot = await db
+        .collection("telegram_notification_bots")
+        .findOne(
+          { _id: new ObjectId(telegramBotId) },
+          { projection: { _id: 1, isActive: 1 } },
+        );
+      if (!telegramBot) {
+        return res.status(400).json({
+          success: false,
+          error: "ไม่พบ Telegram Bot ที่ระบุ",
+        });
+      }
+
+      const chat = await db.collection("telegram_bot_groups").findOne({
+        botId: telegramBotId,
+        chatId: telegramChatId,
+        status: { $ne: "left" },
+      });
+      if (!chat) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "ยังไม่พบกลุ่ม Telegram นี้ในระบบ กรุณาเพิ่มบอทเข้ากลุ่ม แล้วส่งข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+        });
+      }
     }
 
     const now = new Date();
     const doc = {
       name,
-      type: "line_group",
-      senderBotId,
-      groupId,
+      type: channelType,
+      senderBotId: channelType === "line_group" ? senderBotId : null,
+      groupId: channelType === "line_group" ? groupId : null,
+      telegramBotId: channelType === "telegram_group" ? telegramBotId : null,
+      telegramChatId: channelType === "telegram_group" ? telegramChatId : null,
       receiveFromAllBots: receiveAll,
       sources: receiveAll ? [] : sources,
       eventTypes: ["new_order"],
@@ -27705,21 +28513,51 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
     }
 
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const channelType = normalizeNotificationChannelType(req.body?.type);
     const senderBotId =
-      typeof req.body?.senderBotId === "string" ? req.body.senderBotId.trim() : "";
+      typeof req.body?.senderBotId === "string"
+        ? req.body.senderBotId.trim()
+        : "";
     const groupId =
       typeof req.body?.groupId === "string" ? req.body.groupId.trim() : "";
+    const telegramBotId =
+      typeof req.body?.telegramBotId === "string"
+        ? req.body.telegramBotId.trim()
+        : "";
+    const telegramChatId =
+      typeof req.body?.telegramChatId === "string"
+        ? req.body.telegramChatId.trim()
+        : "";
 
-    if (!name || !ObjectId.isValid(senderBotId) || !groupId) {
+    if (!name) {
       return res.status(400).json({
         success: false,
-        error: "กรุณากรอก name, senderBotId และ groupId ให้ถูกต้อง",
+        error: "กรุณากรอกชื่อช่องทางแจ้งเตือน",
+      });
+    }
+
+    if (channelType === "line_group" && (!ObjectId.isValid(senderBotId) || !groupId)) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณากรอก senderBotId และ groupId ให้ถูกต้องสำหรับ LINE",
+      });
+    }
+
+    if (
+      channelType === "telegram_group" &&
+      (!ObjectId.isValid(telegramBotId) || !telegramChatId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "กรุณากรอก telegramBotId และ telegramChatId ให้ถูกต้อง",
       });
     }
 
     const receiveFromAllBots = parseOptionalBoolean(req.body?.receiveFromAllBots);
     const sources = normalizeNotificationSourcesInput(req.body?.sources || []);
-    const settings = normalizeNotificationChannelSettings(req.body?.settings || {});
+    const settings = normalizeNotificationChannelSettings(req.body?.settings || {}, {
+      channelType,
+    });
     const isActive = parseOptionalBoolean(req.body?.isActive);
     const receiveAll = receiveFromAllBots !== false;
     const deliveryMode = normalizeNotificationDeliveryMode(
@@ -27753,23 +28591,61 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
     }
 
-    const group = await db.collection("line_bot_groups").findOne({
-      botId: senderBotId,
-      groupId,
-      status: { $ne: "left" },
-    });
-    if (!group) {
-      return res.status(400).json({
-        success: false,
-        error:
-          "ยังไม่พบกลุ่มนี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+    if (channelType === "line_group") {
+      const senderBot = await db
+        .collection("line_bots")
+        .findOne({ _id: new ObjectId(senderBotId) }, { projection: { _id: 1 } });
+      if (!senderBot) {
+        return res.status(400).json({ success: false, error: "ไม่พบ LINE Bot ที่ระบุ" });
+      }
+
+      const group = await db.collection("line_bot_groups").findOne({
+        botId: senderBotId,
+        groupId,
+        status: { $ne: "left" },
       });
+      if (!group) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "ยังไม่พบกลุ่ม LINE นี้ในระบบ กรุณาเชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+        });
+      }
+    } else {
+      const telegramBot = await db
+        .collection("telegram_notification_bots")
+        .findOne(
+          { _id: new ObjectId(telegramBotId) },
+          { projection: { _id: 1, isActive: 1 } },
+        );
+      if (!telegramBot) {
+        return res.status(400).json({
+          success: false,
+          error: "ไม่พบ Telegram Bot ที่ระบุ",
+        });
+      }
+
+      const chat = await db.collection("telegram_bot_groups").findOne({
+        botId: telegramBotId,
+        chatId: telegramChatId,
+        status: { $ne: "left" },
+      });
+      if (!chat) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "ยังไม่พบกลุ่ม Telegram นี้ในระบบ กรุณาเพิ่มบอทเข้ากลุ่ม แล้วส่งข้อความในกลุ่มเพื่อให้ระบบจับกลุ่มได้",
+        });
+      }
     }
 
     const update = {
       name,
-      senderBotId,
-      groupId,
+      type: channelType,
+      senderBotId: channelType === "line_group" ? senderBotId : null,
+      groupId: channelType === "line_group" ? groupId : null,
+      telegramBotId: channelType === "telegram_group" ? telegramBotId : null,
+      telegramChatId: channelType === "telegram_group" ? telegramChatId : null,
       receiveFromAllBots: receiveAll,
       sources: receiveAll ? [] : sources,
       eventTypes: ["new_order"],
@@ -27779,9 +28655,6 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
       settings,
       updatedAt: new Date(),
     };
-    if (!existing.type) {
-      update.type = "line_group";
-    }
     if (typeof isActive === "boolean") {
       update.isActive = isActive;
     }

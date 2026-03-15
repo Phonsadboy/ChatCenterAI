@@ -20,11 +20,29 @@
                             placeholder="เช่น: กลุ่มออเดอร์หลัก" required>
                     </div>
 
-                    <div class="row g-3">
+                    <div class="mb-3">
+                        <label class="form-label mb-1">ปลายทางการแจ้งเตือน</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="notificationDestinationType"
+                                id="notificationDestinationLine" value="line_group" checked>
+                            <label class="form-check-label" for="notificationDestinationLine">
+                                LINE Group/Room
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="notificationDestinationType"
+                                id="notificationDestinationTelegram" value="telegram_group">
+                            <label class="form-check-label" for="notificationDestinationTelegram">
+                                Telegram Group
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="row g-3" id="notificationLineTargetBox">
                         <div class="col-md-6">
                             <label for="notificationChannelSenderBot" class="form-label">LINE Bot (ผู้ส่ง) <span
                                     class="text-danger">*</span></label>
-                            <select class="form-select" id="notificationChannelSenderBot" required>
+                            <select class="form-select" id="notificationChannelSenderBot">
                                 <option value="">กำลังโหลด...</option>
                             </select>
                             <div class="form-text">ต้องเชิญบอทเข้ากลุ่มก่อน ระบบถึงจะส่งแจ้งเตือนได้</div>
@@ -38,10 +56,35 @@
                                     <i class="fas fa-sync-alt"></i> รีเฟรช
                                 </button>
                             </div>
-                            <select class="form-select" id="notificationChannelGroup" required>
+                            <select class="form-select" id="notificationChannelGroup">
                                 <option value="">เลือก LINE Bot ก่อน</option>
                             </select>
                             <div class="form-text">หากไม่พบกลุ่ม: เชิญบอทเข้ากลุ่ม แล้วพิมพ์ 1 ข้อความในกลุ่ม</div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 d-none" id="notificationTelegramTargetBox">
+                        <div class="col-md-6">
+                            <label for="notificationChannelTelegramBot" class="form-label">Telegram Bot (ผู้ส่ง) <span
+                                    class="text-danger">*</span></label>
+                            <select class="form-select" id="notificationChannelTelegramBot">
+                                <option value="">กำลังโหลด...</option>
+                            </select>
+                            <div class="form-text">เลือก Telegram Sender Bot ที่เชื่อมต่อ webhook แล้ว</div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <label for="notificationChannelTelegramGroup" class="form-label mb-0">กลุ่ม Telegram (ปลายทาง)
+                                    <span class="text-danger">*</span></label>
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                    id="notificationChannelRefreshTelegramGroupsBtn">
+                                    <i class="fas fa-sync-alt"></i> รีเฟรช
+                                </button>
+                            </div>
+                            <select class="form-select" id="notificationChannelTelegramGroup">
+                                <option value="">เลือก Telegram Bot ก่อน</option>
+                            </select>
+                            <div class="form-text">หากไม่พบกลุ่ม: เพิ่มบอทเข้ากลุ่ม แล้วส่งข้อความในกลุ่ม 1 ครั้ง</div>
                         </div>
                     </div>
 
@@ -158,26 +201,28 @@
                         </div>
                     </div>
 
-                    <hr class="my-3">
+                    <div id="notificationSlipOkSection">
+                        <hr class="my-3">
 
-                    <label class="form-label mb-1">ตรวจสลิป SlipOK (ตอบเฉพาะรูปภาพในกลุ่ม)</label>
-                    <div class="form-check form-switch mb-2">
-                        <input class="form-check-input" type="checkbox" role="switch"
-                            id="notificationSettingSlipOkEnabled">
-                        <label class="form-check-label" for="notificationSettingSlipOkEnabled">เปิดใช้งานตรวจสลิป</label>
-                    </div>
-                    <div class="form-text mb-2">เมื่อเปิดใช้งาน: หากมีคนส่งรูปภาพในกลุ่ม/ห้องนี้ ระบบจะตรวจสลิปและตอบกลับผล (ไม่ตอบข้อความ)</div>
-
-                    <div class="border rounded p-2 d-none" id="notificationSlipOkConfigBox">
-                        <div class="mb-2">
-                            <label for="notificationSettingSlipOkApiUrl" class="form-label mb-1">SlipOK API URL</label>
-                            <input type="text" class="form-control" id="notificationSettingSlipOkApiUrl"
-                                placeholder="https://api.slipok.com/api/line/apikey/57824" autocomplete="off">
+                        <label class="form-label mb-1">ตรวจสลิป SlipOK (ตอบเฉพาะรูปภาพในกลุ่ม)</label>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch"
+                                id="notificationSettingSlipOkEnabled">
+                            <label class="form-check-label" for="notificationSettingSlipOkEnabled">เปิดใช้งานตรวจสลิป</label>
                         </div>
-                        <div>
-                            <label for="notificationSettingSlipOkApiKey" class="form-label mb-1">SlipOK API Key</label>
-                            <input type="password" class="form-control" id="notificationSettingSlipOkApiKey"
-                                placeholder="SLIPOKWU4P56T" autocomplete="off">
+                        <div class="form-text mb-2">เมื่อเปิดใช้งาน: หากมีคนส่งรูปภาพในกลุ่ม/ห้องนี้ ระบบจะตรวจสลิปและตอบกลับผล (ไม่ตอบข้อความ)</div>
+
+                        <div class="border rounded p-2 d-none" id="notificationSlipOkConfigBox">
+                            <div class="mb-2">
+                                <label for="notificationSettingSlipOkApiUrl" class="form-label mb-1">SlipOK API URL</label>
+                                <input type="text" class="form-control" id="notificationSettingSlipOkApiUrl"
+                                    placeholder="https://api.slipok.com/api/line/apikey/57824" autocomplete="off">
+                            </div>
+                            <div>
+                                <label for="notificationSettingSlipOkApiKey" class="form-label mb-1">SlipOK API Key</label>
+                                <input type="password" class="form-control" id="notificationSettingSlipOkApiKey"
+                                    placeholder="SLIPOKWU4P56T" autocomplete="off">
+                            </div>
                         </div>
                     </div>
 

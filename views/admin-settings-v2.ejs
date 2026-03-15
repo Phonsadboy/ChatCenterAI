@@ -286,7 +286,7 @@
                         <div class="section-header">
                             <div>
                                 <h2 class="section-title">แจ้งเตือนออเดอร์ (Order Notifications)</h2>
-                                <p class="section-desc">ส่งแจ้งเตือนเมื่อมีออเดอร์ใหม่ไปยังกลุ่ม LINE
+                                <p class="section-desc">ส่งแจ้งเตือนเมื่อมีออเดอร์ใหม่ไปยังกลุ่ม LINE หรือ Telegram
                                     และเลือกได้ว่าจะรับออเดอร์จากบอทไหนบ้าง</p>
                             </div>
                             <div class="d-flex gap-2">
@@ -305,12 +305,31 @@
                             </div>
                             <div class="card-body-v2">
                                 <ol class="mb-0">
-                                    <li>เพิ่ม LINE Bot สำหรับส่งแจ้งเตือนในหน้า “จัดการบอท” (หรือใช้บอทที่มีอยู่)</li>
-                                    <li>เชิญบอทเข้ากลุ่ม LINE ที่ต้องการรับแจ้งเตือน</li>
-                                    <li>พิมพ์ 1 ข้อความในกลุ่ม แล้วกด “รีเฟรช” เพื่อให้ระบบจับกลุ่มได้</li>
-                                    <li>กด “สร้างช่องทาง” เลือกกลุ่มปลายทาง และเลือกบอทต้นทางออเดอร์ที่ต้องการแจ้งเตือน
+                                    <li>เพิ่ม Telegram Sender Bot (ถ้าต้องการส่ง Telegram) และเพิ่ม LINE Bot (ถ้าต้องการส่ง LINE)</li>
+                                    <li>เชิญบอทเข้ากลุ่มปลายทาง (LINE/Telegram) แล้วส่งข้อความ 1 ครั้งในกลุ่ม</li>
+                                    <li>กด “รีเฟรช” เพื่อให้ระบบจับกลุ่ม และตรวจสอบว่ากลุ่มแสดงในรายการ</li>
+                                    <li>กด “สร้างช่องทาง” เลือกปลายทาง LINE หรือ Telegram และเลือกบอทต้นทางออเดอร์ที่ต้องการแจ้งเตือน
                                     </li>
                                 </ol>
+                            </div>
+                        </div>
+
+                        <div class="settings-card">
+                            <div class="card-header-v2">
+                                <h3 class="card-title-v2"><i class="fab fa-telegram-plane me-2"></i>Telegram Sender Bots</h3>
+                                <div class="d-flex gap-2">
+                                    <button class="btn-v2 btn-v2-secondary btn-v2-sm" id="telegramBotsRefreshBtn">
+                                        <i class="fas fa-sync-alt"></i> รีเฟรช
+                                    </button>
+                                    <button class="btn-v2 btn-v2-primary btn-v2-sm" id="telegramBotsCreateBtn">
+                                        <i class="fas fa-plus"></i> เพิ่ม Telegram Bot
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body-v2 p-0">
+                                <div id="telegramNotificationBotsList" class="p-3">
+                                    <div class="text-center p-3 text-muted-v2">กำลังโหลด Telegram Bots...</div>
+                                </div>
                             </div>
                         </div>
 
@@ -754,6 +773,65 @@
             <%- include('partials/modals/bot-keyword-modal') %>
             <%- include('partials/modals/api-key-modal') %>
             <%- include('partials/modals/notification-channel-modal') %>
+            <div class="modal fade" id="telegramNotificationBotModal" tabindex="-1"
+                aria-labelledby="telegramNotificationBotModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="telegramNotificationBotModalLabel">
+                                <i class="fab fa-telegram-plane me-2"></i>เพิ่ม Telegram Sender Bot
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <form id="telegramNotificationBotForm">
+                                <input type="hidden" id="telegramNotificationBotId">
+
+                                <div class="mb-3">
+                                    <label for="telegramNotificationBotName" class="form-label">ชื่อ Telegram Bot <span
+                                            class="text-danger">*</span></label>
+                                    <input type="text" class="form-control" id="telegramNotificationBotName"
+                                        placeholder="เช่น: Telegram แจ้งเตือนออเดอร์หลัก" required>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="telegramNotificationBotToken" class="form-label">Telegram Bot Token <span
+                                            class="text-danger">*</span></label>
+                                    <input type="password" class="form-control" id="telegramNotificationBotToken"
+                                        placeholder="123456:ABCDEF..." autocomplete="off" required>
+                                    <div class="form-text">
+                                        ใช้ token จาก BotFather ระบบจะตั้ง webhook อัตโนมัติเมื่อบันทึก
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="telegramNotificationBotStatus" class="form-label">สถานะ</label>
+                                    <select class="form-select" id="telegramNotificationBotStatus">
+                                        <option value="active">active</option>
+                                        <option value="inactive">inactive</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="telegramNotificationBotIsActive"
+                                        checked>
+                                    <label class="form-check-label" for="telegramNotificationBotIsActive">เปิดใช้งาน</label>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-danger me-auto d-none"
+                                id="telegramNotificationBotDeleteBtn">
+                                <i class="fas fa-trash me-1"></i>ลบ
+                            </button>
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                            <button type="button" class="btn btn-primary" id="telegramNotificationBotSaveBtn">
+                                <i class="fas fa-save me-1"></i>บันทึก
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
                             <!-- Image Collection Modal -->
                             <div class="modal fade" id="imageCollectionModal" tabindex="-1"

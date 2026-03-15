@@ -4,9 +4,12 @@
   const state = {
     channels: [],
     lineBots: null,
+    telegramBots: null,
     allBots: null,
     groupsBySenderBot: new Map(),
+    telegramGroupsByBot: new Map(),
     modalInstance: null,
+    telegramBotModalInstance: null,
   };
 
   const els = {};
@@ -19,7 +22,7 @@
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
+        .replace(/\"/g, "&quot;")
         .replace(/'/g, "&#039;");
     };
   }
@@ -32,20 +35,68 @@
     alert(message);
   }
 
+  function normalizeChannelType(value) {
+    return value === "telegram_group" ? "telegram_group" : "line_group";
+  }
+
+  function selectedDestinationType() {
+    return els.destinationTelegram?.checked === true
+      ? "telegram_group"
+      : "line_group";
+  }
+
   function cacheElements() {
     els.channelsList = document.getElementById("notificationChannelsList");
     els.refreshBtn = document.getElementById("notificationsRefreshBtn");
     els.createBtn = document.getElementById("notificationsCreateBtn");
+
+    els.telegramBotsList = document.getElementById("telegramNotificationBotsList");
+    els.telegramBotsRefreshBtn = document.getElementById("telegramBotsRefreshBtn");
+    els.telegramBotsCreateBtn = document.getElementById("telegramBotsCreateBtn");
+
+    els.telegramBotModalEl = document.getElementById("telegramNotificationBotModal");
+    els.telegramBotModalLabel = document.getElementById(
+      "telegramNotificationBotModalLabel",
+    );
+    els.telegramBotId = document.getElementById("telegramNotificationBotId");
+    els.telegramBotName = document.getElementById("telegramNotificationBotName");
+    els.telegramBotToken = document.getElementById("telegramNotificationBotToken");
+    els.telegramBotStatus = document.getElementById("telegramNotificationBotStatus");
+    els.telegramBotIsActive = document.getElementById(
+      "telegramNotificationBotIsActive",
+    );
+    els.telegramBotSaveBtn = document.getElementById("telegramNotificationBotSaveBtn");
+    els.telegramBotDeleteBtn = document.getElementById(
+      "telegramNotificationBotDeleteBtn",
+    );
 
     els.modalEl = document.getElementById("notificationChannelModal");
     els.modalLabel = document.getElementById("notificationChannelModalLabel");
     els.form = document.getElementById("notificationChannelForm");
     els.channelId = document.getElementById("notificationChannelId");
     els.channelName = document.getElementById("notificationChannelName");
+
+    els.destinationLine = document.getElementById("notificationDestinationLine");
+    els.destinationTelegram = document.getElementById(
+      "notificationDestinationTelegram",
+    );
+    els.lineTargetBox = document.getElementById("notificationLineTargetBox");
+    els.telegramTargetBox = document.getElementById("notificationTelegramTargetBox");
+
     els.senderBotSelect = document.getElementById("notificationChannelSenderBot");
     els.groupSelect = document.getElementById("notificationChannelGroup");
     els.refreshGroupsBtn = document.getElementById(
       "notificationChannelRefreshGroupsBtn",
+    );
+
+    els.telegramBotSelect = document.getElementById(
+      "notificationChannelTelegramBot",
+    );
+    els.telegramGroupSelect = document.getElementById(
+      "notificationChannelTelegramGroup",
+    );
+    els.refreshTelegramGroupsBtn = document.getElementById(
+      "notificationChannelRefreshTelegramGroupsBtn",
     );
 
     els.receiveAll = document.getElementById("notificationReceiveAll");
@@ -61,18 +112,14 @@
     els.includeCustomer = document.getElementById(
       "notificationSettingIncludeCustomer",
     );
-    els.includePhone = document.getElementById(
-      "notificationSettingIncludePhone",
-    );
+    els.includePhone = document.getElementById("notificationSettingIncludePhone");
     els.includeItemsCount = document.getElementById(
       "notificationSettingIncludeItemsCount",
     );
     els.includeItemsDetail = document.getElementById(
       "notificationSettingIncludeItemsDetail",
     );
-    els.includeAddress = document.getElementById(
-      "notificationSettingIncludeAddress",
-    );
+    els.includeAddress = document.getElementById("notificationSettingIncludeAddress");
     els.includePaymentMethod = document.getElementById(
       "notificationSettingIncludePaymentMethod",
     );
@@ -82,9 +129,8 @@
     els.includeOrderLink = document.getElementById(
       "notificationSettingIncludeOrderLink",
     );
-    els.slipOkEnabled = document.getElementById(
-      "notificationSettingSlipOkEnabled",
-    );
+    els.slipOkSection = document.getElementById("notificationSlipOkSection");
+    els.slipOkEnabled = document.getElementById("notificationSettingSlipOkEnabled");
     els.slipOkConfigBox = document.getElementById("notificationSlipOkConfigBox");
     els.slipOkApiUrl = document.getElementById("notificationSettingSlipOkApiUrl");
     els.slipOkApiKey = document.getElementById("notificationSettingSlipOkApiKey");
@@ -126,7 +172,50 @@
       toggleChannel(id, toggle.checked);
     });
 
+    els.telegramBotsRefreshBtn?.addEventListener("click", () => {
+      loadTelegramBots({ force: true }).catch((err) => {
+        console.error("[Notifications] Refresh telegram bots error:", err);
+        toast("ไม่สามารถโหลด Telegram Bots ได้", "danger");
+      });
+    });
+
+    els.telegramBotsCreateBtn?.addEventListener("click", () => {
+      openCreateTelegramBotModal();
+    });
+
+    els.telegramBotsList?.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const id = button.dataset.id;
+      if (!id) return;
+      if (button.dataset.action === "edit") {
+        const bot = (state.telegramBots || []).find((item) => item.id === id);
+        if (bot) openEditTelegramBotModal(bot);
+        return;
+      }
+      if (button.dataset.action === "delete") {
+        deleteTelegramBot(id);
+      }
+    });
+
+    els.telegramBotsList?.addEventListener("change", (event) => {
+      const toggle = event.target;
+      if (!(toggle instanceof HTMLInputElement)) return;
+      if (toggle.dataset.action !== "toggle") return;
+      const id = toggle.dataset.id;
+      if (!id) return;
+      toggleTelegramBot(id, toggle.checked);
+    });
+
+    els.telegramBotSaveBtn?.addEventListener("click", () => saveTelegramBot());
+    els.telegramBotDeleteBtn?.addEventListener("click", () => {
+      const id = els.telegramBotId?.value || "";
+      if (!id) return;
+      deleteTelegramBot(id, { fromModal: true });
+    });
+
     els.senderBotSelect?.addEventListener("change", () => {
+      if (selectedDestinationType() !== "line_group") return;
       const botId = els.senderBotSelect.value;
       loadGroupsForSenderBot(botId).catch((err) => {
         console.error("[Notifications] Load groups error:", err);
@@ -139,6 +228,29 @@
       loadGroupsForSenderBot(botId, { force: true }).catch((err) => {
         console.error("[Notifications] Refresh groups error:", err);
         toast("ไม่สามารถรีเฟรชรายการกลุ่มได้", "danger");
+      });
+    });
+
+    els.telegramBotSelect?.addEventListener("change", () => {
+      if (selectedDestinationType() !== "telegram_group") return;
+      const botId = els.telegramBotSelect.value;
+      loadGroupsForTelegramBot(botId).catch((err) => {
+        console.error("[Notifications] Load telegram groups error:", err);
+        toast("ไม่สามารถโหลดรายการกลุ่ม Telegram ได้", "danger");
+      });
+    });
+
+    els.refreshTelegramGroupsBtn?.addEventListener("click", () => {
+      const botId = els.telegramBotSelect?.value || "";
+      loadGroupsForTelegramBot(botId, { force: true }).catch((err) => {
+        console.error("[Notifications] Refresh telegram groups error:", err);
+        toast("ไม่สามารถรีเฟรชรายการกลุ่ม Telegram ได้", "danger");
+      });
+    });
+
+    [els.destinationLine, els.destinationTelegram].forEach((el) => {
+      el?.addEventListener("change", () => {
+        syncDestinationTypeUI();
       });
     });
 
@@ -160,9 +272,13 @@
   }
 
   function initModal() {
-    if (!els.modalEl) return;
-    if (window.bootstrap?.Modal) {
+    if (els.modalEl && window.bootstrap?.Modal) {
       state.modalInstance = new window.bootstrap.Modal(els.modalEl);
+    }
+    if (els.telegramBotModalEl && window.bootstrap?.Modal) {
+      state.telegramBotModalInstance = new window.bootstrap.Modal(
+        els.telegramBotModalEl,
+      );
     }
   }
 
@@ -178,17 +294,49 @@
     return data;
   }
 
+  function extractBotsFromResponse(data) {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.bots)) return data.bots;
+    return [];
+  }
+
   async function ensureLineBots() {
     if (Array.isArray(state.lineBots)) return state.lineBots;
     const bots = await fetchJson("/api/line-bots");
     const items = Array.isArray(bots) ? bots : [];
-    state.lineBots = items.map((bot) => ({
-      id: bot?._id?.toString?.() || String(bot?._id || ""),
-      name: bot?.name || bot?.displayName || bot?.botName || "LINE Bot",
-      status: bot?.status || null,
-      notificationEnabled: bot?.notificationEnabled !== false,
-    }));
+    state.lineBots = items
+      .map((bot) => ({
+        id: bot?._id?.toString?.() || String(bot?._id || ""),
+        name: bot?.name || bot?.displayName || bot?.botName || "LINE Bot",
+        status: bot?.status || null,
+        notificationEnabled: bot?.notificationEnabled !== false,
+      }))
+      .filter((bot) => bot.id);
     return state.lineBots;
+  }
+
+  async function loadTelegramBots(options = {}) {
+    const force = options.force === true;
+    if (!force && Array.isArray(state.telegramBots)) {
+      renderTelegramBotsList();
+      return state.telegramBots;
+    }
+
+    const data = await fetchJson("/admin/api/telegram-notification-bots");
+    const rawItems = extractBotsFromResponse(data);
+    state.telegramBots = rawItems
+      .map((bot) => ({
+        id: bot?.id?.toString?.() || bot?._id?.toString?.() || String(bot?.id || bot?._id || ""),
+        name: bot?.name || "Telegram Bot",
+        status: bot?.status || "active",
+        isActive: bot?.isActive !== false,
+        tokenMasked: bot?.tokenMasked || bot?.maskedToken || "",
+        botToken: typeof bot?.botToken === "string" ? bot.botToken : "",
+      }))
+      .filter((bot) => bot.id);
+
+    renderTelegramBotsList();
+    return state.telegramBots;
   }
 
   async function ensureAllBots() {
@@ -227,6 +375,30 @@
     return groups;
   }
 
+  async function loadGroupsForTelegramBot(botId, options = {}) {
+    const normalizedId = typeof botId === "string" ? botId.trim() : "";
+    if (!normalizedId) {
+      renderTelegramGroupSelect([]);
+      return [];
+    }
+
+    const force = options.force === true;
+    if (!force && state.telegramGroupsByBot.has(normalizedId)) {
+      const cached = state.telegramGroupsByBot.get(normalizedId) || [];
+      renderTelegramGroupSelect(cached);
+      return cached;
+    }
+
+    renderTelegramGroupSelect(null);
+    const data = await fetchJson(
+      `/admin/api/telegram-notification-bots/${normalizedId}/groups`,
+    );
+    const groups = Array.isArray(data?.groups) ? data.groups : [];
+    state.telegramGroupsByBot.set(normalizedId, groups);
+    renderTelegramGroupSelect(groups);
+    return groups;
+  }
+
   function renderGroupSelect(groups) {
     if (!els.groupSelect) return;
     const escapeHtml = getEscapeHtml();
@@ -250,15 +422,51 @@
         const id = group.groupId || "";
         const name = group.groupName ? `${group.groupName}` : `${id.slice(-10)}`;
         const tag = group.sourceType === "room" ? "ห้อง" : "กลุ่ม";
-        return `<option value="${escapeHtml(id)}">${escapeHtml(
-          `${tag}: ${name}`,
-        )}</option>`;
+        return `<option value="${escapeHtml(id)}">${escapeHtml(`${tag}: ${name}`)}</option>`;
+      }),
+    ].join("");
+  }
+
+  function renderTelegramGroupSelect(groups) {
+    if (!els.telegramGroupSelect) return;
+    const escapeHtml = getEscapeHtml();
+
+    if (groups === null) {
+      els.telegramGroupSelect.innerHTML =
+        '<option value="">กำลังโหลดกลุ่ม Telegram...</option>';
+      els.telegramGroupSelect.disabled = true;
+      return;
+    }
+
+    els.telegramGroupSelect.disabled = false;
+    if (!Array.isArray(groups) || groups.length === 0) {
+      els.telegramGroupSelect.innerHTML =
+        '<option value="">ไม่พบกลุ่ม (เพิ่มบอทเข้ากลุ่มและส่งข้อความ 1 ครั้ง)</option>';
+      return;
+    }
+
+    els.telegramGroupSelect.innerHTML = [
+      '<option value="">เลือกกลุ่ม Telegram</option>',
+      ...groups.map((group) => {
+        const id =
+          typeof group?.chatId === "string"
+            ? group.chatId
+            : group?.chatId !== undefined
+              ? String(group.chatId)
+              : "";
+        const title =
+          (typeof group?.chatTitle === "string" && group.chatTitle.trim()) ||
+          (typeof group?.title === "string" && group.title.trim()) ||
+          `chat ${id}`;
+        const type =
+          (typeof group?.chatType === "string" && group.chatType.trim()) || "group";
+        return `<option value="${escapeHtml(id)}">${escapeHtml(`${title} (${type})`)}</option>`;
       }),
     ].join("");
   }
 
   async function refresh() {
-    await loadChannels();
+    await Promise.all([loadChannels(), loadTelegramBots()]);
   }
 
   async function loadChannels() {
@@ -309,17 +517,24 @@
 
     els.channelsList.innerHTML = state.channels
       .map((channel) => {
-        const groupLabel = channel.groupName
-          ? channel.groupName
-          : channel.groupId || "-";
-        const senderLabel = channel.senderBotName || channel.senderBotId || "-";
+        const type = normalizeChannelType(channel?.type);
+        const isTelegram = type === "telegram_group";
+        const targetLabel = isTelegram
+          ? channel.telegramChatTitle || channel.telegramChatId || "-"
+          : channel.groupName || channel.groupId || "-";
+        const senderLabel = isTelegram
+          ? channel.telegramBotName || channel.telegramBotId || "-"
+          : channel.senderBotName || channel.senderBotId || "-";
+        const destinationLabel = isTelegram ? "Telegram" : "LINE";
         const statusBadge = channel.isActive
           ? '<span class="badge badge-default">Active</span>'
           : '<span class="badge badge-default" style="opacity:0.7;">Inactive</span>';
+        const iconClass = isTelegram ? "telegram" : "notification";
+        const icon = isTelegram ? "fab fa-telegram-plane" : "fas fa-bell";
 
         return `
           <div class="bot-item-compact">
-            <div class="bot-channel notification"><i class="fas fa-bell"></i></div>
+            <div class="bot-channel ${escapeHtml(iconClass)}"><i class="${escapeHtml(icon)}"></i></div>
             <div class="bot-main">
               <div class="bot-header">
                 <div class="bot-title">
@@ -328,29 +543,79 @@
                 </div>
               </div>
               <div class="bot-subtext">
-                ส่งด้วย: ${escapeHtml(senderLabel)} • ปลายทาง: ${escapeHtml(groupLabel)} • ${escapeHtml(
-          summarizeSources(channel),
-        )}
+                ปลายทาง: ${escapeHtml(destinationLabel)} • ส่งด้วย: ${escapeHtml(senderLabel)} • กลุ่ม: ${escapeHtml(targetLabel)}
+                • ${escapeHtml(summarizeSources(channel))}
                 • ${escapeHtml(summarizeDelivery(channel))}
               </div>
             </div>
             <div class="bot-actions-compact">
               <label class="toggle-switch mb-0">
                 <input type="checkbox" data-action="toggle" data-id="${escapeHtml(
-          channel.id,
-        )}" ${channel.isActive ? "checked" : ""}>
+                  channel.id,
+                )}" ${channel.isActive ? "checked" : ""}>
                 <span class="toggle-slider"></span>
               </label>
               <div class="actions-stack">
                 <button class="btn-ghost-sm" title="แก้ไข" data-action="edit" data-id="${escapeHtml(
-          channel.id,
-        )}"><i class="fas fa-edit"></i></button>
+                  channel.id,
+                )}"><i class="fas fa-edit"></i></button>
                 <button class="btn-ghost-sm" title="ทดสอบส่ง" data-action="test" data-id="${escapeHtml(
-          channel.id,
-        )}"><i class="fas fa-paper-plane"></i></button>
+                  channel.id,
+                )}"><i class="fas fa-paper-plane"></i></button>
                 <button class="btn-ghost-sm text-danger" title="ลบ" data-action="delete" data-id="${escapeHtml(
-          channel.id,
-        )}"><i class="fas fa-trash"></i></button>
+                  channel.id,
+                )}"><i class="fas fa-trash"></i></button>
+              </div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  function renderTelegramBotsList() {
+    if (!els.telegramBotsList) return;
+    const escapeHtml = getEscapeHtml();
+    const bots = Array.isArray(state.telegramBots) ? state.telegramBots : [];
+
+    if (!bots.length) {
+      els.telegramBotsList.innerHTML =
+        '<div class="text-center p-4 text-muted-v2">ยังไม่มี Telegram Sender Bot</div>';
+      return;
+    }
+
+    els.telegramBotsList.innerHTML = bots
+      .map((bot) => {
+        const statusText = bot.status || "active";
+        const tokenHint = bot.tokenMasked || "(ซ่อน token)";
+        return `
+          <div class="bot-item-compact">
+            <div class="bot-channel telegram"><i class="fab fa-telegram-plane"></i></div>
+            <div class="bot-main">
+              <div class="bot-header">
+                <div class="bot-title">
+                  <span class="bot-name">${escapeHtml(bot.name || "Telegram Bot")}</span>
+                  <span class="badge badge-default">${escapeHtml(statusText)}</span>
+                </div>
+              </div>
+              <div class="bot-subtext">
+                สถานะ: ${bot.isActive ? "Active" : "Inactive"} • Token: ${escapeHtml(tokenHint)}
+              </div>
+            </div>
+            <div class="bot-actions-compact">
+              <label class="toggle-switch mb-0">
+                <input type="checkbox" data-action="toggle" data-id="${escapeHtml(
+                  bot.id,
+                )}" ${bot.isActive ? "checked" : ""}>
+                <span class="toggle-slider"></span>
+              </label>
+              <div class="actions-stack">
+                <button class="btn-ghost-sm" title="แก้ไข" data-action="edit" data-id="${escapeHtml(
+                  bot.id,
+                )}"><i class="fas fa-edit"></i></button>
+                <button class="btn-ghost-sm text-danger" title="ลบ" data-action="delete" data-id="${escapeHtml(
+                  bot.id,
+                )}"><i class="fas fa-trash"></i></button>
               </div>
             </div>
           </div>
@@ -362,9 +627,12 @@
   async function openCreateModal() {
     await openModalWithData({
       id: "",
+      type: "line_group",
       name: "",
       senderBotId: "",
       groupId: "",
+      telegramBotId: "",
+      telegramChatId: "",
       receiveFromAllBots: true,
       sources: [],
       settings: {
@@ -398,10 +666,28 @@
   }
 
   function syncSlipOkUI() {
-    const enabled = els.slipOkEnabled?.checked === true;
+    const isLine = selectedDestinationType() === "line_group";
+    const enabled = isLine && els.slipOkEnabled?.checked === true;
     if (els.slipOkConfigBox) {
       els.slipOkConfigBox.classList.toggle("d-none", !enabled);
     }
+  }
+
+  function syncDestinationTypeUI() {
+    const type = selectedDestinationType();
+    const isLine = type === "line_group";
+
+    els.lineTargetBox?.classList.toggle("d-none", !isLine);
+    els.telegramTargetBox?.classList.toggle("d-none", isLine);
+    els.slipOkSection?.classList.toggle("d-none", !isLine);
+
+    if (!isLine && els.slipOkEnabled) {
+      els.slipOkEnabled.checked = false;
+      if (els.slipOkApiUrl) els.slipOkApiUrl.value = "";
+      if (els.slipOkApiKey) els.slipOkApiKey.value = "";
+    }
+
+    syncSlipOkUI();
   }
 
   function syncDeliveryModeUI() {
@@ -413,28 +699,34 @@
 
   function parseSummaryTimesInput(raw) {
     if (typeof raw !== "string") return [];
-    const parts = raw
+    return raw
       .split(/[,\s]+/)
       .map((value) => value.trim())
       .filter(Boolean);
-    return parts;
   }
 
   async function openModalWithData(channel) {
     if (!els.modalEl || !state.modalInstance) return;
 
+    const type = normalizeChannelType(channel?.type);
     setModalTitle(Boolean(channel?.id));
 
     els.channelId.value = channel?.id || "";
     els.channelName.value = channel?.name || "";
     els.isActive.checked = channel?.isActive !== false;
 
+    if (els.destinationLine) {
+      els.destinationLine.checked = type === "line_group";
+    }
+    if (els.destinationTelegram) {
+      els.destinationTelegram.checked = type === "telegram_group";
+    }
+
     els.includeCustomer.checked = channel?.settings?.includeCustomer !== false;
     if (els.includePhone) {
       els.includePhone.checked = channel?.settings?.includePhone !== false;
     }
-    els.includeItemsCount.checked =
-      channel?.settings?.includeItemsCount !== false;
+    els.includeItemsCount.checked = channel?.settings?.includeItemsCount !== false;
     if (els.includeItemsDetail) {
       els.includeItemsDetail.checked =
         channel?.settings?.includeItemsDetail !== false;
@@ -449,6 +741,7 @@
     els.includeTotalAmount.checked =
       channel?.settings?.includeTotalAmount !== false;
     els.includeOrderLink.checked = channel?.settings?.includeOrderLink === true;
+
     if (els.slipOkEnabled) {
       els.slipOkEnabled.checked = channel?.settings?.slipOkEnabled === true;
     }
@@ -474,14 +767,22 @@
       els.summaryTimesInput.value = summaryTimes.join(", ");
     }
 
-    await ensureLineBots();
+    await Promise.all([ensureLineBots(), loadTelegramBots(), ensureAllBots()]);
     renderSenderBotSelect(channel?.senderBotId || "");
-
-    await loadGroupsForSenderBot(els.senderBotSelect.value, { force: true });
-    els.groupSelect.value = channel?.groupId || "";
-
-    await ensureAllBots();
+    renderTelegramBotSelect(channel?.telegramBotId || "");
     renderSourcesList();
+
+    const lineSenderId = channel?.senderBotId || "";
+    await loadGroupsForSenderBot(lineSenderId, { force: true });
+    if (els.groupSelect) {
+      els.groupSelect.value = channel?.groupId || "";
+    }
+
+    const telegramBotId = channel?.telegramBotId || "";
+    await loadGroupsForTelegramBot(telegramBotId, { force: true });
+    if (els.telegramGroupSelect) {
+      els.telegramGroupSelect.value = channel?.telegramChatId || "";
+    }
 
     if (channel?.receiveFromAllBots !== false) {
       els.receiveAll.checked = true;
@@ -493,7 +794,7 @@
     }
 
     syncReceiveModeUI();
-    syncSlipOkUI();
+    syncDestinationTypeUI();
     syncDeliveryModeUI();
 
     state.modalInstance.show();
@@ -503,13 +804,16 @@
     if (!els.senderBotSelect) return;
     const escapeHtml = getEscapeHtml();
     const bots = Array.isArray(state.lineBots) ? state.lineBots : [];
+
     const options = bots.map((bot) => {
       const isSelected = selectedId && bot.id === selectedId;
       const notifyDisabled = bot.notificationEnabled === false;
       const statusHint = bot.status === "inactive" ? " (ปิดแชท)" : "";
       const notifyHint = notifyDisabled ? " (ปิดแจ้งเตือน)" : "";
       const disabledAttr = notifyDisabled && !isSelected ? " disabled" : "";
-      return `<option value="${escapeHtml(bot.id)}"${disabledAttr}>${escapeHtml(bot.name)}${statusHint}${notifyHint}</option>`;
+      return `<option value="${escapeHtml(bot.id)}"${disabledAttr}>${escapeHtml(
+        bot.name,
+      )}${statusHint}${notifyHint}</option>`;
     });
 
     els.senderBotSelect.innerHTML = [
@@ -519,6 +823,30 @@
 
     if (selectedId) {
       els.senderBotSelect.value = selectedId;
+    }
+  }
+
+  function renderTelegramBotSelect(selectedId) {
+    if (!els.telegramBotSelect) return;
+    const escapeHtml = getEscapeHtml();
+    const bots = Array.isArray(state.telegramBots) ? state.telegramBots : [];
+
+    const options = bots.map((bot) => {
+      const isSelected = selectedId && bot.id === selectedId;
+      const disabledAttr = bot.isActive || isSelected ? "" : " disabled";
+      const statusHint = bot.isActive ? "" : " (inactive)";
+      return `<option value="${escapeHtml(bot.id)}"${disabledAttr}>${escapeHtml(
+        bot.name,
+      )}${statusHint}</option>`;
+    });
+
+    els.telegramBotSelect.innerHTML = [
+      '<option value="">เลือก Telegram Bot</option>',
+      ...options,
+    ].join("");
+
+    if (selectedId) {
+      els.telegramBotSelect.value = selectedId;
     }
   }
 
@@ -594,18 +922,34 @@
 
   async function saveChannel() {
     const id = els.channelId?.value || "";
+    const type = selectedDestinationType();
     const name = els.channelName?.value?.trim?.() || "";
+
     const senderBotId = els.senderBotSelect?.value || "";
     const groupId = els.groupSelect?.value || "";
+    const telegramBotId = els.telegramBotSelect?.value || "";
+    const telegramChatId = els.telegramGroupSelect?.value || "";
 
-    if (!name || !senderBotId || !groupId) {
-      toast("กรุณากรอกข้อมูลให้ครบถ้วน", "danger");
+    if (!name) {
+      toast("กรุณากรอกชื่อช่องทาง", "danger");
       return;
     }
-    const selectedBot = (state.lineBots || []).find((bot) => bot.id === senderBotId);
-    if (selectedBot && selectedBot.notificationEnabled === false) {
-      toast("บอทที่เลือกปิดการแจ้งเตือนอยู่ กรุณาเปิดแจ้งเตือนก่อน", "danger");
-      return;
+
+    if (type === "line_group") {
+      if (!senderBotId || !groupId) {
+        toast("กรุณาเลือก LINE Bot และกลุ่มปลายทาง", "danger");
+        return;
+      }
+      const selectedBot = (state.lineBots || []).find((bot) => bot.id === senderBotId);
+      if (selectedBot && selectedBot.notificationEnabled === false) {
+        toast("บอทที่เลือกปิดการแจ้งเตือนอยู่ กรุณาเปิดแจ้งเตือนก่อน", "danger");
+        return;
+      }
+    } else {
+      if (!telegramBotId || !telegramChatId) {
+        toast("กรุณาเลือก Telegram Bot และกลุ่มปลายทาง", "danger");
+        return;
+      }
     }
 
     const receiveFromAllBots = els.receiveAll?.checked === true;
@@ -615,10 +959,6 @@
       return;
     }
 
-    const slipOkEnabled = els.slipOkEnabled?.checked === true;
-    const slipOkApiUrl = els.slipOkApiUrl?.value?.trim?.() || "";
-    const slipOkApiKey = els.slipOkApiKey?.value?.trim?.() || "";
-
     const deliveryMode =
       els.deliveryScheduled?.checked === true ? "scheduled" : "realtime";
     const summaryTimes = parseSummaryTimesInput(els.summaryTimesInput?.value || "");
@@ -627,15 +967,19 @@
       return;
     }
 
+    const slipOkEnabled =
+      type === "line_group" && els.slipOkEnabled?.checked === true;
+    const slipOkApiUrl = type === "line_group" ? els.slipOkApiUrl?.value?.trim?.() || "" : "";
+    const slipOkApiKey = type === "line_group" ? els.slipOkApiKey?.value?.trim?.() || "" : "";
+
     if (slipOkEnabled && (!slipOkApiUrl || !slipOkApiKey)) {
       toast("กรุณากรอก SlipOK API URL และ API Key ให้ครบถ้วน", "danger");
       return;
     }
 
     const payload = {
+      type,
       name,
-      senderBotId,
-      groupId,
       receiveFromAllBots,
       sources,
       settings: {
@@ -655,6 +999,14 @@
       summaryTimes,
       isActive: els.isActive?.checked === true,
     };
+
+    if (type === "line_group") {
+      payload.senderBotId = senderBotId;
+      payload.groupId = groupId;
+    } else {
+      payload.telegramBotId = telegramBotId;
+      payload.telegramChatId = telegramChatId;
+    }
 
     try {
       if (els.saveBtn) {
@@ -708,7 +1060,7 @@
 
   async function testChannel(channelId) {
     try {
-      const ok = confirm("ต้องการทดสอบส่งแจ้งเตือนไปยังกลุ่มนี้หรือไม่?");
+      const ok = confirm("ต้องการทดสอบส่งแจ้งเตือนไปยังช่องทางนี้หรือไม่?");
       if (!ok) return;
       await fetchJson(
         `/admin/api/notification-channels/${encodeURIComponent(channelId)}/test`,
@@ -741,15 +1093,163 @@
     }
   }
 
+  function openCreateTelegramBotModal() {
+    if (!state.telegramBotModalInstance) return;
+
+    if (els.telegramBotId) els.telegramBotId.value = "";
+    if (els.telegramBotName) els.telegramBotName.value = "";
+    if (els.telegramBotToken) {
+      els.telegramBotToken.value = "";
+      els.telegramBotToken.placeholder = "123456:ABCDEF...";
+    }
+    if (els.telegramBotStatus) els.telegramBotStatus.value = "active";
+    if (els.telegramBotIsActive) els.telegramBotIsActive.checked = true;
+    if (els.telegramBotDeleteBtn) els.telegramBotDeleteBtn.classList.add("d-none");
+    if (els.telegramBotModalLabel) {
+      els.telegramBotModalLabel.innerHTML =
+        '<i class="fab fa-telegram-plane me-2"></i>เพิ่ม Telegram Sender Bot';
+    }
+
+    state.telegramBotModalInstance.show();
+  }
+
+  function openEditTelegramBotModal(bot) {
+    if (!state.telegramBotModalInstance || !bot) return;
+
+    if (els.telegramBotId) els.telegramBotId.value = bot.id || "";
+    if (els.telegramBotName) els.telegramBotName.value = bot.name || "";
+    if (els.telegramBotToken) {
+      els.telegramBotToken.value = bot.botToken || "";
+      els.telegramBotToken.placeholder = bot.botToken
+        ? "123456:ABCDEF..."
+        : "เว้นว่างหากไม่เปลี่ยน token";
+    }
+    if (els.telegramBotStatus) {
+      els.telegramBotStatus.value = bot.status === "inactive" ? "inactive" : "active";
+    }
+    if (els.telegramBotIsActive) {
+      els.telegramBotIsActive.checked = bot.isActive !== false;
+    }
+    if (els.telegramBotDeleteBtn) els.telegramBotDeleteBtn.classList.remove("d-none");
+    if (els.telegramBotModalLabel) {
+      els.telegramBotModalLabel.innerHTML =
+        '<i class="fab fa-telegram-plane me-2"></i>แก้ไข Telegram Sender Bot';
+    }
+
+    state.telegramBotModalInstance.show();
+  }
+
+  async function saveTelegramBot() {
+    const id = els.telegramBotId?.value || "";
+    const name = els.telegramBotName?.value?.trim?.() || "";
+    const botToken = els.telegramBotToken?.value?.trim?.() || "";
+    const status =
+      els.telegramBotStatus?.value === "inactive" ? "inactive" : "active";
+    const isActive = els.telegramBotIsActive?.checked !== false;
+
+    if (!name) {
+      toast("กรุณากรอกชื่อ Telegram Bot", "danger");
+      return;
+    }
+
+    if (!id && !botToken) {
+      toast("กรุณากรอก Telegram Bot Token", "danger");
+      return;
+    }
+
+    const payload = { name, status, isActive };
+    if (botToken) {
+      payload.botToken = botToken;
+    }
+    const url = id
+      ? `/admin/api/telegram-notification-bots/${encodeURIComponent(id)}`
+      : "/admin/api/telegram-notification-bots";
+    const method = id ? "PUT" : "POST";
+
+    try {
+      if (els.telegramBotSaveBtn) {
+        els.telegramBotSaveBtn.disabled = true;
+      }
+
+      await fetchJson(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      state.telegramBotModalInstance?.hide();
+      state.telegramGroupsByBot.clear();
+      await loadTelegramBots({ force: true });
+      renderTelegramBotSelect(els.telegramBotSelect?.value || "");
+      toast("บันทึก Telegram Sender Bot เรียบร้อยแล้ว", "success");
+    } catch (err) {
+      console.error("[Notifications] Save telegram bot error:", err);
+      toast(err?.message || "บันทึก Telegram Bot ไม่สำเร็จ", "danger");
+    } finally {
+      if (els.telegramBotSaveBtn) {
+        els.telegramBotSaveBtn.disabled = false;
+      }
+    }
+  }
+
+  async function toggleTelegramBot(botId, isActive) {
+    try {
+      await fetchJson(
+        `/admin/api/telegram-notification-bots/${encodeURIComponent(botId)}/toggle`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive }),
+        },
+      );
+      state.telegramGroupsByBot.clear();
+      await loadTelegramBots({ force: true });
+      toast(isActive ? "เปิดใช้งาน Telegram Bot แล้ว" : "ปิดใช้งาน Telegram Bot แล้ว", "success");
+    } catch (err) {
+      console.error("[Notifications] Toggle telegram bot error:", err);
+      toast(err?.message || "ไม่สามารถอัปเดตสถานะ Telegram Bot ได้", "danger");
+      await loadTelegramBots({ force: true });
+    }
+  }
+
+  async function deleteTelegramBot(botId, options = {}) {
+    const confirmed = confirm("ต้องการลบ Telegram Sender Bot นี้หรือไม่?");
+    if (!confirmed) return;
+
+    try {
+      await fetchJson(
+        `/admin/api/telegram-notification-bots/${encodeURIComponent(botId)}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      if (options.fromModal) {
+        state.telegramBotModalInstance?.hide();
+      }
+
+      state.telegramGroupsByBot.clear();
+      await loadTelegramBots({ force: true });
+      toast("ลบ Telegram Sender Bot เรียบร้อยแล้ว", "success");
+    } catch (err) {
+      console.error("[Notifications] Delete telegram bot error:", err);
+      toast(err?.message || "ลบ Telegram Bot ไม่สำเร็จ", "danger");
+    }
+  }
+
   function init() {
     cacheElements();
-    if (!els.channelsList) return;
+    if (!els.channelsList && !els.telegramBotsList) return;
     initModal();
     bindEvents();
-    refresh().catch((err) => console.error("[Notifications] Init refresh error:", err));
+
+    refresh().catch((err) => {
+      console.error("[Notifications] Init refresh error:", err);
+    });
 
     window.notificationChannels = {
       refresh,
+      refreshTelegramBots: () => loadTelegramBots({ force: true }),
     };
   }
 
