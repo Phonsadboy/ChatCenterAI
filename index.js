@@ -57,7 +57,30 @@ const OPENROUTER_HTTP_REFERER =
   process.env.OPENROUTER_HTTP_REFERER ||
   (PUBLIC_BASE_URL ? PUBLIC_BASE_URL : "");
 const OPENROUTER_X_TITLE = process.env.OPENROUTER_X_TITLE || "ChatCenterAI";
-const MONGO_URI = process.env.MONGO_URI;
+const MONGO_URI =
+  (typeof process.env.MONGO_URI === "string" && process.env.MONGO_URI.trim()) ||
+  (typeof process.env.MONGODB_URI === "string" && process.env.MONGODB_URI.trim()) ||
+  "";
+
+function parsePositiveIntEnv(rawValue, fallback) {
+  const parsed = Number.parseInt(rawValue || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const MONGO_MAX_POOL_SIZE = parsePositiveIntEnv(process.env.MONGO_MAX_POOL_SIZE, 20);
+const MONGO_MIN_POOL_SIZE = parsePositiveIntEnv(process.env.MONGO_MIN_POOL_SIZE, 5);
+const MONGO_SERVER_SELECTION_TIMEOUT_MS = parsePositiveIntEnv(
+  process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS,
+  5000,
+);
+const MONGO_CONNECT_TIMEOUT_MS = parsePositiveIntEnv(
+  process.env.MONGO_CONNECT_TIMEOUT_MS,
+  10000,
+);
+const MONGO_SOCKET_TIMEOUT_MS = parsePositiveIntEnv(
+  process.env.MONGO_SOCKET_TIMEOUT_MS,
+  30000,
+);
 const ADMIN_MASTER_PASSCODE = (process.env.ADMIN_MASTER_PASSCODE || "").trim();
 const ADMIN_SESSION_SECRET =
   process.env.ADMIN_SESSION_SECRET || "change-me-please-admin-session-secret";
@@ -1284,32 +1307,65 @@ async function ensureUsageLogsTTL(db) {
 }
 
 let mongoClient = null;
+let mongoConnectPromise = null;
 async function connectDB() {
-  if (!mongoClient) {
-    mongoClient = new MongoClient(MONGO_URI, {
-      maxPoolSize: 20,
-      minPoolSize: 5,
-      serverSelectionTimeoutMS: 5000,
-    });
-    await mongoClient.connect();
-    try {
-      const db = mongoClient.db("chatbot");
-      await ensurePasscodeIndexes(db);
-      await ensureFacebookCommentIndexes(db);
-      await ensureCategoryIndexes(db);
-      await ensureNotificationIndexes(db);
-      await ensureShortLinkIndexes(db);
-      await ensureChatHistoryIndexes(db);
-      await ensurePerformanceIndexes(db);
-      await ensureUsageLogsTTL(db);
-    } catch (err) {
-      console.warn(
-        "[DB] ไม่สามารถตั้งค่า index ได้:",
-        err?.message || err,
-      );
-    }
+  if (mongoClient) {
+    return mongoClient;
   }
-  return mongoClient;
+
+  if (mongoConnectPromise) {
+    return mongoConnectPromise;
+  }
+
+  if (!MONGO_URI) {
+    throw new Error("MONGO_URI (or MONGODB_URI) is not configured");
+  }
+
+  const client = new MongoClient(MONGO_URI, {
+    maxPoolSize: MONGO_MAX_POOL_SIZE,
+    minPoolSize: MONGO_MIN_POOL_SIZE,
+    serverSelectionTimeoutMS: MONGO_SERVER_SELECTION_TIMEOUT_MS,
+    connectTimeoutMS: MONGO_CONNECT_TIMEOUT_MS,
+    socketTimeoutMS: MONGO_SOCKET_TIMEOUT_MS,
+  });
+
+  mongoConnectPromise = (async () => {
+    try {
+      await client.connect();
+      mongoClient = client;
+
+      try {
+        const db = mongoClient.db("chatbot");
+        await ensurePasscodeIndexes(db);
+        await ensureFacebookCommentIndexes(db);
+        await ensureCategoryIndexes(db);
+        await ensureNotificationIndexes(db);
+        await ensureShortLinkIndexes(db);
+        await ensureChatHistoryIndexes(db);
+        await ensurePerformanceIndexes(db);
+        await ensureUsageLogsTTL(db);
+      } catch (err) {
+        console.warn(
+          "[DB] ไม่สามารถตั้งค่า index ได้:",
+          err?.message || err,
+        );
+      }
+
+      return mongoClient;
+    } catch (err) {
+      mongoClient = null;
+      try {
+        await client.close();
+      } catch (closeErr) {
+        // ignore close failure, original error is the root cause we need to return
+      }
+      throw err;
+    } finally {
+      mongoConnectPromise = null;
+    }
+  })();
+
+  return mongoConnectPromise;
 }
 
 const notificationService = createNotificationService({
