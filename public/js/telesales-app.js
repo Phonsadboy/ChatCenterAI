@@ -14,6 +14,7 @@
     // Sales workspace
     queueData: null,
     queueItems: [],
+    pendingSetupLeads: [],
     activeTab: "today",
     searchQuery: "",
     selectedLeadId: null,
@@ -177,6 +178,76 @@
         <div style="font-size:0.88rem; line-height:1.6; color:var(--ts-text);">${esc(report.aiSummary || "ยังไม่มี AI summary")}</div>
       </div>
     `;
+  }
+
+  function assignableSalesUsers() {
+    return state.salesUsers.filter((user) => user.isActive !== false);
+  }
+
+  function unassignedLeadPool(leads = []) {
+    return (leads || []).filter((lead) => !lead?.ownerSalesUserId);
+  }
+
+  function quickAssignCard({ idPrefix, users, availableCount, description, compact = false }) {
+    const defaultCount = Math.min(Math.max(availableCount, 1), 10);
+    const cardClass = compact ? "ts-quick-assign compact" : "ts-quick-assign";
+    return `
+      <div class="${cardClass}">
+        <div class="ts-quick-assign-copy">
+          <div class="ts-quick-assign-title"><i class="fas fa-bolt"></i> Assign ด่วน</div>
+          <div class="ts-quick-assign-desc">${esc(description)}</div>
+        </div>
+        <div class="ts-quick-assign-controls">
+          <select class="ts-input" id="${idPrefix}User">
+            <option value="">เลือกพนักงาน</option>
+            ${users.map((user) => `<option value="${esc(user.id || user._id)}">${esc(user.name)} (${esc(user.code)})</option>`).join("")}
+          </select>
+          <input class="ts-input" type="number" id="${idPrefix}Count" min="1" max="${Math.max(availableCount, 1)}" value="${defaultCount}">
+          <button class="ts-btn ts-btn-save" id="${idPrefix}Btn"${availableCount <= 0 || users.length === 0 ? " disabled" : ""}>
+            <i class="fas fa-user-plus"></i> Assign
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindQuickAssign({ idPrefix, getLeadPool, onDone }) {
+    const btn = document.getElementById(`${idPrefix}Btn`);
+    if (!btn) return;
+
+    btn.addEventListener("click", async () => {
+      const salesUserId = document.getElementById(`${idPrefix}User`)?.value || "";
+      const requested = parseInt(document.getElementById(`${idPrefix}Count`)?.value, 10);
+      const pool = getLeadPool();
+
+      if (!salesUserId) {
+        toast("เลือกพนักงานขายก่อน", "warning");
+        return;
+      }
+      if (!requested || requested < 1) {
+        toast("ระบุจำนวน lead ที่ต้องการ assign", "warning");
+        return;
+      }
+
+      const leadIds = pool.slice(0, requested).map((lead) => lead.id || lead._id).filter(Boolean);
+      if (!leadIds.length) {
+        toast("ไม่มี lead ที่ยังไม่ถูก assign ให้กระจายงาน", "warning");
+        return;
+      }
+
+      try {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลัง assign...';
+        await api.post("/api/telesales/leads/bulk-assign", { leadIds, salesUserId });
+        toast(`Assign ${leadIds.length} lead สำเร็จ`);
+        await onDone();
+      } catch (err) {
+        toast(err.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-user-plus"></i> Assign';
+      }
+    });
   }
 
   const OUTCOME_LABELS = {
@@ -369,9 +440,10 @@
       const data = await api.get("/api/telesales/my-queue?limit=500");
       state.queueData = data;
       state.queueItems = data.items || [];
+      state.pendingSetupLeads = data.pendingSetupLeads || [];
       const counts = queueCategoryCounts(state.queueItems);
       const hasCurrentTabItems = state.activeTab === "all" || (counts[state.activeTab] || 0) > 0;
-      if (!hasCurrentTabItems && state.queueItems.length > 0) {
+      if (!hasCurrentTabItems && (state.queueItems.length > 0 || state.pendingSetupLeads.length > 0)) {
         if (counts.today > 0) state.activeTab = "today";
         else if (counts.overdue > 0) state.activeTab = "overdue";
         else if (counts.tomorrow > 0) state.activeTab = "tomorrow";
@@ -382,14 +454,20 @@
       renderQueueList();
       updateTopbarStats();
 
-      const selectedStillExists = state.selectedLeadId &&
-        state.queueItems.some((item) => leadIdOf(item) === state.selectedLeadId);
+      const selectedStillExists = state.selectedLeadId && (
+        state.queueItems.some((item) => leadIdOf(item) === state.selectedLeadId) ||
+        state.pendingSetupLeads.some((lead) => (lead.id || lead._id) === state.selectedLeadId)
+      );
 
       if (!selectedStillExists) {
         if (state.queueItems.length > 0) {
           const firstItem = state.queueItems[0];
           state.selectedLeadId = leadIdOf(firstItem);
           loadLeadDetail(state.selectedLeadId, checkpointIdOf(firstItem));
+        } else if (state.pendingSetupLeads.length > 0) {
+          const firstLead = state.pendingSetupLeads[0];
+          state.selectedLeadId = firstLead.id || firstLead._id;
+          loadLeadDetail(state.selectedLeadId);
         } else {
           state.selectedLeadId = null;
           document.getElementById("tsDetailPanel").innerHTML = detailPlaceholderHtml("fa-phone-slash", "ยังไม่มีคิวโทรในตอนนี้");
@@ -408,7 +486,7 @@
     set("tabBadgeOverdue", counts.overdue);
     set("tabBadgeToday", counts.today);
     set("tabBadgeTomorrow", counts.tomorrow);
-    set("tabBadgeAll", items.length);
+    set("tabBadgeAll", items.length + state.pendingSetupLeads.length);
   }
 
   function updateTopbarStats() {
@@ -419,7 +497,8 @@
       <div class="ts-topbar-stat"><span>ครบกำหนด:</span> <span class="num">${s.due_today || 0}</span></div>
       <div class="ts-topbar-stat"><span>ค้าง:</span> <span class="num">${s.overdue || 0}</span></div>
       <div class="ts-topbar-stat"><span>โทรกลับ:</span> <span class="num">${s.callback_pending || 0}</span></div>
-      <div class="ts-topbar-stat"><span>ทั้งหมด:</span> <span class="num">${(state.queueItems || []).length}</span></div>
+      <div class="ts-topbar-stat"><span>รอตั้ง:</span> <span class="num">${s.pending_setup || 0}</span></div>
+      <div class="ts-topbar-stat"><span>ทั้งหมด:</span> <span class="num">${(state.queueItems || []).length + (state.pendingSetupLeads || []).length}</span></div>
     `;
   }
 
@@ -429,6 +508,7 @@
     if (!container) return;
 
     let items = state.queueItems;
+    let pendingLeads = state.pendingSetupLeads;
 
     // Filter by tab
     if (state.activeTab !== "all") {
@@ -446,15 +526,22 @@
         const phone = (item.lead?.phone || "").toLowerCase();
         return name.includes(q) || phone.includes(q);
       });
+      pendingLeads = pendingLeads.filter((lead) => {
+        const name = (lead.displayName || "").toLowerCase();
+        const phone = (lead.phone || "").toLowerCase();
+        return name.includes(q) || phone.includes(q);
+      });
     }
 
-    if (items.length === 0) {
+    const showPendingSection = pendingLeads.length > 0 && (state.activeTab === "all" || items.length === 0);
+
+    if (items.length === 0 && !showPendingSection) {
       container.innerHTML = `<div class="ts-empty-small"><i class="fas fa-inbox"></i> ไม่มีรายการ</div>`;
       updateFooter(0);
       return;
     }
 
-    container.innerHTML = items.map(item => {
+    const queueHtml = items.map(item => {
       const lead = item.lead || {};
       const cp = item.checkpoint || {};
       const lid = leadIdOf(item);
@@ -474,6 +561,29 @@
         </div>
       `;
     }).join("");
+
+    const pendingHtml = showPendingSection
+      ? `
+        <div class="ts-queue-section-label">รอตั้ง Cycle</div>
+        ${pendingLeads.map((lead) => {
+          const lid = lead.id || lead._id || "";
+          const isActive = state.selectedLeadId === lid;
+          return `
+            <div class="ts-queue-item pending-setup${isActive ? " active" : ""}" data-lead-id="${esc(lid)}" data-checkpoint-id="">
+              <div class="ts-queue-item-indicator future"></div>
+              <div class="ts-queue-item-body">
+                <div class="ts-queue-item-name">${esc(lead.displayName || "ไม่ทราบชื่อ")}</div>
+                <div class="ts-queue-item-phone">${esc(lead.phone || "-")}</div>
+                <div class="ts-queue-item-product"><span class="ts-status-badge pending">มอบหมายแล้ว แต่รอตั้ง Cycle</span></div>
+                <div class="ts-queue-item-due">ผู้จัดการต้องกำหนดรอบโทรก่อน</div>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      `
+      : "";
+
+    container.innerHTML = queueHtml + pendingHtml;
 
     // Click handler
     container.querySelectorAll(".ts-queue-item").forEach(el => {
@@ -496,8 +606,8 @@
   function updateFooter(count) {
     const footer = document.getElementById("tsQueueFooter");
     if (!footer) return;
-    const total = state.queueItems.length;
-    footer.innerHTML = `<span>แสดง ${count} รายการ</span><span>ทั้งหมด ${total} ลีด</span>`;
+    const total = state.queueItems.length + state.pendingSetupLeads.length;
+    footer.innerHTML = `<span>แสดง ${count} รายการ</span><span>คิวโทร ${state.queueItems.length} / รอตั้ง ${state.pendingSetupLeads.length}</span>`;
   }
 
   /* ---------- Load Lead Detail ---------- */
@@ -958,8 +1068,10 @@
       });
 
       // Unassigned leads
-      const unassignedLeads = allLeads.filter(l => !l.ownerSalesUserId).slice(0, 10);
+      const unassignedPool = unassignedLeadPool(allLeads);
+      const unassignedLeads = unassignedPool.slice(0, 10);
       const needsCycleLeads = allLeads.filter(l => l.needsCycle).slice(0, 10);
+      const activeUsers = assignableSalesUsers();
 
       content.innerHTML = `
         <div class="ts-fade-in">
@@ -979,6 +1091,12 @@
               <div class="ts-mgr-section-title"><i class="fas fa-triangle-exclamation"></i> ต้องจัดการ (${unassigned} lead ยังไม่มีเจ้าของ)</div>
               <button class="ts-btn ts-btn-save ts-btn-sm" id="tsDashAssignBtn"><i class="fas fa-user-plus"></i> Assign ที่เลือก</button>
             </div>
+            ${quickAssignCard({
+              idPrefix: "tsDashQuickAssign",
+              users: activeUsers,
+              availableCount: unassignedPool.length,
+              description: `มี ${unassignedPool.length} lead ที่ยังไม่ถูก assign`,
+            })}
             <div class="ts-table-wrap">
               <table class="ts-table">
                 <thead>
@@ -1147,6 +1265,14 @@
         }
       });
     }
+
+    bindQuickAssign({
+      idPrefix: "tsDashQuickAssign",
+      getLeadPool: () => unassignedLeadPool(state.mgrLeads),
+      onDone: async () => {
+        await loadManagerDashboard();
+      },
+    });
   }
 
   /* ---------- Assign Modal ---------- */
@@ -1252,6 +1378,8 @@
     const users = state.salesUsers.filter(u => u.isActive !== false);
     const userMap = {};
     users.forEach(u => { userMap[u.id || u._id] = u.name; });
+    const visibleUnassignedLeads = unassignedLeadPool(leads);
+    const totalUnassignedLeads = unassignedLeadPool(state.mgrLeads);
 
     content.innerHTML = `
       <div class="ts-fade-in">
@@ -1280,6 +1408,16 @@
           </select>
           <input type="text" id="tsLeadFilterSearch" placeholder="ค้นหาชื่อ/เบอร์..." value="${esc(f.search || "")}">
         </div>
+
+        ${totalUnassignedLeads.length > 0 ? quickAssignCard({
+          idPrefix: "tsLeadsQuickAssign",
+          users,
+          availableCount: visibleUnassignedLeads.length,
+          description: visibleUnassignedLeads.length === totalUnassignedLeads.length
+            ? `ยังไม่ assign ${visibleUnassignedLeads.length} lead ในชุดนี้`
+            : `ยังไม่ assign ${visibleUnassignedLeads.length} lead จากทั้งหมด ${totalUnassignedLeads.length} lead`,
+          compact: true,
+        }) : ""}
 
         <!-- Bulk bar -->
         <div class="ts-bulk-bar" id="tsLeadsBulkBar" style="display:none">
@@ -1401,6 +1539,26 @@
     if (refreshBtn) {
       refreshBtn.addEventListener("click", () => loadManagerLeads());
     }
+
+    bindQuickAssign({
+      idPrefix: "tsLeadsQuickAssign",
+      getLeadPool: () => unassignedLeadPool(state.mgrLeads).filter((lead) => {
+        const matchesStatus = !state.mgrLeadFilters.status || lead.status === state.mgrLeadFilters.status;
+        const matchesOwner = !state.mgrLeadFilters.owner || state.mgrLeadFilters.owner === "unassigned";
+        const matchesCycle =
+          !state.mgrLeadFilters.needsCycle ||
+          (state.mgrLeadFilters.needsCycle === "needs_cycle" && lead.needsCycle) ||
+          (state.mgrLeadFilters.needsCycle === "ready" && !lead.needsCycle);
+        const query = (state.mgrLeadFilters.search || "").toLowerCase();
+        const matchesSearch = !query ||
+          (lead.displayName || "").toLowerCase().includes(query) ||
+          (lead.phone || "").toLowerCase().includes(query);
+        return matchesStatus && matchesOwner && matchesCycle && matchesSearch;
+      }),
+      onDone: async () => {
+        await loadManagerLeads();
+      },
+    });
 
     document.querySelectorAll("[data-assign-lead]").forEach((btn) => {
       btn.addEventListener("click", () => showAssignModal([btn.dataset.assignLead]));

@@ -915,8 +915,9 @@ class TeleSalesService {
   async listQueue({ salesUserId = null, scope = "my", status = "open", limit = 100 } = {}) {
     const db = await this._db();
     const checkpointQuery = {};
+    const normalizedSalesUserId = normalizeIdString(salesUserId);
     if (scope === "my" && salesUserId) {
-      checkpointQuery.assignedToSalesUserId = normalizeIdString(salesUserId);
+      checkpointQuery.assignedToSalesUserId = normalizedSalesUserId;
     }
     checkpointQuery.status = status === "all" ? { $in: ["open", "overdue", "done", "canceled"] } : "open";
 
@@ -926,21 +927,15 @@ class TeleSalesService {
       .limit(Math.min(Math.max(Number(limit) || 100, 1), 5000))
       .toArray();
 
-    if (!checkpoints.length) {
-      return {
-        items: [],
-        summary: {
-          due_today: 0,
-          overdue: 0,
-          callback_pending: 0,
-        },
-      };
-    }
-
     const leadIds = [...new Set(checkpoints.map((item) => item.leadId).filter(Boolean))];
-    const leads = await db.collection(LEAD_COLLECTION)
-      .find({ _id: { $in: leadIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id)) } })
-      .toArray();
+    const leadObjectIds = leadIds
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+    const leads = leadObjectIds.length
+      ? await db.collection(LEAD_COLLECTION)
+        .find({ _id: { $in: leadObjectIds } })
+        .toArray()
+      : [];
     const leadMap = new Map(leads.map((item) => [item._id.toString(), item]));
 
     const todayStart = moment.tz(this.timezone).startOf("day");
@@ -967,12 +962,40 @@ class TeleSalesService {
       };
     });
 
+    let pendingSetupLeads = [];
+    if (scope === "my" && normalizedSalesUserId) {
+      const queuedLeadIdSet = new Set(items.map((item) => item.lead?.id).filter(Boolean));
+      const pendingQuery = {
+        ownerSalesUserId: normalizedSalesUserId,
+        status: "active",
+        _id: {
+          $nin: Array.from(queuedLeadIdSet)
+            .filter((id) => ObjectId.isValid(id))
+            .map((id) => new ObjectId(id)),
+        },
+        $or: [
+          { needsCycle: true },
+          { currentCheckpointId: { $exists: false } },
+          { currentCheckpointId: null },
+          { currentCheckpointId: "" },
+        ],
+      };
+
+      pendingSetupLeads = await db.collection(LEAD_COLLECTION)
+        .find(pendingQuery)
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .limit(200)
+        .toArray();
+    }
+
     return {
       items,
+      pendingSetupLeads: pendingSetupLeads.map(mapLeadDoc),
       summary: {
         due_today: dueToday,
         overdue,
         callback_pending: callbackPending,
+        pending_setup: pendingSetupLeads.length,
       },
     };
   }

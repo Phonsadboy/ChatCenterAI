@@ -416,6 +416,17 @@ input, select, textarea { font-family: inherit; }
   margin-top: 2px;
 }
 .ts-queue-item-due.overdue { color: var(--ts-danger); font-weight: 600; }
+.ts-queue-section-label {
+  padding: 8px 12px 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ts-text-muted);
+  text-transform: uppercase;
+  background: #fafaf7;
+  border-top: 1px solid var(--ts-border-light);
+}
+.ts-queue-item.pending-setup { background: rgba(79, 122, 102, 0.04); }
 
 /* Queue footer stats */
 .ts-queue-footer {
@@ -872,6 +883,57 @@ input, select, textarea { font-family: inherit; }
 }
 .ts-mgr-section-title i { color: var(--ts-text-muted); }
 
+/* ==================== QUICK ASSIGN ==================== */
+.ts-quick-assign {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.85rem;
+  border: 1px solid rgba(var(--ts-primary-rgb), 0.16);
+  border-radius: var(--ts-radius);
+  background:
+    linear-gradient(135deg, rgba(var(--ts-primary-rgb), 0.08), rgba(255,255,255,0.96)),
+    var(--ts-card-bg);
+}
+.ts-quick-assign.compact {
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--ts-radius-sm);
+}
+.ts-quick-assign-copy {
+  min-width: 220px;
+  flex: 1;
+}
+.ts-quick-assign-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ts-text);
+}
+.ts-quick-assign-title i { color: var(--ts-primary); }
+.ts-quick-assign-desc {
+  margin-top: 0.2rem;
+  font-size: 0.76rem;
+  color: var(--ts-text-muted);
+}
+.ts-quick-assign-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+.ts-quick-assign-controls .ts-input {
+  min-width: 150px;
+}
+.ts-quick-assign-controls input.ts-input {
+  min-width: 90px;
+  width: 96px;
+}
+
 /* ==================== DATA TABLE ==================== */
 .ts-table-wrap { overflow-x: auto; }
 .ts-table {
@@ -1119,6 +1181,13 @@ input, select, textarea { font-family: inherit; }
   .ts-kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .ts-team-grid { grid-template-columns: 1fr; }
   .ts-order-form .ts-form-row { grid-template-columns: 1fr; }
+  .ts-quick-assign { align-items: stretch; }
+  .ts-quick-assign-controls { width: 100%; }
+  .ts-quick-assign-controls .ts-input,
+  .ts-quick-assign-controls input.ts-input,
+  .ts-quick-assign-controls .ts-btn {
+    width: 100%;
+  }
 }
 
 @media (max-width: 480px) {
