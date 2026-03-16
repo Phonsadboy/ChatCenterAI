@@ -319,6 +319,7 @@ input, select, textarea { font-family: inherit; }
 .ts-tab-dot.overdue { background: var(--ts-danger); }
 .ts-tab-dot.today { background: var(--ts-warning); }
 .ts-tab-dot.tomorrow { background: var(--ts-info); }
+.ts-tab-dot.pending { background: var(--ts-accent); }
 .ts-tab-dot.all { background: var(--ts-text-muted); }
 .ts-tab-badge {
   background: var(--ts-body-bg);
@@ -718,6 +719,29 @@ input, select, textarea { font-family: inherit; }
   font-size: 0.78rem;
   line-height: 1.55;
   color: var(--ts-text-sub);
+}
+.ts-pending-schedule-card {
+  border-color: rgba(var(--ts-accent-rgb), 0.2);
+  background:
+    linear-gradient(180deg, rgba(var(--ts-accent-rgb), 0.05), rgba(var(--ts-accent-rgb), 0.02)),
+    var(--ts-card-bg);
+}
+.ts-pending-schedule-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: -0.1rem 0 0.75rem;
+  padding: 0.72rem 0.8rem;
+  border-radius: var(--ts-radius-sm);
+  border: 1px solid rgba(var(--ts-accent-rgb), 0.22);
+  background: rgba(var(--ts-accent-rgb), 0.08);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--ts-text-sub);
+}
+.ts-pending-schedule-note i {
+  color: var(--ts-accent);
+  margin-top: 1px;
 }
 .ts-outcome-grid {
   display: flex;

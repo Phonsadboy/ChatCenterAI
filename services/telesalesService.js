@@ -777,6 +777,88 @@ class TeleSalesService {
     return mapLeadDoc(refreshed);
   }
 
+  async scheduleLeadFollowup({
+    leadId,
+    salesUserId,
+    dueAt,
+    note,
+  }) {
+    const db = await this._db();
+    const lead = await this._getLeadById(db, leadId);
+    if (!lead) {
+      throw new Error("ไม่พบ lead");
+    }
+    if (normalizeLeadStatus(lead.status) !== "active") {
+      throw new Error("lead นี้ไม่ได้อยู่ในสถานะ active");
+    }
+
+    const openCheckpoint = await this._getOpenCheckpointForLead(db, leadId);
+    if (openCheckpoint) {
+      throw new Error("lead นี้มี checkpoint เปิดอยู่แล้ว");
+    }
+
+    const normalizedDueAt = normalizeDate(dueAt);
+    if (!normalizedDueAt) {
+      throw new Error("กรุณาระบุ dueAt");
+    }
+
+    const normalizedSalesUserId =
+      normalizeIdString(salesUserId) ||
+      normalizeIdString(lead.ownerSalesUserId) ||
+      null;
+    const sourceOrderIds = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(lead.needsCycleOrderIds) ? lead.needsCycleOrderIds : []),
+          lead.latestOrderId,
+        ]
+          .map((item) => normalizeIdString(item))
+          .filter(Boolean),
+      ),
+    );
+    const normalizedNote = normalizeString(note, 500);
+    const now = new Date();
+
+    await db.collection(LEAD_COLLECTION).updateOne(
+      { _id: lead._id },
+      {
+        $set: {
+          ownerSalesUserId: normalizedSalesUserId,
+          status: "active",
+          pauseReason: null,
+          dncReason: null,
+          updatedAt: now,
+        },
+      },
+    );
+
+    await this._createCheckpoint(db, lead, {
+      type: "callback",
+      dueAt: normalizedDueAt,
+      assignedToSalesUserId: normalizedSalesUserId,
+      sourceOrderIds,
+      dueReasons: [
+        {
+          type: "initial_schedule",
+          scheduledBySalesUserId: normalizedSalesUserId,
+          basedOnOrderId: lead.latestOrderId || null,
+          basedOnOrderAt: normalizeDate(lead.lastOrderAt),
+          needsCycle: lead.needsCycle === true,
+          ...(normalizedNote ? { note: normalizedNote } : {}),
+        },
+      ],
+      createdBy: "sales_schedule",
+    });
+
+    const refreshed = await this._refreshLeadState(db, leadId, {
+      ownerSalesUserId: normalizedSalesUserId,
+      status: "active",
+      pauseReason: null,
+      dncReason: null,
+    });
+    return mapLeadDoc(refreshed);
+  }
+
   async logLeadCall({
     leadId,
     salesUserId,

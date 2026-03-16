@@ -1462,6 +1462,10 @@ class ChatManager {
         }
 
         try {
+            const user =
+                this.allUsers.find(u => u.userId === this.currentUserId) ||
+                this.users.find(u => u.userId === this.currentUserId) ||
+                null;
             const response = await fetch('/admin/chat/send', {
                 method: 'POST',
                 headers: {
@@ -1469,7 +1473,9 @@ class ChatManager {
                 },
                 body: JSON.stringify({
                     userId: this.currentUserId,
-                    message: message
+                    message: message,
+                    platform: user?.platform || null,
+                    botId: user?.botId || null
                 })
             });
 

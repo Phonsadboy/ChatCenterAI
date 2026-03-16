@@ -15129,6 +15129,39 @@ app.post("/api/telesales/leads/:leadId/reopen", requireSalesManager, async (req,
   }
 });
 
+app.post("/api/telesales/leads/:leadId/schedule", async (req, res) => {
+  try {
+    const salesUserId = resolveActingSalesUserId(req);
+    if (!salesUserId) {
+      return res.status(401).json({ success: false, error: "กรุณาล็อกอินฝ่ายขายก่อน" });
+    }
+
+    const lead = await getTeleSalesLeadDocById(req.params.leadId);
+    if (!lead) {
+      return res.status(404).json({ success: false, error: "ไม่พบ lead" });
+    }
+
+    const salesUser = getSalesUserContext(req);
+    const isManager = isAdminAuthenticated(req) || salesUser?.role === "sales_manager";
+    if (!isManager && !canSalesUserAccessLead(lead, salesUserId)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการ lead นี้" });
+    }
+
+    const result = await teleSalesService.scheduleLeadFollowup({
+      leadId: req.params.leadId,
+      salesUserId,
+      dueAt: req.body?.dueAt,
+      note: req.body?.note,
+    });
+    res.json({ success: true, lead: result });
+  } catch (err) {
+    res.status(400).json({
+      success: false,
+      error: err?.message || "กำหนดวันติดตามครั้งแรกไม่สำเร็จ",
+    });
+  }
+});
+
 app.post("/api/telesales/leads/:leadId/log-call", async (req, res) => {
   try {
     const salesUserId = resolveActingSalesUserId(req);
@@ -27623,7 +27656,12 @@ app.get("/admin/chat/history/:userId", async (req, res) => {
 // Send message as admin (AI assistant)
 app.post("/admin/chat/send", async (req, res) => {
   try {
-    const { userId, message } = req.body;
+    const {
+      userId,
+      message,
+      platform: requestedPlatform,
+      botId: requestedBotId,
+    } = req.body || {};
 
     if (!userId || !message) {
       return res.json({ success: false, error: "ข้อมูลไม่ครบถ้วน" });
@@ -27636,13 +27674,30 @@ app.post("/admin/chat/send", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("chat_history");
 
-    // Determine platform and bot from latest chat
-    const lastChat = await coll.findOne(
-      buildChatHistoryUserMatch(userId),
-      { sort: { timestamp: -1 } },
+    const normalizedRequestedPlatform = normalizeChatPlatform(
+      requestedPlatform,
+      "",
     );
-    const platform = lastChat?.platform || "line";
-    const botId = lastChat?.botId || null;
+    const normalizedRequestedBotId =
+      typeof requestedBotId === "string"
+        ? requestedBotId.trim()
+        : requestedBotId
+          ? String(requestedBotId).trim()
+          : "";
+
+    let lastChat = null;
+    if (!normalizedRequestedPlatform || !normalizedRequestedBotId) {
+      // Fallback สำหรับ client เก่าที่ไม่ได้ส่ง context ของแชทปัจจุบันขึ้นมา
+      lastChat = await coll.findOne(
+        buildChatHistoryUserMatch(userId),
+        { sort: { timestamp: -1 } },
+      );
+    }
+
+    const platform =
+      normalizedRequestedPlatform ||
+      normalizeChatPlatform(lastChat?.platform || "line");
+    const botId = normalizedRequestedBotId || lastChat?.botId || null;
 
     // ดึงข้อมูล bot เพื่อตรวจสอบ keyword settings
     let keywordSettings = {};

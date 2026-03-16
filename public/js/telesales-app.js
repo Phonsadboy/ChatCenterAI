@@ -109,6 +109,79 @@
     return counts;
   }
 
+  function leadMatchesSearch(lead, query = state.searchQuery) {
+    if (!query) return true;
+    const normalized = String(query || "").trim().toLowerCase();
+    if (!normalized) return true;
+    const name = (lead?.displayName || "").toLowerCase();
+    const phone = (lead?.phone || "").toLowerCase();
+    return name.includes(normalized) || phone.includes(normalized);
+  }
+
+  function filteredQueueItemsForActiveTab() {
+    let items = Array.isArray(state.queueItems) ? state.queueItems : [];
+    if (state.activeTab === "pending") return [];
+    if (state.activeTab !== "all") {
+      items = items.filter((item) => {
+        const cat = dueCategory(item.checkpoint?.dueAt || item.lead?.nextDueAt);
+        return cat === state.activeTab;
+      });
+    }
+    if (state.searchQuery) {
+      items = items.filter((item) => leadMatchesSearch(item.lead, state.searchQuery));
+    }
+    return items;
+  }
+
+  function filteredPendingLeadsForActiveTab() {
+    let leads = Array.isArray(state.pendingSetupLeads) ? state.pendingSetupLeads : [];
+    if (state.searchQuery) {
+      leads = leads.filter((lead) => leadMatchesSearch(lead, state.searchQuery));
+    }
+    if (state.activeTab !== "all" && state.activeTab !== "pending") {
+      return [];
+    }
+    return leads;
+  }
+
+  function firstVisibleLeadSelection() {
+    const visibleItems = filteredQueueItemsForActiveTab();
+    if (visibleItems.length > 0) {
+      const firstItem = visibleItems[0];
+      return {
+        leadId: leadIdOf(firstItem),
+        checkpointId: checkpointIdOf(firstItem),
+      };
+    }
+
+    const visiblePendingLeads = filteredPendingLeadsForActiveTab();
+    if (visiblePendingLeads.length > 0) {
+      const firstLead = visiblePendingLeads[0];
+      return {
+        leadId: firstLead.id || firstLead._id || "",
+        checkpointId: "",
+      };
+    }
+
+    if (state.queueItems.length > 0) {
+      const firstItem = state.queueItems[0];
+      return {
+        leadId: leadIdOf(firstItem),
+        checkpointId: checkpointIdOf(firstItem),
+      };
+    }
+
+    if (state.pendingSetupLeads.length > 0) {
+      const firstLead = state.pendingSetupLeads[0];
+      return {
+        leadId: firstLead.id || firstLead._id || "",
+        checkpointId: "",
+      };
+    }
+
+    return null;
+  }
+
   function syncDayTabState() {
     const container = document.getElementById("tsDayTabs");
     if (!container) return;
@@ -526,11 +599,17 @@
       state.queueItems = data.items || [];
       state.pendingSetupLeads = data.pendingSetupLeads || [];
       const counts = queueCategoryCounts(state.queueItems);
-      const hasCurrentTabItems = state.activeTab === "all" || (counts[state.activeTab] || 0) > 0;
+      const hasCurrentTabItems =
+        state.activeTab === "all"
+          ? (state.queueItems.length + state.pendingSetupLeads.length) > 0
+          : state.activeTab === "pending"
+            ? state.pendingSetupLeads.length > 0
+            : (counts[state.activeTab] || 0) > 0;
       if (!hasCurrentTabItems && (state.queueItems.length > 0 || state.pendingSetupLeads.length > 0)) {
         if (counts.today > 0) state.activeTab = "today";
         else if (counts.overdue > 0) state.activeTab = "overdue";
         else if (counts.tomorrow > 0) state.activeTab = "tomorrow";
+        else if (state.pendingSetupLeads.length > 0) state.activeTab = "pending";
         else state.activeTab = "all";
         syncDayTabState();
       }
@@ -544,14 +623,10 @@
       );
 
       if (!selectedStillExists) {
-        if (state.queueItems.length > 0) {
-          const firstItem = state.queueItems[0];
-          state.selectedLeadId = leadIdOf(firstItem);
-          loadLeadDetail(state.selectedLeadId, checkpointIdOf(firstItem));
-        } else if (state.pendingSetupLeads.length > 0) {
-          const firstLead = state.pendingSetupLeads[0];
-          state.selectedLeadId = firstLead.id || firstLead._id;
-          loadLeadDetail(state.selectedLeadId);
+        const firstVisible = firstVisibleLeadSelection();
+        if (firstVisible?.leadId) {
+          state.selectedLeadId = firstVisible.leadId;
+          loadLeadDetail(firstVisible.leadId, firstVisible.checkpointId);
         } else {
           state.selectedLeadId = null;
           document.getElementById("tsDetailPanel").innerHTML = detailPlaceholderHtml("fa-phone-slash", "ยังไม่มีคิวโทรในตอนนี้");
@@ -570,6 +645,7 @@
     set("tabBadgeOverdue", counts.overdue);
     set("tabBadgeToday", counts.today);
     set("tabBadgeTomorrow", counts.tomorrow);
+    set("tabBadgePending", state.pendingSetupLeads.length);
     set("tabBadgeAll", items.length + state.pendingSetupLeads.length);
   }
 
@@ -591,33 +667,9 @@
     const container = document.getElementById("tsQueueList");
     if (!container) return;
 
-    let items = state.queueItems;
-    let pendingLeads = state.pendingSetupLeads;
-
-    // Filter by tab
-    if (state.activeTab !== "all") {
-      items = items.filter(item => {
-        const cat = dueCategory(item.checkpoint?.dueAt || item.lead?.nextDueAt);
-        return cat === state.activeTab;
-      });
-    }
-
-    // Filter by search
-    if (state.searchQuery) {
-      const q = state.searchQuery;
-      items = items.filter(item => {
-        const name = (item.lead?.displayName || "").toLowerCase();
-        const phone = (item.lead?.phone || "").toLowerCase();
-        return name.includes(q) || phone.includes(q);
-      });
-      pendingLeads = pendingLeads.filter((lead) => {
-        const name = (lead.displayName || "").toLowerCase();
-        const phone = (lead.phone || "").toLowerCase();
-        return name.includes(q) || phone.includes(q);
-      });
-    }
-
-    const showPendingSection = pendingLeads.length > 0 && (state.activeTab === "all" || items.length === 0);
+    const items = filteredQueueItemsForActiveTab();
+    const pendingLeads = filteredPendingLeadsForActiveTab();
+    const showPendingSection = pendingLeads.length > 0 && (state.activeTab === "all" || state.activeTab === "pending");
 
     if (items.length === 0 && !showPendingSection) {
       container.innerHTML = `<div class="ts-empty-small"><i class="fas fa-inbox"></i> ไม่มีรายการ</div>`;
@@ -648,7 +700,7 @@
 
     const pendingHtml = showPendingSection
       ? `
-        <div class="ts-queue-section-label">รอตั้ง Cycle</div>
+        <div class="ts-queue-section-label">${state.activeTab === "pending" ? "ลีดที่ต้องกำหนดวัน" : "รอตั้งวัน"}</div>
         ${pendingLeads.map((lead) => {
           const lid = lead.id || lead._id || "";
           const isActive = state.selectedLeadId === lid;
@@ -658,8 +710,8 @@
               <div class="ts-queue-item-body">
                 <div class="ts-queue-item-name">${esc(lead.displayName || "ไม่ทราบชื่อ")}</div>
                 <div class="ts-queue-item-phone">${esc(lead.phone || "-")}</div>
-                <div class="ts-queue-item-product"><span class="ts-status-badge pending">มอบหมายแล้ว แต่รอตั้ง Cycle</span></div>
-                <div class="ts-queue-item-due">ผู้จัดการต้องกำหนดรอบโทรก่อน</div>
+                <div class="ts-queue-item-product"><span class="ts-status-badge pending">ยังไม่กำหนดวันติดตาม</span></div>
+                <div class="ts-queue-item-due">${lead.needsCycle ? "เซลล์ตั้งวันโทรครั้งแรกได้เลย แม้ cycle ถาวรยังไม่ถูกตั้ง" : "เซลล์ต้องกำหนดวันโทรครั้งแรก"}</div>
               </div>
             </div>
           `;
@@ -684,7 +736,7 @@
       });
     });
 
-    updateFooter(items.length);
+    updateFooter(items.length + (showPendingSection ? pendingLeads.length : 0));
   }
 
   function updateFooter(count) {
@@ -844,27 +896,72 @@
         </div>
 
         <!-- Call form -->
+        ${lead.status === "active" && !checkpointId ? renderPendingScheduleForm(lead, orders) : ""}
         ${lead.status === "active" ? renderCallForm(checkpointId, lead, orders) : ""}
       </div>
     `;
 
     // Bind call form events
     if (lead.status === "active") {
+      if (!checkpointId) {
+        bindPendingScheduleEvents(lead, orders);
+      }
       bindCallFormEvents(checkpointId, lead, orders);
     }
   }
 
   /* ---------- Call Form ---------- */
+  function renderPendingScheduleForm(lead, orders) {
+    const baseDate = followupBaseDate(orders);
+    const defaultValue = buildFollowupDateTime(orders, 3);
+    return `
+      <div class="ts-section">
+        <div class="ts-call-form ts-pending-schedule-card">
+          <div class="ts-call-form-title"><i class="fas fa-calendar-plus"></i> กำหนดวันโทรครั้งแรก</div>
+          <div class="ts-call-form-hint">
+            lead นี้ถูกมอบหมายมาแล้ว แต่ยังไม่มีกำหนดวันติดตามครั้งแรก ถ้ายังไม่โทรตอนนี้ ให้สร้างวันนัดจากกล่องนี้ก่อน
+          </div>
+          ${lead.needsCycle ? `
+            <div class="ts-pending-schedule-note">
+              <i class="fas fa-circle-info"></i>
+              <span>ออเดอร์นี้ยังไม่มี cycle ถาวร การตั้งค่านี้คือคิวโทรครั้งแรกของเซลล์ และหัวหน้ายังตั้ง cycle เพิ่มได้ภายหลัง</span>
+            </div>
+          ` : ""}
+          <div class="ts-followup-row">
+            <div class="ts-followup-copy">
+              <span>วันติดตามครั้งแรก</span>
+              <small>ยึดฐานจากออเดอร์ล่าสุด ${esc(formatDateTime(baseDate))}</small>
+            </div>
+            <input type="datetime-local" id="tsPendingScheduleAt" value="${esc(defaultValue)}">
+          </div>
+          <div class="ts-followup-presets" id="tsPendingSchedulePresets">
+            <button class="ts-followup-chip" data-schedule-days="3">+3 วัน</button>
+            <button class="ts-followup-chip" data-schedule-days="7">+7 วัน</button>
+            <button class="ts-followup-chip" data-schedule-days="10">+10 วัน</button>
+          </div>
+          <div class="ts-call-fields">
+            <textarea id="tsPendingScheduleNote" placeholder="หมายเหตุการนัดครั้งแรก (ถ้ามี)" rows="2"></textarea>
+          </div>
+          <div class="ts-save-row">
+            <button class="ts-btn ts-btn-save" id="tsPendingScheduleBtn">
+              <i class="fas fa-calendar-check"></i> กำหนดวันติดตาม
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderCallForm(checkpointId, lead, orders) {
     const baseDate = followupBaseDate(orders);
     const manualMode = !checkpointId;
     return `
       <div class="ts-section">
         <div class="ts-call-form" id="tsCallForm">
-          <div class="ts-call-form-title"><i class="fas fa-phone-flip"></i> ${manualMode ? "เพิ่ม Checkpoint หลังโทร" : "บันทึกการโทร"}</div>
+          <div class="ts-call-form-title"><i class="fas fa-phone-flip"></i> ${manualMode ? "บันทึกหลังโทรทันที" : "บันทึกการโทร"}</div>
           ${manualMode ? `
             <div class="ts-call-form-hint">
-              lead นี้ยังไม่มี checkpoint เปิดอยู่ คุณสามารถบันทึกผลโทรและนัดติดตามครั้งถัดไปได้จากตรงนี้
+              ถ้าโทรลูกค้าทันทีโดยยังไม่มี checkpoint เปิดอยู่ ให้บันทึกผลโทรจากฟอร์มนี้ และระบบจะสร้าง checkpoint ถัดไปตามผลที่เลือก
             </div>
           ` : ""}
           <div class="ts-outcome-grid" id="tsOutcomeGrid">
@@ -899,6 +996,48 @@
         </div>
       </div>
     `;
+  }
+
+  function bindPendingScheduleEvents(lead, orders) {
+    const scheduleInput = document.getElementById("tsPendingScheduleAt");
+    const noteEl = document.getElementById("tsPendingScheduleNote");
+    const saveBtn = document.getElementById("tsPendingScheduleBtn");
+    const presets = document.getElementById("tsPendingSchedulePresets");
+
+    if (!scheduleInput || !saveBtn) return;
+
+    presets?.querySelectorAll("[data-schedule-days]").forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        const days = parseInt(btn.dataset.scheduleDays, 10) || 3;
+        scheduleInput.value = buildFollowupDateTime(orders, days);
+      });
+    });
+
+    saveBtn.addEventListener("click", async () => {
+      const dueAt = new Date(scheduleInput.value || "");
+      if (Number.isNaN(dueAt.getTime())) {
+        toast("กรุณาเลือกวันและเวลาติดตามครั้งแรก", "warning");
+        return;
+      }
+
+      try {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังบันทึก...';
+        await api.post(`/api/telesales/leads/${lead.id || lead._id}/schedule`, {
+          dueAt: dueAt.toISOString(),
+          note: noteEl?.value?.trim() || "",
+        });
+        toast("กำหนดวันติดตามครั้งแรกสำเร็จ");
+        await loadQueue();
+        focusAfterPendingSchedule(lead.id || lead._id);
+        renderQueueList();
+      } catch (err) {
+        toast(err.message, "error");
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="fas fa-calendar-check"></i> กำหนดวันติดตาม';
+      }
+    });
   }
 
   function bindCallFormEvents(checkpointId, lead, orders) {
@@ -1013,6 +1152,31 @@
         <i class="fas fa-check-circle" style="color: var(--ts-success)"></i>
         <p>โทรหมดแล้ว!</p>
       </div>`;
+  }
+
+  function focusAfterPendingSchedule(previousLeadId) {
+    const nextPendingLead =
+      state.pendingSetupLeads.find((lead) => (lead.id || lead._id) !== previousLeadId) ||
+      null;
+    if (nextPendingLead) {
+      state.selectedLeadId = nextPendingLead.id || nextPendingLead._id;
+      loadLeadDetail(state.selectedLeadId);
+      return;
+    }
+
+    const currentItem = state.queueItems.find((item) => leadIdOf(item) === previousLeadId);
+    if (currentItem) {
+      if (state.activeTab === "pending") {
+        const cat = dueCategory(currentItem.checkpoint?.dueAt || currentItem.lead?.nextDueAt);
+        state.activeTab = cat === "today" || cat === "overdue" || cat === "tomorrow" ? cat : "all";
+        syncDayTabState();
+      }
+      state.selectedLeadId = previousLeadId;
+      loadLeadDetail(previousLeadId, checkpointIdOf(currentItem));
+      return;
+    }
+
+    focusAfterQueueRefresh(previousLeadId);
   }
 
   /* ---------- Submit Call Log ---------- */
