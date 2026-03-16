@@ -14779,6 +14779,18 @@ app.post("/sales/logout", async (req, res) => {
 
 // ============================ Sales UI Pages ============================
 
+app.get("/sales", async (req, res) => {
+  try {
+    if (!isSalesAuthenticated(req)) return res.redirect("/sales/login");
+    const salesUser = await syncSalesSessionUser(req);
+    if (!salesUser) return res.redirect("/sales/login");
+    return res.redirect("/sales/app");
+  } catch (err) {
+    console.error("[SalesAuth] /sales error:", err);
+    return res.redirect("/sales/login");
+  }
+});
+
 app.get("/sales/login", (req, res) => {
   if (isSalesAuthenticated(req)) return res.redirect("/sales/app");
   res.render("sales-login");
@@ -15336,9 +15348,7 @@ app.patch("/admin/orders/:orderId/telesales-settings", requireSalesManager, asyn
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
     }
 
-    syncTeleSalesOrderById(orderId).catch((syncError) => {
-      console.warn("[TeleSales] sync after telesales-settings update failed:", syncError?.message || syncError);
-    });
+    await syncTeleSalesOrderById(orderId);
 
     res.json({ success: true, order: updated });
   } catch (err) {

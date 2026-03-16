@@ -24,7 +24,7 @@
     mgrTab: "dashboard",
     dashboardData: null,
     mgrLeads: [],
-    mgrLeadFilters: { status: "", owner: "", search: "" },
+    mgrLeadFilters: { status: "", owner: "", needsCycle: "", search: "" },
     salesUsers: [],
     selectedLeadIds: [],
     reports: [],
@@ -97,6 +97,86 @@
 
   function checkpointIdOf(item) {
     return item?.checkpoint?.id || item?.checkpoint?._id || "";
+  }
+
+  function queueCategoryCounts(items) {
+    const counts = { overdue: 0, today: 0, tomorrow: 0 };
+    (items || []).forEach((item) => {
+      const cat = dueCategory(item.checkpoint?.dueAt || item.lead?.nextDueAt);
+      if (counts[cat] !== undefined) counts[cat] += 1;
+    });
+    return counts;
+  }
+
+  function syncDayTabState() {
+    const container = document.getElementById("tsDayTabs");
+    if (!container) return;
+    container.querySelectorAll(".ts-day-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.tab === state.activeTab);
+    });
+  }
+
+  function salesUsersFrom(data) {
+    if (Array.isArray(data?.salesUsers)) return data.salesUsers;
+    if (Array.isArray(data?.users)) return data.users;
+    return [];
+  }
+
+  function reportStats(report) {
+    return report?.stats && typeof report.stats === "object" ? report.stats : {};
+  }
+
+  function reportScopeLabel(report) {
+    if (!report) return "-";
+    if (report.scopeType === "system") return "ภาพรวมระบบ";
+    const scopeId = report.scopeId || "";
+    const user = state.salesUsers.find((item) => (item.id || item._id) === scopeId);
+    if (user) return user.name || user.code || scopeId;
+    return report.scopeType === "sales_user" ? "พนักงานขาย" : (report.scopeType || "-");
+  }
+
+  function reportScopeBadgeClass(report) {
+    return report?.scopeType === "system" ? "active" : "pending";
+  }
+
+  function percent(value) {
+    const number = Number(value) || 0;
+    return `${Math.round(number * 100)}%`;
+  }
+
+  function detailPlaceholderHtml(icon, text) {
+    return `
+      <div class="ts-detail-placeholder">
+        <i class="fas ${icon}"></i>
+        <p>${esc(text)}</p>
+      </div>
+    `;
+  }
+
+  function reportSummaryHtml(report) {
+    if (!report) {
+      return '<div class="ts-empty-small">ยังไม่มีรายงานล่าสุด</div>';
+    }
+
+    const stats = reportStats(report);
+    return `
+      <div style="display:grid; gap:0.75rem;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:700;">${esc(reportScopeLabel(report))}</div>
+            <div style="font-size:0.82rem; color:var(--ts-muted);">วันที่ ${esc(report.dateKey || formatDate(report.generatedAt))}</div>
+          </div>
+          <span class="ts-status-badge ${reportScopeBadgeClass(report)}">${esc(report.scopeType || "-")}</span>
+        </div>
+        <div style="display:flex; gap:0.9rem; flex-wrap:wrap; font-size:0.9rem;">
+          <span>โทร <strong>${stats.attempted || 0}</strong></span>
+          <span>ติดต่อได้ <strong>${stats.contacted || 0}</strong></span>
+          <span>ปิดตรง <strong>${stats.direct_closed_won || 0}</strong></span>
+          <span>ค้าง <strong>${stats.overdue || 0}</strong></span>
+        </div>
+        <div style="font-size:0.88rem; line-height:1.6; color:var(--ts-text);">${esc(report.aiSummary || "ยังไม่มี AI summary")}</div>
+      </div>
+    `;
   }
 
   const OUTCOME_LABELS = {
@@ -286,12 +366,35 @@
   /* ---------- Load Queue ---------- */
   async function loadQueue() {
     try {
-      const data = await api.get("/api/telesales/my-queue");
+      const data = await api.get("/api/telesales/my-queue?limit=500");
       state.queueData = data;
       state.queueItems = data.items || [];
+      const counts = queueCategoryCounts(state.queueItems);
+      const hasCurrentTabItems = state.activeTab === "all" || (counts[state.activeTab] || 0) > 0;
+      if (!hasCurrentTabItems && state.queueItems.length > 0) {
+        if (counts.today > 0) state.activeTab = "today";
+        else if (counts.overdue > 0) state.activeTab = "overdue";
+        else if (counts.tomorrow > 0) state.activeTab = "tomorrow";
+        else state.activeTab = "all";
+        syncDayTabState();
+      }
       updateBadges();
       renderQueueList();
       updateTopbarStats();
+
+      const selectedStillExists = state.selectedLeadId &&
+        state.queueItems.some((item) => leadIdOf(item) === state.selectedLeadId);
+
+      if (!selectedStillExists) {
+        if (state.queueItems.length > 0) {
+          const firstItem = state.queueItems[0];
+          state.selectedLeadId = leadIdOf(firstItem);
+          loadLeadDetail(state.selectedLeadId, checkpointIdOf(firstItem));
+        } else {
+          state.selectedLeadId = null;
+          document.getElementById("tsDetailPanel").innerHTML = detailPlaceholderHtml("fa-phone-slash", "ยังไม่มีคิวโทรในตอนนี้");
+        }
+      }
     } catch (err) {
       document.getElementById("tsQueueList").innerHTML =
         `<div class="ts-empty-small"><i class="fas fa-circle-exclamation"></i> ${esc(err.message)}</div>`;
@@ -300,11 +403,7 @@
 
   function updateBadges() {
     const items = state.queueItems;
-    const counts = { overdue: 0, today: 0, tomorrow: 0 };
-    items.forEach(item => {
-      const cat = dueCategory(item.checkpoint?.dueAt || item.lead?.nextDueAt);
-      if (counts[cat] !== undefined) counts[cat]++;
-    });
+    const counts = queueCategoryCounts(items);
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     set("tabBadgeOverdue", counts.overdue);
     set("tabBadgeToday", counts.today);
@@ -317,9 +416,10 @@
     if (!el) return;
     const s = state.queueData?.summary || {};
     el.innerHTML = `
-      <div class="ts-topbar-stat"><span>โทร:</span> <span class="num">${s.calls_today || 0}</span></div>
-      <div class="ts-topbar-stat"><span>ปิด:</span> <span class="num">${s.closed_today || 0}</span></div>
-      <div class="ts-topbar-stat"><span>เหลือ:</span> <span class="num">${(state.queueItems || []).length}</span></div>
+      <div class="ts-topbar-stat"><span>ครบกำหนด:</span> <span class="num">${s.due_today || 0}</span></div>
+      <div class="ts-topbar-stat"><span>ค้าง:</span> <span class="num">${s.overdue || 0}</span></div>
+      <div class="ts-topbar-stat"><span>โทรกลับ:</span> <span class="num">${s.callback_pending || 0}</span></div>
+      <div class="ts-topbar-stat"><span>ทั้งหมด:</span> <span class="num">${(state.queueItems || []).length}</span></div>
     `;
   }
 
@@ -476,11 +576,12 @@
             ${callLogs.map(log => `
               <div class="ts-timeline-item">
                 <div class="ts-timeline-dot ${esc(OUTCOME_CLASS[log.outcome] || "neutral")}"></div>
-                <div class="ts-timeline-date">${esc(formatDateTime(log.createdAt || log.calledAt))}</div>
+                <div class="ts-timeline-date">${esc(formatDateTime(log.loggedAt || log.createdAt || log.calledAt))}</div>
                 <div class="ts-timeline-outcome">
                   <i class="fas ${esc(OUTCOME_ICONS[log.outcome] || "fa-phone")}"></i>
                   ${esc(OUTCOME_LABELS[log.outcome] || log.outcome || "-")}
                 </div>
+                ${log.salesUser?.name ? `<div class="ts-timeline-date">โดย ${esc(log.salesUser.name)}</div>` : ""}
                 ${log.note ? `<div class="ts-timeline-note">${esc(log.note)}</div>` : ""}
               </div>
             `).join("")}
@@ -515,7 +616,7 @@
           </div>
           <div class="ts-call-fields">
             <textarea id="tsCallNote" placeholder="โน้ตการโทร (จำเป็น)" rows="2"></textarea>
-            <div class="ts-followup-row" id="tsFollowupRow">
+            <div class="ts-followup-row" id="tsFollowupRow" style="display:none;">
               <span>Follow-up อีก</span>
               <input type="number" id="tsFollowupDays" value="3" min="1" max="365">
               <span>วัน</span>
@@ -824,20 +925,24 @@
     content.innerHTML = '<div class="ts-loading"><div class="ts-spinner"></div> กำลังโหลด...</div>';
 
     try {
-      // Load queue + leads + sales users in parallel
-      const [queueData, leadsData, usersData] = await Promise.all([
-        api.get("/api/telesales/manager/queue"),
-        api.get("/api/telesales/manager/leads?limit=500"),
+      const [queueData, leadsData, usersData, reportsData] = await Promise.all([
+        api.get("/api/telesales/manager/queue?limit=5000"),
+        api.get("/api/telesales/manager/leads?limit=5000"),
         api.get("/api/telesales/sales-users"),
+        api.get("/api/telesales/reports/daily?scopeType=system"),
       ]);
 
-      state.salesUsers = usersData.users || [];
+      state.salesUsers = salesUsersFrom(usersData);
       const allItems = queueData.items || [];
       const allLeads = leadsData.leads || [];
+      state.mgrLeads = allLeads;
+      state.reports = reportsData.reports || [];
+      const latestSystemReport = (reportsData.reports || [])[0] || null;
 
       // KPI calculations
       const totalLeads = allLeads.length;
       const unassigned = allLeads.filter(l => !l.ownerSalesUserId).length;
+      const needsCycle = allLeads.filter(l => l.needsCycle).length;
       const overdue = allItems.filter(it => dueCategory(it.checkpoint?.dueAt) === "overdue").length;
       const dueToday = allItems.filter(it => dueCategory(it.checkpoint?.dueAt) === "today").length;
 
@@ -854,6 +959,7 @@
 
       // Unassigned leads
       const unassignedLeads = allLeads.filter(l => !l.ownerSalesUserId).slice(0, 10);
+      const needsCycleLeads = allLeads.filter(l => l.needsCycle).slice(0, 10);
 
       content.innerHTML = `
         <div class="ts-fade-in">
@@ -862,6 +968,7 @@
             ${kpiCard("fas fa-address-book", "primary", totalLeads, "Leads ทั้งหมด")}
             ${kpiCard("fas fa-exclamation-triangle", "danger", overdue, "เลยกำหนด")}
             ${kpiCard("fas fa-clock", "warning", dueToday, "โทรวันนี้")}
+            ${kpiCard("fas fa-repeat", "warning", needsCycle, "ต้องตั้ง Cycle")}
             ${kpiCard("fas fa-user-slash", "info", unassigned, "ยังไม่ assign")}
           </div>
 
@@ -899,6 +1006,37 @@
           </div>
           ` : ""}
 
+          ${needsCycleLeads.length > 0 ? `
+          <div class="ts-mgr-section">
+            <div class="ts-mgr-section-header">
+              <div class="ts-mgr-section-title"><i class="fas fa-repeat"></i> ต้องตั้ง Cycle (${needsCycle} lead)</div>
+              <button class="ts-btn ts-btn-ghost ts-btn-sm" id="tsDashOpenNeedsCycleBtn"><i class="fas fa-arrow-right"></i> ไปหน้า Leads</button>
+            </div>
+            <div class="ts-table-wrap">
+              <table class="ts-table">
+                <thead>
+                  <tr>
+                    <th>ชื่อ</th>
+                    <th>เบอร์</th>
+                    <th>ออเดอร์ที่ยังไม่ตั้ง</th>
+                    <th>จัดการ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${needsCycleLeads.map(l => `
+                    <tr>
+                      <td>${esc(l.displayName || "-")}</td>
+                      <td>${esc(l.phone || "-")}</td>
+                      <td>${(l.needsCycleOrderIds || []).length || 0}</td>
+                      <td><button class="ts-btn ts-btn-save ts-btn-sm" data-set-cycle="${esc(l.id || l._id)}"><i class="fas fa-repeat"></i> ตั้ง Cycle</button></td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          ` : ""}
+
           <!-- Team overview -->
           <div class="ts-mgr-section">
             <div class="ts-mgr-section-header">
@@ -925,7 +1063,7 @@
               <div class="ts-mgr-section-title"><i class="fas fa-chart-bar"></i> รายงานวันนี้</div>
               <button class="ts-btn ts-btn-ghost ts-btn-sm" id="tsRunReportBtn"><i class="fas fa-play"></i> สร้างรายงาน</button>
             </div>
-            <div id="tsDashReportSummary" class="ts-empty-small">กดปุ่มเพื่อสร้างรายงาน</div>
+            <div id="tsDashReportSummary">${reportSummaryHtml(latestSystemReport)}</div>
           </div>
         </div>
       `;
@@ -969,6 +1107,23 @@
       });
     }
 
+    document.getElementById("tsDashOpenNeedsCycleBtn")?.addEventListener("click", () => {
+      state.mgrTab = "leads";
+      state.mgrLeadFilters.needsCycle = "needs_cycle";
+      document.querySelectorAll(".ts-mgr-tab").forEach((tab) => {
+        tab.classList.toggle("active", tab.dataset.tab === "leads");
+      });
+      loadManagerLeads();
+    });
+
+    document.querySelectorAll("[data-set-cycle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const leadId = btn.dataset.setCycle;
+        const lead = state.mgrLeads.find((item) => (item.id || item._id) === leadId);
+        if (lead) showCycleModal(lead);
+      });
+    });
+
     // Run report
     const reportBtn = document.getElementById("tsRunReportBtn");
     if (reportBtn) {
@@ -981,12 +1136,8 @@
           const reports = await api.get("/api/telesales/reports/daily");
           const el = document.getElementById("tsDashReportSummary");
           if (el && reports.reports && reports.reports.length > 0) {
-            const r = reports.reports[0];
-            el.innerHTML = `<div style="text-align:left; font-size:0.85rem;">
-              ทีมโทรไป <strong>${r.totalCalls || 0}</strong> สาย
-              ปิดได้ <strong>${r.closedWon || 0}</strong> ออเดอร์
-              ยอด <strong>฿${money(r.totalRevenue || 0)}</strong>
-            </div>`;
+            const r = reports.reports.find((item) => item.scopeType === "system") || reports.reports[0];
+            el.innerHTML = reportSummaryHtml(r);
           }
         } catch (err) {
           toast(err.message, "error");
@@ -1061,11 +1212,13 @@
 
     try {
       const [leadsData, usersData] = await Promise.all([
-        api.get("/api/telesales/manager/leads?limit=500"),
-        state.salesUsers.length ? Promise.resolve({ users: state.salesUsers }) : api.get("/api/telesales/sales-users"),
+        api.get("/api/telesales/manager/leads?limit=5000"),
+        state.salesUsers.length
+          ? Promise.resolve({ salesUsers: state.salesUsers })
+          : api.get("/api/telesales/sales-users"),
       ]);
 
-      state.salesUsers = usersData.users || [];
+      state.salesUsers = salesUsersFrom(usersData);
       state.mgrLeads = leadsData.leads || [];
       state.selectedLeadIds = [];
 
@@ -1086,6 +1239,8 @@
     if (f.status) leads = leads.filter(l => l.status === f.status);
     if (f.owner === "unassigned") leads = leads.filter(l => !l.ownerSalesUserId);
     else if (f.owner) leads = leads.filter(l => l.ownerSalesUserId === f.owner);
+    if (f.needsCycle === "needs_cycle") leads = leads.filter(l => l.needsCycle);
+    if (f.needsCycle === "ready") leads = leads.filter(l => !l.needsCycle);
     if (f.search) {
       const q = f.search.toLowerCase();
       leads = leads.filter(l =>
@@ -1101,7 +1256,7 @@
     content.innerHTML = `
       <div class="ts-fade-in">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;">
-          <h2 style="font-size:1.1rem; font-weight:700; margin:0;">Leads ทั้งหมด (${state.mgrLeads.length})</h2>
+          <h2 style="font-size:1.1rem; font-weight:700; margin:0;">Leads ทั้งหมด (${leads.length}/${state.mgrLeads.length})</h2>
           <button class="ts-btn ts-btn-ghost ts-btn-sm" id="tsLeadsRefreshBtn"><i class="fas fa-arrows-rotate"></i> รีเฟรช</button>
         </div>
 
@@ -1117,6 +1272,11 @@
             <option value="">ทุกเจ้าของ</option>
             <option value="unassigned"${f.owner === "unassigned" ? " selected" : ""}>ยังไม่ assign</option>
             ${users.map(u => `<option value="${esc(u.id || u._id)}"${f.owner === (u.id || u._id) ? " selected" : ""}>${esc(u.name)}</option>`).join("")}
+          </select>
+          <select id="tsLeadFilterNeedsCycle">
+            <option value="">ทุกรอบ</option>
+            <option value="needs_cycle"${f.needsCycle === "needs_cycle" ? " selected" : ""}>ต้องตั้ง Cycle</option>
+            <option value="ready"${f.needsCycle === "ready" ? " selected" : ""}>พร้อมใช้งาน</option>
           </select>
           <input type="text" id="tsLeadFilterSearch" placeholder="ค้นหาชื่อ/เบอร์..." value="${esc(f.search || "")}">
         </div>
@@ -1143,7 +1303,9 @@
                   <th>Platform</th>
                   <th>เจ้าของ</th>
                   <th>สถานะ</th>
+                  <th>Cycle</th>
                   <th>กำหนดถัดไป</th>
+                  <th>จัดการ</th>
                 </tr>
               </thead>
               <tbody>
@@ -1155,9 +1317,23 @@
                     <td>${esc(l.platform || "-")}</td>
                     <td>${esc(userMap[l.ownerSalesUserId] || (l.ownerSalesUserId ? "?" : "—"))}</td>
                     <td><span class="ts-status-badge ${esc(l.status || "active")}">${esc(l.status || "active")}</span></td>
+                    <td>
+                      ${l.needsCycle
+                        ? `<span class="ts-status-badge pending">ต้องตั้ง ${Math.max((l.needsCycleOrderIds || []).length, 1)} ออเดอร์</span>`
+                        : '<span class="ts-status-badge active">พร้อมใช้งาน</span>'}
+                    </td>
                     <td class="${dueCategory(l.nextDueAt) === "overdue" ? "ts-text-danger" : ""}">${esc(relativeDate(l.nextDueAt) || "-")}</td>
+                    <td>
+                      <div style="display:flex; gap:0.35rem; flex-wrap:wrap;">
+                        <button class="ts-btn ts-btn-ghost ts-btn-sm" data-assign-lead="${esc(l.id || l._id)}"><i class="fas fa-user-plus"></i></button>
+                        ${l.needsCycle ? `<button class="ts-btn ts-btn-save ts-btn-sm" data-set-cycle="${esc(l.id || l._id)}"><i class="fas fa-repeat"></i></button>` : ""}
+                        ${l.status === "active"
+                          ? `<button class="ts-btn ts-btn-ghost ts-btn-sm" data-pause-lead="${esc(l.id || l._id)}"><i class="fas fa-pause"></i></button>`
+                          : `<button class="ts-btn ts-btn-save ts-btn-sm" data-reopen-lead="${esc(l.id || l._id)}"><i class="fas fa-rotate-right"></i></button>`}
+                      </div>
+                    </td>
                   </tr>
-                `).join("") : '<tr><td colspan="7" class="ts-empty-small">ไม่พบ lead</td></tr>'}
+                `).join("") : '<tr><td colspan="9" class="ts-empty-small">ไม่พบ lead</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -1177,6 +1353,7 @@
     };
     bind("tsLeadFilterStatus", "status");
     bind("tsLeadFilterOwner", "owner");
+    bind("tsLeadFilterNeedsCycle", "needsCycle");
 
     const searchInput = document.getElementById("tsLeadFilterSearch");
     if (searchInput) {
@@ -1224,6 +1401,31 @@
     if (refreshBtn) {
       refreshBtn.addEventListener("click", () => loadManagerLeads());
     }
+
+    document.querySelectorAll("[data-assign-lead]").forEach((btn) => {
+      btn.addEventListener("click", () => showAssignModal([btn.dataset.assignLead]));
+    });
+
+    document.querySelectorAll("[data-set-cycle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const lead = state.mgrLeads.find((item) => (item.id || item._id) === btn.dataset.setCycle);
+        if (lead) showCycleModal(lead);
+      });
+    });
+
+    document.querySelectorAll("[data-pause-lead]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const lead = state.mgrLeads.find((item) => (item.id || item._id) === btn.dataset.pauseLead);
+        if (lead) showPauseLeadModal(lead);
+      });
+    });
+
+    document.querySelectorAll("[data-reopen-lead]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const lead = state.mgrLeads.find((item) => (item.id || item._id) === btn.dataset.reopenLead);
+        if (lead) showReopenLeadModal(lead);
+      });
+    });
   }
 
   function updateBulkBar() {
@@ -1244,7 +1446,7 @@
 
     try {
       const data = await api.get("/api/telesales/sales-users");
-      state.salesUsers = data.users || [];
+      state.salesUsers = salesUsersFrom(data);
       renderManagerTeamContent();
     } catch (err) {
       content.innerHTML = `<div class="ts-empty-small"><i class="fas fa-circle-exclamation"></i> ${esc(err.message)}</div>`;
@@ -1404,8 +1606,14 @@
     content.innerHTML = '<div class="ts-loading"><div class="ts-spinner"></div> กำลังโหลด...</div>';
 
     try {
-      const data = await api.get("/api/telesales/reports/daily");
-      state.reports = data.reports || [];
+      const [reportData, usersData] = await Promise.all([
+        api.get("/api/telesales/reports/daily"),
+        state.salesUsers.length
+          ? Promise.resolve({ salesUsers: state.salesUsers })
+          : api.get("/api/telesales/sales-users"),
+      ]);
+      state.salesUsers = salesUsersFrom(usersData);
+      state.reports = reportData.reports || [];
 
       content.innerHTML = `
         <div class="ts-fade-in">
@@ -1420,21 +1628,38 @@
                 <thead>
                   <tr>
                     <th>วันที่</th>
+                    <th>ขอบเขต</th>
                     <th>โทรทั้งหมด</th>
                     <th>ติดต่อได้</th>
-                    <th>ปิดขาย</th>
-                    <th>ยอดรวม</th>
+                    <th>ปิดตรง</th>
+                    <th>Assisted</th>
+                    <th>ค้าง</th>
+                    <th>No answer</th>
+                    <th>Close rate</th>
+                    <th>โน้ตครบ</th>
+                    <th>AI summary</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${state.reports.map(r => `
+                    ${(() => {
+                      const stats = reportStats(r);
+                      return `
                     <tr>
                       <td>${esc(r.dateKey || formatDate(r.createdAt))}</td>
-                      <td>${r.totalCalls || 0}</td>
-                      <td>${r.contacted || 0}</td>
-                      <td>${r.closedWon || 0}</td>
-                      <td>฿${money(r.totalRevenue || 0)}</td>
+                      <td><span class="ts-status-badge ${reportScopeBadgeClass(r)}">${esc(reportScopeLabel(r))}</span></td>
+                      <td>${stats.attempted || 0}</td>
+                      <td>${stats.contacted || 0}</td>
+                      <td>${stats.direct_closed_won || 0}</td>
+                      <td>${stats.assisted_reorder || 0}</td>
+                      <td>${stats.overdue || 0}</td>
+                      <td>${percent(stats.no_answer_rate)}</td>
+                      <td>${percent(stats.close_rate)}</td>
+                      <td>${percent(stats.note_coverage)}</td>
+                      <td style="min-width:320px; line-height:1.6;">${esc(r.aiSummary || "-")}</td>
                     </tr>
+                  `;
+                    })()}
                   `).join("")}
                 </tbody>
               </table>
@@ -1461,6 +1686,185 @@
     } catch (err) {
       content.innerHTML = `<div class="ts-empty-small"><i class="fas fa-circle-exclamation"></i> ${esc(err.message)}</div>`;
     }
+  }
+
+  function showCycleModal(lead) {
+    const existing = document.getElementById("tsCycleModal");
+    if (existing) existing.remove();
+
+    const orderIds = Array.isArray(lead?.needsCycleOrderIds) && lead.needsCycleOrderIds.length
+      ? lead.needsCycleOrderIds
+      : (lead?.latestOrderId ? [lead.latestOrderId] : []);
+
+    if (!orderIds.length) {
+      toast("lead นี้ไม่มีออเดอร์ที่ตั้ง Cycle ได้", "warning");
+      return;
+    }
+
+    const modal = document.createElement("div");
+    modal.className = "ts-modal-overlay";
+    modal.id = "tsCycleModal";
+    modal.innerHTML = `
+      <div class="ts-modal">
+        <div class="ts-modal-title">
+          <span>ตั้ง Cycle สำหรับ ${esc(lead.displayName || "ลูกค้า")}</span>
+          <span class="ts-modal-close" id="tsCycleModalClose"><i class="fas fa-times"></i></span>
+        </div>
+        <div class="ts-form-group">
+          <label class="ts-label">โทรซ้ำอีกกี่วัน</label>
+          <input class="ts-input" type="number" id="tsCycleDaysInput" value="30" min="1" max="365">
+        </div>
+        <div class="ts-form-group">
+          <label class="ts-label">จะอัปเดต</label>
+          <div class="ts-empty-small" style="justify-content:flex-start;">${orderIds.length} ออเดอร์ที่ยังไม่มี cycle</div>
+        </div>
+        <div class="ts-modal-actions">
+          <button class="ts-btn ts-btn-ghost" id="tsCycleCancelBtn">ยกเลิก</button>
+          <button class="ts-btn ts-btn-save" id="tsCycleSaveBtn"><i class="fas fa-check"></i> บันทึก</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => modal.remove();
+    document.getElementById("tsCycleModalClose").addEventListener("click", close);
+    document.getElementById("tsCycleCancelBtn").addEventListener("click", close);
+    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+    document.getElementById("tsCycleSaveBtn").addEventListener("click", async () => {
+      const cycleDays = parseInt(document.getElementById("tsCycleDaysInput")?.value, 10);
+      if (!cycleDays || cycleDays < 1) {
+        toast("กรุณาระบุจำนวนวันที่ถูกต้อง", "warning");
+        return;
+      }
+
+      try {
+        await Promise.all(orderIds.map((orderId) => api.patch(`/admin/orders/${orderId}/telesales-settings`, {
+          teleSalesEnabled: true,
+          teleSalesCycleDays: cycleDays,
+        })));
+        toast(`ตั้ง Cycle ${cycleDays} วันสำเร็จ`);
+        close();
+        await loadManagerLeads();
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    });
+  }
+
+  function showPauseLeadModal(lead) {
+    const existing = document.getElementById("tsPauseLeadModal");
+    if (existing) existing.remove();
+
+    const modal = document.createElement("div");
+    modal.className = "ts-modal-overlay";
+    modal.id = "tsPauseLeadModal";
+    modal.innerHTML = `
+      <div class="ts-modal">
+        <div class="ts-modal-title">
+          <span>พักการติดตาม</span>
+          <span class="ts-modal-close" id="tsPauseLeadModalClose"><i class="fas fa-times"></i></span>
+        </div>
+        <div class="ts-form-group">
+          <label class="ts-label">สถานะ</label>
+          <select class="ts-input" id="tsPauseLeadStatus">
+            <option value="paused">Paused</option>
+            <option value="dnc">Do not call</option>
+          </select>
+        </div>
+        <div class="ts-form-group">
+          <label class="ts-label">เหตุผล</label>
+          <textarea class="ts-input" id="tsPauseLeadReason" rows="3" placeholder="เหตุผลในการพัก lead"></textarea>
+        </div>
+        <div class="ts-modal-actions">
+          <button class="ts-btn ts-btn-ghost" id="tsPauseLeadCancelBtn">ยกเลิก</button>
+          <button class="ts-btn ts-btn-save" id="tsPauseLeadSaveBtn"><i class="fas fa-check"></i> บันทึก</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => modal.remove();
+    document.getElementById("tsPauseLeadModalClose").addEventListener("click", close);
+    document.getElementById("tsPauseLeadCancelBtn").addEventListener("click", close);
+    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+    document.getElementById("tsPauseLeadSaveBtn").addEventListener("click", async () => {
+      try {
+        await api.post(`/api/telesales/leads/${lead.id || lead._id}/pause`, {
+          status: document.getElementById("tsPauseLeadStatus")?.value || "paused",
+          reason: document.getElementById("tsPauseLeadReason")?.value?.trim() || "",
+        });
+        toast("อัปเดตสถานะ lead แล้ว");
+        close();
+        await loadManagerLeads();
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    });
+  }
+
+  function showReopenLeadModal(lead) {
+    const existing = document.getElementById("tsReopenLeadModal");
+    if (existing) existing.remove();
+
+    const users = state.salesUsers.filter((user) => user.isActive !== false);
+    const modal = document.createElement("div");
+    modal.className = "ts-modal-overlay";
+    modal.id = "tsReopenLeadModal";
+    modal.innerHTML = `
+      <div class="ts-modal">
+        <div class="ts-modal-title">
+          <span>เปิด lead กลับมาใช้งาน</span>
+          <span class="ts-modal-close" id="tsReopenLeadModalClose"><i class="fas fa-times"></i></span>
+        </div>
+        <div class="ts-form-group">
+          <label class="ts-label">ครบกำหนดอีก (วัน)</label>
+          <input class="ts-input" type="number" id="tsReopenLeadDays" value="1" min="0" max="365">
+        </div>
+        <div class="ts-form-group">
+          <label class="ts-label">มอบหมายให้</label>
+          <select class="ts-input" id="tsReopenLeadAssignee">
+            <option value="">ใช้เจ้าของเดิม</option>
+            ${users.map((user) => `<option value="${esc(user.id || user._id)}"${(lead.ownerSalesUserId === (user.id || user._id)) ? " selected" : ""}>${esc(user.name)} (${esc(user.code)})</option>`).join("")}
+          </select>
+        </div>
+        <div class="ts-modal-actions">
+          <button class="ts-btn ts-btn-ghost" id="tsReopenLeadCancelBtn">ยกเลิก</button>
+          <button class="ts-btn ts-btn-save" id="tsReopenLeadSaveBtn"><i class="fas fa-check"></i> เปิดใช้งาน</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => modal.remove();
+    document.getElementById("tsReopenLeadModalClose").addEventListener("click", close);
+    document.getElementById("tsReopenLeadCancelBtn").addEventListener("click", close);
+    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+
+    document.getElementById("tsReopenLeadSaveBtn").addEventListener("click", async () => {
+      const days = parseInt(document.getElementById("tsReopenLeadDays")?.value, 10);
+      if (Number.isNaN(days) || days < 0) {
+        toast("กรุณาระบุจำนวนวันที่ถูกต้อง", "warning");
+        return;
+      }
+
+      const nextDate = new Date();
+      nextDate.setDate(nextDate.getDate() + days);
+      nextDate.setHours(9, 0, 0, 0);
+
+      try {
+        await api.post(`/api/telesales/leads/${lead.id || lead._id}/reopen`, {
+          dueAt: nextDate.toISOString(),
+          assignedToSalesUserId: document.getElementById("tsReopenLeadAssignee")?.value || undefined,
+        });
+        toast("เปิด lead กลับมาแล้ว");
+        close();
+        await loadManagerLeads();
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    });
   }
 
 })();

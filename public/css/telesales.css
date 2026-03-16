@@ -480,6 +480,7 @@ input, select, textarea { font-family: inherit; }
   font-weight: 600;
 }
 .ts-status-badge.active { background: rgba(61,139,94,0.1); color: #3D8B5E; }
+.ts-status-badge.pending { background: rgba(79,122,102,0.12); color: #4F7A66; }
 .ts-status-badge.paused { background: rgba(212,160,62,0.1); color: #B5870A; }
 .ts-status-badge.dnc { background: rgba(194,80,80,0.1); color: var(--ts-danger); }
 

@@ -923,7 +923,7 @@ class TeleSalesService {
     const checkpoints = await db.collection(CHECKPOINT_COLLECTION)
       .find(checkpointQuery)
       .sort({ dueAt: 1, createdAt: -1 })
-      .limit(Math.min(Math.max(Number(limit) || 100, 1), 300))
+      .limit(Math.min(Math.max(Number(limit) || 100, 1), 5000))
       .toArray();
 
     if (!checkpoints.length) {
@@ -1008,7 +1008,7 @@ class TeleSalesService {
     const leads = await db.collection(LEAD_COLLECTION)
       .find(query)
       .sort({ nextDueAt: 1, updatedAt: -1 })
-      .limit(Math.min(Math.max(Number(limit) || 100, 1), 300))
+      .limit(Math.min(Math.max(Number(limit) || 100, 1), 5000))
       .toArray();
 
     return leads.map(mapLeadDoc);
