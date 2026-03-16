@@ -44,7 +44,7 @@ const NEXT_CHECKPOINT_REQUIRED_OUTCOMES = new Set([
   "busy",
   "call_back",
   "interested",
-  "not_interested",
+  "already_bought_elsewhere",
 ]);
 
 function normalizeString(value, maxLength = 255) {
@@ -140,6 +140,11 @@ function buildPhone(order = {}) {
     normalizeString(orderData.shippingPhone, 40) ||
     ""
   );
+}
+
+function orderTimestampValue(order = {}) {
+  const date = normalizeDate(order.createdAt || order.extractedAt || order.updatedAt);
+  return date ? date.getTime() : 0;
 }
 
 function buildDueReasonFromOrder(order, dueAt) {
@@ -595,7 +600,7 @@ class TeleSalesService {
     };
   }
 
-  async finalizeClosedWon({ checkpointId, salesUserId, note, order }) {
+  async finalizeClosedWon({ checkpointId, salesUserId, note, order, nextCheckpointAt = null }) {
     const db = await this._db();
     const checkpoint = await this._getCheckpointById(db, checkpointId);
     if (!checkpoint) {
@@ -614,6 +619,7 @@ class TeleSalesService {
       new Date();
     const orderId = normalizeIdString(order?._id);
     const cycleDays = parseCycleDays(order?.teleSalesCycleDays);
+    const explicitNextCheckpointAt = normalizeDate(nextCheckpointAt);
 
     await this._createCallLog(db, {
       leadId: checkpoint.leadId,
@@ -658,8 +664,8 @@ class TeleSalesService {
       },
     );
 
-    if (cycleDays) {
-      const dueAt = addDays(resolvedAt, cycleDays, this.timezone);
+    if (cycleDays || explicitNextCheckpointAt) {
+      const dueAt = explicitNextCheckpointAt || addDays(resolvedAt, cycleDays, this.timezone);
       await this._createCheckpoint(db, lead, {
         type: "reorder",
         dueAt,
@@ -771,6 +777,101 @@ class TeleSalesService {
     return mapLeadDoc(refreshed);
   }
 
+  async logLeadCall({
+    leadId,
+    salesUserId,
+    outcome,
+    note,
+    nextCheckpointAt,
+  }) {
+    const db = await this._db();
+    const lead = await this._getLeadById(db, leadId);
+    if (!lead) {
+      throw new Error("ไม่พบ lead");
+    }
+    if (normalizeLeadStatus(lead.status) !== "active") {
+      throw new Error("lead นี้ไม่ได้อยู่ในสถานะ active");
+    }
+
+    const openCheckpoint = await this._getOpenCheckpointForLead(db, leadId);
+    if (openCheckpoint) {
+      throw new Error("lead นี้มี checkpoint เปิดอยู่แล้ว");
+    }
+
+    const normalizedOutcome = normalizeOutcome(outcome);
+    if (!normalizedOutcome || normalizedOutcome === "closed_won" || normalizedOutcome === "purchased_via_ai") {
+      throw new Error("outcome นี้ต้องใช้ endpoint อื่นหรือไม่รองรับ");
+    }
+
+    const normalizedNextCheckpointAt = normalizeDate(nextCheckpointAt);
+    if (
+      NEXT_CHECKPOINT_REQUIRED_OUTCOMES.has(normalizedOutcome) &&
+      !normalizedNextCheckpointAt
+    ) {
+      throw new Error("กรุณาระบุ nextCheckpointAt");
+    }
+
+    const loggedAt = new Date();
+    await this._createCallLog(db, {
+      leadId,
+      checkpointId: null,
+      salesUserId,
+      outcome: normalizedOutcome,
+      note,
+      nextCheckpointAt: normalizedNextCheckpointAt,
+      loggedAt,
+      metadata: {
+        source: "lead_manual_log",
+      },
+    });
+
+    const normalizedSalesUserId =
+      normalizeIdString(salesUserId) ||
+      normalizeIdString(lead.ownerSalesUserId) ||
+      null;
+    const leadPatch = {
+      ownerSalesUserId: normalizedSalesUserId,
+      lastContactAt: loggedAt,
+      updatedAt: loggedAt,
+    };
+
+    if (normalizedOutcome === "not_interested") {
+      leadPatch.status = "paused";
+      leadPatch.pauseReason = "not_interested";
+    } else if (normalizedOutcome === "wrong_number") {
+      leadPatch.status = "paused";
+      leadPatch.pauseReason = "wrong_number";
+    } else if (normalizedOutcome === "do_not_call") {
+      leadPatch.status = "dnc";
+      leadPatch.dncReason = "do_not_call";
+    }
+
+    await db.collection(LEAD_COLLECTION).updateOne(
+      { _id: lead._id },
+      { $set: leadPatch },
+    );
+
+    if (NEXT_CHECKPOINT_REQUIRED_OUTCOMES.has(normalizedOutcome) && normalizedNextCheckpointAt) {
+      await this._createCheckpoint(db, lead, {
+        type: "callback",
+        dueAt: normalizedNextCheckpointAt,
+        assignedToSalesUserId: normalizedSalesUserId,
+        sourceOrderIds: lead.latestOrderId ? [lead.latestOrderId] : [],
+        dueReasons: [
+          {
+            type: "manual_callback",
+            fromOutcome: normalizedOutcome,
+            nextCheckpointAt: normalizedNextCheckpointAt,
+          },
+        ],
+        createdBy: "sales_manual_call",
+      });
+    }
+
+    const refreshed = await this._refreshLeadState(db, leadId, leadPatch);
+    return mapLeadDoc(refreshed);
+  }
+
   async logCallOutcome({ checkpointId, salesUserId, outcome, note, nextCheckpointAt }) {
     const db = await this._db();
     const checkpoint = await this._getCheckpointById(db, checkpointId);
@@ -822,7 +923,10 @@ class TeleSalesService {
       updatedAt: loggedAt,
     };
 
-    if (normalizedOutcome === "wrong_number") {
+    if (normalizedOutcome === "not_interested") {
+      leadPatch.status = "paused";
+      leadPatch.pauseReason = "not_interested";
+    } else if (normalizedOutcome === "wrong_number") {
       leadPatch.status = "paused";
       leadPatch.pauseReason = "wrong_number";
     } else if (normalizedOutcome === "do_not_call") {
@@ -908,7 +1012,7 @@ class TeleSalesService {
         ...mapCallLogDoc(item),
         salesUser: salesMap.get(item.salesUserId || "") || null,
       })),
-      orders,
+      orders: [...orders].sort((a, b) => orderTimestampValue(b) - orderTimestampValue(a)),
     };
   }
 

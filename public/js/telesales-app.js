@@ -19,7 +19,7 @@
     searchQuery: "",
     selectedLeadId: null,
     leadDetail: null,
-    callForm: { outcome: "", note: "", followupDays: 3 },
+    callForm: { outcome: "", note: "", nextFollowupAt: "" },
     orderFormVisible: false,
     // Manager
     mgrTab: "dashboard",
@@ -180,6 +180,90 @@
     `;
   }
 
+  function orderTimestamp(order) {
+    return order?.createdAt || order?.extractedAt || order?.updatedAt || null;
+  }
+
+  function orderTimestampMs(order) {
+    const timestamp = orderTimestamp(order);
+    if (!timestamp) return 0;
+    const value = new Date(timestamp).getTime();
+    return Number.isNaN(value) ? 0 : value;
+  }
+
+  function sortOrdersByTimestamp(orders = []) {
+    return [...orders].sort((a, b) => orderTimestampMs(b) - orderTimestampMs(a));
+  }
+
+  function orderItems(order) {
+    if (Array.isArray(order?.items)) return order.items;
+    if (Array.isArray(order?.orderData?.items)) return order.orderData.items;
+    return [];
+  }
+
+  function orderTotal(order) {
+    const direct = Number(order?.totalAmount || order?.orderData?.totalAmount || 0);
+    if (direct > 0) return direct;
+    return orderItems(order).reduce((sum, item) => {
+      const quantity = Number(item?.quantity || 0);
+      const price = Number(item?.price || 0);
+      return sum + (quantity * price);
+    }, 0);
+  }
+
+  function orderAddress(order) {
+    return order?.orderData?.shippingAddress ||
+      order?.shippingAddress ||
+      order?.address ||
+      "";
+  }
+
+  function orderPhone(order) {
+    return order?.orderData?.phone ||
+      order?.orderData?.customerPhone ||
+      order?.orderData?.shippingPhone ||
+      order?.phone ||
+      "";
+  }
+
+  function orderReference(order, index = 0) {
+    const explicit = order?.orderNumber || order?.displayId || order?.shortId || order?.reference || "";
+    if (explicit) return String(explicit);
+    const rawId = order?.id || order?._id || "";
+    return rawId ? `#${String(rawId).slice(-6)}` : `#${index + 1}`;
+  }
+
+  function leadAddress(lead, orders = []) {
+    return lead?.address || lead?.shippingAddress || orderAddress(orders[0]) || "";
+  }
+
+  function leadPhone(lead, orders = []) {
+    return lead?.phone || orderPhone(orders[0]) || "";
+  }
+
+  function toLocalDateTimeInputValue(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const local = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+    return local.toISOString().slice(0, 16);
+  }
+
+  function followupBaseDate(orders = []) {
+    const base = orderTimestamp(orders[0]);
+    return base ? new Date(base) : new Date();
+  }
+
+  function buildDateTimeFromBase(baseValue, offsetDays = 3) {
+    const date = baseValue instanceof Date ? new Date(baseValue.getTime()) : new Date(baseValue);
+    if (Number.isNaN(date.getTime())) return "";
+    date.setDate(date.getDate() + offsetDays);
+    return toLocalDateTimeInputValue(date);
+  }
+
+  function buildFollowupDateTime(orders = [], offsetDays = 3) {
+    return buildDateTimeFromBase(followupBaseDate(orders), offsetDays);
+  }
+
   function assignableSalesUsers() {
     return state.salesUsers.filter((user) => user.isActive !== false);
   }
@@ -273,7 +357,7 @@
     do_not_call: "negative", closed_won: "positive", purchased_via_ai: "positive",
   };
 
-  const NEEDS_NEXT = new Set(["no_answer", "busy", "call_back", "interested", "not_interested"]);
+  const NEEDS_NEXT = new Set(["no_answer", "busy", "call_back", "interested", "already_bought_elsewhere"]);
   const TERMINAL_OUTCOMES = new Set(["wrong_number", "do_not_call"]);
 
   // Outcomes shown in call form (sales can choose)
@@ -618,8 +702,16 @@
 
     try {
       const data = await api.get(`/api/telesales/leads/${leadId}`);
-      state.leadDetail = data;
-      state.callForm = { outcome: "", note: "", followupDays: 3 };
+      const orders = sortOrdersByTimestamp(data.orders || []);
+      state.leadDetail = {
+        ...data,
+        orders,
+      };
+      state.callForm = {
+        outcome: "",
+        note: "",
+        nextFollowupAt: buildFollowupDateTime(orders, 3),
+      };
       state.orderFormVisible = false;
 
       // Find the active checkpoint (from queue or from lead data)
@@ -629,7 +721,7 @@
         if (openCp) activeCheckpointId = openCp.id || openCp._id;
       }
 
-      renderLeadDetail(data, activeCheckpointId);
+      renderLeadDetail(state.leadDetail, activeCheckpointId);
     } catch (err) {
       panel.innerHTML = `<div class="ts-empty-small"><i class="fas fa-circle-exclamation"></i> ${esc(err.message)}</div>`;
     }
@@ -641,9 +733,12 @@
     if (!panel) return;
 
     const lead = data.lead || {};
-    const orders = data.orders || [];
+    const orders = sortOrdersByTimestamp(data.orders || []);
     const callLogs = data.callLogs || [];
     const latestOrder = orders[0];
+    const latestOrderAt = orderTimestamp(latestOrder);
+    const primaryAddress = leadAddress(lead, orders);
+    const primaryPhone = leadPhone(lead, orders);
 
     panel.innerHTML = `
       <div class="ts-detail-content ts-fade-in">
@@ -655,9 +750,27 @@
               <span class="ts-status-badge ${esc(lead.status || "active")}">${esc(lead.status || "active")}</span>
             </div>
             <div class="ts-lead-meta">
-              ${lead.phone ? `<span><i class="fas fa-phone"></i> <a href="tel:${esc(lead.phone)}">${esc(lead.phone)}</a></span>` : ""}
+              ${primaryPhone ? `<span><i class="fas fa-phone"></i> <a href="tel:${esc(primaryPhone)}">${esc(primaryPhone)}</a></span>` : ""}
               ${lead.platform ? `<span><i class="fas fa-${lead.platform === "line" ? "comment-dots" : "globe"}"></i> ${esc(lead.platform)}</span>` : ""}
-              ${lead.address || lead.shippingAddress ? `<span><i class="fas fa-map-marker-alt"></i> ${esc(lead.address || lead.shippingAddress || "")}</span>` : ""}
+              ${primaryAddress ? `<span><i class="fas fa-map-marker-alt"></i> ${esc(primaryAddress)}</span>` : ""}
+            </div>
+          </div>
+        </div>
+
+        <div class="ts-section">
+          <div class="ts-section-title"><i class="fas fa-id-card"></i> ข้อมูลลูกค้า</div>
+          <div class="ts-customer-grid">
+            <div class="ts-customer-stat">
+              <span class="label">ที่อยู่ล่าสุด</span>
+              <strong>${esc(primaryAddress || "-")}</strong>
+            </div>
+            <div class="ts-customer-stat">
+              <span class="label">จำนวนออเดอร์</span>
+              <strong>${orders.length}</strong>
+            </div>
+            <div class="ts-customer-stat">
+              <span class="label">สั่งล่าสุด</span>
+              <strong>${esc(latestOrderAt ? formatDateTime(latestOrderAt) : "-")}</strong>
             </div>
           </div>
         </div>
@@ -667,16 +780,47 @@
         <div class="ts-section">
           <div class="ts-section-title"><i class="fas fa-shopping-bag"></i> ออเดอร์ล่าสุด</div>
           <div class="ts-order-card">
-            <div class="ts-order-items">
-              ${(latestOrder.items || latestOrder.orderData?.items || []).map(it =>
-                `${esc(it.product || it.name)} x${it.quantity} ฿${money(it.price)}`
-              ).join("<br>")}
-              <span>${formatDate(latestOrder.createdAt || latestOrder.extractedAt)}</span>
+            <div class="ts-order-card-head">
+              <div class="ts-order-card-title">ออเดอร์ ${esc(orderReference(latestOrder, 0))}</div>
+              <div class="ts-order-card-date">${esc(formatDateTime(latestOrderAt))}</div>
             </div>
-            ${latestOrder.totalAmount || latestOrder.orderData?.totalAmount ? `<div class="ts-order-total">฿${money(latestOrder.totalAmount || latestOrder.orderData?.totalAmount)}</div>` : ""}
+            <div class="ts-order-items">
+              ${orderItems(latestOrder).map(it =>
+                `${esc(it.product || it.name)} x${it.quantity} ฿${money(it.price || 0)}`
+              ).join("<br>") || '<span>ไม่มีรายการสินค้า</span>'}
+            </div>
+            ${orderTotal(latestOrder) ? `<div class="ts-order-total">฿${money(orderTotal(latestOrder))}</div>` : ""}
           </div>
         </div>
         ` : ""}
+
+        <div class="ts-section">
+          <div class="ts-section-title"><i class="fas fa-box-archive"></i> ออเดอร์ทั้งหมด</div>
+          ${orders.length > 0 ? `
+            <div class="ts-order-history">
+              ${orders.map((order, index) => `
+                <div class="ts-order-history-card">
+                  <div class="ts-order-history-head">
+                    <div>
+                      <div class="ts-order-history-title">ออเดอร์ ${esc(orderReference(order, index))}</div>
+                      <div class="ts-order-history-date">${esc(formatDateTime(orderTimestamp(order)))}</div>
+                    </div>
+                    <div class="ts-order-total">฿${money(orderTotal(order))}</div>
+                  </div>
+                  <div class="ts-order-history-body">
+                    ${orderItems(order).map((item) => `
+                      <div class="ts-order-history-item">
+                        <span>${esc(item.product || item.name || "-")}</span>
+                        <span>x${esc(item.quantity || 0)} / ฿${money(item.price || 0)}</span>
+                      </div>
+                    `).join("") || '<div class="ts-text-muted">ไม่มีรายการสินค้า</div>'}
+                  </div>
+                  ${orderAddress(order) ? `<div class="ts-order-history-address"><i class="fas fa-location-dot"></i> ${esc(orderAddress(order))}</div>` : ""}
+                </div>
+              `).join("")}
+            </div>
+          ` : '<div class="ts-empty-small">ยังไม่มีออเดอร์</div>'}
+        </div>
 
         <!-- Timeline -->
         <div class="ts-section">
@@ -700,42 +844,56 @@
         </div>
 
         <!-- Call form -->
-        ${checkpointId && lead.status === "active" ? renderCallForm(checkpointId, lead) : ""}
+        ${lead.status === "active" ? renderCallForm(checkpointId, lead, orders) : ""}
       </div>
     `;
 
     // Bind call form events
-    if (checkpointId && lead.status === "active") {
-      bindCallFormEvents(checkpointId, lead);
+    if (lead.status === "active") {
+      bindCallFormEvents(checkpointId, lead, orders);
     }
   }
 
   /* ---------- Call Form ---------- */
-  function renderCallForm(checkpointId, lead) {
+  function renderCallForm(checkpointId, lead, orders) {
+    const baseDate = followupBaseDate(orders);
+    const manualMode = !checkpointId;
     return `
       <div class="ts-section">
         <div class="ts-call-form" id="tsCallForm">
-          <div class="ts-call-form-title"><i class="fas fa-phone-flip"></i> บันทึกการโทร</div>
+          <div class="ts-call-form-title"><i class="fas fa-phone-flip"></i> ${manualMode ? "เพิ่ม Checkpoint หลังโทร" : "บันทึกการโทร"}</div>
+          ${manualMode ? `
+            <div class="ts-call-form-hint">
+              lead นี้ยังไม่มี checkpoint เปิดอยู่ คุณสามารถบันทึกผลโทรและนัดติดตามครั้งถัดไปได้จากตรงนี้
+            </div>
+          ` : ""}
           <div class="ts-outcome-grid" id="tsOutcomeGrid">
             ${CALL_OUTCOMES.map(o => {
               let cls = "ts-outcome-btn";
               if (TERMINAL_OUTCOMES.has(o)) cls += " terminal";
               return `<button class="${cls}" data-outcome="${o}"><i class="fas ${OUTCOME_ICONS[o]}"></i> ${OUTCOME_LABELS[o]}</button>`;
             }).join("")}
-            <button class="ts-outcome-btn closed-won" data-outcome="closed_won"><i class="fas fa-trophy"></i> ปิดการขาย</button>
+            ${manualMode ? "" : '<button class="ts-outcome-btn closed-won" data-outcome="closed_won"><i class="fas fa-trophy"></i> ปิดการขาย</button>'}
           </div>
           <div class="ts-call-fields">
             <textarea id="tsCallNote" placeholder="โน้ตการโทร (จำเป็น)" rows="2"></textarea>
             <div class="ts-followup-row" id="tsFollowupRow" style="display:none;">
-              <span>Follow-up อีก</span>
-              <input type="number" id="tsFollowupDays" value="3" min="1" max="365">
-              <span>วัน</span>
+              <div class="ts-followup-copy">
+                <span>Follow-up ครั้งถัดไป</span>
+                <small>อิงจากออเดอร์ล่าสุด ${esc(formatDateTime(baseDate))}</small>
+              </div>
+              <input type="datetime-local" id="tsNextFollowupAt" value="${esc(state.callForm.nextFollowupAt || buildFollowupDateTime(orders, 3))}">
+            </div>
+            <div class="ts-followup-presets" id="tsFollowupPresets" style="display:none;">
+              <button class="ts-followup-chip" data-followup-days="3">+3 วัน</button>
+              <button class="ts-followup-chip" data-followup-days="7">+7 วัน</button>
+              <button class="ts-followup-chip" data-followup-days="10">+10 วัน</button>
             </div>
           </div>
           <div id="tsOrderFormSlot"></div>
           <div class="ts-save-row">
             <button class="ts-btn ts-btn-save" id="tsSaveCallBtn" disabled>
-              <i class="fas fa-save"></i> บันทึก
+              <i class="fas fa-save"></i> ${manualMode ? "บันทึกและสร้าง Checkpoint" : "บันทึก"}
             </button>
           </div>
         </div>
@@ -743,11 +901,12 @@
     `;
   }
 
-  function bindCallFormEvents(checkpointId, lead) {
+  function bindCallFormEvents(checkpointId, lead, orders) {
     const grid = document.getElementById("tsOutcomeGrid");
     const noteEl = document.getElementById("tsCallNote");
     const followupRow = document.getElementById("tsFollowupRow");
-    const followupDays = document.getElementById("tsFollowupDays");
+    const nextFollowupInput = document.getElementById("tsNextFollowupAt");
+    const followupPresets = document.getElementById("tsFollowupPresets");
     const saveBtn = document.getElementById("tsSaveCallBtn");
     const orderSlot = document.getElementById("tsOrderFormSlot");
 
@@ -765,14 +924,16 @@
       // Show/hide followup row
       if (NEEDS_NEXT.has(outcome)) {
         followupRow.style.display = "flex";
+        followupPresets.style.display = "flex";
       } else {
         followupRow.style.display = "none";
+        followupPresets.style.display = "none";
       }
 
       // Show/hide order form
       if (outcome === "closed_won") {
         state.orderFormVisible = true;
-        orderSlot.innerHTML = renderOrderForm(lead);
+        orderSlot.innerHTML = renderOrderForm(lead, orders);
         bindOrderFormEvents();
       } else {
         state.orderFormVisible = false;
@@ -787,8 +948,18 @@
       updateSaveBtn();
     });
 
-    followupDays.addEventListener("input", () => {
-      state.callForm.followupDays = parseInt(followupDays.value) || 3;
+    nextFollowupInput?.addEventListener("input", () => {
+      state.callForm.nextFollowupAt = nextFollowupInput.value;
+    });
+
+    followupPresets?.querySelectorAll("[data-followup-days]").forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        const days = parseInt(btn.dataset.followupDays, 10) || 3;
+        const nextValue = buildFollowupDateTime(orders, days);
+        state.callForm.nextFollowupAt = nextValue;
+        if (nextFollowupInput) nextFollowupInput.value = nextValue;
+      });
     });
 
     function updateSaveBtn() {
@@ -803,11 +974,45 @@
       const outcome = state.callForm.outcome;
 
       if (outcome === "closed_won") {
-        await submitOrder(checkpointId, lead);
+        await submitOrder(checkpointId, lead, orders);
       } else {
-        await submitCallLog(checkpointId);
+        if (checkpointId) {
+          await submitCallLog(checkpointId);
+        } else {
+          await submitLeadCall(lead.id || lead._id);
+        }
       }
     });
+  }
+
+  function focusAfterQueueRefresh(previousLeadId) {
+    const nextItem = state.queueItems.find((item) => leadIdOf(item) !== previousLeadId);
+    if (nextItem) {
+      state.selectedLeadId = leadIdOf(nextItem);
+      loadLeadDetail(leadIdOf(nextItem), checkpointIdOf(nextItem));
+      return;
+    }
+
+    const currentItem = state.queueItems.find((item) => leadIdOf(item) === previousLeadId);
+    if (currentItem) {
+      state.selectedLeadId = previousLeadId;
+      loadLeadDetail(leadIdOf(currentItem), checkpointIdOf(currentItem));
+      return;
+    }
+
+    if (state.pendingSetupLeads.length > 0) {
+      const pendingLead = state.pendingSetupLeads.find((lead) => (lead.id || lead._id) !== previousLeadId) || state.pendingSetupLeads[0];
+      state.selectedLeadId = pendingLead.id || pendingLead._id;
+      loadLeadDetail(state.selectedLeadId);
+      return;
+    }
+
+    state.selectedLeadId = null;
+    document.getElementById("tsDetailPanel").innerHTML = `
+      <div class="ts-detail-placeholder">
+        <i class="fas fa-check-circle" style="color: var(--ts-success)"></i>
+        <p>โทรหมดแล้ว!</p>
+      </div>`;
   }
 
   /* ---------- Submit Call Log ---------- */
@@ -823,11 +1028,14 @@
       };
 
       if (NEEDS_NEXT.has(state.callForm.outcome)) {
-        const days = state.callForm.followupDays || 3;
-        const nextDate = new Date();
-        nextDate.setDate(nextDate.getDate() + days);
-        nextDate.setHours(9, 0, 0, 0);
-        body.nextCheckpointAt = nextDate.toISOString();
+        const nextCheckpointAt = new Date(state.callForm.nextFollowupAt || "");
+        if (Number.isNaN(nextCheckpointAt.getTime())) {
+          toast("กรุณาเลือกวันและเวลาสำหรับ follow-up ครั้งถัดไป", "warning");
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = '<i class="fas fa-save"></i> บันทึก';
+          return;
+        }
+        body.nextCheckpointAt = nextCheckpointAt.toISOString();
       }
 
       await api.post(`/api/telesales/checkpoints/${checkpointId}/log-call`, body);
@@ -835,19 +1043,7 @@
 
       // Refresh queue and detail
       await loadQueue();
-      // Auto-select next item or clear
-      const nextItem = state.queueItems.find(it => leadIdOf(it) !== state.selectedLeadId);
-      if (nextItem) {
-        state.selectedLeadId = leadIdOf(nextItem);
-        loadLeadDetail(leadIdOf(nextItem), checkpointIdOf(nextItem));
-      } else {
-        state.selectedLeadId = null;
-        document.getElementById("tsDetailPanel").innerHTML = `
-          <div class="ts-detail-placeholder">
-            <i class="fas fa-check-circle" style="color: var(--ts-success)"></i>
-            <p>โทรหมดแล้ว!</p>
-          </div>`;
-      }
+      focusAfterQueueRefresh(state.selectedLeadId);
       renderQueueList();
     } catch (err) {
       toast(err.message, "error");
@@ -856,8 +1052,46 @@
     }
   }
 
+  async function submitLeadCall(leadId) {
+    const saveBtn = document.getElementById("tsSaveCallBtn");
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังบันทึก...';
+
+    try {
+      const body = {
+        outcome: state.callForm.outcome,
+        note: state.callForm.note.trim(),
+      };
+
+      if (NEEDS_NEXT.has(state.callForm.outcome)) {
+        const nextCheckpointAt = new Date(state.callForm.nextFollowupAt || "");
+        if (Number.isNaN(nextCheckpointAt.getTime())) {
+          toast("กรุณาเลือกวันและเวลาสำหรับ follow-up ครั้งถัดไป", "warning");
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = '<i class="fas fa-save"></i> บันทึกและสร้าง Checkpoint';
+          return;
+        }
+        body.nextCheckpointAt = nextCheckpointAt.toISOString();
+      }
+
+      await api.post(`/api/telesales/leads/${leadId}/log-call`, body);
+      toast("บันทึกผลโทรและสร้าง checkpoint สำเร็จ");
+
+      await loadQueue();
+      focusAfterQueueRefresh(state.selectedLeadId);
+      renderQueueList();
+    } catch (err) {
+      toast(err.message, "error");
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<i class="fas fa-save"></i> บันทึกและสร้าง Checkpoint';
+    }
+  }
+
   /* ---------- Order Form (Inline) ---------- */
-  function renderOrderForm(lead) {
+  function renderOrderForm(lead, orders = []) {
+    const primaryPhone = leadPhone(lead, orders);
+    const primaryAddress = leadAddress(lead, orders);
+    const orderFollowupDefault = buildDateTimeFromBase(new Date(), 30);
     return `
       <div class="ts-order-form">
         <div class="ts-order-form-title"><i class="fas fa-trophy"></i> สร้างออเดอร์</div>
@@ -878,13 +1112,13 @@
           </div>
           <div class="ts-form-group">
             <label class="ts-label">เบอร์โทร</label>
-            <input class="ts-input" type="text" id="tsOrderPhone" value="${esc(lead.phone || "")}">
+            <input class="ts-input" type="text" id="tsOrderPhone" value="${esc(primaryPhone)}">
           </div>
         </div>
         <div class="ts-form-row single">
           <div class="ts-form-group">
             <label class="ts-label">ที่อยู่จัดส่ง</label>
-            <input class="ts-input" type="text" id="tsOrderAddress" value="${esc(lead.address || lead.shippingAddress || "")}">
+            <input class="ts-input" type="text" id="tsOrderAddress" value="${esc(primaryAddress)}">
           </div>
         </div>
         <div class="ts-form-row">
@@ -897,8 +1131,9 @@
             </select>
           </div>
           <div class="ts-form-group">
-            <label class="ts-label">Follow-up อีก (วัน)</label>
-            <input class="ts-input" type="number" id="tsOrderCycleDays" value="30" min="1">
+            <label class="ts-label">Follow-up ครั้งถัดไป</label>
+            <input class="ts-input" type="datetime-local" id="tsOrderNextFollowupAt" value="${esc(orderFollowupDefault)}">
+            <div class="ts-order-followup-hint">ระบบจะยึดจากเวลา create ออเดอร์ใหม่ แล้วนัดรอบถัดไปตามวันเวลานี้</div>
           </div>
         </div>
       </div>
@@ -925,7 +1160,7 @@
   }
 
   /* ---------- Submit Order ---------- */
-  async function submitOrder(checkpointId, lead) {
+  async function submitOrder(checkpointId, lead, orders = []) {
     const saveBtn = document.getElementById("tsSaveCallBtn");
     saveBtn.disabled = true;
     saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังสร้างออเดอร์...';
@@ -950,10 +1185,20 @@
 
       const totalAmount = items.reduce((s, i) => s + i.price * i.quantity, 0);
       const customerName = document.getElementById("tsOrderName")?.value?.trim() || lead.displayName || "";
-      const phone = document.getElementById("tsOrderPhone")?.value?.trim() || lead.phone || "";
-      const address = document.getElementById("tsOrderAddress")?.value?.trim() || "";
+      const phone = document.getElementById("tsOrderPhone")?.value?.trim() || leadPhone(lead, orders) || "";
+      const address = document.getElementById("tsOrderAddress")?.value?.trim() || leadAddress(lead, orders) || "";
       const payment = document.getElementById("tsOrderPayment")?.value || "เก็บเงินปลายทาง";
-      const cycleDays = parseInt(document.getElementById("tsOrderCycleDays")?.value) || 30;
+      const nextFollowupAtRaw = document.getElementById("tsOrderNextFollowupAt")?.value || "";
+      const nextFollowupAt = new Date(nextFollowupAtRaw);
+      if (Number.isNaN(nextFollowupAt.getTime())) {
+        toast("กรุณาเลือกวันและเวลาสำหรับ follow-up ครั้งถัดไป", "warning");
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="fas fa-save"></i> บันทึก';
+        return;
+      }
+      const orderBase = new Date();
+      const diffDays = Math.ceil((nextFollowupAt.getTime() - orderBase.getTime()) / 86400000);
+      const cycleDays = Math.max(1, diffDays);
 
       const body = {
         callNote: state.callForm.note.trim(),
@@ -961,6 +1206,7 @@
         notes: "เทเลเซลล์ปิดการขาย",
         teleSalesEnabled: true,
         teleSalesCycleDays: cycleDays,
+        nextCheckpointAt: nextFollowupAt.toISOString(),
         orderData: {
           items,
           totalAmount,
@@ -977,18 +1223,7 @@
 
       // Refresh
       await loadQueue();
-      const nextItem = state.queueItems.find(it => leadIdOf(it) !== state.selectedLeadId);
-      if (nextItem) {
-        state.selectedLeadId = leadIdOf(nextItem);
-        loadLeadDetail(leadIdOf(nextItem), checkpointIdOf(nextItem));
-      } else {
-        state.selectedLeadId = null;
-        document.getElementById("tsDetailPanel").innerHTML = `
-          <div class="ts-detail-placeholder">
-            <i class="fas fa-check-circle" style="color: var(--ts-success)"></i>
-            <p>โทรหมดแล้ว!</p>
-          </div>`;
-      }
+      focusAfterQueueRefresh(state.selectedLeadId);
       renderQueueList();
     } catch (err) {
       toast(err.message, "error");

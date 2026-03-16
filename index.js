@@ -15129,6 +15129,37 @@ app.post("/api/telesales/leads/:leadId/reopen", requireSalesManager, async (req,
   }
 });
 
+app.post("/api/telesales/leads/:leadId/log-call", async (req, res) => {
+  try {
+    const salesUserId = resolveActingSalesUserId(req);
+    if (!salesUserId) {
+      return res.status(401).json({ success: false, error: "กรุณาล็อกอินฝ่ายขายก่อน" });
+    }
+
+    const lead = await getTeleSalesLeadDocById(req.params.leadId);
+    if (!lead) {
+      return res.status(404).json({ success: false, error: "ไม่พบ lead" });
+    }
+
+    const salesUser = getSalesUserContext(req);
+    const isManager = isAdminAuthenticated(req) || salesUser?.role === "sales_manager";
+    if (!isManager && !canSalesUserAccessLead(lead, salesUserId)) {
+      return res.status(403).json({ success: false, error: "ไม่มีสิทธิ์จัดการ lead นี้" });
+    }
+
+    const result = await teleSalesService.logLeadCall({
+      leadId: req.params.leadId,
+      salesUserId,
+      outcome: req.body?.outcome,
+      note: req.body?.note,
+      nextCheckpointAt: req.body?.nextCheckpointAt,
+    });
+    res.json({ success: true, lead: result });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err?.message || "log lead call ไม่สำเร็จ" });
+  }
+});
+
 app.post("/api/telesales/checkpoints/:checkpointId/log-call", async (req, res) => {
   try {
     const salesUserId = resolveActingSalesUserId(req);
@@ -15253,6 +15284,7 @@ app.post("/api/telesales/checkpoints/:checkpointId/create-order", async (req, re
       salesUserId,
       note: callNote,
       order: createdOrder,
+      nextCheckpointAt: req.body?.nextCheckpointAt,
     });
 
     triggerOrderNotification(orderId);
