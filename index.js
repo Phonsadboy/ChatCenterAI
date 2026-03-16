@@ -27518,7 +27518,12 @@ app.get("/admin/chat/history/:userId", async (req, res) => {
 // Send message as admin (AI assistant)
 app.post("/admin/chat/send", async (req, res) => {
   try {
-    const { userId, message } = req.body;
+    const {
+      userId,
+      message,
+      platform: requestedPlatform,
+      botId: requestedBotId,
+    } = req.body || {};
 
     if (!userId || !message) {
       return res.json({ success: false, error: "ข้อมูลไม่ครบถ้วน" });
@@ -27527,10 +27532,27 @@ app.post("/admin/chat/send", async (req, res) => {
     // ตรวจจับคำสั่งควบคุมจากแอดมิน
     const trimmed = String(message).trim();
 
-    // Determine platform and bot from latest chat
-    const lastChat = await getChatRepository().getLatestContext(userId);
-    const platform = lastChat?.platform || "line";
-    const botId = lastChat?.botId || null;
+    const normalizedRequestedPlatform = normalizeChatPlatform(
+      requestedPlatform,
+      "",
+    );
+    const normalizedRequestedBotId =
+      typeof requestedBotId === "string"
+        ? requestedBotId.trim()
+        : requestedBotId
+          ? String(requestedBotId).trim()
+          : "";
+
+    let lastChat = null;
+    if (!normalizedRequestedPlatform || !normalizedRequestedBotId) {
+      // Fallback สำหรับ client เก่าที่ไม่ได้ส่ง context ของแชทปัจจุบันขึ้นมา
+      lastChat = await getChatRepository().getLatestContext(userId);
+    }
+
+    const platform =
+      normalizedRequestedPlatform ||
+      normalizeChatPlatform(lastChat?.platform || "line");
+    const botId = normalizedRequestedBotId || lastChat?.botId || null;
 
     // ดึงข้อมูล bot เพื่อตรวจสอบ keyword settings
     let contextBot = null;
