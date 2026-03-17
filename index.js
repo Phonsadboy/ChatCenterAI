@@ -15378,8 +15378,8 @@ function normalizeAssetKey(value) {
   return normalized || null;
 }
 
-function addAssetToLookup(map, asset) {
-  if (!map || !asset || typeof asset !== "object") return;
+function collectAssetLookupCandidates(asset) {
+  if (!asset || typeof asset !== "object") return new Map();
   const candidates = new Map();
   const register = (text, prefer = false) => {
     if (!text || typeof text !== "string") return;
@@ -15409,6 +15409,13 @@ function addAssetToLookup(map, asset) {
       register(tag);
     }
   }
+
+  return candidates;
+}
+
+function addAssetToLookup(map, asset) {
+  if (!map || !asset || typeof asset !== "object") return;
+  const candidates = collectAssetLookupCandidates(asset);
 
   for (const [key, prefer] of candidates.entries()) {
     if (prefer || !map[key]) {
@@ -15450,6 +15457,131 @@ function findAssetInLookup(map, query) {
   return null;
 }
 
+function simplifyAssetLookupKey(value) {
+  const normalized = normalizeAssetKey(value);
+  if (!normalized) return null;
+  const simplified = normalized
+    .replace(/\b\d+\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return simplified || null;
+}
+
+function tokenizeAssetLookupKey(value) {
+  const normalized = normalizeAssetKey(value);
+  if (!normalized) return [];
+  return normalized.split(" ").filter(Boolean);
+}
+
+function scoreApproxAssetCandidate(query, candidate) {
+  const normalizedQuery = normalizeAssetKey(query);
+  const normalizedCandidate = normalizeAssetKey(candidate);
+  if (!normalizedQuery || !normalizedCandidate) return Number.NEGATIVE_INFINITY;
+  if (!/[\p{L}\p{N}]/u.test(normalizedQuery)) return Number.NEGATIVE_INFINITY;
+
+  if (normalizedQuery === normalizedCandidate) return 1;
+
+  const simplifiedQuery = simplifyAssetLookupKey(normalizedQuery);
+  const simplifiedCandidate = simplifyAssetLookupKey(normalizedCandidate);
+  if (
+    simplifiedQuery &&
+    simplifiedCandidate &&
+    simplifiedQuery.length >= 5 &&
+    simplifiedQuery === simplifiedCandidate
+  ) {
+    return 0.96;
+  }
+
+  if (
+    normalizedQuery.length >= 5 &&
+    normalizedCandidate.length >= 5 &&
+    (normalizedCandidate.includes(normalizedQuery)
+      || normalizedQuery.includes(normalizedCandidate))
+  ) {
+    const lengthDelta = Math.abs(
+      normalizedCandidate.length - normalizedQuery.length,
+    );
+    return Math.max(0.86, 0.92 - lengthDelta * 0.01);
+  }
+
+  const queryTokens = tokenizeAssetLookupKey(normalizedQuery);
+  const candidateTokens = tokenizeAssetLookupKey(normalizedCandidate);
+  if (queryTokens.length === 0 || candidateTokens.length === 0) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const queryTokenSet = new Set(queryTokens);
+  const candidateTokenSet = new Set(candidateTokens);
+  let shared = 0;
+  for (const token of queryTokenSet) {
+    if (candidateTokenSet.has(token)) shared += 1;
+  }
+  if (shared === 0) return Number.NEGATIVE_INFINITY;
+
+  const tokenCoverage = shared / Math.max(queryTokenSet.size, candidateTokenSet.size);
+  const exactTokenCoverage = shared / queryTokenSet.size;
+  let score = tokenCoverage * 0.75 + exactTokenCoverage * 0.2;
+
+  if (shared === queryTokenSet.size || shared === candidateTokenSet.size) {
+    score += 0.05;
+  }
+
+  return score;
+}
+
+function findApproxAssetInLookup(map, query) {
+  if (!map || !query || typeof query !== "string") return null;
+  const normalizedQuery = normalizeAssetKey(query);
+  if (!normalizedQuery || normalizedQuery.length < 4) return null;
+  if (!/[\p{L}\p{N}]/u.test(normalizedQuery)) return null;
+
+  const seenAssets = new Set();
+  const ranked = [];
+
+  for (const value of Object.values(map)) {
+    const asset = value && typeof value === "object" ? value : null;
+    if (!asset) continue;
+    const stableKey =
+      asset.assetId
+      || asset.pgAssetId
+      || asset._id
+      || asset.storageKey
+      || asset.fileName
+      || asset.url;
+    if (!stableKey || seenAssets.has(stableKey)) continue;
+    seenAssets.add(stableKey);
+
+    const candidates = collectAssetLookupCandidates(asset);
+    let bestScore = Number.NEGATIVE_INFINITY;
+    let bestLabel = null;
+
+    for (const candidate of candidates.keys()) {
+      const score = scoreApproxAssetCandidate(normalizedQuery, candidate);
+      if (score > bestScore) {
+        bestScore = score;
+        bestLabel = candidate;
+      }
+    }
+
+    if (bestScore > Number.NEGATIVE_INFINITY && bestLabel) {
+      ranked.push({ asset, matchedLabel: bestLabel, score: bestScore });
+    }
+  }
+
+  if (ranked.length === 0) return null;
+
+  ranked.sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+  const second = ranked[1];
+  const hasStrongLead = !second || best.score - second.score >= 0.12;
+
+  if (best.score >= 0.92 || (best.score >= 0.84 && hasStrongLead)) {
+    return best;
+  }
+
+  return null;
+}
+
 async function getInstructionAssetsMap() {
   const assets = await getInstructionAssets();
   return buildAssetsLookup(assets);
@@ -15482,13 +15614,17 @@ async function getAssetsInstructionsText(selectedCollectionIds = null) {
   }
   const lines = [];
   lines.push(
-    'การแทรกรูปภาพในการตอบ: ใช้แท็ก #[IMAGE:<ชื่อรูปภาพ>] ในตำแหน่งที่ต้องการ เช่น ตัวอย่าง: "ยอดชำระ 500 บาท #[IMAGE:QR Code ชำระเงิน] ขอบคุณค่ะ" หรือ "นี่คือสินค้าของเรา #[IMAGE:สินค้า A] ราคา 199 บาท" ระบบจะแยกเป็นข้อความ-รูปภาพ-ข้อความโดยอัตโนมัติ',
+    'การแทรกรูปภาพในการตอบ: ใช้แท็ก #[IMAGE:<ชื่อรูปภาพ>] ในตำแหน่งที่ต้องการ ระบบจะแยกเป็นข้อความ-รูปภาพ-ข้อความให้อัตโนมัติ',
   );
-  lines.push("รายการรูปที่สามารถใช้ได้ (ชื่อรูปภาพ: คำอธิบาย):");
+  lines.push(
+    "กติกาสำคัญ: คัดลอกชื่อรูปจากรายการด้านล่างแบบตรงตัว 100% เท่านั้น ห้ามเดา ห้ามตัดเลข ห้ามเปลี่ยนคำ; ถ้าไม่แน่ใจให้ตอบเป็นข้อความอย่างเดียวและไม่ต้องใส่แท็กรูป",
+  );
+  lines.push("รายการรูปที่สามารถใช้ได้ (คัดลอกโทเคนนี้ไปใช้ได้ทันที):");
   for (const a of assets) {
     const label = a.label;
     const desc = a.description || a.alt || "";
-    lines.push(`- ${label}: ${desc}`);
+    const token = `#[IMAGE:${label}]`;
+    lines.push(desc ? `- ${token} | ${desc}` : `- ${token}`);
   }
   const result = lines.join("\n");
   runtimeAssetsTextCache.set(cacheKey, result);
@@ -15614,6 +15750,19 @@ function parseMessageSegmentsByImageTokens(message, assetsMap) {
       if (asset) {
         matchedLabel = candidate;
         break;
+      }
+    }
+    if (!asset) {
+      for (const candidate of candidates) {
+        const approxMatch = findApproxAssetInLookup(assetsMap, candidate);
+        if (approxMatch?.asset) {
+          asset = approxMatch.asset;
+          matchedLabel = approxMatch.matchedLabel || candidate;
+          console.warn(
+            `[Assets] Auto-resolved image token "${rawLabel}" -> "${asset.label || matchedLabel}" (score=${approxMatch.score.toFixed(2)})`,
+          );
+          break;
+        }
       }
     }
     if (asset) {
