@@ -2004,10 +2004,22 @@ async function getAIHistory(userId) {
     }
   };
 
+  const HUMAN_ADMIN_SOURCES = new Set(["admin_page", "admin_chat"]);
+
   const sanitized = items.map((ch) => {
+    const rawContent = sanitize(ch.role, ch.content);
+    // ถ้า assistant message มาจากแอดมินมนุษย์ (ไม่ใช่ AI) ให้ใส่ label
+    // เพื่อป้องกัน AI สับสนว่าเป็นข้อความที่ตัวเองส่ง
+    const isHumanAdmin =
+      ch.role === "assistant" &&
+      ch.source &&
+      HUMAN_ADMIN_SOURCES.has(ch.source);
+    const content = isHumanAdmin
+      ? `[แอดมินส่ง] ${rawContent}`
+      : rawContent;
     const msg = {
       role: ch.role,
-      content: sanitize(ch.role, ch.content),
+      content,
     };
     if (ch.tool_calls) msg.tool_calls = ch.tool_calls;
     if (ch.tool_call_id) msg.tool_call_id = ch.tool_call_id;
