@@ -2028,9 +2028,14 @@ async function getAIHistory(userId) {
   });
 
   // ลบข้อความว่างที่ไม่มีประโยชน์ต่อบริบท
-  return sanitized.filter(
-    (m) => m && typeof m.content === "string" && m.content.trim() !== "",
-  );
+  // (แต่คงข้อความ tool_calls และ tool result ไว้แม้ content จะว่าง)
+  return sanitized.filter((m) => {
+    if (!m) return false;
+    if (typeof m.content === "string" && m.content.trim() !== "") return true;
+    if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) return true;
+    if (m.role === "tool" && m.tool_call_id) return true;
+    return false;
+  });
 }
 
 // ฟังก์ชันสำหรับดึงข้อมูลโปรไฟล์จาก LINE API
@@ -2536,7 +2541,7 @@ async function saveToolInteraction(
   let assistantRes = { insertedId: null };
   if (toolCallMsg) {
     const assistantDoc = {
-      senderId: "bot",
+      senderId: userId,
       role: "assistant", // เก็บเป็น assistant เพื่อให้สอดคล้องกับ Role ของ OpenAI
       content: toolCallMsg.content || "", // ปกติจะเป็น null หรือ empty string สำหรับ tool call
       tool_calls: toolCallMsg.tool_calls, // เก็บ array ของการเรียก tool (สำคัญมาก)
@@ -2555,7 +2560,7 @@ async function saveToolInteraction(
   // เพื่อให้ AI เห็นผลลัพธ์ว่าทำสำเร็จหรือไม่ ได้ค่าอะไรกลับมา
   // นี่คือส่วนที่ AI จะเห็น Order ID ที่สร้างไป
   const toolDoc = {
-    senderId: "system",
+    senderId: userId,
     role: "tool", // Role เป็น tool ตามมาตรฐาน OpenAI
     content: toolResultMsg.content, // ผลลัพธ์ JSON string
     tool_call_id: toolResultMsg.tool_call_id, // link กับ call ข้างบน

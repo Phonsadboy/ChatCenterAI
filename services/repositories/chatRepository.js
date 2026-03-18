@@ -236,6 +236,9 @@ function createChatRepository({
           orderExtractionRoundId: messageDoc?.orderExtractionRoundId || null,
           orderExtractionMarkedAt: messageDoc?.orderExtractionMarkedAt || null,
           orderId: messageDoc?.orderId ? toLegacyId(messageDoc.orderId) : null,
+          tool_calls: messageDoc?.tool_calls || null,
+          tool_call_id: messageDoc?.tool_call_id || null,
+          tool_name: messageDoc?.name || null,
         }),
         messageDoc?.timestamp || new Date(),
       ],
@@ -266,6 +269,9 @@ function createChatRepository({
       orderExtractionRoundId: metadata.orderExtractionRoundId || null,
       orderExtractionMarkedAt: metadata.orderExtractionMarkedAt || null,
       orderId: metadata.orderId || null,
+      tool_calls: metadata.tool_calls || null,
+      tool_call_id: metadata.tool_call_id || null,
+      name: metadata.tool_name || null,
     };
   }
 
