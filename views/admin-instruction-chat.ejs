@@ -80,21 +80,30 @@
                     <div class="ic-model-selector" id="icModelSelector">
                         <button class="ic-model-pill" id="icModelBtn" title="เลือกโมเดล">
                             <span class="ic-model-dot"></span>
-                            <span id="icModelLabel">GPT-5.2</span>
+                            <span id="icModelLabel">GPT-5.4</span>
                             <i class="fas fa-chevron-down ic-model-chevron"></i>
                         </button>
                         <div class="ic-model-dropdown" id="icModelDropdown">
                             <div class="ic-dropdown-header">Model</div>
-                            <div class="ic-model-option active" data-model="gpt-5.2">
+                            <div class="ic-model-option active" data-model="gpt-5.4">
                                 <div class="ic-model-option-left">
                                     <div class="ic-model-option-icon star"><i class="fas fa-star"></i></div>
                                     <div>
-                                        <div class="ic-model-option-name">GPT-5.2</div>
-                                        <div class="ic-model-option-desc">ดีที่สุด — สมดุลระหว่างความเร็วและความแม่นยำ
+                                        <div class="ic-model-option-name">GPT-5.4</div>
+                                        <div class="ic-model-option-desc">เรือธงล่าสุดสำหรับ reasoning และงานแก้ instruction
                                         </div>
                                     </div>
                                 </div>
                                 <span class="ic-badge-recommended">แนะนำ</span>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.2">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon fast"><i class="fas fa-bolt"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.2</div>
+                                        <div class="ic-model-option-desc">ยังคงเร็วและแม่นยำ เหมาะกับงานทั่วไป</div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="ic-model-option" data-model="gpt-5.2-codex">
                                 <div class="ic-model-option-left">
@@ -128,9 +137,9 @@
                             <div class="ic-thinking-bar" id="icThinkingLevels">
                                 <button class="ic-think-btn" data-level="off">Off</button>
                                 <button class="ic-think-btn" data-level="low">Low</button>
-                                <button class="ic-think-btn" data-level="medium">Med</button>
+                                <button class="ic-think-btn active" data-level="medium">Med</button>
                                 <button class="ic-think-btn" data-level="high">High</button>
-                                <button class="ic-think-btn active" data-level="max">Max</button>
+                                <button class="ic-think-btn" data-level="max">Max</button>
                             </div>
                             <div class="ic-thinking-note" id="icThinkingNote"></div>
                         </div>
@@ -202,8 +211,8 @@
                         <div class="ic-input-info">
                             <span id="icStatusInfo" style="display:none;">
                                 <span class="ic-dot-live"></span>
-                                <span id="icStatusModel">GPT-5.2</span> ·
-                                Thinking: <span id="icStatusThinking">Max</span> ·
+                                <span id="icStatusModel">GPT-5.4</span> ·
+                                Thinking: <span id="icStatusThinking">Medium</span> ·
                                 <span id="icStatusTokens">0</span> tokens ·
                                 <span id="icStatusChanges">0</span> edits
                             </span>

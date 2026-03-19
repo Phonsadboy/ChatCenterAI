@@ -7,8 +7,11 @@
     "use strict";
 
     // ─── Config ─────────────────────────────────────────────────────────
+    const DEFAULT_MODEL = "gpt-5.4";
+    const DEFAULT_THINKING = "medium";
 
     const MODELS = {
+        "gpt-5.4": { label: "GPT-5.4", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
         "gpt-5.2": { label: "GPT-5.2", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
         "gpt-5.2-codex": { label: "GPT-5.2 Codex", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
         "gpt-5.1": { label: "GPT-5.1", efforts: ["off", "low", "medium", "high"], default: "medium" },
@@ -22,8 +25,8 @@
         selectedId: null,
         selectedName: "",
         sessionId: null,
-        model: "gpt-5.2",
-        thinking: "medium",
+        model: DEFAULT_MODEL,
+        thinking: DEFAULT_THINKING,
         history: [],
         totalTokens: 0,
         totalChanges: 0,
@@ -83,6 +86,7 @@
     async function init() {
         await loadInstructions();
         setupEventListeners();
+        syncModelSelectionUI();
         updateThinkingUI();
 
         // Desktop: sidebar visible by default
@@ -1303,6 +1307,35 @@
         return `ses_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 4)}`;
     }
 
+    function syncModelSelectionUI() {
+        dom.modelLabel.textContent = MODELS[state.model]?.label || state.model;
+        $$(".ic-model-option").forEach((opt) => {
+            opt.classList.toggle("active", opt.dataset.model === state.model);
+        });
+    }
+
+    function getSafeThinkingForModel(modelId, thinking) {
+        const modelConfig = MODELS[modelId] || MODELS[DEFAULT_MODEL];
+        if (modelConfig.efforts.includes(thinking)) return thinking;
+        if (modelConfig.efforts.includes(DEFAULT_THINKING)) return DEFAULT_THINKING;
+        return modelConfig.default;
+    }
+
+    function resetSessionPreferences() {
+        state.model = DEFAULT_MODEL;
+        state.thinking = DEFAULT_THINKING;
+        syncModelSelectionUI();
+        updateThinkingUI();
+    }
+
+    function applySessionPreferences(session = null) {
+        const sessionModel = typeof session?.model === "string" ? session.model : "";
+        state.model = MODELS[sessionModel] ? sessionModel : DEFAULT_MODEL;
+        state.thinking = getSafeThinkingForModel(state.model, session?.thinking);
+        syncModelSelectionUI();
+        updateThinkingUI();
+    }
+
     async function saveSession() {
         if (!state.sessionId || !state.selectedId) return;
         try {
@@ -1369,6 +1402,7 @@
                     state.history = latestSession.history;
                     state.totalTokens = latestSession.totalTokens || state.totalTokens;
                     state.totalChanges = latestSession.totalChanges || state.totalChanges;
+                    applySessionPreferences(latestSession);
 
                     if (contentEl && serverLastAssistant.content) {
                         contentEl.innerHTML = formatContent(serverLastAssistant.content);
@@ -1427,6 +1461,7 @@
         state.totalTokens = 0;
         state.totalChanges = 0;
         state.isUserNearBottom = true;
+        resetSessionPreferences();
 
         // Update UI
         dom.activeName.textContent = name || "Untitled";
@@ -1445,6 +1480,7 @@
             state.history = lastSession.history;
             state.totalTokens = lastSession.totalTokens || 0;
             state.totalChanges = lastSession.totalChanges || 0;
+            applySessionPreferences(lastSession);
 
             // Render old messages from history
             for (const msg of state.history) {
@@ -1652,9 +1688,7 @@
         $$(".ic-model-option").forEach(opt => {
             opt.addEventListener("click", () => {
                 state.model = opt.dataset.model;
-                dom.modelLabel.textContent = MODELS[state.model]?.label || state.model;
-                $$(".ic-model-option").forEach(o => o.classList.remove("active"));
-                opt.classList.add("active");
+                syncModelSelectionUI();
                 updateThinkingUI();
                 // Close dropdown
                 dom.modelDropdown.classList.remove("show");
