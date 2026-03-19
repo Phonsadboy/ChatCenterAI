@@ -24437,7 +24437,16 @@ GPT-5 เสีย reasoning tokens พยายาม reconcile คำสั่
 - shell tool: สั่ง command ผ่าน controlled interface
 - Verbosity control: ตั้ง verbosity=low ทั่วไป + high เฉพาะ code tools
 
-═══ GPT-5.2 (ล่าสุด) ═══
+═══ GPT-5.4 (ล่าสุด) ═══
+
+## GPT-5.4 — ความแตกต่างหลัก
+- รุ่น flagship สำหรับ complex reasoning, coding, และงาน professional ที่ต้องการคุณภาพสูง
+- ค่าเริ่มต้นใน InstructionAI: **medium**
+- รองรับ reasoning_effort: **none, low, medium, high, xhigh**
+- ราคาแพงกว่า GPT-5.2 จึงเหมาะกับงานที่ต้องการความแม่นยำหรือคุณภาพสูงจริง
+- ถ้าต้องการ latency ต่ำ ให้เริ่มที่ **none** หรือ **low** ก่อน แล้วค่อยเพิ่มเมื่อ eval แล้วจำเป็น
+
+═══ GPT-5.2 ═══
 
 ## GPT-5.2 — ความแตกต่างหลัก
 | จุด | GPT-5/5.1 | GPT-5.2 |
@@ -24923,6 +24932,7 @@ app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req
 
 // ─── InstructionAI Responses API Helpers ───
 const INSTRUCTION_REASONING_SUPPORT = {
+  "gpt-5.4": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "medium" },
   "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
   "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
   "gpt-5.1": { efforts: ["none", "low", "medium", "high"], default: "none" },
@@ -24943,7 +24953,7 @@ function resolveInstructionReasoningEffort(model, thinking) {
       : model;
   const modelConfig =
     INSTRUCTION_REASONING_SUPPORT[normalizedModelId] ||
-    INSTRUCTION_REASONING_SUPPORT["gpt-5.2"];
+    INSTRUCTION_REASONING_SUPPORT["gpt-5.4"];
   let effort = INSTRUCTION_THINKING_MAP[thinking] || modelConfig.default;
   if (!modelConfig.efforts.includes(effort)) effort = modelConfig.default;
   return effort;
@@ -25008,9 +25018,9 @@ function appendInstructionTurnToStatelessInput(input, options = {}) {
 
 async function requestInstructionFinalSummaryWithoutTools(openai, options = {}) {
   const {
-    model = "gpt-5.2",
+    model = "gpt-5.4",
     previousResponseId = null,
-    effort = "low",
+    effort = "medium",
     toolsUsed = [],
     stateful = true,
     conversationInput = [],
@@ -25087,9 +25097,9 @@ function sanitizeInstructionVersionNote(note) {
 
 async function generateInstructionVersionNoteWithModel(openai, options = {}) {
   const {
-    model = "gpt-5.2",
+    model = "gpt-5.4",
     previousResponseId = null,
-    effort = "low",
+    effort = "medium",
     toolsUsed = [],
     changes = [],
     finalContent = "",
@@ -25335,7 +25345,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     if (!shouldUsePostgresInstructionsV2()) {
       return sendPostgresMigrationPending(res, "Instruction AI chat state");
     }
-    const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], images } = req.body;
+    const { instructionId, message = "", model = "gpt-5.4", thinking = "medium", history = [], images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
     const normalizedInstructionRef = String(instructionId || "").trim();
 
@@ -25938,7 +25948,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     if (!shouldUsePostgresInstructionsV2()) {
       return sendPostgresMigrationPending(res, "Instruction AI chat state");
     }
-    const { instructionId, message = "", model = "gpt-5.2", thinking = "medium", history = [], sessionId: clientSessionId, images } = req.body;
+    const { instructionId, message = "", model = "gpt-5.4", thinking = "medium", history = [], sessionId: clientSessionId, images } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
     const normalizedInstructionRef = String(instructionId || "").trim();
 
@@ -29969,11 +29979,12 @@ app.post("/api/settings/filter", async (req, res) => {
 
 // ============================ OpenAI API Key Management ============================
 
-// Model pricing (USD per 1M tokens) - OpenAI Standard tier prices (Dec 2024)
+// Model pricing defaults (USD per 1M tokens) for internal usage reporting
 const OPENAI_MODEL_PRICING = {
   // GPT-5 series
   "gpt-5": { input: 1.25, output: 10.0 },
   "gpt-5.1": { input: 1.25, output: 10.0 },
+  "gpt-5.4": { input: 2.5, output: 15.0 },
   "gpt-5.2": { input: 1.75, output: 14.0 },
   "gpt-5.2-codex": { input: 1.75, output: 14.0 },
   "gpt-5-mini": { input: 0.25, output: 2.0 },
