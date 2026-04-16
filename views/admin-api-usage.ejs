@@ -24,19 +24,31 @@
             <div class="container-fluid py-4">
                 <!-- Page Header -->
                 <div class="page-header-row">
-                    <div>
+                    <div class="page-header-copy">
                         <h1 class="page-title mb-1">
                             <i class="fas fa-chart-line me-2 text-primary"></i>สถิติการใช้งาน API
                         </h1>
                         <p class="text-muted mb-0">วิเคราะห์การใช้งาน OpenAI API แบบ Real-time</p>
+                        <div class="active-date-chip" id="activeDateChip">
+                            <i class="fas fa-calendar-day"></i>
+                            <span id="activeDateText">7 วันที่ผ่านมา</span>
+                        </div>
                     </div>
                     <div class="header-actions">
-                        <select class="form-select" id="dateRangeSelect">
-                            <option value="today">วันนี้</option>
-                            <option value="7days" selected>7 วันที่ผ่านมา</option>
-                            <option value="30days">30 วันที่ผ่านมา</option>
-                            <option value="all">ทั้งหมด</option>
-                        </select>
+                        <div class="date-controls">
+                            <select class="form-select" id="dateRangeSelect">
+                                <option value="today">วันนี้</option>
+                                <option value="7days" selected>7 วันที่ผ่านมา</option>
+                                <option value="30days">30 วันที่ผ่านมา</option>
+                                <option value="all">ทั้งหมด</option>
+                                <option value="custom">เลือกวันที่</option>
+                            </select>
+                            <div class="custom-date-field" id="customDateField" hidden>
+                                <i class="fas fa-calendar-alt"></i>
+                                <label class="visually-hidden" for="customDateInput">เลือกวันที่</label>
+                                <input type="date" class="form-control" id="customDateInput">
+                            </div>
+                        </div>
                         <button class="btn btn-outline-secondary" id="refreshBtn" title="รีเฟรช">
                             <i class="fas fa-sync-alt"></i>
                         </button>

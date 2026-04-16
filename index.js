@@ -31219,19 +31219,33 @@ app.post("/api/openai-keys/:id/test", async (req, res) => {
 });
 
 // GET: Usage statistics summary
+function parseApiUsageDateInput(dateValue) {
+  if (typeof dateValue !== "string") {
+    return null;
+  }
+
+  const trimmedValue = dateValue.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmedValue)) {
+    const bangkokDate = moment.tz(trimmedValue, "YYYY-MM-DD", true, BANGKOK_TZ);
+    return bangkokDate.isValid() ? bangkokDate : null;
+  }
+
+  const parsedDate = moment(trimmedValue);
+  if (!parsedDate.isValid()) {
+    return null;
+  }
+
+  return parsedDate.tz(BANGKOK_TZ);
+}
+
 function parseApiUsageDateRange(startDateStr, endDateStr) {
   const now = getBangkokMoment();
-  let startMoment = startDateStr
-    ? moment(startDateStr).tz(BANGKOK_TZ)
-    : null;
-  let endMoment = endDateStr ? moment(endDateStr).tz(BANGKOK_TZ) : null;
-
-  if (!startMoment || !startMoment.isValid()) {
-    startMoment = null;
-  }
-  if (!endMoment || !endMoment.isValid()) {
-    endMoment = null;
-  }
+  let startMoment = parseApiUsageDateInput(startDateStr);
+  let endMoment = parseApiUsageDateInput(endDateStr);
 
   if (!startMoment && endMoment) {
     startMoment = endMoment.clone();

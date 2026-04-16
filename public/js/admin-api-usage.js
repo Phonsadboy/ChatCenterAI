@@ -25,16 +25,61 @@ const State = {
 };
 
 const THB_RATE = 33;
+const DEFAULT_DATE_RANGE = '7days';
+const VALID_DATE_RANGES = new Set(['today', '7days', '30days', 'all', 'custom']);
 
 // ==================== Initialization ====================
 document.addEventListener('DOMContentLoaded', function () {
+    initializeDateControls();
     initEventListeners();
     loadDashboardData();
 });
 
+function initializeDateControls() {
+    const rangeSelect = document.getElementById('dateRangeSelect');
+    const customDateInput = document.getElementById('customDateInput');
+    const todayValue = getBangkokTodayInputValue();
+    const urlParams = new URLSearchParams(window.location.search);
+    const requestedRange = urlParams.get('range');
+    const requestedDate = sanitizeDateInputValue(urlParams.get('date'));
+
+    customDateInput.max = todayValue;
+    customDateInput.value = requestedDate || todayValue;
+
+    if (VALID_DATE_RANGES.has(requestedRange)) {
+        rangeSelect.value = requestedRange;
+    } else if (requestedDate) {
+        rangeSelect.value = 'custom';
+    } else {
+        rangeSelect.value = DEFAULT_DATE_RANGE;
+    }
+
+    updateDateControlState();
+    syncDateStateToUrl();
+}
+
 function initEventListeners() {
+    const rangeSelect = document.getElementById('dateRangeSelect');
+    const customDateInput = document.getElementById('customDateInput');
+
     // Date range
-    document.getElementById('dateRangeSelect').addEventListener('change', loadDashboardData);
+    rangeSelect.addEventListener('change', function () {
+        if (this.value === 'custom' && !sanitizeDateInputValue(customDateInput.value)) {
+            customDateInput.value = getBangkokTodayInputValue();
+        }
+        updateDateControlState();
+        loadDashboardData();
+    });
+
+    customDateInput.addEventListener('change', function () {
+        const normalizedDate = sanitizeDateInputValue(this.value) || getBangkokTodayInputValue();
+        this.value = normalizedDate;
+        if (rangeSelect.value !== 'custom') {
+            rangeSelect.value = 'custom';
+        }
+        updateDateControlState();
+        loadDashboardData();
+    });
 
     // Refresh button
     document.getElementById('refreshBtn').addEventListener('click', function () {
@@ -82,6 +127,8 @@ async function loadDashboardData() {
         showLoadingState();
 
         const params = getDateParams();
+        syncDateStateToUrl();
+        updateActiveDateText();
         const response = await fetch('/api/openai-usage/summary?' + params);
         const data = await response.json();
 
@@ -106,6 +153,16 @@ async function loadDashboardData() {
 
 function getDateParams() {
     const range = document.getElementById('dateRangeSelect').value;
+    const customDate = sanitizeDateInputValue(document.getElementById('customDateInput').value);
+
+    if (range === 'custom') {
+        const selectedDate = customDate || getBangkokTodayInputValue();
+        const params = new URLSearchParams();
+        params.append('startDate', selectedDate);
+        params.append('endDate', selectedDate);
+        return params;
+    }
+
     const now = new Date();
     const endDate = new Date(now);
     endDate.setHours(23, 59, 59, 999);
@@ -131,6 +188,64 @@ function getDateParams() {
     if (startDate) params.append('startDate', startDate.toISOString());
     params.append('endDate', endDate.toISOString());
     return params;
+}
+
+function updateDateControlState() {
+    const isCustomRange = document.getElementById('dateRangeSelect').value === 'custom';
+    const customDateField = document.getElementById('customDateField');
+    const customDateInput = document.getElementById('customDateInput');
+
+    customDateField.hidden = !isCustomRange;
+    customDateInput.disabled = !isCustomRange;
+    updateActiveDateText();
+}
+
+function syncDateStateToUrl() {
+    const url = new URL(window.location.href);
+    const range = document.getElementById('dateRangeSelect').value;
+    const customDate = sanitizeDateInputValue(document.getElementById('customDateInput').value);
+
+    if (range && range !== DEFAULT_DATE_RANGE) {
+        url.searchParams.set('range', range);
+    } else {
+        url.searchParams.delete('range');
+    }
+
+    if (range === 'custom' && customDate) {
+        url.searchParams.set('date', customDate);
+    } else {
+        url.searchParams.delete('date');
+    }
+
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function updateActiveDateText() {
+    const activeDateText = document.getElementById('activeDateText');
+    if (!activeDateText) return;
+    activeDateText.textContent = getActiveDateLabel();
+}
+
+function getActiveDateLabel() {
+    const range = document.getElementById('dateRangeSelect').value;
+    const customDate = sanitizeDateInputValue(document.getElementById('customDateInput').value);
+
+    if (range === 'today') {
+        return 'ข้อมูลของวันนี้';
+    }
+    if (range === '7days') {
+        return 'ข้อมูลย้อนหลัง 7 วันรวมวันนี้';
+    }
+    if (range === '30days') {
+        return 'ข้อมูลย้อนหลัง 30 วันรวมวันนี้';
+    }
+    if (range === 'all') {
+        return 'ข้อมูลทั้งหมดที่มีในระบบ';
+    }
+    if (range === 'custom') {
+        return `ข้อมูลวันที่ ${formatSelectedDateLabel(customDate || getBangkokTodayInputValue())}`;
+    }
+    return 'ข้อมูลการใช้งาน API';
 }
 
 // ==================== Summary Cards ====================
@@ -891,7 +1006,7 @@ function exportToCSV() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `api-usage-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `api-usage-${getExportFileSuffix()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -926,6 +1041,58 @@ function closeExpandedPanel() {
 }
 
 // ==================== Utilities ====================
+function sanitizeDateInputValue(value) {
+    if (typeof value !== 'string') return '';
+    const trimmedValue = value.trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(trimmedValue) ? trimmedValue : '';
+}
+
+function getBangkokTodayInputValue() {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    });
+    const parts = formatter.formatToParts(new Date());
+    const partMap = {};
+    parts.forEach(part => {
+        partMap[part.type] = part.value;
+    });
+    return `${partMap.year}-${partMap.month}-${partMap.day}`;
+}
+
+function formatSelectedDateLabel(dateValue) {
+    const normalizedDate = sanitizeDateInputValue(dateValue);
+    if (!normalizedDate) {
+        return 'วันนี้';
+    }
+
+    const [year, month, day] = normalizedDate.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString('th-TH', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+    });
+}
+
+function getExportFileSuffix() {
+    const range = document.getElementById('dateRangeSelect').value;
+    const customDate = sanitizeDateInputValue(document.getElementById('customDateInput').value);
+
+    if (range === 'custom') {
+        return customDate || getBangkokTodayInputValue();
+    }
+    if (range === 'today') {
+        return getBangkokTodayInputValue();
+    }
+    if (range === 'all') {
+        return `all-${getBangkokTodayInputValue()}`;
+    }
+    return `${range}-${getBangkokTodayInputValue()}`;
+}
+
 function formatNumber(num) {
     return new Intl.NumberFormat('th-TH').format(num || 0);
 }

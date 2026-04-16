@@ -10,6 +10,12 @@
     gap: 1rem;
 }
 
+.page-header-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
 .page-title {
     font-size: 1.75rem;
     font-weight: 600;
@@ -21,10 +27,65 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    flex-wrap: wrap;
+}
+
+.date-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
 }
 
 .header-actions .form-select {
     width: 180px;
+}
+
+.active-date-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.75rem;
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.08) 100%);
+    border: 1px solid rgba(59, 130, 246, 0.16);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 600;
+    width: fit-content;
+}
+
+.active-date-chip i {
+    color: var(--primary);
+}
+
+.custom-date-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 220px;
+    padding: 0.45rem 0.75rem;
+    background: white;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.custom-date-field i {
+    color: var(--text-secondary);
+}
+
+.custom-date-field .form-control {
+    min-width: 0;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    padding: 0;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.custom-date-field .form-control:focus {
+    box-shadow: none;
 }
 
 /* Summary Cards Grid */
@@ -551,7 +612,18 @@
 
     .header-actions {
         width: 100%;
-        justify-content: space-between;
+        justify-content: flex-start;
+    }
+
+    .date-controls {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .header-actions .form-select,
+    .custom-date-field {
+        width: 100%;
     }
 
     .filters-section {
