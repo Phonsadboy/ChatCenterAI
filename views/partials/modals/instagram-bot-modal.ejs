@@ -98,13 +98,17 @@
                                             class="text-danger">*</span></label>
                                     <button type="button" class="btn btn-outline-secondary btn-sm ms-2"
                                         data-bs-toggle="collapse" data-bs-target="#instagramBotAiParams"
-                                        aria-expanded="false" aria-controls="instagramBotAiParams">
+                                        aria-expanded="false" aria-controls="instagramBotAiParams"
+                                        title="กดเพื่อปรับโหมด API/พารามิเตอร์; Responses API เป็นโหมดแนะนำสำหรับ tools + reasoning + state reuse ส่วน Chat Completions เป็นโหมด compatibility ที่ยังใช้ custom tools ได้">
                                         <i class="fas fa-cog"></i>
                                     </button>
                                 </div>
                                 <input type="text" class="form-control mt-1" id="instagramBotAiModel" name="aiModel"
-                                    list="instagramBotAiModelPresets" placeholder="เช่น gpt-5 หรือ openai/gpt-4.1" required>
+                                    list="instagramBotAiModelPresets" placeholder="เช่น gpt-5.4-mini หรือ openai/gpt-4.1" required>
                                 <datalist id="instagramBotAiModelPresets">
+                                    <option value="gpt-5.4"></option>
+                                    <option value="gpt-5.4-mini"></option>
+                                    <option value="gpt-5.4-nano"></option>
                                     <option value="gpt-5.2"></option>
                                     <option value="gpt-5.1"></option>
                                     <option value="gpt-5"></option>
@@ -114,18 +118,21 @@
                                     <option value="gpt-4.1"></option>
                                     <option value="gpt-4.1-mini"></option>
                                     <option value="gpt-4.1-nano"></option>
+                                    <option value="o4-mini"></option>
                                     <option value="gpt-4o"></option>
                                     <option value="gpt-4o-mini"></option>
                                 </datalist>
+                                <div class="form-text">เลือกรุ่นที่ใช้กับ Instagram Bot นี้ ระบบจะสลับ instructions ให้เหมาะกับ GPT-5/o-series และ GPT-4.1/4o อัตโนมัติ</div>
                                 <div class="collapse mt-2" id="instagramBotAiParams">
                                     <div class="p-3 border rounded bg-light">
                                         <div class="mb-3">
                                             <label for="instagramBotApiMode" class="form-label mb-1">API Mode</label>
                                             <select class="form-select form-select-sm" id="instagramBotApiMode"
                                                 name="apiMode">
-                                                <option value="responses">Responses API</option>
-                                                <option value="chat">Chat Completions API</option>
+                                                <option value="responses">Responses API (แนะนำ: tools, instructions, reasoning, state reuse)</option>
+                                                <option value="chat">Chat Completions API (compatibility: custom tools ได้, ไม่มี previous_response_id)</option>
                                             </select>
+                                            <div class="form-text">Responses เหมาะกับ flow หลักของระบบ; Chat ใช้เมื่ออยากคง behavior เดิมหรือ provider ยังไม่รองรับ Responses</div>
                                         </div>
                                         <div id="instagramBotResponsesParams">
                                             <div class="row g-2">
@@ -141,6 +148,7 @@
                                                         <option value="medium">medium</option>
                                                         <option value="high">high</option>
                                                     </select>
+                                                    <div class="form-text">ใช้เฉพาะ Responses; backend จะกรองค่าให้เข้ากับรุ่นที่เลือกอัตโนมัติ</div>
                                                 </div>
                                                 <div class="col-md-6 d-none" id="instagramBotReasoningNote">
                                                     <div class="alert alert-info py-2 px-3 small mb-0">

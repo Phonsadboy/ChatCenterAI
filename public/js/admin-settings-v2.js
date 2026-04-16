@@ -13,7 +13,11 @@ const BOT_LABELS = {
     instagram: 'Instagram',
     whatsapp: 'WhatsApp'
 };
+const DEFAULT_BOT_MODEL = 'gpt-5.4-mini';
 const BOT_MODEL_PRESETS = [
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.4-nano',
     'gpt-5.2',
     'gpt-5.1',
     'gpt-5',
@@ -23,6 +27,7 @@ const BOT_MODEL_PRESETS = [
     'gpt-4.1',
     'gpt-4.1-mini',
     'gpt-4.1-nano',
+    'o4-mini',
     'gpt-4o',
     'gpt-4o-mini'
 ];
@@ -284,7 +289,7 @@ function renderLineBots(bots) {
                     </div>
                 </div>
                 <div class="bot-subtext">
-                    Model: ${escapeHtml(bot.aiModel || 'gpt-5')}
+                    Model: ${escapeHtml(bot.aiModel || DEFAULT_BOT_MODEL)}
                     • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
                     • อัปเดต: ${formatBotUpdatedAt(bot.updatedAt)}
                 </div>
@@ -337,7 +342,7 @@ function renderFacebookBots(bots) {
                     </div>
                 </div>
                 <div class="bot-subtext">
-                    Model: ${escapeHtml(bot.aiModel || 'gpt-5')}
+                    Model: ${escapeHtml(bot.aiModel || DEFAULT_BOT_MODEL)}
                     • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
                     • Page: ${escapeHtml(bot.pageId || 'N/A')}
                 </div>
@@ -377,7 +382,7 @@ function renderInstagramBots(bots) {
                     </div>
                 </div>
                 <div class="bot-subtext">
-                    Model: ${escapeHtml(bot.aiModel || 'gpt-5')}
+                    Model: ${escapeHtml(bot.aiModel || DEFAULT_BOT_MODEL)}
                     • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
                     • IG ID: ${escapeHtml(bot.instagramUserId || bot.igUserId || bot.instagramBusinessAccountId || 'N/A')}
                 </div>
@@ -417,7 +422,7 @@ function renderWhatsAppBots(bots) {
                     </div>
                 </div>
                 <div class="bot-subtext">
-                    Model: ${escapeHtml(bot.aiModel || 'gpt-5')}
+                    Model: ${escapeHtml(bot.aiModel || DEFAULT_BOT_MODEL)}
                     • API: ${bot.aiConfig?.apiMode === 'chat' ? 'Chat' : 'Responses'}
                     • Phone ID: ${escapeHtml(bot.phoneNumberId || bot.whatsappPhoneNumberId || 'N/A')}
                 </div>
@@ -907,7 +912,7 @@ window.openEditInstagramBotModal = async function (id) {
         if (statusSelect) statusSelect.value = bot.status || 'active';
 
         const aiModelSelect = document.getElementById('instagramBotAiModel');
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel || 'gpt-5';
+        if (aiModelSelect) aiModelSelect.value = bot.aiModel || DEFAULT_BOT_MODEL;
 
         const defaultCheck = document.getElementById('instagramBotDefault');
         if (defaultCheck) defaultCheck.checked = !!bot.isDefault;
@@ -1052,7 +1057,7 @@ window.openEditWhatsAppBotModal = async function (id) {
         if (statusSelect) statusSelect.value = bot.status || 'active';
 
         const aiModelSelect = document.getElementById('whatsappBotAiModel');
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel || 'gpt-5';
+        if (aiModelSelect) aiModelSelect.value = bot.aiModel || DEFAULT_BOT_MODEL;
 
         const defaultCheck = document.getElementById('whatsappBotDefault');
         if (defaultCheck) defaultCheck.checked = !!bot.isDefault;
@@ -1816,7 +1821,7 @@ function buildInstructionInlineRow(bot, botType) {
     const collectionCount = Array.isArray(bot.selectedImageCollections) ? bot.selectedImageCollections.length : 0;
     const selectedCollectionValue = getSelectedImageCollectionValue(bot);
     const collectionOptions = buildImageCollectionOptions(selectedCollectionValue, collectionCount);
-    const selectedModel = String(bot.aiModel || 'gpt-5');
+    const selectedModel = String(bot.aiModel || DEFAULT_BOT_MODEL);
     const modelOptions = buildModelOptions(selectedModel);
 
     return `
@@ -1901,7 +1906,7 @@ function buildImageCollectionOptions(selectedValue, selectedCount = 0) {
 
 function buildModelOptions(selectedValue) {
     const options = [];
-    const normalizedSelectedValue = selectedValue || 'gpt-5';
+    const normalizedSelectedValue = selectedValue || DEFAULT_BOT_MODEL;
     const hasSelectedInPreset = BOT_MODEL_PRESETS.includes(normalizedSelectedValue);
 
     if (!hasSelectedInPreset && normalizedSelectedValue) {
@@ -2270,7 +2275,7 @@ async function saveBotModelSelection(botType, botId, modelId, select, previousVa
             throw new Error(botData?.error || 'โหลดข้อมูลบอทไม่สำเร็จ');
         }
 
-        botData.aiModel = modelId || 'gpt-5';
+        botData.aiModel = modelId || DEFAULT_BOT_MODEL;
         delete botData._id;
 
         const updateRes = await fetch(endpoint, {

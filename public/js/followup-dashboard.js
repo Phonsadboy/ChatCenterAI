@@ -49,13 +49,17 @@
     const modalInstance = el.modalRoot ? new bootstrap.Modal(el.modalRoot) : null;
 
     const MODEL_OPTIONS = [
-        { value: 'gpt-5-nano', label: 'GPT-5 Nano (ค่าเริ่มต้น - ประหยัดสุด)' },
-        { value: 'gpt-5-mini', label: 'GPT-5 Mini (แนะนำ)' },
+        { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (แนะนำ)' },
+        { value: 'gpt-5.4', label: 'GPT-5.4 (แม่นสุด)' },
+        { value: 'gpt-5.4-nano', label: 'GPT-5.4 Nano (ประหยัด)' },
+        { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
+        { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
         { value: 'gpt-5', label: 'GPT-5' },
-        { value: 'gpt-5-chat-latest', label: 'GPT-5 Chat Latest' },
         { value: 'gpt-4.1', label: 'GPT-4.1' },
         { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-        { value: 'o3', label: 'O3 (ทรงพลังสุด)' }
+        { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
+        { value: 'o4-mini', label: 'O4 Mini (reasoning คุ้มสุด)' },
+        { value: 'o3', label: 'O3 (reasoning ลึกสุด)' }
     ];
 
     const getDefaultPromptInstructions = () => {

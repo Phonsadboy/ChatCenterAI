@@ -10,6 +10,8 @@
 
     const MODELS = {
         "gpt-5.4": { label: "GPT-5.4", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
+        "gpt-5.4-mini": { label: "GPT-5.4 Mini", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
+        "gpt-5.4-nano": { label: "GPT-5.4 Nano", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
         "gpt-5.2": { label: "GPT-5.2", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
         "gpt-5.2-codex": { label: "GPT-5.2 Codex", efforts: ["off", "low", "medium", "high", "max"], default: "medium" },
         "gpt-5.1": { label: "GPT-5.1", efforts: ["off", "low", "medium", "high"], default: "medium" },

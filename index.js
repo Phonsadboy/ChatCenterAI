@@ -162,6 +162,8 @@ const BOT_COLLECTION_BY_PLATFORM = {
 
 const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
+const DEFAULT_ASSISTANT_MODEL = "gpt-5.4-mini";
+const DEFAULT_ORDER_EXTRACTION_MODEL = "gpt-5.4-nano";
 const runtimeConfig = getRuntimeConfig();
 const WEBHOOK_FORWARD_TIMEOUT_MS = Number(
   process.env.CCAI_WEBHOOK_FORWARD_TIMEOUT_MS || 4000,
@@ -2871,6 +2873,95 @@ const ORDER_PROMPT_JSON_SUFFIX = `ตอบเป็น JSON เท่านั�
   "confidence": 0.0-1.0,
   "reason": "เหตุผลสั้นๆ (หากไม่มีที่อยู่ให้สรุปว่าไม่มีออเดอร์)"
 }`;
+
+const ORDER_EXTRACTION_RESPONSE_SCHEMA = {
+  name: "order_extraction",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      hasOrder: { type: "boolean" },
+      orderData: {
+        type: ["object", "null"],
+        additionalProperties: false,
+        properties: {
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                product: { type: "string" },
+                quantity: { type: "number" },
+                price: { type: "number" },
+                shippingName: { type: ["string", "null"] },
+                color: { type: ["string", "null"] },
+                width: { type: ["number", "null"] },
+                length: { type: ["number", "null"] },
+                height: { type: ["number", "null"] },
+                weight: { type: ["number", "null"] },
+              },
+              required: [
+                "product",
+                "quantity",
+                "price",
+                "shippingName",
+                "color",
+                "width",
+                "length",
+                "height",
+                "weight",
+              ],
+            },
+          },
+          totalAmount: { type: ["number", "null"] },
+          shippingAddress: { type: ["string", "null"] },
+          phone: { type: ["string", "null"] },
+          email: { type: ["string", "null"] },
+          paymentMethod: { type: ["string", "null"] },
+          shippingCost: { type: ["number", "null"] },
+          customerName: { type: ["string", "null"] },
+          recipientName: { type: ["string", "null"] },
+          addressSubDistrict: { type: ["string", "null"] },
+          addressDistrict: { type: ["string", "null"] },
+          addressProvince: { type: ["string", "null"] },
+          addressPostalCode: { type: ["string", "null"] },
+          transferDate: { type: ["string", "null"] },
+          transferTime: { type: ["string", "null"] },
+          paymentReceiver: { type: ["string", "null"] },
+          notes: { type: ["string", "null"] },
+        },
+        required: [
+          "items",
+          "totalAmount",
+          "shippingAddress",
+          "phone",
+          "email",
+          "paymentMethod",
+          "shippingCost",
+          "customerName",
+          "recipientName",
+          "addressSubDistrict",
+          "addressDistrict",
+          "addressProvince",
+          "addressPostalCode",
+          "transferDate",
+          "transferTime",
+          "paymentReceiver",
+          "notes",
+        ],
+      },
+      confidence: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+      },
+      reason: { type: "string" },
+    },
+    required: ["hasOrder", "orderData", "confidence", "reason"],
+  },
+};
 
 function normalizeFollowUpBotId(botId) {
   if (!botId) return null;
@@ -5585,7 +5676,7 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
     modelOverride ||
     pageSettingsData.orderModel ||
     pageSettingsData.model ||
-    (await getSettingValue("orderModel", "gpt-4.1-nano"));
+    (await getSettingValue("orderModel", DEFAULT_ORDER_EXTRACTION_MODEL));
 
   const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
   if (!apiKeyToUse.apiKey) {
@@ -5614,7 +5705,7 @@ async function analyzeOrderFromChat(userId, messages, options = {}) {
   } else {
     promptBody = (await getOrderPromptBody(platform, botId)).trim();
   }
-  const systemPrompt = `${promptBody}\n\n${ORDER_PROMPT_JSON_SUFFIX}`;
+  const fallbackPrompt = `${promptBody}\n\n${ORDER_PROMPT_JSON_SUFFIX}`;
 
   // ดึงรายการสินค้าที่เคยสกัดไว้ในระบบ เพื่อให้ AI ใช้ชื่อเดียวกัน
   const existingProducts = await getExistingProductNames({ platform, botId, limit: 30 });
@@ -5653,31 +5744,52 @@ ${existingProducts.map((p, i) => `${i + 1}. "${p}"`).join("\n")}
   const userPrompt = `${productMatchingHint}${previousContextText}บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์และสกัดข้อมูลออเดอร์:`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: resolvedOrderModel.model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.1, // ลดความสุ่มเพื่อความแม่นยำ
-    });
-
-    const content = response.choices?.[0]?.message?.content || "";
-    const trimmed = content.trim();
     let parsed = null;
+    const isOpenAIProvider =
+      normalizeProvider(apiKeyToUse.provider) === LLM_PROVIDER_OPENAI;
 
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch (_) {
-      // พยายามดึง JSON จากข้อความที่มีคำอื่นปะปน
-      const match = trimmed.match(/\{[\s\S]*\}/);
-      if (match) {
-        parsed = JSON.parse(match[0]);
+    if (isOpenAIProvider) {
+      const response = await openai.responses.create({
+        model: resolvedOrderModel.model,
+        instructions: promptBody,
+        input: userPrompt,
+        text: {
+          format: {
+            type: "json_schema",
+            ...ORDER_EXTRACTION_RESPONSE_SCHEMA,
+          },
+        },
+      });
+
+      const content = extractInstructionResponseText(response).trim();
+      if (content) {
+        parsed = JSON.parse(content);
+      }
+    } else {
+      const response = await openai.chat.completions.create({
+        model: resolvedOrderModel.model,
+        messages: [
+          buildChatInstructionMessage(resolvedOrderModel.model, fallbackPrompt),
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.1,
+      });
+
+      const content = response.choices?.[0]?.message?.content || "";
+      const trimmed = content.trim();
+
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch (_) {
+        const match = trimmed.match(/\{[\s\S]*\}/);
+        if (match) {
+          parsed = JSON.parse(match[0]);
+        }
       }
     }
 
     if (!parsed || typeof parsed.hasOrder === "undefined") {
-      console.warn("[Order] รูปแบบคำตอบไม่ถูกต้อง:", trimmed);
+      console.warn("[Order] รูปแบบคำตอบไม่ถูกต้อง");
       return null;
     }
 
@@ -9688,11 +9800,10 @@ async function processCommentWithAI(commentText, systemPrompt, aiModel, botId = 
       return "";
     }
     const messages = [
-      {
-        role: "system",
-        content:
-          systemPrompt || "คุณคือผู้ช่วยตอบคอมเมนต์ Facebook อย่างเป็นมิตร",
-      },
+      buildChatInstructionMessage(
+        resolvedCommentModel.model,
+        systemPrompt || "คุณคือผู้ช่วยตอบคอมเมนต์ Facebook อย่างเป็นมิตร",
+      ),
       { role: "user", content: commentText },
     ];
 
@@ -12198,117 +12309,398 @@ async function fetchBotAiConfig(botId, platform) {
   }
 }
 
-// ฟังก์ชันสำหรับจัดการข้อความอย่างเดียว (ไม่มีรูปภาพ)
-async function getAssistantResponseTextOnly(
-  systemInstructions,
-  history,
-  userText,
-  aiModel = null,
-  botId = null,
-  platform = null,
-  userId = null
-) {
-  try {
-    // Get per-bot API key or fallback to default
-    const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
-    if (!apiKeyToUse.apiKey) {
-      console.warn("[OpenAI Text] No API key available");
-      return "";
+const COMMERCE_MAX_TOOL_LOOPS = 5;
+
+function normalizeModelIdentifier(modelId) {
+  const rawModel = typeof modelId === "string" ? modelId.trim() : "";
+  if (!rawModel) return "";
+  const slashIndex = rawModel.indexOf("/");
+  const normalized = slashIndex === -1
+    ? rawModel
+    : rawModel.slice(slashIndex + 1).trim();
+  return normalized.toLowerCase();
+}
+
+function modelSupportsResponsesApi(modelId) {
+  const normalized = normalizeModelIdentifier(modelId);
+  if (!normalized || normalized.includes("chat-latest")) return false;
+  return (
+    normalized.startsWith("gpt-4.1") ||
+    normalized.startsWith("gpt-4o") ||
+    normalized.startsWith("gpt-5") ||
+    normalized.startsWith("o1") ||
+    normalized.startsWith("o3") ||
+    normalized.startsWith("o4")
+  );
+}
+
+function modelSupportsDeveloperInstructions(modelId) {
+  return modelSupportsResponsesApi(modelId);
+}
+
+function buildChatInstructionMessage(modelId, content) {
+  return {
+    role: modelSupportsDeveloperInstructions(modelId) ? "developer" : "system",
+    content,
+  };
+}
+
+function getResponsesReasoningSupport(modelId) {
+  const normalized = normalizeModelIdentifier(modelId);
+  if (
+    normalized === "gpt-5.4" ||
+    normalized === "gpt-5.4-mini" ||
+    normalized === "gpt-5.4-nano" ||
+    normalized === "gpt-5.2" ||
+    normalized === "gpt-5.2-codex"
+  ) {
+    return {
+      allowed: ["none", "low", "medium", "high", "xhigh"],
+      defaultEffort: "medium",
+    };
+  }
+  if (normalized === "gpt-5.1") {
+    return {
+      allowed: ["none", "low", "medium", "high"],
+      defaultEffort: "medium",
+    };
+  }
+  if (normalized === "gpt-5") {
+    return {
+      allowed: ["minimal", "low", "medium", "high"],
+      defaultEffort: "medium",
+    };
+  }
+  if (
+    normalized === "gpt-5-mini" ||
+    normalized === "gpt-5-nano" ||
+    normalized.startsWith("o1") ||
+    normalized.startsWith("o3") ||
+    normalized.startsWith("o4")
+  ) {
+    return {
+      allowed: ["low", "medium", "high"],
+      defaultEffort: "medium",
+    };
+  }
+  if (normalized === "gpt-5-pro") {
+    return {
+      allowed: ["medium", "high", "xhigh"],
+      defaultEffort: "high",
+    };
+  }
+  return null;
+}
+
+function resolveResponsesReasoningConfig(modelId, requestedEffort) {
+  const effort =
+    typeof requestedEffort === "string" ? requestedEffort.trim() : "";
+  if (!effort) return null;
+
+  const support = getResponsesReasoningSupport(modelId);
+  if (!support) return null;
+  if (support.allowed.includes(effort)) {
+    return { effort };
+  }
+  return { effort: support.defaultEffort };
+}
+
+function shouldUseResponsesRuntime(provider, apiMode, modelId) {
+  if (apiMode === "chat") return false;
+  return (
+    normalizeProvider(provider) === LLM_PROVIDER_OPENAI &&
+    modelSupportsResponsesApi(modelId)
+  );
+}
+
+function normalizeHistoryMessageContent(content) {
+  if (typeof content === "string") {
+    const text = content.trim();
+    return text || null;
+  }
+  if (Array.isArray(content) && content.length > 0) {
+    return content;
+  }
+  return null;
+}
+
+function mapHistoryRoleForResponses(role, modelId) {
+  if (role === "system" && modelSupportsDeveloperInstructions(modelId)) {
+    return "developer";
+  }
+  return role;
+}
+
+function buildResponsesFunctionCallInput(toolCall) {
+  if (!toolCall || typeof toolCall !== "object") return null;
+  const callId = toolCall.call_id || toolCall.id || null;
+  const name =
+    typeof toolCall.name === "string"
+      ? toolCall.name
+      : typeof toolCall.function?.name === "string"
+        ? toolCall.function.name
+        : "";
+  if (!callId || !name) return null;
+  const rawArguments =
+    typeof toolCall.arguments === "string"
+      ? toolCall.arguments
+      : typeof toolCall.function?.arguments === "string"
+        ? toolCall.function.arguments
+        : JSON.stringify(toolCall.arguments || toolCall.function?.arguments || {});
+  return {
+    type: "function_call",
+    call_id: callId,
+    name,
+    arguments: rawArguments,
+  };
+}
+
+function mapStoredHistoryToResponsesInput(history, modelId) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  const mapped = [];
+
+  for (const msg of safeHistory) {
+    if (!msg || typeof msg !== "object") continue;
+
+    if (
+      msg.role === "assistant" &&
+      Array.isArray(msg.tool_calls) &&
+      msg.tool_calls.length > 0
+    ) {
+      const assistantContent = normalizeHistoryMessageContent(msg.content);
+      if (assistantContent) {
+        mapped.push({ role: "assistant", content: assistantContent });
+      }
+      for (const toolCall of msg.tool_calls) {
+        const input = buildResponsesFunctionCallInput(toolCall);
+        if (input) mapped.push(input);
+      }
+      continue;
     }
-    const openai = buildLLMClientFromKey(apiKeyToUse);
-    if (!openai) {
-      console.warn("[OpenAI Text] Cannot create client for selected provider");
-      return "";
+
+    if (msg.role === "tool" && msg.tool_call_id) {
+      mapped.push({
+        type: "function_call_output",
+        call_id: msg.tool_call_id,
+        output:
+          typeof msg.content === "string"
+            ? msg.content
+            : JSON.stringify(msg.content || {}),
+      });
+      continue;
     }
 
-    console.log(
-      `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (ข้อความอย่างเดียว)...`,
-    );
-
-    const toolSystemInstructions =
-      await appendOrderToolInstructions(systemInstructions);
-    let messages = [
-      { role: "system", content: toolSystemInstructions },
-      ...history,
-      { role: "user", content: userText },
-    ];
-
-    console.log(`[LOG] ส่งคำขอไปยัง OpenAI API (ข้อความ)...`);
-
-    // ใช้โมเดลที่ส่งมา หรือ fallback ไปใช้ global setting
-    const textModel = aiModel || (await getSettingValue("textModel", "gpt-5"));
-    const resolvedTextModel = resolveModelForProvider(
-      textModel,
-      apiKeyToUse.provider,
-    );
-    if (!resolvedTextModel.ok) {
-      console.warn(`[OpenAI Text] ${resolvedTextModel.error}`);
-      return "ขออภัย โมเดลที่เลือกไม่รองรับกับผู้ให้บริการ API key ปัจจุบัน";
+    if (!["system", "developer", "user", "assistant"].includes(msg.role)) {
+      continue;
     }
-    const botAiConfig = await fetchBotAiConfig(botId, platform);
-    const apiMode = botAiConfig.apiMode === "chat" ? "chat" : "responses";
+    const content = normalizeHistoryMessageContent(msg.content);
+    if (!content) continue;
+    mapped.push({
+      role: mapHistoryRoleForResponses(msg.role, modelId),
+      content,
+    });
+  }
 
-    // Define Tools
-    const tools = [
-      {
-        type: "function",
-        function: {
-          name: "get_categories",
-          description: "Get list of all available product categories. Use this first to know which category to search in.",
-          parameters: { type: "object", properties: {} }
-        }
+  return mapped;
+}
+
+function appendResponsesTurnToInput(input, options = {}) {
+  if (!Array.isArray(input)) return;
+  const { assistantText = "", toolCalls = [], toolOutputs = [] } = options || {};
+
+  if (typeof assistantText === "string" && assistantText.trim()) {
+    input.push({ role: "assistant", content: assistantText.trim() });
+  }
+
+  for (const toolCall of Array.isArray(toolCalls) ? toolCalls : []) {
+    const mapped = buildResponsesFunctionCallInput(toolCall);
+    if (mapped) input.push(mapped);
+  }
+
+  if (Array.isArray(toolOutputs) && toolOutputs.length > 0) {
+    input.push(...toolOutputs);
+  }
+}
+
+function extractResponsesText(response) {
+  if (typeof response?.output_text === "string") {
+    return response.output_text;
+  }
+  const output = Array.isArray(response?.output) ? response.output : [];
+  let text = "";
+  for (const item of output) {
+    if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const part of item.content) {
+      if (part?.type === "output_text" && typeof part?.text === "string") {
+        text += part.text;
+      }
+    }
+  }
+  return text;
+}
+
+function extractResponsesFunctionCalls(response) {
+  const output = Array.isArray(response?.output) ? response.output : [];
+  return output.filter((item) =>
+    item?.type === "function_call" &&
+    typeof item?.name === "string" &&
+    typeof item?.call_id === "string"
+  );
+}
+
+function createUsageAccumulator() {
+  return {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    cached_prompt_tokens: 0,
+    reasoning_tokens: 0,
+    total_tokens: 0,
+  };
+}
+
+function mapResponsesUsage(usage) {
+  const promptTokens = usage?.input_tokens || 0;
+  const completionTokens = usage?.output_tokens || 0;
+  const cachedPromptTokens = usage?.input_tokens_details?.cached_tokens || 0;
+  const reasoningTokens = usage?.output_tokens_details?.reasoning_tokens || 0;
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    cached_prompt_tokens: cachedPromptTokens,
+    reasoning_tokens: reasoningTokens,
+    total_tokens: usage?.total_tokens || (promptTokens + completionTokens),
+  };
+}
+
+function mapChatUsage(usage) {
+  const promptTokens = usage?.prompt_tokens || 0;
+  const completionTokens = usage?.completion_tokens || 0;
+  const cachedPromptTokens = usage?.prompt_tokens_details?.cached_tokens || 0;
+  const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens || 0;
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    cached_prompt_tokens: cachedPromptTokens,
+    reasoning_tokens: reasoningTokens,
+    total_tokens: usage?.total_tokens || (promptTokens + completionTokens),
+  };
+}
+
+function addUsage(totalUsage, usage) {
+  if (!usage) return;
+  totalUsage.prompt_tokens += usage.prompt_tokens || 0;
+  totalUsage.completion_tokens += usage.completion_tokens || 0;
+  totalUsage.cached_prompt_tokens += usage.cached_prompt_tokens || 0;
+  totalUsage.reasoning_tokens += usage.reasoning_tokens || 0;
+  totalUsage.total_tokens += usage.total_tokens || 0;
+}
+
+function buildUsageSummaryText(usage, options = {}) {
+  const imageCount = Number(options.imageCount) || 0;
+  const cachedText =
+    usage.cached_prompt_tokens > 0
+      ? `, ${usage.cached_prompt_tokens} cached`
+      : "";
+  const imageText = imageCount > 0 ? ` (มีรูปภาพ ${imageCount} รูป)` : "";
+  return `\n\n📊 Token Usage: ${usage.prompt_tokens} input${cachedText} + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens${imageText}`;
+}
+
+function trimAssistantReplyArtifacts(text) {
+  let assistantReply =
+    typeof text === "string" ? text : JSON.stringify(text || "");
+  assistantReply = assistantReply.replace(/\[cut\]{2,}/g, "[cut]");
+  const cutList = assistantReply.split("[cut]");
+  if (cutList.length > 10) {
+    assistantReply = cutList.slice(0, 10).join("[cut]");
+  }
+  return assistantReply;
+}
+
+function mapChatToolsToResponses(tools) {
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .map((tool) => {
+      if (tool?.type === "function" && tool.function) {
+        return {
+          type: "function",
+          name: tool.function.name,
+          description: tool.function.description,
+          parameters: tool.function.parameters || { type: "object", properties: {} },
+        };
+      }
+      return tool;
+    })
+    .filter(Boolean);
+}
+
+function getCommerceToolDefinitions() {
+  return [
+    {
+      type: "function",
+      function: {
+        name: "get_categories",
+        description:
+          "Get list of all available product categories. Use this first to know which category to search in.",
+        parameters: { type: "object", properties: {} },
       },
-      {
-        type: "function",
-        function: {
-          name: "search_item_by_category",
-          description: "Search for items in a specific category using the first column (Main Key). Use this for specific searches like Model Name or ID.",
-          parameters: {
-            type: "object",
-            properties: {
-              category: { type: "string", description: "Category name (must be exact match from get_categories)" },
-              keyword: { type: "string", description: "Search keyword" }
+    },
+    {
+      type: "function",
+      function: {
+        name: "search_item_by_category",
+        description:
+          "Search for items in a specific category using the first column (Main Key). Use this for specific searches like Model Name or ID.",
+        parameters: {
+          type: "object",
+          properties: {
+            category: {
+              type: "string",
+              description: "Category name (must be exact match from get_categories)",
             },
-            required: ["category", "keyword"]
-          }
-        }
+            keyword: { type: "string", description: "Search keyword" },
+          },
+          required: ["category", "keyword"],
+        },
       },
-      {
-        type: "function",
-        function: {
-          name: "search_item_broad",
-          description: "Search for items in a specific category across ALL columns. Use this if specific search fails.",
-          parameters: {
-            type: "object",
-            properties: {
-              category: { type: "string", description: "Category name" },
-              keyword: { type: "string", description: "Search keyword" }
+    },
+    {
+      type: "function",
+      function: {
+        name: "search_item_broad",
+        description:
+          "Search for items in a specific category across ALL columns. Use this if specific search fails.",
+        parameters: {
+          type: "object",
+          properties: {
+            category: { type: "string", description: "Category name" },
+            keyword: { type: "string", description: "Search keyword" },
+          },
+          required: ["category", "keyword"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_orders",
+        description:
+          "Get existing orders for the current customer. ALWAYS call this before creating a new order to check for duplicates or if customer wants to modify existing order.",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: {
+              type: "number",
+              description: "Number of recent orders to retrieve (default: 5, max: 10)",
             },
-            required: ["category", "keyword"]
-          }
-        }
+          },
+        },
       },
-      {
-        type: "function",
-        function: {
-          name: "get_orders",
-          description: "Get existing orders for the current customer. ALWAYS call this before creating a new order to check for duplicates or if customer wants to modify existing order.",
-          parameters: {
-            type: "object",
-            properties: {
-              limit: {
-                type: "number",
-                description: "Number of recent orders to retrieve (default: 5, max: 10)"
-              }
-            }
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "create_order",
-          description: `Create a new order. PRICING RULES:
+    },
+    {
+      type: "function",
+      function: {
+        name: "create_order",
+        description: `Create a new order. PRICING RULES:
 
 สินค้าปกติ (รู้ราคาต่อชิ้น):
 - quantity = จำนวนหน่วย เช่น 3 ลัง → quantity: 3
@@ -12324,287 +12716,629 @@ async function getAssistantResponseTextOnly(
 ตัวอย่าง:
 1. สินค้าปกติ: items: [{product: "สินค้า A", quantity: 3, price: 2350}], totalAmount: 7050
 2. โปรโมชั่น: items: [{product: "โปรพียูโฟม 3 ลัง", quantity: 1, price: 0}], totalAmount: 7050`,
-          parameters: {
-            type: "object",
-            properties: {
-              orderData: {
-                type: "object",
-                properties: {
+        parameters: {
+          type: "object",
+          properties: {
+            orderData: {
+              type: "object",
+              properties: {
+                items: {
+                  type: "array",
+                  description: "รายการสินค้า/โปรโมชั่น",
                   items: {
-                    type: "array",
-                    description: "รายการสินค้า/โปรโมชั่น",
-                    items: {
-                      type: "object",
-                      properties: {
-                        product: { type: "string", description: "ชื่อสินค้า หรือ ชื่อโปรโมชั่น+รายละเอียด" },
-                        quantity: { type: "number", description: "จำนวนหน่วย/ชุด (สินค้าปกติ=จำนวนชิ้น, โปรโมชั่น=จำนวนชุด)" },
-                        price: { type: "number", description: "ราคาต่อหน่วย (ใส่ 0 ถ้าเป็นโปรโมชั่นที่ไม่รู้ราคาแยก)" },
-                        shippingName: { type: "string" },
-                        color: { type: "string" },
-                        width: { type: "number" },
-                        length: { type: "number" },
-                        height: { type: "number" },
-                        weight: { type: "number" }
+                    type: "object",
+                    properties: {
+                      product: {
+                        type: "string",
+                        description: "ชื่อสินค้า หรือ ชื่อโปรโมชั่น+รายละเอียด",
                       },
-                      required: ["product", "quantity", "price"]
-                    }
+                      quantity: {
+                        type: "number",
+                        description:
+                          "จำนวนหน่วย/ชุด (สินค้าปกติ=จำนวนชิ้น, โปรโมชั่น=จำนวนชุด)",
+                      },
+                      price: {
+                        type: "number",
+                        description:
+                          "ราคาต่อหน่วย (ใส่ 0 ถ้าเป็นโปรโมชั่นที่ไม่รู้ราคาแยก)",
+                      },
+                      shippingName: { type: "string" },
+                      color: { type: "string" },
+                      width: { type: "number" },
+                      length: { type: "number" },
+                      height: { type: "number" },
+                      weight: { type: "number" },
+                    },
+                    required: ["product", "quantity", "price"],
                   },
-                  totalAmount: { type: "number", description: "ยอดรวมทั้งหมด (จำเป็นต้องส่ง!) - สำหรับโปรโมชั่นให้ใส่ราคาโปรเลย" },
-                  shippingCost: { type: "number" },
-                  customerName: { type: "string" },
-                  recipientName: { type: "string" },
-                  shippingAddress: { type: "string" },
-                  addressSubDistrict: { type: "string" },
-                  addressDistrict: { type: "string" },
-                  addressProvince: { type: "string" },
-                  addressPostalCode: { type: "string" },
-                  phone: { type: "string" },
-                  email: { type: "string" },
-                  paymentMethod: { type: "string" },
-                  transferDate: { type: "string" },
-                  transferTime: { type: "string" },
-                  paymentReceiver: { type: "string" },
-                  notes: { type: "string" }
                 },
-                required: ["items"]
+                totalAmount: {
+                  type: "number",
+                  description:
+                    "ยอดรวมทั้งหมด (จำเป็นต้องส่ง!) - สำหรับโปรโมชั่นให้ใส่ราคาโปรเลย",
+                },
+                shippingCost: { type: "number" },
+                customerName: { type: "string" },
+                recipientName: { type: "string" },
+                shippingAddress: { type: "string" },
+                addressSubDistrict: { type: "string" },
+                addressDistrict: { type: "string" },
+                addressProvince: { type: "string" },
+                addressPostalCode: { type: "string" },
+                phone: { type: "string" },
+                email: { type: "string" },
+                paymentMethod: { type: "string" },
+                transferDate: { type: "string" },
+                transferTime: { type: "string" },
+                paymentReceiver: { type: "string" },
+                notes: { type: "string" },
               },
-              status: {
-                type: "string",
-                enum: ["pending", "confirmed", "shipped", "completed", "cancelled"]
-              },
-              notes: { type: "string" }
+              required: ["items"],
             },
-            required: ["orderData"]
-          }
-        }
+            status: {
+              type: "string",
+              enum: ["pending", "confirmed", "shipped", "completed", "cancelled"],
+            },
+            notes: { type: "string" },
+          },
+          required: ["orderData"],
+        },
       },
-      {
-        type: "function",
-        function: {
-          name: "update_order",
-          description: "Update an existing order. ALWAYS provide the orderId. Send ONLY fields that need to change (partial update).",
-          parameters: {
-            type: "object",
-            properties: {
-              orderId: { type: "string" },
-              orderData: {
-                type: "object",
-                properties: {
+    },
+    {
+      type: "function",
+      function: {
+        name: "update_order",
+        description:
+          "Update an existing order. ALWAYS provide the orderId. Send ONLY fields that need to change (partial update).",
+        parameters: {
+          type: "object",
+          properties: {
+            orderId: { type: "string" },
+            orderData: {
+              type: "object",
+              properties: {
+                items: {
+                  type: "array",
                   items: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        product: { type: "string" },
-                        quantity: { type: "number" },
-                        price: { type: "number" },
-                        shippingName: { type: "string" },
-                        color: { type: "string" },
-                        width: { type: "number" },
-                        length: { type: "number" },
-                        height: { type: "number" },
-                        weight: { type: "number" }
-                      },
-                      required: ["product", "quantity", "price"]
-                    }
+                    type: "object",
+                    properties: {
+                      product: { type: "string" },
+                      quantity: { type: "number" },
+                      price: { type: "number" },
+                      shippingName: { type: "string" },
+                      color: { type: "string" },
+                      width: { type: "number" },
+                      length: { type: "number" },
+                      height: { type: "number" },
+                      weight: { type: "number" },
+                    },
+                    required: ["product", "quantity", "price"],
                   },
-                  totalAmount: { type: "number" },
-                  shippingCost: { type: "number" },
-                  customerName: { type: "string" },
-                  recipientName: { type: "string" },
-                  shippingAddress: { type: "string" },
-                  addressSubDistrict: { type: "string" },
-                  addressDistrict: { type: "string" },
-                  addressProvince: { type: "string" },
-                  addressPostalCode: { type: "string" },
-                  phone: { type: "string" },
-                  email: { type: "string" },
-                  paymentMethod: { type: "string" },
-                  transferDate: { type: "string" },
-                  transferTime: { type: "string" },
-                  paymentReceiver: { type: "string" },
-                  notes: { type: "string" }
-                }
+                },
+                totalAmount: { type: "number" },
+                shippingCost: { type: "number" },
+                customerName: { type: "string" },
+                recipientName: { type: "string" },
+                shippingAddress: { type: "string" },
+                addressSubDistrict: { type: "string" },
+                addressDistrict: { type: "string" },
+                addressProvince: { type: "string" },
+                addressPostalCode: { type: "string" },
+                phone: { type: "string" },
+                email: { type: "string" },
+                paymentMethod: { type: "string" },
+                transferDate: { type: "string" },
+                transferTime: { type: "string" },
+                paymentReceiver: { type: "string" },
+                notes: { type: "string" },
               },
-              status: {
-                type: "string",
-                enum: ["pending", "confirmed", "shipped", "completed", "cancelled"]
-              },
-              notes: { type: "string" }
-            }
-          }
-        }
-      }
-    ];
+            },
+            status: {
+              type: "string",
+              enum: ["pending", "confirmed", "shipped", "completed", "cancelled"],
+            },
+            notes: { type: "string" },
+          },
+        },
+      },
+    },
+  ];
+}
 
-    const enabledTools = canUseCategoryStorage()
-      ? tools
-      : tools.filter(
-        (toolDef) =>
-          ![
-            "get_categories",
-            "search_item_by_category",
-            "search_item_broad",
-          ].includes(toolDef?.function?.name),
+function getEnabledCommerceTools() {
+  const tools = getCommerceToolDefinitions();
+  if (canUseCategoryStorage()) return tools;
+  return tools.filter(
+    (toolDef) =>
+      ![
+        "get_categories",
+        "search_item_by_category",
+        "search_item_broad",
+      ].includes(toolDef?.function?.name),
+  );
+}
+
+function parseToolArguments(rawArguments, functionName, label) {
+  try {
+    if (typeof rawArguments === "string" && rawArguments.trim()) {
+      return JSON.parse(rawArguments);
+    }
+    if (rawArguments && typeof rawArguments === "object") {
+      return rawArguments;
+    }
+  } catch (error) {
+    console.warn(
+      `[${label}] parse tool arguments failed for ${functionName}:`,
+      error.message,
+    );
+  }
+  return {};
+}
+
+async function executeCommerceTool(functionName, functionArgs, toolContext) {
+  let toolResult = { error: "Unknown tool" };
+  const { botId, platform } = toolContext;
+
+  if (functionName === "get_categories") {
+    toolResult = await getCategories({ botId, platform });
+  } else if (functionName === "search_item_by_category") {
+    toolResult = await searchItemByCategory(
+      functionArgs.category,
+      functionArgs.keyword,
+      botId,
+      platform,
+    );
+  } else if (functionName === "search_item_broad") {
+    toolResult = await searchItemBroad(
+      functionArgs.category,
+      functionArgs.keyword,
+      botId,
+      platform,
+    );
+  } else if (functionName === "get_orders") {
+    toolResult = await getOrdersForTool(functionArgs, toolContext);
+  } else if (functionName === "create_order") {
+    toolResult = await createOrderFromTool(functionArgs, toolContext);
+  } else if (functionName === "update_order") {
+    toolResult = await updateOrderFromTool(functionArgs, toolContext);
+  }
+
+  return toolResult;
+}
+
+function buildToolResultMessage(toolCallId, functionName, toolResult) {
+  return {
+    tool_call_id: toolCallId,
+    role: "tool",
+    name: functionName,
+    content: JSON.stringify(toolResult),
+  };
+}
+
+function mapResponseFunctionCallToChatToolCall(toolCall) {
+  return {
+    id: toolCall.call_id,
+    type: "function",
+    function: {
+      name: toolCall.name,
+      arguments:
+        typeof toolCall.arguments === "string"
+          ? toolCall.arguments
+          : JSON.stringify(toolCall.arguments || {}),
+    },
+  };
+}
+
+function normalizeImageDataUrl(rawContent) {
+  let imageUrl =
+    typeof rawContent === "string" ? rawContent.trim() : "";
+  if (!imageUrl) return "";
+  if (imageUrl.startsWith("data:image/")) return imageUrl;
+
+  let mimeType = "image/jpeg";
+  if (imageUrl.startsWith("iVBORw0KGgo")) {
+    mimeType = "image/png";
+  } else if (imageUrl.startsWith("R0lGOD")) {
+    mimeType = "image/gif";
+  } else if (imageUrl.startsWith("UklGR")) {
+    mimeType = "image/webp";
+  }
+  return `data:${mimeType};base64,${imageUrl}`;
+}
+
+function resolveVisionDetail(modelId, useHighDetail) {
+  const chatDetail = useHighDetail ? "high" : "low";
+  const responsesDetail =
+    useHighDetail && normalizeModelIdentifier(modelId).startsWith("gpt-5.4")
+      ? "original"
+      : chatDetail;
+  return { chatDetail, responsesDetail };
+}
+
+function buildMultimodalPayloads(contentSequence, maxImages, modelId) {
+  let imageCount = 0;
+  const chatContent = [];
+  const responsesContent = [];
+  let textParts = [];
+
+  const flushText = () => {
+    if (textParts.length === 0) return;
+    const combinedText = textParts.join("\n\n");
+    chatContent.push({ type: "text", text: combinedText });
+    responsesContent.push({ type: "input_text", text: combinedText });
+    textParts = [];
+  };
+
+  for (const item of Array.isArray(contentSequence) ? contentSequence : []) {
+    if (item?.type === "text") {
+      textParts.push(item.content);
+      continue;
+    }
+
+    if (item?.type === "image" && imageCount < maxImages) {
+      flushText();
+      const imageSize = typeof item.content === "string" ? item.content.length : 0;
+      const useHighDetail = imageSize > 100000;
+      const imageUrl = normalizeImageDataUrl(item.content);
+      const { chatDetail, responsesDetail } = resolveVisionDetail(
+        modelId,
+        useHighDetail,
       );
 
-    // Tool Loop
-    let finalResponse = null;
-    let toolLoopCount = 0;
-    const MAX_TOOL_LOOPS = 5;
+      if (imageUrl) {
+        chatContent.push({
+          type: "image_url",
+          image_url: { url: imageUrl, detail: chatDetail },
+        });
+        responsesContent.push({
+          type: "input_image",
+          image_url: imageUrl,
+          detail: responsesDetail,
+        });
+      }
 
-    const buildPayload = () => {
+      const description = `[รูปภาพที่ ${imageCount + 1}]: ${item.description || ""}`.trim();
+      chatContent.push({ type: "text", text: description });
+      responsesContent.push({ type: "input_text", text: description });
+      imageCount += 1;
+      continue;
+    }
+
+    if (item?.type === "image") {
+      textParts.push("[มีรูปภาพเพิ่มเติมที่ไม่สามารถแสดงได้เนื่องจากข้อจำกัดการประมวลผล]");
+    }
+  }
+
+  flushText();
+
+  if (chatContent.length === 0) {
+    chatContent.push({
+      type: "text",
+      text: "ผู้ใช้ส่งเนื้อหามา โปรดตอบกลับอย่างเหมาะสม",
+    });
+  }
+  if (responsesContent.length === 0) {
+    responsesContent.push({
+      type: "input_text",
+      text: "ผู้ใช้ส่งเนื้อหามา โปรดตอบกลับอย่างเหมาะสม",
+    });
+  }
+
+  return { chatContent, responsesContent, imageCount };
+}
+
+async function runCommerceAssistantConversation(options = {}) {
+  const {
+    systemInstructions = "",
+    history = [],
+    chatUserContent = "",
+    responsesUserContent = chatUserContent,
+    aiModel = null,
+    defaultSettingKey = "textModel",
+    defaultModel = DEFAULT_ASSISTANT_MODEL,
+    botId = null,
+    platform = null,
+    userId = null,
+    functionName = "runCommerceAssistantConversation",
+    logLabel = "OpenAI",
+  } = options || {};
+
+  const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
+  if (!apiKeyToUse.apiKey) {
+    console.warn(`[${logLabel}] No API key available`);
+    return { reply: "", usage: createUsageAccumulator(), model: "" };
+  }
+
+  const openai = buildLLMClientFromKey(apiKeyToUse);
+  if (!openai) {
+    console.warn(`[${logLabel}] Cannot create client for selected provider`);
+    return { reply: "", usage: createUsageAccumulator(), model: "" };
+  }
+
+  const selectedModel =
+    aiModel || (await getSettingValue(defaultSettingKey, defaultModel));
+  const resolvedModel = resolveModelForProvider(
+    selectedModel,
+    apiKeyToUse.provider,
+  );
+  if (!resolvedModel.ok) {
+    console.warn(`[${logLabel}] ${resolvedModel.error}`);
+    return {
+      reply: "ขออภัย โมเดลที่เลือกไม่รองรับกับผู้ให้บริการ API key ปัจจุบัน",
+      usage: createUsageAccumulator(),
+      model: "",
+    };
+  }
+
+  const botAiConfig = await fetchBotAiConfig(botId, platform);
+  const runtimeMode = shouldUseResponsesRuntime(
+    apiKeyToUse.provider,
+    botAiConfig.apiMode,
+    resolvedModel.model,
+  )
+    ? "responses"
+    : "chat";
+  const enabledTools = getEnabledCommerceTools();
+  const totalUsage = createUsageAccumulator();
+  const toolSystemInstructions =
+    await appendOrderToolInstructions(systemInstructions);
+  const toolContext = { userId, platform, botId };
+  let finalReplyText = "";
+
+  console.log(`[LOG] ${logLabel}: ใช้ ${runtimeMode} กับโมเดล ${resolvedModel.model}`);
+
+  if (runtimeMode === "responses") {
+    const mappedTools = mapChatToolsToResponses(enabledTools);
+    const statelessInput = [
+      ...mapStoredHistoryToResponsesInput(history, resolvedModel.model),
+      { role: "user", content: responsesUserContent },
+    ];
+    let nextInput = [...statelessInput];
+    let previousResponseId = null;
+    let toolLoopCount = 0;
+
+    while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
       const payload = {
-        model: resolvedTextModel.model,
+        model: resolvedModel.model,
+        instructions: toolSystemInstructions,
+        input: previousResponseId ? nextInput : statelessInput,
+        tools: mappedTools,
+        tool_choice: "auto",
+      };
+      const reasoning = resolveResponsesReasoningConfig(
+        resolvedModel.model,
+        botAiConfig.reasoningEffort,
+      );
+      if (reasoning) {
+        payload.reasoning = reasoning;
+      }
+      if (previousResponseId) {
+        payload.previous_response_id = previousResponseId;
+      }
+
+      const response = await openai.responses.create(payload);
+      previousResponseId = response?.id || previousResponseId;
+      addUsage(totalUsage, mapResponsesUsage(response?.usage));
+
+      const toolCalls = extractResponsesFunctionCalls(response);
+      if (toolCalls.length === 0) {
+        finalReplyText = extractResponsesText(response);
+        break;
+      }
+
+      console.log(
+        `[LOG] ${logLabel}: AI ต้องการใช้ Tool ${toolCalls.length} calls`,
+      );
+
+      const assistantToolCallMessage = {
+        role: "assistant",
+        content: extractResponsesText(response),
+        tool_calls: toolCalls.map(mapResponseFunctionCallToChatToolCall),
+      };
+      const toolOutputs = [];
+      let isFirstToolCall = true;
+
+      for (const toolCall of toolCalls) {
+        const functionArgs = parseToolArguments(
+          toolCall.arguments,
+          toolCall.name,
+          logLabel,
+        );
+        console.log(
+          `[LOG] ${logLabel}: Executing Tool ${toolCall.name}`,
+          functionArgs,
+        );
+
+        const toolResult = await executeCommerceTool(
+          toolCall.name,
+          functionArgs,
+          toolContext,
+        );
+        const toolResultMessage = buildToolResultMessage(
+          toolCall.call_id,
+          toolCall.name,
+          toolResult,
+        );
+
+        toolOutputs.push({
+          type: "function_call_output",
+          call_id: toolCall.call_id,
+          output: toolResultMessage.content,
+        });
+
+        await saveToolInteraction(
+          userId,
+          isFirstToolCall ? assistantToolCallMessage : null,
+          toolResultMessage,
+          platform,
+          botId,
+        );
+        isFirstToolCall = false;
+      }
+
+      nextInput = toolOutputs;
+      toolLoopCount += 1;
+    }
+
+    if (!finalReplyText && totalUsage.total_tokens > 0) {
+      console.warn(`[${logLabel}] Tool loop limit reached`);
+      finalReplyText =
+        "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
+    }
+  } else {
+    const messages = [
+      buildChatInstructionMessage(resolvedModel.model, toolSystemInstructions),
+      ...(Array.isArray(history) ? history : []),
+      { role: "user", content: chatUserContent },
+    ];
+    let toolLoopCount = 0;
+
+    while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
+      const payload = {
+        model: resolvedModel.model,
         messages,
         tools: enabledTools,
         tool_choice: "auto",
       };
 
-      if (apiMode === "chat") {
-        if (botAiConfig.temperature !== null) {
-          payload.temperature = botAiConfig.temperature;
-        }
-        if (botAiConfig.topP !== null) {
-          payload.top_p = botAiConfig.topP;
-        }
-        if (botAiConfig.presencePenalty !== null) {
-          payload.presence_penalty = botAiConfig.presencePenalty;
-        }
-        if (botAiConfig.frequencyPenalty !== null) {
-          payload.frequency_penalty = botAiConfig.frequencyPenalty;
-        }
-      } else if (botAiConfig.reasoningEffort) {
-        payload.reasoning_effort = botAiConfig.reasoningEffort;
+      if (botAiConfig.temperature !== null) {
+        payload.temperature = botAiConfig.temperature;
+      }
+      if (botAiConfig.topP !== null) {
+        payload.top_p = botAiConfig.topP;
+      }
+      if (botAiConfig.presencePenalty !== null) {
+        payload.presence_penalty = botAiConfig.presencePenalty;
+      }
+      if (botAiConfig.frequencyPenalty !== null) {
+        payload.frequency_penalty = botAiConfig.frequencyPenalty;
       }
 
-      return payload;
-    };
+      const response = await openai.chat.completions.create(payload);
+      addUsage(totalUsage, mapChatUsage(response?.usage));
+      const responseMessage = response?.choices?.[0]?.message || {};
 
-    const toolContext = { userId, platform, botId };
-
-    while (toolLoopCount < MAX_TOOL_LOOPS) {
-      const response = await openai.chat.completions.create(buildPayload());
-      const responseMessage = response.choices[0].message;
-
-      if (responseMessage.tool_calls) {
-        messages.push(responseMessage);
-
-        console.log(
-          `[LOG] AI ต้องการใช้ Tool: ${responseMessage.tool_calls.length} calls`,
-        );
-
-        let isFirstToolCall = true;
-
-        for (const toolCall of responseMessage.tool_calls) {
-          const functionName = toolCall.function.name;
-          const functionArgs = JSON.parse(toolCall.function.arguments);
-
-          console.log(`[LOG] Executing Tool: ${functionName}`, functionArgs);
-
-          let toolResult = { error: "Unknown tool" };
-
-          if (functionName === "get_categories") {
-            toolResult = await getCategories({ botId, platform });
-          } else if (functionName === "search_item_by_category") {
-            toolResult = await searchItemByCategory(
-              functionArgs.category,
-              functionArgs.keyword,
-              botId,
-              platform,
-            );
-          } else if (functionName === "search_item_broad") {
-            toolResult = await searchItemBroad(
-              functionArgs.category,
-              functionArgs.keyword,
-              botId,
-              platform,
-            );
-          } else if (functionName === "get_orders") {
-            toolResult = await getOrdersForTool(functionArgs, toolContext);
-          } else if (functionName === "create_order") {
-            toolResult = await createOrderFromTool(functionArgs, toolContext);
-          } else if (functionName === "update_order") {
-            toolResult = await updateOrderFromTool(functionArgs, toolContext);
-          }
-
-          const toolResultMsg = {
-            tool_call_id: toolCall.id,
-            role: "tool",
-            name: functionName,
-            content: JSON.stringify(toolResult),
-          };
-
-          messages.push(toolResultMsg);
-
-          // Save tool interaction to DB
-          await saveToolInteraction(
-            userId,
-            isFirstToolCall ? responseMessage : null,
-            toolResultMsg,
-            platform,
-            botId
-          );
-          isFirstToolCall = false;
-
-        }
-        toolLoopCount++;
-      } else {
-        // Debug: AI ตอบโดยไม่ใช้ tool
-        console.log(`[LOG] AI ตอบโดยไม่ใช้ Tool (loop ${toolLoopCount}). Content preview: ${responseMessage.content?.substring(0, 100)}...`);
-        finalResponse = response;
+      if (
+        !Array.isArray(responseMessage.tool_calls) ||
+        responseMessage.tool_calls.length === 0
+      ) {
+        finalReplyText =
+          typeof responseMessage.content === "string"
+            ? responseMessage.content
+            : JSON.stringify(responseMessage.content || "");
         break;
       }
-    }
 
-    if (!finalResponse) {
-      console.warn("[LOG] Tool loop limit reached or no response");
-      return "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
-    }
-
-    console.log(`[LOG] ได้รับคำตอบจาก OpenAI API เรียบร้อยแล้ว`);
-
-    let assistantReply = finalResponse.choices[0].message.content;
-    if (typeof assistantReply !== "string") {
-      assistantReply = JSON.stringify(assistantReply);
-    }
-
-    assistantReply = assistantReply.replace(/\[cut\]{2,}/g, "[cut]");
-    const cutList = assistantReply.split("[cut]");
-    if (cutList.length > 10) {
-      assistantReply = cutList.slice(0, 10).join("[cut]");
-    }
-
-    // เพิ่มข้อมูล token usage ต่อท้ายคำตอบ (ถ้าเปิดใช้งาน)
-    if (finalResponse.usage) {
-      const usage = finalResponse.usage;
-      const showTokenUsage = await getSettingValue("showTokenUsage", false);
-
-      if (showTokenUsage) {
-        const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens`;
-        assistantReply += tokenInfo;
-      }
-
+      messages.push(responseMessage);
       console.log(
-        `[LOG] Token usage (text): ${usage.total_tokens} total (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion)`,
+        `[LOG] ${logLabel}: AI ต้องการใช้ Tool ${responseMessage.tool_calls.length} calls`,
       );
 
-      // Log usage to database
-      await logOpenAIUsage({
-        apiKeyId: apiKeyToUse.keyId,
-        botId,
-        platform,
-        provider: apiKeyToUse.provider,
-        model: resolvedTextModel.model,
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        totalTokens: usage.total_tokens,
-        functionName: 'getAssistantResponseTextOnly'
-      });
+      let isFirstToolCall = true;
+      for (const toolCall of responseMessage.tool_calls) {
+        const functionArgs = parseToolArguments(
+          toolCall.function?.arguments,
+          toolCall.function?.name,
+          logLabel,
+        );
+        const functionName = toolCall.function?.name || "unknown_tool";
+        console.log(`[LOG] ${logLabel}: Executing Tool ${functionName}`, functionArgs);
+
+        const toolResult = await executeCommerceTool(
+          functionName,
+          functionArgs,
+          toolContext,
+        );
+        const toolResultMessage = buildToolResultMessage(
+          toolCall.id,
+          functionName,
+          toolResult,
+        );
+        messages.push(toolResultMessage);
+
+        await saveToolInteraction(
+          userId,
+          isFirstToolCall ? responseMessage : null,
+          toolResultMessage,
+          platform,
+          botId,
+        );
+        isFirstToolCall = false;
+      }
+
+      toolLoopCount += 1;
     }
 
-    // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
-    const finalReply = extractThaiReply(assistantReply);
+    if (!finalReplyText && totalUsage.total_tokens > 0) {
+      console.warn(`[${logLabel}] Tool loop limit reached`);
+      finalReplyText =
+        "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
+    }
+  }
+
+  const finalReply = extractThaiReply(trimAssistantReplyArtifacts(finalReplyText)).trim();
+
+  if (totalUsage.total_tokens > 0) {
+    await logOpenAIUsage({
+      apiKeyId: apiKeyToUse.keyId,
+      botId,
+      platform,
+      provider: apiKeyToUse.provider,
+      model: resolvedModel.model,
+      promptTokens: totalUsage.prompt_tokens,
+      completionTokens: totalUsage.completion_tokens,
+      totalTokens: totalUsage.total_tokens,
+      cachedPromptTokens: totalUsage.cached_prompt_tokens,
+      reasoningTokens: totalUsage.reasoning_tokens,
+      functionName,
+    });
+  }
+
+  return {
+    reply: finalReply,
+    usage: totalUsage,
+    model: resolvedModel.model,
+  };
+}
+
+// ฟังก์ชันสำหรับจัดการข้อความอย่างเดียว (ไม่มีรูปภาพ)
+async function getAssistantResponseTextOnly(
+  systemInstructions,
+  history,
+  userText,
+  aiModel = null,
+  botId = null,
+  platform = null,
+  userId = null
+) {
+  try {
+    const safeUserText = sanitizeTextValue(userText, { maxLength: 8000 });
+    const result = await runCommerceAssistantConversation({
+      systemInstructions,
+      history,
+      chatUserContent: safeUserText,
+      responsesUserContent: safeUserText,
+      aiModel,
+      defaultSettingKey: "textModel",
+      defaultModel: DEFAULT_ASSISTANT_MODEL,
+      botId,
+      platform,
+      userId,
+      functionName: "getAssistantResponseTextOnly",
+      logLabel: "OpenAI Text",
+    });
+
+    let finalReply = result.reply || "";
+    if (result.usage?.total_tokens > 0) {
+      const showTokenUsage = await getSettingValue("showTokenUsage", false);
+      if (showTokenUsage) {
+        finalReply += buildUsageSummaryText(result.usage);
+      }
+      console.log(
+        `[LOG] Token usage (text): ${result.usage.total_tokens} total (${result.usage.prompt_tokens} prompt + ${result.usage.completion_tokens} completion)`,
+      );
+    }
 
     return finalReply.trim();
   } catch (err) {
@@ -12624,463 +13358,40 @@ async function getAssistantResponseMultimodal(
   userId = null
 ) {
   try {
-    // Get per-bot API key or fallback to default
-    const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
-    if (!apiKeyToUse.apiKey) {
-      console.warn("[OpenAI Multimodal] No API key available");
-      return "";
-    }
-    const openai = buildLLMClientFromKey(apiKeyToUse);
-    if (!openai) {
-      console.warn("[OpenAI Multimodal] Cannot create client for selected provider");
-      return "";
-    }
-
-    console.log(
-      `[LOG] สร้าง messages สำหรับการเรียก OpenAI API (multimodal)...`,
+    const selectedVisionModel =
+      aiModel || (await getSettingValue("visionModel", DEFAULT_ASSISTANT_MODEL));
+    const maxImages = await getSettingValue("maxImagesPerMessage", 3);
+    const { chatContent, responsesContent, imageCount } = buildMultimodalPayloads(
+      contentSequence,
+      maxImages,
+      selectedVisionModel,
     );
 
-    // จัดการเนื้อหาตามลำดับ - แต่จำกัดจำนวนรูปภาพเพื่อควบคุมต้นทุน
-    const maxImages = await getSettingValue("maxImagesPerMessage", 3); // ใช้ค่าที่ตั้งไว้
-    let imageCount = 0;
-    let finalContent = [];
-    let textParts = [];
+    const result = await runCommerceAssistantConversation({
+      systemInstructions,
+      history,
+      chatUserContent: chatContent,
+      responsesUserContent: responsesContent,
+      aiModel: selectedVisionModel,
+      defaultSettingKey: "visionModel",
+      defaultModel: DEFAULT_ASSISTANT_MODEL,
+      botId,
+      platform,
+      userId,
+      functionName: "getAssistantResponseMultimodal",
+      logLabel: "OpenAI Multimodal",
+    });
 
-    for (const item of contentSequence) {
-      if (item.type === "text") {
-        textParts.push(item.content);
-      } else if (item.type === "image" && imageCount < maxImages) {
-        // รวมข้อความที่สะสมก่อนรูปภาพ
-        if (textParts.length > 0) {
-          finalContent.push({
-            type: "text",
-            text: textParts.join("\n\n"),
-          });
-          textParts = [];
-        }
-
-        // เพิ่มรูปภาพ พร้อมตั้งค่า detail ให้เหมาะสมเพื่อประหยัด token
-        const imageSize = item.content.length;
-        const useHighDetail = imageSize > 100000; // ใช้ high detail เฉพาะรูปที่มีรายละเอียดมาก
-
-        // ตรวจจับ MIME type จาก content
-        let imageUrl = item.content;
-        if (!imageUrl.startsWith("data:image/")) {
-          // ตรวจจับ MIME type จาก signature
-          let mimeType = "image/jpeg";
-          const trimmed = imageUrl.trim();
-          if (trimmed.startsWith("/9j/")) {
-            mimeType = "image/jpeg";
-          } else if (trimmed.startsWith("iVBORw0KGgo")) {
-            mimeType = "image/png";
-          } else if (trimmed.startsWith("R0lGOD")) {
-            mimeType = "image/gif";
-          } else if (trimmed.startsWith("UklGR")) {
-            mimeType = "image/webp";
-          }
-          imageUrl = `data:${mimeType};base64,${item.content}`;
-        }
-
-        finalContent.push({
-          type: "image_url",
-          image_url: {
-            url: imageUrl,
-            detail: useHighDetail ? "high" : "low", // ปรับ detail ตามขนาดรูป
-          },
-        });
-
-        console.log(
-          `[LOG] ใช้ detail: ${useHighDetail ? "high" : "low"} สำหรับรูปภาพขนาด ${(imageSize / 1024).toFixed(1)}KB`,
-        );
-
-        // เพิ่มคำอธิบายรูปภาพ
-        finalContent.push({
-          type: "text",
-          text: `[รูปภาพที่ ${imageCount + 1}]: ${item.description}`,
-        });
-
-        imageCount++;
-        console.log(`[LOG] เพิ่มรูปภาพที่ ${imageCount} เข้าไปใน content`);
-      } else if (item.type === "image" && imageCount >= maxImages) {
-        // ถ้าเกินจำนวนรูปภาพที่กำหนด ให้แจ้งเตือน
-        textParts.push(
-          `[มีรูปภาพเพิ่มเติมที่ไม่สามารถแสดงได้เนื่องจากข้อจำกัดการประมวลผล]`,
-        );
-      }
-    }
-
-    // รวมข้อความที่เหลือ
-    if (textParts.length > 0) {
-      finalContent.push({
-        type: "text",
-        text: textParts.join("\n\n"),
-      });
-    }
-
-    // หากไม่มีเนื้อหาใด ๆ ให้เพิ่มข้อความขอให้อธิบาย
-    if (finalContent.length === 0) {
-      finalContent.push({
-        type: "text",
-        text: "ผู้ใช้ส่งเนื้อหามา โปรดตอบกลับอย่างเหมาะสม",
-      });
-    }
-
-    const toolSystemInstructions =
-      await appendOrderToolInstructions(systemInstructions);
-    const messages = [
-      { role: "system", content: toolSystemInstructions },
-      ...history,
-      { role: "user", content: finalContent },
-    ];
-
-    console.log(
-      `[LOG] ส่งคำขอไปยัง OpenAI API (multimodal) พร้อมรูปภาพ ${imageCount} รูป...`,
-    );
-
-    // ใช้โมเดลที่ส่งมา หรือ fallback ไปใช้ global setting
-    const visionModel =
-      aiModel || (await getSettingValue("visionModel", "gpt-5"));
-    const resolvedVisionModel = resolveModelForProvider(
-      visionModel,
-      apiKeyToUse.provider,
-    );
-    if (!resolvedVisionModel.ok) {
-      console.warn(`[OpenAI Multimodal] ${resolvedVisionModel.error}`);
-      return "ขออภัย โมเดลที่เลือกไม่รองรับกับผู้ให้บริการ API key ปัจจุบัน";
-    }
-
-    const tools = [
-      {
-        type: "function",
-        function: {
-          name: "get_categories",
-          description: "Get list of all available product categories. Use this first to know which category to search in.",
-          parameters: { type: "object", properties: {} }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "search_item_by_category",
-          description: "Search for items in a specific category using the first column (Main Key). Use this for specific searches like Model Name or ID.",
-          parameters: {
-            type: "object",
-            properties: {
-              category: { type: "string", description: "Category name (must be exact match from get_categories)" },
-              keyword: { type: "string", description: "Search keyword" }
-            },
-            required: ["category", "keyword"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "search_item_broad",
-          description: "Search for items in a specific category across ALL columns. Use this if specific search fails.",
-          parameters: {
-            type: "object",
-            properties: {
-              category: { type: "string", description: "Category name" },
-              keyword: { type: "string", description: "Search keyword" }
-            },
-            required: ["category", "keyword"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "get_orders",
-          description: "Get existing orders for the current customer. ALWAYS call this before creating a new order to check for duplicates or if customer wants to modify existing order.",
-          parameters: {
-            type: "object",
-            properties: {
-              limit: {
-                type: "number",
-                description: "Number of recent orders to retrieve (default: 5, max: 10)"
-              }
-            }
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "create_order",
-          description: `Create a new order. PRICING RULES:
-
-สินค้าปกติ (รู้ราคาต่อชิ้น):
-- quantity = จำนวนหน่วย เช่น 3 ลัง → quantity: 3
-- price = ราคาต่อหน่วย เช่น ลังละ 2,350 → price: 2350
-- totalAmount = ยอดรวม (ต้องส่งเสมอ!)
-
-โปรโมชั่น/เซ็ต (ไม่รู้ราคาแยกต่อชิ้น):
-- ใส่ชื่อโปรโมชั่นเป็น product เช่น "โปรพียูโฟม 3 ลัง 7,050"
-- quantity = จำนวนชุด/เซ็ต เช่น 1 ชุด → quantity: 1
-- price = 0 (ใส่ 0 ถ้าไม่รู้ราคาแยก)
-- totalAmount = ราคาโปร เช่น 7050
-
-ตัวอย่าง:
-1. สินค้าปกติ: items: [{product: "สินค้า A", quantity: 3, price: 2350}], totalAmount: 7050
-2. โปรโมชั่น: items: [{product: "โปรพียูโฟม 3 ลัง", quantity: 1, price: 0}], totalAmount: 7050`,
-          parameters: {
-            type: "object",
-            properties: {
-              orderData: {
-                type: "object",
-                properties: {
-                  items: {
-                    type: "array",
-                    description: "รายการสินค้า/โปรโมชั่น",
-                    items: {
-                      type: "object",
-                      properties: {
-                        product: { type: "string", description: "ชื่อสินค้า หรือ ชื่อโปรโมชั่น+รายละเอียด" },
-                        quantity: { type: "number", description: "จำนวนหน่วย/ชุด (สินค้าปกติ=จำนวนชิ้น, โปรโมชั่น=จำนวนชุด)" },
-                        price: { type: "number", description: "ราคาต่อหน่วย (ใส่ 0 ถ้าเป็นโปรโมชั่นที่ไม่รู้ราคาแยก)" },
-                        shippingName: { type: "string" },
-                        color: { type: "string" },
-                        width: { type: "number" },
-                        length: { type: "number" },
-                        height: { type: "number" },
-                        weight: { type: "number" }
-                      },
-                      required: ["product", "quantity", "price"]
-                    }
-                  },
-                  totalAmount: { type: "number", description: "ยอดรวมทั้งหมด (จำเป็นต้องส่ง!) - สำหรับโปรโมชั่นให้ใส่ราคาโปรเลย" },
-                  shippingCost: { type: "number" },
-                  customerName: { type: "string" },
-                  recipientName: { type: "string" },
-                  shippingAddress: { type: "string" },
-                  addressSubDistrict: { type: "string" },
-                  addressDistrict: { type: "string" },
-                  addressProvince: { type: "string" },
-                  addressPostalCode: { type: "string" },
-                  phone: { type: "string" },
-                  email: { type: "string" },
-                  paymentMethod: { type: "string" },
-                  transferDate: { type: "string" },
-                  transferTime: { type: "string" },
-                  paymentReceiver: { type: "string" },
-                  notes: { type: "string" }
-                },
-                required: ["items"]
-              },
-              status: {
-                type: "string",
-                enum: ["pending", "confirmed", "shipped", "completed", "cancelled"]
-              },
-              notes: { type: "string" }
-            },
-            required: ["orderData"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "update_order",
-          description: "Update an existing order (default: latest order for this customer).",
-          parameters: {
-            type: "object",
-            properties: {
-              orderId: { type: "string" },
-              orderData: {
-                type: "object",
-                properties: {
-                  items: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        product: { type: "string" },
-                        quantity: { type: "number" },
-                        price: { type: "number" },
-                        shippingName: { type: "string" },
-                        color: { type: "string" },
-                        width: { type: "number" },
-                        length: { type: "number" },
-                        height: { type: "number" },
-                        weight: { type: "number" }
-                      },
-                      required: ["product", "quantity", "price"]
-                    }
-                  },
-                  totalAmount: { type: "number" },
-                  shippingCost: { type: "number" },
-                  customerName: { type: "string" },
-                  recipientName: { type: "string" },
-                  shippingAddress: { type: "string" },
-                  addressSubDistrict: { type: "string" },
-                  addressDistrict: { type: "string" },
-                  addressProvince: { type: "string" },
-                  addressPostalCode: { type: "string" },
-                  phone: { type: "string" },
-                  email: { type: "string" },
-                  paymentMethod: { type: "string" },
-                  transferDate: { type: "string" },
-                  transferTime: { type: "string" },
-                  paymentReceiver: { type: "string" },
-                  notes: { type: "string" }
-                }
-              },
-              status: {
-                type: "string",
-                enum: ["pending", "confirmed", "shipped", "completed", "cancelled"]
-              },
-              notes: { type: "string" }
-            }
-          }
-        }
-      }
-    ];
-
-    const enabledTools = canUseCategoryStorage()
-      ? tools
-      : tools.filter(
-        (toolDef) =>
-          ![
-            "get_categories",
-            "search_item_by_category",
-            "search_item_broad",
-          ].includes(toolDef?.function?.name),
-      );
-
-    let finalResponse = null;
-    let toolLoopCount = 0;
-    const MAX_TOOL_LOOPS = 5;
-    const toolContext = { userId, platform, botId };
-
-    while (toolLoopCount < MAX_TOOL_LOOPS) {
-      const response = await openai.chat.completions.create({
-        model: resolvedVisionModel.model,
-        messages,
-        tools: enabledTools,
-        tool_choice: "auto",
-      });
-
-      const responseMessage = response.choices[0].message;
-
-      if (responseMessage.tool_calls) {
-        messages.push(responseMessage);
-        console.log(
-          `[LOG] AI ต้องการใช้ Tool (multimodal): ${responseMessage.tool_calls.length} calls`,
-        );
-
-        let isFirstToolCall = true;
-
-        for (const toolCall of responseMessage.tool_calls) {
-          const functionName = toolCall.function.name;
-          const functionArgs = JSON.parse(toolCall.function.arguments);
-
-          console.log(`[LOG] Executing Tool: ${functionName}`, functionArgs);
-
-          let toolResult = { error: "Unknown tool" };
-
-          if (functionName === "get_categories") {
-            toolResult = await getCategories({ botId, platform });
-          } else if (functionName === "search_item_by_category") {
-            toolResult = await searchItemByCategory(
-              functionArgs.category,
-              functionArgs.keyword,
-              botId,
-              platform,
-            );
-          } else if (functionName === "search_item_broad") {
-            toolResult = await searchItemBroad(
-              functionArgs.category,
-              functionArgs.keyword,
-              botId,
-              platform,
-            );
-          } else if (functionName === "get_orders") {
-            toolResult = await getOrdersForTool(functionArgs, toolContext);
-          } else if (functionName === "create_order") {
-            toolResult = await createOrderFromTool(functionArgs, toolContext);
-          } else if (functionName === "update_order") {
-            toolResult = await updateOrderFromTool(functionArgs, toolContext);
-          }
-
-          const toolResultMsg = {
-            tool_call_id: toolCall.id,
-            role: "tool",
-            name: functionName,
-            content: JSON.stringify(toolResult),
-          };
-
-          messages.push(toolResultMsg);
-
-          // Save tool interaction to DB
-          await saveToolInteraction(
-            userId,
-            isFirstToolCall ? responseMessage : null,
-            toolResultMsg,
-            platform,
-            botId
-          );
-          isFirstToolCall = false;
-
-        }
-
-        toolLoopCount++;
-      } else {
-        // Debug: AI ตอบโดยไม่ใช้ tool (multimodal)
-        console.log(`[LOG] AI (multimodal) ตอบโดยไม่ใช้ Tool (loop ${toolLoopCount}). Content preview: ${responseMessage.content?.substring(0, 100)}...`);
-        finalResponse = response;
-        break;
-      }
-    }
-
-    if (!finalResponse) {
-      console.warn("[LOG] Tool loop limit reached (multimodal)");
-      return "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
-    }
-
-    console.log(`[LOG] ได้รับคำตอบจาก OpenAI API (multimodal) เรียบร้อยแล้ว`);
-
-    let assistantReply = finalResponse.choices[0].message.content;
-    if (typeof assistantReply !== "string") {
-      assistantReply = JSON.stringify(assistantReply);
-    }
-
-    assistantReply = assistantReply.replace(/\[cut\]{2,}/g, "[cut]");
-    const cutList = assistantReply.split("[cut]");
-    if (cutList.length > 10) {
-      assistantReply = cutList.slice(0, 10).join("[cut]");
-    }
-
-    // เพิ่มข้อมูล token usage ต่อท้ายคำตอบ (ถ้าเปิดใช้งาน)
-    if (finalResponse.usage) {
-      const usage = finalResponse.usage;
+    let finalReply = result.reply || "";
+    if (result.usage?.total_tokens > 0) {
       const showTokenUsage = await getSettingValue("showTokenUsage", false);
-
       if (showTokenUsage) {
-        const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens (มีรูปภาพ ${imageCount} รูป)`;
-        assistantReply += tokenInfo;
+        finalReply += buildUsageSummaryText(result.usage, { imageCount });
       }
-
       console.log(
-        `[LOG] Token usage (multimodal): ${usage.total_tokens} total (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion) with ${imageCount} images`,
+        `[LOG] Token usage (multimodal): ${result.usage.total_tokens} total (${result.usage.prompt_tokens} prompt + ${result.usage.completion_tokens} completion) with ${imageCount} images`,
       );
-
-      // Log usage to database
-      await logOpenAIUsage({
-        apiKeyId: apiKeyToUse.keyId,
-        botId,
-        platform,
-        provider: apiKeyToUse.provider,
-        model: resolvedVisionModel.model,
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        totalTokens: usage.total_tokens,
-        functionName: 'getAssistantResponseMultimodal'
-      });
     }
-
-    // ดึงข้อความจากแท็ก THAI_REPLY ถ้ามี
-    const finalReply = extractThaiReply(assistantReply);
 
     return finalReply.trim();
   } catch (err) {
@@ -13097,8 +13408,8 @@ async function ensureSettings() {
     { key: "chatDelaySeconds", value: 0 },
     { key: "maxQueueMessages", value: 10 },
     { key: "enableMessageMerging", value: true },
-    { key: "textModel", value: "gpt-5" },
-    { key: "visionModel", value: "gpt-5" },
+    { key: "textModel", value: DEFAULT_ASSISTANT_MODEL },
+    { key: "visionModel", value: DEFAULT_ASSISTANT_MODEL },
     { key: "maxImagesPerMessage", value: 3 },
     { key: "defaultInstruction", value: "" },
     { key: "enableChatHistory", value: true },
@@ -18440,7 +18751,7 @@ async function processFacebookMessageWithAI(
   facebookBot,
 ) {
   try {
-    const aiModel = facebookBot.aiModel || "gpt-5";
+    const aiModel = facebookBot.aiModel || DEFAULT_ASSISTANT_MODEL;
 
     let systemPrompt = "คุณเป็น AI Assistant ที่ช่วยตอบคำถามผู้ใช้";
     const fbSelections = normalizeInstructionSelections(
@@ -18593,7 +18904,7 @@ async function processFacebookMessageWithAI(
 
 // Helper function to process message with AI
 async function processMessageWithAI(message, userId, lineBot) {
-  const aiModel = lineBot.aiModel || "gpt-5";
+  const aiModel = lineBot.aiModel || DEFAULT_ASSISTANT_MODEL;
   const lineSelections = normalizeInstructionSelections(
     lineBot.selectedInstructions || [],
   );
@@ -18656,44 +18967,80 @@ async function processMessageWithAI(message, userId, lineBot) {
 
     for (let attemptIndex = 0; attemptIndex < messageVariants.length; attemptIndex++) {
       const variant = messageVariants[attemptIndex];
-      const payloadMessages = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: variant.content },
-      ];
-
       try {
         console.log(
           `[Line AI] ประมวลผลข้อความ (${variant.label}, รอบที่ ${attemptIndex + 1}/${messageVariants.length}) สำหรับผู้ใช้ ${userId}`,
         );
         const aiConfig = normalizeAiConfig(lineBot.aiConfig || {});
-        const payload = {
-          model: resolvedModel.model,
-          messages: payloadMessages,
-        };
-        if (aiConfig.apiMode === "responses" && aiConfig.reasoningEffort) {
-          payload.reasoning_effort = aiConfig.reasoningEffort;
-        }
-        if (aiConfig.apiMode === "chat") {
+        const runtimeMode = shouldUseResponsesRuntime(
+          apiKeyToUse.provider,
+          aiConfig.apiMode,
+          resolvedModel.model,
+        )
+          ? "responses"
+          : "chat";
+        const usage = createUsageAccumulator();
+        let assistantReply = "";
+
+        if (runtimeMode === "responses") {
+          const payload = {
+            model: resolvedModel.model,
+            instructions: systemPrompt,
+            input: variant.content,
+          };
+          const reasoning = resolveResponsesReasoningConfig(
+            resolvedModel.model,
+            aiConfig.reasoningEffort,
+          );
+          if (reasoning) {
+            payload.reasoning = reasoning;
+          }
+
+          const response = await openai.responses.create(payload);
+          addUsage(usage, mapResponsesUsage(response?.usage));
+          assistantReply = extractResponsesText(response);
+        } else {
+          const payload = {
+            model: resolvedModel.model,
+            messages: [
+              buildChatInstructionMessage(resolvedModel.model, systemPrompt),
+              { role: "user", content: variant.content },
+            ],
+          };
           if (aiConfig.temperature !== null) payload.temperature = aiConfig.temperature;
           if (aiConfig.topP !== null) payload.top_p = aiConfig.topP;
           if (aiConfig.presencePenalty !== null) payload.presence_penalty = aiConfig.presencePenalty;
           if (aiConfig.frequencyPenalty !== null) payload.frequency_penalty = aiConfig.frequencyPenalty;
+
+          const response = await openai.chat.completions.create(payload);
+          addUsage(usage, mapChatUsage(response?.usage));
+          assistantReply = response?.choices?.[0]?.message?.content || "";
         }
 
-        const response = await openai.chat.completions.create(payload);
-
-        let assistantReply = response.choices[0].message.content;
-        if (typeof assistantReply !== "string") {
-          assistantReply = JSON.stringify(assistantReply);
+        let finalReply = extractThaiReply(
+          trimAssistantReplyArtifacts(assistantReply),
+        ).trim();
+        const showTokenUsage = await getSettingValue("showTokenUsage", false);
+        if (showTokenUsage && usage.total_tokens > 0) {
+          finalReply += buildUsageSummaryText(usage);
         }
 
-        if (response.usage) {
-          const usage = response.usage;
-          const tokenInfo = `\n\n📊 Token Usage: ${usage.prompt_tokens} input + ${usage.completion_tokens} output = ${usage.total_tokens} total tokens`;
-          assistantReply += tokenInfo;
+        if (usage.total_tokens > 0) {
+          await logOpenAIUsage({
+            apiKeyId: apiKeyToUse.keyId,
+            botId: lineBotId,
+            platform: "line",
+            provider: apiKeyToUse.provider,
+            model: resolvedModel.model,
+            promptTokens: usage.prompt_tokens,
+            completionTokens: usage.completion_tokens,
+            totalTokens: usage.total_tokens,
+            cachedPromptTokens: usage.cached_prompt_tokens,
+            reasoningTokens: usage.reasoning_tokens,
+            functionName: "processMessageWithAI",
+          });
         }
 
-        const finalReply = extractThaiReply(assistantReply);
         return finalReply.trim();
       } catch (error) {
         console.error(
@@ -18796,7 +19143,7 @@ app.post("/api/line-bots", async (req, res) => {
       status: status || "active",
       isDefault: isDefault || false,
       notificationEnabled: notificationEnabled !== false,
-      aiModel: aiModel || "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
+      aiModel: aiModel || DEFAULT_ASSISTANT_MODEL, // AI Model เฉพาะสำหรับ Line Bot นี้
       aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
@@ -18862,7 +19209,7 @@ app.put("/api/line-bots/:id", async (req, res) => {
       webhookUrl: webhookUrl || "",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: req.body.aiModel || existing.aiModel || "gpt-5", // AI Model เฉพาะสำหรับ Line Bot นี้
+      aiModel: req.body.aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL, // AI Model เฉพาะสำหรับ Line Bot นี้
       aiConfig: normalizeAiConfig(
         req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
       ),
@@ -19181,7 +19528,7 @@ app.post("/api/facebook-bots/init", async (req, res) => {
       verifyToken,
       status: "setup",
       isDefault: false,
-      aiModel: "gpt-5",
+      aiModel: DEFAULT_ASSISTANT_MODEL,
       selectedInstructions: [],
       selectedImageCollections: [],
       createdAt: new Date(),
@@ -19317,7 +19664,7 @@ app.post("/api/facebook-bots", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || "gpt-5",
+      aiModel: aiModel || DEFAULT_ASSISTANT_MODEL,
       aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
@@ -19420,7 +19767,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || existing.aiModel || "gpt-5",
+      aiModel: aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL,
       aiConfig: normalizeAiConfig(
         req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
       ),
@@ -20075,7 +20422,7 @@ app.post("/api/instagram-bots", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || "gpt-5",
+      aiModel: aiModel || DEFAULT_ASSISTANT_MODEL,
       aiConfig: normalizeAiConfig(req.body?.aiConfig || req.body || {}),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
@@ -20150,7 +20497,7 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || existing.aiModel || "gpt-5",
+      aiModel: aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL,
       aiConfig: normalizeAiConfig(
         req.body?.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
       ),
@@ -20487,7 +20834,7 @@ app.post("/api/whatsapp-bots", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || "gpt-5",
+      aiModel: aiModel || DEFAULT_ASSISTANT_MODEL,
       aiConfig: normalizeAiConfig(req.body?.aiConfig || req.body || {}),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
@@ -20561,7 +20908,7 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || existing.aiModel || "gpt-5",
+      aiModel: aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL,
       aiConfig: normalizeAiConfig(
         req.body?.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
       ),
@@ -24933,6 +25280,8 @@ app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req
 // ─── InstructionAI Responses API Helpers ───
 const INSTRUCTION_REASONING_SUPPORT = {
   "gpt-5.4": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "medium" },
+  "gpt-5.4-mini": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "medium" },
+  "gpt-5.4-nano": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "medium" },
   "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
   "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
   "gpt-5.1": { efforts: ["none", "low", "medium", "high"], default: "none" },
@@ -25250,7 +25599,7 @@ function normalizeInstructionHistoryForResponses(history) {
   const normalized = [];
   for (const msg of safeHistory) {
     if (!msg || typeof msg !== "object") continue;
-    if (!["system", "developer", "user", "assistant"].includes(msg.role)) continue;
+    if (!["user", "assistant"].includes(msg.role)) continue;
     if (typeof msg.content === "string") {
       const content = msg.content.trim();
       if (!content) continue;
@@ -25297,11 +25646,13 @@ function buildInstructionUserHistoryText(message, images) {
 function mapInstructionResponseUsage(usage) {
   const promptTokens = usage?.input_tokens || 0;
   const completionTokens = usage?.output_tokens || 0;
+  const cachedPromptTokens = usage?.input_tokens_details?.cached_tokens || 0;
   const reasoningTokens = usage?.output_tokens_details?.reasoning_tokens || 0;
   const totalTokens = usage?.total_tokens || (promptTokens + completionTokens);
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
+    cached_prompt_tokens: cachedPromptTokens,
     reasoning_tokens: reasoningTokens,
     total_tokens: totalTokens,
   };
@@ -25311,6 +25662,7 @@ function addInstructionUsage(totalUsage, usage) {
   if (!usage) return;
   totalUsage.prompt_tokens += usage.prompt_tokens || 0;
   totalUsage.completion_tokens += usage.completion_tokens || 0;
+  totalUsage.cached_prompt_tokens += usage.cached_prompt_tokens || 0;
   totalUsage.reasoning_tokens += usage.reasoning_tokens || 0;
   totalUsage.total_tokens += usage.total_tokens || 0;
 }
@@ -25419,7 +25771,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     );
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
-    let nextInput = [{ role: "system", content: systemPrompt }, ...safeHistory];
+    let nextInput = [...safeHistory];
     if (!isDuplicatedUserMessage) {
       nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
     }
@@ -25429,13 +25781,20 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     const changes = [];
     let versionSnapshot = null;
     let unsavedWriteChanges = 0;
-    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
+    let totalUsage = {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      cached_prompt_tokens: 0,
+      reasoning_tokens: 0,
+      total_tokens: 0,
+    };
     let finalContent = "";
     let previousResponseId = null;
 
     for (let i = 0; i < INSTRUCTION_MAX_TOOL_ITERATIONS; i++) {
       const payload = {
         model: resolvedInstructionModel.model,
+        instructions: systemPrompt,
         input: usePreviousResponseId ? nextInput : statelessInput,
         tools,
         tool_choice: "auto",
@@ -26165,7 +26524,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     );
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
-    let nextInput = [{ role: "system", content: systemPrompt }, ...safeHistory];
+    let nextInput = [...safeHistory];
     if (!isDuplicatedUserMessage) {
       nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
     }
@@ -26173,7 +26532,13 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     const toolsUsed = [];
     const changes = [];
-    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
+    let totalUsage = {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      cached_prompt_tokens: 0,
+      reasoning_tokens: 0,
+      total_tokens: 0,
+    };
     let previousResponseId = null;
     let finalContent = "";
     const assistantMessages = [];
@@ -26185,6 +26550,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
       const payload = {
         model: resolvedInstructionModel.model,
+        instructions: systemPrompt,
         input: usePreviousResponseId ? nextInput : statelessInput,
         tools,
         tool_choice: "auto",
@@ -29642,8 +30008,8 @@ app.get("/api/settings", async (req, res) => {
       showTokenUsage: false,
       showDebugInfo: false,
       audioAttachmentResponse: DEFAULT_AUDIO_ATTACHMENT_RESPONSE,
-      textModel: "gpt-5",
-      visionModel: "gpt-5",
+      textModel: DEFAULT_ASSISTANT_MODEL,
+      visionModel: DEFAULT_ASSISTANT_MODEL,
       maxImagesPerMessage: 3,
       defaultInstruction: "",
       aiEnabled: true,
@@ -29778,13 +30144,23 @@ app.post("/api/settings/ai", async (req, res) => {
 
     // Validate input
     const validModels = [
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.4-nano",
+      "gpt-5.2",
+      "gpt-5.1",
       "gpt-5",
       "gpt-5-mini",
-      "gpt-5-chat-latest",
       "gpt-5-nano",
+      "gpt-5-pro",
       "gpt-4.1",
       "gpt-4.1-mini",
+      "gpt-4.1-nano",
+      "gpt-4o",
+      "gpt-4o-mini",
       "o3",
+      "o4-mini",
+      "gpt-5-chat-latest",
     ];
 
     if (!validModels.includes(textModel)) {
@@ -29982,42 +30358,72 @@ app.post("/api/settings/filter", async (req, res) => {
 // Model pricing defaults (USD per 1M tokens) for internal usage reporting
 const OPENAI_MODEL_PRICING = {
   // GPT-5 series
-  "gpt-5": { input: 1.25, output: 10.0 },
-  "gpt-5.1": { input: 1.25, output: 10.0 },
-  "gpt-5.4": { input: 2.5, output: 15.0 },
-  "gpt-5.2": { input: 1.75, output: 14.0 },
-  "gpt-5.2-codex": { input: 1.75, output: 14.0 },
-  "gpt-5-mini": { input: 0.25, output: 2.0 },
-  "gpt-5-nano": { input: 0.05, output: 0.4 },
-  "gpt-5-pro": { input: 15.0, output: 120.0 },
+  "gpt-5": { input: 1.25, cachedInput: 0.125, output: 10.0 },
+  "gpt-5.1": { input: 1.25, cachedInput: 0.125, output: 10.0 },
+  "gpt-5.4": { input: 2.5, cachedInput: 0.25, output: 15.0 },
+  "gpt-5.4-mini": { input: 0.75, cachedInput: 0.075, output: 4.5 },
+  "gpt-5.4-nano": { input: 0.2, cachedInput: 0.02, output: 1.25 },
+  "gpt-5.2": { input: 1.75, cachedInput: 0.175, output: 14.0 },
+  "gpt-5.2-codex": { input: 1.75, cachedInput: 0.175, output: 14.0 },
+  "gpt-5-mini": { input: 0.25, cachedInput: 0.025, output: 2.0 },
+  "gpt-5-nano": { input: 0.05, cachedInput: 0.005, output: 0.4 },
+  "gpt-5-pro": { input: 15.0, cachedInput: null, output: 120.0 },
   // GPT-4.1 series
-  "gpt-4.1": { input: 2.0, output: 8.0 },
-  "gpt-4.1-mini": { input: 0.4, output: 1.6 },
-  "gpt-4.1-nano": { input: 0.1, output: 0.4 },
+  "gpt-4.1": { input: 2.0, cachedInput: 0.5, output: 8.0 },
+  "gpt-4.1-mini": { input: 0.4, cachedInput: 0.1, output: 1.6 },
+  "gpt-4.1-nano": { input: 0.1, cachedInput: 0.025, output: 0.4 },
   // GPT-4o series
-  "gpt-4o": { input: 2.5, output: 10.0 },
-  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "gpt-4o": { input: 2.5, cachedInput: 1.25, output: 10.0 },
+  "gpt-4o-mini": { input: 0.15, cachedInput: 0.075, output: 0.6 },
   // O-series reasoning models
-  "o1": { input: 15.0, output: 60.0 },
-  "o1-mini": { input: 1.1, output: 4.4 },
-  "o1-pro": { input: 150.0, output: 600.0 },
-  "o3": { input: 2.0, output: 8.0 },
-  "o3-mini": { input: 1.1, output: 4.4 },
-  "o3-pro": { input: 20.0, output: 80.0 },
-  "o4-mini": { input: 1.1, output: 4.4 },
+  "o1": { input: 15.0, cachedInput: 7.5, output: 60.0 },
+  "o1-mini": { input: 1.1, cachedInput: 0.55, output: 4.4 },
+  "o1-pro": { input: 150.0, cachedInput: null, output: 600.0 },
+  "o3": { input: 2.0, cachedInput: 0.5, output: 8.0 },
+  "o3-mini": { input: 1.1, cachedInput: 0.55, output: 4.4 },
+  "o3-pro": { input: 20.0, cachedInput: null, output: 80.0 },
+  "o4-mini": { input: 1.1, cachedInput: 0.275, output: 4.4 },
   // Legacy models
-  "gpt-4-turbo": { input: 10.0, output: 30.0 },
-  "gpt-3.5-turbo": { input: 0.5, output: 1.5 },
+  "gpt-4-turbo": { input: 10.0, cachedInput: null, output: 30.0 },
+  "gpt-3.5-turbo": { input: 0.5, cachedInput: null, output: 1.5 },
   // Default fallback
-  "default": { input: 1.0, output: 4.0 },
+  default: { input: 1.0, cachedInput: null, output: 4.0 },
 };
 
+function resolveOpenAIPricingKey(model) {
+  const normalizedModel = normalizeModelIdentifier(model);
+  if (!normalizedModel) return "default";
+  if (OPENAI_MODEL_PRICING[normalizedModel]) return normalizedModel;
+
+  const candidates = Object.keys(OPENAI_MODEL_PRICING)
+    .filter((key) => key !== "default")
+    .sort((left, right) => right.length - left.length);
+  for (const candidate of candidates) {
+    if (normalizedModel === candidate || normalizedModel.startsWith(`${candidate}-`)) {
+      return candidate;
+    }
+  }
+  return "default";
+}
+
 // Helper: Calculate estimated cost
-function calculateOpenAICost(model, promptTokens, completionTokens) {
-  const pricing = OPENAI_MODEL_PRICING[model] || OPENAI_MODEL_PRICING["default"];
-  const inputCost = (promptTokens / 1000000) * pricing.input;
+function calculateOpenAICost(
+  model,
+  promptTokens,
+  completionTokens,
+  cachedPromptTokens = 0,
+) {
+  const pricingKey = resolveOpenAIPricingKey(model);
+  const pricing = OPENAI_MODEL_PRICING[pricingKey] || OPENAI_MODEL_PRICING.default;
+  const cachedTokens = Math.max(0, Number(cachedPromptTokens) || 0);
+  const promptCount = Math.max(0, Number(promptTokens) || 0);
+  const uncachedPromptTokens = Math.max(0, promptCount - cachedTokens);
+  const cachedInputRate =
+    typeof pricing.cachedInput === "number" ? pricing.cachedInput : pricing.input;
+  const inputCost = (uncachedPromptTokens / 1000000) * pricing.input;
+  const cachedInputCost = (cachedTokens / 1000000) * cachedInputRate;
   const outputCost = (completionTokens / 1000000) * pricing.output;
-  return inputCost + outputCost;
+  return inputCost + cachedInputCost + outputCost;
 }
 
 // Helper: Mask API key for display
@@ -30198,17 +30604,26 @@ async function logOpenAIUsage(data) {
     const {
       apiKeyId, botId, platform, model, provider,
       promptTokens, completionTokens, totalTokens,
-      functionName
+      cachedPromptTokens, reasoningTokens, functionName,
     } = data;
 
     const normalizedProvider = normalizeProvider(provider);
     const promptCount = Number(promptTokens) || 0;
     const completionCount = Number(completionTokens) || 0;
-    const totalCount = Number(totalTokens) || 0;
+    const cachedPromptCount = Number(cachedPromptTokens) || 0;
+    const reasoningCount = Number(reasoningTokens) || 0;
+    const totalCount =
+      Number(totalTokens) || (promptCount + completionCount);
+    const pricingKey = resolveOpenAIPricingKey(model);
     const estimatedCost =
       normalizedProvider === LLM_PROVIDER_OPENROUTER
         ? null
-        : calculateOpenAICost(model, promptCount, completionCount);
+        : calculateOpenAICost(
+          model,
+          promptCount,
+          completionCount,
+          cachedPromptCount,
+        );
 
     if (isPostgresConfigured()) {
       let resolvedPgApiKeyId = null;
@@ -30287,6 +30702,9 @@ async function logOpenAIUsage(data) {
             provider: normalizedProvider,
             functionName: functionName || null,
             estimatedCost,
+            pricingModel: pricingKey,
+            cachedPromptTokens: cachedPromptCount,
+            reasoningTokens: reasoningCount,
             legacyApiKeyId: normalizedApiKeyId || null,
             legacyBotId: normalizedBotId || null,
           }),
