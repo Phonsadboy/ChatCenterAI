@@ -41,12 +41,18 @@
                                 <option value="7days" selected>7 วันที่ผ่านมา</option>
                                 <option value="30days">30 วันที่ผ่านมา</option>
                                 <option value="all">ทั้งหมด</option>
-                                <option value="custom">เลือกวันที่</option>
+                                <option value="custom">เลือกช่วงวันที่</option>
                             </select>
                             <div class="custom-date-field" id="customDateField" hidden>
-                                <i class="fas fa-calendar-alt"></i>
-                                <label class="visually-hidden" for="customDateInput">เลือกวันที่</label>
-                                <input type="date" class="form-control" id="customDateInput">
+                                <div class="custom-date-input">
+                                    <label for="customStartDateInput">เริ่มต้น</label>
+                                    <input type="date" class="form-control" id="customStartDateInput">
+                                </div>
+                                <span class="date-range-separator">ถึง</span>
+                                <div class="custom-date-input">
+                                    <label for="customEndDateInput">สิ้นสุด</label>
+                                    <input type="date" class="form-control" id="customEndDateInput">
+                                </div>
                             </div>
                         </div>
                         <button class="btn btn-outline-secondary" id="refreshBtn" title="รีเฟรช">

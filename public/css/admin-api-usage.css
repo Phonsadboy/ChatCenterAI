@@ -62,7 +62,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    min-width: 220px;
+    min-width: 360px;
     padding: 0.45rem 0.75rem;
     background: white;
     border: 1px solid rgba(0, 0, 0, 0.12);
@@ -70,8 +70,29 @@
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
-.custom-date-field i {
+.custom-date-input {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    flex: 1 1 0;
+}
+
+.custom-date-input label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1;
     color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.date-range-separator {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    align-self: flex-end;
+    padding-bottom: 0.15rem;
 }
 
 .custom-date-field .form-control {
@@ -624,6 +645,17 @@
     .header-actions .form-select,
     .custom-date-field {
         width: 100%;
+    }
+
+    .custom-date-field {
+        min-width: 0;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .date-range-separator {
+        align-self: flex-start;
+        padding-bottom: 0;
     }
 
     .filters-section {

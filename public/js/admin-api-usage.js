@@ -37,46 +37,75 @@ document.addEventListener('DOMContentLoaded', function () {
 
 function initializeDateControls() {
     const rangeSelect = document.getElementById('dateRangeSelect');
-    const customDateInput = document.getElementById('customDateInput');
+    const customStartDateInput = document.getElementById('customStartDateInput');
+    const customEndDateInput = document.getElementById('customEndDateInput');
     const todayValue = getBangkokTodayInputValue();
     const urlParams = new URLSearchParams(window.location.search);
     const requestedRange = urlParams.get('range');
-    const requestedDate = sanitizeDateInputValue(urlParams.get('date'));
+    const requestedStartDate = sanitizeDateInputValue(urlParams.get('startDate'));
+    const requestedEndDate = sanitizeDateInputValue(urlParams.get('endDate'));
+    const initialCustomRange = normalizeDateRangeValues(
+        requestedStartDate,
+        requestedEndDate,
+        null,
+        getDefaultCustomDateRangeValues()
+    );
 
-    customDateInput.max = todayValue;
-    customDateInput.value = requestedDate || todayValue;
+    customStartDateInput.max = todayValue;
+    customEndDateInput.max = todayValue;
+    setCustomDateRangeInputs(initialCustomRange);
 
     if (VALID_DATE_RANGES.has(requestedRange)) {
         rangeSelect.value = requestedRange;
-    } else if (requestedDate) {
+    } else if (requestedStartDate || requestedEndDate) {
         rangeSelect.value = 'custom';
     } else {
         rangeSelect.value = DEFAULT_DATE_RANGE;
     }
 
+    rangeSelect.dataset.prevValue = rangeSelect.value;
     updateDateControlState();
     syncDateStateToUrl();
 }
 
 function initEventListeners() {
     const rangeSelect = document.getElementById('dateRangeSelect');
-    const customDateInput = document.getElementById('customDateInput');
+    const customStartDateInput = document.getElementById('customStartDateInput');
+    const customEndDateInput = document.getElementById('customEndDateInput');
 
     // Date range
     rangeSelect.addEventListener('change', function () {
-        if (this.value === 'custom' && !sanitizeDateInputValue(customDateInput.value)) {
-            customDateInput.value = getBangkokTodayInputValue();
+        const previousRange = this.dataset.prevValue || DEFAULT_DATE_RANGE;
+
+        if (this.value === 'custom') {
+            if (previousRange !== 'custom') {
+                setCustomDateRangeInputs(getCustomPrefillRangeValues(previousRange));
+            } else {
+                setCustomDateRangeInputs(getNormalizedCustomDateRange());
+            }
         }
+
+        this.dataset.prevValue = this.value;
         updateDateControlState();
         loadDashboardData();
     });
 
-    customDateInput.addEventListener('change', function () {
-        const normalizedDate = sanitizeDateInputValue(this.value) || getBangkokTodayInputValue();
-        this.value = normalizedDate;
+    customStartDateInput.addEventListener('change', function () {
+        setCustomDateRangeInputs(getNormalizedCustomDateRange('start'));
         if (rangeSelect.value !== 'custom') {
             rangeSelect.value = 'custom';
         }
+        rangeSelect.dataset.prevValue = 'custom';
+        updateDateControlState();
+        loadDashboardData();
+    });
+
+    customEndDateInput.addEventListener('change', function () {
+        setCustomDateRangeInputs(getNormalizedCustomDateRange('end'));
+        if (rangeSelect.value !== 'custom') {
+            rangeSelect.value = 'custom';
+        }
+        rangeSelect.dataset.prevValue = 'custom';
         updateDateControlState();
         loadDashboardData();
     });
@@ -152,58 +181,29 @@ async function loadDashboardData() {
 }
 
 function getDateParams() {
-    const range = document.getElementById('dateRangeSelect').value;
-    const customDate = sanitizeDateInputValue(document.getElementById('customDateInput').value);
-
-    if (range === 'custom') {
-        const selectedDate = customDate || getBangkokTodayInputValue();
-        const params = new URLSearchParams();
-        params.append('startDate', selectedDate);
-        params.append('endDate', selectedDate);
-        return params;
-    }
-
-    const now = new Date();
-    const endDate = new Date(now);
-    endDate.setHours(23, 59, 59, 999);
-    let startDate = null;
-
-    if (range === 'today') {
-        startDate = new Date(now);
-    } else if (range === '7days') {
-        startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 6); // รวมวันนี้ + ย้อน 6 วัน = 7 วัน
-    } else if (range === '30days') {
-        startDate = new Date(now);
-        startDate.setDate(startDate.getDate() - 29);
-    } else if (range === 'all') {
-        startDate = new Date(0);
-    }
-
-    if (startDate) {
-        startDate.setHours(0, 0, 0, 0);
-    }
-
+    const { startDate, endDate } = getCurrentDateRangeValues();
     const params = new URLSearchParams();
-    if (startDate) params.append('startDate', startDate.toISOString());
-    params.append('endDate', endDate.toISOString());
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
     return params;
 }
 
 function updateDateControlState() {
     const isCustomRange = document.getElementById('dateRangeSelect').value === 'custom';
     const customDateField = document.getElementById('customDateField');
-    const customDateInput = document.getElementById('customDateInput');
+    const customStartDateInput = document.getElementById('customStartDateInput');
+    const customEndDateInput = document.getElementById('customEndDateInput');
 
     customDateField.hidden = !isCustomRange;
-    customDateInput.disabled = !isCustomRange;
+    customStartDateInput.disabled = !isCustomRange;
+    customEndDateInput.disabled = !isCustomRange;
     updateActiveDateText();
 }
 
 function syncDateStateToUrl() {
     const url = new URL(window.location.href);
     const range = document.getElementById('dateRangeSelect').value;
-    const customDate = sanitizeDateInputValue(document.getElementById('customDateInput').value);
+    const customRange = getNormalizedCustomDateRange();
 
     if (range && range !== DEFAULT_DATE_RANGE) {
         url.searchParams.set('range', range);
@@ -211,11 +211,14 @@ function syncDateStateToUrl() {
         url.searchParams.delete('range');
     }
 
-    if (range === 'custom' && customDate) {
-        url.searchParams.set('date', customDate);
+    if (range === 'custom') {
+        url.searchParams.set('startDate', customRange.startDate);
+        url.searchParams.set('endDate', customRange.endDate);
     } else {
-        url.searchParams.delete('date');
+        url.searchParams.delete('startDate');
+        url.searchParams.delete('endDate');
     }
+    url.searchParams.delete('date');
 
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
@@ -228,7 +231,6 @@ function updateActiveDateText() {
 
 function getActiveDateLabel() {
     const range = document.getElementById('dateRangeSelect').value;
-    const customDate = sanitizeDateInputValue(document.getElementById('customDateInput').value);
 
     if (range === 'today') {
         return 'ข้อมูลของวันนี้';
@@ -243,9 +245,94 @@ function getActiveDateLabel() {
         return 'ข้อมูลทั้งหมดที่มีในระบบ';
     }
     if (range === 'custom') {
-        return `ข้อมูลวันที่ ${formatSelectedDateLabel(customDate || getBangkokTodayInputValue())}`;
+        const { startDate, endDate } = getNormalizedCustomDateRange();
+        if (startDate === endDate) {
+            return `ข้อมูลวันที่ ${formatSelectedDateLabel(startDate)}`;
+        }
+        return `ข้อมูลช่วงวันที่ ${formatSelectedDateLabel(startDate)} - ${formatSelectedDateLabel(endDate)}`;
     }
     return 'ข้อมูลการใช้งาน API';
+}
+
+function getCurrentDateRangeValues() {
+    const range = document.getElementById('dateRangeSelect').value;
+    if (range === 'custom') {
+        return getNormalizedCustomDateRange();
+    }
+    return getPresetDateRangeValues(range);
+}
+
+function getPresetDateRangeValues(range) {
+    const todayValue = getBangkokTodayInputValue();
+
+    if (range === 'today') {
+        return { startDate: todayValue, endDate: todayValue };
+    }
+    if (range === '7days') {
+        return { startDate: shiftDateInputValue(todayValue, -6), endDate: todayValue };
+    }
+    if (range === '30days') {
+        return { startDate: shiftDateInputValue(todayValue, -29), endDate: todayValue };
+    }
+    if (range === 'all') {
+        return { startDate: '1970-01-01', endDate: todayValue };
+    }
+    return getPresetDateRangeValues(DEFAULT_DATE_RANGE);
+}
+
+function getDefaultCustomDateRangeValues() {
+    return getPresetDateRangeValues(DEFAULT_DATE_RANGE);
+}
+
+function getCustomPrefillRangeValues(range) {
+    if (range && range !== 'custom' && range !== 'all') {
+        return getPresetDateRangeValues(range);
+    }
+    return getDefaultCustomDateRangeValues();
+}
+
+function getNormalizedCustomDateRange(changedField = null) {
+    return normalizeDateRangeValues(
+        document.getElementById('customStartDateInput').value,
+        document.getElementById('customEndDateInput').value,
+        changedField,
+        getDefaultCustomDateRangeValues()
+    );
+}
+
+function setCustomDateRangeInputs({ startDate, endDate }) {
+    document.getElementById('customStartDateInput').value = startDate;
+    document.getElementById('customEndDateInput').value = endDate;
+}
+
+function normalizeDateRangeValues(startDateValue, endDateValue, changedField = null, fallbackRange = null) {
+    const fallback = fallbackRange || getDefaultCustomDateRangeValues();
+    let startDate = sanitizeDateInputValue(startDateValue);
+    let endDate = sanitizeDateInputValue(endDateValue);
+
+    if (!startDate && endDate) {
+        startDate = endDate;
+    } else if (!endDate && startDate) {
+        endDate = startDate;
+    } else if (!startDate && !endDate) {
+        startDate = fallback.startDate;
+        endDate = fallback.endDate;
+    }
+
+    if (startDate > endDate) {
+        if (changedField === 'start') {
+            endDate = startDate;
+        } else if (changedField === 'end') {
+            startDate = endDate;
+        } else {
+            const minDate = startDate < endDate ? startDate : endDate;
+            const maxDate = startDate > endDate ? startDate : endDate;
+            startDate = minDate;
+            endDate = maxDate;
+        }
+    }
+
+    return { startDate, endDate };
 }
 
 // ==================== Summary Cards ====================
@@ -1062,14 +1149,43 @@ function getBangkokTodayInputValue() {
     return `${partMap.year}-${partMap.month}-${partMap.day}`;
 }
 
-function formatSelectedDateLabel(dateValue) {
+function shiftDateInputValue(dateValue, deltaDays) {
     const normalizedDate = sanitizeDateInputValue(dateValue);
     if (!normalizedDate) {
-        return 'วันนี้';
+        return '';
     }
 
     const [year, month, day] = normalizedDate.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
+    const shiftedDate = new Date(Date.UTC(year, month - 1, day));
+    shiftedDate.setUTCDate(shiftedDate.getUTCDate() + deltaDays);
+
+    return formatDateInputParts(
+        shiftedDate.getUTCFullYear(),
+        shiftedDate.getUTCMonth() + 1,
+        shiftedDate.getUTCDate()
+    );
+}
+
+function formatDateInputParts(year, month, day) {
+    return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function buildDateFromInputValue(dateValue) {
+    const normalizedDate = sanitizeDateInputValue(dateValue);
+    if (!normalizedDate) {
+        return null;
+    }
+
+    const [year, month, day] = normalizedDate.split('-').map(Number);
+    return new Date(year, month - 1, day);
+}
+
+function formatSelectedDateLabel(dateValue) {
+    const date = buildDateFromInputValue(dateValue);
+    if (!date) {
+        return 'วันนี้';
+    }
+
     return date.toLocaleDateString('th-TH', {
         day: 'numeric',
         month: 'short',
@@ -1079,18 +1195,15 @@ function formatSelectedDateLabel(dateValue) {
 
 function getExportFileSuffix() {
     const range = document.getElementById('dateRangeSelect').value;
-    const customDate = sanitizeDateInputValue(document.getElementById('customDateInput').value);
+    const { startDate, endDate } = getCurrentDateRangeValues();
 
-    if (range === 'custom') {
-        return customDate || getBangkokTodayInputValue();
-    }
-    if (range === 'today') {
-        return getBangkokTodayInputValue();
-    }
     if (range === 'all') {
-        return `all-${getBangkokTodayInputValue()}`;
+        return `all-${endDate}`;
     }
-    return `${range}-${getBangkokTodayInputValue()}`;
+    if (startDate === endDate) {
+        return startDate;
+    }
+    return `${startDate}_to_${endDate}`;
 }
 
 function formatNumber(num) {
@@ -1102,7 +1215,7 @@ function formatCost(cost) {
 }
 
 function formatShortDate(dateStr) {
-    const date = new Date(dateStr);
+    const date = buildDateFromInputValue(dateStr) || new Date(dateStr);
     return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
 }
 
