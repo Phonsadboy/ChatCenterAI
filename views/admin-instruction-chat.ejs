@@ -90,20 +90,40 @@
                                     <div class="ic-model-option-icon star"><i class="fas fa-star"></i></div>
                                     <div>
                                         <div class="ic-model-option-name">GPT-5.4</div>
-                                        <div class="ic-model-option-desc">เรือธงล่าสุดสำหรับ reasoning และงานแก้ instruction
-                                        </div>
+                                        <div class="ic-model-option-desc">รุ่นใหม่ล่าสุดสำหรับงาน reasoning และแก้ instruction</div>
+                                    </div>
+                                </div>
+                                <span class="ic-badge-recommended">ล่าสุด</span>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.4-mini">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon fast"><i class="fas fa-bolt"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.4 Mini</div>
+                                        <div class="ic-model-option-desc">เร็วขึ้นและคุ้มกว่าสำหรับงาน instruction ส่วนใหญ่</div>
                                     </div>
                                 </div>
                                 <span class="ic-badge-recommended">แนะนำ</span>
                             </div>
-                            <div class="ic-model-option" data-model="gpt-5.2">
+                            <div class="ic-model-option" data-model="gpt-5.4-nano">
                                 <div class="ic-model-option-left">
                                     <div class="ic-model-option-icon fast"><i class="fas fa-bolt"></i></div>
                                     <div>
-                                        <div class="ic-model-option-name">GPT-5.2</div>
-                                        <div class="ic-model-option-desc">ยังคงเร็วและแม่นยำ เหมาะกับงานทั่วไป</div>
+                                        <div class="ic-model-option-name">GPT-5.4 Nano</div>
+                                        <div class="ic-model-option-desc">ประหยัดสุดสำหรับงานที่ต้องการความเร็วสูง</div>
                                     </div>
                                 </div>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.2">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon star"><i class="fas fa-star"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.2</div>
+                                        <div class="ic-model-option-desc">ดีที่สุด — สมดุลระหว่างความเร็วและความแม่นยำ
+                                        </div>
+                                    </div>
+                                </div>
+                                <span class="ic-badge-recommended">แนะนำ</span>
                             </div>
                             <div class="ic-model-option" data-model="gpt-5.2-codex">
                                 <div class="ic-model-option-left">
@@ -226,38 +246,42 @@
         </div>
     </div>
 
-    <!-- Version Modal -->
-    <div class="ic-version-modal-overlay" id="icVersionModal" style="display:none;">
-        <div class="ic-version-modal">
-            <div class="ic-version-modal-header">
-                <h3><i class="fas fa-code-branch"></i> เวอร์ชัน</h3>
-                <button class="ic-version-modal-close" id="icVersionModalClose"><i class="fas fa-xmark"></i></button>
-            </div>
-            <div class="ic-version-modal-body" id="icVersionList">
-                <div class="ic-version-empty">กำลังโหลด...</div>
+    <%- include('partials/announcement-modal') %>
+
+        <!-- Version Modal -->
+        <div class="ic-version-modal-overlay" id="icVersionModal" style="display:none;">
+            <div class="ic-version-modal">
+                <div class="ic-version-modal-header">
+                    <h3><i class="fas fa-code-branch"></i> เวอร์ชัน</h3>
+                    <button class="ic-version-modal-close" id="icVersionModalClose"><i
+                            class="fas fa-xmark"></i></button>
+                </div>
+                <div class="ic-version-modal-body" id="icVersionList">
+                    <div class="ic-version-empty">กำลังโหลด...</div>
+                </div>
             </div>
         </div>
-    </div>
 
-    <!-- Save Version Modal -->
-    <div class="ic-version-modal-overlay" id="icSaveVersionModal" style="display:none;">
-        <div class="ic-version-modal ic-version-modal-sm">
-            <div class="ic-version-modal-header">
-                <h3><i class="fas fa-floppy-disk"></i> บันทึกเวอร์ชันใหม่</h3>
-                <button class="ic-version-modal-close" id="icSaveVersionModalClose"><i class="fas fa-xmark"></i></button>
-            </div>
-            <div class="ic-version-modal-body">
-                <label class="ic-version-note-label">หมายเหตุ (ไม่บังคับ)</label>
-                <input type="text" id="icVersionNote" class="ic-version-note-input"
-                    placeholder="เช่น เพิ่มโปรโมชันเดือน ก.พ." maxlength="200">
-                <button class="ic-version-save-confirm" id="icVersionSaveConfirm">
-                    <i class="fas fa-check"></i> บันทึกเวอร์ชัน
-                </button>
+        <!-- Save Version Modal -->
+        <div class="ic-version-modal-overlay" id="icSaveVersionModal" style="display:none;">
+            <div class="ic-version-modal ic-version-modal-sm">
+                <div class="ic-version-modal-header">
+                    <h3><i class="fas fa-floppy-disk"></i> บันทึกเวอร์ชันใหม่</h3>
+                    <button class="ic-version-modal-close" id="icSaveVersionModalClose"><i
+                            class="fas fa-xmark"></i></button>
+                </div>
+                <div class="ic-version-modal-body">
+                    <label class="ic-version-note-label">หมายเหตุ (ไม่บังคับ)</label>
+                    <input type="text" id="icVersionNote" class="ic-version-note-input"
+                        placeholder="เช่น เพิ่มโปรโมชันเดือน ก.พ." maxlength="200">
+                    <button class="ic-version-save-confirm" id="icVersionSaveConfirm">
+                        <i class="fas fa-check"></i> บันทึกเวอร์ชัน
+                    </button>
+                </div>
             </div>
         </div>
-    </div>
 
-    <script src="/js/instruction-chat.js?v=<%= assetVersion %>"></script>
+        <script src="/js/instruction-chat.js?v=<%= assetVersion %>"></script>
 </body>
 
 </html>

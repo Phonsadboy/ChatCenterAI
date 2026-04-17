@@ -136,13 +136,16 @@
                                     <button type="button" class="btn btn-outline-secondary btn-sm ms-2"
                                         data-bs-toggle="collapse" data-bs-target="#facebookBotAiParams"
                                         aria-expanded="false" aria-controls="facebookBotAiParams"
-                                        title="กดเพื่อปรับโหมด API/พารามิเตอร์; ถ้าเลือก Chat API (ไม่รองรับ tool จัดการข้อมูล) ระบบจะตอบแบบไม่มี tool search/จัดการข้อมูล">
+                                        title="กดเพื่อปรับโหมด API/พารามิเตอร์; Responses API เป็นโหมดแนะนำสำหรับ tools + reasoning + state reuse ส่วน Chat Completions เป็นโหมด compatibility ที่ยังใช้ custom tools ได้">
                                         <i class="fas fa-cog"></i>
                                     </button>
                                 </div>
                                 <input type="text" class="form-control mt-1" id="facebookBotAiModel" name="aiModel"
-                                    list="facebookBotAiModelPresets" placeholder="เช่น gpt-5 หรือ openai/gpt-4.1" required>
+                                    list="facebookBotAiModelPresets" placeholder="เช่น gpt-5.4-mini หรือ openai/gpt-4.1" required>
                                 <datalist id="facebookBotAiModelPresets">
+                                    <option value="gpt-5.4"></option>
+                                    <option value="gpt-5.4-mini"></option>
+                                    <option value="gpt-5.4-nano"></option>
                                     <option value="gpt-5.2"></option>
                                     <option value="gpt-5.1"></option>
                                     <option value="gpt-5"></option>
@@ -152,24 +155,23 @@
                                     <option value="gpt-4.1"></option>
                                     <option value="gpt-4.1-mini"></option>
                                     <option value="gpt-4.1-nano"></option>
+                                    <option value="o4-mini"></option>
                                     <option value="gpt-4o"></option>
                                     <option value="gpt-4o-mini"></option>
                                 </datalist>
-                                <div class="form-text">เลือก AI Model ที่จะใช้สำหรับ Facebook Bot นี้ — ถ้าเลือก Chat
-                                    API (ใช้ tools ไม่ได้) ระบบจะไม่ส่ง tool จัดการข้อมูล/AI search ให้</div>
+                                <div class="form-text">เลือกรุ่นที่ใช้กับ Facebook Bot นี้ ระบบจะสลับ instructions ให้เหมาะกับ GPT-5/o-series และ GPT-4.1/4o อัตโนมัติ</div>
                                 <div class="collapse mt-2" id="facebookBotAiParams">
                                     <div class="p-3 border rounded bg-light">
                                         <div class="mb-3">
                                             <label for="facebookBotApiMode" class="form-label mb-1">API Mode</label>
                                             <select class="form-select form-select-sm" id="facebookBotApiMode"
                                                 name="apiMode">
-                                                <option value="responses">Responses API (รองรับ tools / reasoning)
+                                                <option value="responses">Responses API (แนะนำ: tools, instructions, reasoning, state reuse)
                                                 </option>
-                                                <option value="chat">Chat Completions API (ไม่รองรับ tool จัดการข้อมูล)
+                                                <option value="chat">Chat Completions API (compatibility: custom tools ได้, ไม่มี previous_response_id)
                                                 </option>
                                             </select>
-                                            <div class="form-text">Responses: เหมาะกับ reasoning + tools; Chat:
-                                                เร็ว/คงไลบรารีเดิมแต่ไม่มี tools</div>
+                                            <div class="form-text">Responses เหมาะกับ flow หลักของระบบ; Chat ใช้เมื่ออยากคง behavior เดิมหรือ provider ยังไม่รองรับ Responses</div>
                                         </div>
                                         <div id="facebookBotResponsesParams">
                                             <div class="row g-2">

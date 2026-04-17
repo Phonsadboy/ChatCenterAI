@@ -412,7 +412,7 @@ function populateSettings() {
         if (textModel) textModel.value = currentSettings.textModel;
     } else {
         const textModel = document.getElementById('textModel');
-        if (textModel) textModel.value = 'gpt-5';
+        if (textModel) textModel.value = 'gpt-5.4-mini';
     }
     
     if (currentSettings.visionModel) {
@@ -420,7 +420,7 @@ function populateSettings() {
         if (visionModel) visionModel.value = currentSettings.visionModel;
     } else {
         const visionModel = document.getElementById('visionModel');
-        if (visionModel) visionModel.value = 'gpt-5';
+        if (visionModel) visionModel.value = 'gpt-5.4-mini';
     }
 
     if (currentSettings.maxImagesPerMessage !== undefined) {

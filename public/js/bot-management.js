@@ -106,7 +106,7 @@ function displayLineBotList(lineBots) {
             ? (bot.webhookUrl.trim().split('/').filter(Boolean).pop() || bot.webhookUrl.trim())
             : 'ไม่ระบุ';
         const updatedDisplay = formatBotUpdatedAt(bot.updatedAt);
-        const aiModel = bot.aiModel || 'gpt-5';
+        const aiModel = bot.aiModel || 'gpt-5.4-mini';
         const description = bot.description || 'ไม่มีคำอธิบาย';
 
         return `
@@ -288,7 +288,7 @@ function displayLineBotAiModelInfo(lineBots) {
     
     let html = '<div class="row">';
     lineBots.forEach(bot => {
-        const modelName = bot.aiModel || 'gpt-5';
+        const modelName = bot.aiModel || 'gpt-5.4-mini';
         const statusClass = bot.status === 'active' ? 'success' : 'warning';
         
         html += `
@@ -360,7 +360,7 @@ async function editLineBot(botId) {
             if (lineWebhookUrl) lineWebhookUrl.value = bot.webhookUrl || '';
             if (lineBotStatus) lineBotStatus.value = bot.status;
             if (lineBotNotificationEnabled) lineBotNotificationEnabled.checked = bot.notificationEnabled !== false;
-            if (lineBotAiModel) lineBotAiModel.value = bot.aiModel || 'gpt-5';
+            if (lineBotAiModel) lineBotAiModel.value = bot.aiModel || 'gpt-5.4-mini';
             if (lineBotDefault) lineBotDefault.checked = bot.isDefault;
             
             const addLineBotModalLabel = document.getElementById('addLineBotModalLabel');
@@ -560,7 +560,7 @@ function displayFacebookBotList(facebookBots) {
             ? (pageId.length > 14 ? `${pageId.slice(0, 6)}…${pageId.slice(-4)}` : pageId)
             : 'ไม่ระบุ';
         const updatedDisplay = formatBotUpdatedAt(bot.updatedAt);
-        const aiModel = bot.aiModel || 'gpt-5';
+        const aiModel = bot.aiModel || 'gpt-5.4-mini';
         const description = bot.description || 'ไม่มีคำอธิบาย';
 
         return `
@@ -723,7 +723,7 @@ async function editFacebookBot(botId) {
             if (facebookAccessToken) facebookAccessToken.value = bot.accessToken;
             if (facebookWebhookUrl) facebookWebhookUrl.value = bot.webhookUrl || '';
             if (facebookVerifyToken) facebookVerifyToken.value = bot.verifyToken || '';
-            if (facebookBotAiModel) facebookBotAiModel.value = bot.aiModel || 'gpt-5';
+            if (facebookBotAiModel) facebookBotAiModel.value = bot.aiModel || 'gpt-5.4-mini';
             if (facebookBotDefault) facebookBotDefault.checked = bot.isDefault || false;
 
             const addFacebookBotModalLabel = document.getElementById('addFacebookBotModalLabel');
