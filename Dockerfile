@@ -1,9 +1,11 @@
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-# `sharp` falls back to node-gyp on Alpine when a prebuilt binary is unavailable.
-RUN apk add --no-cache python3 make g++
+# Build deps for native modules such as `sharp`.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package*.json ./
