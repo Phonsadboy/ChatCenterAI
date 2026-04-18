@@ -1,0 +1,61 @@
+name: Deploy Railway Services
+
+on:
+  push:
+    branches:
+      - codex/test
+  workflow_dispatch:
+
+concurrency:
+  group: railway-production-services
+  cancel-in-progress: false
+
+env:
+  RAILWAY_PROJECT_ID: 0722dba6-fb77-4b20-8801-9a1d083384e2
+  RAILWAY_ENVIRONMENT: production
+
+jobs:
+  deploy-non-web-services:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate Railway token
+        run: |
+          if [ -z "${RAILWAY_TOKEN}" ]; then
+            echo "::error::Missing RAILWAY_TOKEN GitHub secret"
+            exit 1
+          fi
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy Railway services
+        run: |
+          set -euo pipefail
+
+          services=(
+            "migration-runner"
+            "public-ingest"
+            "worker-realtime"
+            "worker-batch"
+          )
+
+          for service in "${services[@]}"; do
+            echo "Deploying ${service}"
+            railway up \
+              --service "${service}" \
+              --environment "${RAILWAY_ENVIRONMENT}" \
+              --project "${RAILWAY_PROJECT_ID}" \
+              --ci \
+              --message "GitHub Actions deploy ${GITHUB_SHA::7} for ${service}"
+          done

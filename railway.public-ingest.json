@@ -1,10 +1,10 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS"
+    "builder": "DOCKERFILE"
   },
   "deploy": {
-    "startCommand": "npm start",
+    "startCommand": "npm run start:public-ingest",
     "region": "asia-southeast1-eqsg3a",
     "multiRegionConfig": {
       "asia-southeast1-eqsg3a": {
