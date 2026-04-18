@@ -5444,6 +5444,23 @@ function normalizeChatPageSelections(pageKeyParam) {
 
 async function loadChatPageCatalog() {
   const botRepo = getBotRepository();
+  const threadSummaryPromise = query(
+    `
+      SELECT
+        t.platform,
+        b.legacy_bot_id,
+        COUNT(DISTINCT c.legacy_contact_id)::int AS chat_count,
+        MAX(t.updated_at) AS last_activity_at
+      FROM threads t
+      INNER JOIN contacts c ON c.id = t.contact_id
+      LEFT JOIN bots b ON b.id = t.bot_id
+      GROUP BY t.platform, b.legacy_bot_id
+    `,
+  ).catch((error) => {
+    console.warn("[Chat] ไม่สามารถ aggregate รายการเพจจาก threads ได้:", error);
+    return { rows: [] };
+  });
+
   const [lineBots, facebookBots, instagramBots, whatsappBots, threadResult] =
     await Promise.all([
       botRepo.list("line", {
@@ -5458,19 +5475,7 @@ async function loadChatPageCatalog() {
       botRepo.list("whatsapp", {
         projection: { name: 1, phoneNumber: 1, phoneNumberId: 1 },
       }),
-      query(
-        `
-          SELECT
-            t.platform,
-            b.legacy_bot_id,
-            COUNT(DISTINCT c.legacy_contact_id)::int AS chat_count,
-            MAX(t.updated_at) AS last_activity_at
-          FROM threads t
-          INNER JOIN contacts c ON c.id = t.contact_id
-          LEFT JOIN bots b ON b.id = t.bot_id
-          GROUP BY t.platform, b.legacy_bot_id
-        `,
-      ),
+      threadSummaryPromise,
     ]);
 
   const pageMap = new Map();
@@ -28073,9 +28078,9 @@ app.get("/admin/chat/pages", async (req, res) => {
     });
   } catch (error) {
     console.error("[Chat] ไม่สามารถดึงรายการเพจ/บอทได้:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message || "ไม่สามารถดึงรายการเพจได้",
+    res.json({
+      success: true,
+      warning: error.message || "ไม่สามารถดึงรายการเพจได้",
       pages: [],
     });
   }
