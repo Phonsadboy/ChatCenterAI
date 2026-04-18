@@ -31,6 +31,7 @@ const BOT_MODEL_PRESETS = [
     'gpt-4o',
     'gpt-4o-mini'
 ];
+
 let activeBotChannel = 'line';
 const botKeywordModalState = {
     botType: '',
@@ -555,6 +556,7 @@ window.openAddLineBotModal = async function () {
     if (idInput) idInput.value = '';
     const notifyToggle = document.getElementById('lineBotNotificationEnabled');
     if (notifyToggle) notifyToggle.checked = true;
+    syncBotModelSelectOptions('lineBotAiModel', DEFAULT_BOT_MODEL);
     setAiConfigUI('line', defaultAiConfig);
     const collapseEl = document.getElementById('lineBotAiParams');
     if (collapseEl && collapseEl.classList.contains('show')) {
@@ -600,8 +602,7 @@ window.openEditLineBotModal = async function (id) {
         const notifyToggle = document.getElementById('lineBotNotificationEnabled');
         if (notifyToggle) notifyToggle.checked = bot.notificationEnabled !== false;
 
-        const aiModelSelect = document.getElementById('lineBotAiModel'); // Corrected ID (case sensitive check)
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel;
+        syncBotModelSelectOptions('lineBotAiModel', bot.aiModel || DEFAULT_BOT_MODEL);
 
         const defaultCheck = document.getElementById('lineBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
@@ -688,6 +689,7 @@ window.openAddFacebookBotModal = async function () {
 
     const verifiedToggle = document.getElementById('fbVerifiedToggle');
     if (verifiedToggle) verifiedToggle.checked = false;
+    syncBotModelSelectOptions('facebookBotAiModel', DEFAULT_BOT_MODEL);
     setAiConfigUI('facebook', defaultAiConfig);
     const fbCollapseEl = document.getElementById('facebookBotAiParams');
     if (fbCollapseEl && fbCollapseEl.classList.contains('show')) {
@@ -746,8 +748,7 @@ window.openEditFacebookBotModal = async function (id) {
         document.getElementById('facebookVerifyToken').value = bot.verifyToken;
         document.getElementById('facebookWebhookUrl').value = bot.webhookUrl || '';
 
-        const aiModelSelect = document.getElementById('facebookBotAiModel'); // Corrected ID
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel;
+        syncBotModelSelectOptions('facebookBotAiModel', bot.aiModel || DEFAULT_BOT_MODEL);
 
         const defaultCheck = document.getElementById('facebookBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
@@ -870,6 +871,7 @@ window.openAddInstagramBotModal = async function () {
     const idInput = document.getElementById('instagramBotId');
     if (idInput) idInput.value = '';
 
+    syncBotModelSelectOptions('instagramBotAiModel', DEFAULT_BOT_MODEL);
     setAiConfigUI('instagram', defaultAiConfig);
     const collapseEl = document.getElementById('instagramBotAiParams');
     if (collapseEl && collapseEl.classList.contains('show')) {
@@ -911,8 +913,7 @@ window.openEditInstagramBotModal = async function (id) {
         const statusSelect = document.getElementById('instagramBotStatus');
         if (statusSelect) statusSelect.value = bot.status || 'active';
 
-        const aiModelSelect = document.getElementById('instagramBotAiModel');
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel || DEFAULT_BOT_MODEL;
+        syncBotModelSelectOptions('instagramBotAiModel', bot.aiModel || DEFAULT_BOT_MODEL);
 
         const defaultCheck = document.getElementById('instagramBotDefault');
         if (defaultCheck) defaultCheck.checked = !!bot.isDefault;
@@ -1014,6 +1015,7 @@ window.openAddWhatsAppBotModal = async function () {
     const idInput = document.getElementById('whatsappBotId');
     if (idInput) idInput.value = '';
 
+    syncBotModelSelectOptions('whatsappBotAiModel', DEFAULT_BOT_MODEL);
     setAiConfigUI('whatsapp', defaultAiConfig);
     const collapseEl = document.getElementById('whatsappBotAiParams');
     if (collapseEl && collapseEl.classList.contains('show')) {
@@ -1056,8 +1058,7 @@ window.openEditWhatsAppBotModal = async function (id) {
         const statusSelect = document.getElementById('whatsappBotStatus');
         if (statusSelect) statusSelect.value = bot.status || 'active';
 
-        const aiModelSelect = document.getElementById('whatsappBotAiModel');
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel || DEFAULT_BOT_MODEL;
+        syncBotModelSelectOptions('whatsappBotAiModel', bot.aiModel || DEFAULT_BOT_MODEL);
 
         const defaultCheck = document.getElementById('whatsappBotDefault');
         if (defaultCheck) defaultCheck.checked = !!bot.isDefault;
@@ -1906,7 +1907,7 @@ function buildImageCollectionOptions(selectedValue, selectedCount = 0) {
 
 function buildModelOptions(selectedValue) {
     const options = [];
-    const normalizedSelectedValue = selectedValue || DEFAULT_BOT_MODEL;
+    const normalizedSelectedValue = normalizeBotModelValue(selectedValue);
     const hasSelectedInPreset = BOT_MODEL_PRESETS.includes(normalizedSelectedValue);
 
     if (!hasSelectedInPreset && normalizedSelectedValue) {
@@ -1919,6 +1920,21 @@ function buildModelOptions(selectedValue) {
     });
 
     return options.join('');
+}
+
+function normalizeBotModelValue(value) {
+    if (typeof value !== 'string') return DEFAULT_BOT_MODEL;
+    const normalizedValue = value.trim();
+    return normalizedValue || DEFAULT_BOT_MODEL;
+}
+
+function syncBotModelSelectOptions(selectId, selectedValue) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    const normalizedSelectedValue = normalizeBotModelValue(selectedValue);
+    select.innerHTML = buildModelOptions(normalizedSelectedValue);
+    select.value = normalizedSelectedValue;
 }
 
 function getSelectedInstructionKey(bot) {
