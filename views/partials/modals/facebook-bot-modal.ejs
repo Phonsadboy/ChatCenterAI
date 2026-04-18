@@ -140,26 +140,8 @@
                                         <i class="fas fa-cog"></i>
                                     </button>
                                 </div>
-                                <input type="text" class="form-control mt-1" id="facebookBotAiModel" name="aiModel"
-                                    list="facebookBotAiModelPresets" placeholder="เช่น gpt-5.4-mini หรือ openai/gpt-4.1" required>
-                                <datalist id="facebookBotAiModelPresets">
-                                    <option value="gpt-5.4"></option>
-                                    <option value="gpt-5.4-mini"></option>
-                                    <option value="gpt-5.4-nano"></option>
-                                    <option value="gpt-5.2"></option>
-                                    <option value="gpt-5.1"></option>
-                                    <option value="gpt-5"></option>
-                                    <option value="gpt-5-mini"></option>
-                                    <option value="gpt-5-nano"></option>
-                                    <option value="gpt-5-pro"></option>
-                                    <option value="gpt-4.1"></option>
-                                    <option value="gpt-4.1-mini"></option>
-                                    <option value="gpt-4.1-nano"></option>
-                                    <option value="o4-mini"></option>
-                                    <option value="gpt-4o"></option>
-                                    <option value="gpt-4o-mini"></option>
-                                </datalist>
-                                <div class="form-text">เลือกรุ่นที่ใช้กับ Facebook Bot นี้ ระบบจะสลับ instructions ให้เหมาะกับ GPT-5/o-series และ GPT-4.1/4o อัตโนมัติ</div>
+                                <select class="form-select mt-1" id="facebookBotAiModel" name="aiModel" required></select>
+                                <div class="form-text">เลือกโมเดลที่รองรับสำหรับ Facebook Bot นี้ ระบบจะสลับ instructions ให้เหมาะกับ GPT-5/o-series และ GPT-4.1/4o อัตโนมัติ</div>
                                 <div class="collapse mt-2" id="facebookBotAiParams">
                                     <div class="p-3 border rounded bg-light">
                                         <div class="mb-3">
@@ -179,16 +161,8 @@
                                                     <label class="form-label mb-1"
                                                         for="facebookBotReasoningEffort">reasoning_effort</label>
                                                     <select class="form-select form-select-sm"
-                                                        id="facebookBotReasoningEffort">
-                                                        <option value="">ตามค่า default ของโมเดล</option>
-                                                        <option value="none">none (GPT-5.1 เท่านั้น)</option>
-                                                        <option value="minimal">minimal (GPT-5 เท่านั้น)</option>
-                                                        <option value="low">low</option>
-                                                        <option value="medium">medium</option>
-                                                        <option value="high">high</option>
-                                                    </select>
-                                                    <div class="form-text">ใช้เฉพาะ Responses; หากเลือกค่านี้จะไม่ใช้
-                                                        temperature/top_p/penalties</div>
+                                                        id="facebookBotReasoningEffort"></select>
+                                                    <div class="form-text">ใช้เฉพาะ Responses; สำหรับ GPT-5/o-series ต้องเลือกค่าเอง และ none ใช้ได้เฉพาะรุ่นที่รองรับ</div>
                                                 </div>
                                                 <div class="col-md-6 d-none" id="facebookBotReasoningNote">
                                                     <div class="alert alert-info py-2 px-3 small mb-0">

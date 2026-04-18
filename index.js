@@ -4996,7 +4996,8 @@ function normalizeAiConfig(raw = {}) {
       raw.reasoningEffort ||
       raw.reasoning_effort ||
       (raw.reasoning && raw.reasoning.effort);
-    cfg.reasoningEffort = effort || "";
+    cfg.reasoningEffort =
+      typeof effort === "string" ? effort.trim() : effort || "";
   } else {
     cfg.temperature = parseNum(raw.temperature);
     cfg.topP = parseNum(raw.topP ?? raw.top_p);
@@ -5009,6 +5010,26 @@ function normalizeAiConfig(raw = {}) {
   }
 
   return cfg;
+}
+
+function getBotReasoningValidationError(modelId, aiConfigRaw = {}) {
+  const support = getResponsesReasoningSupport(modelId);
+  if (!support) return null;
+
+  const cfg = normalizeAiConfig(aiConfigRaw);
+  if (cfg.apiMode !== "responses") return null;
+
+  const effort =
+    typeof cfg.reasoningEffort === "string" ? cfg.reasoningEffort.trim() : "";
+  if (!effort) {
+    return `กรุณาเลือก reasoning_effort สำหรับ model "${modelId}"`;
+  }
+
+  if (!support.allowed.includes(effort)) {
+    return `reasoning_effort "${effort}" ไม่รองรับกับ model "${modelId}"`;
+  }
+
+  return null;
 }
 
 function normalizeOrderPlatform(platform) {
@@ -11787,6 +11808,12 @@ function buildChatInstructionMessage(modelId, content) {
 
 function getResponsesReasoningSupport(modelId) {
   const normalized = normalizeModelIdentifier(modelId);
+  if (normalized === "gpt-5-pro") {
+    return {
+      allowed: ["high"],
+      defaultEffort: "high",
+    };
+  }
   if (
     normalized === "gpt-5.4" ||
     normalized === "gpt-5.4-mini" ||
@@ -11796,24 +11823,26 @@ function getResponsesReasoningSupport(modelId) {
   ) {
     return {
       allowed: ["none", "low", "medium", "high", "xhigh"],
-      defaultEffort: "medium",
+      defaultEffort: "none",
     };
   }
   if (normalized === "gpt-5.1") {
     return {
       allowed: ["none", "low", "medium", "high"],
-      defaultEffort: "medium",
+      defaultEffort: "none",
     };
   }
-  if (normalized === "gpt-5") {
+  if (
+    normalized === "gpt-5" ||
+    normalized === "gpt-5-mini" ||
+    normalized === "gpt-5-nano"
+  ) {
     return {
       allowed: ["minimal", "low", "medium", "high"],
       defaultEffort: "medium",
     };
   }
   if (
-    normalized === "gpt-5-mini" ||
-    normalized === "gpt-5-nano" ||
     normalized.startsWith("o1") ||
     normalized.startsWith("o3") ||
     normalized.startsWith("o4")
@@ -11821,12 +11850,6 @@ function getResponsesReasoningSupport(modelId) {
     return {
       allowed: ["low", "medium", "high"],
       defaultEffort: "medium",
-    };
-  }
-  if (normalized === "gpt-5-pro") {
-    return {
-      allowed: ["medium", "high", "xhigh"],
-      defaultEffort: "high",
     };
   }
   return null;
@@ -17356,6 +17379,15 @@ app.post("/api/line-bots", async (req, res) => {
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections || [],
     );
+    const resolvedAiModel = aiModel || DEFAULT_ASSISTANT_MODEL;
+    const resolvedAiConfigRaw = req.body.aiConfig || req.body;
+    const reasoningError = getBotReasoningValidationError(
+      resolvedAiModel,
+      resolvedAiConfigRaw,
+    );
+    if (reasoningError) {
+      return res.status(400).json({ error: reasoningError });
+    }
 
     const lineBot = {
       name,
@@ -17366,8 +17398,8 @@ app.post("/api/line-bots", async (req, res) => {
       status: status || "active",
       isDefault: isDefault || false,
       notificationEnabled: notificationEnabled !== false,
-      aiModel: aiModel || DEFAULT_ASSISTANT_MODEL, // AI Model เฉพาะสำหรับ Line Bot นี้
-      aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
+      aiModel: resolvedAiModel, // AI Model เฉพาะสำหรับ Line Bot นี้
+      aiConfig: normalizeAiConfig(resolvedAiConfigRaw),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
@@ -17431,6 +17463,19 @@ app.put("/api/line-bots/:id", async (req, res) => {
       );
     }
 
+    const resolvedAiModel =
+      req.body.aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL;
+    const resolvedAiConfigRaw = req.body.aiConfig
+      ? req.body.aiConfig
+      : { ...existing.aiConfig, ...req.body };
+    const reasoningError = getBotReasoningValidationError(
+      resolvedAiModel,
+      resolvedAiConfigRaw,
+    );
+    if (reasoningError) {
+      return res.status(400).json({ error: reasoningError });
+    }
+
     const updateData = {
       name,
       description: description || "",
@@ -17439,10 +17484,8 @@ app.put("/api/line-bots/:id", async (req, res) => {
       webhookUrl: webhookUrl || "",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: req.body.aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL, // AI Model เฉพาะสำหรับ Line Bot นี้
-      aiConfig: normalizeAiConfig(
-        req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
-      ),
+      aiModel: resolvedAiModel, // AI Model เฉพาะสำหรับ Line Bot นี้
+      aiConfig: normalizeAiConfig(resolvedAiConfigRaw),
       openaiApiKeyId: req.body.openaiApiKeyId !== undefined ? (req.body.openaiApiKeyId || null) : existing.openaiApiKeyId,
       updatedAt: new Date(),
     };
@@ -17923,6 +17966,15 @@ app.post("/api/facebook-bots", async (req, res) => {
         );
       }
     }
+    const resolvedAiModel = aiModel || DEFAULT_ASSISTANT_MODEL;
+    const resolvedAiConfigRaw = req.body.aiConfig || req.body;
+    const reasoningError = getBotReasoningValidationError(
+      resolvedAiModel,
+      resolvedAiConfigRaw,
+    );
+    if (reasoningError) {
+      return res.status(400).json({ error: reasoningError });
+    }
 
     const facebookBot = {
       name,
@@ -17933,8 +17985,8 @@ app.post("/api/facebook-bots", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || DEFAULT_ASSISTANT_MODEL,
-      aiConfig: normalizeAiConfig(req.body.aiConfig || req.body),
+      aiModel: resolvedAiModel,
+      aiConfig: normalizeAiConfig(resolvedAiConfigRaw),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
@@ -18016,6 +18068,17 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
         );
       }
     }
+    const resolvedAiModel = aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL;
+    const resolvedAiConfigRaw = req.body.aiConfig
+      ? req.body.aiConfig
+      : { ...existing.aiConfig, ...req.body };
+    const reasoningError = getBotReasoningValidationError(
+      resolvedAiModel,
+      resolvedAiConfigRaw,
+    );
+    if (reasoningError) {
+      return res.status(400).json({ error: reasoningError });
+    }
 
     const updateData = {
       name,
@@ -18026,10 +18089,8 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL,
-      aiConfig: normalizeAiConfig(
-        req.body.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
-      ),
+      aiModel: resolvedAiModel,
+      aiConfig: normalizeAiConfig(resolvedAiConfigRaw),
       openaiApiKeyId: req.body.openaiApiKeyId !== undefined ? (req.body.openaiApiKeyId || null) : existing.openaiApiKeyId,
       datasetId: datasetId || null,
       updatedAt: new Date(),
@@ -18756,6 +18817,15 @@ app.post("/api/instagram-bots", async (req, res) => {
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections || [],
     );
+    const resolvedAiModel = aiModel || DEFAULT_ASSISTANT_MODEL;
+    const resolvedAiConfigRaw = req.body?.aiConfig || req.body || {};
+    const reasoningError = getBotReasoningValidationError(
+      resolvedAiModel,
+      resolvedAiConfigRaw,
+    );
+    if (reasoningError) {
+      return res.status(400).json({ error: reasoningError });
+    }
 
     const bot = {
       name,
@@ -18769,8 +18839,8 @@ app.post("/api/instagram-bots", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || DEFAULT_ASSISTANT_MODEL,
-      aiConfig: normalizeAiConfig(req.body?.aiConfig || req.body || {}),
+      aiModel: resolvedAiModel,
+      aiConfig: normalizeAiConfig(resolvedAiConfigRaw),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
@@ -18838,6 +18908,18 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
       );
     }
 
+    const resolvedAiModel = aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL;
+    const resolvedAiConfigRaw = req.body?.aiConfig
+      ? req.body.aiConfig
+      : { ...existing.aiConfig, ...req.body };
+    const reasoningError = getBotReasoningValidationError(
+      resolvedAiModel,
+      resolvedAiConfigRaw,
+    );
+    if (reasoningError) {
+      return res.status(400).json({ error: reasoningError });
+    }
+
     const updateData = {
       name,
       description: description || "",
@@ -18850,10 +18932,8 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL,
-      aiConfig: normalizeAiConfig(
-        req.body?.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
-      ),
+      aiModel: resolvedAiModel,
+      aiConfig: normalizeAiConfig(resolvedAiConfigRaw),
       openaiApiKeyId:
         req.body?.openaiApiKeyId !== undefined
           ? req.body.openaiApiKeyId || null
@@ -19207,6 +19287,15 @@ app.post("/api/whatsapp-bots", async (req, res) => {
     const normalizedCollections = normalizeImageCollectionSelections(
       selectedImageCollections || [],
     );
+    const resolvedAiModel = aiModel || DEFAULT_ASSISTANT_MODEL;
+    const resolvedAiConfigRaw = req.body?.aiConfig || req.body || {};
+    const reasoningError = getBotReasoningValidationError(
+      resolvedAiModel,
+      resolvedAiConfigRaw,
+    );
+    if (reasoningError) {
+      return res.status(400).json({ error: reasoningError });
+    }
 
     const bot = {
       name,
@@ -19220,8 +19309,8 @@ app.post("/api/whatsapp-bots", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || DEFAULT_ASSISTANT_MODEL,
-      aiConfig: normalizeAiConfig(req.body?.aiConfig || req.body || {}),
+      aiModel: resolvedAiModel,
+      aiConfig: normalizeAiConfig(resolvedAiConfigRaw),
       selectedInstructions: normalizedSelections,
       selectedImageCollections: normalizedCollections,
       openaiApiKeyId: openaiApiKeyId || null,
@@ -19288,6 +19377,18 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
       );
     }
 
+    const resolvedAiModel = aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL;
+    const resolvedAiConfigRaw = req.body?.aiConfig
+      ? req.body.aiConfig
+      : { ...existing.aiConfig, ...req.body };
+    const reasoningError = getBotReasoningValidationError(
+      resolvedAiModel,
+      resolvedAiConfigRaw,
+    );
+    if (reasoningError) {
+      return res.status(400).json({ error: reasoningError });
+    }
+
     const updateData = {
       name,
       description: description || "",
@@ -19300,10 +19401,8 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
       verifyToken: verifyToken || "your_verify_token",
       status: status || "active",
       isDefault: isDefault || false,
-      aiModel: aiModel || existing.aiModel || DEFAULT_ASSISTANT_MODEL,
-      aiConfig: normalizeAiConfig(
-        req.body?.aiConfig ? req.body.aiConfig : { ...existing.aiConfig, ...req.body },
-      ),
+      aiModel: resolvedAiModel,
+      aiConfig: normalizeAiConfig(resolvedAiConfigRaw),
       openaiApiKeyId:
         req.body?.openaiApiKeyId !== undefined
           ? req.body.openaiApiKeyId || null

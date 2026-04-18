@@ -547,6 +547,19 @@ async function populateApiKeyDropdowns(selectId, selectedValue = '') {
     }
 }
 
+function populateBotModelDropdown(selectId, selectedValue = DEFAULT_BOT_MODEL) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    const normalizedValue =
+        typeof selectedValue === 'string' && selectedValue.trim()
+            ? selectedValue.trim()
+            : DEFAULT_BOT_MODEL;
+
+    select.innerHTML = buildModelOptions(normalizedValue);
+    select.value = normalizedValue;
+}
+
 // Line Bot
 window.openAddLineBotModal = async function () {
     const form = document.getElementById('lineBotForm');
@@ -555,6 +568,7 @@ window.openAddLineBotModal = async function () {
     if (idInput) idInput.value = '';
     const notifyToggle = document.getElementById('lineBotNotificationEnabled');
     if (notifyToggle) notifyToggle.checked = true;
+    populateBotModelDropdown('lineBotAiModel');
     setAiConfigUI('line', defaultAiConfig);
     const collapseEl = document.getElementById('lineBotAiParams');
     if (collapseEl && collapseEl.classList.contains('show')) {
@@ -600,8 +614,7 @@ window.openEditLineBotModal = async function (id) {
         const notifyToggle = document.getElementById('lineBotNotificationEnabled');
         if (notifyToggle) notifyToggle.checked = bot.notificationEnabled !== false;
 
-        const aiModelSelect = document.getElementById('lineBotAiModel'); // Corrected ID (case sensitive check)
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel;
+        populateBotModelDropdown('lineBotAiModel', bot.aiModel || DEFAULT_BOT_MODEL);
 
         const defaultCheck = document.getElementById('lineBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
@@ -632,6 +645,7 @@ window.openEditLineBotModal = async function (id) {
 
 async function saveLineBot() {
     const form = document.getElementById('lineBotForm');
+    if (!validateBotConfigForm('line', form)) return;
     const formData = new FormData(form); // Use FormData to get values if preferred, or manual getElementById
     const botId = document.getElementById('lineBotId').value;
 
@@ -688,6 +702,7 @@ window.openAddFacebookBotModal = async function () {
 
     const verifiedToggle = document.getElementById('fbVerifiedToggle');
     if (verifiedToggle) verifiedToggle.checked = false;
+    populateBotModelDropdown('facebookBotAiModel');
     setAiConfigUI('facebook', defaultAiConfig);
     const fbCollapseEl = document.getElementById('facebookBotAiParams');
     if (fbCollapseEl && fbCollapseEl.classList.contains('show')) {
@@ -746,8 +761,7 @@ window.openEditFacebookBotModal = async function (id) {
         document.getElementById('facebookVerifyToken').value = bot.verifyToken;
         document.getElementById('facebookWebhookUrl').value = bot.webhookUrl || '';
 
-        const aiModelSelect = document.getElementById('facebookBotAiModel'); // Corrected ID
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel;
+        populateBotModelDropdown('facebookBotAiModel', bot.aiModel || DEFAULT_BOT_MODEL);
 
         const defaultCheck = document.getElementById('facebookBotDefault'); // Corrected ID
         if (defaultCheck) defaultCheck.checked = bot.isDefault;
@@ -779,6 +793,8 @@ window.openEditFacebookBotModal = async function (id) {
 };
 
 async function saveFacebookBot() {
+    const form = document.getElementById('facebookBotForm');
+    if (!validateBotConfigForm('facebook', form)) return;
     const botId = document.getElementById('facebookBotId').value;
 
     const botData = {
@@ -870,6 +886,7 @@ window.openAddInstagramBotModal = async function () {
     const idInput = document.getElementById('instagramBotId');
     if (idInput) idInput.value = '';
 
+    populateBotModelDropdown('instagramBotAiModel');
     setAiConfigUI('instagram', defaultAiConfig);
     const collapseEl = document.getElementById('instagramBotAiParams');
     if (collapseEl && collapseEl.classList.contains('show')) {
@@ -911,8 +928,7 @@ window.openEditInstagramBotModal = async function (id) {
         const statusSelect = document.getElementById('instagramBotStatus');
         if (statusSelect) statusSelect.value = bot.status || 'active';
 
-        const aiModelSelect = document.getElementById('instagramBotAiModel');
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel || DEFAULT_BOT_MODEL;
+        populateBotModelDropdown('instagramBotAiModel', bot.aiModel || DEFAULT_BOT_MODEL);
 
         const defaultCheck = document.getElementById('instagramBotDefault');
         if (defaultCheck) defaultCheck.checked = !!bot.isDefault;
@@ -940,6 +956,8 @@ window.openEditInstagramBotModal = async function (id) {
 };
 
 async function saveInstagramBot() {
+    const form = document.getElementById('instagramBotForm');
+    if (!validateBotConfigForm('instagram', form)) return;
     const botId = document.getElementById('instagramBotId').value;
     const botData = {
         name: document.getElementById('instagramBotName').value,
@@ -1014,6 +1032,7 @@ window.openAddWhatsAppBotModal = async function () {
     const idInput = document.getElementById('whatsappBotId');
     if (idInput) idInput.value = '';
 
+    populateBotModelDropdown('whatsappBotAiModel');
     setAiConfigUI('whatsapp', defaultAiConfig);
     const collapseEl = document.getElementById('whatsappBotAiParams');
     if (collapseEl && collapseEl.classList.contains('show')) {
@@ -1056,8 +1075,7 @@ window.openEditWhatsAppBotModal = async function (id) {
         const statusSelect = document.getElementById('whatsappBotStatus');
         if (statusSelect) statusSelect.value = bot.status || 'active';
 
-        const aiModelSelect = document.getElementById('whatsappBotAiModel');
-        if (aiModelSelect) aiModelSelect.value = bot.aiModel || DEFAULT_BOT_MODEL;
+        populateBotModelDropdown('whatsappBotAiModel', bot.aiModel || DEFAULT_BOT_MODEL);
 
         const defaultCheck = document.getElementById('whatsappBotDefault');
         if (defaultCheck) defaultCheck.checked = !!bot.isDefault;
@@ -1085,6 +1103,8 @@ window.openEditWhatsAppBotModal = async function (id) {
 };
 
 async function saveWhatsAppBot() {
+    const form = document.getElementById('whatsappBotForm');
+    if (!validateBotConfigForm('whatsapp', form)) return;
     const botId = document.getElementById('whatsappBotId').value;
     const botData = {
         name: document.getElementById('whatsappBotName').value,
@@ -1554,16 +1574,163 @@ const defaultAiConfig = {
     frequencyPenalty: ''
 };
 
+const REASONING_EFFORT_LABELS = {
+    none: 'none',
+    minimal: 'minimal',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: 'xhigh'
+};
+
+function normalizeBotModelIdentifier(modelId) {
+    if (!modelId || typeof modelId !== 'string') return '';
+    const rawId = modelId.trim().toLowerCase();
+    if (!rawId) return '';
+    return rawId.includes('/') ? rawId.split('/').pop().trim() : rawId;
+}
+
+function getBotReasoningSupport(modelId) {
+    const normalized = normalizeBotModelIdentifier(modelId);
+    if (!normalized) return null;
+
+    if (normalized === 'gpt-5-pro') {
+        return {
+            allowed: ['high'],
+            defaultEffort: 'high'
+        };
+    }
+
+    if (
+        normalized === 'gpt-5.4' ||
+        normalized === 'gpt-5.4-mini' ||
+        normalized === 'gpt-5.4-nano'
+    ) {
+        return {
+            allowed: ['none', 'low', 'medium', 'high', 'xhigh'],
+            defaultEffort: 'none'
+        };
+    }
+
+    if (normalized === 'gpt-5.2' || normalized === 'gpt-5.2-codex') {
+        return {
+            allowed: ['none', 'low', 'medium', 'high', 'xhigh'],
+            defaultEffort: 'none'
+        };
+    }
+
+    if (normalized === 'gpt-5.1') {
+        return {
+            allowed: ['none', 'low', 'medium', 'high'],
+            defaultEffort: 'none'
+        };
+    }
+
+    if (
+        normalized === 'gpt-5' ||
+        normalized === 'gpt-5-mini' ||
+        normalized === 'gpt-5-nano'
+    ) {
+        return {
+            allowed: ['minimal', 'low', 'medium', 'high'],
+            defaultEffort: 'medium'
+        };
+    }
+
+    if (
+        normalized.startsWith('o1') ||
+        normalized.startsWith('o3') ||
+        normalized.startsWith('o4')
+    ) {
+        return {
+            allowed: ['low', 'medium', 'high'],
+            defaultEffort: 'medium'
+        };
+    }
+
+    return null;
+}
+
+function buildReasoningEffortOptions(modelId, selectedValue = '') {
+    const support = getBotReasoningSupport(modelId);
+    if (!support) {
+        return '<option value="">โมเดลนี้ไม่รองรับ reasoning_effort</option>';
+    }
+
+    const normalizedSelectedValue =
+        typeof selectedValue === 'string' ? selectedValue.trim() : '';
+    const hasSelectedValue = support.allowed.includes(normalizedSelectedValue);
+    const options = [
+        `<option value="" ${hasSelectedValue ? '' : 'selected'} disabled>เลือก reasoning_effort</option>`
+    ];
+
+    support.allowed.forEach((effort) => {
+        const selected = hasSelectedValue && normalizedSelectedValue === effort ? 'selected' : '';
+        options.push(
+            `<option value="${effort}" ${selected}>${REASONING_EFFORT_LABELS[effort] || effort}</option>`
+        );
+    });
+
+    return options.join('');
+}
+
+function populateReasoningEffortDropdown(prefix, selectedValue = '') {
+    const select = document.getElementById(`${prefix}BotReasoningEffort`);
+    if (!select) return;
+
+    const modelId = getInputValue(`${prefix}BotAiModel`);
+    const support = getBotReasoningSupport(modelId);
+    select.innerHTML = buildReasoningEffortOptions(modelId, selectedValue);
+    select.disabled = !support;
+}
+
+function updateReasoningRequirement(prefix) {
+    const select = document.getElementById(`${prefix}BotReasoningEffort`);
+    if (!select) return;
+
+    const support = getBotReasoningSupport(getInputValue(`${prefix}BotAiModel`));
+    const apiMode = getInputValue(`${prefix}BotApiMode`) === 'chat' ? 'chat' : 'responses';
+    const requiresSelection = Boolean(support) && apiMode === 'responses';
+
+    select.required = requiresSelection;
+    if (!requiresSelection) {
+        select.setCustomValidity('');
+        return;
+    }
+
+    if (!select.value) {
+        select.setCustomValidity('กรุณาเลือก reasoning_effort สำหรับโมเดล GPT-5/o-series');
+        return;
+    }
+
+    select.setCustomValidity('');
+}
+
+function validateBotConfigForm(prefix, form) {
+    updateReasoningRequirement(prefix);
+    const support = getBotReasoningSupport(getInputValue(`${prefix}BotAiModel`));
+    const apiMode = getInputValue(`${prefix}BotApiMode`) === 'chat' ? 'chat' : 'responses';
+    const reasoningSelect = document.getElementById(`${prefix}BotReasoningEffort`);
+
+    if (support && apiMode === 'responses' && reasoningSelect && !reasoningSelect.value) {
+        const collapseEl = document.getElementById(`${prefix}BotAiParams`);
+        if (collapseEl && !collapseEl.classList.contains('show')) {
+            bootstrap.Collapse.getOrCreateInstance(collapseEl, { toggle: false }).show();
+        }
+        showToast('กรุณาเลือก reasoning_effort ก่อนบันทึก', 'warning');
+        window.setTimeout(() => {
+            reasoningSelect.focus();
+            reasoningSelect.reportValidity();
+        }, 220);
+        return false;
+    }
+
+    if (!form) return true;
+    return form.reportValidity();
+}
+
 function isReasoningModel(modelId) {
-    if (!modelId || typeof modelId !== 'string') return false;
-    const rawId = modelId.toLowerCase();
-    const id = rawId.includes('/') ? rawId.split('/').pop() : rawId;
-    // Models that support reasoning_effort:
-    // - o1, o1-mini, o1-preview (OpenAI reasoning models)
-    // - o3, o3-mini (OpenAI reasoning models)
-    // - gpt-5 (future GPT-5 models)
-    // GPT-4, GPT-4.1, GPT-4o do NOT support reasoning_effort
-    return id.startsWith('o1') || id.startsWith('o3') || id.startsWith('gpt-5');
+    return Boolean(getBotReasoningSupport(modelId));
 }
 
 function parseNumberOrNull(value) {
@@ -1590,14 +1757,14 @@ function attachRangeListener(id) {
     });
 }
 
-function applyAiModeVisibility(prefix, apiMode) {
+function applyAiModeVisibility(prefix, apiMode, options = {}) {
     const mode = apiMode === 'chat' ? 'chat' : 'responses';
     const responsesSection = document.getElementById(`${prefix}BotResponsesParams`);
     const chatSection = document.getElementById(`${prefix}BotChatParams`);
     if (responsesSection) responsesSection.classList.toggle('d-none', mode !== 'responses');
     if (chatSection) chatSection.classList.toggle('d-none', mode !== 'chat');
 
-    updateReasoningVisibility(prefix);
+    updateReasoningVisibility(prefix, options);
     updateChatSamplingVisibility(prefix);
 }
 
@@ -1606,14 +1773,14 @@ function setAiConfigUI(prefix, config) {
     const apiMode = cfg.apiMode === 'chat' ? 'chat' : 'responses';
 
     setInputValue(`${prefix}BotApiMode`, apiMode);
-    setInputValue(`${prefix}BotReasoningEffort`, cfg.reasoningEffort ?? '');
     setRangeValue(`${prefix}BotTemperature`, cfg.temperature);
     setRangeValue(`${prefix}BotTopP`, cfg.topP);
     setRangeValue(`${prefix}BotPresencePenalty`, cfg.presencePenalty);
     setRangeValue(`${prefix}BotFrequencyPenalty`, cfg.frequencyPenalty);
 
-    applyAiModeVisibility(prefix, apiMode);
-    updateReasoningVisibility(prefix);
+    applyAiModeVisibility(prefix, apiMode, {
+        selectedReasoningEffort: cfg.reasoningEffort ?? ''
+    });
 }
 
 function readAiConfigFromUI(prefix) {
@@ -1656,6 +1823,7 @@ function initAiModeListeners() {
         if (select) {
             select.addEventListener('change', (e) => {
                 applyAiModeVisibility(prefix, e.target.value);
+                updateReasoningRequirement(prefix);
             });
         }
         ['Temperature', 'TopP', 'PresencePenalty', 'FrequencyPenalty'].forEach(suffix => {
@@ -1666,20 +1834,32 @@ function initAiModeListeners() {
             modelSelect.addEventListener('change', () => updateReasoningVisibility(prefix));
             modelSelect.addEventListener('change', () => updateChatSamplingVisibility(prefix));
         }
+        const reasoningSelect = document.getElementById(`${prefix}BotReasoningEffort`);
+        if (reasoningSelect) {
+            reasoningSelect.addEventListener('change', () => updateReasoningRequirement(prefix));
+        }
     });
 }
 
-function updateReasoningVisibility(prefix) {
+function updateReasoningVisibility(prefix, options = {}) {
     const modelSelect = document.getElementById(`${prefix}BotAiModel`);
     const modelId = modelSelect ? modelSelect.value : '';
     const supported = isReasoningModel(modelId);
     const group = document.getElementById(`${prefix}BotReasoningGroup`);
     const note = document.getElementById(`${prefix}BotReasoningNote`);
+    const select = document.getElementById(`${prefix}BotReasoningEffort`);
+    const selectedReasoningEffort =
+        options.selectedReasoningEffort !== undefined && options.selectedReasoningEffort !== null
+            ? options.selectedReasoningEffort
+            : (select ? select.value : '');
+
+    populateReasoningEffortDropdown(prefix, selectedReasoningEffort);
     if (group) group.classList.toggle('d-none', !supported);
     if (note) note.classList.toggle('d-none', supported);
     if (!supported) {
         setInputValue(`${prefix}BotReasoningEffort`, '');
     }
+    updateReasoningRequirement(prefix);
 }
 
 function updateChatSamplingVisibility(prefix) {
@@ -2273,6 +2453,19 @@ async function saveBotModelSelection(botType, botId, modelId, select, previousVa
         const botData = await getRes.json().catch(() => ({}));
         if (!getRes.ok) {
             throw new Error(botData?.error || 'โหลดข้อมูลบอทไม่สำเร็จ');
+        }
+
+        const support = getBotReasoningSupport(modelId);
+        const currentApiMode = botData?.aiConfig?.apiMode === 'chat' ? 'chat' : 'responses';
+        const currentEffort =
+            typeof botData?.aiConfig?.reasoningEffort === 'string'
+                ? botData.aiConfig.reasoningEffort.trim()
+                : '';
+
+        if (support && currentApiMode === 'responses' && !support.allowed.includes(currentEffort)) {
+            select.value = previousValue;
+            showToast('โมเดล GPT-5/o-series ต้องเลือก reasoning_effort ในหน้าแก้ไขบอทก่อน', 'warning');
+            return;
         }
 
         botData.aiModel = modelId || DEFAULT_BOT_MODEL;
