@@ -24006,6 +24006,267 @@ ${dataItemsSummary}
 }
 
 
+function normalizeInstructionAIChatDocument(doc) {
+  if (!doc || typeof doc !== "object") return null;
+  return {
+    ...doc,
+    _id:
+      doc._id && typeof doc._id.toString === "function"
+        ? doc._id.toString()
+        : doc._id || null,
+    conversationStarter: normalizeConversationStarterConfig(
+      doc.conversationStarter,
+    ),
+  };
+}
+
+function buildInstructionAIChatStores(db) {
+  const instructionsColl = db.collection("instructions_v2");
+  const followUpPageSettingsColl = db.collection("follow_up_page_settings");
+  const followUpAssetsColl = db.collection("follow_up_assets");
+  const instructionVersionsColl = db.collection("instruction_versions");
+  const changelogColl = db.collection("instruction_chat_changelog");
+
+  return {
+    instructionStore: {
+      async load(instructionRef) {
+        const doc = await loadLatestInstruction(instructionRef, db);
+        return normalizeInstructionAIChatDocument(doc);
+      },
+      async save(instructionRef, instructionDoc) {
+        const existing = await loadLatestInstruction(instructionRef, db);
+        if (!existing) {
+          throw new Error("Instruction not found");
+        }
+
+        const nextInstructionId =
+          typeof instructionDoc?.instructionId === "string" &&
+            instructionDoc.instructionId.trim()
+            ? instructionDoc.instructionId.trim()
+            : existing.instructionId || generateInstructionId();
+        const nextUpdatedAt =
+          instructionDoc?.updatedAt instanceof Date
+            ? instructionDoc.updatedAt
+            : new Date();
+        const replacement = {
+          ...existing,
+          ...instructionDoc,
+          _id: existing._id,
+          instructionId: nextInstructionId,
+          createdAt:
+            existing.createdAt ||
+            (instructionDoc?.createdAt instanceof Date
+              ? instructionDoc.createdAt
+              : new Date()),
+          updatedAt: nextUpdatedAt,
+          conversationStarter: normalizeConversationStarterConfig(
+            instructionDoc?.conversationStarter ?? existing.conversationStarter,
+          ),
+        };
+
+        await instructionsColl.replaceOne({ _id: existing._id }, replacement);
+        return normalizeInstructionAIChatDocument(replacement);
+      },
+    },
+    settingsStore: {
+      async getValue(key, defaultValue) {
+        return getSettingValue(key, defaultValue);
+      },
+      async setValue(key, value) {
+        const saved = await setSettingValue(key, value);
+        if (!saved) {
+          throw new Error(`Failed to persist setting: ${key}`);
+        }
+        return true;
+      },
+    },
+    botStore: {
+      async list(platform, options = {}) {
+        const sort =
+          options && options.sort && typeof options.sort === "object"
+            ? options.sort
+            : { createdAt: -1 };
+        return db
+          .collection(getBotCollectionName(platform))
+          .find({})
+          .sort(sort)
+          .toArray();
+      },
+      async updateById(platform, botId, update) {
+        const objectId = toObjectId(botId);
+        if (!objectId) {
+          return { matchedCount: 0, modifiedCount: 0 };
+        }
+        if (
+          !update ||
+          typeof update !== "object" ||
+          Object.keys(update).length === 0
+        ) {
+          return { matchedCount: 0, modifiedCount: 0 };
+        }
+        return db
+          .collection(getBotCollectionName(platform))
+          .updateOne({ _id: objectId }, update);
+      },
+    },
+    followUpAssetStore: {
+      async getById(assetId) {
+        const normalizedAssetId =
+          typeof assetId === "string"
+            ? assetId.trim()
+            : assetId && typeof assetId.toString === "function"
+              ? assetId.toString().trim()
+              : "";
+        if (!normalizedAssetId) return null;
+
+        const objectId = toObjectId(normalizedAssetId);
+        const orConditions = [
+          { assetId: normalizedAssetId },
+          { legacyAssetId: normalizedAssetId },
+        ];
+        if (objectId) {
+          orConditions.unshift({ _id: objectId });
+        }
+        return followUpAssetsColl.findOne({ $or: orConditions });
+      },
+      async list(options = {}) {
+        const limit = Number.isFinite(Number(options?.limit))
+          ? Math.max(1, Math.min(100, Number(options.limit)))
+          : 50;
+        return followUpAssetsColl
+          .find({})
+          .sort({ createdAt: -1 })
+          .limit(limit)
+          .toArray();
+      },
+    },
+    followUpPageSettingsRepository: {
+      async getExact(platform, botId) {
+        return followUpPageSettingsColl.findOne({
+          platform: normalizeChatPlatform(platform),
+          botId: normalizeFollowUpBotId(botId),
+        });
+      },
+      async listAll() {
+        return followUpPageSettingsColl.find({}).toArray();
+      },
+      async upsert(platform, botId, settings) {
+        const normalizedPlatform = normalizeChatPlatform(platform);
+        const normalizedBotId = normalizeFollowUpBotId(botId);
+        const nextSettings =
+          settings && typeof settings === "object" ? { ...settings } : {};
+        if (Array.isArray(nextSettings.rounds)) {
+          nextSettings.rounds = normalizeFollowUpRounds(nextSettings.rounds);
+        }
+
+        const now = new Date();
+        await followUpPageSettingsColl.updateOne(
+          { platform: normalizedPlatform, botId: normalizedBotId },
+          {
+            $set: {
+              settings: nextSettings,
+              updatedAt: now,
+            },
+            $setOnInsert: {
+              platform: normalizedPlatform,
+              botId: normalizedBotId,
+              createdAt: now,
+            },
+          },
+          { upsert: true },
+        );
+
+        return followUpPageSettingsColl.findOne({
+          platform: normalizedPlatform,
+          botId: normalizedBotId,
+        });
+      },
+    },
+    versionStore: {
+      async list(instruction) {
+        const instructionRef =
+          instruction?._id || instruction?.instructionId || instruction;
+        const latestInstruction = await loadLatestInstruction(instructionRef, db);
+        if (!latestInstruction?.instructionId) return [];
+
+        return instructionVersionsColl
+          .find({ instructionId: latestInstruction.instructionId })
+          .sort({ version: -1 })
+          .toArray();
+      },
+      async save(instruction, options = {}) {
+        const instructionRef =
+          instruction?._id || instruction?.instructionId || instruction;
+        const snapshotResult = await createSnapshotFromLatest(
+          instructionRef,
+          options?.note || "",
+          options?.savedBy || "instructionAI",
+          db,
+        );
+        if (!snapshotResult?.success) {
+          throw new Error(snapshotResult?.error || "save_version_failed");
+        }
+
+        const updatedInstruction = await loadLatestInstruction(instructionRef, db);
+        return {
+          version: snapshotResult.version,
+          note: snapshotResult.note || "",
+          snapshotAt: snapshotResult.snapshotAt || new Date(),
+          instruction: normalizeInstructionAIChatDocument(updatedInstruction),
+        };
+      },
+      async get(instruction, version) {
+        const instructionRef =
+          instruction?._id || instruction?.instructionId || instruction;
+        const latestInstruction = await loadLatestInstruction(instructionRef, db);
+        if (!latestInstruction?.instructionId) return null;
+
+        const normalizedVersion = Number.parseInt(version, 10);
+        if (!Number.isInteger(normalizedVersion) || normalizedVersion <= 0) {
+          return null;
+        }
+
+        const snapshot = await instructionVersionsColl.findOne({
+          instructionId: latestInstruction.instructionId,
+          version: normalizedVersion,
+        });
+        if (snapshot) return snapshot;
+
+        if (
+          Number.isInteger(latestInstruction.version) &&
+          latestInstruction.version === normalizedVersion
+        ) {
+          return buildInstructionVersionSnapshotPayload(latestInstruction, {
+            version: normalizedVersion,
+            note: "",
+            savedBy: "current",
+            snapshotAt:
+              latestInstruction.updatedAt ||
+              latestInstruction.createdAt ||
+              new Date(),
+          });
+        }
+        return null;
+      },
+    },
+    instructionChatStateRepository: {
+      async createChangelogEntry(payload) {
+        await changelogColl.insertOne(payload);
+        return payload;
+      },
+    },
+  };
+}
+
+function createInstructionAIChatService(db, openaiClient) {
+  return new InstructionChatService(db, openaiClient, {
+    ...buildInstructionAIChatStores(db),
+    resetFollowUpConfigCache,
+    invalidateInstructionPromptCaches,
+    invalidateAllRuntimeCaches,
+  });
+}
+
 // InstructionAI Page
 app.get("/admin/instruction-ai", requireAdmin, async (req, res) => {
   try {
@@ -24735,11 +24996,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     const usePreviousResponseId = canUseInstructionPreviousResponseId(
       apiKeyToUse.provider,
     );
-    const chatService = new InstructionChatService(db, openai, {
-      resetFollowUpConfigCache,
-      invalidateInstructionPromptCaches,
-      invalidateAllRuntimeCaches,
-    });
+    const chatService = createInstructionAIChatService(db, openai);
 
     // Get instruction for system prompt
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
@@ -24991,11 +25248,7 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
 
     const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
     const openaiClient = buildLLMClientFromKey(apiKeyToUse);
-    const chatService = new InstructionChatService(db, openaiClient, {
-      resetFollowUpConfigCache,
-      invalidateInstructionPromptCaches,
-      invalidateAllRuntimeCaches,
-    });
+    const chatService = createInstructionAIChatService(db, openaiClient);
     let instructionMutated = false;
 
     // Reverse the operation
@@ -25529,11 +25782,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const usePreviousResponseId = canUseInstructionPreviousResponseId(
       apiKeyToUse.provider,
     );
-    const chatService = new InstructionChatService(db, openai, {
-      resetFollowUpConfigCache,
-      invalidateInstructionPromptCaches,
-      invalidateAllRuntimeCaches,
-    });
+    const chatService = createInstructionAIChatService(db, openai);
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) {
       sendEvent("error", { error: "ไม่พบ Instruction" });
