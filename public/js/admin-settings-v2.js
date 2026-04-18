@@ -31,6 +31,16 @@ const BOT_MODEL_PRESETS = [
     'gpt-4o',
     'gpt-4o-mini'
 ];
+const BOT_REASONING_EFFORT_LABELS = {
+    none: 'none - ไม่คิด',
+    minimal: 'minimal - คิดน้อยมาก',
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    xhigh: 'xhigh'
+};
+const CHAT_API_MODE_LABEL = 'Chat Completions API (compatibility: custom tools ได้, ไม่มี previous_response_id)';
+const CHAT_API_MODE_DISABLED_LABEL = 'Chat Completions API (รุ่นนี้รองรับผ่าน Responses เท่านั้น)';
 
 let activeBotChannel = 'line';
 const botKeywordModalState = {
@@ -1555,16 +1565,176 @@ const defaultAiConfig = {
     frequencyPenalty: ''
 };
 
+function normalizeRuntimeModelId(modelId) {
+    if (!modelId || typeof modelId !== 'string') return '';
+    const rawId = modelId.trim().toLowerCase();
+    if (!rawId) return '';
+    return rawId.includes('/') ? rawId.split('/').pop().trim() : rawId;
+}
+
+function getBotReasoningSupport(modelId) {
+    const normalized = normalizeRuntimeModelId(modelId);
+    if (!normalized) return null;
+
+    if (
+        normalized === 'gpt-5.4' ||
+        normalized === 'gpt-5.4-mini' ||
+        normalized === 'gpt-5.4-nano' ||
+        normalized === 'gpt-5.2' ||
+        normalized === 'gpt-5.2-codex'
+    ) {
+        return {
+            allowed: ['none', 'low', 'medium', 'high', 'xhigh'],
+            defaultEffort: 'none',
+            chatSamplingAllowed: normalized === 'gpt-5.4' || normalized === 'gpt-5.2'
+        };
+    }
+
+    if (normalized === 'gpt-5.4-pro') {
+        return {
+            allowed: ['medium', 'high', 'xhigh'],
+            defaultEffort: 'medium',
+            chatSamplingAllowed: false,
+            responsesOnly: true
+        };
+    }
+
+    if (normalized === 'gpt-5-pro') {
+        return {
+            allowed: ['high'],
+            defaultEffort: 'high',
+            chatSamplingAllowed: false,
+            responsesOnly: true
+        };
+    }
+
+    if (normalized === 'gpt-5.3-codex') {
+        return {
+            allowed: ['low', 'medium', 'high', 'xhigh'],
+            defaultEffort: 'medium',
+            chatSamplingAllowed: false,
+            responsesOnly: true
+        };
+    }
+
+    if (normalized === 'gpt-5.1') {
+        return {
+            allowed: ['none', 'low', 'medium', 'high'],
+            defaultEffort: 'none',
+            chatSamplingAllowed: false
+        };
+    }
+
+    if (
+        normalized === 'gpt-5' ||
+        normalized === 'gpt-5-mini' ||
+        normalized === 'gpt-5-nano'
+    ) {
+        return {
+            allowed: ['minimal', 'low', 'medium', 'high'],
+            defaultEffort: 'medium',
+            chatSamplingAllowed: false
+        };
+    }
+
+    if (
+        normalized.startsWith('o1') ||
+        normalized.startsWith('o3') ||
+        normalized.startsWith('o4')
+    ) {
+        return {
+            allowed: ['low', 'medium', 'high'],
+            defaultEffort: 'medium',
+            chatSamplingAllowed: false
+        };
+    }
+
+    return null;
+}
+
+function resolveBotReasoningEffort(modelId, requestedEffort) {
+    const support = getBotReasoningSupport(modelId);
+    if (!support) return '';
+
+    const effort = typeof requestedEffort === 'string' ? requestedEffort.trim().toLowerCase() : '';
+    return support.allowed.includes(effort) ? effort : support.defaultEffort;
+}
+
 function isReasoningModel(modelId) {
-    if (!modelId || typeof modelId !== 'string') return false;
-    const rawId = modelId.toLowerCase();
-    const id = rawId.includes('/') ? rawId.split('/').pop() : rawId;
-    // Models that support reasoning_effort:
-    // - o1, o1-mini, o1-preview (OpenAI reasoning models)
-    // - o3, o3-mini (OpenAI reasoning models)
-    // - gpt-5 (future GPT-5 models)
-    // GPT-4, GPT-4.1, GPT-4o do NOT support reasoning_effort
-    return id.startsWith('o1') || id.startsWith('o3') || id.startsWith('gpt-5');
+    return Boolean(getBotReasoningSupport(modelId));
+}
+
+function isChatSamplingAllowed(modelId) {
+    const support = getBotReasoningSupport(modelId);
+    return !support || support.chatSamplingAllowed === true;
+}
+
+function modelRequiresResponsesApi(modelId) {
+    return getBotReasoningSupport(modelId)?.responsesOnly === true;
+}
+
+function buildReasoningEffortOptions(support, selectedEffort) {
+    return support.allowed.map((effort) => {
+        const selected = effort === selectedEffort ? ' selected' : '';
+        const label = BOT_REASONING_EFFORT_LABELS[effort] || effort;
+        return `<option value="${escapeHtml(effort)}"${selected}>${escapeHtml(label)}</option>`;
+    }).join('');
+}
+
+function getReasoningHelpText(support) {
+    if (!support) {
+        return 'ใช้เฉพาะ Responses';
+    }
+
+    const defaultText = `default ของ OpenAI คือ "${support.defaultEffort}"`;
+    if (support.allowed.includes('none')) {
+        return `ใช้เฉพาะ Responses; รุ่นนี้บังคับเลือก reasoning_effort และเลือก "none" ได้ (${defaultText})`;
+    }
+    if (support.allowed.includes('minimal')) {
+        return `ใช้เฉพาะ Responses; รุ่นนี้บังคับเลือก reasoning_effort โดยค่าต่ำสุดคือ "minimal" (${defaultText})`;
+    }
+    return `ใช้เฉพาะ Responses; รุ่นนี้บังคับเลือก reasoning_effort (${defaultText})`;
+}
+
+function syncReasoningEffortSelect(prefix, requestedEffort = '') {
+    const modelId = getInputValue(`${prefix}BotAiModel`);
+    const support = getBotReasoningSupport(modelId);
+    const select = document.getElementById(`${prefix}BotReasoningEffort`);
+    const help = document.getElementById(`${prefix}BotReasoningHelp`);
+
+    if (!select) return '';
+
+    if (!support) {
+        select.innerHTML = '';
+        select.required = false;
+        select.value = '';
+        if (help) help.textContent = getReasoningHelpText(null);
+        return '';
+    }
+
+    const nextEffort = resolveBotReasoningEffort(modelId, requestedEffort);
+    select.innerHTML = buildReasoningEffortOptions(support, nextEffort);
+    select.value = nextEffort;
+    select.required = true;
+    if (help) help.textContent = getReasoningHelpText(support);
+    return nextEffort;
+}
+
+function syncAiModeConstraints(prefix) {
+    const select = document.getElementById(`${prefix}BotApiMode`);
+    if (!select) return;
+
+    const chatOption = Array.from(select.options).find((option) => option.value === 'chat');
+    const responsesOnly = modelRequiresResponsesApi(getInputValue(`${prefix}BotAiModel`));
+
+    if (chatOption) {
+        chatOption.disabled = responsesOnly;
+        chatOption.textContent = responsesOnly ? CHAT_API_MODE_DISABLED_LABEL : CHAT_API_MODE_LABEL;
+    }
+
+    if (responsesOnly && select.value === 'chat') {
+        select.value = 'responses';
+    }
 }
 
 function parseNumberOrNull(value) {
@@ -1592,7 +1762,14 @@ function attachRangeListener(id) {
 }
 
 function applyAiModeVisibility(prefix, apiMode) {
-    const mode = apiMode === 'chat' ? 'chat' : 'responses';
+    syncAiModeConstraints(prefix);
+    const apiModeSelect = document.getElementById(`${prefix}BotApiMode`);
+    const mode = apiModeSelect && apiModeSelect.value === 'chat' && !modelRequiresResponsesApi(getInputValue(`${prefix}BotAiModel`))
+        ? 'chat'
+        : 'responses';
+    if (apiModeSelect) {
+        apiModeSelect.value = mode;
+    }
     const responsesSection = document.getElementById(`${prefix}BotResponsesParams`);
     const chatSection = document.getElementById(`${prefix}BotChatParams`);
     if (responsesSection) responsesSection.classList.toggle('d-none', mode !== 'responses');
@@ -1607,35 +1784,38 @@ function setAiConfigUI(prefix, config) {
     const apiMode = cfg.apiMode === 'chat' ? 'chat' : 'responses';
 
     setInputValue(`${prefix}BotApiMode`, apiMode);
-    setInputValue(`${prefix}BotReasoningEffort`, cfg.reasoningEffort ?? '');
     setRangeValue(`${prefix}BotTemperature`, cfg.temperature);
     setRangeValue(`${prefix}BotTopP`, cfg.topP);
     setRangeValue(`${prefix}BotPresencePenalty`, cfg.presencePenalty);
     setRangeValue(`${prefix}BotFrequencyPenalty`, cfg.frequencyPenalty);
 
+    syncReasoningEffortSelect(prefix, cfg.reasoningEffort ?? '');
     applyAiModeVisibility(prefix, apiMode);
     updateReasoningVisibility(prefix);
 }
 
 function readAiConfigFromUI(prefix) {
+    syncAiModeConstraints(prefix);
     const apiModeSelect = document.getElementById(`${prefix}BotApiMode`);
     const apiMode = apiModeSelect && apiModeSelect.value === 'chat' ? 'chat' : 'responses';
     const modelId = getInputValue(`${prefix}BotAiModel`);
-    const reasoningModel = isReasoningModel(modelId);
+    const reasoningSupport = getBotReasoningSupport(modelId);
 
     const config = {
         apiMode
     };
 
     if (apiMode === 'responses') {
-        config.reasoningEffort = getInputValue(`${prefix}BotReasoningEffort`) || '';
+        config.reasoningEffort = reasoningSupport
+            ? resolveBotReasoningEffort(modelId, getInputValue(`${prefix}BotReasoningEffort`))
+            : '';
         config.temperature = null;
         config.topP = null;
         config.presencePenalty = null;
         config.frequencyPenalty = null;
     } else {
         config.reasoningEffort = '';
-        if (reasoningModel) {
+        if (!isChatSamplingAllowed(modelId)) {
             config.temperature = null;
             config.topP = null;
             config.presencePenalty = null;
@@ -1664,8 +1844,11 @@ function initAiModeListeners() {
         });
         const modelSelect = document.getElementById(`${prefix}BotAiModel`);
         if (modelSelect) {
-            modelSelect.addEventListener('change', () => updateReasoningVisibility(prefix));
-            modelSelect.addEventListener('change', () => updateChatSamplingVisibility(prefix));
+            modelSelect.addEventListener('change', () => {
+                syncAiModeConstraints(prefix);
+                updateReasoningVisibility(prefix);
+                updateChatSamplingVisibility(prefix);
+            });
         }
     });
 }
@@ -1678,23 +1861,38 @@ function updateReasoningVisibility(prefix) {
     const note = document.getElementById(`${prefix}BotReasoningNote`);
     if (group) group.classList.toggle('d-none', !supported);
     if (note) note.classList.toggle('d-none', supported);
-    if (!supported) {
+    if (supported) {
+        syncReasoningEffortSelect(prefix, getInputValue(`${prefix}BotReasoningEffort`));
+    } else {
+        const select = document.getElementById(`${prefix}BotReasoningEffort`);
+        if (select) {
+            select.innerHTML = '';
+            select.required = false;
+        }
+        const help = document.getElementById(`${prefix}BotReasoningHelp`);
+        if (help) help.textContent = getReasoningHelpText(null);
         setInputValue(`${prefix}BotReasoningEffort`, '');
     }
 }
 
 function updateChatSamplingVisibility(prefix) {
+    syncAiModeConstraints(prefix);
     const modelSelect = document.getElementById(`${prefix}BotAiModel`);
     const modelId = modelSelect ? modelSelect.value : '';
     const apiModeSelect = document.getElementById(`${prefix}BotApiMode`);
     const apiMode = apiModeSelect && apiModeSelect.value === 'chat' ? 'chat' : 'responses';
-    const isReasoning = isReasoningModel(modelId);
+    const samplingAllowed = isChatSamplingAllowed(modelId);
     const controls = document.getElementById(`${prefix}BotChatControls`);
     const note = document.getElementById(`${prefix}BotChatNote`);
 
-    const hideSampling = apiMode !== 'chat' || isReasoning;
+    const hideSampling = apiMode !== 'chat' || !samplingAllowed;
     if (controls) controls.classList.toggle('d-none', hideSampling);
-    if (note) note.classList.toggle('d-none', !isReasoning);
+    if (note) {
+        if (!samplingAllowed) {
+            note.textContent = 'โมเดลนี้ไม่รองรับ temperature/top_p/penalties ใน Chat API ตามเอกสาร OpenAI';
+        }
+        note.classList.toggle('d-none', apiMode !== 'chat' || samplingAllowed);
+    }
 
     if (hideSampling) {
         setRangeValue(`${prefix}BotTemperature`, '');

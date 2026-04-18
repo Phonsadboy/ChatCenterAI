@@ -316,6 +316,25 @@
     letter-spacing: 0.5px;
 }
 
+.filter-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.filter-inline-action {
+    padding: 0;
+    font-size: 0.75rem;
+}
+
+.page-filter-meta {
+    margin-bottom: 0.625rem;
+    font-size: 0.75rem;
+    color: var(--chat-text-secondary);
+}
+
 .filter-buttons {
     display: flex;
     flex-wrap: wrap;
@@ -356,6 +375,59 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+}
+
+.page-filters {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 14rem;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.page-filter-option {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--chat-border-color);
+    border-radius: 14px;
+    background: var(--chat-bg-app);
+    cursor: pointer;
+    transition: var(--chat-transition);
+}
+
+.page-filter-option:hover {
+    border-color: var(--chat-primary);
+    background: var(--chat-bg-hover);
+}
+
+.page-filter-option.active {
+    border-color: var(--chat-primary);
+    background: rgba(99, 125, 161, 0.1);
+}
+
+.page-filter-option input {
+    margin: 0;
+}
+
+.page-filter-label {
+    min-width: 0;
+    font-size: 0.8125rem;
+    color: var(--chat-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.page-filter-count {
+    min-width: 1.75rem;
+    text-align: right;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--chat-text-secondary);
 }
 
 .tag-filter-btn {

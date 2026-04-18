@@ -2,6 +2,9 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# `sharp` falls back to node-gyp on Alpine when a prebuilt binary is unavailable.
+RUN apk add --no-cache python3 make g++
+
 # Copy package files
 COPY package*.json ./
 

@@ -283,6 +283,17 @@ function createChatRepository({
       ? "ASC"
       : "DESC";
     const params = [normalizedUserId];
+    const pageFilters = normalizeThreadPageFilters(
+      Array.isArray(options.pageFilters)
+        ? options.pageFilters
+        : options.platform
+          ? [{ platform: options.platform, botId: options.botId }]
+          : [],
+    );
+    const pageFilterSql = buildThreadPageFilterSql(pageFilters, params, {
+      threadAlias: "t",
+      botIdExpression: "b.legacy_bot_id",
+    });
     let limitSql = "";
     if (Number.isFinite(options.limit) && options.limit > 0) {
       params.push(options.limit);
@@ -310,6 +321,7 @@ function createChatRepository({
         INNER JOIN threads t ON t.id = m.thread_id
         LEFT JOIN bots b ON b.id = m.bot_id
         WHERE c.legacy_contact_id = $1
+          ${pageFilterSql}
         ORDER BY m.created_at ${sortDirection}, m.id ${sortDirection}
         ${limitSql}
       `,
@@ -363,11 +375,60 @@ function createChatRepository({
     };
   }
 
+  function normalizeThreadPageFilters(pageFilters = []) {
+    if (!Array.isArray(pageFilters) || pageFilters.length === 0) {
+      return [];
+    }
+
+    const seen = new Set();
+    return pageFilters
+      .map((entry) => {
+        const platform = normalizePlatform(entry?.platform, "");
+        if (!platform) return null;
+        const botId = toLegacyId(entry?.botId) || null;
+        const key = `${platform}:${botId || "default"}`;
+        if (seen.has(key)) return null;
+        seen.add(key);
+        return { platform, botId };
+      })
+      .filter(Boolean);
+  }
+
+  function buildThreadPageFilterSql(pageFilters = [], params = [], options = {}) {
+    const normalizedFilters = normalizeThreadPageFilters(pageFilters);
+    if (normalizedFilters.length === 0) {
+      return "";
+    }
+
+    const threadAlias = options.threadAlias || "t";
+    const botIdExpression = options.botIdExpression || "b.legacy_bot_id";
+    const clauses = normalizedFilters.map((filter) => {
+      params.push(filter.platform);
+      const platformParam = `$${params.length}`;
+      if (filter.botId) {
+        params.push(filter.botId);
+        const botIdParam = `$${params.length}`;
+        return `(${threadAlias}.platform = ${platformParam} AND COALESCE(${botIdExpression}, '') = ${botIdParam})`;
+      }
+      return `(${threadAlias}.platform = ${platformParam} AND COALESCE(${botIdExpression}, '') = '')`;
+    });
+
+    return clauses.length > 0 ? `AND (${clauses.join(" OR ")})` : "";
+  }
+
   async function readPostgresUserSummaries(options = {}) {
     const limit =
       Number.isFinite(options.limit) && options.limit > 0 ? options.limit : 50;
     const focusUserId = toLegacyId(options.focusUserId) || null;
     const scanLimit = Math.max(userSummaryRecentThreadScanLimit, limit * 40);
+    const pageFilters = normalizeThreadPageFilters(options.pageFilters);
+    const params = [focusUserId, limit];
+    const pageFilterSql = buildThreadPageFilterSql(pageFilters, params, {
+      threadAlias: "t",
+      botIdExpression: "b.legacy_bot_id",
+    });
+    params.push(scanLimit);
+    const scanLimitParam = `$${params.length}`;
 
     const result = await query(
       `
@@ -378,16 +439,21 @@ function createChatRepository({
             t.bot_id,
             t.stats,
             t.updated_at,
-            t.id
+            t.id,
+            b.legacy_bot_id
           FROM threads t
+          LEFT JOIN bots b ON b.id = t.bot_id
+          WHERE 1 = 1
+          ${pageFilterSql}
           ORDER BY t.updated_at DESC, t.id DESC
-          LIMIT $3
+          LIMIT ${scanLimitParam}
         ),
         latest_per_contact AS (
           SELECT DISTINCT ON (rt.contact_id)
             rt.contact_id,
             rt.platform,
             rt.bot_id,
+            rt.legacy_bot_id,
             COALESCE(NULLIF(rt.stats->>'lastPreview', ''), '') AS last_message,
             CASE
               WHEN COALESCE(rt.stats->>'lastMessageAt', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
@@ -411,10 +477,9 @@ function createChatRepository({
           l.last_timestamp,
           l.message_count,
           l.platform,
-          b.legacy_bot_id
+          l.legacy_bot_id
         FROM latest_per_contact l
         INNER JOIN contacts c ON c.id = l.contact_id
-        LEFT JOIN bots b ON b.id = l.bot_id
         ORDER BY
           CASE
             WHEN $1::text IS NOT NULL AND c.legacy_contact_id = $1 THEN 0
@@ -424,13 +489,19 @@ function createChatRepository({
           c.legacy_contact_id ASC
         LIMIT $2
       `,
-      [focusUserId, limit, scanLimit],
+      params,
     );
 
     const docs = result.rows.map((row) => hydratePostgresUserSummary(row));
     if (!focusUserId || docs.some((doc) => toLegacyId(doc?._id) === focusUserId)) {
       return docs;
     }
+
+    const focusParams = [focusUserId];
+    const focusPageFilterSql = buildThreadPageFilterSql(pageFilters, focusParams, {
+      threadAlias: "t",
+      botIdExpression: "b.legacy_bot_id",
+    });
 
     const focusResult = await query(
       `
@@ -453,10 +524,11 @@ function createChatRepository({
         INNER JOIN contacts c ON c.id = t.contact_id
         LEFT JOIN bots b ON b.id = t.bot_id
         WHERE c.legacy_contact_id = $1
+          ${focusPageFilterSql}
         ORDER BY t.updated_at DESC, t.id DESC
         LIMIT 1
       `,
-      [focusUserId],
+      focusParams,
     );
     if (focusResult.rowCount === 0) {
       return docs;
@@ -849,23 +921,28 @@ function createChatRepository({
   }
 
   async function listUsers(options = {}) {
-    const cachedDocs = getCachedUserSummaries(options);
-    if (cachedDocs) {
-      return cachedDocs;
+    const useCache = normalizeThreadPageFilters(options.pageFilters).length === 0;
+    if (useCache) {
+      const cachedDocs = getCachedUserSummaries(options);
+      if (cachedDocs) {
+        return cachedDocs;
+      }
     }
 
     ensurePostgresAvailable("listUsers");
     try {
       const pgDocs = await readPostgresUserSummaries(options);
-      if (Array.isArray(pgDocs) && pgDocs.length > 0) {
+      if (useCache && Array.isArray(pgDocs) && pgDocs.length > 0) {
         userSummariesCache.docs = pgDocs;
         userSummariesCache.updatedAt = Date.now();
       }
       return pgDocs;
     } catch (error) {
-      const staleCache = getCachedUserSummaries(options, true);
-      if (staleCache) {
-        return staleCache;
+      if (useCache) {
+        const staleCache = getCachedUserSummaries(options, true);
+        if (staleCache) {
+          return staleCache;
+        }
       }
       throw error;
     }

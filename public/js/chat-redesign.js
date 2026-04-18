@@ -9,17 +9,21 @@ class ChatManager {
         this.users = [];
         this.allUsers = [];
         this.chatHistory = {};
+        this.currentChatContext = null;
         this.messageInputBaseHeight = 0;
         this.quickReplies = [];
         this.templateStorageKey = 'chatTemplates';
         this.currentEditingTemplateId = null;
         this.emojiPicker = null;
+        this.availablePages = [];
+        this.userLoadRequestId = 0;
 
         // Filter state
         this.currentFilters = {
             status: 'all',
             tags: [],
-            search: ''
+            search: '',
+            pageKeys: this.getPageKeysFromQuery()
         };
 
         // Tags
@@ -47,6 +51,7 @@ class ChatManager {
         console.log('Initializing Chat Manager...');
         this.initializeSocket();
         this.setupEventListeners();
+        this.loadPageOptions();
         this.loadUsers();
         this.loadAvailableTags();
         this.setupAutoRefresh();
@@ -65,6 +70,79 @@ class ChatManager {
         } catch (_) {
             return '';
         }
+    }
+
+    getPageKeysFromQuery() {
+        try {
+            const params = new URLSearchParams(window.location.search || '');
+            return this.normalizePageKeys(params.get('pageKey'));
+        } catch (_) {
+            return [];
+        }
+    }
+
+    normalizePlatform(platform) {
+        const normalized = typeof platform === 'string' ? platform.trim().toLowerCase() : '';
+        if (['line', 'facebook', 'instagram', 'whatsapp'].includes(normalized)) {
+            return normalized;
+        }
+        return 'line';
+    }
+
+    normalizeBotId(botId) {
+        if (botId === null || typeof botId === 'undefined') return null;
+        const normalized = String(botId).trim();
+        if (!normalized || normalized.toLowerCase() === 'default') {
+            return null;
+        }
+        return normalized;
+    }
+
+    buildPageKey(platform, botId = null) {
+        const normalizedPlatform = this.normalizePlatform(platform);
+        const normalizedBotId = this.normalizeBotId(botId);
+        return `${normalizedPlatform}:${normalizedBotId || 'default'}`;
+    }
+
+    normalizePageKeys(pageKeys, availablePageKeys = null) {
+        const rawPageKeys = Array.isArray(pageKeys)
+            ? pageKeys
+            : typeof pageKeys === 'string'
+                ? pageKeys.split(',')
+                : [];
+        const allowSet = availablePageKeys instanceof Set ? availablePageKeys : null;
+        const seen = new Set();
+        const normalized = [];
+
+        rawPageKeys.forEach((entry) => {
+            const key = String(entry || '').trim();
+            if (!key || !key.includes(':')) return;
+            const [platformPart, ...botParts] = key.split(':');
+            const normalizedKey = this.buildPageKey(platformPart, botParts.join(':') || null);
+            if (allowSet && !allowSet.has(normalizedKey)) return;
+            if (seen.has(normalizedKey)) return;
+            seen.add(normalizedKey);
+            normalized.push(normalizedKey);
+        });
+
+        return normalized;
+    }
+
+    findUserByContext(userId, pageKey = '') {
+        const normalizedPageKey = String(pageKey || '').trim();
+        const matches = [...this.users, ...this.allUsers];
+        return matches.find((user) => {
+            if (!user || user.userId !== userId) return false;
+            if (!normalizedPageKey) return true;
+            const userPageKey = user.pageKey || this.buildPageKey(user.platform, user.botId);
+            return userPageKey === normalizedPageKey;
+        }) || null;
+    }
+
+    getCurrentUserRecord() {
+        if (!this.currentUserId) return null;
+        const pageKey = this.currentChatContext?.pageKey || '';
+        return this.findUserByContext(this.currentUserId, pageKey);
     }
 
     async tryAutoFocusUser() {
@@ -189,6 +267,13 @@ class ChatManager {
         if (clearFilters) {
             clearFilters.addEventListener('click', () => {
                 this.clearFilters();
+            });
+        }
+
+        const clearPageFilters = document.getElementById('clearPageFilters');
+        if (clearPageFilters) {
+            clearPageFilters.addEventListener('click', () => {
+                this.clearPageFilters();
             });
         }
 
@@ -602,6 +687,15 @@ class ChatManager {
 	            });
 	        }
 
+        const pageFilters = document.getElementById('pageFilters');
+        if (pageFilters) {
+            pageFilters.addEventListener('change', (e) => {
+                const input = e.target.closest('input[data-page-key]');
+                if (!input || !pageFilters.contains(input)) return;
+                this.togglePageFilter(input.dataset.pageKey || '', input.checked);
+            });
+        }
+
 	        // Tag modal actions (delegation)
 	        const currentTags = document.getElementById('currentTags');
 	        if (currentTags) {
@@ -721,10 +815,7 @@ class ChatManager {
     buildDebugSnapshot() {
         if (!this.currentUserId) return null;
 
-        const user =
-            this.allUsers.find(u => u.userId === this.currentUserId) ||
-            this.users.find(u => u.userId === this.currentUserId) ||
-            null;
+        const user = this.getCurrentUserRecord();
         const orders = Array.isArray(this.currentOrders) ? this.currentOrders : [];
         const latestOrder = orders.length > 0 ? orders[0] : null;
         const messages = this.chatHistory[this.currentUserId] || [];
@@ -768,8 +859,10 @@ class ChatManager {
             filters: {
                 status: this.currentFilters.status,
                 tags: [...this.currentFilters.tags],
-                search: this.currentFilters.search
+                search: this.currentFilters.search,
+                pageKeys: [...this.currentFilters.pageKeys]
             },
+            currentChatContext: this.currentChatContext ? { ...this.currentChatContext } : null,
             latestOrder: latestOrder ? {
                 id: latestOrder._id || null,
                 status: latestOrder.status || null,
@@ -809,17 +902,209 @@ class ChatManager {
     // User Management
     // ========================================
 
+    async loadPageOptions() {
+        try {
+            const response = await fetch('/admin/chat/pages');
+            const data = await response.json();
+            if (!data.success) {
+                this.availablePages = [];
+                this.renderPageFilters();
+                this.updateFilterBadge();
+                return;
+            }
+
+            this.availablePages = Array.isArray(data.pages)
+                ? data.pages.map((page) => ({
+                    ...page,
+                    pageKey: page.pageKey || this.buildPageKey(page.platform, page.botId)
+                }))
+                : [];
+
+            const availablePageKeys = new Set(this.availablePages.map(page => page.pageKey));
+            const normalizedPageKeys = this.normalizePageKeys(
+                this.currentFilters.pageKeys,
+                availablePageKeys
+            );
+            const pageFilterChanged =
+                normalizedPageKeys.length !== this.currentFilters.pageKeys.length ||
+                normalizedPageKeys.some((key, index) => key !== this.currentFilters.pageKeys[index]);
+            this.currentFilters.pageKeys = normalizedPageKeys;
+
+            this.renderPageFilters();
+            this.updateFilterBadge();
+
+            if (pageFilterChanged) {
+                this.loadUsers();
+            }
+        } catch (error) {
+            console.error('Error loading chat pages:', error);
+            this.availablePages = [];
+            this.renderPageFilters();
+            this.updateFilterBadge();
+        }
+    }
+
+    renderPageFilters() {
+        const pageFilters = document.getElementById('pageFilters');
+        const pageFilterMeta = document.getElementById('pageFilterMeta');
+        const clearPageFilters = document.getElementById('clearPageFilters');
+        if (!pageFilters) return;
+
+        const selectedSet = new Set(this.currentFilters.pageKeys || []);
+        if (pageFilterMeta) {
+            if (selectedSet.size === 0) {
+                pageFilterMeta.textContent = 'ทุกเพจและทุกบอท';
+            } else if (selectedSet.size === 1) {
+                const selectedPage = this.availablePages.find(page => selectedSet.has(page.pageKey));
+                pageFilterMeta.textContent = selectedPage?.name || 'เลือก 1 เพจ/บอท';
+            } else {
+                pageFilterMeta.textContent = `เลือกแล้ว ${selectedSet.size} เพจ/บอท`;
+            }
+        }
+
+        if (clearPageFilters) {
+            clearPageFilters.hidden = selectedSet.size === 0;
+        }
+
+        if (!Array.isArray(this.availablePages) || this.availablePages.length === 0) {
+            pageFilters.innerHTML = '<span class="no-tags">ไม่พบเพจหรือบอท</span>';
+            return;
+        }
+
+        pageFilters.innerHTML = this.availablePages.map((page) => {
+            const pageKey = page.pageKey || this.buildPageKey(page.platform, page.botId);
+            const checked = selectedSet.has(pageKey);
+            const chatCount = Number.isFinite(Number(page.chatCount)) ? Number(page.chatCount) : 0;
+            return `
+                <label class="page-filter-option ${checked ? 'active' : ''}">
+                    <input type="checkbox" data-page-key="${this.escapeHtml(pageKey)}" ${checked ? 'checked' : ''}>
+                    <span class="page-filter-label">${this.escapeHtml(page.name || pageKey)}</span>
+                    <span class="page-filter-count">${chatCount}</span>
+                </label>
+            `;
+        }).join('');
+    }
+
+    clearPageFilters(options = {}) {
+        const { skipLoad = false } = options;
+        this.currentFilters.pageKeys = [];
+        this.renderPageFilters();
+        this.updateFilterBadge();
+        if (!skipLoad) {
+            this.loadUsers();
+        }
+    }
+
+    togglePageFilter(pageKey, forceChecked = null) {
+        const normalizedPageKey = this.normalizePageKeys([pageKey])[0];
+        if (!normalizedPageKey) return;
+
+        const nextSelected = new Set(this.currentFilters.pageKeys || []);
+        const shouldSelect = typeof forceChecked === 'boolean'
+            ? forceChecked
+            : !nextSelected.has(normalizedPageKey);
+        if (shouldSelect) {
+            nextSelected.add(normalizedPageKey);
+        } else {
+            nextSelected.delete(normalizedPageKey);
+        }
+
+        this.currentFilters.pageKeys = this.normalizePageKeys([...nextSelected]);
+        this.renderPageFilters();
+        this.updateFilterBadge();
+        this.loadUsers();
+    }
+
+    buildUsersEndpointUrl() {
+        const params = new URLSearchParams();
+        if (this.pendingFocusUserId) {
+            params.set('focus', this.pendingFocusUserId);
+        }
+        if (Array.isArray(this.currentFilters.pageKeys) && this.currentFilters.pageKeys.length > 0) {
+            params.set('pageKey', this.currentFilters.pageKeys.join(','));
+        }
+        const query = params.toString();
+        return query ? `/admin/chat/users?${query}` : '/admin/chat/users';
+    }
+
+    getDefaultChatEmptyStateHtml() {
+        return `
+            <div class="empty-state app-empty" id="emptyState">
+                <div class="app-empty__icon">
+                    <i class="fab fa-facebook-messenger"></i>
+                </div>
+                <div class="app-empty__title">เลือกแชทเพื่อเริ่มการสนทนา</div>
+                <div class="app-empty__desc">
+                    เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที
+                </div>
+            </div>
+        `;
+    }
+
+    resetSelectedChat() {
+        this.currentUserId = null;
+        this.currentChatContext = null;
+        this.currentOrders = [];
+        this.renderOrders();
+        this.hideTypingIndicator();
+
+        const chatAvatar = document.getElementById('chatAvatar');
+        const chatUserName = document.getElementById('chatUserName');
+        const chatUserMeta = document.getElementById('chatUserMeta');
+        const chatHeaderActions = document.getElementById('chatHeaderActions');
+        const messagesContainer = document.getElementById('messagesContainer');
+        const messageInputArea = document.getElementById('messageInputArea');
+        const messageInput = document.getElementById('messageInput');
+        const charCount = document.getElementById('charCount');
+
+        if (chatAvatar) {
+            chatAvatar.innerHTML = '<i class="fas fa-user"></i>';
+            chatAvatar.className = 'chat-avatar';
+        }
+        if (chatUserName) {
+            chatUserName.textContent = 'เลือกแชทเพื่อเริ่มสนทนา';
+        }
+        if (chatUserMeta) {
+            chatUserMeta.innerHTML = `
+                <span class="meta-item">
+                    <i class="fas fa-comment"></i>
+                    <span id="messageCount">0</span> ข้อความ
+                </span>
+            `;
+        }
+        if (chatHeaderActions) {
+            chatHeaderActions.style.display = 'none';
+        }
+        if (messagesContainer) {
+            messagesContainer.innerHTML = this.getDefaultChatEmptyStateHtml();
+        }
+        if (messageInputArea) {
+            messageInputArea.style.display = 'none';
+        }
+        if (messageInput) {
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+        }
+        if (charCount) {
+            charCount.textContent = '0';
+        }
+        this.updateDebugPanel();
+    }
+
     async loadUsers() {
         try {
-            const focusQuery = this.pendingFocusUserId
-                ? `?focus=${encodeURIComponent(this.pendingFocusUserId)}`
-                : '';
-            const response = await fetch(`/admin/chat/users${focusQuery}`);
+            const requestId = ++this.userLoadRequestId;
+            const response = await fetch(this.buildUsersEndpointUrl());
             const data = await response.json();
+            if (requestId !== this.userLoadRequestId) return;
 
             if (data.success) {
                 this.allUsers = (data.users || []).map(user => {
                     const normalizedUser = { ...user };
+                    normalizedUser.pageKey = normalizedUser.pageKey || this.buildPageKey(
+                        normalizedUser.platform,
+                        normalizedUser.botId
+                    );
                     if (user.lastMessage) {
                         const previewText = this.extractDisplayText({
                             content: user.lastMessage,
@@ -829,6 +1114,19 @@ class ChatManager {
                     }
                     return normalizedUser;
                 });
+                if (this.currentUserId) {
+                    const currentPageKey = this.currentChatContext?.pageKey || '';
+                    const selectedUser = this.findUserByContext(this.currentUserId, currentPageKey);
+                    if (selectedUser) {
+                        this.currentChatContext = {
+                            platform: selectedUser.platform || null,
+                            botId: selectedUser.botId || null,
+                            pageKey: selectedUser.pageKey || this.buildPageKey(selectedUser.platform, selectedUser.botId)
+                        };
+                    } else {
+                        this.resetSelectedChat();
+                    }
+                }
                 this.applyFilters();
                 await this.tryAutoFocusUser();
             } else {
@@ -842,6 +1140,14 @@ class ChatManager {
 
     applyFilters() {
         let filtered = [...this.allUsers];
+
+        if (this.currentFilters.pageKeys.length > 0) {
+            const selectedPages = new Set(this.currentFilters.pageKeys);
+            filtered = filtered.filter(user => {
+                const pageKey = user.pageKey || this.buildPageKey(user.platform, user.botId);
+                return selectedPages.has(pageKey);
+            });
+        }
 
         // Status filter
         if (this.currentFilters.status !== 'all') {
@@ -1018,6 +1324,15 @@ class ChatManager {
 
     async selectUser(userId) {
         this.currentUserId = userId;
+        const user = this.findUserByContext(
+            userId,
+            this.currentChatContext?.pageKey || ''
+        ) || this.findUserByContext(userId);
+        this.currentChatContext = user ? {
+            platform: user.platform || null,
+            botId: user.botId || null,
+            pageKey: user.pageKey || this.buildPageKey(user.platform, user.botId)
+        } : null;
 
         // Close sidebar on mobile
         const chatSidebar = document.getElementById('chatSidebar');
@@ -1045,9 +1360,7 @@ class ChatManager {
 
     updateChatHeader() {
         const btnRefreshProfile = document.getElementById('btnRefreshProfile');
-        const user =
-            this.users.find(u => u.userId === this.currentUserId) ||
-            this.allUsers.find(u => u.userId === this.currentUserId);
+        const user = this.getCurrentUserRecord();
         if (!user) {
             if (btnRefreshProfile) {
                 btnRefreshProfile.disabled = true;
@@ -1150,7 +1463,15 @@ class ChatManager {
 
     async loadChatHistory(userId) {
         try {
-            const response = await fetch(`/admin/chat/history/${userId}`);
+            const params = new URLSearchParams();
+            const pageKey = this.currentChatContext?.pageKey || '';
+            if (pageKey) {
+                params.set('pageKey', pageKey);
+            }
+            const query = params.toString();
+            const response = await fetch(
+                `/admin/chat/history/${userId}${query ? `?${query}` : ''}`
+            );
             const data = await response.json();
 
             if (data.success) {
@@ -1494,9 +1815,7 @@ class ChatManager {
 
         try {
             const user =
-                this.allUsers.find(u => u.userId === this.currentUserId) ||
-                this.users.find(u => u.userId === this.currentUserId) ||
-                null;
+                this.getCurrentUserRecord();
             const response = await fetch('/admin/chat/send', {
                 method: 'POST',
                 headers: {
@@ -1505,8 +1824,8 @@ class ChatManager {
                 body: JSON.stringify({
                     userId: this.currentUserId,
                     message: message,
-                    platform: user?.platform || null,
-                    botId: user?.botId || null
+                    platform: user?.platform || this.currentChatContext?.platform || null,
+                    botId: user?.botId || this.currentChatContext?.botId || null
                 })
             });
 
@@ -1546,7 +1865,7 @@ class ChatManager {
     async togglePurchaseStatus() {
         if (!this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.getCurrentUserRecord();
         if (!user) return;
 
         const newStatus = !user.hasPurchased;
@@ -1585,8 +1904,7 @@ class ChatManager {
         }
 
         const user =
-            this.users.find(u => u.userId === this.currentUserId) ||
-            this.allUsers.find(u => u.userId === this.currentUserId);
+            this.getCurrentUserRecord();
 
         if (!user) {
             this.showToast('ไม่พบข้อมูลผู้ใช้ในรายการ', 'error');
@@ -1676,7 +1994,7 @@ class ChatManager {
     async toggleAI() {
         if (!this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.getCurrentUserRecord();
         if (!user) return;
 
         const currentStatus = user.aiEnabled !== false;
@@ -1791,7 +2109,7 @@ class ChatManager {
     openTagModal() {
         if (!this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.getCurrentUserRecord();
         if (!user) return;
 
         const modal = new bootstrap.Modal(document.getElementById('tagModal'));
@@ -1841,7 +2159,7 @@ class ChatManager {
     async addTag(tag) {
         if (!tag || !this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.getCurrentUserRecord();
         if (!user) return;
 
         const tags = user.tags || [];
@@ -1889,7 +2207,7 @@ class ChatManager {
             return;
         }
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.getCurrentUserRecord();
         const notesModalUserName = document.getElementById('notesModalUserName');
         const userNotesTextarea = document.getElementById('userNotesTextarea');
         const notesLastUpdated = document.getElementById('notesLastUpdated');
@@ -1979,7 +2297,7 @@ class ChatManager {
     async removeTag(tag) {
         if (!this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.getCurrentUserRecord();
         if (!user) return;
 
         const tags = (user.tags || []).filter(t => t !== tag);
@@ -2307,14 +2625,25 @@ class ChatManager {
             normalizedMessage.feedback = null;
         }
 
-        // Add to chat history
-        if (!this.chatHistory[userId]) {
-            this.chatHistory[userId] = [];
+        const messagePageKey = this.buildPageKey(
+            normalizedMessage.platform,
+            normalizedMessage.botId
+        );
+        const currentPageKey = this.currentChatContext?.pageKey || '';
+        const shouldAppendToCurrentHistory =
+            userId !== this.currentUserId ||
+            !currentPageKey ||
+            currentPageKey === messagePageKey;
+
+        if (shouldAppendToCurrentHistory) {
+            if (!this.chatHistory[userId]) {
+                this.chatHistory[userId] = [];
+            }
+            this.chatHistory[userId].push(normalizedMessage);
         }
-        this.chatHistory[userId].push(normalizedMessage);
 
         // Update UI if this is the current chat
-        if (userId === this.currentUserId) {
+        if (userId === this.currentUserId && shouldAppendToCurrentHistory) {
             this.renderMessages();
         }
 
@@ -2358,7 +2687,8 @@ class ChatManager {
         this.currentFilters = {
             status: 'all',
             tags: [],
-            search: ''
+            search: '',
+            pageKeys: []
         };
 
         // Reset UI
@@ -2371,8 +2701,10 @@ class ChatManager {
             userSearch.value = '';
         }
 
+        this.renderPageFilters();
         this.renderTagFilters();
         this.applyFilters();
+        this.loadUsers();
     }
 
     updateFilterBadge() {
@@ -2381,6 +2713,7 @@ class ChatManager {
 
         let count = 0;
         if (this.currentFilters.status !== 'all') count++;
+        count += this.currentFilters.pageKeys.length;
         count += this.currentFilters.tags.length;
         if (this.currentFilters.search) count++;
 

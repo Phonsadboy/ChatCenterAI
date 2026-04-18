@@ -5411,6 +5411,191 @@ function buildDefaultOrderBotConditions() {
   ];
 }
 
+function normalizeChatPageSelections(pageKeyParam) {
+  const rawPageKeys = Array.isArray(pageKeyParam)
+    ? pageKeyParam
+    : typeof pageKeyParam === "string"
+      ? pageKeyParam.split(",")
+      : [];
+
+  const seen = new Set();
+  const pageKeys = [];
+  const pageFilters = [];
+
+  rawPageKeys.forEach((rawKey) => {
+    const key = String(rawKey || "").trim();
+    if (!key) return;
+    const parsed = parseOrderPageKey(key);
+    if (!parsed.platform) return;
+    const normalizedPlatform = normalizeChatPlatform(parsed.platform);
+    const normalizedBotId = normalizeFollowUpBotId(parsed.botId);
+    const normalizedKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
+    if (seen.has(normalizedKey)) return;
+    seen.add(normalizedKey);
+    pageKeys.push(normalizedKey);
+    pageFilters.push({
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+    });
+  });
+
+  return { pageKeys, pageFilters };
+}
+
+async function loadChatPageCatalog() {
+  const botRepo = getBotRepository();
+  const [lineBots, facebookBots, instagramBots, whatsappBots, threadResult] =
+    await Promise.all([
+      botRepo.list("line", {
+        projection: { name: 1, displayName: 1, botName: 1 },
+      }),
+      botRepo.list("facebook", {
+        projection: { name: 1, pageName: 1 },
+      }),
+      botRepo.list("instagram", {
+        projection: { name: 1, instagramUsername: 1, instagramUserId: 1, igUserId: 1 },
+      }),
+      botRepo.list("whatsapp", {
+        projection: { name: 1, phoneNumber: 1, phoneNumberId: 1 },
+      }),
+      query(
+        `
+          SELECT
+            t.platform,
+            b.legacy_bot_id,
+            COUNT(DISTINCT c.legacy_contact_id)::int AS chat_count,
+            MAX(t.updated_at) AS last_activity_at
+          FROM threads t
+          INNER JOIN contacts c ON c.id = t.contact_id
+          LEFT JOIN bots b ON b.id = t.bot_id
+          GROUP BY t.platform, b.legacy_bot_id
+        `,
+      ),
+    ]);
+
+  const pageMap = new Map();
+  const upsertPage = ({
+    platform,
+    botId = null,
+    name = "",
+    chatCount = 0,
+    lastActivityAt = null,
+  }) => {
+    const normalizedPlatform = normalizeChatPlatform(platform);
+    const normalizedBotId = normalizeFollowUpBotId(botId);
+    const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
+    const existing = pageMap.get(pageKey);
+
+    if (existing) {
+      if (name && !existing.name) existing.name = name;
+      if (Number.isFinite(chatCount)) {
+        existing.chatCount = Math.max(existing.chatCount || 0, chatCount);
+      }
+      if (lastActivityAt) {
+        const existingTime = existing.lastActivityAt
+          ? new Date(existing.lastActivityAt).getTime()
+          : 0;
+        const nextTime = new Date(lastActivityAt).getTime();
+        if (nextTime > existingTime) {
+          existing.lastActivityAt = lastActivityAt;
+        }
+      }
+      return;
+    }
+
+    pageMap.set(pageKey, {
+      pageKey,
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+      name,
+      chatCount: Number.isFinite(chatCount) ? chatCount : 0,
+      lastActivityAt: lastActivityAt || null,
+    });
+  };
+
+  lineBots.forEach((bot) => {
+    const botId = bot?._id?.toString?.() || null;
+    if (!botId) return;
+    upsertPage({
+      platform: "line",
+      botId,
+      name:
+        bot.displayName ||
+        bot.name ||
+        bot.botName ||
+        `LINE Bot (${botId.slice(-4)})`,
+    });
+  });
+
+  facebookBots.forEach((bot) => {
+    const botId = bot?._id?.toString?.() || null;
+    if (!botId) return;
+    upsertPage({
+      platform: "facebook",
+      botId,
+      name:
+        bot.pageName ||
+        bot.name ||
+        `Facebook Page (${botId.slice(-4)})`,
+    });
+  });
+
+  instagramBots.forEach((bot) => {
+    const botId = bot?._id?.toString?.() || null;
+    if (!botId) return;
+    upsertPage({
+      platform: "instagram",
+      botId,
+      name:
+        bot.name ||
+        bot.instagramUsername ||
+        bot.instagramUserId ||
+        bot.igUserId ||
+        `Instagram (${botId.slice(-4)})`,
+    });
+  });
+
+  whatsappBots.forEach((bot) => {
+    const botId = bot?._id?.toString?.() || null;
+    if (!botId) return;
+    upsertPage({
+      platform: "whatsapp",
+      botId,
+      name:
+        bot.name ||
+        bot.phoneNumber ||
+        bot.phoneNumberId ||
+        `WhatsApp (${botId.slice(-4)})`,
+    });
+  });
+
+  const threadGroups = Array.isArray(threadResult?.rows) ? threadResult.rows : [];
+  threadGroups.forEach((row) => {
+    const platform = normalizeChatPlatform(row?.platform || "line");
+    const botId = normalizeFollowUpBotId(row?.legacy_bot_id);
+    const fallbackName = botId
+      ? `${getPlatformLabel(platform)} (${botId.slice(-4)})`
+      : `${getPlatformLabel(platform)} (default)`;
+    upsertPage({
+      platform,
+      botId,
+      name: fallbackName,
+      chatCount: Number(row?.chat_count) || 0,
+      lastActivityAt: row?.last_activity_at || null,
+    });
+  });
+
+  return Array.from(pageMap.values()).sort((a, b) => {
+    const countDiff = (b.chatCount || 0) - (a.chatCount || 0);
+    if (countDiff !== 0) return countDiff;
+    return String(a.name || a.pageKey).localeCompare(
+      String(b.name || b.pageKey),
+      "th",
+      { sensitivity: "base" },
+    );
+  });
+}
+
 
 
 async function ensureOrderBufferIndexes() {
@@ -12356,28 +12541,38 @@ function getResponsesReasoningSupport(modelId) {
   ) {
     return {
       allowed: ["none", "low", "medium", "high", "xhigh"],
+      defaultEffort: "none",
+    };
+  }
+  if (normalized === "gpt-5.4-pro") {
+    return {
+      allowed: ["medium", "high", "xhigh"],
       defaultEffort: "medium",
     };
   }
   if (normalized === "gpt-5.1") {
     return {
       allowed: ["none", "low", "medium", "high"],
-      defaultEffort: "medium",
+      defaultEffort: "none",
     };
   }
-  if (normalized === "gpt-5") {
+  if (
+    normalized === "gpt-5" ||
+    normalized === "gpt-5-mini" ||
+    normalized === "gpt-5-nano"
+  ) {
     return {
       allowed: ["minimal", "low", "medium", "high"],
       defaultEffort: "medium",
     };
   }
-  if (
-    normalized === "gpt-5-mini" ||
-    normalized === "gpt-5-nano" ||
-    normalized.startsWith("o1") ||
-    normalized.startsWith("o3") ||
-    normalized.startsWith("o4")
-  ) {
+  if (normalized === "gpt-5.3-codex") {
+    return {
+      allowed: ["low", "medium", "high", "xhigh"],
+      defaultEffort: "medium",
+    };
+  }
+  if (normalized.startsWith("o1") || normalized.startsWith("o3") || normalized.startsWith("o4")) {
     return {
       allowed: ["low", "medium", "high"],
       defaultEffort: "medium",
@@ -12385,7 +12580,7 @@ function getResponsesReasoningSupport(modelId) {
   }
   if (normalized === "gpt-5-pro") {
     return {
-      allowed: ["medium", "high", "xhigh"],
+      allowed: ["high"],
       defaultEffort: "high",
     };
   }
@@ -12395,22 +12590,60 @@ function getResponsesReasoningSupport(modelId) {
 function resolveResponsesReasoningConfig(modelId, requestedEffort) {
   const effort =
     typeof requestedEffort === "string" ? requestedEffort.trim() : "";
-  if (!effort) return null;
-
   const support = getResponsesReasoningSupport(modelId);
   if (!support) return null;
+  if (!effort) {
+    return { effort: support.defaultEffort };
+  }
   if (support.allowed.includes(effort)) {
     return { effort };
   }
   return { effort: support.defaultEffort };
 }
 
-function shouldUseResponsesRuntime(provider, apiMode, modelId) {
-  if (apiMode === "chat") return false;
+function modelRequiresResponsesApi(modelId) {
+  const normalized = normalizeModelIdentifier(modelId);
   return (
-    normalizeProvider(provider) === LLM_PROVIDER_OPENAI &&
-    modelSupportsResponsesApi(modelId)
+    normalized === "gpt-5-pro" ||
+    normalized === "gpt-5.4-pro" ||
+    normalized === "gpt-5.3-codex"
   );
+}
+
+function modelSupportsChatSamplingParams(modelId) {
+  const normalized = normalizeModelIdentifier(modelId);
+  if (!normalized) return false;
+  const reasoningSupport = getResponsesReasoningSupport(normalized);
+  if (!reasoningSupport) return true;
+  return normalized === "gpt-5.4" || normalized === "gpt-5.2";
+}
+
+function applyChatSamplingConfig(payload, aiConfig, modelId) {
+  if (!payload || !aiConfig || !modelSupportsChatSamplingParams(modelId)) {
+    return payload;
+  }
+
+  if (aiConfig.temperature !== null) {
+    payload.temperature = aiConfig.temperature;
+  }
+  if (aiConfig.topP !== null) {
+    payload.top_p = aiConfig.topP;
+  }
+  if (aiConfig.presencePenalty !== null) {
+    payload.presence_penalty = aiConfig.presencePenalty;
+  }
+  if (aiConfig.frequencyPenalty !== null) {
+    payload.frequency_penalty = aiConfig.frequencyPenalty;
+  }
+
+  return payload;
+}
+
+function shouldUseResponsesRuntime(provider, apiMode, modelId) {
+  if (normalizeProvider(provider) !== LLM_PROVIDER_OPENAI) return false;
+  if (!modelSupportsResponsesApi(modelId)) return false;
+  if (modelRequiresResponsesApi(modelId)) return true;
+  return apiMode !== "chat";
 }
 
 function normalizeHistoryMessageContent(content) {
@@ -13202,18 +13435,7 @@ async function runCommerceAssistantConversation(options = {}) {
         tool_choice: "auto",
       };
 
-      if (botAiConfig.temperature !== null) {
-        payload.temperature = botAiConfig.temperature;
-      }
-      if (botAiConfig.topP !== null) {
-        payload.top_p = botAiConfig.topP;
-      }
-      if (botAiConfig.presencePenalty !== null) {
-        payload.presence_penalty = botAiConfig.presencePenalty;
-      }
-      if (botAiConfig.frequencyPenalty !== null) {
-        payload.frequency_penalty = botAiConfig.frequencyPenalty;
-      }
+      applyChatSamplingConfig(payload, botAiConfig, resolvedModel.model);
 
       const response = await openai.chat.completions.create(payload);
       addUsage(totalUsage, mapChatUsage(response?.usage));
@@ -19007,10 +19229,7 @@ async function processMessageWithAI(message, userId, lineBot) {
               { role: "user", content: variant.content },
             ],
           };
-          if (aiConfig.temperature !== null) payload.temperature = aiConfig.temperature;
-          if (aiConfig.topP !== null) payload.top_p = aiConfig.topP;
-          if (aiConfig.presencePenalty !== null) payload.presence_penalty = aiConfig.presencePenalty;
-          if (aiConfig.frequencyPenalty !== null) payload.frequency_penalty = aiConfig.frequencyPenalty;
+          applyChatSamplingConfig(payload, aiConfig, resolvedModel.model);
 
           const response = await openai.chat.completions.create(payload);
           addUsage(usage, mapChatUsage(response?.usage));
@@ -24753,12 +24972,10 @@ function buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsS
 ## GPT-5 — reasoning_effort
 | ระดับ | ใช้เมื่อ |
 |---|---|
-| none | แทน GPT-4.1/4o — ไม่ใช้ reasoning, เร็วสุด |
-| minimal | งานง่าย ต้องการ latency ต่ำ |
+| minimal | งานง่าย ต้องการ latency ต่ำ และเป็นค่าต่ำสุดของ GPT-5 |
 | low | งานทั่วไป |
 | medium | งานปกติ (default GPT-5) |
 | high | งานซับซ้อน multi-step |
-| xhigh | งานยากที่สุด ต้องการ quality สูงสุด |
 
 ## GPT-5 — Tool Preambles
 สั่งให้ AI อธิบาย goal ก่อนเรียก tool:
@@ -24788,7 +25005,7 @@ GPT-5 เสีย reasoning tokens พยายาม reconcile คำสั่
 
 ## GPT-5.4 — ความแตกต่างหลัก
 - รุ่น flagship สำหรับ complex reasoning, coding, และงาน professional ที่ต้องการคุณภาพสูง
-- ค่าเริ่มต้นใน InstructionAI: **medium**
+- ค่าเริ่มต้นใน InstructionAI: **none**
 - รองรับ reasoning_effort: **none, low, medium, high, xhigh**
 - ราคาแพงกว่า GPT-5.2 จึงเหมาะกับงานที่ต้องการความแม่นยำหรือคุณภาพสูงจริง
 - ถ้าต้องการ latency ต่ำ ให้เริ่มที่ **none** หรือ **low** ก่อน แล้วค่อยเพิ่มเมื่อ eval แล้วจำเป็น
@@ -25279,13 +25496,19 @@ app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req
 
 // ─── InstructionAI Responses API Helpers ───
 const INSTRUCTION_REASONING_SUPPORT = {
-  "gpt-5.4": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "medium" },
-  "gpt-5.4-mini": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "medium" },
-  "gpt-5.4-nano": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "medium" },
+  "gpt-5.4": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+  "gpt-5.4-mini": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+  "gpt-5.4-nano": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
+  "gpt-5.4-pro": { efforts: ["medium", "high", "xhigh"], default: "medium" },
   "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
   "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], default: "none" },
   "gpt-5.1": { efforts: ["none", "low", "medium", "high"], default: "none" },
-  "gpt-5": { efforts: ["low", "medium", "high"], default: "medium" },
+  "gpt-5": { efforts: ["minimal", "low", "medium", "high"], default: "medium" },
+  "gpt-5-mini": { efforts: ["minimal", "low", "medium", "high"], default: "medium" },
+  "gpt-5-nano": { efforts: ["minimal", "low", "medium", "high"], default: "medium" },
+  "gpt-5-pro": { efforts: ["high"], default: "high" },
+  "gpt-5.3-codex": { efforts: ["low", "medium", "high", "xhigh"], default: "medium" },
+  "o4-mini": { efforts: ["low", "medium", "high"], default: "medium" },
 };
 
 const INSTRUCTION_THINKING_MAP = { off: "none", low: "low", medium: "medium", high: "high", max: "xhigh" };
@@ -25303,8 +25526,17 @@ function resolveInstructionReasoningEffort(model, thinking) {
   const modelConfig =
     INSTRUCTION_REASONING_SUPPORT[normalizedModelId] ||
     INSTRUCTION_REASONING_SUPPORT["gpt-5.4"];
-  let effort = INSTRUCTION_THINKING_MAP[thinking] || modelConfig.default;
-  if (!modelConfig.efforts.includes(effort)) effort = modelConfig.default;
+  const mappedEffort = INSTRUCTION_THINKING_MAP[thinking];
+  let effort = mappedEffort || modelConfig.default;
+  if (!modelConfig.efforts.includes(effort)) {
+    if (thinking === "off" && modelConfig.efforts.includes("minimal")) {
+      effort = "minimal";
+    } else if (thinking === "max" && modelConfig.efforts.includes("high")) {
+      effort = modelConfig.efforts.includes("xhigh") ? "xhigh" : "high";
+    } else {
+      effort = modelConfig.default;
+    }
+  }
   return effort;
 }
 
@@ -27832,6 +28064,23 @@ app.get("/admin/orders/pages", async (req, res) => {
   }
 });
 
+app.get("/admin/chat/pages", async (req, res) => {
+  try {
+    const pages = await loadChatPageCatalog();
+    res.json({
+      success: true,
+      pages,
+    });
+  } catch (error) {
+    console.error("[Chat] ไม่สามารถดึงรายการเพจ/บอทได้:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "ไม่สามารถดึงรายการเพจได้",
+      pages: [],
+    });
+  }
+});
+
 
 // Get users who have chatted
 app.get("/admin/chat/users", async (req, res) => {
@@ -27842,7 +28091,10 @@ app.get("/admin/chat/users", async (req, res) => {
     const focusUserId = Array.isArray(rawFocus)
       ? String(rawFocus[0] || "").trim()
       : String(rawFocus || "").trim();
-    const cacheKey = `focus:${focusUserId || "-"}`;
+    const { pageKeys, pageFilters } = normalizeChatPageSelections(
+      req.query?.pageKey,
+    );
+    const cacheKey = `focus:${focusUserId || "-"}:pages:${pageKeys.join("|") || "all"}`;
     const cachedUsers = getCachedAdminChatUsers(cacheKey);
     if (cachedUsers) {
       return res.json({ success: true, users: cachedUsers });
@@ -27858,6 +28110,7 @@ app.get("/admin/chat/users", async (req, res) => {
     const usersPromise = getNormalizedChatUsers({
       applyFilter: true,
       focusUserId,
+      pageFilters,
     });
     adminChatUsersInflight.set(cacheKey, usersPromise);
     const users = await usersPromise;
@@ -27878,7 +28131,8 @@ app.get("/admin/chat/users", async (req, res) => {
     const focusUserId = Array.isArray(rawFocus)
       ? String(rawFocus[0] || "").trim()
       : String(rawFocus || "").trim();
-    const cacheKey = `focus:${focusUserId || "-"}`;
+    const { pageKeys } = normalizeChatPageSelections(req.query?.pageKey);
+    const cacheKey = `focus:${focusUserId || "-"}:pages:${pageKeys.join("|") || "all"}`;
     adminChatUsersInflight.delete(cacheKey);
     console.error("Error getting chat users:", err);
     res.json({ success: false, error: err.message });
@@ -28043,9 +28297,14 @@ app.post("/admin/chat/mark-read/:userId", async (req, res) => {
 app.get("/admin/chat/history/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
+    const { pageFilters } = normalizeChatPageSelections(req.query?.pageKey);
+    const selectedPageFilter = pageFilters[0] || null;
 
     // ใช้ฟังก์ชันตัวกรองข้อมูลใหม่
-    const messages = await getNormalizedChatHistory(userId);
+    const messages = await getNormalizedChatHistory(userId, {
+      platform: selectedPageFilter?.platform || undefined,
+      botId: selectedPageFilter?.botId || null,
+    });
 
     // รีเซ็ต unread count เมื่อแอดมินดูประวัติการสนทนา
     await resetUserUnreadCount(userId);
@@ -34500,10 +34759,12 @@ function createImageHTML(imageData, index = 0) {
  */
 async function getNormalizedChatHistory(userId, options = {}) {
   try {
-    const { applyFilter = false } = options || {};
+    const { applyFilter = false, platform, botId = null } = options || {};
     const messages = await getChatRepository().getHistory(userId, {
       sort: { timestamp: 1 },
       limit: 200,
+      ...(platform ? { platform } : {}),
+      ...(platform ? { botId } : {}),
     });
 
     const messageIds = messages
@@ -34614,7 +34875,7 @@ async function getNormalizedChatHistory(userId, options = {}) {
  */
 async function getNormalizedChatUsers(options = {}) {
   try {
-    const { applyFilter = false, focusUserId = "" } = options || {};
+    const { applyFilter = false, focusUserId = "", pageFilters = [] } = options || {};
     const followUpRepo = getFollowUpRepository();
     const userStateRepo = getUserStateRepository();
     const profileRepo = getProfileRepository();
@@ -34622,6 +34883,7 @@ async function getNormalizedChatUsers(options = {}) {
     const users = await getChatRepository().listUsers({
       limit: 50,
       focusUserId,
+      pageFilters,
     });
 
     // Map botId -> bot display name for showing channel in chat user list
@@ -35036,6 +35298,7 @@ async function getNormalizedChatUsers(options = {}) {
             unreadCount,
             platform,
             botId,
+            pageKey: buildOrderPageKey(platform, botId),
             platformLabel: channelInfo.platformLabel,
             botName: channelInfo.botName,
             channelLabel: channelInfo.channelLabel,
