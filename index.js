@@ -5444,7 +5444,7 @@ function normalizeChatPageSelections(pageKeyParam) {
 
 async function loadChatPageCatalog() {
   const botRepo = getBotRepository();
-  const threadSummaryPromise = query(
+  const threadSummaryPromise = pgQuery(
     `
       SELECT
         t.platform,

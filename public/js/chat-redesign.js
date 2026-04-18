@@ -902,21 +902,34 @@ class ChatManager {
     // User Management
     // ========================================
 
+    async fetchPageCatalog(url) {
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!data || data.success !== true) {
+            throw new Error(data?.error || `Failed to load page catalog from ${url}`);
+        }
+        return data;
+    }
+
     async loadPageOptions() {
         try {
-            const response = await fetch('/admin/chat/pages');
-            const data = await response.json();
-            if (!data.success) {
-                this.availablePages = [];
-                this.renderPageFilters();
-                this.updateFilterBadge();
-                return;
+            let data = null;
+            try {
+                data = await this.fetchPageCatalog('/admin/chat/pages');
+            } catch (primaryError) {
+                console.warn('Primary chat page catalog failed, falling back to orders pages', primaryError);
+            }
+            if (!data || !Array.isArray(data.pages) || data.pages.length === 0 || data.warning) {
+                data = await this.fetchPageCatalog('/admin/orders/pages');
             }
 
             this.availablePages = Array.isArray(data.pages)
                 ? data.pages.map((page) => ({
                     ...page,
-                    pageKey: page.pageKey || this.buildPageKey(page.platform, page.botId)
+                    pageKey: page.pageKey || this.buildPageKey(page.platform, page.botId),
+                    chatCount: Number.isFinite(Number(page.chatCount))
+                        ? Number(page.chatCount)
+                        : Number(page.orderCount) || 0
                 }))
                 : [];
 
