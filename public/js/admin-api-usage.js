@@ -6,7 +6,10 @@
 // ==================== Global State ====================
 const State = {
     data: null,
-    filteredData: [],
+    viewData: null,
+    detailedLogs: [],
+    detailCacheKey: '',
+    detailMeta: null,
     viewMode: 'grouped', // 'grouped' or 'detailed'
     sortColumn: 'cost',
     sortDirection: 'desc',
@@ -21,7 +24,9 @@ const State = {
         daily: null,
         pie: null
     },
-    expandedRow: null
+    expandedRow: null,
+    requestToken: 0,
+    detailRequestToken: 0
 };
 
 const THB_RATE = 33;
@@ -32,6 +37,8 @@ const VALID_DATE_RANGES = new Set(['today', '7days', '30days', 'all', 'custom'])
 document.addEventListener('DOMContentLoaded', function () {
     initializeDateControls();
     initEventListeners();
+    syncFilterStateFromControls();
+    setViewMode(State.viewMode, { shouldRender: false });
     loadDashboardData();
 });
 
@@ -123,14 +130,16 @@ function initEventListeners() {
 
     // Filters
     ['filterBot', 'filterModel', 'filterPlatform', 'filterKey'].forEach(id => {
-        document.getElementById(id).addEventListener('change', applyFilters);
+        document.getElementById(id).addEventListener('change', function () {
+            applyFilters({ reloadData: true });
+        });
     });
 
     // Search with debounce
     let searchTimeout;
     document.getElementById('searchInput').addEventListener('input', function () {
         clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(applyFilters, 300);
+        searchTimeout = setTimeout(() => applyFilters(), 300);
     });
 
     // Clear filters
@@ -139,10 +148,7 @@ function initEventListeners() {
     // View mode toggle
     document.querySelectorAll('#viewModeToggle button').forEach(btn => {
         btn.addEventListener('click', function () {
-            document.querySelectorAll('#viewModeToggle button').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            State.viewMode = this.dataset.view;
-            renderTable();
+            setViewMode(this.dataset.view);
         });
     });
 
@@ -152,31 +158,38 @@ function initEventListeners() {
 
 // ==================== Data Loading ====================
 async function loadDashboardData() {
+    const requestToken = ++State.requestToken;
+
     try {
         showLoadingState();
+        State.detailedLogs = [];
+        State.detailCacheKey = '';
+        State.detailMeta = null;
+        closeExpandedRows();
 
-        const params = getDateParams();
         syncDateStateToUrl();
         updateActiveDateText();
-        const response = await fetch('/api/openai-usage/summary?' + params);
-        const data = await response.json();
+        const data = await fetchJson('/api/openai-usage/summary?' + getDateParams().toString());
+
+        if (requestToken !== State.requestToken) {
+            return null;
+        }
 
         State.data = data;
 
         // Populate filter dropdowns
         populateFilterDropdowns(data);
+        syncFilterStateFromControls();
 
-        // Update UI
-        updateSummaryCards(data.summary || {});
-        updateCharts(data);
-        applyFilters();
-
-        return data;
+        return await refreshDashboardViewData({ requestToken });
 
     } catch (err) {
+        if (requestToken !== State.requestToken) {
+            return null;
+        }
         console.error('Error loading dashboard data:', err);
         showErrorState();
-        throw err;
+        return null;
     }
 }
 
@@ -186,6 +199,83 @@ function getDateParams() {
     if (startDate) params.append('startDate', startDate);
     if (endDate) params.append('endDate', endDate);
     return params;
+}
+
+function buildDataRequestParams({ includeStructuredFilters = false } = {}) {
+    const params = getDateParams();
+
+    if (!includeStructuredFilters) {
+        return params;
+    }
+
+    const structuredFilters = getStructuredFilterState();
+    appendQueryParam(params, 'botId', structuredFilters.botId);
+    appendQueryParam(params, 'platform', structuredFilters.platform);
+    appendQueryParam(params, 'keyId', structuredFilters.keyId);
+    appendQueryParam(params, 'provider', structuredFilters.provider);
+    appendQueryParam(params, 'model', structuredFilters.model);
+
+    return params;
+}
+
+function getStructuredFilterState() {
+    const parsedModel = parseModelFilterKey(State.filters.model);
+
+    return {
+        botId: State.filters.bot || '',
+        platform: State.filters.platform || '',
+        keyId: State.filters.key || '',
+        provider: parsedModel.provider || '',
+        model: parsedModel.model || ''
+    };
+}
+
+function syncFilterStateFromControls() {
+    State.filters = {
+        bot: document.getElementById('filterBot').value,
+        model: document.getElementById('filterModel').value,
+        platform: document.getElementById('filterPlatform').value,
+        key: document.getElementById('filterKey').value,
+        search: document.getElementById('searchInput').value.trim().toLowerCase()
+    };
+
+    return State.filters;
+}
+
+function hasStructuredFilters(filters = State.filters) {
+    return Boolean(filters.bot || filters.model || filters.platform || filters.key);
+}
+
+async function refreshDashboardViewData({ requestToken = null } = {}) {
+    if (!State.data) {
+        return null;
+    }
+
+    const activeRequestToken = requestToken ?? ++State.requestToken;
+
+    try {
+        const data = hasStructuredFilters()
+            ? await fetchJson('/api/openai-usage/summary?' + buildDataRequestParams({ includeStructuredFilters: true }).toString())
+            : State.data;
+
+        if (activeRequestToken !== State.requestToken) {
+            return null;
+        }
+
+        State.viewData = data;
+        updateSummaryCards(data.summary || {});
+        updateCharts(data);
+        closeExpandedRows();
+        renderTable();
+        return data;
+    } catch (err) {
+        if (activeRequestToken !== State.requestToken) {
+            return null;
+        }
+        console.error('Error refreshing dashboard view:', err);
+        showErrorState();
+        return null;
+    }
 }
 
 function updateDateControlState() {
@@ -340,11 +430,28 @@ function updateSummaryCards(summary) {
     const totalCalls = summary.totalCalls || 0;
     const totalTokens = summary.totalTokens || 0;
     const totalCostUSD = summary.totalCostUSD || 0;
+    const totalPromptTokens = summary.totalPromptTokens ?? summary.totalInputTokens ?? 0;
+    const totalCompletionTokens = summary.totalCompletionTokens ?? summary.totalOutputTokens ?? 0;
     const pricedCalls = summary.pricedCalls ?? totalCalls;
+    const unpricedCalls = summary.unpricedCalls ?? Math.max(totalCalls - pricedCalls, 0);
     const avgCostPerCall = pricedCalls > 0 ? totalCostUSD / pricedCalls : null;
+    const callsChange = document.getElementById('callsChange');
 
     animateValue('totalCalls', 0, totalCalls, 800, formatNumber);
     animateValue('totalTokens', 0, totalTokens, 800, formatNumber);
+
+    if (callsChange) {
+        if (totalCalls === 0) {
+            callsChange.textContent = 'ยังไม่มีข้อมูลในช่วงเวลานี้';
+            callsChange.className = 'summary-sub text-muted';
+        } else if (unpricedCalls > 0) {
+            callsChange.textContent = `คิดราคาได้ ${formatNumber(pricedCalls)} ครั้ง / ยังไม่ทราบราคา ${formatNumber(unpricedCalls)} ครั้ง`;
+            callsChange.className = 'summary-sub text-warning';
+        } else {
+            callsChange.textContent = `คำนวณต้นทุนได้ครบ ${formatNumber(pricedCalls)} ครั้ง`;
+            callsChange.className = 'summary-sub text-success';
+        }
+    }
 
     if (pricedCalls > 0) {
         document.getElementById('totalCost').textContent = '$' + formatCost(totalCostUSD);
@@ -358,11 +465,8 @@ function updateSummaryCards(summary) {
         document.getElementById('avgCostPerCallTHB').textContent = 'N/A';
     }
 
-    // Token breakdown (if available)
-    if (summary.totalInputTokens !== undefined) {
-        document.getElementById('inputTokens').textContent = formatNumber(summary.totalInputTokens);
-        document.getElementById('outputTokens').textContent = formatNumber(summary.totalOutputTokens || 0);
-    }
+    document.getElementById('inputTokens').textContent = formatNumber(totalPromptTokens);
+    document.getElementById('outputTokens').textContent = formatNumber(totalCompletionTokens);
 }
 
 function animateValue(elementId, start, end, duration, formatter) {
@@ -379,8 +483,6 @@ function animateValue(elementId, start, end, duration, formatter) {
     function update(currentTime) {
         const elapsed = currentTime - startTime;
         const progress = Math.min(elapsed / duration, 1);
-
-        // Ease out cubic
         const easeProgress = 1 - Math.pow(1 - progress, 3);
         const current = Math.round(start + range * easeProgress);
 
@@ -403,15 +505,11 @@ function updateCharts(data) {
 function updateDailyChart(dailyData) {
     const canvas = document.getElementById('dailyUsageChart');
     const ctx = canvas.getContext('2d');
-
-    // Sort by date
     const sorted = [...dailyData].sort((a, b) => new Date(a._id) - new Date(b._id));
-
     const labels = sorted.map(d => formatShortDate(d._id));
     const callsData = sorted.map(d => d.calls || 0);
     const costData = sorted.map(d => d.cost || 0);
 
-    // Destroy existing chart
     if (State.charts.daily) {
         State.charts.daily.destroy();
     }
@@ -509,18 +607,11 @@ function updateDailyChart(dailyData) {
 function updatePieChart(modelData) {
     const canvas = document.getElementById('modelPieChart');
     const ctx = canvas.getContext('2d');
-
-    // Sort by cost and take top 5
     const sorted = [...modelData].sort((a, b) => (b.costUSD || 0) - (a.costUSD || 0)).slice(0, 6);
-
     const labels = sorted.map(m => formatModelLabel(m.model, m.provider));
     const data = sorted.map(m => m.costUSD || 0);
+    const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6366f1'];
 
-    const colors = [
-        '#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6366f1'
-    ];
-
-    // Destroy existing chart
     if (State.charts.pie) {
         State.charts.pie.destroy();
     }
@@ -549,10 +640,10 @@ function updatePieChart(modelData) {
                         padding: 8,
                         font: { size: 10 },
                         generateLabels: function (chart) {
-                            const data = chart.data;
-                            const total = data.datasets[0].data.reduce((a, b) => a + b, 0);
-                            return data.labels.map((label, i) => {
-                                const value = data.datasets[0].data[i];
+                            const dataset = chart.data.datasets[0] || { data: [] };
+                            const total = dataset.data.reduce((sum, value) => sum + value, 0);
+                            return chart.data.labels.map((label, i) => {
+                                const value = dataset.data[i] || 0;
                                 const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
                                 return {
                                     text: `${label} (${percentage}%)`,
@@ -567,7 +658,7 @@ function updatePieChart(modelData) {
                 tooltip: {
                     callbacks: {
                         label: function (context) {
-                            const value = context.parsed;
+                            const value = context.parsed || 0;
                             return `$${value.toFixed(4)} (~฿${(value * THB_RATE).toFixed(2)})`;
                         }
                     }
@@ -579,28 +670,43 @@ function updatePieChart(modelData) {
 
 // ==================== Filter Dropdowns ====================
 function populateFilterDropdowns(data) {
-    // Bots
     const botSelect = document.getElementById('filterBot');
-    botSelect.innerHTML = '<option value="">ทั้งหมด</option>';
-    (data.byBot || []).forEach(b => {
-        const opt = document.createElement('option');
-        opt.value = b.botId || '';
-        opt.textContent = b.name || b.botId || '-';
-        botSelect.appendChild(opt);
-    });
-
-    // Models
     const modelSelect = document.getElementById('filterModel');
+    const keySelect = document.getElementById('filterKey');
+    const platformSelect = document.getElementById('filterPlatform');
+    const selectedFilters = { ...State.filters };
+
+    botSelect.innerHTML = '<option value="">ทั้งหมด</option>';
+    const botMap = new Map();
+    (data.byBot || []).forEach(bot => {
+        if (!bot.botId || botMap.has(bot.botId)) {
+            return;
+        }
+        botMap.set(bot.botId, {
+            id: bot.botId,
+            label: bot.name || bot.botId || '-'
+        });
+    });
+    Array.from(botMap.values())
+        .sort((a, b) => a.label.localeCompare(b.label, 'th'))
+        .forEach(bot => {
+            const opt = document.createElement('option');
+            opt.value = bot.id;
+            opt.textContent = bot.label;
+            botSelect.appendChild(opt);
+        });
+
     modelSelect.innerHTML = '<option value="">ทั้งหมด</option>';
     const modelMap = new Map();
-    (data.byModel || []).forEach(m => {
-        const modelKey = buildModelFilterKey(m.model, m.provider);
-        if (!modelMap.has(modelKey)) {
-            modelMap.set(modelKey, {
-                model: m.model || '',
-                provider: m.provider
-            });
+    (data.byModel || []).forEach(modelInfo => {
+        const modelKey = buildModelFilterKey(modelInfo.model, modelInfo.provider);
+        if (modelMap.has(modelKey)) {
+            return;
         }
+        modelMap.set(modelKey, {
+            model: modelInfo.model || '',
+            provider: modelInfo.provider
+        });
     });
     Array.from(modelMap.entries())
         .sort((a, b) => formatModelLabel(a[1].model, a[1].provider).localeCompare(formatModelLabel(b[1].model, b[1].provider)))
@@ -611,30 +717,45 @@ function populateFilterDropdowns(data) {
             modelSelect.appendChild(opt);
         });
 
-    // Keys
-    const keySelect = document.getElementById('filterKey');
     keySelect.innerHTML = '<option value="">ทั้งหมด</option>';
-    (data.byKey || []).forEach(k => {
-        const opt = document.createElement('option');
-        opt.value = k.keyId || 'env';
-        opt.textContent = formatKeyLabel(k.name || 'Environment Variable', k.provider);
-        keySelect.appendChild(opt);
+    const keyMap = new Map();
+    (data.byKey || []).forEach(keyInfo => {
+        const keyId = keyInfo.keyId || 'env';
+        if (keyMap.has(keyId)) {
+            return;
+        }
+        keyMap.set(keyId, {
+            id: keyId,
+            label: formatKeyLabel(keyInfo.name || 'Environment Variable', keyInfo.provider)
+        });
     });
+    Array.from(keyMap.values())
+        .sort((a, b) => a.label.localeCompare(b.label))
+        .forEach(keyInfo => {
+            const opt = document.createElement('option');
+            opt.value = keyInfo.id;
+            opt.textContent = keyInfo.label;
+            keySelect.appendChild(opt);
+        });
+
+    restoreSelectValue(botSelect, selectedFilters.bot);
+    restoreSelectValue(modelSelect, selectedFilters.model);
+    restoreSelectValue(platformSelect, selectedFilters.platform);
+    restoreSelectValue(keySelect, selectedFilters.key);
 }
 
 // ==================== Filtering & Sorting ====================
-function applyFilters() {
-    State.filters = {
-        bot: document.getElementById('filterBot').value,
-        model: document.getElementById('filterModel').value,
-        platform: document.getElementById('filterPlatform').value,
-        key: document.getElementById('filterKey').value,
-        search: document.getElementById('searchInput').value.toLowerCase()
-    };
+function applyFilters({ reloadData = false } = {}) {
+    syncFilterStateFromControls();
+    closeExpandedRows();
 
-    // Update filtered summary if filters are active
-    updateFilteredSummary();
+    if (reloadData) {
+        State.detailCacheKey = '';
+        return refreshDashboardViewData();
+    }
+
     renderTable();
+    return Promise.resolve();
 }
 
 function clearFilters() {
@@ -643,36 +764,47 @@ function clearFilters() {
     document.getElementById('filterPlatform').value = '';
     document.getElementById('filterKey').value = '';
     document.getElementById('searchInput').value = '';
-    applyFilters();
+    applyFilters({ reloadData: true });
 }
 
-function updateFilteredSummary() {
-    // If any filter is active, recalculate summary
-    const hasFilters = Object.values(State.filters).some(v => v !== '');
+function setViewMode(viewMode, { shouldRender = true } = {}) {
+    const previousViewMode = State.viewMode;
+    State.viewMode = viewMode === 'detailed' ? 'detailed' : 'grouped';
+    document.querySelectorAll('#viewModeToggle button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === State.viewMode);
+    });
 
-    if (!hasFilters && State.data) {
-        updateSummaryCards(State.data.summary || {});
+    if (State.viewMode !== previousViewMode && State.viewMode === 'grouped') {
+        State.sortColumn = 'cost';
+        State.sortDirection = 'desc';
+    } else if (State.viewMode !== previousViewMode && State.viewMode === 'detailed') {
+        State.sortColumn = 'timestamp';
+        State.sortDirection = 'desc';
     }
-    // For filtered view, summary would need to be recalculated from filtered data
-    // This would require additional logic based on view mode
+
+    closeExpandedRows();
+
+    if (shouldRender && (State.viewData || State.data)) {
+        renderTable();
+    }
 }
 
 // ==================== Table Rendering ====================
 function renderTable() {
-    if (!State.data) return;
+    const dataSource = getDataSourceForCurrentView();
+    if (!dataSource) return;
 
     const tableHeader = document.getElementById('tableHeader');
     const tableBody = document.getElementById('tableBody');
 
     if (State.viewMode === 'grouped') {
-        renderGroupedTable(tableHeader, tableBody);
+        renderGroupedTable(tableHeader, tableBody, dataSource);
     } else {
         renderDetailedTable(tableHeader, tableBody);
     }
 }
 
-function renderGroupedTable(tableHeader, tableBody) {
-    // Headers
+function renderGroupedTable(tableHeader, tableBody, dataSource) {
     tableHeader.innerHTML = `
         <tr>
             <th class="sortable" data-sort="name">Bot/Page</th>
@@ -684,32 +816,19 @@ function renderGroupedTable(tableHeader, tableBody) {
             <th class="text-center" style="width: 50px;"></th>
         </tr>
     `;
+    bindSortHandlers(tableHeader);
 
-    // Add sort click handlers
-    tableHeader.querySelectorAll('.sortable').forEach(th => {
-        th.addEventListener('click', () => handleSort(th.dataset.sort));
-    });
+    let items = [...(dataSource.byBot || [])];
+    if (State.filters.search) {
+        items = items.filter(item => {
+            const name = `${item.name || ''} ${item.botId || ''}`.toLowerCase();
+            return name.includes(State.filters.search);
+        });
+    }
 
-    // Get filtered bot data
-    let items = [...(State.data.byBot || [])];
-
-    // Apply filters
-    items = items.filter(item => {
-        if (State.filters.platform && item.platform !== State.filters.platform) return false;
-        if (State.filters.search) {
-            const name = (item.name || item.botId || '').toLowerCase();
-            if (!name.includes(State.filters.search)) return false;
-        }
-        return true;
-    });
-
-    // Sort
-    items = sortData(items);
-
-    // Update count
+    items = sortGroupedData(items);
     document.getElementById('resultCount').textContent = formatNumber(items.length);
 
-    // Render rows
     if (items.length === 0) {
         tableBody.innerHTML = `
             <tr>
@@ -722,19 +841,20 @@ function renderGroupedTable(tableHeader, tableBody) {
         return;
     }
 
-    const maxCost = Math.max(...items.map(i => i.costUSD || 0));
-
+    const maxCost = Math.max(...items.map(item => item.costUSD || 0), 0);
     let html = '';
-    items.forEach((item, index) => {
+
+    items.forEach(item => {
         const pricedCalls = item.pricedCalls ?? item.calls ?? 0;
         const hasCostData = pricedCalls > 0;
-        const avgCostUSD = hasCostData ? (item.costUSD / pricedCalls) : null;
-        const avgCostTHB = avgCostUSD * THB_RATE;
+        const avgCostUSD = hasCostData ? (item.costUSD || 0) / pricedCalls : null;
+        const avgCostTHB = hasCostData ? avgCostUSD * THB_RATE : 0;
         const totalCostTHB = (item.costUSD || 0) * THB_RATE;
-        const costPercent = hasCostData && maxCost > 0 ? ((item.costUSD || 0) / maxCost * 100) : 0;
+        const costPercent = hasCostData && maxCost > 0 ? ((item.costUSD || 0) / maxCost) * 100 : 0;
+        const canExpand = Boolean(item.botId);
 
         html += `
-            <tr class="expandable" data-bot-id="${escapeHtml(item.botId || '')}" data-index="${index}">
+            <tr class="${canExpand ? 'expandable' : ''}" data-bot-id="${escapeHtml(item.botId || '')}">
                 <td>
                     <div class="d-flex align-items-center gap-2">
                         <i class="${getPlatformIcon(item.platform)} text-muted"></i>
@@ -754,22 +874,19 @@ function renderGroupedTable(tableHeader, tableBody) {
                     ${hasCostData ? `<span class="text-info fw-semibold">$${avgCostUSD.toFixed(4)}</span><span class="cost-sub">(฿${avgCostTHB.toFixed(2)})</span>` : '<span class="text-muted">-</span>'}
                 </td>
                 <td class="text-center">
-                    <i class="fas fa-chevron-right expand-icon"></i>
+                    ${canExpand ? '<i class="fas fa-chevron-right expand-icon"></i>' : '<span class="text-muted">-</span>'}
                 </td>
             </tr>
         `;
     });
 
     tableBody.innerHTML = html;
-
-    // Add click handlers for expandable rows
     tableBody.querySelectorAll('.expandable').forEach(row => {
         row.addEventListener('click', () => toggleRowExpand(row));
     });
 }
 
 function renderDetailedTable(tableHeader, tableBody) {
-    // Headers for detailed view
     tableHeader.innerHTML = `
         <tr>
             <th class="sortable" data-sort="timestamp">เวลา</th>
@@ -782,18 +899,17 @@ function renderDetailedTable(tableHeader, tableBody) {
             <th class="sortable text-end" data-sort="cost">Cost</th>
         </tr>
     `;
-
-    // Add sort handlers
-    tableHeader.querySelectorAll('.sortable').forEach(th => {
-        th.addEventListener('click', () => handleSort(th.dataset.sort));
-    });
-
-    // Load detailed logs
-    loadDetailedLogs();
+    bindSortHandlers(tableHeader);
+    loadDetailedLogs(tableBody);
 }
 
-async function loadDetailedLogs() {
-    const tableBody = document.getElementById('tableBody');
+async function loadDetailedLogs(tableBody = document.getElementById('tableBody')) {
+    const requestKey = getDetailedLogsCacheKey();
+    if (State.detailCacheKey === requestKey) {
+        renderDetailedRows(State.detailedLogs, tableBody);
+        return;
+    }
+
     tableBody.innerHTML = `
         <tr>
             <td colspan="8" class="text-center py-4">
@@ -803,110 +919,106 @@ async function loadDetailedLogs() {
         </tr>
     `;
 
+    const requestToken = ++State.detailRequestToken;
+
     try {
-        const params = getDateParams();
-        params.append('limit', 100);
+        const params = buildDataRequestParams({ includeStructuredFilters: true });
+        params.set('limit', '500');
 
-        if (State.filters.platform) params.append('platform', State.filters.platform);
-        if (State.filters.bot) params.append('botId', State.filters.bot);
-
-        const response = await fetch('/api/openai-usage?' + params);
-        const data = await response.json();
-
-        const logs = data.logs || [];
-
-        // Build bot name map
-        const botNameMap = {};
-        if (State.data && State.data.byBot) {
-            State.data.byBot.forEach(b => {
-                if (b.botId) botNameMap[b.botId] = b.name || b.botId;
-            });
-        }
-
-        // Apply additional filters
-        let filtered = logs.filter(log => {
-            if (State.filters.model && buildModelFilterKey(log.model, log.provider) !== State.filters.model) {
-                return false;
-            }
-            if (State.filters.search) {
-                const botName = (botNameMap[log.botId] || log.botId || '').toLowerCase();
-                const modelLabel = formatModelLabel(log.model, log.provider).toLowerCase();
-                if (!botName.includes(State.filters.search) && !modelLabel.includes(State.filters.search)) {
-                    return false;
-                }
-            }
-            return true;
-        });
-
-        document.getElementById('resultCount').textContent = formatNumber(filtered.length);
-
-        if (filtered.length === 0) {
-            tableBody.innerHTML = `
-                <tr>
-                    <td colspan="8" class="empty-state">
-                        <i class="fas fa-inbox d-block"></i>
-                        <p class="mb-0">ไม่พบบันทึก</p>
-                    </td>
-                </tr>
-            `;
+        const data = await fetchJson('/api/openai-usage?' + params.toString());
+        if (requestToken !== State.detailRequestToken) {
             return;
         }
 
-        let html = '';
-        filtered.forEach(log => {
-            const botName = botNameMap[log.botId] || log.botId || '-';
-            const hasCostData = typeof log.estimatedCostUSD === 'number';
-            const costTHB = hasCostData ? (log.estimatedCostUSD * THB_RATE) : 0;
-            const modelLabel = formatModelLabel(log.model, log.provider);
-
-            html += `
-                <tr>
-                    <td>${formatDateTime(log.timestamp)}</td>
-                    <td><span class="model-badge ${getModelClass(log.model)}">${escapeHtml(modelLabel)}</span></td>
-                    <td>${escapeHtml(botName)}</td>
-                    <td><span class="platform-badge ${log.platform || ''}">${capitalize(log.platform || '-')}</span></td>
-                    <td class="text-end">${formatNumber(log.promptTokens || 0)}</td>
-                    <td class="text-end">${formatNumber(log.completionTokens || 0)}</td>
-                    <td class="text-end fw-medium">${formatNumber(log.totalTokens || 0)}</td>
-                    <td class="text-end">
-                        ${hasCostData
-                    ? `<span class="cost-display">$${formatCost(log.estimatedCostUSD)}</span><span class="cost-sub">(฿${costTHB.toFixed(2)})</span>`
-                    : '<span class="text-muted">-</span>'}
-                    </td>
-                </tr>
-            `;
-        });
-
-        tableBody.innerHTML = html;
-
+        State.detailedLogs = Array.isArray(data.logs) ? data.logs : [];
+        State.detailMeta = data.pagination || null;
+        State.detailCacheKey = requestKey;
+        renderDetailedRows(State.detailedLogs, tableBody);
     } catch (err) {
+        if (requestToken !== State.detailRequestToken) {
+            return;
+        }
         console.error('Error loading detailed logs:', err);
         tableBody.innerHTML = `
             <tr>
                 <td colspan="8" class="text-center text-danger py-4">
-                    <i class="fas fa-exclamation-circle me-2"></i>เกิดข้อผิดพลาด
+                    <i class="fas fa-exclamation-circle me-2"></i>เกิดข้อผิดพลาดในการโหลดบันทึก
                 </td>
             </tr>
         `;
     }
 }
 
+function renderDetailedRows(logs, tableBody = document.getElementById('tableBody')) {
+    const botNameMap = buildBotNameMap();
+    const filtered = sortDetailedLogs(logs.filter(log => {
+        if (!State.filters.search) {
+            return true;
+        }
+
+        const botName = (botNameMap[log.botId] || log.botId || '').toLowerCase();
+        const modelLabel = formatModelLabel(log.model, log.provider).toLowerCase();
+        const functionName = (log.functionName || '').toLowerCase();
+        return botName.includes(State.filters.search)
+            || modelLabel.includes(State.filters.search)
+            || functionName.includes(State.filters.search);
+    }), botNameMap);
+
+    document.getElementById('resultCount').textContent = formatNumber(filtered.length);
+
+    if (filtered.length === 0) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="8" class="empty-state">
+                    <i class="fas fa-inbox d-block"></i>
+                    <p class="mb-0">ไม่พบบันทึก</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    let html = '';
+    filtered.forEach(log => {
+        const botName = botNameMap[log.botId] || log.botId || '-';
+        const hasCostData = typeof log.estimatedCostUSD === 'number';
+        const costTHB = hasCostData ? (log.estimatedCostUSD * THB_RATE) : 0;
+        const modelLabel = formatModelLabel(log.model, log.provider);
+
+        html += `
+            <tr>
+                <td>${formatDateTime(log.timestamp)}</td>
+                <td><span class="model-badge ${getModelClass(log.model)}">${escapeHtml(modelLabel)}</span></td>
+                <td>${escapeHtml(botName)}</td>
+                <td><span class="platform-badge ${log.platform || ''}">${capitalize(log.platform || '-')}</span></td>
+                <td class="text-end">${formatNumber(log.promptTokens || 0)}</td>
+                <td class="text-end">${formatNumber(log.completionTokens || 0)}</td>
+                <td class="text-end fw-medium">${formatNumber(log.totalTokens || 0)}</td>
+                <td class="text-end">
+                    ${hasCostData
+                        ? `<span class="cost-display">$${formatCost(log.estimatedCostUSD)}</span><span class="cost-sub">(฿${costTHB.toFixed(2)})</span>`
+                        : '<span class="text-muted">-</span>'}
+                </td>
+            </tr>
+        `;
+    });
+
+    tableBody.innerHTML = html;
+}
+
 // ==================== Row Expansion ====================
 async function toggleRowExpand(row) {
     const botId = row.dataset.botId;
     const isExpanded = row.classList.contains('expanded');
+    closeExpandedRows();
 
-    // Remove any existing expanded detail rows
-    document.querySelectorAll('.expanded-detail-row').forEach(r => r.remove());
-    document.querySelectorAll('.expanded').forEach(r => r.classList.remove('expanded'));
-
-    if (isExpanded) {
-        return; // Just close
+    if (isExpanded || !botId) {
+        return;
     }
 
     row.classList.add('expanded');
+    State.expandedRow = botId;
 
-    // Create detail row
     const detailRow = document.createElement('tr');
     detailRow.className = 'expanded-detail-row';
     detailRow.innerHTML = `
@@ -922,16 +1034,14 @@ async function toggleRowExpand(row) {
 
     row.after(detailRow);
 
-    // Load detail data
     try {
-        const params = getDateParams();
-        const response = await fetch(`/api/openai-usage/by-bot/${encodeURIComponent(botId)}?${params}`);
-        const data = await response.json();
+        const params = buildDataRequestParams({ includeStructuredFilters: true });
+        params.delete('botId');
 
-        const totals = data.totals || {};
-        const pricedCalls = totals.pricedCalls ?? totals.totalCalls ?? 0;
-        const hasCostData = pricedCalls > 0;
-        const avgCostPerCall = hasCostData ? (totals.totalCost / pricedCalls) : null;
+        const data = await fetchJson(`/api/openai-usage/by-bot/${encodeURIComponent(botId)}?${params.toString()}`);
+        const modelItems = data.byModel || [];
+        const keyItems = data.byKey || [];
+        const recentLogs = (data.recentLogs || []).slice(0, 5);
 
         let html = `
             <div class="expanded-row-content">
@@ -944,21 +1054,25 @@ async function toggleRowExpand(row) {
                         <ul class="detail-list">
         `;
 
-        (data.byModel || []).forEach(m => {
-            const pricedCallsForModel = m.pricedCalls ?? m.count ?? 0;
-            const hasCostForModel = pricedCallsForModel > 0;
-            const avgCost = hasCostForModel ? (m.estimatedCost / pricedCallsForModel) : null;
-            const modelLabel = formatModelLabel(m.model, m.provider);
-            html += `
-                <li>
-                    <span><span class="model-badge ${getModelClass(m.model)}">${escapeHtml(modelLabel)}</span></span>
-                    <span>
-                        <strong>${formatNumber(m.count)}</strong> calls • 
-                        ${hasCostForModel ? `<span class="text-info">$${avgCost.toFixed(4)}</span>/call` : '<span class="text-muted">-</span>'}
-                    </span>
-                </li>
-            `;
-        });
+        if (modelItems.length === 0) {
+            html += '<li><span class="text-muted">ไม่มีข้อมูล</span><span></span></li>';
+        } else {
+            modelItems.forEach(modelInfo => {
+                const pricedCalls = modelInfo.pricedCalls ?? modelInfo.count ?? 0;
+                const hasCostData = pricedCalls > 0;
+                const avgCost = hasCostData ? modelInfo.estimatedCost / pricedCalls : null;
+                const modelLabel = formatModelLabel(modelInfo.model, modelInfo.provider);
+                html += `
+                    <li>
+                        <span><span class="model-badge ${getModelClass(modelInfo.model)}">${escapeHtml(modelLabel)}</span></span>
+                        <span>
+                            <strong>${formatNumber(modelInfo.count)}</strong> calls •
+                            ${hasCostData ? `<span class="text-info">$${avgCost.toFixed(4)}</span>/call` : '<span class="text-muted">-</span>'}
+                        </span>
+                    </li>
+                `;
+            });
+        }
 
         html += `
                         </ul>
@@ -971,16 +1085,20 @@ async function toggleRowExpand(row) {
                         <ul class="detail-list">
         `;
 
-        (data.byKey || []).forEach(k => {
-            const hasCostForKey = (k.pricedCalls ?? k.count ?? 0) > 0;
-            const keyLabel = formatKeyLabel(k.keyName, k.provider);
-            html += `
-                <li>
-                    <span><i class="fas fa-key text-muted me-1"></i>${escapeHtml(keyLabel)}</span>
-                    <span><strong>${formatNumber(k.count)}</strong> calls • ${hasCostForKey ? `$${formatCost(k.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
-                </li>
-            `;
-        });
+        if (keyItems.length === 0) {
+            html += '<li><span class="text-muted">ไม่มีข้อมูล</span><span></span></li>';
+        } else {
+            keyItems.forEach(keyInfo => {
+                const hasCostData = (keyInfo.pricedCalls ?? keyInfo.count ?? 0) > 0;
+                const keyLabel = formatKeyLabel(keyInfo.keyName, keyInfo.provider);
+                html += `
+                    <li>
+                        <span><i class="fas fa-key text-muted me-1"></i>${escapeHtml(keyLabel)}</span>
+                        <span><strong>${formatNumber(keyInfo.count)}</strong> calls • ${hasCostData ? `$${formatCost(keyInfo.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
+                    </li>
+                `;
+            });
+        }
 
         html += `
                         </ul>
@@ -993,16 +1111,20 @@ async function toggleRowExpand(row) {
                         <ul class="detail-list">
         `;
 
-        (data.recentLogs || []).slice(0, 5).forEach(l => {
-            const hasCost = typeof l.estimatedCost === 'number';
-            const modelLabel = formatModelLabel(l.model, l.provider);
-            html += `
-                <li>
-                    <span>${formatDateTime(l.timestamp)}</span>
-                    <span>${escapeHtml(modelLabel)} • ${formatNumber(l.totalTokens)} tokens • ${hasCost ? `$${formatCost(l.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
-                </li>
-            `;
-        });
+        if (recentLogs.length === 0) {
+            html += '<li><span class="text-muted">ไม่มีข้อมูล</span><span></span></li>';
+        } else {
+            recentLogs.forEach(log => {
+                const hasCostData = typeof log.estimatedCost === 'number';
+                const modelLabel = formatModelLabel(log.model, log.provider);
+                html += `
+                    <li>
+                        <span>${formatDateTime(log.timestamp)}</span>
+                        <span>${escapeHtml(modelLabel)} • ${formatNumber(log.totalTokens)} tokens • ${hasCostData ? `$${formatCost(log.estimatedCost)}` : '<span class="text-muted">-</span>'}</span>
+                    </li>
+                `;
+            });
+        }
 
         html += `
                         </ul>
@@ -1012,7 +1134,6 @@ async function toggleRowExpand(row) {
         `;
 
         detailRow.querySelector('td').innerHTML = html;
-
     } catch (err) {
         console.error('Error loading bot details:', err);
         detailRow.querySelector('td').innerHTML = `
@@ -1031,65 +1152,109 @@ function handleSort(column) {
         State.sortDirection = State.sortDirection === 'asc' ? 'desc' : 'asc';
     } else {
         State.sortColumn = column;
-        State.sortDirection = 'desc';
+        State.sortDirection = getDefaultSortDirection(column);
     }
 
-    // Update header classes
-    document.querySelectorAll('.sortable').forEach(th => {
-        th.classList.remove('sort-asc', 'sort-desc');
-        if (th.dataset.sort === column) {
-            th.classList.add(State.sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
-        }
-    });
-
+    updateSortHeaderClasses();
     renderTable();
 }
 
-function sortData(items) {
+function sortGroupedData(items) {
     const col = State.sortColumn;
     const dir = State.sortDirection === 'asc' ? 1 : -1;
 
-    return items.sort((a, b) => {
-        let valA, valB;
-
+    return [...items].sort((a, b) => {
         switch (col) {
             case 'name':
-                valA = (a.name || a.botId || '').toLowerCase();
-                valB = (b.name || b.botId || '').toLowerCase();
-                return valA.localeCompare(valB) * dir;
+                return ((a.name || a.botId || '').toLowerCase()).localeCompare((b.name || b.botId || '').toLowerCase()) * dir;
             case 'platform':
-                valA = a.platform || '';
-                valB = b.platform || '';
-                return valA.localeCompare(valB) * dir;
+                return (a.platform || '').localeCompare(b.platform || '') * dir;
             case 'calls':
                 return ((a.calls || 0) - (b.calls || 0)) * dir;
             case 'tokens':
                 return ((a.tokens || 0) - (b.tokens || 0)) * dir;
+            case 'avgCost': {
+                const avgA = (a.pricedCalls ?? a.calls ?? 0) > 0 ? (a.costUSD || 0) / (a.pricedCalls ?? a.calls ?? 0) : 0;
+                const avgB = (b.pricedCalls ?? b.calls ?? 0) > 0 ? (b.costUSD || 0) / (b.pricedCalls ?? b.calls ?? 0) : 0;
+                return (avgA - avgB) * dir;
+            }
             case 'cost':
-                return ((a.costUSD || 0) - (b.costUSD || 0)) * dir;
-            case 'avgCost':
-                valA = a.calls > 0 ? a.costUSD / a.calls : 0;
-                valB = b.calls > 0 ? b.costUSD / b.calls : 0;
-                return (valA - valB) * dir;
             default:
-                return 0;
+                return ((a.costUSD || 0) - (b.costUSD || 0)) * dir;
+        }
+    });
+}
+
+function sortDetailedLogs(logs, botNameMap) {
+    const dir = State.sortDirection === 'asc' ? 1 : -1;
+    const sortColumn = State.sortColumn;
+
+    return [...logs].sort((a, b) => {
+        let valueA;
+        let valueB;
+
+        switch (sortColumn) {
+            case 'model':
+                valueA = formatModelLabel(a.model, a.provider).toLowerCase();
+                valueB = formatModelLabel(b.model, b.provider).toLowerCase();
+                return valueA.localeCompare(valueB) * dir;
+            case 'bot':
+                valueA = (botNameMap[a.botId] || a.botId || '').toLowerCase();
+                valueB = (botNameMap[b.botId] || b.botId || '').toLowerCase();
+                return valueA.localeCompare(valueB) * dir;
+            case 'platform':
+                return (a.platform || '').localeCompare(b.platform || '') * dir;
+            case 'input':
+                return ((a.promptTokens || 0) - (b.promptTokens || 0)) * dir;
+            case 'output':
+                return ((a.completionTokens || 0) - (b.completionTokens || 0)) * dir;
+            case 'total':
+                return ((a.totalTokens || 0) - (b.totalTokens || 0)) * dir;
+            case 'cost':
+                return (((a.estimatedCostUSD ?? -1)) - ((b.estimatedCostUSD ?? -1))) * dir;
+            case 'timestamp':
+            default:
+                return (new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) * dir;
+        }
+    });
+}
+
+function getDefaultSortDirection(column) {
+    if (['name', 'model', 'bot', 'platform'].includes(column)) {
+        return 'asc';
+    }
+    return 'desc';
+}
+
+function bindSortHandlers(tableHeader) {
+    tableHeader.querySelectorAll('.sortable').forEach(th => {
+        th.addEventListener('click', () => handleSort(th.dataset.sort));
+    });
+    updateSortHeaderClasses(tableHeader);
+}
+
+function updateSortHeaderClasses(scope = document) {
+    scope.querySelectorAll('.sortable').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.dataset.sort === State.sortColumn) {
+            th.classList.add(State.sortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
         }
     });
 }
 
 // ==================== Export ====================
 function exportToCSV() {
-    if (!State.data) return;
+    const dataSource = getDataSourceForCurrentView();
+    if (!dataSource) return;
 
-    let csv = 'Date,Calls,Tokens,Input Tokens,Output Tokens,Cost USD,Cost THB\n';
-
-    const daily = State.data.daily || [];
-    daily.forEach(d => {
-        const costTHB = (d.cost || 0) * THB_RATE;
-        csv += `${d._id || d.date},${d.calls || 0},${d.tokens || 0},${d.inputTokens || 0},${d.outputTokens || 0},${(d.cost || 0).toFixed(4)},${costTHB.toFixed(2)}\n`;
+    let csv = 'Date,Calls,Tokens,Priced Calls,Cost USD,Cost THB\n';
+    (dataSource.daily || []).forEach(day => {
+        const costUSD = day.cost || 0;
+        const costTHB = costUSD * THB_RATE;
+        csv += `${day._id || day.date},${day.calls || day.count || 0},${day.tokens || day.totalTokens || 0},${day.pricedCalls || 0},${costUSD.toFixed(4)},${costTHB.toFixed(2)}\n`;
     });
 
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1100,6 +1265,7 @@ function exportToCSV() {
 
 // ==================== UI Helpers ====================
 function showLoadingState() {
+    document.getElementById('resultCount').textContent = '0';
     document.getElementById('tableBody').innerHTML = `
         <tr>
             <td colspan="8" class="text-center py-5">
@@ -1113,6 +1279,10 @@ function showLoadingState() {
 }
 
 function showErrorState() {
+    closeExpandedRows();
+    document.getElementById('resultCount').textContent = '0';
+    updateSummaryCards({});
+    updateCharts({ daily: [], byModel: [] });
     document.getElementById('tableBody').innerHTML = `
         <tr>
             <td colspan="8" class="text-center text-danger py-5">
@@ -1127,7 +1297,63 @@ function closeExpandedPanel() {
     document.getElementById('expandedPanel').style.display = 'none';
 }
 
+function closeExpandedRows() {
+    document.querySelectorAll('.expanded-detail-row').forEach(row => row.remove());
+    document.querySelectorAll('.expanded').forEach(row => row.classList.remove('expanded'));
+    State.expandedRow = null;
+}
+
 // ==================== Utilities ====================
+async function fetchJson(url) {
+    const response = await fetch(url);
+    let data;
+
+    try {
+        data = await response.json();
+    } catch (err) {
+        throw new Error('รูปแบบข้อมูลจากเซิร์ฟเวอร์ไม่ถูกต้อง');
+    }
+
+    if (!response.ok || data?.success === false) {
+        throw new Error(data?.error || 'ไม่สามารถโหลดข้อมูลได้');
+    }
+
+    return data;
+}
+
+function getDataSourceForCurrentView() {
+    return State.viewData || State.data;
+}
+
+function getDetailedLogsCacheKey() {
+    const params = buildDataRequestParams({ includeStructuredFilters: true });
+    params.set('limit', '500');
+    return params.toString();
+}
+
+function buildBotNameMap() {
+    const botNameMap = {};
+    (State.data?.byBot || []).forEach(bot => {
+        if (bot.botId) {
+            botNameMap[bot.botId] = bot.name || bot.botId;
+        }
+    });
+    return botNameMap;
+}
+
+function appendQueryParam(params, key, value) {
+    if (value !== null && value !== undefined && value !== '') {
+        params.append(key, value);
+    }
+}
+
+function restoreSelectValue(select, value) {
+    if (!select) return;
+    const normalizedValue = value || '';
+    const hasOption = Array.from(select.options).some(option => option.value === normalizedValue);
+    select.value = hasOption ? normalizedValue : '';
+}
+
 function sanitizeDateInputValue(value) {
     if (typeof value !== 'string') return '';
     const trimmedValue = value.trim();
@@ -1265,6 +1491,18 @@ function formatModelLabel(model, provider) {
 
 function buildModelFilterKey(model, provider) {
     return `${normalizeProviderName(provider)}::${model || ''}`;
+}
+
+function parseModelFilterKey(value) {
+    if (typeof value !== 'string' || !value.includes('::')) {
+        return { provider: '', model: '' };
+    }
+
+    const [provider, ...rest] = value.split('::');
+    return {
+        provider: normalizeProviderName(provider),
+        model: rest.join('::')
+    };
 }
 
 function formatKeyLabel(name, provider) {

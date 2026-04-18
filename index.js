@@ -31551,6 +31551,7 @@ function buildPostgresUsageFilter({
   botId,
   platform,
   provider,
+  model,
 } = {}) {
   const params = [];
   const conditions = [];
@@ -31570,6 +31571,12 @@ function buildPostgresUsageFilter({
   }
   if (provider) {
     push(`${PG_USAGE_PROVIDER_SQL} =`, normalizeProvider(provider));
+  }
+  if (model) {
+    const normalized = String(model).trim();
+    if (normalized) {
+      push("COALESCE(NULLIF(u.model, ''), 'unknown') =", normalized);
+    }
   }
   if (keyId) {
     const normalized = String(keyId || "").trim();
@@ -31600,7 +31607,8 @@ function buildPostgresUsageFilter({
 
 app.get("/api/openai-usage/summary", async (req, res) => {
   try {
-    const { startDate, endDate, keyId, botId, platform, provider } = req.query;
+    const { startDate, endDate, keyId, botId, platform, provider, model } =
+      req.query;
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
       endDate,
@@ -31618,6 +31626,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
         botId,
         platform: normalizedPlatform || null,
         provider,
+        model,
       });
 
       const totalsResult = await pgQuery(
@@ -31655,7 +31664,6 @@ app.get("/api/openai-usage/summary", async (req, res) => {
             COALESCE(NULLIF(u.model, ''), 'unknown'),
             ${PG_USAGE_PROVIDER_SQL}
           ORDER BY cost DESC, calls DESC
-          LIMIT 10
         `,
         params,
       );
@@ -31680,7 +31688,6 @@ app.get("/api/openai-usage/summary", async (req, res) => {
           ${byBotWhereSql}
           GROUP BY ${PG_USAGE_BOT_REF_SQL}, u.platform
           ORDER BY cost DESC, calls DESC
-          LIMIT 20
         `,
         params,
       );
@@ -31789,6 +31796,7 @@ app.get("/api/openai-usage", async (req, res) => {
       botId,
       platform,
       provider,
+      model,
       page = 1,
       limit = 50,
     } = req.query;
@@ -31816,6 +31824,7 @@ app.get("/api/openai-usage", async (req, res) => {
         botId,
         platform: normalizedPlatform || null,
         provider,
+        model,
       });
 
       const totalResult = await pgQuery(
@@ -31895,17 +31904,25 @@ app.get("/api/openai-usage", async (req, res) => {
 app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
   try {
     const { botId } = req.params;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, keyId, platform, provider, model } = req.query;
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
       endDate,
     );
 
     if (isPostgresConfigured()) {
+      const normalizedPlatform =
+        typeof platform === "string" && platform.trim()
+          ? normalizeChatPlatform(platform)
+          : "";
       const { whereSql, params } = buildPostgresUsageFilter({
         startDate: startMoment.toDate(),
         endDate: endMoment.toDate(),
         botId,
+        keyId,
+        platform: normalizedPlatform || null,
+        provider,
+        model,
       });
 
       const byModelResult = await pgQuery(
@@ -31923,7 +31940,7 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${whereSql}
-          GROUP BY model, provider
+          GROUP BY 1, 2
           ORDER BY count DESC, estimated_cost DESC
         `,
         params,
@@ -31943,7 +31960,7 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${whereSql}
-          GROUP BY key_id
+          GROUP BY 1
           ORDER BY count DESC, estimated_cost DESC
         `,
         params,
@@ -31961,7 +31978,7 @@ app.get("/api/openai-usage/by-bot/:botId", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${whereSql}
-          GROUP BY day_key
+          GROUP BY 1
           ORDER BY day_key DESC
           LIMIT 30
         `,
@@ -32123,7 +32140,7 @@ app.get("/api/openai-usage/by-model/:model", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${modelWhereSql}
-          GROUP BY day_key
+          GROUP BY 1
           ORDER BY day_key DESC
           LIMIT 30
         `,
@@ -32240,7 +32257,7 @@ app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${whereSql}
-          GROUP BY model
+          GROUP BY 1
           ORDER BY count DESC, estimated_cost DESC
         `,
         params,
@@ -32258,7 +32275,7 @@ app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
           LEFT JOIN bots b ON b.id = u.bot_id
           LEFT JOIN api_keys ak ON ak.id = u.api_key_id
           ${whereSql}
-          GROUP BY day_key
+          GROUP BY 1
           ORDER BY day_key DESC
           LIMIT 30
         `,
