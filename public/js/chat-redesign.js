@@ -2961,6 +2961,232 @@ class ChatManager {
         }
     }
 
+    formatCurrency(value) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return '';
+        return `฿${numeric.toLocaleString('th-TH')}`;
+    }
+
+    formatOrderStatusLabel(status) {
+        const normalized = typeof status === 'string' ? status.trim().toLowerCase() : '';
+        const statusLabels = {
+            pending: 'รอดำเนินการ',
+            confirmed: 'ยืนยันแล้ว',
+            shipped: 'จัดส่งแล้ว',
+            completed: 'เสร็จสิ้น',
+            cancelled: 'ยกเลิก'
+        };
+        return statusLabels[normalized] || (typeof status === 'string' ? status : '');
+    }
+
+    formatToolDateTime(value) {
+        if (!value) return '';
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toLocaleString('th-TH', {
+            day: '2-digit',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    summarizeOrderItems(items) {
+        if (!Array.isArray(items) || items.length === 0) return '';
+        const visibleItems = items
+            .map((item) => {
+                if (!item || typeof item !== 'object') return '';
+                const product = String(item.product || 'สินค้า').trim();
+                const quantity = Number(item.quantity);
+                const safeQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+                return `${product} x${safeQuantity}`;
+            })
+            .filter(Boolean);
+
+        if (visibleItems.length === 0) return '';
+        const preview = visibleItems.slice(0, 3).join(', ');
+        if (visibleItems.length <= 3) return preview;
+        return `${preview} และอีก ${visibleItems.length - 3} รายการ`;
+    }
+
+    summarizeSearchResultRow(row) {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) return '';
+        const entries = Object.entries(row)
+            .map(([key, value]) => {
+                const normalizedValue = value === null || typeof value === 'undefined'
+                    ? ''
+                    : String(value).trim();
+                if (!normalizedValue) return '';
+                return `${key}: ${normalizedValue}`;
+            })
+            .filter(Boolean);
+
+        return entries.slice(0, 3).join(' · ');
+    }
+
+    isRecognizedToolPayload(payload) {
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            return false;
+        }
+
+        return (
+            Object.prototype.hasOwnProperty.call(payload, 'success') ||
+            Object.prototype.hasOwnProperty.call(payload, 'error') ||
+            Object.prototype.hasOwnProperty.call(payload, 'message') ||
+            Object.prototype.hasOwnProperty.call(payload, 'orderId') ||
+            Object.prototype.hasOwnProperty.call(payload, 'existingOrderId') ||
+            Object.prototype.hasOwnProperty.call(payload, 'missingFields') ||
+            Array.isArray(payload.orders) ||
+            Array.isArray(payload.categories) ||
+            Array.isArray(payload.data)
+        );
+    }
+
+    buildReadableToolText(message, structured) {
+        if (!this.isRecognizedToolPayload(structured)) {
+            return '';
+        }
+
+        const payload = structured;
+        const lines = [];
+        const role = typeof message?.role === 'string' ? message.role.trim().toLowerCase() : '';
+        const likelyToolMessage = role === 'tool' || role === '' || !!message?.isToolResult;
+
+        if (!likelyToolMessage && !Array.isArray(payload.orders) && !Array.isArray(payload.categories) && !Array.isArray(payload.data)) {
+            return '';
+        }
+
+        if (Array.isArray(payload.orders)) {
+            const orders = payload.orders;
+            if (orders.length === 0) {
+                return typeof payload.message === 'string' && payload.message.trim()
+                    ? payload.message.trim()
+                    : 'ยังไม่มีออเดอร์ของลูกค้ารายนี้';
+            }
+
+            const totalOrders = Number(payload.totalOrders);
+            const visibleTotal = Number.isFinite(totalOrders) && totalOrders > 0 ? totalOrders : orders.length;
+            lines.push(
+                typeof payload.message === 'string' && payload.message.trim()
+                    ? payload.message.trim()
+                    : `พบ ${visibleTotal} ออเดอร์`
+            );
+
+            orders.slice(0, 3).forEach((order, index) => {
+                if (!order || typeof order !== 'object') return;
+                const itemSummary = this.summarizeOrderItems(order.items);
+                const totalAmount = this.formatCurrency(order.totalAmount);
+                const statusLabel = this.formatOrderStatusLabel(order.status);
+                const createdAt = this.formatToolDateTime(order.createdAt);
+                const summaryParts = [];
+                if (itemSummary) summaryParts.push(itemSummary);
+                if (totalAmount) summaryParts.push(`รวม ${totalAmount}`);
+                if (statusLabel) summaryParts.push(statusLabel);
+                if (createdAt) summaryParts.push(createdAt);
+                const line = summaryParts.length > 0
+                    ? `${index + 1}. ${summaryParts.join(' · ')}`
+                    : `${index + 1}. ออเดอร์ #${index + 1}`;
+                lines.push(line);
+            });
+
+            if (orders.length > 3) {
+                lines.push(`และอีก ${orders.length - 3} ออเดอร์`);
+            }
+
+            return lines.join('\n');
+        }
+
+        if (payload.success === true && payload.orderId) {
+            const orderData = payload.orderData || payload.order?.orderData || payload.order || {};
+            const itemSummary = this.summarizeOrderItems(orderData.items);
+            const totalAmount = this.formatCurrency(orderData.totalAmount);
+            const statusLabel = this.formatOrderStatusLabel(payload.status || payload.order?.status);
+            const customerName = String(orderData.customerName || orderData.recipientName || '').trim();
+            const title = payload.orderData ? 'บันทึกออเดอร์เรียบร้อย' : 'อัปเดตออเดอร์เรียบร้อย';
+
+            lines.push(title);
+            lines.push(`เลขออเดอร์: ${payload.orderId}`);
+            if (itemSummary) lines.push(`รายการ: ${itemSummary}`);
+            if (totalAmount) lines.push(`ยอดรวม: ${totalAmount}`);
+            if (customerName) lines.push(`ลูกค้า: ${customerName}`);
+            if (statusLabel) lines.push(`สถานะ: ${statusLabel}`);
+            return lines.join('\n');
+        }
+
+        if (payload.success === false) {
+            if (payload.existingOrderId) {
+                lines.push('พบออเดอร์เดิมที่มีรายการสินค้าซ้ำกัน');
+                lines.push(`เลขออเดอร์เดิม: ${payload.existingOrderId}`);
+                const existingOrder = payload.existingOrder || {};
+                const itemSummary = this.summarizeOrderItems(existingOrder.items);
+                const totalAmount = this.formatCurrency(existingOrder.totalAmount);
+                if (itemSummary) lines.push(`รายการเดิม: ${itemSummary}`);
+                if (totalAmount) lines.push(`ยอดรวมเดิม: ${totalAmount}`);
+            }
+
+            const errorText = typeof payload.error === 'string' && payload.error.trim()
+                ? payload.error.trim()
+                : typeof payload.message === 'string' && payload.message.trim()
+                    ? payload.message.trim()
+                    : 'ดำเนินการไม่สำเร็จ';
+            lines.push(errorText);
+
+            if (Array.isArray(payload.missingFields) && payload.missingFields.length > 0) {
+                lines.push(`ข้อมูลที่ยังขาด: ${payload.missingFields.join(', ')}`);
+            }
+
+            return lines.join('\n');
+        }
+
+        if (Array.isArray(payload.categories)) {
+            const categories = payload.categories;
+            if (categories.length === 0) {
+                return 'ยังไม่มีหมวดหมู่สินค้า';
+            }
+
+            lines.push('หมวดหมู่สินค้าที่ใช้งานได้');
+            categories.slice(0, 8).forEach((category, index) => {
+                const name = String(category?.name || '').trim();
+                const description = String(category?.description || '').trim();
+                if (!name) return;
+                lines.push(description ? `${index + 1}. ${name} - ${description}` : `${index + 1}. ${name}`);
+            });
+            if (categories.length > 8) {
+                lines.push(`และอีก ${categories.length - 8} หมวดหมู่`);
+            }
+            return lines.join('\n');
+        }
+
+        if (Array.isArray(payload.data)) {
+            const results = payload.data;
+            if (results.length === 0) {
+                return typeof payload.message === 'string' && payload.message.trim()
+                    ? payload.message.trim()
+                    : 'ไม่พบข้อมูลที่ค้นหา';
+            }
+
+            lines.push(`พบข้อมูล ${results.length} รายการ`);
+            results.slice(0, 5).forEach((row, index) => {
+                const summary = this.summarizeSearchResultRow(row);
+                lines.push(summary ? `${index + 1}. ${summary}` : `${index + 1}. พบข้อมูล`);
+            });
+            if (results.length > 5) {
+                lines.push(`และอีก ${results.length - 5} รายการ`);
+            }
+            return lines.join('\n');
+        }
+
+        if (typeof payload.message === 'string' && payload.message.trim()) {
+            return payload.message.trim();
+        }
+
+        if (payload.success === true) {
+            return 'ดำเนินการสำเร็จ';
+        }
+
+        return '';
+    }
+
     detectImageMimeType(base64, fallback = 'image/jpeg') {
         if (typeof base64 !== 'string') return fallback;
         const trimmed = base64.trim();
@@ -3098,6 +3324,7 @@ class ChatManager {
         const rawContent =
             typeof normalized.rawContent !== 'undefined' ? normalized.rawContent : normalized.content;
         const structured = this.parseJsonIfPossible(rawContent);
+        const readableToolText = this.buildReadableToolText(normalized, structured);
 
         const existingImages = this.normalizeImageList(normalized.images);
         const extractedImages = this.extractImagesFromContent(structured, messageId);
@@ -3122,7 +3349,11 @@ class ChatManager {
             normalized.images = [];
         }
 
-        let plainText = this.extractPlainTextFromStructured(structured);
+        if (readableToolText) {
+            normalized.displayContent = readableToolText;
+        }
+
+        let plainText = readableToolText || this.extractPlainTextFromStructured(structured);
         if (!plainText && mergedImages.length === 0) {
             if (typeof normalized.displayContent === 'string' && normalized.displayContent.trim()) {
                 const textFromHtml = this.stripHtmlToText(normalized.displayContent);
@@ -3145,6 +3376,14 @@ class ChatManager {
             return typeof message._plainText === 'string' ? message._plainText : '';
         }
 
+        const rawContent =
+            typeof message?.rawContent !== 'undefined' ? message.rawContent : message?.content;
+        const structured = this.parseJsonIfPossible(rawContent);
+        const readableToolText = this.buildReadableToolText(message, structured);
+        if (readableToolText) {
+            return readableToolText;
+        }
+
         const hasImages = Array.isArray(message.images) && message.images.length > 0;
         if (!hasImages && typeof message.displayContent === 'string' && message.displayContent.trim()) {
             const textFromHtml = this.stripHtmlToText(message.displayContent);
@@ -3153,8 +3392,6 @@ class ChatManager {
             }
         }
 
-        const rawContent =
-            typeof message?.rawContent !== 'undefined' ? message.rawContent : message?.content;
         if (typeof rawContent === 'string') {
             const trimmed = rawContent.trim();
             if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
