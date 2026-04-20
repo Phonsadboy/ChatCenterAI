@@ -2859,10 +2859,12 @@ class ChatManager {
         if (!mobileActiveFilters) return;
 
         if (activeFilters.length === 0) {
-            mobileActiveFilters.innerHTML = '<span class="mobile-active-filters__empty">ยังไม่ได้เลือกตัวกรองเพิ่มเติม</span>';
+            mobileActiveFilters.classList.add('is-empty');
+            mobileActiveFilters.innerHTML = '';
             return;
         }
 
+        mobileActiveFilters.classList.remove('is-empty');
         mobileActiveFilters.innerHTML = activeFilters.map((label) => `
             <span class="mobile-active-filter-chip">${this.escapeHtml(label)}</span>
         `).join('');
