@@ -34,6 +34,12 @@ class ChatManager {
         // Orders
         this.currentOrders = [];
         this.debugPanelVisible = false;
+        this.currentMobileSheet = null;
+        this.currentContextTab = 'overview';
+        this.userNotesState = {
+            notes: '',
+            updatedAt: null,
+        };
 
         // URL focus param
         this.pendingFocusUserId = this.getFocusUserIdFromQuery();
@@ -41,6 +47,111 @@ class ChatManager {
 
         // Initialize
         this.init();
+    }
+
+    setStatusFilter(filter = 'all') {
+        this.currentFilters.status = filter;
+        document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.filter === filter);
+        });
+        document.querySelectorAll('[data-mobile-filter]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mobileFilter === filter);
+        });
+        this.applyFilters();
+    }
+
+    openSheet(sheetId) {
+        if (!this.isMobileViewport()) return;
+        this.closeComposerTray();
+        const sheets = ['mobileInboxSheet', 'mobileContextSheet', 'mobileAdminSheet'];
+        const backdrop = document.getElementById('mobileSheetBackdrop');
+        sheets.forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const isTarget = id === sheetId;
+            el.hidden = !isTarget;
+            el.classList.toggle('is-open', isTarget);
+            el.setAttribute('aria-hidden', isTarget ? 'false' : 'true');
+        });
+        if (backdrop) {
+            const show = Boolean(sheetId);
+            backdrop.hidden = !show;
+            backdrop.classList.toggle('show', show);
+        }
+        this.currentMobileSheet = sheetId || null;
+    }
+
+    closeSheet(sheetId) {
+        const el = document.getElementById(sheetId);
+        if (!el) return;
+        el.hidden = true;
+        el.classList.remove('is-open');
+        el.setAttribute('aria-hidden', 'true');
+        if (this.currentMobileSheet === sheetId) {
+            this.currentMobileSheet = null;
+        }
+        const stillOpen = ['mobileInboxSheet', 'mobileContextSheet', 'mobileAdminSheet']
+            .some((id) => document.getElementById(id)?.classList.contains('is-open'));
+        const backdrop = document.getElementById('mobileSheetBackdrop');
+        if (backdrop && !stillOpen) {
+            backdrop.hidden = true;
+            backdrop.classList.remove('show');
+        }
+    }
+
+    closeAllMobileSheets() {
+        ['mobileInboxSheet', 'mobileContextSheet', 'mobileAdminSheet'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.hidden = true;
+            el.classList.remove('is-open');
+            el.setAttribute('aria-hidden', 'true');
+        });
+        const backdrop = document.getElementById('mobileSheetBackdrop');
+        if (backdrop) {
+            backdrop.hidden = true;
+            backdrop.classList.remove('show');
+        }
+        this.currentMobileSheet = null;
+        this.closeComposerTray();
+    }
+
+    toggleComposerTray(forceState = null) {
+        const tray = document.getElementById('mobileComposerTray');
+        if (!tray) return;
+        const nextState = typeof forceState === 'boolean'
+            ? forceState
+            : tray.hidden;
+        tray.hidden = !nextState;
+        tray.classList.toggle('is-open', nextState);
+        const btn = document.getElementById('btnMobileTools');
+        if (btn) {
+            btn.classList.toggle('is-active', nextState);
+            btn.setAttribute('aria-expanded', nextState ? 'true' : 'false');
+        }
+    }
+
+    closeComposerTray() {
+        this.toggleComposerTray(false);
+    }
+
+    setContextTab(tab = 'overview') {
+        this.currentContextTab = tab;
+        document.querySelectorAll('[data-context-tab]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.contextTab === tab);
+        });
+        const panelMap = {
+            overview: 'mobileContextPanelOverview',
+            tags: 'mobileContextPanelTags',
+            orders: 'mobileContextPanelOrders',
+        };
+        Object.entries(panelMap).forEach(([key, id]) => {
+            const panel = document.getElementById(id);
+            if (!panel) return;
+            const active = key === tab;
+            panel.hidden = !active;
+            panel.classList.toggle('active', active);
+        });
     }
 
     init() {
@@ -51,6 +162,7 @@ class ChatManager {
         this.loadAvailableTags();
         this.setupAutoRefresh();
         this.hideTypingIndicator();
+        this.syncResponsiveUi();
     }
 
     getFocusUserIdFromQuery() {
@@ -75,6 +187,20 @@ class ChatManager {
         this.focusHandled = true;
         this.pendingFocusUserId = null;
         await this.selectUser(targetId);
+    }
+
+    isMobileViewport() {
+        return window.matchMedia('(max-width: 767.98px)').matches;
+    }
+
+    syncResponsiveUi() {
+        if (!this.isMobileViewport()) {
+            this.closeAllMobileSheets();
+        }
+        this.renderUserList();
+        this.updateChatHeader();
+        this.renderTagFilters();
+        this.renderOrders();
     }
 
     // ========================================
@@ -183,6 +309,13 @@ class ChatManager {
                 this.applyFilters();
             });
         }
+        const mobileUserSearch = document.getElementById('mobileUserSearch');
+        if (mobileUserSearch) {
+            mobileUserSearch.addEventListener('input', (e) => {
+                this.currentFilters.search = e.target.value.trim();
+                this.applyFilters();
+            });
+        }
 
         // Clear filters
         const clearFilters = document.getElementById('clearFilters');
@@ -196,10 +329,13 @@ class ChatManager {
         document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const filter = e.currentTarget.dataset.filter;
-                document.querySelectorAll('.filter-btn[data-filter]').forEach(b => b.classList.remove('active'));
-                e.currentTarget.classList.add('active');
-                this.currentFilters.status = filter;
-                this.applyFilters();
+                this.setStatusFilter(filter);
+            });
+        });
+        document.querySelectorAll('[data-mobile-filter]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const filter = e.currentTarget.dataset.mobileFilter;
+                this.setStatusFilter(filter);
             });
         });
 
@@ -230,6 +366,87 @@ class ChatManager {
             });
         }
 
+        const mobileSheetBackdrop = document.getElementById('mobileSheetBackdrop');
+        const mobileInboxToggle = document.getElementById('mobileInboxToggle');
+        const mobileInboxClose = document.getElementById('mobileInboxClose');
+        const mobileContextToggle = document.getElementById('mobileContextToggle');
+        const mobileContextClose = document.getElementById('mobileContextClose');
+        const mobileContextSummary = document.getElementById('mobileContextSummary');
+        const mobileAdminToggle = document.getElementById('mobileAdminToggle');
+        const mobileAdminClose = document.getElementById('mobileAdminClose');
+        const btnMobileTools = document.getElementById('btnMobileTools');
+        const mobileTemplateAction = document.getElementById('mobileTemplateAction');
+        const mobileEmojiAction = document.getElementById('mobileEmojiAction');
+        const mobileContextTabs = document.getElementById('mobileContextTabs');
+        const mobileAddTagBtn = document.getElementById('mobileAddTagBtn');
+        const mobileNewTagInput = document.getElementById('mobileNewTagInput');
+        const mobileLogoutBtn = document.getElementById('mobileLogoutBtn');
+
+        if (mobileInboxToggle) {
+            mobileInboxToggle.addEventListener('click', () => this.openSheet('mobileInboxSheet'));
+        }
+        if (mobileInboxClose) {
+            mobileInboxClose.addEventListener('click', () => this.closeSheet('mobileInboxSheet'));
+        }
+        if (mobileContextToggle) {
+            mobileContextToggle.addEventListener('click', () => this.openSheet('mobileContextSheet'));
+        }
+        if (mobileContextClose) {
+            mobileContextClose.addEventListener('click', () => this.closeSheet('mobileContextSheet'));
+        }
+        if (mobileContextSummary) {
+            mobileContextSummary.addEventListener('click', () => this.openSheet('mobileContextSheet'));
+        }
+        if (mobileAdminToggle) {
+            mobileAdminToggle.addEventListener('click', () => this.openSheet('mobileAdminSheet'));
+        }
+        if (mobileAdminClose) {
+            mobileAdminClose.addEventListener('click', () => this.closeSheet('mobileAdminSheet'));
+        }
+        if (mobileSheetBackdrop) {
+            mobileSheetBackdrop.addEventListener('click', () => this.closeAllMobileSheets());
+        }
+        if (btnMobileTools) {
+            btnMobileTools.addEventListener('click', () => this.toggleComposerTray());
+        }
+        if (mobileTemplateAction) {
+            mobileTemplateAction.addEventListener('click', () => {
+                this.closeComposerTray();
+                this.openTemplateModal();
+            });
+        }
+        if (mobileEmojiAction) {
+            mobileEmojiAction.addEventListener('click', () => {
+                this.closeComposerTray();
+                const btnEmoji = document.getElementById('btnEmoji');
+                if (btnEmoji) this.toggleEmojiPicker(btnEmoji);
+            });
+        }
+        if (mobileContextTabs) {
+            mobileContextTabs.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-context-tab]');
+                if (!btn || !mobileContextTabs.contains(btn)) return;
+                this.setContextTab(btn.dataset.contextTab || 'overview');
+            });
+        }
+        if (mobileAddTagBtn) {
+            mobileAddTagBtn.addEventListener('click', () => {
+                this.addTag(mobileNewTagInput?.value.trim() || '');
+            });
+        }
+        if (mobileNewTagInput) {
+            mobileNewTagInput.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                this.addTag(mobileNewTagInput.value.trim());
+            });
+        }
+        if (mobileLogoutBtn) {
+            mobileLogoutBtn.addEventListener('click', () => {
+                document.getElementById('adminLogoutBtn')?.click();
+            });
+        }
+
         // Message input
         const messageInput = document.getElementById('messageInput');
         const btnSend = document.getElementById('btnSend');
@@ -238,7 +455,9 @@ class ChatManager {
         if (messageInput) {
             const updateCharCount = (value = '') => {
                 if (charCount) {
-                    charCount.textContent = value.length;
+                    const length = value.length;
+                    charCount.textContent = length;
+                    charCount.parentElement?.classList.toggle('is-visible', length >= 700);
                 }
             };
             const fallbackBaseHeight = messageInput.offsetHeight || 48;
@@ -358,7 +577,12 @@ class ChatManager {
 
         if (btnToggleOrders) {
             btnToggleOrders.addEventListener('click', () => {
-                this.toggleOrderSidebarMobile(true);
+                if (this.isMobileViewport()) {
+                    this.setContextTab('orders');
+                    this.openSheet('mobileContextSheet');
+                } else {
+                    this.toggleOrderSidebarMobile(true);
+                }
             });
         }
 
@@ -417,6 +641,7 @@ class ChatManager {
             if (resizeTimer) window.clearTimeout(resizeTimer);
             resizeTimer = window.setTimeout(() => {
                 this.syncOrderSidebarCollapseForViewport();
+                this.syncResponsiveUi();
             }, 120);
         });
 
@@ -517,6 +742,10 @@ class ChatManager {
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
             if (document.querySelector('.modal.show')) return;
+            if (this.currentMobileSheet) {
+                this.closeAllMobileSheets();
+                return;
+            }
 
             const chatSidebar = document.getElementById('chatSidebar');
             const sidebarOverlay = document.getElementById('sidebarOverlay');
@@ -589,6 +818,16 @@ class ChatManager {
 	                this.selectUser(userId);
 	            });
 	        }
+        const mobileUserList = document.getElementById('mobileUserList');
+        if (mobileUserList) {
+            mobileUserList.addEventListener('click', (e) => {
+                const item = e.target.closest('.mobile-user-item[data-user-id]');
+                if (!item || !mobileUserList.contains(item)) return;
+                const userId = item.dataset.userId;
+                if (!userId) return;
+                this.selectUser(userId);
+            });
+        }
 
 	        // Tag filter buttons (delegation)
 	        const tagFilters = document.getElementById('tagFilters');
@@ -601,6 +840,16 @@ class ChatManager {
 	                this.toggleTagFilter(tag);
 	            });
 	        }
+        const mobileTagFilters = document.getElementById('mobileTagFilters');
+        if (mobileTagFilters) {
+            mobileTagFilters.addEventListener('click', (e) => {
+                const btn = e.target.closest('.tag-filter-btn[data-tag]');
+                if (!btn || !mobileTagFilters.contains(btn)) return;
+                const tag = btn.dataset.tag;
+                if (!tag) return;
+                this.toggleTagFilter(tag);
+            });
+        }
 
 	        // Tag modal actions (delegation)
 	        const currentTags = document.getElementById('currentTags');
@@ -634,6 +883,26 @@ class ChatManager {
 	                this.addTag(tag);
 	            });
 	        }
+        const mobileCurrentTags = document.getElementById('mobileCurrentTags');
+        if (mobileCurrentTags) {
+            mobileCurrentTags.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-action="remove-tag"][data-tag]');
+                if (!btn || !mobileCurrentTags.contains(btn)) return;
+                const tag = btn.dataset.tag;
+                if (!tag) return;
+                this.removeTag(tag);
+            });
+        }
+        const mobilePopularTags = document.getElementById('mobilePopularTags');
+        if (mobilePopularTags) {
+            mobilePopularTags.addEventListener('click', (e) => {
+                const tagEl = e.target.closest('[data-action="add-tag"][data-tag]');
+                if (!tagEl || !mobilePopularTags.contains(tagEl)) return;
+                const tag = tagEl.dataset.tag;
+                if (!tag) return;
+                this.addTag(tag);
+            });
+        }
 
 		        // Message image click (delegation)
 		        const messagesContainer = document.getElementById('messagesContainer');
@@ -670,6 +939,40 @@ class ChatManager {
 	                    this.editOrder(orderId);
 	                } else if (action === 'delete-order') {
 	                    this.deleteOrder(orderId);
+                }
+            });
+        }
+        const mobileOrderList = document.getElementById('mobileOrderList');
+        if (mobileOrderList) {
+            mobileOrderList.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-action]');
+                if (!btn || !mobileOrderList.contains(btn)) return;
+                const action = btn.dataset.action;
+                const orderId = btn.dataset.orderId;
+                if (!orderId) return;
+                if (action === 'edit-order') {
+                    this.editOrder(orderId);
+                } else if (action === 'delete-order') {
+                    this.deleteOrder(orderId);
+                }
+            });
+        }
+        const mobileOverviewCard = document.getElementById('mobileOverviewCard');
+        if (mobileOverviewCard) {
+            mobileOverviewCard.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-mobile-action]');
+                if (!btn || !mobileOverviewCard.contains(btn)) return;
+                const action = btn.dataset.mobileAction;
+                if (action === 'toggle-ai') {
+                    this.toggleAI();
+                } else if (action === 'toggle-purchase') {
+                    this.togglePurchaseStatus();
+                } else if (action === 'refresh-profile') {
+                    this.refreshCurrentUserProfile();
+                } else if (action === 'clear-chat') {
+                    this.clearChat();
+                } else if (action === 'save-notes') {
+                    this.saveUserNotes('mobile');
                 }
             });
         }
@@ -887,10 +1190,10 @@ class ChatManager {
 
     renderUserList() {
         const userList = document.getElementById('userList');
+        const mobileUserList = document.getElementById('mobileUserList');
         const userCountBadge = document.getElementById('userCountBadge');
         const filteredCount = document.getElementById('filteredCount');
-
-        if (!userList) return;
+        const mobileFilteredCount = document.getElementById('mobileFilteredCount');
 
         // Update counts
         if (userCountBadge) {
@@ -899,19 +1202,30 @@ class ChatManager {
         if (filteredCount) {
             filteredCount.textContent = this.users.length;
         }
+        if (mobileFilteredCount) {
+            mobileFilteredCount.textContent = this.users.length;
+        }
 
         // Render users
         if (this.users.length === 0) {
-            userList.innerHTML = `
+            const emptyHtml = `
                 <div class="empty-state" style="padding: 2rem;">
                     <i class="fas fa-inbox" style="font-size: 3rem; color: var(--text-tertiary); margin-bottom: 1rem;"></i>
-                    <p style="color: var(--text-secondary);">ไม่พบผู้ใช้</p>
+                    <p style="color: var(--text-secondary);">ไม่พบบทสนทนา</p>
                 </div>
             `;
+            if (userList) userList.innerHTML = emptyHtml;
+            if (mobileUserList) mobileUserList.innerHTML = emptyHtml;
             return;
         }
 
-        userList.innerHTML = this.users.map(user => this.renderUserItem(user)).join('');
+        if (userList) {
+            userList.innerHTML = this.users.map(user => this.renderUserItem(user)).join('');
+        }
+        if (mobileUserList) {
+            mobileUserList.innerHTML = this.users.map(user => this.renderMobileUserItem(user)).join('');
+        }
+        this.renderMobileContextSummary();
     }
 
     renderUserItem(user) {
@@ -988,9 +1302,9 @@ class ChatManager {
             ).join('')
             : '';
 
-		        return `
-		            <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" role="button" tabindex="0"
-		                 data-user-id="${this.escapeHtml(user.userId || '')}">
+        return `
+            <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" role="button" tabindex="0"
+                 data-user-id="${this.escapeHtml(user.userId || '')}">
 		                <div class="user-avatar">
 		                    ${avatarContent}
 		                    <div class="user-status-indicators">
@@ -1011,9 +1325,79 @@ class ChatManager {
         `;
     }
 
+    buildUserStateChips(user, options = {}) {
+        const chips = [];
+        const unreadCount = Number(user.unreadCount || 0);
+        const orderCount = Number(user.orderCount || 0);
+        const aiEnabled = user.aiEnabled !== false;
+        const isFollowUp = !!(user.followUp && user.followUp.isFollowUp);
+        const isPurchased = !!user.hasPurchased;
+        if (options.includeAi !== false) {
+            chips.push(`<span class="mobile-state-chip ${aiEnabled ? 'is-ai-on' : 'is-ai-off'}">${aiEnabled ? 'AI on' : 'AI off'}</span>`);
+        }
+        if (isFollowUp) {
+            chips.push('<span class="mobile-state-chip is-followup">ติดตาม</span>');
+        }
+        if (isPurchased) {
+            chips.push('<span class="mobile-state-chip is-purchased">ซื้อแล้ว</span>');
+        }
+        if (orderCount > 0 || user.hasOrders) {
+            chips.push(`<span class="mobile-state-chip is-order">ออเดอร์ ${orderCount || 1}</span>`);
+        }
+        if (options.includeMessages) {
+            const messages = this.chatHistory[user.userId] || [];
+            chips.push(`<span class="mobile-state-chip is-neutral">${messages.length} ข้อความ</span>`);
+        }
+        if (unreadCount > 0 && options.includeUnread !== false) {
+            chips.push(`<span class="mobile-state-chip is-unread">${unreadCount} ใหม่</span>`);
+        }
+        return chips;
+    }
+
+    renderMobileUserItem(user) {
+        const isActive = user.userId === this.currentUserId;
+        const avatarLetter = user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U';
+        const lastMessage = user.lastMessage ? this.truncateText(user.lastMessage, 60) : 'ไม่มีข้อความ';
+        const lastTimestamp = user.lastTimestamp || user.lastMessageTime || user.lastMessageAt || null;
+        const time = lastTimestamp ? this.formatRelativeTime(lastTimestamp) : '';
+        const channelLabel = (() => {
+            const explicit = typeof user.channelLabel === 'string' ? user.channelLabel.trim() : '';
+            if (explicit) return explicit;
+            return user.platform === 'facebook' ? 'Facebook' : user.platform === 'line' ? 'LINE' : (user.userId || '');
+        })();
+        const avatarContent = user.pictureUrl
+            ? `
+                <img src="${this.escapeHtml(user.pictureUrl)}"
+                     alt="${this.escapeHtml(user.displayName || 'User')}"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <span class="avatar-fallback" style="display:none;">${avatarLetter}</span>
+            `
+            : `<span class="avatar-fallback">${avatarLetter}</span>`;
+        const unread = Number(user.unreadCount || 0);
+
+        return `
+            <div class="mobile-user-item ${isActive ? 'active' : ''}" data-user-id="${this.escapeHtml(user.userId || '')}">
+                <div class="mobile-user-item__avatar">${avatarContent}</div>
+                <div class="mobile-user-item__body">
+                    <div class="mobile-user-item__top">
+                        <div class="mobile-user-item__name">${this.escapeHtml(user.displayName || user.userId)}</div>
+                        <div class="mobile-user-item__time">${this.escapeHtml(time)}</div>
+                    </div>
+                    <div class="mobile-user-item__meta">${this.escapeHtml(channelLabel)}</div>
+                    <div class="mobile-user-item__message">${this.escapeHtml(lastMessage)}</div>
+                    <div class="mobile-user-item__chips">
+                        ${this.buildUserStateChips(user, { includeAi: true, includeUnread: false }).slice(0, 3).join('')}
+                    </div>
+                </div>
+                ${unread > 0 ? `<div class="mobile-user-item__unread">${unread}</div>` : ''}
+            </div>
+        `;
+    }
+
 
     async selectUser(userId) {
         this.currentUserId = userId;
+        this.userNotesState = { notes: '', updatedAt: null };
 
         // Close sidebar on mobile
         const chatSidebar = document.getElementById('chatSidebar');
@@ -1021,6 +1405,7 @@ class ChatManager {
         if (chatSidebar) chatSidebar.classList.remove('show');
         if (sidebarOverlay) sidebarOverlay.classList.remove('show');
         this.toggleOrderSidebarMobile(false);
+        this.closeSheet('mobileInboxSheet');
 
         // Update UI
         this.renderUserList();
@@ -1033,6 +1418,7 @@ class ChatManager {
 
         // Load orders
         await this.loadOrders();
+        this.loadUserNotes();
         this.updateDebugPanel();
 
         // Mark as read
@@ -1041,13 +1427,17 @@ class ChatManager {
 
     updateChatHeader() {
         const btnRefreshProfile = document.getElementById('btnRefreshProfile');
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.findCurrentUser();
         if (!user) {
             if (btnRefreshProfile) {
                 btnRefreshProfile.disabled = true;
                 btnRefreshProfile.title = 'เลือกผู้ใช้เพื่ออัปเดตข้อมูล';
                 btnRefreshProfile.classList.add('disabled');
             }
+            const mobileChatTitle = document.getElementById('mobileChatTitle');
+            if (mobileChatTitle) mobileChatTitle.textContent = 'Inbox';
+            this.renderMobileContextSummary();
+            this.renderMobileContextSheet();
             return;
         }
 
@@ -1098,6 +1488,142 @@ class ChatManager {
                 : 'ใช้กับผู้ใช้ Facebook เท่านั้น';
             btnRefreshProfile.classList.toggle('disabled', !isFacebook);
         }
+
+        const mobileChatTitle = document.getElementById('mobileChatTitle');
+        if (mobileChatTitle) {
+            mobileChatTitle.textContent = user.displayName || user.userId || 'Inbox';
+        }
+        this.renderMobileContextSummary();
+        this.renderMobileContextSheet();
+    }
+
+    findCurrentUser() {
+        if (!this.currentUserId) return null;
+        return this.users.find(u => u.userId === this.currentUserId)
+            || this.allUsers.find(u => u.userId === this.currentUserId)
+            || null;
+    }
+
+    getChannelLabel(user) {
+        if (!user) return '';
+        const explicit = typeof user.channelLabel === 'string' ? user.channelLabel.trim() : '';
+        if (explicit) return explicit;
+        if (user.platform === 'facebook') return 'Facebook';
+        if (user.platform === 'line') return 'LINE';
+        return user.userId || '';
+    }
+
+    buildAvatarMarkup(user, fallbackClass = 'avatar-fallback') {
+        const avatarLetter = user?.displayName ? user.displayName.charAt(0).toUpperCase() : 'U';
+        if (user?.pictureUrl) {
+            return `
+                <img src="${this.escapeHtml(user.pictureUrl)}"
+                     alt="${this.escapeHtml(user.displayName || 'User')}"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <span class="${fallbackClass}" style="display:none;">${avatarLetter}</span>
+            `;
+        }
+        return `<span class="${fallbackClass}">${avatarLetter}</span>`;
+    }
+
+    renderMobileContextSummary() {
+        const summary = document.getElementById('mobileContextSummary');
+        const avatar = document.getElementById('mobileSummaryAvatar');
+        const name = document.getElementById('mobileSummaryName');
+        const meta = document.getElementById('mobileSummaryMeta');
+        const chips = document.getElementById('mobileSummaryChips');
+        const user = this.findCurrentUser();
+
+        if (!summary || !avatar || !name || !meta || !chips) return;
+
+        if (!user) {
+            summary.hidden = true;
+            chips.innerHTML = '';
+            return;
+        }
+
+        const messages = this.chatHistory[this.currentUserId] || [];
+        summary.hidden = false;
+        avatar.innerHTML = this.buildAvatarMarkup(user);
+        name.textContent = user.displayName || user.userId || 'ลูกค้า';
+        meta.textContent = `${this.getChannelLabel(user)} · ${user.userId || ''}`;
+        chips.innerHTML = this.buildUserStateChips(user, {
+            includeMessages: true,
+            includeUnread: false,
+        }).slice(0, 4).join('');
+        if (!chips.innerHTML) {
+            chips.innerHTML = `<span class="mobile-state-chip is-neutral">${messages.length} ข้อความ</span>`;
+        }
+    }
+
+    renderMobileContextSheet() {
+        const overviewCard = document.getElementById('mobileOverviewCard');
+        const mobileOrderList = document.getElementById('mobileOrderList');
+        if (!overviewCard || !mobileOrderList) return;
+
+        const user = this.findCurrentUser();
+        if (!user) {
+            overviewCard.innerHTML = '<div class="mobile-overview-empty">เลือกแชทเพื่อดูข้อมูลลูกค้า</div>';
+            this.renderMobileTagManager();
+            return;
+        }
+
+        const isFacebook = user.platform === 'facebook';
+        const messages = this.chatHistory[this.currentUserId] || [];
+        const noteText = this.userNotesState.notes || '';
+        const noteUpdated = this.userNotesState.updatedAt
+            ? this.formatRelativeTime(this.userNotesState.updatedAt)
+            : '';
+        overviewCard.innerHTML = `
+            <div class="mobile-overview-profile">
+                <div class="mobile-overview-avatar">${this.buildAvatarMarkup(user)}</div>
+                <div class="mobile-overview-profile__body">
+                    <div class="mobile-overview-name">${this.escapeHtml(user.displayName || user.userId)}</div>
+                    <div class="mobile-overview-sub">${this.escapeHtml(this.getChannelLabel(user))} · ${this.escapeHtml(user.userId || '')}</div>
+                </div>
+            </div>
+            <div class="mobile-overview-stats">
+                <div class="mobile-overview-stat">
+                    <span>ข้อความ</span>
+                    <strong>${messages.length}</strong>
+                </div>
+                <div class="mobile-overview-stat">
+                    <span>ใหม่</span>
+                    <strong>${Number(user.unreadCount || 0)}</strong>
+                </div>
+                <div class="mobile-overview-stat">
+                    <span>ออเดอร์</span>
+                    <strong>${this.currentOrders.length}</strong>
+                </div>
+            </div>
+            <div class="mobile-overview-actions">
+                <button type="button" class="mobile-action-btn ${user.aiEnabled !== false ? 'is-active' : ''}" data-mobile-action="toggle-ai">
+                    <i class="fas fa-robot"></i>
+                    <span>${user.aiEnabled !== false ? 'AI เปิด' : 'AI ปิด'}</span>
+                </button>
+                <button type="button" class="mobile-action-btn ${user.hasPurchased ? 'is-active' : ''}" data-mobile-action="toggle-purchase">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span>${user.hasPurchased ? 'ซื้อแล้ว' : 'ยังไม่ซื้อ'}</span>
+                </button>
+                <button type="button" class="mobile-action-btn ${!isFacebook ? 'is-disabled' : ''}" data-mobile-action="refresh-profile" ${!isFacebook ? 'disabled' : ''}>
+                    <i class="fas fa-sync"></i>
+                    <span>อัปเดตโปรไฟล์</span>
+                </button>
+                <button type="button" class="mobile-action-btn mobile-action-btn--danger" data-mobile-action="clear-chat">
+                    <i class="fas fa-trash"></i>
+                    <span>ล้างแชท</span>
+                </button>
+            </div>
+            <div class="mobile-note-editor">
+                <label for="mobileUserNotesTextarea">โน้ตลูกค้า</label>
+                <textarea id="mobileUserNotesTextarea" rows="4" placeholder="บันทึกสิ่งที่ต้องจำสำหรับลูกค้าคนนี้...">${this.escapeHtml(noteText)}</textarea>
+                <div class="mobile-note-editor__footer">
+                    <span>${noteUpdated ? `อัปเดต ${this.escapeHtml(noteUpdated)}` : 'ยังไม่มีโน้ต'}</span>
+                    <button type="button" class="mobile-action-btn mobile-action-btn--primary" data-mobile-action="save-notes">บันทึก</button>
+                </div>
+            </div>
+        `;
+        this.renderMobileTagManager();
     }
 
     showMessageInput() {
@@ -1131,6 +1657,7 @@ class ChatManager {
                     return this.prepareMessageForDisplay(normalized);
                 });
                 this.renderMessages();
+                this.updateChatHeader();
             } else {
                 this.showToast('ไม่สามารถโหลดประวัติการสนทนาได้', 'error');
             }
@@ -1159,6 +1686,7 @@ class ChatManager {
                     <div class="app-empty__desc">เริ่มต้นการสนทนาด้วยการส่งข้อความแรก</div>
                 </div>
             `;
+            this.renderMobileContextSummary();
             return;
         }
 
@@ -1177,6 +1705,7 @@ class ChatManager {
 
         // Scroll to bottom
         this.scrollToBottom();
+        this.renderMobileContextSummary();
     }
 
     renderMessage(message) {
@@ -1434,6 +1963,7 @@ class ChatManager {
         const rawMessage = messageInput.value;
         if (!rawMessage.trim()) return;
         const message = rawMessage.replace(/\r\n/g, '\n');
+        this.closeComposerTray();
 
         // Optimistic UI: append temp message
         const tempMessage = {
@@ -1509,7 +2039,7 @@ class ChatManager {
     async togglePurchaseStatus() {
         if (!this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.findCurrentUser();
         if (!user) return;
 
         const newStatus = !user.hasPurchased;
@@ -1531,6 +2061,7 @@ class ChatManager {
                 user.hasPurchased = newStatus;
                 this.renderUserList();
                 this.updateChatHeader();
+                this.renderMobileContextSheet();
                 this.showToast(newStatus ? 'ทำเครื่องหมายว่าซื้อแล้ว' : 'ยกเลิกเครื่องหมายซื้อแล้ว', 'success');
             } else {
                 this.showToast('ไม่สามารถอัปเดตสถานะได้', 'error');
@@ -1547,9 +2078,7 @@ class ChatManager {
             return;
         }
 
-        const user =
-            this.users.find(u => u.userId === this.currentUserId) ||
-            this.allUsers.find(u => u.userId === this.currentUserId);
+        const user = this.findCurrentUser();
 
         if (!user) {
             this.showToast('ไม่พบข้อมูลผู้ใช้ในรายการ', 'error');
@@ -1600,6 +2129,7 @@ class ChatManager {
 
             await this.loadUsers();
             this.updateChatHeader();
+            this.renderMobileContextSheet();
         } catch (error) {
             console.error('Error refreshing profile:', error);
             this.showToast(error.message || 'เกิดข้อผิดพลาดในการอัปเดต', 'error');
@@ -1633,13 +2163,17 @@ class ChatManager {
             if (chatUserName) {
                 chatUserName.textContent = displayName;
             }
+            const mobileChatTitle = document.getElementById('mobileChatTitle');
+            if (mobileChatTitle) {
+                mobileChatTitle.textContent = displayName;
+            }
         }
     }
 
     async toggleAI() {
         if (!this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.findCurrentUser();
         if (!user) return;
 
         const currentStatus = user.aiEnabled !== false;
@@ -1663,6 +2197,7 @@ class ChatManager {
                 user.aiEnabled = newStatus;
                 this.renderUserList();
                 this.updateChatHeader();
+                this.renderMobileContextSheet();
                 this.showToast(newStatus ? 'เปิด AI แล้ว' : 'ปิด AI แล้ว', 'success');
             } else {
                 this.showToast('ไม่สามารถอัปเดตสถานะ AI ได้', 'error');
@@ -1690,6 +2225,7 @@ class ChatManager {
             if (data.success) {
                 this.clearChatDisplay();
                 this.showToast('ล้างประวัติการสนทนาแล้ว', 'success');
+                this.renderMobileContextSummary();
             } else {
                 this.showToast('ไม่สามารถล้างประวัติได้', 'error');
             }
@@ -1702,6 +2238,7 @@ class ChatManager {
     clearChatDisplay() {
         this.chatHistory[this.currentUserId] = [];
         this.renderMessages();
+        this.updateChatHeader();
     }
 
     // ========================================
@@ -1725,19 +2262,23 @@ class ChatManager {
 
     renderTagFilters() {
         const tagFilters = document.getElementById('tagFilters');
-        if (!tagFilters) return;
+        const mobileTagFilters = document.getElementById('mobileTagFilters');
 
         if (this.availableTags.length === 0) {
-            tagFilters.innerHTML = '<span class="no-tags">ไม่มีแท็ก</span>';
+            if (tagFilters) tagFilters.innerHTML = '<span class="no-tags">ไม่มีแท็ก</span>';
+            if (mobileTagFilters) mobileTagFilters.innerHTML = '<span class="mobile-filter-empty">ไม่มีแท็ก</span>';
             return;
         }
 
-	        tagFilters.innerHTML = this.availableTags.slice(0, 10).map(tag => `
-	            <button type="button" class="tag-filter-btn ${this.currentFilters.tags.includes(tag) ? 'active' : ''}" data-tag="${this.escapeHtml(tag)}">
-	                ${this.escapeHtml(tag)}
-	            </button>
-	        `).join('');
-	    }
+        const rendered = this.availableTags.slice(0, 10).map(tag => `
+            <button type="button" class="tag-filter-btn ${this.currentFilters.tags.includes(tag) ? 'active' : ''}" data-tag="${this.escapeHtml(tag)}">
+                ${this.escapeHtml(tag)}
+            </button>
+        `).join('');
+        if (tagFilters) tagFilters.innerHTML = rendered;
+        if (mobileTagFilters) mobileTagFilters.innerHTML = rendered;
+        this.renderMobileTagManager();
+    }
 
     toggleTagFilter(tag) {
         const index = this.currentFilters.tags.indexOf(tag);
@@ -1747,15 +2288,58 @@ class ChatManager {
             this.currentFilters.tags.push(tag);
         }
 
-	        this.applyFilters();
-	        this.renderTagFilters();
-	    }
+        this.applyFilters();
+        this.renderTagFilters();
+    }
+
+    renderMobileTagManager() {
+        const currentTagsEl = document.getElementById('mobileCurrentTags');
+        const popularTagsEl = document.getElementById('mobilePopularTags');
+        const newTagInput = document.getElementById('mobileNewTagInput');
+        const user = this.findCurrentUser();
+        if (!currentTagsEl || !popularTagsEl) return;
+
+        if (!user) {
+            currentTagsEl.innerHTML = '<span class="mobile-filter-empty">เลือกแชทก่อน</span>';
+            popularTagsEl.innerHTML = '<span class="mobile-filter-empty">ไม่มีแท็ก</span>';
+            if (newTagInput) newTagInput.value = '';
+            return;
+        }
+
+        const tags = Array.isArray(user.tags) ? user.tags : [];
+        currentTagsEl.innerHTML = tags.length > 0
+            ? tags.map(tag => `
+                <span class="tag-item">
+                    ${this.escapeHtml(tag)}
+                    <button type="button" class="btn-remove-tag" data-action="remove-tag" data-tag="${this.escapeHtml(tag)}" aria-label="ลบแท็ก ${this.escapeHtml(tag)}">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </span>
+            `).join('')
+            : '<span class="mobile-filter-empty">ไม่มีแท็ก</span>';
+
+        popularTagsEl.innerHTML = this.availableTags.length > 0
+            ? this.availableTags.slice(0, 12).map(tag => `
+                <button type="button" class="mobile-tag-pill ${tags.includes(tag) ? 'is-active' : ''}" data-action="add-tag" data-tag="${this.escapeHtml(tag)}">
+                    ${this.escapeHtml(tag)}
+                </button>
+            `).join('')
+            : '<span class="mobile-filter-empty">ไม่มีแท็ก</span>';
+    }
 
     openTagModal() {
         if (!this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.findCurrentUser();
         if (!user) return;
+
+        if (this.isMobileViewport()) {
+            this.renderMobileTagManager();
+            this.setContextTab('tags');
+            this.openSheet('mobileContextSheet');
+            document.getElementById('mobileNewTagInput')?.focus();
+            return;
+        }
 
         const modal = new bootstrap.Modal(document.getElementById('tagModal'));
         const tagModalUserName = document.getElementById('tagModalUserName');
@@ -1804,7 +2388,7 @@ class ChatManager {
     async addTag(tag) {
         if (!tag || !this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.findCurrentUser();
         if (!user) return;
 
         const tags = user.tags || [];
@@ -1831,7 +2415,14 @@ class ChatManager {
             if (data.success) {
                 user.tags = tags;
                 this.loadAvailableTags();
-                this.openTagModal();
+                if (this.isMobileViewport()) {
+                    this.renderMobileTagManager();
+                    this.renderMobileContextSummary();
+                } else {
+                    this.openTagModal();
+                }
+                const mobileNewTagInput = document.getElementById('mobileNewTagInput');
+                if (mobileNewTagInput) mobileNewTagInput.value = '';
                 this.showToast('เพิ่มแท็กแล้ว', 'success');
             } else {
                 this.showToast('ไม่สามารถเพิ่มแท็กได้', 'error');
@@ -1846,20 +2437,54 @@ class ChatManager {
     // User Notes
     // ========================================
 
+    async loadUserNotes() {
+        if (!this.currentUserId) {
+            this.userNotesState = { notes: '', updatedAt: null };
+            this.renderMobileContextSheet();
+            return this.userNotesState;
+        }
+
+        try {
+            const response = await fetch(`/api/users/${this.currentUserId}/notes`);
+            const data = await response.json();
+            this.userNotesState = {
+                notes: data.success ? (data.notes || '') : '',
+                updatedAt: data.success ? (data.updatedAt || null) : null,
+            };
+        } catch (error) {
+            console.error('Error loading user notes:', error);
+            this.userNotesState = { notes: '', updatedAt: null };
+        }
+
+        this.renderMobileContextSheet();
+        return this.userNotesState;
+    }
+
     async openUserNotesModal() {
         if (!this.currentUserId) {
             this.showToast('กรุณาเลือกผู้ใช้ก่อน', 'warning');
             return;
         }
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        if (this.isMobileViewport()) {
+            await this.loadUserNotes();
+            this.setContextTab('overview');
+            this.openSheet('mobileContextSheet');
+            const mobileNotes = document.getElementById('mobileUserNotesTextarea');
+            if (mobileNotes) {
+                setTimeout(() => mobileNotes.focus(), 60);
+            }
+            return;
+        }
+
+        const resolvedUser = this.findCurrentUser();
         const notesModalUserName = document.getElementById('notesModalUserName');
         const userNotesTextarea = document.getElementById('userNotesTextarea');
         const notesLastUpdated = document.getElementById('notesLastUpdated');
         const notesUpdatedTime = document.getElementById('notesUpdatedTime');
 
         if (notesModalUserName) {
-            notesModalUserName.textContent = user?.displayName || this.currentUserId;
+            notesModalUserName.textContent = resolvedUser?.displayName || this.currentUserId;
         }
 
         if (userNotesTextarea) {
@@ -1872,16 +2497,13 @@ class ChatManager {
 
         // Load existing notes
         try {
-            const response = await fetch(`/api/users/${this.currentUserId}/notes`);
-            const data = await response.json();
-
-            if (data.success && userNotesTextarea) {
-                userNotesTextarea.value = data.notes || '';
-
-                if (data.updatedAt && notesLastUpdated && notesUpdatedTime) {
-                    notesUpdatedTime.textContent = this.formatRelativeTime(data.updatedAt);
-                    notesLastUpdated.style.display = 'block';
-                }
+            const notesState = await this.loadUserNotes();
+            if (userNotesTextarea) {
+                userNotesTextarea.value = notesState.notes || '';
+            }
+            if (notesState.updatedAt && notesLastUpdated && notesUpdatedTime) {
+                notesUpdatedTime.textContent = this.formatRelativeTime(notesState.updatedAt);
+                notesLastUpdated.style.display = 'block';
             }
         } catch (error) {
             console.error('Error loading user notes:', error);
@@ -1892,16 +2514,23 @@ class ChatManager {
         modal.show();
     }
 
-    async saveUserNotes() {
+    async saveUserNotes(mode = 'desktop') {
         if (!this.currentUserId) return;
 
-        const userNotesTextarea = document.getElementById('userNotesTextarea');
+        const userNotesTextarea = mode === 'mobile'
+            ? document.getElementById('mobileUserNotesTextarea')
+            : document.getElementById('userNotesTextarea');
         const notes = userNotesTextarea?.value || '';
 
-        const saveBtn = document.getElementById('saveUserNotesBtn');
+        const saveBtn = mode === 'mobile'
+            ? document.querySelector('[data-mobile-action="save-notes"]')
+            : document.getElementById('saveUserNotesBtn');
         if (saveBtn) {
             saveBtn.disabled = true;
-            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>กำลังบันทึก...';
+            const loadingHtml = mode === 'mobile'
+                ? '<i class="fas fa-spinner fa-spin"></i><span>กำลังบันทึก</span>'
+                : '<i class="fas fa-spinner fa-spin me-2"></i>กำลังบันทึก...';
+            saveBtn.innerHTML = loadingHtml;
         }
 
         try {
@@ -1916,6 +2545,10 @@ class ChatManager {
             const data = await response.json();
 
             if (data.success) {
+                this.userNotesState = {
+                    notes: data.notes || notes,
+                    updatedAt: new Date().toISOString(),
+                };
                 this.showToast('บันทึกโน้ตแล้ว', 'success');
 
                 // Update last updated time
@@ -1925,6 +2558,7 @@ class ChatManager {
                     notesUpdatedTime.textContent = 'เมื่อสักครู่';
                     notesLastUpdated.style.display = 'block';
                 }
+                this.renderMobileContextSheet();
             } else {
                 this.showToast('ไม่สามารถบันทึกโน้ตได้', 'error');
             }
@@ -1934,7 +2568,9 @@ class ChatManager {
         } finally {
             if (saveBtn) {
                 saveBtn.disabled = false;
-                saveBtn.innerHTML = '<i class="fas fa-save me-2"></i>บันทึก';
+                saveBtn.innerHTML = mode === 'mobile'
+                    ? 'บันทึก'
+                    : '<i class="fas fa-save me-2"></i>บันทึก';
             }
         }
     }
@@ -1942,7 +2578,7 @@ class ChatManager {
     async removeTag(tag) {
         if (!this.currentUserId) return;
 
-        const user = this.users.find(u => u.userId === this.currentUserId);
+        const user = this.findCurrentUser();
         if (!user) return;
 
         const tags = (user.tags || []).filter(t => t !== tag);
@@ -1963,7 +2599,12 @@ class ChatManager {
             if (data.success) {
                 user.tags = tags;
                 this.loadAvailableTags();
-                this.openTagModal();
+                if (this.isMobileViewport()) {
+                    this.renderMobileTagManager();
+                    this.renderMobileContextSummary();
+                } else {
+                    this.openTagModal();
+                }
                 this.showToast('ลบแท็กแล้ว', 'success');
             } else {
                 this.showToast('ไม่สามารถลบแท็กได้', 'error');
@@ -2019,6 +2660,7 @@ class ChatManager {
 
     openTemplateModal() {
         this.ensureTemplatesLoaded();
+        this.closeComposerTray();
         this.renderTemplateList();
         const searchInput = document.getElementById('templateSearch');
         if (searchInput) searchInput.value = '';
@@ -2328,10 +2970,17 @@ class ChatManager {
         document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.filter === 'all');
         });
+        document.querySelectorAll('[data-mobile-filter]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mobileFilter === 'all');
+        });
 
         const userSearch = document.getElementById('userSearch');
         if (userSearch) {
             userSearch.value = '';
+        }
+        const mobileUserSearch = document.getElementById('mobileUserSearch');
+        if (mobileUserSearch) {
+            mobileUserSearch.value = '';
         }
 
         this.renderTagFilters();
@@ -2765,9 +3414,8 @@ class ChatManager {
 
     renderOrders() {
         const orderContent = document.getElementById('orderContent');
+        const mobileOrderList = document.getElementById('mobileOrderList');
         const orderCountBadge = document.getElementById('orderCountBadge');
-
-        if (!orderContent) return;
 
         // Update count badge
         if (orderCountBadge) {
@@ -2776,7 +3424,7 @@ class ChatManager {
 
         // Render orders
         if (this.currentOrders.length === 0) {
-            orderContent.innerHTML = `
+            const emptyHtml = `
                 <div class="order-empty-state" id="orderEmptyState">
                     <div class="order-empty-icon">
                         <i class="fas fa-shopping-bag"></i>
@@ -2787,12 +3435,18 @@ class ChatManager {
                     </p>
                 </div>
             `;
+            if (orderContent) orderContent.innerHTML = emptyHtml;
+            if (mobileOrderList) mobileOrderList.innerHTML = emptyHtml;
             this.updateDebugPanel();
+            this.renderMobileContextSummary();
             return;
         }
 
-        orderContent.innerHTML = this.currentOrders.map(order => this.renderOrderCard(order)).join('');
+        const rendered = this.currentOrders.map(order => this.renderOrderCard(order)).join('');
+        if (orderContent) orderContent.innerHTML = rendered;
+        if (mobileOrderList) mobileOrderList.innerHTML = rendered;
         this.updateDebugPanel();
+        this.renderMobileContextSummary();
     }
 
     renderOrderCard(order) {

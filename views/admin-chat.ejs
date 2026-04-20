@@ -25,6 +25,146 @@
                         <!-- Sidebar Overlay (Mobile) -->
                         <div class="sidebar-overlay" id="sidebarOverlay"></div>
                         <div class="sidebar-overlay" id="orderSidebarOverlay"></div>
+                        <div class="mobile-sheet-backdrop" id="mobileSheetBackdrop" hidden></div>
+
+                        <div class="mobile-chat-sheet mobile-chat-sheet--inbox" id="mobileInboxSheet" hidden
+                            aria-hidden="true">
+                            <div class="mobile-sheet-header">
+                                <div>
+                                    <div class="mobile-sheet-eyebrow">Inbox</div>
+                                    <h5 class="mobile-sheet-title">บทสนทนา</h5>
+                                </div>
+                                <button type="button" class="mobile-sheet-close" id="mobileInboxClose"
+                                    aria-label="ปิดรายการแชท">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                            <div class="mobile-sheet-search">
+                                <i class="fas fa-search"></i>
+                                <input type="text" id="mobileUserSearch" placeholder="ค้นหาลูกค้า, user ID">
+                            </div>
+                            <div class="mobile-sheet-filters">
+                                <div class="mobile-filter-row" id="mobileStatusFilters">
+                                    <button type="button" class="mobile-filter-chip active" data-mobile-filter="all">ทั้งหมด</button>
+                                    <button type="button" class="mobile-filter-chip" data-mobile-filter="unread">ยังไม่อ่าน</button>
+                                    <button type="button" class="mobile-filter-chip" data-mobile-filter="followup">ติดตาม</button>
+                                    <button type="button" class="mobile-filter-chip" data-mobile-filter="purchased">ซื้อแล้ว</button>
+                                </div>
+                                <div class="mobile-filter-row mobile-filter-row--tags" id="mobileTagFilters">
+                                    <span class="mobile-filter-empty">ไม่มีแท็ก</span>
+                                </div>
+                            </div>
+                            <div class="mobile-sheet-count">
+                                <span id="mobileFilteredCount">0</span> บทสนทนา
+                            </div>
+                            <div class="mobile-user-list" id="mobileUserList">
+                                <div class="loading-placeholder">
+                                    <div class="spinner"></div>
+                                    <span>กำลังโหลด...</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mobile-chat-sheet mobile-chat-sheet--context" id="mobileContextSheet" hidden
+                            aria-hidden="true">
+                            <div class="mobile-sheet-handle" aria-hidden="true"></div>
+                            <div class="mobile-sheet-header mobile-sheet-header--context">
+                                <div>
+                                    <div class="mobile-sheet-eyebrow">Context</div>
+                                    <h5 class="mobile-sheet-title">ข้อมูลบทสนทนา</h5>
+                                </div>
+                                <button type="button" class="mobile-sheet-close" id="mobileContextClose"
+                                    aria-label="ปิดข้อมูลบทสนทนา">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                            <div class="mobile-context-tabs" id="mobileContextTabs">
+                                <button type="button" class="mobile-context-tab active" data-context-tab="overview">ภาพรวม</button>
+                                <button type="button" class="mobile-context-tab" data-context-tab="tags">แท็ก</button>
+                                <button type="button" class="mobile-context-tab" data-context-tab="orders">ออเดอร์</button>
+                            </div>
+                            <div class="mobile-context-panels">
+                                <section class="mobile-context-panel active" id="mobileContextPanelOverview">
+                                    <div class="mobile-context-card" id="mobileOverviewCard">
+                                        <div class="mobile-overview-empty">เลือกแชทเพื่อดูข้อมูลลูกค้า</div>
+                                    </div>
+                                </section>
+                                <section class="mobile-context-panel" id="mobileContextPanelTags" hidden>
+                                    <div class="mobile-context-card">
+                                        <div class="mobile-context-section-head">
+                                            <span>แท็กปัจจุบัน</span>
+                                        </div>
+                                        <div class="mobile-tag-list" id="mobileCurrentTags">
+                                            <span class="mobile-filter-empty">ไม่มีแท็ก</span>
+                                        </div>
+                                    </div>
+                                    <div class="mobile-context-card">
+                                        <div class="mobile-context-section-head">
+                                            <span>เพิ่มแท็ก</span>
+                                        </div>
+                                        <div class="mobile-tag-input-row">
+                                            <input type="text" id="mobileNewTagInput" placeholder="ชื่อแท็ก">
+                                            <button type="button" class="mobile-action-btn mobile-action-btn--primary"
+                                                id="mobileAddTagBtn">
+                                                เพิ่ม
+                                            </button>
+                                        </div>
+                                        <div class="mobile-tag-list mobile-tag-list--compact" id="mobilePopularTags">
+                                            <span class="mobile-filter-empty">ไม่มีแท็ก</span>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="mobile-context-panel" id="mobileContextPanelOrders" hidden>
+                                    <div class="mobile-order-list" id="mobileOrderList">
+                                        <div class="order-empty-state">
+                                            <div class="order-empty-icon">
+                                                <i class="fas fa-shopping-bag"></i>
+                                            </div>
+                                            <h6 class="order-empty-title">ไม่มีออเดอร์</h6>
+                                            <p class="order-empty-description">เลือกผู้ใช้เพื่อดูออเดอร์</p>
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
+                        </div>
+
+                        <div class="mobile-chat-sheet mobile-chat-sheet--admin" id="mobileAdminSheet" hidden
+                            aria-hidden="true">
+                            <div class="mobile-sheet-handle" aria-hidden="true"></div>
+                            <div class="mobile-sheet-header mobile-sheet-header--context">
+                                <div>
+                                    <div class="mobile-sheet-eyebrow">Admin</div>
+                                    <h5 class="mobile-sheet-title">เมนูผู้ดูแล</h5>
+                                </div>
+                                <button type="button" class="mobile-sheet-close" id="mobileAdminClose"
+                                    aria-label="ปิดเมนูผู้ดูแล">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                            <div class="mobile-admin-links">
+                                <a class="mobile-admin-link" href="/admin/dashboard">
+                                    <i class="fas fa-chart-line"></i>
+                                    <span>แดชบอร์ด</span>
+                                </a>
+                                <a class="mobile-admin-link" href="/admin/orders">
+                                    <i class="fas fa-shopping-basket"></i>
+                                    <span>ออเดอร์</span>
+                                </a>
+                                <a class="mobile-admin-link" href="/admin/followup">
+                                    <i class="fas fa-user-clock"></i>
+                                    <span>ติดตามลูกค้า</span>
+                                </a>
+                                <a class="mobile-admin-link" href="/admin/settings2">
+                                    <i class="fas fa-cogs"></i>
+                                    <span>ตั้งค่า</span>
+                                </a>
+                                <button type="button" class="mobile-admin-link mobile-admin-link--danger"
+                                    id="mobileLogoutBtn">
+                                    <i class="fas fa-sign-out-alt"></i>
+                                    <span>ออกจากระบบ</span>
+                                </button>
+                            </div>
+                        </div>
 
                         <!-- Left Sidebar - User List -->
                         <aside class="chat-sidebar" id="chatSidebar">
@@ -111,6 +251,40 @@
 
                         <!-- Main Chat Area -->
                         <main class="chat-main">
+                            <div class="mobile-chat-bar" id="mobileChatBar">
+                                <button type="button" class="mobile-chat-bar__btn" id="mobileInboxToggle"
+                                    aria-label="เปิดรายการแชท">
+                                    <i class="fas fa-inbox"></i>
+                                    <span>Inbox</span>
+                                </button>
+                                <div class="mobile-chat-bar__title" id="mobileChatTitle">Inbox</div>
+                                <div class="mobile-chat-bar__actions">
+                                    <button type="button" class="mobile-chat-bar__icon" id="mobileContextToggle"
+                                        aria-label="เปิดข้อมูลบทสนทนา">
+                                        <i class="fas fa-sliders"></i>
+                                    </button>
+                                    <button type="button" class="mobile-chat-bar__icon" id="mobileAdminToggle"
+                                        aria-label="เปิดเมนูผู้ดูแล">
+                                        <i class="fas fa-ellipsis-h"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <button type="button" class="mobile-context-summary" id="mobileContextSummary" hidden
+                                aria-label="เปิดข้อมูลลูกค้า">
+                                <div class="mobile-context-summary__avatar" id="mobileSummaryAvatar">
+                                    <i class="fas fa-user"></i>
+                                </div>
+                                <div class="mobile-context-summary__body">
+                                    <div class="mobile-context-summary__name" id="mobileSummaryName">ยังไม่ได้เลือกบทสนทนา</div>
+                                    <div class="mobile-context-summary__meta" id="mobileSummaryMeta">เลือกแชทเพื่อดูข้อมูลลูกค้า</div>
+                                    <div class="mobile-context-summary__chips" id="mobileSummaryChips"></div>
+                                </div>
+                                <div class="mobile-context-summary__arrow">
+                                    <i class="fas fa-chevron-up"></i>
+                                </div>
+                            </button>
+
                             <!-- Chat Header -->
                             <header class="chat-header" id="chatHeader">
                                 <div class="chat-header-left">
@@ -270,9 +444,23 @@
 
                             <!-- Message Input Area (Fixed at bottom) -->
                             <div class="message-input-area" id="messageInputArea" style="display: none;">
+                                <div class="mobile-composer-tray" id="mobileComposerTray" hidden>
+                                    <button type="button" class="mobile-composer-tool" id="mobileTemplateAction">
+                                        <i class="fas fa-magic"></i>
+                                        <span>Template</span>
+                                    </button>
+                                    <button type="button" class="mobile-composer-tool" id="mobileEmojiAction">
+                                        <i class="far fa-smile"></i>
+                                        <span>Emoji</span>
+                                    </button>
+                                </div>
                                 <div class="message-input-container">
                                     <button class="btn-input-action" id="btnTemplate" title="Templates">
                                         <i class="fas fa-magic"></i>
+                                    </button>
+                                    <button class="btn-input-action btn-input-action--mobile" id="btnMobileTools"
+                                        title="เครื่องมือข้อความ" aria-label="เปิดเครื่องมือข้อความ">
+                                        <i class="fas fa-plus"></i>
                                     </button>
                                     <div class="message-input-wrapper">
                                         <textarea class="message-input" id="messageInput" placeholder="พิมพ์ข้อความ..."
