@@ -1,0 +1,2 @@
+[     290ms] [LOG] Initializing Chat Manager... @ http://127.0.0.1:4011/js/chat-redesign.js:50
+[     494ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:4011/favicon.ico:0

@@ -254,21 +254,22 @@ class ChatManager {
 
     setupEventListeners() {
         // Search
-        const userSearch = document.getElementById('userSearch');
-        if (userSearch) {
-            userSearch.addEventListener('input', (e) => {
+        const searchInputs = Array.from(document.querySelectorAll('[data-user-search]'));
+        searchInputs.forEach((input) => {
+            input.addEventListener('input', (e) => {
                 this.currentFilters.search = e.target.value.trim();
+                this.syncSearchInputs(e.target);
                 this.applyFilters();
             });
-        }
+        });
+        this.syncSearchInputs();
 
         // Clear filters
-        const clearFilters = document.getElementById('clearFilters');
-        if (clearFilters) {
-            clearFilters.addEventListener('click', () => {
+        document.querySelectorAll('#clearFilters, [data-clear-filters]').forEach((button) => {
+            button.addEventListener('click', () => {
                 this.clearFilters();
             });
-        }
+        });
 
         const clearPageFilters = document.getElementById('clearPageFilters');
         if (clearPageFilters) {
@@ -281,12 +282,12 @@ class ChatManager {
         document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const filter = e.currentTarget.dataset.filter;
-                document.querySelectorAll('.filter-btn[data-filter]').forEach(b => b.classList.remove('active'));
-                e.currentTarget.classList.add('active');
                 this.currentFilters.status = filter;
+                this.syncStatusFilterButtons();
                 this.applyFilters();
             });
         });
+        this.syncStatusFilterButtons();
 
         // Sidebar toggle (mobile)
         const toggleSidebar = document.getElementById('toggleSidebar');
@@ -502,6 +503,8 @@ class ChatManager {
             if (resizeTimer) window.clearTimeout(resizeTimer);
             resizeTimer = window.setTimeout(() => {
                 this.syncOrderSidebarCollapseForViewport();
+                this.renderUserList();
+                this.renderMobileSidebarState();
             }, 120);
         });
 
@@ -575,26 +578,33 @@ class ChatManager {
         });
 
         // Toggle filter panel accessibility
-        const filterToggleBtn = document.getElementById('filterToggle');
+        const filterToggleButtons = Array.from(document.querySelectorAll('[data-filter-toggle]'));
         const filterPanel = document.getElementById('filterPanel');
-        if (filterToggleBtn && filterPanel) {
-            filterToggleBtn.setAttribute('aria-expanded', 'false');
-            filterPanel.setAttribute('tabindex', '-1');
-            filterToggleBtn.addEventListener('click', () => {
-                const isShown = filterPanel.classList.toggle('show');
+        if (filterToggleButtons.length > 0 && filterPanel) {
+            const setFilterPanelState = (isShown) => {
+                filterPanel.classList.toggle('show', isShown);
                 filterPanel.style.display = isShown ? 'block' : 'none';
-                filterToggleBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
+                filterToggleButtons.forEach((button) => {
+                    button.setAttribute('aria-expanded', isShown ? 'true' : 'false');
+                });
                 if (isShown) {
                     filterPanel.focus({ preventScroll: true });
                 }
+            };
+
+            filterPanel.setAttribute('tabindex', '-1');
+            filterToggleButtons.forEach((button) => {
+                button.setAttribute('aria-expanded', 'false');
+                button.addEventListener('click', () => {
+                    setFilterPanelState(!filterPanel.classList.contains('show'));
+                });
             });
+
             // Close filter panel when pressing Esc
             filterPanel.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
-                    filterPanel.classList.remove('show');
-                    filterPanel.style.display = 'none';
-                    filterToggleBtn.setAttribute('aria-expanded', 'false');
-                    filterToggleBtn.focus();
+                    setFilterPanelState(false);
+                    filterToggleButtons[0]?.focus();
                 }
             });
         }
@@ -981,6 +991,7 @@ class ChatManager {
 
         if (!Array.isArray(this.availablePages) || this.availablePages.length === 0) {
             pageFilters.innerHTML = '<span class="no-tags">ไม่พบเพจหรือบอท</span>';
+            this.renderMobileSidebarState();
             return;
         }
 
@@ -996,6 +1007,7 @@ class ChatManager {
                 </label>
             `;
         }).join('');
+        this.renderMobileSidebarState();
     }
 
     clearPageFilters(options = {}) {
@@ -1206,18 +1218,16 @@ class ChatManager {
 
     renderUserList() {
         const userList = document.getElementById('userList');
-        const userCountBadge = document.getElementById('userCountBadge');
-        const filteredCount = document.getElementById('filteredCount');
 
         if (!userList) return;
 
         // Update counts
-        if (userCountBadge) {
-            userCountBadge.textContent = this.users.length;
-        }
-        if (filteredCount) {
-            filteredCount.textContent = this.users.length;
-        }
+        document.querySelectorAll('[data-user-count]').forEach((node) => {
+            node.textContent = this.users.length;
+        });
+        document.querySelectorAll('[data-filtered-count]').forEach((node) => {
+            node.textContent = this.users.length;
+        });
 
         // Render users
         if (this.users.length === 0) {
@@ -1227,10 +1237,12 @@ class ChatManager {
                     <p style="color: var(--text-secondary);">ไม่พบผู้ใช้</p>
                 </div>
             `;
+            this.renderMobileSidebarState();
             return;
         }
 
         userList.innerHTML = this.users.map(user => this.renderUserItem(user)).join('');
+        this.renderMobileSidebarState();
     }
 
     renderUserItem(user) {
@@ -1309,6 +1321,54 @@ class ChatManager {
                 `<span class="tag-badge">${this.escapeHtml(tag)}</span>`
             ).join('')
             : '';
+
+        if (this.isMobileSidebarViewport()) {
+            const mobileChannelChip = channelLabel
+                ? `<span class="user-mobile-channel-chip">${this.escapeHtml(channelLabel)}</span>`
+                : '';
+            const mobileOrderChip = hasOrders
+                ? `<span class="badge-sm badge-order">ออเดอร์ ${orderCount}</span>`
+                : '';
+            const mobileUnreadChip = hasUnread
+                ? `<span class="user-mobile-unread">${user.unreadCount} ใหม่</span>`
+                : '';
+
+            return `
+                <div class="user-item user-item--mobile ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" role="button" tabindex="0"
+                     data-user-id="${this.escapeHtml(user.userId || '')}">
+                    <div class="user-item-mobile-head">
+                        <div class="user-avatar">
+                            ${avatarContent}
+                            <div class="user-status-indicators">
+                                ${statusDots.join('')}
+                            </div>
+                        </div>
+                        <div class="user-item-content">
+                            <div class="user-item-header">
+                                <div class="user-name">${this.escapeHtml(user.displayName || user.userId)}</div>
+                                <div class="user-time">${time}</div>
+                            </div>
+                            <div class="user-mobile-statusline">
+                                ${mobileChannelChip}
+                                ${mobileOrderChip}
+                                ${mobileUnreadChip}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="user-mobile-message-shell">
+                        <div class="user-last-message">${this.escapeHtml(lastMessage)}</div>
+                    </div>
+                    <div class="user-mobile-footer">
+                        <div class="user-badges">
+                            ${aiEnabled ? '<span class="badge-sm badge-ai">AI</span>' : '<span class="badge-sm badge-ai badge-ai--off">AI ปิด</span>'}
+                            ${isFollowUp ? '<span class="badge-sm badge-followup">ติดตาม</span>' : ''}
+                            ${isPurchased ? '<span class="badge-sm badge-purchased">ซื้อแล้ว</span>' : ''}
+                        </div>
+                        ${tags ? `<div class="user-tags">${tags}</div>` : ''}
+                    </div>
+                </div>
+            `;
+        }
 
 		        return `
 		            <div class="user-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" role="button" tabindex="0"
@@ -2097,6 +2157,7 @@ class ChatManager {
 
         if (this.availableTags.length === 0) {
             tagFilters.innerHTML = '<span class="no-tags">ไม่มีแท็ก</span>';
+            this.renderMobileSidebarState();
             return;
         }
 
@@ -2105,6 +2166,7 @@ class ChatManager {
 	                ${this.escapeHtml(tag)}
 	            </button>
 	        `).join('');
+        this.renderMobileSidebarState();
 	    }
 
     toggleTagFilter(tag) {
@@ -2705,14 +2767,8 @@ class ChatManager {
         };
 
         // Reset UI
-        document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.filter === 'all');
-        });
-
-        const userSearch = document.getElementById('userSearch');
-        if (userSearch) {
-            userSearch.value = '';
-        }
+        this.syncStatusFilterButtons();
+        this.syncSearchInputs();
 
         this.renderPageFilters();
         this.renderTagFilters();
@@ -2721,21 +2777,95 @@ class ChatManager {
     }
 
     updateFilterBadge() {
-        const filterBadge = document.getElementById('filterBadge');
-        if (!filterBadge) return;
-
         let count = 0;
         if (this.currentFilters.status !== 'all') count++;
         count += this.currentFilters.pageKeys.length;
         count += this.currentFilters.tags.length;
         if (this.currentFilters.search) count++;
 
-        if (count > 0) {
-            filterBadge.textContent = count;
-            filterBadge.style.display = 'block';
-        } else {
-            filterBadge.style.display = 'none';
+        document.querySelectorAll('[data-filter-badge]').forEach((badge) => {
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'block';
+            } else {
+                badge.style.display = 'none';
+            }
+        });
+        this.renderMobileSidebarState();
+    }
+
+    syncSearchInputs(source = null) {
+        const nextValue = this.currentFilters.search || '';
+        document.querySelectorAll('[data-user-search]').forEach((input) => {
+            if (source && input === source) return;
+            if (input.value !== nextValue) {
+                input.value = nextValue;
+            }
+        });
+    }
+
+    syncStatusFilterButtons() {
+        document.querySelectorAll('.filter-btn[data-filter]').forEach((button) => {
+            const isActive = button.dataset.filter === this.currentFilters.status;
+            button.classList.toggle('active', isActive);
+            button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+        });
+    }
+
+    isMobileSidebarViewport() {
+        return window.matchMedia('(max-width: 767.98px)').matches;
+    }
+
+    getSidebarMetrics() {
+        const users = Array.isArray(this.allUsers) ? this.allUsers : [];
+        return {
+            all: users.length,
+            unread: users.filter((user) => Number(user.unreadCount) > 0).length,
+            followup: users.filter((user) => user.followUp && user.followUp.isFollowUp).length,
+            purchased: users.filter((user) => !!user.hasPurchased).length
+        };
+    }
+
+    renderMobileSidebarState() {
+        const metrics = this.getSidebarMetrics();
+        document.querySelectorAll('[data-mobile-stat]').forEach((node) => {
+            const key = node.dataset.mobileStat;
+            node.textContent = Number(metrics[key] || 0);
+        });
+
+        const activeFilters = [];
+        if (this.currentFilters.status !== 'all') {
+            const statusMap = {
+                unread: 'ยังไม่อ่าน',
+                followup: 'ติดตาม',
+                purchased: 'ซื้อแล้ว'
+            };
+            activeFilters.push(statusMap[this.currentFilters.status] || this.currentFilters.status);
         }
+        if (this.currentFilters.pageKeys.length > 0) {
+            activeFilters.push(`เพจ ${this.currentFilters.pageKeys.length}`);
+        }
+        if (this.currentFilters.tags.length > 0) {
+            activeFilters.push(...this.currentFilters.tags.slice(0, 3).map((tag) => `#${tag}`));
+            if (this.currentFilters.tags.length > 3) {
+                activeFilters.push(`แท็ก+${this.currentFilters.tags.length - 3}`);
+            }
+        }
+        if (this.currentFilters.search) {
+            activeFilters.push(`ค้นหา “${this.currentFilters.search}”`);
+        }
+
+        const mobileActiveFilters = document.getElementById('mobileActiveFilters');
+        if (!mobileActiveFilters) return;
+
+        if (activeFilters.length === 0) {
+            mobileActiveFilters.innerHTML = '<span class="mobile-active-filters__empty">ยังไม่ได้เลือกตัวกรองเพิ่มเติม</span>';
+            return;
+        }
+
+        mobileActiveFilters.innerHTML = activeFilters.map((label) => `
+            <span class="mobile-active-filter-chip">${this.escapeHtml(label)}</span>
+        `).join('');
     }
 
     // ========================================

@@ -29,30 +29,120 @@
 
                         <!-- Left Sidebar - User List -->
                         <aside class="chat-sidebar" id="chatSidebar">
-                            <!-- Sidebar Header -->
-                            <div class="sidebar-header">
-                                <div class="sidebar-header-content">
-                                    <h5 class="sidebar-title">
-                                        <i class="fas fa-comments"></i>
-                                        แชท
-                                    </h5>
-                                    <div class="user-count-badge" id="userCountBadge">0</div>
+                            <div class="sidebar-desktop-shell d-none d-md-flex">
+                                <!-- Sidebar Header -->
+                                <div class="sidebar-header">
+                                    <div class="sidebar-header-content">
+                                        <h5 class="sidebar-title">
+                                            <i class="fas fa-comments"></i>
+                                            แชท
+                                        </h5>
+                                        <div class="user-count-badge" id="userCountBadge" data-user-count>0</div>
+                                    </div>
                                 </div>
-                                <button class="btn-close-sidebar d-md-none" id="closeSidebar" title="ปิด" aria-label="ปิดรายชื่อผู้ใช้">
-                                    <i class="fas fa-times"></i>
-                                </button>
+
+                                <!-- Search Bar -->
+                                <div class="search-container search-container--desktop">
+                                    <div class="search-input-wrapper">
+                                        <i class="fas fa-search search-icon"></i>
+                                        <input type="text" class="search-input" id="userSearchDesktop"
+                                            data-user-search placeholder="ค้นหาผู้ใช้...">
+                                        <button class="btn-filter" id="filterToggle" data-filter-toggle
+                                            title="ตัวกรอง">
+                                            <i class="fas fa-filter"></i>
+                                            <span class="filter-badge" id="filterBadge" data-filter-badge
+                                                style="display: none;">0</span>
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
 
-                            <!-- Search Bar -->
-                            <div class="search-container">
-                                <div class="search-input-wrapper">
-                                    <i class="fas fa-search search-icon"></i>
-                                    <input type="text" class="search-input" id="userSearch"
-                                        placeholder="ค้นหาผู้ใช้...">
-                                    <button class="btn-filter" id="filterToggle" title="ตัวกรอง">
-                                        <i class="fas fa-filter"></i>
-                                        <span class="filter-badge" id="filterBadge" style="display: none;">0</span>
+                            <div class="sidebar-mobile-shell d-md-none">
+                                <div class="mobile-sidebar-hero">
+                                    <div class="mobile-sidebar-hero__copy">
+                                        <div class="mobile-sidebar-eyebrow">Mobile Inbox</div>
+                                        <h5 class="mobile-sidebar-title">แชททั้งหมด</h5>
+                                        <p class="mobile-sidebar-subtitle">
+                                            สลับบทสนทนา ดูสถานะ และคัดกรองลูกค้าได้ในหน้าจอเดียว
+                                        </p>
+                                    </div>
+                                    <button class="mobile-sidebar-close" id="closeSidebar" type="button" title="ปิด"
+                                        aria-label="ปิดรายชื่อผู้ใช้">
+                                        <i class="fas fa-times"></i>
                                     </button>
+                                </div>
+
+                                <div class="mobile-sidebar-search-card">
+                                    <div class="search-input-wrapper search-input-wrapper--mobile">
+                                        <i class="fas fa-magnifying-glass search-icon"></i>
+                                        <input type="text" class="search-input search-input--mobile"
+                                            id="userSearchMobile" data-user-search
+                                            placeholder="ค้นหาชื่อลูกค้า, user ID หรือข้อความล่าสุด">
+                                    </div>
+                                </div>
+
+                                <div class="mobile-status-pills" aria-label="ตัวกรองด่วน">
+                                    <button type="button" class="filter-btn mobile-status-pill active"
+                                        data-filter="all">
+                                        <span class="mobile-status-pill__label">ทั้งหมด</span>
+                                    </button>
+                                    <button type="button" class="filter-btn mobile-status-pill"
+                                        data-filter="unread">
+                                        <span class="mobile-status-pill__label">ยังไม่อ่าน</span>
+                                    </button>
+                                    <button type="button" class="filter-btn mobile-status-pill"
+                                        data-filter="followup">
+                                        <span class="mobile-status-pill__label">ติดตาม</span>
+                                    </button>
+                                    <button type="button" class="filter-btn mobile-status-pill"
+                                        data-filter="purchased">
+                                        <span class="mobile-status-pill__label">ซื้อแล้ว</span>
+                                    </button>
+                                </div>
+
+                                <div class="mobile-sidebar-insights" aria-label="สรุปสถานะแชท">
+                                    <button type="button" class="filter-btn mobile-insight-card active"
+                                        data-filter="all">
+                                        <span class="mobile-insight-card__label">ทั้งหมด</span>
+                                        <strong class="mobile-insight-card__value" data-mobile-stat="all">0</strong>
+                                    </button>
+                                    <button type="button" class="filter-btn mobile-insight-card"
+                                        data-filter="unread">
+                                        <span class="mobile-insight-card__label">ยังไม่อ่าน</span>
+                                        <strong class="mobile-insight-card__value"
+                                            data-mobile-stat="unread">0</strong>
+                                    </button>
+                                    <button type="button" class="filter-btn mobile-insight-card"
+                                        data-filter="followup">
+                                        <span class="mobile-insight-card__label">ติดตาม</span>
+                                        <strong class="mobile-insight-card__value"
+                                            data-mobile-stat="followup">0</strong>
+                                    </button>
+                                    <button type="button" class="filter-btn mobile-insight-card"
+                                        data-filter="purchased">
+                                        <span class="mobile-insight-card__label">ซื้อแล้ว</span>
+                                        <strong class="mobile-insight-card__value"
+                                            data-mobile-stat="purchased">0</strong>
+                                    </button>
+                                </div>
+
+                                <div class="mobile-sidebar-toolbar">
+                                    <button class="mobile-sidebar-toolbar__btn" type="button" data-filter-toggle
+                                        aria-label="เปิดตัวกรองละเอียด">
+                                        <i class="fas fa-sliders"></i>
+                                        <span>ตัวกรองละเอียด</span>
+                                        <span class="mobile-toolbar-badge" data-filter-badge
+                                            style="display: none;">0</span>
+                                    </button>
+                                    <button class="mobile-sidebar-toolbar__btn mobile-sidebar-toolbar__btn--ghost"
+                                        type="button" data-clear-filters aria-label="ล้างตัวกรองทั้งหมด">
+                                        <i class="fas fa-rotate-left"></i>
+                                        <span>ล้าง</span>
+                                    </button>
+                                </div>
+
+                                <div class="mobile-active-filters" id="mobileActiveFilters">
+                                    <span class="mobile-active-filters__empty">ยังไม่ได้เลือกตัวกรองเพิ่มเติม</span>
                                 </div>
                             </div>
 
@@ -109,7 +199,17 @@
 
                                 <!-- Filter Summary -->
                                 <div class="filter-summary">
-                                    <span id="filteredCount">0</span> ผู้ใช้
+                                    <span data-filtered-count>0</span> ผู้ใช้
+                                </div>
+                            </div>
+
+                            <div class="sidebar-list-head">
+                                <div class="sidebar-list-head__copy">
+                                    <span class="sidebar-list-head__eyebrow">Conversation Queue</span>
+                                    <strong class="sidebar-list-head__title">รายชื่อแชท</strong>
+                                </div>
+                                <div class="sidebar-list-head__meta">
+                                    <span data-filtered-count id="filteredCount">0</span> รายการ
                                 </div>
                             </div>
 

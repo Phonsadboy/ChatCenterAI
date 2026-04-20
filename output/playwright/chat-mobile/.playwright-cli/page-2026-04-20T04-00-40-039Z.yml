@@ -1,0 +1,194 @@
+- generic [ref=e1]:
+  - text: "[object Promise]"
+  - generic [ref=e5]:
+    - complementary [ref=e6]:
+      - text:   
+      - generic [ref=e109]:
+        - generic [ref=e110]:
+          - generic [ref=e111]:
+            - generic [ref=e112]: Mobile Inbox
+            - heading "แชททั้งหมด" [level=5] [ref=e113]
+            - paragraph [ref=e114]: สลับบทสนทนา ดูสถานะ และคัดกรองลูกค้าได้ในหน้าจอเดียว
+          - button "ปิดรายชื่อผู้ใช้" [ref=e115] [cursor=pointer]:
+            - generic [ref=e116]: 
+        - generic [ref=e118]:
+          - generic [ref=e119]: 
+          - textbox "ค้นหาชื่อลูกค้า, user ID หรือข้อความล่าสุด" [ref=e120]
+        - generic "ตัวกรองด่วน" [ref=e121]:
+          - button "ทั้งหมด" [pressed] [ref=e122] [cursor=pointer]:
+            - generic [ref=e123]: ทั้งหมด
+          - button "ยังไม่อ่าน" [ref=e124] [cursor=pointer]:
+            - generic [ref=e125]: ยังไม่อ่าน
+          - button "ติดตาม" [ref=e126] [cursor=pointer]:
+            - generic [ref=e127]: ติดตาม
+          - button "ซื้อแล้ว" [ref=e128] [cursor=pointer]:
+            - generic [ref=e129]: ซื้อแล้ว
+        - generic "สรุปสถานะแชท" [ref=e130]:
+          - button "ทั้งหมด 3" [pressed] [ref=e131] [cursor=pointer]:
+            - generic [ref=e132]: ทั้งหมด
+            - strong [ref=e133]: "3"
+          - button "ยังไม่อ่าน 2" [ref=e134] [cursor=pointer]:
+            - generic [ref=e135]: ยังไม่อ่าน
+            - strong [ref=e136]: "2"
+          - button "ติดตาม 2" [ref=e137] [cursor=pointer]:
+            - generic [ref=e138]: ติดตาม
+            - strong [ref=e139]: "2"
+          - button "ซื้อแล้ว 1" [ref=e140] [cursor=pointer]:
+            - generic [ref=e141]: ซื้อแล้ว
+            - strong [ref=e142]: "1"
+        - generic [ref=e143]:
+          - button "เปิดตัวกรองละเอียด" [ref=e144] [cursor=pointer]:
+            - generic [ref=e145]: 
+            - generic [ref=e146]: ตัวกรองละเอียด
+          - button "ล้างตัวกรองทั้งหมด" [ref=e147] [cursor=pointer]:
+            - generic [ref=e148]: 
+            - generic [ref=e149]: ล้าง
+        - generic [ref=e225]: ยังไม่ได้เลือกตัวกรองเพิ่มเติม
+      - region "ตัวกรองรายชื่อผู้ใช้":
+        - generic:
+          - generic: ตัวกรอง
+          - button "ล้างทั้งหมด"
+        - generic:
+          - generic: สถานะ
+          - generic:
+            - button " ทั้งหมด" [pressed]:
+              - generic: 
+              - text: ทั้งหมด
+            - button " ยังไม่อ่าน":
+              - generic: 
+              - text: ยังไม่อ่าน
+            - button " ติดตาม":
+              - generic: 
+              - text: ติดตาม
+            - button " ซื้อแล้ว":
+              - generic: 
+              - text: ซื้อแล้ว
+        - generic:
+          - generic:
+            - generic: เพจ / บอท
+          - generic: ทุกเพจและทุกบอท
+          - generic:
+            - generic:
+              - checkbox "FB Store 12"
+              - generic: FB Store
+              - generic: "12"
+            - generic:
+              - checkbox "LINE OA 8"
+              - generic: LINE OA
+              - generic: "8"
+            - generic:
+              - checkbox "IG Brand 5"
+              - generic: IG Brand
+              - generic: "5"
+        - generic:
+          - generic: แท็ก
+          - generic:
+            - button "vip"
+            - button "new-drop"
+            - button "repeat"
+            - button "follow-up"
+        - generic: 3 ผู้ใช้
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]: Conversation Queue
+          - strong [ref=e22]: รายชื่อแชท
+        - generic [ref=e23]: 3 รายการ
+      - generic [ref=e24]:
+        - button "N Narinya Studio เมื่อสักครู่ Facebook · FB Store ออเดอร์ 2 4 ใหม่ สนใจเซ็ตใหม่ค่ะ มีไซซ์พร้อมส่งไหม AI ติดตาม vip new-drop" [ref=e226] [cursor=pointer]:
+          - generic [ref=e227]:
+            - generic [ref=e228]:
+              - generic [ref=e229]: "N"
+              - generic [ref=e230]:
+                - generic "AI เปิดใช้งาน" [ref=e231]
+                - generic "ต้องติดตาม" [ref=e232]
+                - generic "มีออเดอร์ 2" [ref=e233]
+            - generic [ref=e234]:
+              - generic [ref=e235]:
+                - generic [ref=e236]: Narinya Studio
+                - generic [ref=e237]: เมื่อสักครู่
+              - generic [ref=e238]:
+                - generic [ref=e239]: Facebook · FB Store
+                - generic [ref=e240]: ออเดอร์ 2
+                - generic [ref=e241]: 4 ใหม่
+          - generic [ref=e243]: สนใจเซ็ตใหม่ค่ะ มีไซซ์พร้อมส่งไหม
+          - generic [ref=e244]:
+            - generic [ref=e245]:
+              - generic [ref=e246]: AI
+              - generic [ref=e247]: ติดตาม
+            - generic [ref=e248]:
+              - generic [ref=e249]: vip
+              - generic [ref=e250]: new-drop
+        - button "L LINE คุณฝน 42 นาทีที่แล้ว LINE · LINE OA ออเดอร์ 1 โอนแล้วนะคะ รบกวนเช็กยอดให้ด้วย AI ปิด ซื้อแล้ว repeat" [ref=e251] [cursor=pointer]:
+          - generic [ref=e252]:
+            - generic [ref=e253]:
+              - generic [ref=e254]: L
+              - generic [ref=e255]:
+                - generic "AI ปิดใช้งาน" [ref=e256]
+                - generic "มีออเดอร์ 1" [ref=e257]
+                - generic "ซื้อสินค้าแล้ว" [ref=e258]
+            - generic [ref=e259]:
+              - generic [ref=e260]:
+                - generic [ref=e261]: LINE คุณฝน
+                - generic [ref=e262]: 42 นาทีที่แล้ว
+              - generic [ref=e263]:
+                - generic [ref=e264]: LINE · LINE OA
+                - generic [ref=e265]: ออเดอร์ 1
+          - generic [ref=e267]: โอนแล้วนะคะ รบกวนเช็กยอดให้ด้วย
+          - generic [ref=e268]:
+            - generic [ref=e269]:
+              - generic [ref=e270]: AI ปิด
+              - generic [ref=e271]: ซื้อแล้ว
+            - generic [ref=e273]: repeat
+        - button "I IG Mint Closet 2 ชั่วโมงที่แล้ว Instagram · IG Brand 1 ใหม่ ขอสีครีมกับดำค่ะ ต่างกันยังไงบ้าง AI ติดตาม follow-up" [ref=e274] [cursor=pointer]:
+          - generic [ref=e275]:
+            - generic [ref=e276]:
+              - generic [ref=e277]: I
+              - generic [ref=e278]:
+                - generic "AI เปิดใช้งาน" [ref=e279]
+                - generic "ต้องติดตาม" [ref=e280]
+            - generic [ref=e281]:
+              - generic [ref=e282]:
+                - generic [ref=e283]: IG Mint Closet
+                - generic [ref=e284]: 2 ชั่วโมงที่แล้ว
+              - generic [ref=e285]:
+                - generic [ref=e286]: Instagram · IG Brand
+                - generic [ref=e287]: 1 ใหม่
+          - generic [ref=e289]: ขอสีครีมกับดำค่ะ ต่างกันยังไงบ้าง
+          - generic [ref=e290]:
+            - generic [ref=e291]:
+              - generic [ref=e292]: AI
+              - generic [ref=e293]: ติดตาม
+            - generic [ref=e295]: follow-up
+    - main [ref=e76]:
+      - generic [ref=e77]:
+        - generic [ref=e78]:
+          - button "เปิดรายชื่อผู้ใช้" [active] [ref=e152] [cursor=pointer]:
+            - generic [ref=e153]: 
+          - generic [ref=e79]:
+            - generic [ref=e81]: 
+            - generic [ref=e82]:
+              - heading "เลือกแชทเพื่อเริ่มสนทนา" [level=6] [ref=e83]
+              - generic [ref=e85]:
+                - generic [ref=e86]: 
+                - generic [ref=e87]: "0"
+                - text: ข้อความ
+        - text:                
+      - generic [ref=e90]:
+        - generic [ref=e92]: 
+        - generic [ref=e93]: เลือกแชทเพื่อเริ่มการสนทนา
+        - generic [ref=e94]: เลือกผู้ใช้จากรายการด้านซ้ายเพื่อดูข้อความและตอบกลับได้ทันที
+      - text:      
+    - complementary [ref=e95]:
+      - generic [ref=e96]:
+        - generic [ref=e97]:
+          - button "" [ref=e98] [cursor=pointer]:
+            - generic [ref=e99]: 
+          - heading " ออเดอร์" [level=5] [ref=e100]:
+            - generic [ref=e101]: 
+            - text: ออเดอร์
+        - generic [ref=e102]: "0"
+      - generic [ref=e104]:
+        - generic [ref=e106]: 
+        - heading "ไม่มีออเดอร์" [level=6] [ref=e107]
+        - paragraph [ref=e108]: เลือกผู้ใช้เพื่อดูออเดอร์ ระบบจะแสดงออเดอร์ที่ AI บันทึกไว้
+  - text:   +  +       
