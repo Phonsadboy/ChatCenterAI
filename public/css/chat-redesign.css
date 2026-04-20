@@ -2168,9 +2168,12 @@
         background:
             radial-gradient(circle at top left, rgba(127, 167, 214, 0.16), transparent 34%),
             linear-gradient(180deg, rgba(249, 251, 255, 0.98) 0%, rgba(241, 245, 251, 0.96) 54%, rgba(237, 242, 248, 0.98) 100%);
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
     }
 
     .sidebar-header {
@@ -2207,6 +2210,9 @@
         padding: calc(0.65rem + env(safe-area-inset-top, 0px)) 0.75rem 0.55rem;
         border-bottom: 1px solid rgba(104, 128, 165, 0.12);
         background: linear-gradient(180deg, rgba(250, 252, 255, 0.98), rgba(243, 247, 252, 0.92));
+        position: sticky;
+        top: 0;
+        z-index: 2;
     }
 
     .mobile-sidebar-actions {
@@ -2283,24 +2289,20 @@
     }
 
     .mobile-status-pills {
-        display: flex;
-        gap: 0.45rem;
-        overflow-x: auto;
-        padding: 0 0.05rem 0.15rem;
-        scrollbar-width: none;
-    }
-
-    .mobile-status-pills::-webkit-scrollbar {
-        display: none;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.35rem;
+        padding-bottom: 0.1rem;
     }
 
     .mobile-status-pill {
-        flex: 0 0 auto;
         min-height: 36px;
         display: inline-flex;
         align-items: center;
-        gap: 0.42rem;
-        padding: 0.35rem 0.72rem;
+        justify-content: center;
+        gap: 0.32rem;
+        min-width: 0;
+        padding: 0.35rem 0.4rem;
         border-radius: 16px;
         background: rgba(255, 255, 255, 0.82);
         border: 1px solid rgba(104, 128, 165, 0.14);
@@ -2314,24 +2316,27 @@
     }
 
     .mobile-status-pill__label {
-        font-size: 0.78rem;
+        font-size: 0.72rem;
         font-weight: 700;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .mobile-status-pill__count {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-width: 1.35rem;
-        height: 1.35rem;
-        padding: 0 0.32rem;
+        min-width: 1.2rem;
+        height: 1.2rem;
+        padding: 0 0.25rem;
         border-radius: 999px;
         background: rgba(74, 111, 165, 0.1);
         color: var(--chat-primary);
-        font-size: 0.72rem;
+        font-size: 0.66rem;
         font-weight: 700;
         line-height: 1;
+        flex-shrink: 0;
     }
 
     .mobile-status-pill.active .mobile-status-pill__count {
@@ -2405,6 +2410,9 @@
     }
 
     .user-list {
+        flex: none;
+        min-height: auto;
+        overflow: visible;
         padding: 0.4rem 0.75rem 0.9rem;
         scrollbar-gutter: auto;
     }
