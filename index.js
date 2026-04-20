@@ -32812,13 +32812,19 @@ app.get("/admin/orders/export", async (req, res) => {
         : null;
       const orderNo = resolveOrderNumber(order, orderData, extractedMoment);
       const paymentState = derivePaymentState(orderData, paymentMethod);
+      const rawAddressFallback = [
+        orderData.shippingAddress,
+        orderData.address,
+        orderData.deliveryAddress,
+        orderData.recipientAddress,
+      ].find((value) => typeof value === "string" && value.trim());
 
       const fullAddressText = formatOrderAddressText(addressInfo);
       const addressTextWithoutPostalCode = formatOrderAddressText(addressInfo, {
         includePostalCode: false,
       });
       const addressText = toText(
-        fullAddressText || orderData.shippingAddress || orderData.address || "",
+        fullAddressText || rawAddressFallback || "",
       );
       const postalCodeText = toText(addressInfo.postalCode || orderData.addressPostalCode || "");
 
