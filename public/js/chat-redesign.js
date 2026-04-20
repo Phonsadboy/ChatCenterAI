@@ -15,6 +15,8 @@ class ChatManager {
         this.templateStorageKey = 'chatTemplates';
         this.currentEditingTemplateId = null;
         this.emojiPicker = null;
+        this.closeFilterPanel = () => { };
+        this.syncMobileSidebarLayout = () => { };
         this.availablePages = [];
         this.userLoadRequestId = 0;
 
@@ -294,9 +296,23 @@ class ChatManager {
         const closeSidebar = document.getElementById('closeSidebar');
         const sidebarOverlay = document.getElementById('sidebarOverlay');
         const chatSidebar = document.getElementById('chatSidebar');
+        const mobileSidebarShell = chatSidebar?.querySelector('.sidebar-mobile-shell');
+
+        this.syncMobileSidebarLayout = () => {
+            if (!chatSidebar || !mobileSidebarShell) return;
+            if (!this.isMobileSidebarViewport()) {
+                chatSidebar.style.removeProperty('--mobile-sidebar-shell-height');
+                return;
+            }
+            const shellHeight = Math.ceil(mobileSidebarShell.getBoundingClientRect().height);
+            chatSidebar.style.setProperty('--mobile-sidebar-shell-height', `${shellHeight}px`);
+        };
+        this.syncMobileSidebarLayout();
+        window.addEventListener('resize', this.syncMobileSidebarLayout);
 
         if (toggleSidebar) {
             toggleSidebar.addEventListener('click', () => {
+                this.syncMobileSidebarLayout();
                 chatSidebar.classList.add('show');
                 sidebarOverlay.classList.add('show');
             });
@@ -304,6 +320,7 @@ class ChatManager {
 
         if (closeSidebar) {
             closeSidebar.addEventListener('click', () => {
+                this.closeFilterPanel();
                 chatSidebar.classList.remove('show');
                 sidebarOverlay.classList.remove('show');
             });
@@ -311,6 +328,7 @@ class ChatManager {
 
         if (sidebarOverlay) {
             sidebarOverlay.addEventListener('click', () => {
+                this.closeFilterPanel();
                 chatSidebar.classList.remove('show');
                 sidebarOverlay.classList.remove('show');
             });
@@ -582,22 +600,46 @@ class ChatManager {
         const filterPanel = document.getElementById('filterPanel');
         if (filterToggleButtons.length > 0 && filterPanel) {
             const setFilterPanelState = (isShown) => {
+                this.syncMobileSidebarLayout();
                 filterPanel.classList.toggle('show', isShown);
                 filterPanel.style.display = isShown ? 'block' : 'none';
+                filterPanel.setAttribute('aria-hidden', isShown ? 'false' : 'true');
+                chatSidebar?.classList.toggle('filter-panel-open', isShown);
                 filterToggleButtons.forEach((button) => {
                     button.setAttribute('aria-expanded', isShown ? 'true' : 'false');
+                    button.setAttribute('aria-controls', 'filterPanel');
                 });
                 if (isShown) {
-                    filterPanel.focus({ preventScroll: true });
+                    if (this.isMobileSidebarViewport()) {
+                        requestAnimationFrame(() => {
+                            chatSidebar?.scrollTo({ top: 0, behavior: 'smooth' });
+                        });
+                    } else {
+                        filterPanel.focus({ preventScroll: true });
+                    }
                 }
             };
 
+            this.closeFilterPanel = () => {
+                setFilterPanelState(false);
+            };
+
             filterPanel.setAttribute('tabindex', '-1');
+            filterPanel.setAttribute('aria-hidden', 'true');
             filterToggleButtons.forEach((button) => {
                 button.setAttribute('aria-expanded', 'false');
-                button.addEventListener('click', () => {
+                button.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
                     setFilterPanelState(!filterPanel.classList.contains('show'));
                 });
+            });
+
+            document.addEventListener('click', (event) => {
+                if (!filterPanel.classList.contains('show')) return;
+                if (filterPanel.contains(event.target)) return;
+                if (filterToggleButtons.some((button) => button.contains(event.target))) return;
+                setFilterPanelState(false);
             });
 
             // Close filter panel when pressing Esc
@@ -616,6 +658,7 @@ class ChatManager {
             const chatSidebar = document.getElementById('chatSidebar');
             const sidebarOverlay = document.getElementById('sidebarOverlay');
             if (chatSidebar?.classList.contains('show')) {
+                this.closeFilterPanel();
                 chatSidebar.classList.remove('show');
                 sidebarOverlay?.classList.remove('show');
             }
@@ -1410,6 +1453,7 @@ class ChatManager {
         // Close sidebar on mobile
         const chatSidebar = document.getElementById('chatSidebar');
         const sidebarOverlay = document.getElementById('sidebarOverlay');
+        this.closeFilterPanel();
         if (chatSidebar) chatSidebar.classList.remove('show');
         if (sidebarOverlay) sidebarOverlay.classList.remove('show');
         this.toggleOrderSidebarMobile(false);
@@ -2861,6 +2905,9 @@ class ChatManager {
         if (activeFilters.length === 0) {
             mobileActiveFilters.classList.add('is-empty');
             mobileActiveFilters.innerHTML = '';
+            requestAnimationFrame(() => {
+                this.syncMobileSidebarLayout();
+            });
             return;
         }
 
@@ -2868,6 +2915,9 @@ class ChatManager {
         mobileActiveFilters.innerHTML = activeFilters.map((label) => `
             <span class="mobile-active-filter-chip">${this.escapeHtml(label)}</span>
         `).join('');
+        requestAnimationFrame(() => {
+            this.syncMobileSidebarLayout();
+        });
     }
 
     // ========================================

@@ -2176,6 +2176,10 @@
         overscroll-behavior: contain;
     }
 
+    .chat-sidebar.filter-panel-open {
+        overflow: hidden;
+    }
+
     .sidebar-header {
         padding-top: calc(1rem + env(safe-area-inset-top, 0px));
     }
@@ -2385,16 +2389,51 @@
     }
 
     .filter-panel {
-        margin: 0 0.75rem 0.55rem;
+        --mobile-filter-panel-pad: 0.75rem;
+        position: absolute;
+        top: calc(var(--mobile-sidebar-shell-height, 0px) + 0.35rem);
+        left: 0.75rem;
+        right: 0.75rem;
+        bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+        margin: 0;
+        padding: var(--mobile-filter-panel-pad);
         border: 1px solid rgba(104, 128, 165, 0.16);
-        border-radius: 22px;
-        background: rgba(255, 255, 255, 0.88);
-        box-shadow: 0 16px 28px rgba(83, 104, 140, 0.08);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.98);
+        box-shadow: 0 24px 44px rgba(55, 76, 110, 0.18);
         border-bottom: 1px solid rgba(104, 128, 165, 0.16);
+        overflow-y: auto;
+        overflow-x: hidden;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        z-index: 4;
+        scrollbar-gutter: auto;
+    }
+
+    .filter-panel.show {
+        animation: mobileFilterPanelIn 0.18s ease;
+    }
+
+    @keyframes mobileFilterPanelIn {
+        from {
+            opacity: 0;
+            transform: translateY(8px) scale(0.985);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
     }
 
     .filter-header {
-        margin-bottom: 1rem;
+        position: sticky;
+        top: calc(var(--mobile-filter-panel-pad) * -1);
+        margin: calc(var(--mobile-filter-panel-pad) * -1) calc(var(--mobile-filter-panel-pad) * -1) 0.9rem;
+        padding: var(--mobile-filter-panel-pad) var(--mobile-filter-panel-pad) 0.7rem;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(251, 252, 255, 0.96));
+        border-bottom: 1px solid rgba(104, 128, 165, 0.1);
+        z-index: 1;
     }
 
     .filter-buttons {
@@ -2403,6 +2442,12 @@
 
     .filter-btn {
         min-height: 40px;
+    }
+
+    .page-filters {
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
     }
 
     .sidebar-list-head {
@@ -2580,7 +2625,7 @@
     }
 
     .filter-panel {
-        max-height: 45vh;
+        max-height: none;
         overflow-y: auto;
     }
 
