@@ -4560,6 +4560,55 @@ function normalizeOrderAddress(orderData = {}) {
   };
 }
 
+function formatOrderAddressText(addressInfo = {}, options = {}) {
+  const normalized = addressInfo && typeof addressInfo === "object" ? addressInfo : {};
+  const {
+    includeSubDistrict = true,
+    includeDistrict = true,
+    includeProvince = true,
+    includePostalCode = true,
+    subDistrictPrefix = "",
+    districtPrefix = "",
+  } = options;
+
+  const parts = [];
+  const fullAddress = sanitizeOptionalString(normalized.fullAddress);
+  const subDistrict = sanitizeOptionalString(normalized.subDistrict);
+  const district = sanitizeOptionalString(normalized.district);
+  const province = sanitizeOptionalString(normalized.province);
+  const postalCode = sanitizeOptionalString(normalized.postalCode);
+  const compactText = (value) =>
+    sanitizeOptionalString(value)?.toLowerCase().replace(/\s+/g, "") || "";
+  const compactFullAddress = compactText(fullAddress);
+
+  const appendPart = (value, prefix = "") => {
+    const text = sanitizeOptionalString(value);
+    if (!text) return;
+
+    const candidate = prefix ? `${prefix}${text}` : text;
+    if (compactFullAddress) {
+      const compactCandidate = compactText(candidate);
+      const compactRaw = compactText(text);
+      if (
+        (compactCandidate && compactFullAddress.includes(compactCandidate)) ||
+        (compactRaw && compactFullAddress.includes(compactRaw))
+      ) {
+        return;
+      }
+    }
+
+    parts.push(candidate);
+  };
+
+  if (fullAddress) parts.push(fullAddress);
+  if (includeSubDistrict) appendPart(subDistrict, subDistrictPrefix);
+  if (includeDistrict) appendPart(district, districtPrefix);
+  if (includeProvince) appendPart(province);
+  if (includePostalCode) appendPart(postalCode);
+
+  return parts.join(" ").trim();
+}
+
 const ORDER_EXTRACTION_MODES = Object.freeze({
   REALTIME: "realtime",
   SCHEDULED: "scheduled",
@@ -32764,8 +32813,12 @@ app.get("/admin/orders/export", async (req, res) => {
       const orderNo = resolveOrderNumber(order, orderData, extractedMoment);
       const paymentState = derivePaymentState(orderData, paymentMethod);
 
+      const fullAddressText = formatOrderAddressText(addressInfo);
+      const addressTextWithoutPostalCode = formatOrderAddressText(addressInfo, {
+        includePostalCode: false,
+      });
       const addressText = toText(
-        addressInfo.fullAddress || orderData.shippingAddress || orderData.address || "",
+        fullAddressText || orderData.shippingAddress || orderData.address || "",
       );
       const postalCodeText = toText(addressInfo.postalCode || orderData.addressPostalCode || "");
 
@@ -32819,6 +32872,7 @@ app.get("/admin/orders/export", async (req, res) => {
         customerName,
         phone: phone || "-",
         address: addressText || "-",
+        addressWithoutPostalCode: addressTextWithoutPostalCode || addressText || "-",
         postalCode: postalCodeText || "",
         noteText: noteText || "-",
         productCodeList: productCodeList || "-",
@@ -32886,7 +32940,8 @@ app.get("/admin/orders/export", async (req, res) => {
         No: row.index,
         "*ชื่อผู้รับ/Recipient Name": row.recipientName === "-" ? "" : row.recipientName,
         "*เบอร์ผู้รับ/Mobile No.": row.phone === "-" ? "" : row.phone,
-        "*ที่อยู่/Address": row.address === "-" ? "" : row.address,
+        "*ที่อยู่/Address":
+          row.addressWithoutPostalCode === "-" ? "" : row.addressWithoutPostalCode,
         "*รหัสไปรษณีย์/Postal code": row.postalCode,
         "COD Amt (Baht)": row.codAmount,
         "ชื่อสินค้า/Product name": row.shippingProductList,
@@ -33566,15 +33621,10 @@ app.get("/admin/orders/:orderId/print-label", async (req, res) => {
       ? moment(order.extractedAt).tz("Asia/Bangkok").format("DD/MM/YYYY HH:mm")
       : "-";
 
-    // สร้าง address string
-    const addressParts = [
-      addressInfo.fullAddress,
-      addressInfo.subDistrict ? `ต.${addressInfo.subDistrict}` : "",
-      addressInfo.district ? `อ.${addressInfo.district}` : "",
-      addressInfo.province || "",
-      addressInfo.postalCode || "",
-    ].filter(Boolean);
-    const fullAddress = addressParts.join(" ");
+    const fullAddress = formatOrderAddressText(addressInfo, {
+      subDistrictPrefix: "ต.",
+      districtPrefix: "อ.",
+    });
 
     // Payment info
     const paymentMethod = orderData.paymentMethod || "เก็บเงินปลายทาง";
