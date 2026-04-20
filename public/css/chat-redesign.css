@@ -2180,6 +2180,12 @@
         overflow: hidden;
     }
 
+    .chat-sidebar.filter-panel-open .sidebar-list-head,
+    .chat-sidebar.filter-panel-open .user-list {
+        visibility: hidden;
+        pointer-events: none;
+    }
+
     .sidebar-header {
         padding-top: calc(1rem + env(safe-area-inset-top, 0px));
     }
@@ -2399,13 +2405,14 @@
         padding: var(--mobile-filter-panel-pad);
         border: 1px solid rgba(104, 128, 165, 0.16);
         border-radius: 24px;
-        background: rgba(255, 255, 255, 0.98);
+        background: #ffffff;
         box-shadow: 0 24px 44px rgba(55, 76, 110, 0.18);
         border-bottom: 1px solid rgba(104, 128, 165, 0.16);
         overflow-y: auto;
         overflow-x: hidden;
         -webkit-overflow-scrolling: touch;
         overscroll-behavior: contain;
+        touch-action: pan-y;
         z-index: 4;
         scrollbar-gutter: auto;
     }
@@ -2445,9 +2452,13 @@
     }
 
     .page-filters {
-        max-height: none;
-        overflow: visible;
-        padding-right: 0;
+        max-height: clamp(12rem, 34vh, 20rem);
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 0.15rem;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
     }
 
     .sidebar-list-head {
