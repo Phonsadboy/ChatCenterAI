@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>แก้ไขชุดข้อมูล - <%= instruction.title || instruction.parentInstructionName || 'ไม่มีชื่อ' %>
     </title>
 
@@ -17,6 +17,7 @@
 
     <!-- Main Styles -->
     <link href="/css/style.css" rel="stylesheet">
+    <link href="/css/mobile-improvements.css" rel="stylesheet">
 
     <style>
         /* ===== Layout ===== */
@@ -685,7 +686,7 @@
     </style>
 </head>
 
-<body>
+<body class="app-shell page-edit-data-item">
     <div class="editor-container">
         <!-- Editor Header -->
         <header class="editor-header">
