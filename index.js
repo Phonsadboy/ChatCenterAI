@@ -34033,6 +34033,102 @@ function buildFallbackDisplayFromContent(content) {
   };
 }
 
+function normalizeMessageToolMetadata(message) {
+  const metadata =
+    message?.metadata && typeof message.metadata === "object" ? message.metadata : {};
+
+  const toolCalls = Array.isArray(message?.tool_calls)
+    ? message.tool_calls
+    : Array.isArray(metadata.tool_calls)
+      ? metadata.tool_calls
+      : [];
+
+  const toolCallId =
+    typeof message?.tool_call_id === "string" && message.tool_call_id.trim()
+      ? message.tool_call_id.trim()
+      : typeof metadata.tool_call_id === "string" &&
+          metadata.tool_call_id.trim()
+        ? metadata.tool_call_id.trim()
+        : null;
+
+  const toolName =
+    typeof message?.name === "string" && message.name.trim()
+      ? message.name.trim()
+      : typeof metadata.tool_name === "string" && metadata.tool_name.trim()
+        ? metadata.tool_name.trim()
+        : null;
+
+  return {
+    toolCalls,
+    toolCallId,
+    toolName,
+  };
+}
+
+function deriveFrontendMessageSemantics(message, options = {}) {
+  const role =
+    typeof options.role === "string" && options.role.trim()
+      ? options.role.trim().toLowerCase()
+      : typeof message?.role === "string" && message.role.trim()
+        ? message.role.trim().toLowerCase()
+        : "";
+  const source =
+    typeof options.source === "string" && options.source.trim()
+      ? options.source.trim().toLowerCase()
+      : typeof message?.source === "string" && message.source.trim()
+        ? message.source.trim().toLowerCase()
+        : "";
+  const content =
+    typeof options.content === "string"
+      ? options.content
+      : typeof message?.content === "string"
+        ? message.content
+        : "";
+  const { toolCalls, toolCallId, toolName } = normalizeMessageToolMetadata(
+    message,
+  );
+
+  const isToolCall = role === "assistant" && toolCalls.length > 0;
+  const isToolResult = role === "tool" && !!toolCallId;
+  const isSystemControl =
+    source === "admin_chat" &&
+    typeof content === "string" &&
+    content.trim().startsWith("[ระบบ]");
+
+  let messageType = "system";
+  let customerVisible = false;
+
+  if (role === "user") {
+    messageType = "incoming";
+  } else if (isToolCall) {
+    messageType = "tool-call";
+  } else if (isToolResult) {
+    messageType = "tool-result";
+  } else if (source === "follow_up") {
+    messageType = "followup";
+    customerVisible = true;
+  } else if (
+    (source === "admin_chat" || source === "admin_page") &&
+    !isSystemControl
+  ) {
+    messageType = "admin-outbound";
+    customerVisible = true;
+  } else if (source === "ai") {
+    messageType = "ai-outbound";
+    customerVisible = true;
+  }
+
+  return {
+    messageType,
+    customerVisible,
+    toolCalls,
+    toolCallId,
+    toolName,
+    isToolCall,
+    isToolResult,
+  };
+}
+
 /**
  * ฟังก์ชันสำหรับแปลงข้อมูลข้อความจากฐานข้อมูลให้อยู่ในรูปแบบที่ frontend สามารถแสดงผลได้
  * @param {Object} message - ข้อความจากฐานข้อมูล
@@ -34049,6 +34145,13 @@ function normalizeMessageForFrontend(message) {
         source: "system",
         displayContent: "ข้อความไม่ถูกต้อง",
         contentType: "text",
+        messageType: "system",
+        customerVisible: false,
+        toolCalls: [],
+        toolCallId: null,
+        toolName: null,
+        isToolCall: false,
+        isToolResult: false,
       };
     }
 
@@ -34141,6 +34244,16 @@ function normalizeMessageForFrontend(message) {
       richDisplayContent = displayContent;
     }
 
+    const {
+      messageType,
+      customerVisible,
+      toolCalls,
+      toolCallId,
+      toolName,
+      isToolCall,
+      isToolResult,
+    } = deriveFrontendMessageSemantics(message, { content });
+
     return {
       content,
       role: message.role || "user",
@@ -34163,6 +34276,13 @@ function normalizeMessageForFrontend(message) {
       rawContent: originalContent,
       messageId,
       orderExtractionRoundId,
+      messageType,
+      customerVisible,
+      toolCalls,
+      toolCallId,
+      toolName,
+      isToolCall,
+      isToolResult,
     };
   } catch (error) {
     console.error("[Normalize] ข้อผิดพลาดในการแปลงข้อความ:", error);
@@ -34176,6 +34296,13 @@ function normalizeMessageForFrontend(message) {
       richDisplayContent: "เกิดข้อผิดพลาดในการประมวลผลข้อความ",
       messageId: null,
       orderExtractionRoundId: null,
+      messageType: "system",
+      customerVisible: false,
+      toolCalls: [],
+      toolCallId: null,
+      toolName: null,
+      isToolCall: false,
+      isToolResult: false,
     };
   }
 }

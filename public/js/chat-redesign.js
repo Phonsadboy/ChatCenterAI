@@ -19,6 +19,7 @@ class ChatManager {
         this.syncMobileSidebarLayout = () => { };
         this.availablePages = [];
         this.userLoadRequestId = 0;
+        this.toolGroupUiState = new Map();
 
         // Filter state
         this.currentFilters = {
@@ -784,8 +785,25 @@ class ChatManager {
 
 		        // Message image click (delegation)
 		        const messagesContainer = document.getElementById('messagesContainer');
-		        if (messagesContainer) {
+	        if (messagesContainer) {
 		            messagesContainer.addEventListener('click', (e) => {
+	                const toggleBtn = e.target.closest('[data-action="toggle-tool-group"]');
+	                if (toggleBtn && messagesContainer.contains(toggleBtn)) {
+	                    const toolGroup = toggleBtn.closest('.message-tool-group');
+	                    if (!toolGroup) return;
+	                    const groupKey = toolGroup.dataset.toolGroupKey || '';
+	                    const nextExpanded = !toolGroup.classList.contains('is-expanded');
+	                    this.toolGroupUiState.set(groupKey, nextExpanded);
+	                    toolGroup.classList.toggle('is-expanded', nextExpanded);
+	                    toolGroup.classList.toggle('is-collapsed', !nextExpanded);
+	                    toggleBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+	                    const body = toolGroup.querySelector('.message-tool-group__body');
+	                    if (body) {
+	                        body.hidden = !nextExpanded;
+	                    }
+	                    return;
+	                }
+
 	                const imageWrap = e.target.closest('.message-image');
 	                if (!imageWrap || !messagesContainer.contains(imageWrap)) return;
 	                const src = imageWrap.dataset.imageSrc || '';
@@ -1613,12 +1631,25 @@ class ChatManager {
         const messagesContainer = document.getElementById('messagesContainer');
         if (!messagesContainer) return;
 
-        const messages = this.chatHistory[this.currentUserId] || [];
+        const rawMessages = this.chatHistory[this.currentUserId] || [];
+        const messages = rawMessages.map((message) => {
+            if (message && typeof message === 'object') {
+                return message;
+            }
+            return this.prepareMessageForDisplay({
+                role: 'assistant',
+                source: 'system',
+                content: String(message || ''),
+                timestamp: new Date().toISOString()
+            });
+        });
 
         // Clear typing indicator when rerendering actual messages
         this.hideTypingIndicator();
 
-        if (messages.length === 0) {
+        const renderableBlocks = this.groupRenderableMessages(messages);
+
+        if (renderableBlocks.length === 0) {
             messagesContainer.innerHTML = `
                 <div class="app-empty">
                     <div class="app-empty__icon">
@@ -1633,13 +1664,17 @@ class ChatManager {
 
         let lastDateLabel = '';
         const blocks = [];
-        messages.forEach(msg => {
-            const dateLabel = msg.timestamp ? this.formatDateLabel(msg.timestamp) : '';
+        renderableBlocks.forEach((block) => {
+            const dateLabel = block.timestamp ? this.formatDateLabel(block.timestamp) : '';
             if (dateLabel && dateLabel !== lastDateLabel) {
                 blocks.push(`<div class="message-separator">${dateLabel}</div>`);
                 lastDateLabel = dateLabel;
             }
-            blocks.push(this.renderMessage(msg));
+            if (block.type === 'tool-group') {
+                blocks.push(this.renderToolActivityBlock(block));
+                return;
+            }
+            blocks.push(this.renderMessage(block.message));
         });
 
         messagesContainer.innerHTML = blocks.join('');
@@ -1648,58 +1683,142 @@ class ChatManager {
         this.scrollToBottom();
     }
 
+    isToolActivityMessage(message) {
+        if (!message || typeof message !== 'object') return false;
+        return message.messageType === 'tool-call' ||
+            message.messageType === 'tool-result' ||
+            !!message.isToolCall ||
+            !!message.isToolResult;
+    }
+
+    shouldRenderMessageBlock(message) {
+        if (!message || typeof message !== 'object') return false;
+        const hasImages = Array.isArray(message.images) && message.images.length > 0;
+        const displayText = this.extractDisplayText(message);
+        return hasImages || (typeof displayText === 'string' && displayText.trim().length > 0);
+    }
+
+    buildMessageBlockKey(message, index) {
+        const messageId = this.resolveMessageId(message);
+        if (messageId) return `message-${messageId}`;
+        const timestamp = message?.timestamp ? new Date(message.timestamp).getTime() : Date.now();
+        return `message-${timestamp}-${index}`;
+    }
+
+    buildToolGroupKey(messages, startIndex, endIndex) {
+        const firstId = this.resolveMessageId(messages[0]) || `start-${startIndex}`;
+        const lastId = this.resolveMessageId(messages[messages.length - 1]) || `end-${endIndex}`;
+        return `tool-${firstId}-${lastId}`.replace(/[^a-zA-Z0-9_-]+/g, '-');
+    }
+
+    groupRenderableMessages(messages) {
+        const blocks = [];
+        let index = 0;
+
+        while (index < messages.length) {
+            const message = messages[index];
+            if (!message || typeof message !== 'object') {
+                index += 1;
+                continue;
+            }
+
+            if (this.isToolActivityMessage(message)) {
+                const startIndex = index;
+                const toolMessages = [];
+
+                while (index < messages.length && this.isToolActivityMessage(messages[index])) {
+                    toolMessages.push(messages[index]);
+                    index += 1;
+                }
+
+                const rows = this.buildToolActivityRows(toolMessages);
+                if (rows.length > 0) {
+                    blocks.push({
+                        type: 'tool-group',
+                        key: this.buildToolGroupKey(toolMessages, startIndex, index - 1),
+                        timestamp: toolMessages[toolMessages.length - 1]?.timestamp || toolMessages[0]?.timestamp || null,
+                        rows,
+                        status: this.deriveToolGroupStatus(rows)
+                    });
+                }
+                continue;
+            }
+
+            if (this.shouldRenderMessageBlock(message)) {
+                blocks.push({
+                    type: 'message',
+                    key: this.buildMessageBlockKey(message, index),
+                    timestamp: message.timestamp || null,
+                    message
+                });
+            }
+            index += 1;
+        }
+
+        return blocks;
+    }
+
     renderMessage(message) {
-        const role = message.role || 'user';
-        const rawSource = typeof message.source === 'string' ? message.source.trim() : '';
-        const normalizedSource = rawSource ? rawSource.toLowerCase() : '';
+        const semantics = this.deriveMessageSemantics(message);
+        const normalizedSource = semantics.source;
         const sourceClass = normalizedSource
             ? `source-${normalizedSource.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
+            : '';
+        const typeClass = semantics.messageType
+            ? `message-type-${semantics.messageType.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
             : '';
         const platformLabel = (() => {
             const platform = typeof message.platform === 'string' ? message.platform.trim().toLowerCase() : '';
             if (platform === 'facebook') return 'Facebook';
             if (platform === 'line') return 'LINE';
+            if (platform === 'instagram') return 'Instagram';
+            if (platform === 'whatsapp') return 'WhatsApp';
             return '';
         })();
 
-        let visualRole = role === 'user' ? 'user' : 'assistant';
-        let headerIcon = role === 'user' ? 'user' : 'paper-plane';
-        let headerLabel = role === 'user' ? 'ลูกค้า' : 'ระบบ';
+        let visualRole = 'assistant';
+        let headerIcon = 'circle-info';
+        let headerLabel = 'ระบบ';
 
-        if (role !== 'user') {
-            if (normalizedSource === 'follow_up') {
-                visualRole = 'followup';
-                headerIcon = 'user-clock';
-                headerLabel = 'ระบบติดตาม';
-            } else if (normalizedSource === 'admin_page') {
-                visualRole = 'admin';
-                headerIcon = 'inbox';
-                headerLabel = 'แอดมิน (เพจ)';
-            } else if (normalizedSource === 'admin_chat') {
-                visualRole = 'admin';
-                headerIcon = 'desktop';
-                headerLabel = 'แอดมิน (เว็บ)';
-            } else if (normalizedSource === 'ai') {
-                visualRole = 'assistant';
-                headerIcon = 'robot';
-                headerLabel = 'AI';
-            } else if (normalizedSource === 'comment_pull') {
-                visualRole = 'assistant';
-                headerIcon = 'comment-dots';
-                headerLabel = 'ระบบ (ดึงคอมเมนต์)';
-            }
+        if (semantics.messageType === 'incoming') {
+            visualRole = 'user';
+            headerIcon = 'user';
+            headerLabel = 'ลูกค้า';
+        } else if (semantics.messageType === 'followup') {
+            visualRole = 'followup';
+            headerIcon = 'user-clock';
+            headerLabel = 'ระบบติดตาม';
+        } else if (semantics.messageType === 'admin-outbound') {
+            visualRole = 'admin';
+            headerIcon = normalizedSource === 'admin_page' ? 'inbox' : 'desktop';
+            headerLabel = normalizedSource === 'admin_page' ? 'แอดมิน (เพจ)' : 'แอดมิน';
+        } else if (semantics.messageType === 'ai-outbound') {
+            visualRole = 'assistant';
+            headerIcon = 'robot';
+            headerLabel = 'AI';
+        } else if (normalizedSource === 'comment_pull') {
+            visualRole = 'assistant';
+            headerIcon = 'comment-dots';
+            headerLabel = 'ระบบ (ดึงคอมเมนต์)';
         }
 
         const displayText = this.extractDisplayText(message);
         const hasImages = Array.isArray(message.images) && message.images.length > 0;
-        const textForRender = displayText || (hasImages ? '[ไฟล์แนบ]' : '');
-        const content = this.escapeHtml(textForRender);
+        const hasTextContent = typeof displayText === 'string' && displayText.trim().length > 0;
         const time = message.timestamp ? this.formatTime(message.timestamp) : '';
         const messageId = this.resolveMessageId(message);
         const isSending = message.sending;
         const deliveryStatus = message.deliveryStatus || '';
-
-        const headerMeta = platformLabel ? ` · ${platformLabel}` : '';
+        const showDeliveryStatus = semantics.customerVisible && deliveryStatus;
+        const badgeHtml = semantics.customerVisible
+            ? `<span class="message-badge message-badge--customer">ส่งถึงลูกค้า</span>`
+            : '';
+        const channelHtml = platformLabel
+            ? `<span class="message-channel">${platformLabel}</span>`
+            : '';
+        const contentHtml = hasTextContent
+            ? `<div class="message-content">${this.escapeHtml(displayText)}</div>`
+            : '';
 
         let imagesHtml = '';
         if (message.images && message.images.length > 0) {
@@ -1716,20 +1835,27 @@ class ChatManager {
 
 
         return `
-            <div class="message ${visualRole} ${sourceClass}">
+            <div class="message ${visualRole} ${sourceClass} ${typeClass} ${semantics.customerVisible ? 'message--customer-visible' : 'message--internal'}">
                 <div class="message-bubble">
                     <div class="message-header">
-                        <i class="fas fa-${headerIcon}"></i>
-                        ${headerLabel}${headerMeta}
+                        <div class="message-header-main">
+                            <span class="message-sender message-sender--${visualRole}">
+                                <i class="fas fa-${headerIcon}"></i>
+                                <span>${headerLabel}</span>
+                            </span>
+                            ${badgeHtml}
+                        </div>
+                        ${channelHtml}
                     </div>
-                    <div class="message-content">${content}</div>
+                    ${contentHtml}
                     ${imagesHtml}
-                    <div class="message-time">
-                        ${isSending ? '<i class="fas fa-spinner fa-spin me-1"></i>' : ''}
-                        ${time}
+                    <div class="message-footer">
+                        <div class="message-time">
+                            ${isSending ? '<i class="fas fa-spinner fa-spin me-1"></i>' : ''}
+                            ${time}
+                        </div>
+                        ${showDeliveryStatus ? `<div class="message-meta">${this.renderDeliveryStatus(deliveryStatus)}</div>` : ''}
                     </div>
-
-                    ${deliveryStatus ? `<div class="message-meta text-muted">${this.renderDeliveryStatus(deliveryStatus)}</div>` : ''}
                 </div>
             </div>
         `;
@@ -1756,7 +1882,14 @@ class ChatManager {
             indicator.innerHTML = `
                 <div class="message-bubble">
                     <div class="message-header">
-                        <i class="fas fa-robot"></i> AI ${platformLabel ? `· ${this.escapeHtml(platformLabel)}` : ''}
+                        <div class="message-header-main">
+                            <span class="message-sender message-sender--assistant">
+                                <i class="fas fa-robot"></i>
+                                <span>AI</span>
+                            </span>
+                            <span class="message-badge message-badge--customer">ส่งถึงลูกค้า</span>
+                        </div>
+                        ${platformLabel ? `<span class="message-channel">${this.escapeHtml(platformLabel)}</span>` : ''}
                     </div>
                     <div class="message-content">
                         <span class="typing-dot"></span>
@@ -1903,14 +2036,20 @@ class ChatManager {
         const rawMessage = messageInput.value;
         if (!rawMessage.trim()) return;
         const message = rawMessage.replace(/\r\n/g, '\n');
+        const currentUser = this.getCurrentUserRecord();
 
         // Optimistic UI: append temp message
-        const tempMessage = {
+        const tempMessage = this.prepareMessageForDisplay({
             role: 'admin',
+            source: 'admin_chat',
             content: message,
             timestamp: new Date().toISOString(),
-            sending: true
-        };
+            sending: true,
+            customerVisible: true,
+            messageType: 'admin-outbound',
+            platform: currentUser?.platform || this.currentChatContext?.platform || null,
+            botId: currentUser?.botId || this.currentChatContext?.botId || null
+        });
         if (!this.chatHistory[this.currentUserId]) {
             this.chatHistory[this.currentUserId] = [];
         }
@@ -1931,8 +2070,6 @@ class ChatManager {
         }
 
         try {
-            const user =
-                this.getCurrentUserRecord();
             const response = await fetch('/admin/chat/send', {
                 method: 'POST',
                 headers: {
@@ -1941,27 +2078,42 @@ class ChatManager {
                 body: JSON.stringify({
                     userId: this.currentUserId,
                     message: message,
-                    platform: user?.platform || this.currentChatContext?.platform || null,
-                    botId: user?.botId || this.currentChatContext?.botId || null
+                    platform: currentUser?.platform || this.currentChatContext?.platform || null,
+                    botId: currentUser?.botId || this.currentChatContext?.botId || null
                 })
             });
 
             const data = await response.json();
 
-            if (data.success && data.message) {
-                // Replace last temp message
-                const history = this.chatHistory[this.currentUserId] || [];
-                const idx = history.lastIndexOf(tempMessage);
-                if (idx >= 0) {
-                    history[idx] = data.message;
-                } else {
-                    history.push(data.message);
-                }
-                this.renderMessages();
-                this.loadUsers();
-            } else {
+            if (!data.success) {
                 throw new Error(data.error || 'ไม่สามารถส่งข้อความได้');
             }
+
+            const history = this.chatHistory[this.currentUserId] || [];
+            const idx = history.lastIndexOf(tempMessage);
+
+            if (data.message && typeof data.message === 'object') {
+                const normalizedMessage = this.prepareMessageForDisplay(data.message);
+                if (idx >= 0) {
+                    history[idx] = normalizedMessage;
+                } else {
+                    history.push(normalizedMessage);
+                }
+                this.renderMessages();
+            } else {
+                if (idx >= 0 && (data.silent || data.control)) {
+                    history.splice(idx, 1);
+                } else if (idx >= 0) {
+                    history[idx].sending = false;
+                    history[idx].awaitingEcho = true;
+                }
+                this.renderMessages();
+            }
+
+            if (data.displayMessage) {
+                this.showToast(data.displayMessage, 'success');
+            }
+            this.loadUsers();
         } catch (error) {
             console.error('Error sending message:', error);
             this.showToast('เกิดข้อผิดพลาดในการส่งข้อความ', 'error');
@@ -2758,7 +2910,10 @@ class ChatManager {
             if (!this.chatHistory[userId]) {
                 this.chatHistory[userId] = [];
             }
-            this.chatHistory[userId].push(normalizedMessage);
+            const replacedOptimistic = this.replaceOptimisticOutgoingMessage(userId, normalizedMessage);
+            if (!replacedOptimistic) {
+                this.chatHistory[userId].push(normalizedMessage);
+            }
         }
 
         // Update UI if this is the current chat
@@ -3187,6 +3342,540 @@ class ChatManager {
         return '';
     }
 
+    deriveMessageSemantics(message) {
+        const role = typeof message?.role === 'string' && message.role.trim()
+            ? message.role.trim().toLowerCase()
+            : '';
+        const source = typeof message?.source === 'string' && message.source.trim()
+            ? message.source.trim().toLowerCase()
+            : '';
+        const toolCalls = Array.isArray(message?.toolCalls)
+            ? message.toolCalls
+            : Array.isArray(message?.tool_calls)
+                ? message.tool_calls
+                : [];
+        const toolCallIdCandidate = message?.toolCallId || message?.tool_call_id || '';
+        const toolCallId = typeof toolCallIdCandidate === 'string' && toolCallIdCandidate.trim()
+            ? toolCallIdCandidate.trim()
+            : '';
+        const toolNameCandidate = message?.toolName || message?.name || '';
+        const toolName = typeof toolNameCandidate === 'string' && toolNameCandidate.trim()
+            ? toolNameCandidate.trim()
+            : '';
+        const contentText = typeof message?.content === 'string' ? message.content.trim() : '';
+        const isToolCall = Boolean(message?.isToolCall) || (role === 'assistant' && toolCalls.length > 0);
+        const isToolResult = Boolean(message?.isToolResult) || (role === 'tool' && !!toolCallId);
+        const isControlMessage =
+            (source === 'admin_chat' || source === 'admin_page') &&
+            contentText.startsWith('[ระบบ]');
+
+        let messageType = typeof message?.messageType === 'string' && message.messageType.trim()
+            ? message.messageType.trim()
+            : '';
+
+        if (!messageType) {
+            if (role === 'user') {
+                messageType = 'incoming';
+            } else if (role === 'admin') {
+                messageType = 'admin-outbound';
+            } else if (isToolCall) {
+                messageType = 'tool-call';
+            } else if (isToolResult) {
+                messageType = 'tool-result';
+            } else if (source === 'follow_up') {
+                messageType = 'followup';
+            } else if ((source === 'admin_chat' || source === 'admin_page') && !isControlMessage) {
+                messageType = 'admin-outbound';
+            } else if (source === 'ai') {
+                messageType = 'ai-outbound';
+            } else {
+                messageType = 'system';
+            }
+        }
+
+        let customerVisible = typeof message?.customerVisible === 'boolean'
+            ? message.customerVisible
+            : ['admin-outbound', 'ai-outbound', 'followup'].includes(messageType);
+
+        if (isControlMessage) {
+            customerVisible = false;
+            if (messageType === 'admin-outbound') {
+                messageType = 'system';
+            }
+        }
+
+        return {
+            role,
+            source,
+            messageType,
+            customerVisible,
+            toolCalls,
+            toolCallId,
+            toolName,
+            isToolCall,
+            isToolResult
+        };
+    }
+
+    replaceOptimisticOutgoingMessage(userId, incomingMessage) {
+        const history = this.chatHistory[userId] || [];
+        const incomingSemantics = this.deriveMessageSemantics(incomingMessage);
+        if (incomingSemantics.messageType !== 'admin-outbound') {
+            return false;
+        }
+
+        const incomingText = this.extractDisplayText(incomingMessage).trim();
+
+        for (let index = history.length - 1; index >= 0; index -= 1) {
+            const candidate = history[index];
+            if (!candidate || typeof candidate !== 'object') continue;
+            if (!candidate.sending && !candidate.awaitingEcho) continue;
+
+            const candidateSemantics = this.deriveMessageSemantics(candidate);
+            if (candidateSemantics.messageType !== incomingSemantics.messageType) continue;
+
+            const samePlatform = String(candidate.platform || '') === String(incomingMessage.platform || '');
+            const sameBot = String(candidate.botId || '') === String(incomingMessage.botId || '');
+            if (!samePlatform || !sameBot) continue;
+
+            const candidateText = this.extractDisplayText(candidate).trim();
+            if (incomingText && candidateText && candidateText === incomingText) {
+                history[index] = incomingMessage;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    getToolType(toolName) {
+        const normalized = typeof toolName === 'string' ? toolName.trim().toLowerCase() : '';
+        if (!normalized) return 'default';
+        if (
+            normalized.includes('search') ||
+            normalized.includes('get') ||
+            normalized.includes('list') ||
+            normalized.includes('find')
+        ) {
+            return 'search';
+        }
+        if (
+            normalized.includes('update') ||
+            normalized.includes('rename') ||
+            normalized.includes('edit') ||
+            normalized.includes('set')
+        ) {
+            return 'edit';
+        }
+        if (
+            normalized.includes('add') ||
+            normalized.includes('create') ||
+            normalized.includes('save') ||
+            normalized.includes('insert')
+        ) {
+            return 'add';
+        }
+        if (normalized.includes('delete') || normalized.includes('remove')) {
+            return 'delete';
+        }
+        return 'default';
+    }
+
+    getToolIcon(toolType) {
+        return {
+            search: 'fa-magnifying-glass',
+            edit: 'fa-pen',
+            add: 'fa-plus',
+            delete: 'fa-trash',
+            default: 'fa-wrench'
+        }[toolType] || 'fa-wrench';
+    }
+
+    formatToolPreviewValue(value) {
+        if (value === null || typeof value === 'undefined') return '';
+        if (Array.isArray(value)) return `[${value.length}]`;
+        if (typeof value === 'object') return '{...}';
+        const normalized = String(value).trim().replace(/\s+/g, ' ');
+        return normalized.length > 24 ? `${normalized.slice(0, 24)}...` : normalized;
+    }
+
+    buildToolArgsPreview(rawArguments) {
+        if (rawArguments === null || typeof rawArguments === 'undefined' || rawArguments === '') {
+            return '';
+        }
+
+        const parsedArguments = this.parseJsonIfPossible(rawArguments);
+        if (parsedArguments && typeof parsedArguments === 'object' && !Array.isArray(parsedArguments)) {
+            const entries = Object.entries(parsedArguments)
+                .filter(([, value]) => value !== null && typeof value !== 'undefined' && String(value).trim() !== '')
+                .slice(0, 2)
+                .map(([key, value]) => `${key}=${this.formatToolPreviewValue(value)}`);
+            if (entries.length === 0) return '';
+            const extraCount = Math.max(0, Object.keys(parsedArguments).length - entries.length);
+            const suffix = extraCount > 0 ? ` +${extraCount}` : '';
+            return this.truncateText(`${entries.join(' · ')}${suffix}`, 72);
+        }
+
+        if (Array.isArray(parsedArguments)) {
+            return this.truncateText(`[${parsedArguments.length}]`, 72);
+        }
+
+        const normalized = String(rawArguments).trim().replace(/\s+/g, ' ');
+        return normalized ? this.truncateText(normalized, 72) : '';
+    }
+
+    prettyPrintToolData(value) {
+        if (value === null || typeof value === 'undefined' || value === '') {
+            return '';
+        }
+
+        const parsed = this.parseJsonIfPossible(value);
+        if (parsed && typeof parsed === 'object') {
+            try {
+                return JSON.stringify(parsed, null, 2);
+            } catch (_) {
+                return '';
+            }
+        }
+
+        if (typeof value === 'string') {
+            return value.trim();
+        }
+
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch (_) {
+            return String(value);
+        }
+    }
+
+    extractToolCallInfo(toolCall) {
+        const fnPayload = toolCall?.function && typeof toolCall.function === 'object'
+            ? toolCall.function
+            : null;
+        const callIdCandidate = toolCall?.call_id || toolCall?.id || toolCall?.tool_call_id || '';
+        const callId = typeof callIdCandidate === 'string' && callIdCandidate.trim()
+            ? callIdCandidate.trim()
+            : '';
+        const toolNameCandidate = toolCall?.name || fnPayload?.name || toolCall?.tool || '';
+        const toolName = typeof toolNameCandidate === 'string' && toolNameCandidate.trim()
+            ? toolNameCandidate.trim()
+            : '';
+
+        let rawArguments = null;
+        if (typeof toolCall?.arguments === 'string' && toolCall.arguments.trim()) {
+            rawArguments = toolCall.arguments;
+        } else if (typeof fnPayload?.arguments === 'string' && fnPayload.arguments.trim()) {
+            rawArguments = fnPayload.arguments;
+        } else if (toolCall?.arguments && typeof toolCall.arguments === 'object') {
+            rawArguments = toolCall.arguments;
+        } else if (fnPayload?.arguments && typeof fnPayload.arguments === 'object') {
+            rawArguments = fnPayload.arguments;
+        }
+
+        return {
+            callId,
+            toolName,
+            rawArguments
+        };
+    }
+
+    createToolRow(options = {}) {
+        const toolName = options.toolName || 'tool';
+        const toolType = this.getToolType(toolName);
+        return {
+            key: options.key || `tool-row-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            callId: options.callId || '',
+            toolName,
+            toolType,
+            toolIcon: this.getToolIcon(toolType),
+            argsPreview: options.argsPreview || '',
+            argsRaw: options.argsRaw || '',
+            resultSummary: options.resultSummary || '',
+            resultDetails: Array.isArray(options.resultDetails) ? options.resultDetails : [],
+            rawPayload: options.rawPayload || '',
+            status: options.status || 'pending',
+            startedAt: options.startedAt || null,
+            finishedAt: options.finishedAt || null,
+            order: Number.isFinite(options.order) ? options.order : 0
+        };
+    }
+
+    findPendingToolRow(rows, toolName = '') {
+        for (let index = rows.length - 1; index >= 0; index -= 1) {
+            const row = rows[index];
+            if (!row || row.status !== 'pending') continue;
+            if (toolName && row.toolName !== toolName) continue;
+            return row;
+        }
+        return null;
+    }
+
+    deriveToolRowStatus(payload, message) {
+        if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+            if (
+                payload.success === false ||
+                (typeof payload.error === 'string' && payload.error.trim())
+            ) {
+                return 'error';
+            }
+            return 'success';
+        }
+
+        const rawPayload = typeof message?.rawContent !== 'undefined' ? message.rawContent : message?.content;
+        if (typeof rawPayload === 'string' && rawPayload.trim()) {
+            return 'success';
+        }
+        return 'pending';
+    }
+
+    deriveToolGroupStatus(rows) {
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return 'pending';
+        }
+        if (rows.some((row) => row.status === 'error')) {
+            return 'error';
+        }
+        if (rows.some((row) => row.status === 'pending')) {
+            return 'pending';
+        }
+        return 'success';
+    }
+
+    formatToolGroupStatusLabel(status) {
+        return {
+            pending: 'กำลังทำงาน',
+            success: 'สำเร็จ',
+            error: 'มีข้อผิดพลาด'
+        }[status] || 'กำลังทำงาน';
+    }
+
+    formatToolRowStatusLabel(status) {
+        return {
+            pending: 'รอผลลัพธ์',
+            success: 'สำเร็จ',
+            error: 'ผิดพลาด'
+        }[status] || 'รอผลลัพธ์';
+    }
+
+    buildToolActivityRows(messages) {
+        const rows = [];
+        const rowsByCallId = new Map();
+
+        messages.forEach((message, messageIndex) => {
+            const semantics = this.deriveMessageSemantics(message);
+            const toolCalls = Array.isArray(semantics.toolCalls) ? semantics.toolCalls : [];
+
+            toolCalls.forEach((toolCall, toolIndex) => {
+                const callInfo = this.extractToolCallInfo(toolCall);
+                let row = callInfo.callId ? rowsByCallId.get(callInfo.callId) : null;
+                if (!row) {
+                    row = this.createToolRow({
+                        key: callInfo.callId || `tool-call-${messageIndex}-${toolIndex}`,
+                        callId: callInfo.callId,
+                        toolName: callInfo.toolName || 'tool',
+                        argsPreview: this.buildToolArgsPreview(callInfo.rawArguments),
+                        argsRaw: this.prettyPrintToolData(callInfo.rawArguments),
+                        startedAt: message.timestamp || null,
+                        order: rows.length
+                    });
+                    rows.push(row);
+                    if (callInfo.callId) {
+                        rowsByCallId.set(callInfo.callId, row);
+                    }
+                    return;
+                }
+
+                if (!row.toolName && callInfo.toolName) {
+                    row.toolName = callInfo.toolName;
+                }
+                if (!row.argsPreview && callInfo.rawArguments !== null) {
+                    row.argsPreview = this.buildToolArgsPreview(callInfo.rawArguments);
+                }
+                if (!row.argsRaw && callInfo.rawArguments !== null) {
+                    row.argsRaw = this.prettyPrintToolData(callInfo.rawArguments);
+                }
+                if (!row.startedAt) {
+                    row.startedAt = message.timestamp || null;
+                }
+                row.toolType = this.getToolType(row.toolName);
+                row.toolIcon = this.getToolIcon(row.toolType);
+            });
+
+            if (!semantics.isToolResult && semantics.messageType !== 'tool-result') {
+                return;
+            }
+
+            const rawPayload = typeof message.rawContent !== 'undefined' ? message.rawContent : message.content;
+            const parsedPayload = this.parseJsonIfPossible(rawPayload);
+            const readableText = this.buildReadableToolText({
+                ...message,
+                isToolResult: true,
+                messageType: 'tool-result'
+            }, parsedPayload);
+            const readableLines = typeof readableText === 'string'
+                ? readableText.split('\n').map((line) => line.trim()).filter(Boolean)
+                : [];
+
+            let row = semantics.toolCallId ? rowsByCallId.get(semantics.toolCallId) : null;
+            if (!row) {
+                row = this.findPendingToolRow(rows, semantics.toolName);
+            }
+            if (!row) {
+                row = this.createToolRow({
+                    key: semantics.toolCallId || `tool-result-${messageIndex}`,
+                    callId: semantics.toolCallId,
+                    toolName: semantics.toolName || 'tool',
+                    startedAt: message.timestamp || null,
+                    order: rows.length
+                });
+                rows.push(row);
+            }
+
+            if (semantics.toolCallId && !row.callId) {
+                row.callId = semantics.toolCallId;
+            }
+            if (semantics.toolCallId) {
+                rowsByCallId.set(semantics.toolCallId, row);
+            }
+            if (!row.toolName && semantics.toolName) {
+                row.toolName = semantics.toolName;
+            }
+
+            row.toolType = this.getToolType(row.toolName);
+            row.toolIcon = this.getToolIcon(row.toolType);
+            row.rawPayload = this.prettyPrintToolData(rawPayload);
+            row.status = this.deriveToolRowStatus(parsedPayload, message);
+            row.finishedAt = message.timestamp || row.finishedAt;
+
+            if (readableLines.length > 0) {
+                row.resultSummary = readableLines[0];
+                row.resultDetails = readableLines.slice(1);
+            } else {
+                const rawSummary = row.rawPayload
+                    ? row.rawPayload.replace(/\s+/g, ' ').trim()
+                    : '';
+                row.resultSummary = rawSummary
+                    ? this.truncateText(rawSummary, 96)
+                    : this.formatToolRowStatusLabel(row.status);
+                row.resultDetails = [];
+            }
+        });
+
+        return rows
+            .sort((left, right) => left.order - right.order)
+            .map((row) => {
+                if (!row.resultSummary) {
+                    row.resultSummary = this.formatToolRowStatusLabel(row.status);
+                }
+                return row;
+            });
+    }
+
+    renderToolActivityRow(row) {
+        const argsHtml = row.argsPreview
+            ? `
+                <div class="message-tool-row__args">
+                    <span class="message-tool-row__label">args</span>
+                    <code>${this.escapeHtml(row.argsPreview)}</code>
+                </div>
+            `
+            : '';
+        const detailHtml = row.resultDetails.length > 0
+            ? `
+                <div class="message-tool-row__details">
+                    ${row.resultDetails.map((line) => `<div>${this.escapeHtml(line)}</div>`).join('')}
+                </div>
+            `
+            : '';
+
+        const rawSections = [];
+        if (row.argsRaw) {
+            rawSections.push(`
+                <div class="message-tool-raw__section">
+                    <div class="message-tool-raw__label">args</div>
+                    <pre>${this.escapeHtml(row.argsRaw)}</pre>
+                </div>
+            `);
+        }
+        if (row.rawPayload) {
+            rawSections.push(`
+                <div class="message-tool-raw__section">
+                    <div class="message-tool-raw__label">result</div>
+                    <pre>${this.escapeHtml(row.rawPayload)}</pre>
+                </div>
+            `);
+        }
+
+        const rawHtml = rawSections.length > 0
+            ? `
+                <details class="message-tool-raw">
+                    <summary>ดู raw</summary>
+                    ${rawSections.join('')}
+                </details>
+            `
+            : '';
+
+        const rowTime = row.finishedAt || row.startedAt;
+
+        return `
+            <div class="message-tool-row message-tool-row--${row.status}" data-tool-type="${this.escapeHtml(row.toolType)}">
+                <div class="message-tool-row__main">
+                    <div class="message-tool-row__icon">
+                        <i class="fas ${row.toolIcon}"></i>
+                    </div>
+                    <div class="message-tool-row__content">
+                        <div class="message-tool-row__topline">
+                            <code class="message-tool-row__name">${this.escapeHtml(row.toolName || 'tool')}</code>
+                            <span class="message-tool-row__status">${this.escapeHtml(this.formatToolRowStatusLabel(row.status))}</span>
+                            ${rowTime ? `<span class="message-tool-row__time">${this.escapeHtml(this.formatTime(rowTime))}</span>` : ''}
+                        </div>
+                        ${argsHtml}
+                        <div class="message-tool-row__summary">${this.escapeHtml(row.resultSummary)}</div>
+                        ${detailHtml}
+                        ${rawHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderToolActivityBlock(block) {
+        const isExpanded = this.toolGroupUiState.get(block.key) === true;
+        const toolCountLabel = `${block.rows.length} tool${block.rows.length === 1 ? '' : 's'}`;
+
+        return `
+            <div class="message message-tool">
+                <div class="message-tool-group ${isExpanded ? 'is-expanded' : 'is-collapsed'}" data-tool-group-key="${this.escapeHtml(block.key)}">
+                    <button type="button" class="message-tool-group__header" data-action="toggle-tool-group" aria-expanded="${isExpanded ? 'true' : 'false'}">
+                        <div class="message-tool-group__header-main">
+                            <div class="message-tool-group__eyebrow">
+                                <span class="message-tool-group__icon">
+                                    <i class="fas fa-terminal"></i>
+                                </span>
+                                <span class="message-tool-group__title-wrap">
+                                    <span class="message-tool-group__title">Tool Activity</span>
+                                    <span class="message-tool-group__subtitle">ไม่ส่งถึงลูกค้า</span>
+                                </span>
+                            </div>
+                            <div class="message-tool-group__header-meta">
+                                <span class="message-tool-group__count">${this.escapeHtml(toolCountLabel)}</span>
+                                <span class="message-tool-group__status message-tool-group__status--${this.escapeHtml(block.status)}">${this.escapeHtml(this.formatToolGroupStatusLabel(block.status))}</span>
+                            </div>
+                        </div>
+                        <div class="message-tool-group__header-side">
+                            <span class="message-tool-group__time">${block.timestamp ? this.escapeHtml(this.formatTime(block.timestamp)) : ''}</span>
+                            <i class="fas fa-chevron-down message-tool-group__chevron"></i>
+                        </div>
+                    </button>
+                    <div class="message-tool-group__body" ${isExpanded ? '' : 'hidden'}>
+                        ${block.rows.map((row) => this.renderToolActivityRow(row)).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     detectImageMimeType(base64, fallback = 'image/jpeg') {
         if (typeof base64 !== 'string') return fallback;
         const trimmed = base64.trim();
@@ -3321,6 +4010,7 @@ class ChatManager {
         if (!message || typeof message !== 'object') return message;
         const normalized = { ...message };
         const messageId = this.resolveMessageId(normalized);
+        const semantics = this.deriveMessageSemantics(normalized);
         const rawContent =
             typeof normalized.rawContent !== 'undefined' ? normalized.rawContent : normalized.content;
         const structured = this.parseJsonIfPossible(rawContent);
@@ -3366,6 +4056,14 @@ class ChatManager {
         }
 
         normalized._plainText = typeof plainText === 'string' ? plainText : '';
+        normalized.messageType = semantics.messageType;
+        normalized.customerVisible = semantics.customerVisible;
+        normalized.toolCalls = semantics.toolCalls;
+        normalized.toolCallId = semantics.toolCallId;
+        normalized.toolName = semantics.toolName;
+        normalized.isToolCall = semantics.isToolCall;
+        normalized.isToolResult = semantics.isToolResult;
+        normalized.source = normalized.source || semantics.source || null;
         return normalized;
     }
 
