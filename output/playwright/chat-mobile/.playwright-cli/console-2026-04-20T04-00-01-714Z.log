@@ -2176,3 +2176,35 @@
 [96423999ms] [ERROR] Error loading users: TypeError: Failed to fetch
     at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
     at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
+[96454008ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4011/admin/chat/users:0
+[96454008ms] [ERROR] Error loading users: TypeError: Failed to fetch
+    at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
+    at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
+[96484002ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4011/admin/chat/users:0
+[96484002ms] [ERROR] Error loading users: TypeError: Failed to fetch
+    at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
+    at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
+[96514050ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4011/admin/chat/users:0
+[96514052ms] [ERROR] Error loading users: TypeError: Failed to fetch
+    at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
+    at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
+[96543997ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4011/admin/chat/users:0
+[96543997ms] [ERROR] Error loading users: TypeError: Failed to fetch
+    at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
+    at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
+[96573999ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4011/admin/chat/users:0
+[96573999ms] [ERROR] Error loading users: TypeError: Failed to fetch
+    at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
+    at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
+[96603993ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4011/admin/chat/users:0
+[96603993ms] [ERROR] Error loading users: TypeError: Failed to fetch
+    at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
+    at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
+[96633997ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4011/admin/chat/users:0
+[96633997ms] [ERROR] Error loading users: TypeError: Failed to fetch
+    at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
+    at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
+[96664052ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4011/admin/chat/users:0
+[96664052ms] [ERROR] Error loading users: TypeError: Failed to fetch
+    at ChatManager.loadUsers (http://127.0.0.1:4011/js/chat-redesign.js:1122:36)
+    at http://127.0.0.1:4011/js/chat-redesign.js:2879:22 @ http://127.0.0.1:4011/js/chat-redesign.js:1160
