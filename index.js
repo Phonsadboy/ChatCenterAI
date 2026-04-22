@@ -1672,6 +1672,15 @@ function getConversationThreadRepository() {
   return conversationThreadRepository;
 }
 
+function createConversationThreadService() {
+  return new (getConversationThreadServiceClass())(null, {
+    conversationThreadRepository: getConversationThreadRepository(),
+    chatRepository: getChatRepository(),
+    orderRepository: getOrderRepository(),
+    botRepository: getBotRepository(),
+  });
+}
+
 function getInstructionChatStateRepository() {
   if (!instructionChatStateRepository) {
     instructionChatStateRepository = createInstructionChatStateRepository();
@@ -2848,6 +2857,22 @@ async function saveChatHistory(
     }
   }
 
+  void createConversationThreadService()
+    .upsertThread(
+      userId,
+      platform,
+      botId,
+      normalizedInstructionRefs,
+      botName,
+      normalizedInstructionMeta,
+    )
+    .catch((threadSyncError) => {
+      console.warn(
+        "[ConversationThread] ไม่สามารถ sync thread หลังบันทึกแชทได้:",
+        threadSyncError?.message || threadSyncError,
+      );
+    });
+
   // วิเคราะห์การติดตามลูกค้าหลังจากบันทึกข้อความของผู้ใช้
   const shouldAnalyzeFollowUp =
     typeof userMsgToSave === "string" ? userMsgToSave.trim().length > 0 : true;
@@ -2857,7 +2882,8 @@ async function saveChatHistory(
     });
   }
 
-  // Thread summary is maintained inside ChatRepository.
+  // ChatRepository stores raw messages, while ConversationThreadService maintains
+  // the analytics index used by InstructionAI conversation tools.
 }
 
 /**

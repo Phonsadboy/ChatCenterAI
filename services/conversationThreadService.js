@@ -615,6 +615,9 @@ class ConversationThreadService {
           timestamp: 1,
           platform: 1,
           botId: 1,
+          botName: 1,
+          instructionRefs: 1,
+          instructionMeta: 1,
         },
         sort: { timestamp: 1 },
       },
@@ -635,12 +638,29 @@ class ConversationThreadService {
           assistantMessages: 0,
           firstMessageAt: null,
           lastMessageAt: null,
+          botName: null,
+          instructionRefs: [],
+          instructionMeta: [],
         });
       }
       const group = groupStats.get(key);
       group.totalMessages += 1;
       if (message.role === "user") group.userMessages += 1;
       if (message.role === "assistant") group.assistantMessages += 1;
+      if (!group.botName && typeof message.botName === "string" && message.botName.trim()) {
+        group.botName = message.botName.trim();
+      }
+      group.instructionRefs = this._mergeInstructionRefs(
+        group.instructionRefs,
+        Array.isArray(message.instructionRefs) ? message.instructionRefs : [],
+      );
+      group.instructionMeta = this._normalizeInstructionMeta(
+        [
+          ...(Array.isArray(group.instructionMeta) ? group.instructionMeta : []),
+          ...(Array.isArray(message.instructionMeta) ? message.instructionMeta : []),
+        ],
+        group.instructionRefs,
+      );
       const timestamp = message?.timestamp ? new Date(message.timestamp) : null;
       if (!timestamp || Number.isNaN(timestamp.getTime())) continue;
       if (!group.firstMessageAt || timestamp < group.firstMessageAt) {
@@ -676,27 +696,32 @@ class ConversationThreadService {
       const { senderId, botId, platform } = group._id;
       const threadId = this._generateThreadId(senderId, botId, platform);
 
-      let instructionRefs = [];
-      let instructionMeta = [];
-      let botName = null;
+      let instructionRefs = this._mergeInstructionRefs([], group.instructionRefs);
+      let instructionMeta = this._normalizeInstructionMeta(
+        group.instructionMeta,
+        instructionRefs,
+      );
+      let botName = group.botName || null;
       if (botId && botMap.has(botId)) {
         const botInfo = botMap.get(botId);
-        botName = botInfo.name;
-        instructionRefs = (botInfo.selectedInstructions || [])
-          .map((selection) => {
-            if (selection && typeof selection === "object" && selection.instructionId) {
-              return {
-                instructionId: selection.instructionId,
-                version: selection.version != null ? selection.version : null,
-              };
-            }
-            if (typeof selection === "string" && selection.trim()) {
-              return { instructionId: selection.trim(), version: null };
-            }
-            return null;
-          })
-          .filter(Boolean);
-        instructionMeta = this._normalizeInstructionMeta([], instructionRefs);
+        botName = botName || botInfo.name;
+        if (instructionRefs.length === 0 && instructionMeta.length === 0) {
+          instructionRefs = (botInfo.selectedInstructions || [])
+            .map((selection) => {
+              if (selection && typeof selection === "object" && selection.instructionId) {
+                return {
+                  instructionId: selection.instructionId,
+                  version: selection.version != null ? selection.version : null,
+                };
+              }
+              if (typeof selection === "string" && selection.trim()) {
+                return { instructionId: selection.trim(), version: null };
+              }
+              return null;
+            })
+            .filter(Boolean);
+          instructionMeta = this._normalizeInstructionMeta([], instructionRefs);
+        }
       }
 
       const durationMinutes =
