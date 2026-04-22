@@ -16,6 +16,12 @@ function normalizeSessionDoc(doc = {}) {
           ? doc.instruction_name
           : "",
     history: Array.isArray(doc.history) ? doc.history : [],
+    lastResponseId:
+      typeof doc.lastResponseId === "string"
+        ? doc.lastResponseId
+        : typeof doc.last_response_id === "string"
+          ? doc.last_response_id
+          : "",
     model: typeof doc.model === "string" ? doc.model : "",
     thinking: typeof doc.thinking === "string" ? doc.thinking : "",
     totalTokens: Number(doc.totalTokens || doc.total_tokens || 0),
@@ -98,6 +104,7 @@ function createInstructionChatStateRepository() {
           instruction_id,
           instruction_name,
           history,
+          last_response_id,
           model,
           thinking,
           total_tokens,
@@ -106,12 +113,13 @@ function createInstructionChatStateRepository() {
           created_at,
           updated_at
         ) VALUES (
-          $1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11
+          $1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12
         )
         ON CONFLICT (session_id) DO UPDATE SET
           instruction_id = EXCLUDED.instruction_id,
           instruction_name = EXCLUDED.instruction_name,
           history = EXCLUDED.history,
+          last_response_id = EXCLUDED.last_response_id,
           model = EXCLUDED.model,
           thinking = EXCLUDED.thinking,
           total_tokens = EXCLUDED.total_tokens,
@@ -124,6 +132,7 @@ function createInstructionChatStateRepository() {
         normalized.instructionId,
         normalized.instructionName,
         safeStringify(normalized.history),
+        normalized.lastResponseId || null,
         normalized.model,
         normalized.thinking,
         normalized.totalTokens,
@@ -155,6 +164,7 @@ function createInstructionChatStateRepository() {
           instruction_id,
           instruction_name,
           history,
+          last_response_id,
           model,
           thinking,
           total_tokens,
@@ -184,6 +194,7 @@ function createInstructionChatStateRepository() {
           instruction_id,
           instruction_name,
           history,
+          last_response_id,
           model,
           thinking,
           total_tokens,

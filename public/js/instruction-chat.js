@@ -28,6 +28,8 @@
         model: "gpt-5.4",
         thinking: "medium",
         history: [],
+        lastResponseId: null,
+        lastResponseModel: null,
         totalTokens: 0,
         totalChanges: 0,
         sending: false,
@@ -134,8 +136,8 @@
 
         // Add user message (with images if any)
         appendMessage("user", rawText, imagesToSend);
-        const historyUserText = rawText.trim() || (imagesToSend.length > 0 ? `[แนบรูปภาพ ${imagesToSend.length} รูป]` : "");
-        state.history.push({ role: "user", content: historyUserText });
+        state._lastAssistantMessages = null;
+        state._lastHistoryDelta = null;
 
         // Create streaming AI response container
         const aiMsg = appendStreamingMessage();
@@ -160,6 +162,15 @@
                 } catch (e) { console.warn("Image upload failed:", e); }
             }
 
+            const currentUserHistoryEntry = buildUserHistoryEntry(
+                rawText,
+                uploadedImages,
+                imagesToSend.length,
+            );
+            if (currentUserHistoryEntry) {
+                state.history.push(currentUserHistoryEntry);
+            }
+
             const response = await fetch("/api/instruction-ai/stream", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -171,6 +182,8 @@
                     history: historyForRequest,
                     sessionId: state.sessionId,
                     images: uploadedImages.length > 0 ? uploadedImages : undefined,
+                    previousResponseId: state.lastResponseId,
+                    previousResponseModel: state.lastResponseModel,
                 }),
                 signal: state.abortController.signal,
             });
@@ -194,18 +207,17 @@
                 }
             }
 
-            // Save to history — use full tool messages if available
-            if (fullContent && !historyRecovered) {
-                const fullMsgs = state._lastAssistantMessages;
-                if (fullMsgs && fullMsgs.length > 0) {
-                    for (const m of fullMsgs) {
-                        state.history.push(m);
-                    }
-                } else {
+            // Save to history — use full tool/result delta if available
+            if (!historyRecovered) {
+                const historyDelta = Array.isArray(state._lastHistoryDelta) ? state._lastHistoryDelta : [];
+                if (historyDelta.length > 0) {
+                    appendHistoryDelta(historyDelta);
+                } else if (fullContent) {
                     state.history.push({ role: "assistant", content: fullContent });
                 }
-                state._lastAssistantMessages = null;
             }
+            state._lastAssistantMessages = null;
+            state._lastHistoryDelta = null;
 
             // Auto-save session (backend also saves, but this keeps frontend state in sync)
             saveSession();
@@ -516,6 +528,11 @@
             if (data.usage) state.totalTokens += data.usage.total_tokens || 0;
             if (data.changes) state.totalChanges += data.changes.length;
             if (data.assistantMessages) state._lastAssistantMessages = data.assistantMessages;
+            state._lastHistoryDelta = Array.isArray(data.historyDelta) ? data.historyDelta : null;
+            if (typeof data.lastResponseId === "string" && data.lastResponseId.trim()) {
+                state.lastResponseId = data.lastResponseId.trim();
+                state.lastResponseModel = state.model;
+            }
             if (data.versionSnapshot && Number.isInteger(data.versionSnapshot.version)) {
                 const label = $("#icVersionLabel");
                 if (label) label.textContent = `v${data.versionSnapshot.version}`;
@@ -625,7 +642,9 @@
                     changes: snapshot.changes,
                     toolsUsed: snapshot.toolsUsed,
                     assistantMessages: snapshot.assistantMessages,
+                    historyDelta: snapshot.historyDelta,
                     versionSnapshot: snapshot.versionSnapshot,
+                    lastResponseId: snapshot.lastResponseId,
                 });
                 cancelledByState = true;
                 try { await reader.cancel(); } catch (e) { }
@@ -662,6 +681,7 @@
                     payload.tool || "",
                     String((payload.partialContent || "").length),
                     toolDigest,
+                    String((payload.lastResponseId || "").length),
                     payload.error || "",
                 ].join("||");
 
@@ -881,6 +901,8 @@
 
         const aiMsg = appendStreamingMessage();
         const contentEl = aiMsg.querySelector(".ic-msg-content");
+        state._lastAssistantMessages = null;
+        state._lastHistoryDelta = null;
 
         state.abortController = new AbortController();
 
@@ -899,6 +921,8 @@
                 if (lastSession?.sessionId && lastSession?.history?.length > 0) {
                     state.sessionId = lastSession.sessionId;
                     state.history = lastSession.history;
+                    state.lastResponseId = lastSession.lastResponseId || null;
+                    state.lastResponseModel = lastSession.model || null;
                     state.totalTokens = lastSession.totalTokens || 0;
                     state.totalChanges = lastSession.totalChanges || 0;
                     // Re-render messages
@@ -931,8 +955,11 @@
             const latestAssistantContent = (() => {
                 for (let i = state.history.length - 1; i >= 0; i--) {
                     const msg = state.history[i];
-                    if (msg && msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
-                        return msg.content.trim();
+                    const contentText = msg && msg.role === "assistant"
+                        ? getHistoryContentText(msg.content)
+                        : "";
+                    if (contentText) {
+                        return contentText.trim();
                     }
                 }
                 return "";
@@ -945,15 +972,17 @@
             if (isReplayDuplicate) {
                 aiMsg.remove();
                 state._lastAssistantMessages = null;
-            } else if (result.fullContent && !historyRecovered) {
-                const fullMsgs = state._lastAssistantMessages;
-                if (fullMsgs && fullMsgs.length > 0) {
-                    for (const m of fullMsgs) state.history.push(m);
-                } else {
+                state._lastHistoryDelta = null;
+            } else if (!historyRecovered) {
+                const historyDelta = Array.isArray(state._lastHistoryDelta) ? state._lastHistoryDelta : [];
+                if (historyDelta.length > 0) {
+                    appendHistoryDelta(historyDelta);
+                } else if (result.fullContent) {
                     state.history.push({ role: "assistant", content: result.fullContent });
                 }
-                state._lastAssistantMessages = null;
             }
+            state._lastAssistantMessages = null;
+            state._lastHistoryDelta = null;
 
             saveSession();
         } catch (err) {
@@ -1003,14 +1032,20 @@
 
     function appendMessage(role, content, images) {
         const isUser = role === "user";
-        const hasTextContent = typeof content === "string" && content.trim().length > 0;
+        const displayText = typeof content === "string"
+            ? content
+            : getHistoryContentText(content);
+        const displayImages = isUser && Array.isArray(images) && images.length > 0
+            ? images
+            : (isUser ? getHistoryContentImages(content) : []);
+        const hasTextContent = typeof displayText === "string" && displayText.trim().length > 0;
         const div = document.createElement("div");
         div.className = `ic-msg ${isUser ? "ic-msg--user" : "ic-msg--ai"}`;
 
         let imageHtml = "";
-        if (isUser && Array.isArray(images) && images.length > 0) {
-            imageHtml = `<div class="ic-msg-images">${images.map(img =>
-                `<img src="${img.dataUrl || img.data || ''}" class="ic-msg-thumb" alt="uploaded image">`
+        if (isUser && Array.isArray(displayImages) && displayImages.length > 0) {
+            imageHtml = `<div class="ic-msg-images">${displayImages.map(img =>
+                `<img src="${img.dataUrl || img.data || img.image_url || ''}" class="ic-msg-thumb" alt="uploaded image">`
             ).join("")}</div>`;
         }
 
@@ -1019,7 +1054,7 @@
             <div class="ic-msg-row">
                 <div class="ic-msg-body">
                     ${imageHtml}
-                    ${hasTextContent ? `<div class="ic-msg-content">${formatContent(content)}</div>` : ""}
+                    ${hasTextContent ? `<div class="ic-msg-content">${formatContent(displayText)}</div>` : ""}
                 </div>
             </div>`;
         } else {
@@ -1032,7 +1067,7 @@
                 </div>
                 <div class="ic-msg-body">
                     <div class="ic-msg-role">AI Assistant</div>
-                    <div class="ic-msg-content">${formatContent(content)}</div>
+                    <div class="ic-msg-content">${formatContent(displayText)}</div>
                 </div>
             </div>`;
         }
@@ -1317,6 +1352,7 @@
                     instructionId: state.selectedId,
                     instructionName: state.selectedName,
                     history: state.history,
+                    lastResponseId: state.lastResponseId,
                     model: state.model,
                     thinking: state.thinking,
                     totalTokens: state.totalTokens,
@@ -1343,12 +1379,99 @@
 
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+    function getHistoryContentText(content) {
+        if (typeof content === "string") return content;
+        if (!Array.isArray(content)) return "";
+        return content
+            .map((part) => {
+                if (!part || typeof part !== "object") return "";
+                if (
+                    ["input_text", "text", "output_text"].includes(part.type) &&
+                    typeof part.text === "string"
+                ) {
+                    return part.text.trim();
+                }
+                return "";
+            })
+            .filter(Boolean)
+            .join("\n\n")
+            .trim();
+    }
+
+    function getHistoryContentImages(content) {
+        if (!Array.isArray(content)) return [];
+        return content
+            .map((part) => {
+                if (!part || typeof part !== "object") return null;
+                if (part.type === "input_image" && typeof part.image_url === "string" && part.image_url.trim()) {
+                    return { data: part.image_url.trim() };
+                }
+                if (
+                    part.type === "image_url" &&
+                    part.image_url &&
+                    typeof part.image_url.url === "string" &&
+                    part.image_url.url.trim()
+                ) {
+                    return { data: part.image_url.url.trim() };
+                }
+                return null;
+            })
+            .filter(Boolean);
+    }
+
+    function buildUserHistoryEntry(text, uploadedImages = [], fallbackImageCount = 0) {
+        const trimmedText = typeof text === "string" ? text.trim() : "";
+        const safeImages = Array.isArray(uploadedImages) ? uploadedImages.slice(0, 10) : [];
+
+        if (safeImages.length === 0) {
+            if (trimmedText) return { role: "user", content: trimmedText };
+            if (fallbackImageCount > 0) {
+                return { role: "user", content: `[แนบรูปภาพ ${fallbackImageCount} รูป]` };
+            }
+            return null;
+        }
+
+        const content = [];
+        if (trimmedText) content.push({ type: "input_text", text: trimmedText });
+
+        safeImages.forEach((img) => {
+            if (img?.name) {
+                content.push({ type: "input_text", text: `[ไฟล์แนบ: ${img.name}]` });
+            }
+            const imageUrl = typeof img?.data === "string"
+                ? img.data
+                : typeof img?.imageData === "string"
+                    ? img.imageData
+                    : "";
+            if (!imageUrl) return;
+            content.push({
+                type: "input_image",
+                image_url: imageUrl,
+                detail: img?.detail || "low",
+            });
+        });
+
+        return content.length > 0 ? { role: "user", content } : null;
+    }
+
+    function appendHistoryDelta(items) {
+        if (!Array.isArray(items) || items.length === 0) return;
+        items.forEach((item) => {
+            if (item && typeof item === "object") {
+                state.history.push(item);
+            }
+        });
+    }
+
     function getLatestAssistantMessage(history = []) {
         if (!Array.isArray(history)) return null;
         for (let i = history.length - 1; i >= 0; i--) {
             const msg = history[i];
-            if (msg && msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
-                return msg;
+            const contentText = msg && msg.role === "assistant"
+                ? getHistoryContentText(msg.content)
+                : "";
+            if (contentText) {
+                return { ...msg, content: contentText };
             }
         }
         return null;
@@ -1370,6 +1493,8 @@
                 if (hasNewAssistant) {
                     state.sessionId = latestSession.sessionId || state.sessionId;
                     state.history = latestSession.history;
+                    state.lastResponseId = latestSession.lastResponseId || state.lastResponseId;
+                    state.lastResponseModel = latestSession.model || state.lastResponseModel;
                     state.totalTokens = latestSession.totalTokens || state.totalTokens;
                     state.totalChanges = latestSession.totalChanges || state.totalChanges;
 
@@ -1427,6 +1552,10 @@
         state.selectedName = name;
         state.sessionId = generateSessionId();
         state.history = [];
+        state.lastResponseId = null;
+        state.lastResponseModel = null;
+        state._lastAssistantMessages = null;
+        state._lastHistoryDelta = null;
         state.totalTokens = 0;
         state.totalChanges = 0;
         state.isUserNearBottom = true;
@@ -1446,6 +1575,8 @@
             // Restore session state
             state.sessionId = lastSession.sessionId;
             state.history = lastSession.history;
+            state.lastResponseId = lastSession.lastResponseId || null;
+            state.lastResponseModel = lastSession.model || null;
             state.totalTokens = lastSession.totalTokens || 0;
             state.totalChanges = lastSession.totalChanges || 0;
 
@@ -1687,6 +1818,10 @@
             // Clear everything
             state.sessionId = generateSessionId();
             state.history = [];
+            state.lastResponseId = null;
+            state.lastResponseModel = null;
+            state._lastAssistantMessages = null;
+            state._lastHistoryDelta = null;
             state.totalTokens = 0;
             state.totalChanges = 0;
             state.activeRequestId = null;

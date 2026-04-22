@@ -26500,21 +26500,217 @@ function getRuntimeInstructionToolDefinitions(chatService) {
   });
 }
 
-function normalizeInstructionHistoryForResponses(history) {
-  const safeHistory = Array.isArray(history) ? history : [];
+function normalizeInstructionHistoryTextPart(part) {
+  if (!part || typeof part !== "object") return null;
+  if (
+    !["input_text", "text", "output_text"].includes(part.type) ||
+    typeof part.text !== "string"
+  ) {
+    return null;
+  }
+  const text = part.text.trim();
+  if (!text) return null;
+  return { type: "input_text", text };
+}
+
+function normalizeInstructionHistoryImagePart(part) {
+  if (!part || typeof part !== "object") return null;
+  let imageUrl = "";
+  let detail = "low";
+
+  if (part.type === "input_image" && typeof part.image_url === "string") {
+    imageUrl = part.image_url.trim();
+    detail = part.detail || "low";
+  } else if (
+    part.type === "image_url" &&
+    part.image_url &&
+    typeof part.image_url.url === "string"
+  ) {
+    imageUrl = part.image_url.url.trim();
+    detail = part.image_url.detail || "low";
+  }
+
+  if (!imageUrl) return null;
+  return {
+    type: "input_image",
+    image_url: imageUrl,
+    detail,
+  };
+}
+
+function normalizeInstructionHistoryContent(content, role = "user") {
+  if (typeof content === "string") {
+    const text = content.trim();
+    return text || null;
+  }
+  if (!Array.isArray(content) || content.length === 0) {
+    return null;
+  }
+
+  if (role === "assistant") {
+    const assistantText = content
+      .map((part) => normalizeInstructionHistoryTextPart(part)?.text || "")
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+    return assistantText || null;
+  }
+
   const normalized = [];
-  for (const msg of safeHistory) {
-    if (!msg || typeof msg !== "object") continue;
-    if (!["user", "assistant"].includes(msg.role)) continue;
-    if (typeof msg.content === "string") {
-      const content = msg.content.trim();
-      if (!content) continue;
-      normalized.push({ role: msg.role, content });
-    } else if (Array.isArray(msg.content) && msg.content.length > 0) {
-      normalized.push({ role: msg.role, content: msg.content });
+  for (const part of content) {
+    const textPart = normalizeInstructionHistoryTextPart(part);
+    if (textPart) {
+      normalized.push(textPart);
+      continue;
+    }
+    const imagePart = normalizeInstructionHistoryImagePart(part);
+    if (imagePart) {
+      normalized.push(imagePart);
     }
   }
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeInstructionFunctionCallHistoryItem(item) {
+  if (!item || typeof item !== "object") return null;
+  const callId =
+    typeof item.call_id === "string" && item.call_id.trim()
+      ? item.call_id.trim()
+      : typeof item.id === "string" && item.id.trim()
+        ? item.id.trim()
+        : "";
+  const name =
+    typeof item.name === "string" && item.name.trim()
+      ? item.name.trim()
+      : typeof item.function?.name === "string" && item.function.name.trim()
+        ? item.function.name.trim()
+        : "";
+  if (!callId || !name) return null;
+  const rawArguments =
+    typeof item.arguments === "string"
+      ? item.arguments
+      : typeof item.function?.arguments === "string"
+        ? item.function.arguments
+        : JSON.stringify(item.arguments || item.function?.arguments || {});
+  return {
+    type: "function_call",
+    call_id: callId,
+    name,
+    arguments: rawArguments,
+  };
+}
+
+function buildInstructionFunctionOutputHistoryItem(callId, output) {
+  const normalizedCallId =
+    typeof callId === "string" ? callId.trim() : "";
+  if (!normalizedCallId) return null;
+  return {
+    type: "function_call_output",
+    call_id: normalizedCallId,
+    output:
+      typeof output === "string" ? output : JSON.stringify(output || {}),
+  };
+}
+
+function normalizeInstructionSessionHistory(history) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  const normalized = [];
+
+  for (const msg of safeHistory) {
+    if (!msg || typeof msg !== "object") continue;
+
+    if (msg.type === "function_call") {
+      const toolCallItem = normalizeInstructionFunctionCallHistoryItem(msg);
+      if (toolCallItem) normalized.push(toolCallItem);
+      continue;
+    }
+
+    if (msg.type === "function_call_output") {
+      const toolOutputItem = buildInstructionFunctionOutputHistoryItem(
+        msg.call_id,
+        msg.output,
+      );
+      if (toolOutputItem) normalized.push(toolOutputItem);
+      continue;
+    }
+
+    if (
+      msg.role === "assistant" &&
+      Array.isArray(msg.tool_calls) &&
+      msg.tool_calls.length > 0
+    ) {
+      const assistantContent = normalizeInstructionHistoryContent(
+        msg.content,
+        "assistant",
+      );
+      if (assistantContent) {
+        normalized.push({ role: "assistant", content: assistantContent });
+      }
+      for (const toolCall of msg.tool_calls) {
+        const toolCallItem = normalizeInstructionFunctionCallHistoryItem(toolCall);
+        if (toolCallItem) normalized.push(toolCallItem);
+      }
+      continue;
+    }
+
+    if (msg.role === "tool" && msg.tool_call_id) {
+      const toolOutputItem = buildInstructionFunctionOutputHistoryItem(
+        msg.tool_call_id,
+        msg.content,
+      );
+      if (toolOutputItem) normalized.push(toolOutputItem);
+      continue;
+    }
+
+    if (!["user", "assistant"].includes(msg.role)) continue;
+
+    const content = normalizeInstructionHistoryContent(msg.content, msg.role);
+    if (!content) continue;
+
+    normalized.push({
+      role: msg.role,
+      content,
+    });
+  }
+
   return normalized;
+}
+
+function mapInstructionSessionHistoryToResponsesInput(history) {
+  const safeHistory = normalizeInstructionSessionHistory(history);
+  const mapped = [];
+
+  for (const item of safeHistory) {
+    if (!item || typeof item !== "object") continue;
+
+    if (item.type === "function_call") {
+      const toolCallItem = normalizeInstructionFunctionCallHistoryItem(item);
+      if (toolCallItem) mapped.push(toolCallItem);
+      continue;
+    }
+
+    if (item.type === "function_call_output") {
+      const toolOutputItem = buildInstructionFunctionOutputHistoryItem(
+        item.call_id,
+        item.output,
+      );
+      if (toolOutputItem) mapped.push(toolOutputItem);
+      continue;
+    }
+
+    if (!["user", "assistant"].includes(item.role)) continue;
+
+    const content = normalizeInstructionHistoryContent(item.content, item.role);
+    if (!content) continue;
+
+    mapped.push({
+      role: item.role,
+      content,
+    });
+  }
+
+  return mapped;
 }
 
 function buildInstructionUserInputForResponses(message, images) {
@@ -26541,12 +26737,48 @@ function buildInstructionUserInputForResponses(message, images) {
   return content.length > 0 ? content : [{ type: "input_text", text: "[แนบรูปภาพ]" }];
 }
 
-function buildInstructionUserHistoryText(message, images) {
-  const text = typeof message === "string" ? message.trim() : "";
-  if (text) return text;
-  const imageCount = Array.isArray(images) ? images.length : 0;
-  if (imageCount > 0) return `[แนบรูปภาพ ${imageCount} รูป]`;
-  return "";
+function buildInstructionUserHistoryEntry(message, images) {
+  const content = buildInstructionUserInputForResponses(message, images);
+  const normalized = normalizeInstructionHistoryContent(content, "user");
+  if (!normalized) return null;
+  return {
+    role: "user",
+    content: normalized,
+  };
+}
+
+function extractInstructionComparableUserText(content) {
+  const normalized = normalizeInstructionHistoryContent(content, "user");
+  if (typeof normalized === "string") {
+    return normalized;
+  }
+  if (!Array.isArray(normalized) || normalized.length === 0) {
+    return "";
+  }
+  return normalized
+    .filter((part) => part?.type === "input_text" && typeof part.text === "string")
+    .map((part) => part.text.trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
+function canContinueInstructionPreviousResponseState(
+  previousResponseId,
+  previousResponseModel,
+  currentModel,
+) {
+  const normalizedResponseId =
+    typeof previousResponseId === "string" ? previousResponseId.trim() : "";
+  if (!normalizedResponseId) return false;
+
+  const previousModelId = normalizeModelIdentifier(previousResponseModel);
+  const currentModelId = normalizeModelIdentifier(currentModel);
+  if (previousModelId && currentModelId && previousModelId !== currentModelId) {
+    return false;
+  }
+
+  return true;
 }
 
 function mapInstructionResponseUsage(usage) {
@@ -26603,7 +26835,16 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     if (!shouldUsePostgresInstructionsV2()) {
       return sendPostgresMigrationPending(res, "Instruction AI chat state");
     }
-    const { instructionId, message = "", model = "gpt-5.4", thinking = "medium", history = [], images } = req.body;
+    const {
+      instructionId,
+      message = "",
+      model = "gpt-5.4",
+      thinking = "medium",
+      history = [],
+      images,
+      previousResponseId: clientPreviousResponseId = null,
+      previousResponseModel: clientPreviousResponseModel = "",
+    } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
     const normalizedInstructionRef = String(instructionId || "").trim();
 
@@ -26659,14 +26900,29 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       dataItemsSummary,
     );
 
-    const safeHistory = normalizeInstructionHistoryForResponses(history);
+    const safeHistory = normalizeInstructionSessionHistory(history);
+    const historyInput = mapInstructionSessionHistoryToResponsesInput(safeHistory);
     const lastHistoryMsg = safeHistory[safeHistory.length - 1];
     const isDuplicatedUserMessage =
       !hasIncomingImages &&
       lastHistoryMsg &&
       lastHistoryMsg.role === "user" &&
-      typeof lastHistoryMsg.content === "string" &&
-      lastHistoryMsg.content.trim() === String(message).trim();
+      extractInstructionComparableUserText(lastHistoryMsg.content) ===
+        String(message).trim();
+    const currentUserHistoryEntry = !isDuplicatedUserMessage
+      ? buildInstructionUserHistoryEntry(message, images)
+      : null;
+    const currentUserInput = currentUserHistoryEntry
+      ? mapInstructionSessionHistoryToResponsesInput([currentUserHistoryEntry])
+      : [];
+    const canStartFromPreviousResponseState =
+      usePreviousResponseId &&
+      currentUserInput.length > 0 &&
+      canContinueInstructionPreviousResponseState(
+        clientPreviousResponseId,
+        clientPreviousResponseModel,
+        resolvedInstructionModel.model,
+      );
 
     const runtimeToolDefinitions = getRuntimeInstructionToolDefinitions(chatService);
     const tools = mapInstructionToolsForResponses(runtimeToolDefinitions);
@@ -26677,14 +26933,14 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     );
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
-    let nextInput = [...safeHistory];
-    if (!isDuplicatedUserMessage) {
-      nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
-    }
-    const statelessInput = [...nextInput];
+    const statelessInput = [...historyInput, ...currentUserInput];
+    let nextInput = canStartFromPreviousResponseState
+      ? [...currentUserInput]
+      : [...statelessInput];
 
     const toolsUsed = [];
     const changes = [];
+    const historyDelta = [];
     let versionSnapshot = null;
     let unsavedWriteChanges = 0;
     let totalUsage = {
@@ -26695,7 +26951,9 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       total_tokens: 0,
     };
     let finalContent = "";
-    let previousResponseId = null;
+    let previousResponseId = canStartFromPreviousResponseState
+      ? String(clientPreviousResponseId).trim()
+      : null;
 
     for (let i = 0; i < INSTRUCTION_MAX_TOOL_ITERATIONS; i++) {
       const payload = {
@@ -26720,6 +26978,18 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       if (toolCalls.length === 0) {
         finalContent = extractInstructionResponseText(response);
         break;
+      }
+
+      const iterationAssistantText = extractInstructionResponseText(response).trim();
+      if (iterationAssistantText) {
+        historyDelta.push({ role: "assistant", content: iterationAssistantText });
+      }
+
+      const toolCallHistoryItems = toolCalls
+        .map((toolCall) => buildInstructionStatelessFunctionCallInput(toolCall))
+        .filter(Boolean);
+      if (toolCallHistoryItems.length > 0) {
+        historyDelta.push(...toolCallHistoryItems);
       }
 
       const toolOutputs = [];
@@ -26760,11 +27030,14 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
           unsavedWriteChanges += 1;
         }
 
-        toolOutputs.push({
-          type: "function_call_output",
-          call_id: toolCall.call_id,
-          output: JSON.stringify(result),
-        });
+        const toolOutputItem = buildInstructionFunctionOutputHistoryItem(
+          toolCall.call_id,
+          result,
+        );
+        if (toolOutputItem) {
+          toolOutputs.push(toolOutputItem);
+          historyDelta.push(toolOutputItem);
+        }
       }
 
       if (usePreviousResponseId) {
@@ -26801,6 +27074,13 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     if (!finalContent || !finalContent.trim()) {
       finalContent = getInstructionFinalTextFallback(toolsUsed);
     }
+
+    if (finalContent && finalContent.trim()) {
+      historyDelta.push({ role: "assistant", content: finalContent.trim() });
+    }
+
+    const sessionResponseId =
+      usePreviousResponseId && previousResponseId ? previousResponseId : null;
 
     const shouldAutoSaveVersion = unsavedWriteChanges > 0;
     if (shouldAutoSaveVersion) {
@@ -26868,6 +27148,8 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       changes,
       usage: totalUsage,
       versionSnapshot,
+      historyDelta,
+      lastResponseId: sessionResponseId,
       model: resolvedInstructionModel.model,
       thinking,
     });
@@ -27209,7 +27491,9 @@ function buildActiveInstructionRequestSnapshot(reqState) {
     changes: reqState?.donePayload?.changes || null,
     toolsUsed: reqState?.donePayload?.toolsUsed || null,
     assistantMessages: reqState?.donePayload?.assistantMessages || null,
+    historyDelta: reqState?.donePayload?.historyDelta || null,
     versionSnapshot: reqState?.donePayload?.versionSnapshot || null,
+    lastResponseId: reqState?.donePayload?.lastResponseId || null,
     error: reqState?.error || null,
   };
 }
@@ -27221,7 +27505,17 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     if (!shouldUsePostgresInstructionsV2()) {
       return sendPostgresMigrationPending(res, "Instruction AI chat state");
     }
-    const { instructionId, message = "", model = "gpt-5.4", thinking = "medium", history = [], sessionId: clientSessionId, images } = req.body;
+    const {
+      instructionId,
+      message = "",
+      model = "gpt-5.4",
+      thinking = "medium",
+      history = [],
+      sessionId: clientSessionId,
+      images,
+      previousResponseId: clientPreviousResponseId = null,
+      previousResponseModel: clientPreviousResponseModel = "",
+    } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
     const normalizedInstructionRef = String(instructionId || "").trim();
 
@@ -27419,15 +27713,29 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       instruction,
       dataItemsSummary,
     );
-    const safeHistory = normalizeInstructionHistoryForResponses(history);
+    const safeHistory = normalizeInstructionSessionHistory(history);
+    const historyInput = mapInstructionSessionHistoryToResponsesInput(safeHistory);
     const lastHistoryMsg = safeHistory[safeHistory.length - 1];
     const isDuplicatedUserMessage =
       !hasIncomingImages &&
       lastHistoryMsg &&
       lastHistoryMsg.role === "user" &&
-      typeof lastHistoryMsg.content === "string" &&
-      lastHistoryMsg.content.trim() === String(message).trim();
-    const userHistoryText = buildInstructionUserHistoryText(message, images);
+      extractInstructionComparableUserText(lastHistoryMsg.content) ===
+        String(message).trim();
+    const currentUserHistoryEntry = !isDuplicatedUserMessage
+      ? buildInstructionUserHistoryEntry(message, images)
+      : null;
+    const currentUserInput = currentUserHistoryEntry
+      ? mapInstructionSessionHistoryToResponsesInput([currentUserHistoryEntry])
+      : [];
+    const canStartFromPreviousResponseState =
+      usePreviousResponseId &&
+      currentUserInput.length > 0 &&
+      canContinueInstructionPreviousResponseState(
+        clientPreviousResponseId,
+        clientPreviousResponseModel,
+        resolvedInstructionModel.model,
+      );
 
     const runtimeToolDefinitions = getRuntimeInstructionToolDefinitions(chatService);
     const tools = mapInstructionToolsForResponses(runtimeToolDefinitions);
@@ -27438,14 +27746,14 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     );
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
-    let nextInput = [...safeHistory];
-    if (!isDuplicatedUserMessage) {
-      nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
-    }
-    const statelessInput = [...nextInput];
+    const statelessInput = [...historyInput, ...currentUserInput];
+    let nextInput = canStartFromPreviousResponseState
+      ? [...currentUserInput]
+      : [...statelessInput];
 
     const toolsUsed = [];
     const changes = [];
+    const historyDelta = [];
     let totalUsage = {
       prompt_tokens: 0,
       completion_tokens: 0,
@@ -27453,7 +27761,9 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       reasoning_tokens: 0,
       total_tokens: 0,
     };
-    let previousResponseId = null;
+    let previousResponseId = canStartFromPreviousResponseState
+      ? String(clientPreviousResponseId).trim()
+      : null;
     let finalContent = "";
     const assistantMessages = [];
     let versionSnapshot = null;
@@ -27714,6 +28024,18 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         .sort((a, b) => (a.output_index ?? Number.MAX_SAFE_INTEGER) - (b.output_index ?? Number.MAX_SAFE_INTEGER));
 
       if (toolCalls.length > 0) {
+        const trimmedIterationContent = iterationContent.trim();
+        if (trimmedIterationContent) {
+          historyDelta.push({ role: "assistant", content: trimmedIterationContent });
+        }
+
+        const toolCallHistoryItems = toolCalls
+          .map((toolCall) => buildInstructionStatelessFunctionCallInput(toolCall))
+          .filter(Boolean);
+        if (toolCallHistoryItems.length > 0) {
+          historyDelta.push(...toolCallHistoryItems);
+        }
+
         const toolOutputs = [];
         for (const toolCall of toolCalls) {
           const toolName = toolCall.name;
@@ -27763,11 +28085,14 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             iteration: i + 1,
           });
           sendStatus("continuing", { iteration: i + 1, tool: null });
-          toolOutputs.push({
-            type: "function_call_output",
-            call_id: toolCall.call_id,
-            output: JSON.stringify(result),
-          });
+          const toolOutputItem = buildInstructionFunctionOutputHistoryItem(
+            toolCall.call_id,
+            result,
+          );
+          if (toolOutputItem) {
+            toolOutputs.push(toolOutputItem);
+            historyDelta.push(toolOutputItem);
+          }
         }
 
         if (usePreviousResponseId) {
@@ -27838,6 +28163,23 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         assistantMessages.push({ role: "assistant", content: finalContent });
       }
     }
+
+    for (const assistantMessage of assistantMessages) {
+      if (
+        assistantMessage &&
+        assistantMessage.role === "assistant" &&
+        typeof assistantMessage.content === "string" &&
+        assistantMessage.content.trim()
+      ) {
+        historyDelta.push({
+          role: "assistant",
+          content: assistantMessage.content.trim(),
+        });
+      }
+    }
+
+    const sessionResponseId =
+      usePreviousResponseId && previousResponseId ? previousResponseId : null;
 
     const shouldAutoSaveVersion = unsavedWriteChanges > 0;
     if (shouldAutoSaveVersion) {
@@ -27931,7 +28273,16 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       versionSnapshot: versionSnapshot || null,
     });
 
-    const donePayload = { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages, versionSnapshot };
+    const donePayload = {
+      toolsUsed,
+      changes,
+      usage: totalUsage,
+      toolContext,
+      assistantMessages,
+      historyDelta,
+      versionSnapshot,
+      lastResponseId: sessionResponseId,
+    };
     requestState.donePayload = donePayload;
     requestState.status = "complete";
     requestState.updatedAt = Date.now();
@@ -27940,13 +28291,18 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     // Auto-save session (even if client disconnected)
     try {
       const fullHistory = isDuplicatedUserMessage
-        ? [...safeHistory, ...assistantMessages]
-        : [...safeHistory, ...(userHistoryText ? [{ role: "user", content: userHistoryText }] : []), ...assistantMessages];
+        ? [...safeHistory, ...historyDelta]
+        : [
+          ...safeHistory,
+          ...(currentUserHistoryEntry ? [currentUserHistoryEntry] : []),
+          ...historyDelta,
+        ];
       await getInstructionChatStateRepository().saveSession({
         sessionId,
         instructionId: normalizedInstructionRef,
         instructionName: instruction.name || "",
         history: fullHistory,
+        lastResponseId: sessionResponseId,
         model: resolvedInstructionModel.model,
         thinking,
         totalTokens: totalUsage.total_tokens,
@@ -28039,7 +28395,17 @@ app.get("/api/instruction-ai/stream/state", requireAdmin, (req, res) => {
 // Save session
 app.post("/api/instruction-ai/sessions", requireAdmin, async (req, res) => {
   try {
-    const { sessionId, instructionId, instructionName, history, model, thinking, totalTokens, totalChanges } = req.body;
+    const {
+      sessionId,
+      instructionId,
+      instructionName,
+      history,
+      lastResponseId,
+      model,
+      thinking,
+      totalTokens,
+      totalChanges,
+    } = req.body;
     if (!sessionId || !instructionId) return res.json({ error: "Missing sessionId or instructionId" });
 
     const username = req.session?.user?.username || "admin";
@@ -28049,6 +28415,7 @@ app.post("/api/instruction-ai/sessions", requireAdmin, async (req, res) => {
       instructionId,
       instructionName: instructionName || "",
       history: history || [],
+      lastResponseId: typeof lastResponseId === "string" ? lastResponseId : "",
       model,
       thinking,
       totalTokens: totalTokens || 0,
