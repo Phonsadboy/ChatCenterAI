@@ -217,6 +217,31 @@ const HISTORY_IMAGE_ACCESSIBLE_PER_MESSAGE_LIMIT = Math.max(
   1,
   Number(process.env.CCAI_HISTORY_IMAGE_ACCESSIBLE_PER_MESSAGE_LIMIT || 1),
 );
+const CHAT_IMAGE_STORAGE_MAX_LONG_EDGE = Math.max(
+  1600,
+  Number(process.env.CCAI_CHAT_IMAGE_STORAGE_MAX_LONG_EDGE || 1800),
+);
+const CHAT_IMAGE_STORAGE_TARGET_QUALITY = Math.max(
+  40,
+  Math.min(
+    90,
+    Number(process.env.CCAI_CHAT_IMAGE_STORAGE_TARGET_QUALITY || 70),
+  ),
+);
+const CHAT_IMAGE_STORAGE_MIN_QUALITY = Math.max(
+  35,
+  Math.min(
+    CHAT_IMAGE_STORAGE_TARGET_QUALITY,
+    Number(process.env.CCAI_CHAT_IMAGE_STORAGE_MIN_QUALITY || 50),
+  ),
+);
+const CHAT_IMAGE_STORAGE_MAX_BYTES = Math.max(
+  1024 * 1024,
+  Number(
+    process.env.CCAI_CHAT_IMAGE_STORAGE_MAX_BYTES ||
+      Math.round(1.5 * 1024 * 1024),
+  ),
+);
 const WEBHOOK_DEDUPE_TTL_SECONDS = Math.max(
   60,
   Number(process.env.CCAI_WEBHOOK_DEDUPE_TTL_SECONDS || 24 * 60 * 60),
@@ -10174,28 +10199,16 @@ async function handleLineEvent(event, queueOptions = {}) {
         const originalBuffer = Buffer.concat(buffers);
         console.log(`[LOG] ขนาดรูปภาพต้นฉบับ: ${originalBuffer.length} bytes`);
 
-        let resizedBuffer = await optimizeImageBufferForVision(originalBuffer);
+        const optimizedImage = await optimizeImageBufferForChatStorage(
+          originalBuffer,
+        );
+        let resizedBuffer = optimizedImage.buffer;
         console.log(
           `[LOG] ปรับขนาดรูปภาพเรียบร้อย: ${resizedBuffer.length} bytes (ลดลง ${((1 - resizedBuffer.length / originalBuffer.length) * 100).toFixed(1)}%)`,
         );
-
-        // ตรวจสอบขนาดไฟล์หลังการปรับขนาด
-        const maxSize = 20 * 1024 * 1024; // 20MB limit
-        if (resizedBuffer.length > maxSize) {
-          console.log(
-            `[LOG] รูปภาพใหญ่เกินไป (${(resizedBuffer.length / 1024 / 1024).toFixed(1)}MB), ปรับคุณภาพลง...`,
-          );
-          try {
-            resizedBuffer = await sharp(resizedBuffer)
-              .jpeg({ quality: 60 })
-              .toBuffer();
-            console.log(
-              `[LOG] ปรับคุณภาพลงเรียบร้อย: ${resizedBuffer.length} bytes`,
-            );
-          } catch (err) {
-            console.error("[ERROR] ไม่สามารถปรับคุณภาพรูปภาพได้:", err.message);
-          }
-        }
+        console.log(
+          `[LOG] คุณภาพรูปภาพหลัง optimize: ${optimizedImage.quality}, ขนาดเป้าหมายไม่เกิน ${(CHAT_IMAGE_STORAGE_MAX_BYTES / 1024 / 1024).toFixed(2)}MB`,
+        );
 
         // เปลี่ยนเป็น base64
         const base64Data = resizedBuffer.toString("base64");
@@ -19636,16 +19649,9 @@ async function fetchWhatsAppMediaAsBase64(mediaId, accessToken) {
 
   if (typeof mimeType === "string" && mimeType.startsWith("image/")) {
     try {
-      buffer = await sharp(buffer)
-        .resize({
-          width: 1024,
-          height: 1024,
-          fit: "inside",
-          withoutEnlargement: true,
-        })
-        .jpeg({ quality: 85, progressive: true })
-        .toBuffer();
-      finalMime = "image/jpeg";
+      const optimized = await optimizeImageBufferForChatStorage(buffer);
+      buffer = optimized.buffer;
+      finalMime = optimized.mimeType || mimeType;
     } catch (imageError) {
       console.warn(
         "[WhatsApp] ไม่สามารถแปลงขนาดรูปจาก media API ได้:",
@@ -19921,31 +19927,109 @@ async function readInstructionAssetBuffer(seg) {
   );
 }
 
-async function optimizeImageBufferForVision(originalBuffer) {
-  let optimizedBuffer = originalBuffer;
+function resolveChatImageStorageFormat(metadata = {}) {
+  const format =
+    typeof metadata.format === "string" ? metadata.format.trim().toLowerCase() : "";
+  const hasAlpha = metadata?.hasAlpha === true;
+
+  if (hasAlpha || ["png", "webp", "gif", "avif", "heif", "heic"].includes(format)) {
+    return { codec: "webp", mimeType: "image/webp" };
+  }
+
+  return { codec: "jpeg", mimeType: "image/jpeg" };
+}
+
+async function renderOptimizedChatImageBuffer(
+  originalBuffer,
+  outputFormat,
+  quality,
+) {
+  let pipeline = sharp(originalBuffer, { animated: false, failOn: "none" })
+    .rotate()
+    .resize({
+      width: CHAT_IMAGE_STORAGE_MAX_LONG_EDGE,
+      height: CHAT_IMAGE_STORAGE_MAX_LONG_EDGE,
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+
+  if (outputFormat === "webp") {
+    return pipeline.webp({ quality, effort: 4 }).toBuffer();
+  }
+
+  pipeline = pipeline.flatten({ background: { r: 255, g: 255, b: 255 } });
+  return pipeline.jpeg({ quality, progressive: true, mozjpeg: true }).toBuffer();
+}
+
+async function optimizeImageBufferForChatStorage(originalBuffer) {
+  if (!Buffer.isBuffer(originalBuffer) || originalBuffer.length === 0) {
+    return {
+      buffer: originalBuffer,
+      mimeType: null,
+      codec: null,
+      quality: CHAT_IMAGE_STORAGE_TARGET_QUALITY,
+    };
+  }
+
   try {
-    optimizedBuffer = await sharp(originalBuffer)
-      .resize({
-        width: 1024,
-        height: 1024,
-        fit: "inside",
-        withoutEnlargement: true,
-      })
-      .jpeg({ quality: 85, progressive: true })
-      .toBuffer();
+    const metadata = await sharp(originalBuffer, {
+      animated: false,
+      failOn: "none",
+    }).metadata();
+    const output = resolveChatImageStorageFormat(metadata);
+    let quality = CHAT_IMAGE_STORAGE_TARGET_QUALITY;
+    let optimizedBuffer = await renderOptimizedChatImageBuffer(
+      originalBuffer,
+      output.codec,
+      quality,
+    );
+
+    while (
+      optimizedBuffer.length > CHAT_IMAGE_STORAGE_MAX_BYTES &&
+      quality > CHAT_IMAGE_STORAGE_MIN_QUALITY
+    ) {
+      quality = Math.max(CHAT_IMAGE_STORAGE_MIN_QUALITY, quality - 10);
+      optimizedBuffer = await renderOptimizedChatImageBuffer(
+        originalBuffer,
+        output.codec,
+        quality,
+      );
+      if (quality === CHAT_IMAGE_STORAGE_MIN_QUALITY) {
+        break;
+      }
+    }
+
+    return {
+      buffer: optimizedBuffer,
+      mimeType: output.mimeType,
+      codec: output.codec,
+      quality,
+      width: metadata?.width || null,
+      height: metadata?.height || null,
+    };
   } catch (err) {
     console.error("Error optimizing image buffer:", err.message);
+    return {
+      buffer: originalBuffer,
+      mimeType: null,
+      codec: null,
+      quality: CHAT_IMAGE_STORAGE_TARGET_QUALITY,
+    };
   }
-  return optimizedBuffer;
+}
+
+async function optimizeImageBufferForVision(originalBuffer) {
+  const optimized = await optimizeImageBufferForChatStorage(originalBuffer);
+  return optimized.buffer;
 }
 
 // Helper to download and optimize Facebook image to base64
 async function fetchFacebookImageAsBase64(url) {
   const response = await axios.get(url, { responseType: "arraybuffer" });
-  const buffer = await optimizeImageBufferForVision(
+  const optimized = await optimizeImageBufferForChatStorage(
     Buffer.from(response.data, "binary"),
   );
-  return buffer.toString("base64");
+  return optimized.buffer.toString("base64");
 }
 
 // Convert table instruction data to a JSON string
