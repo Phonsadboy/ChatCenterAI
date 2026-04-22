@@ -1787,6 +1787,41 @@ function buildMessagingEventDedupeKey(platform, botId, messagingEvent = {}) {
   ].join(":");
 }
 
+function resolveFacebookTargetUserId(messagingEvent = {}, candidatePageIds = []) {
+  const senderId = String(messagingEvent?.sender?.id || "").trim();
+  const recipientId = String(messagingEvent?.recipient?.id || "").trim();
+  const pageIds = new Set(
+    (Array.isArray(candidatePageIds) ? candidatePageIds : [candidatePageIds])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+  const isPageId = (value) => Boolean(value) && pageIds.has(value);
+
+  let targetUserId = "";
+
+  if (senderId && recipientId) {
+    if (isPageId(senderId) && !isPageId(recipientId)) {
+      targetUserId = recipientId;
+    } else if (isPageId(recipientId) && !isPageId(senderId)) {
+      targetUserId = senderId;
+    } else {
+      targetUserId = recipientId || senderId;
+    }
+  } else {
+    targetUserId = recipientId || senderId;
+  }
+
+  if (isPageId(targetUserId)) {
+    if (senderId && !isPageId(senderId)) {
+      targetUserId = senderId;
+    } else if (recipientId && !isPageId(recipientId)) {
+      targetUserId = recipientId;
+    }
+  }
+
+  return targetUserId;
+}
+
 function buildFacebookCommentDedupeKey(botId, changeValue = {}) {
   const normalizedBotId = normalizeRuntimeCacheId(botId, "default");
   const commentId =
@@ -17618,6 +17653,11 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
     // Process webhook events asynchronously
     if (req.body.object === "page") {
       for (let entry of req.body.entry) {
+        const entryPageId =
+          typeof entry?.id === "string" && entry.id.trim()
+            ? entry.id.trim()
+            : pageId;
+
         // Handle feed/comment events
         if (entry.changes) {
           for (let change of entry.changes) {
@@ -17659,7 +17699,7 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
               };
 
               handleFacebookComment(
-                pageId,
+                entryPageId,
                 postId,
                 commentData,
                 accessToken,
@@ -17689,37 +17729,10 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
             // จัดการข้อความที่ส่งจากเพจเอง (echo) – ถือว่าเป็นข้อความจากแอดมินเพจ
             if (messagingEvent.message?.is_echo) {
               try {
-                const senderId = String(messagingEvent.sender?.id || "").trim();
-                const recipientId = String(
-                  messagingEvent.recipient?.id || "",
-                ).trim();
-                const pageIdStr = String(pageId || "").trim();
-                let targetUserId = "";
-
-                // รองรับ payload ได้ทั้งกรณี sender=page,recipient=user และ sender=user,recipient=page
-                if (senderId && recipientId) {
-                  if (senderId === pageIdStr && recipientId !== pageIdStr) {
-                    targetUserId = recipientId;
-                  } else if (
-                    recipientId === pageIdStr &&
-                    senderId !== pageIdStr
-                  ) {
-                    targetUserId = senderId;
-                  } else {
-                    targetUserId = recipientId || senderId;
-                  }
-                } else {
-                  targetUserId = recipientId || senderId;
-                }
-
-                // ป้องกันกรณี fallback แล้วได้ pageId แทน userId
-                if (targetUserId === pageIdStr) {
-                  if (senderId && senderId !== pageIdStr) {
-                    targetUserId = senderId;
-                  } else if (recipientId && recipientId !== pageIdStr) {
-                    targetUserId = recipientId;
-                  }
-                }
+                const targetUserId = resolveFacebookTargetUserId(
+                  messagingEvent,
+                  [facebookBot.pageId, entryPageId],
+                );
                 const text = messagingEvent.message?.text?.trim();
                 const metadata =
                   typeof messagingEvent.message?.metadata === "string"
