@@ -538,6 +538,28 @@ function normalizeHistoryImageCandidateUrl(url) {
   return resolved;
 }
 
+function buildInlineHistoryImageDataUrl(rawContent, explicitMime = null) {
+  if (!isNonEmptyString(rawContent)) return "";
+
+  const trimmed = rawContent.trim();
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  const compact = trimmed.replace(/\s+/g, "");
+  if (!compact || !/^[A-Za-z0-9+/=]+$/.test(compact)) {
+    return "";
+  }
+
+  const preferredMime =
+    isNonEmptyString(explicitMime) &&
+    explicitMime.trim().toLowerCase().startsWith("image/")
+      ? explicitMime.trim()
+      : "";
+  const mimeType = preferredMime || detectImageMimeType(compact);
+  return `data:${mimeType || "image/jpeg"};base64,${compact}`;
+}
+
 function buildChatImageHistoryUrl(messageId, imageIndex) {
   if (!isNonEmptyString(messageId)) return "";
   if (!Number.isInteger(imageIndex) || imageIndex < 0) return "";
@@ -2275,15 +2297,23 @@ async function getAIHistory(userId) {
 
       const collectImageNode = (target) => {
         if (!target || target.type !== "image") return false;
-        const fallbackUrl = isNonEmptyString(target.base64 || target.content)
+        const hasInlineImage = isNonEmptyString(target.base64 || target.content);
+        const inlineDataUrl = buildInlineHistoryImageDataUrl(
+          target.base64 || target.content,
+          target.mime || target.mimeType || null,
+        );
+        const fallbackUrl = hasInlineImage
           ? buildChatImageHistoryUrl(messageId, imageIndex)
           : "";
         const candidateUrl =
+          inlineDataUrl ||
           normalizeHistoryImageCandidateUrl(
             target.url || target.previewUrl || fallbackUrl,
-          ) || "";
+          ) ||
+          "";
         imageCandidates.push({
           url: candidateUrl,
+          requiresAccessibilityCheck: !inlineDataUrl,
           caption:
             (typeof target.description === "string" && target.description.trim())
             || (typeof target.caption === "string" && target.caption.trim())
@@ -2354,12 +2384,15 @@ async function getAIHistory(userId) {
             hadUnavailableImage = true;
             continue;
           }
-          // Validate URL before it is sent back to the model. Broken/private URLs
-          // should degrade to a plain note instead of poisoning the chat context.
-          const isAccessible = await isHistoryImageUrlAccessible(candidate.url);
-          if (!isAccessible) {
-            hadUnavailableImage = true;
-            continue;
+          if (candidate.requiresAccessibilityCheck) {
+            // Validate remote URLs before they are sent back to the model.
+            // Broken/private URLs should degrade to a plain note instead of
+            // poisoning the chat context.
+            const isAccessible = await isHistoryImageUrlAccessible(candidate.url);
+            if (!isAccessible) {
+              hadUnavailableImage = true;
+              continue;
+            }
           }
           accessibleImages.push(candidate);
         }
@@ -13340,6 +13373,96 @@ function normalizeHistoryMessageContent(content) {
   return null;
 }
 
+function historyContentHasImagePart(content) {
+  if (!Array.isArray(content) || content.length === 0) return false;
+  return content.some((part) => {
+    if (!part || typeof part !== "object") return false;
+    if (
+      part.type === "input_image" &&
+      typeof part.image_url === "string" &&
+      part.image_url.trim()
+    ) {
+      return true;
+    }
+    return (
+      part.type === "image_url" &&
+      part.image_url &&
+      typeof part.image_url.url === "string" &&
+      part.image_url.url.trim()
+    );
+  });
+}
+
+function stripHistoryImagesFromContent(content, role = "user") {
+  const normalizedContent = normalizeHistoryMessageContent(content);
+  if (typeof normalizedContent === "string") {
+    return normalizedContent;
+  }
+  if (!Array.isArray(normalizedContent) || normalizedContent.length === 0) {
+    return null;
+  }
+
+  const textParts = [];
+  let hasImage = false;
+
+  normalizedContent.forEach((part) => {
+    if (!part || typeof part !== "object") return;
+    if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+      textParts.push(part.text.trim());
+      return;
+    }
+    if (
+      (part.type === "input_image" &&
+        typeof part.image_url === "string" &&
+        part.image_url.trim()) ||
+      (part.type === "image_url" &&
+        part.image_url &&
+        typeof part.image_url.url === "string" &&
+        part.image_url.url.trim())
+    ) {
+      hasImage = true;
+    }
+  });
+
+  const text = textParts.join("\n\n").trim();
+  if (!hasImage || role === "assistant") {
+    return text || null;
+  }
+  return text ? `${text}\n\n[เคยมีรูปมาก่อน]` : "[เคยมีรูปมาก่อน]";
+}
+
+function historyHasImageParts(history) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  return safeHistory.some((msg) => historyContentHasImagePart(msg?.content));
+}
+
+function stripImagesFromHistoryMessages(history) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  return safeHistory
+    .map((msg) => {
+      if (!msg || typeof msg !== "object") return null;
+      if (!Array.isArray(msg.content)) return { ...msg };
+      return {
+        ...msg,
+        content: stripHistoryImagesFromContent(msg.content, msg.role) || "",
+      };
+    })
+    .filter((msg) => {
+      if (!msg) return false;
+      if (typeof msg.content === "string" && msg.content.trim() !== "") return true;
+      if (Array.isArray(msg.content) && msg.content.length > 0) return true;
+      if (
+        msg.role === "assistant" &&
+        Array.isArray(msg.tool_calls) &&
+        msg.tool_calls.length > 0
+      ) {
+        return true;
+      }
+      if (msg.role === "tool" && msg.tool_call_id) return true;
+      return false;
+    });
+}
+
 function mapHistoryContentToResponsesContent(content, role = "user") {
   const normalizedContent = normalizeHistoryMessageContent(content);
   if (typeof normalizedContent === "string") {
@@ -13991,6 +14114,74 @@ function buildMultimodalPayloads(contentSequence, maxImages, modelId) {
   return { chatContent, responsesContent, imageCount };
 }
 
+function shouldRetryConversationWithoutHistoryImages(err, history) {
+  if (!historyHasImageParts(history)) {
+    return false;
+  }
+
+  const errorMessage =
+    typeof err?.message === "string"
+      ? err.message
+      : typeof err?.error?.message === "string"
+        ? err.error.message
+        : "";
+  const errorType =
+    typeof err?.type === "string"
+      ? err.type
+      : typeof err?.error?.type === "string"
+        ? err.error.type
+        : "";
+  const errorParam =
+    typeof err?.param === "string"
+      ? err.param
+      : typeof err?.error?.param === "string"
+        ? err.error.param
+        : "";
+  const errorCode =
+    typeof err?.code === "string"
+      ? err.code
+      : typeof err?.error?.code === "string"
+        ? err.error.code
+        : "";
+
+  if (errorParam !== "url") {
+    return false;
+  }
+  if (errorType && errorType !== "invalid_request_error") {
+    return false;
+  }
+  return (
+    errorCode === "invalid_value" ||
+    /timeout while downloading/i.test(errorMessage) ||
+    /while downloading/i.test(errorMessage)
+  );
+}
+
+async function runCommerceAssistantConversationWithHistoryImageFallback(
+  options = {},
+) {
+  try {
+    return await runCommerceAssistantConversation(options);
+  } catch (err) {
+    if (!shouldRetryConversationWithoutHistoryImages(err, options.history)) {
+      throw err;
+    }
+
+    const baseLogLabel =
+      typeof options.logLabel === "string" && options.logLabel.trim()
+        ? options.logLabel.trim()
+        : "OpenAI";
+    console.warn(
+      `[${baseLogLabel}] Retry without history images after URL error: ${err?.message || err}`,
+    );
+    return runCommerceAssistantConversation({
+      ...options,
+      history: stripImagesFromHistoryMessages(options.history),
+      logLabel: `${baseLogLabel} History Fallback`,
+    });
+  }
+}
+
 async function runCommerceAssistantConversation(options = {}) {
   const {
     systemInstructions = "",
@@ -14266,7 +14457,7 @@ async function getAssistantResponseTextOnly(
 ) {
   try {
     const safeUserText = sanitizeTextValue(userText, { maxLength: 8000 });
-    const result = await runCommerceAssistantConversation({
+    const result = await runCommerceAssistantConversationWithHistoryImageFallback({
       systemInstructions,
       history,
       chatUserContent: safeUserText,
@@ -14319,7 +14510,7 @@ async function getAssistantResponseMultimodal(
       selectedVisionModel,
     );
 
-    const result = await runCommerceAssistantConversation({
+    const result = await runCommerceAssistantConversationWithHistoryImageFallback({
       systemInstructions,
       history,
       chatUserContent: chatContent,

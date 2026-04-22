@@ -20,6 +20,25 @@ const POSTGRES_MAINTENANCE_INTERVAL_MS = Math.max(
   15 * 60 * 1000,
   Number(process.env.CCAI_POSTGRES_MAINTENANCE_INTERVAL_MS || 60 * 60 * 1000),
 );
+const POSTGRES_MAINTENANCE_STARTUP_JOB_ID = `${JOB_NAMES.POSTGRES_MAINTENANCE_TICK}-startup`;
+
+async function enqueueStartupPostgresMaintenance(statsQueue) {
+  if (!POSTGRES_MAINTENANCE_ENABLED) {
+    return false;
+  }
+
+  await statsQueue.add(
+    JOB_NAMES.POSTGRES_MAINTENANCE_TICK,
+    {
+      source: "startup",
+    },
+    {
+      jobId: POSTGRES_MAINTENANCE_STARTUP_JOB_ID,
+    },
+  );
+
+  return true;
+}
 
 async function registerBatchSchedulers() {
   const followUpQueue = getQueue(QUEUE_NAMES.FOLLOWUP);
@@ -67,6 +86,8 @@ async function registerBatchSchedulers() {
         },
       },
     );
+
+    await enqueueStartupPostgresMaintenance(statsQueue);
   }
 }
 
@@ -101,7 +122,11 @@ async function startBatchWorkers() {
         return { processed: true, job: job.name };
       }
       if (job.name === JOB_NAMES.POSTGRES_MAINTENANCE_TICK) {
+        console.log(
+          `[Worker:batch] Running PostgreSQL maintenance (source=${job.data?.source || "scheduled"})`,
+        );
         const summary = await runPostgresMaintenance();
+        console.log("[Worker:batch] PostgreSQL maintenance finished", summary);
         return { processed: true, job: job.name, summary };
       }
       return { skipped: true, reason: "unknown_job" };
