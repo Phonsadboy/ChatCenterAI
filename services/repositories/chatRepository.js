@@ -798,6 +798,29 @@ function createChatRepository({
     return readPostgresMessageById(messageId);
   }
 
+  async function updateMessageContent(messageId, content) {
+    const normalizedMessageId = toLegacyId(messageId);
+    if (!normalizedMessageId) return null;
+    ensurePostgresAvailable("updateMessageContent");
+
+    await query(
+      `
+        UPDATE messages
+        SET
+          content_text = $2,
+          content = $3::jsonb
+        WHERE legacy_message_id = $1 OR id::text = $1
+      `,
+      [
+        normalizedMessageId,
+        toText(content),
+        JSON.stringify(normalizeJson(content, null)),
+      ],
+    );
+
+    return readPostgresMessageById(normalizedMessageId);
+  }
+
   async function hasMessages(filter = {}) {
     ensurePostgresAvailable("hasMessages");
     const rows = await readPostgresActivityDocs(filter, {
@@ -961,6 +984,7 @@ function createChatRepository({
     listDistinctUserIds,
     listUsers,
     markMessagesAsOrderExtracted,
+    updateMessageContent,
   };
 }
 

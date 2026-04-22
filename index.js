@@ -191,8 +191,21 @@ const ASSET_HTTP_FETCH_RETRY_DELAY_MS = Math.max(
   0,
   Number(process.env.CCAI_ASSET_HTTP_FETCH_RETRY_DELAY_MS || 1500),
 );
+const HISTORY_IMAGE_URL_CHECK_TIMEOUT_MS = Math.max(
+  1500,
+  Number(process.env.CCAI_HISTORY_IMAGE_URL_CHECK_TIMEOUT_MS || 5000),
+);
+const HISTORY_IMAGE_URL_CHECK_CACHE_TTL_MS = Math.max(
+  10000,
+  Number(process.env.CCAI_HISTORY_IMAGE_URL_CHECK_CACHE_TTL_MS || 300000),
+);
+const HISTORY_IMAGE_ACCESSIBLE_PER_MESSAGE_LIMIT = Math.max(
+  1,
+  Number(process.env.CCAI_HISTORY_IMAGE_ACCESSIBLE_PER_MESSAGE_LIMIT || 3),
+);
 const adminChatUsersCache = new Map();
 const adminChatUsersInflight = new Map();
+const historyImageUrlAccessCache = new Map();
 
 function sleep(ms) {
   const normalizedMs = Number(ms);
@@ -435,6 +448,185 @@ function resolveInstructionAssetUrl(url, fallbackFileName) {
     ? `/assets/instructions/${fallbackFileName}`
     : null;
   return resolvePublicAssetUrl(url, fallbackPath);
+}
+
+function parseStoredChatContent(value) {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return value;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch (_) {
+    return value;
+  }
+}
+
+function cloneStoredChatContent(value) {
+  if (!value || typeof value !== "object") return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_) {
+    return value;
+  }
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function normalizeHistoryImageCandidateUrl(url) {
+  if (!isNonEmptyString(url)) return "";
+  const resolved = resolvePublicAssetUrl(url.trim());
+  if (!resolved || !/^https?:\/\//i.test(resolved)) {
+    return "";
+  }
+  return resolved;
+}
+
+function buildChatImageHistoryUrl(messageId, imageIndex) {
+  if (!isNonEmptyString(messageId)) return "";
+  if (!Number.isInteger(imageIndex) || imageIndex < 0) return "";
+  return normalizeHistoryImageCandidateUrl(
+    `/assets/chat-images/${String(messageId).trim()}/${imageIndex}`,
+  );
+}
+
+function buildPersistableContentOutput(content, originalValue) {
+  if (typeof originalValue === "string") {
+    return typeof content === "string" ? content : JSON.stringify(content);
+  }
+  return content;
+}
+
+function stripImageTokensFromText(value) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(createImageTokenRegex("gi"), " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function attachChatImageUrlsToStoredContent(content, messageId) {
+  const parsed = parseStoredChatContent(content);
+  if (!parsed || typeof parsed !== "object") {
+    return { content, changed: false };
+  }
+
+  const cloned = cloneStoredChatContent(parsed);
+  let imageIndex = 0;
+  let changed = false;
+
+  const visit = (node) => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    if (typeof node !== "object") return;
+
+    const updateImageNode = (target) => {
+      if (!target || target.type !== "image") return false;
+      const hasInlineImage = isNonEmptyString(target.base64 || target.content);
+      const stableUrl = hasInlineImage
+        ? buildChatImageHistoryUrl(messageId, imageIndex)
+        : normalizeHistoryImageCandidateUrl(target.url || target.previewUrl);
+      imageIndex += 1;
+      if (!stableUrl) return false;
+
+      if (target.url !== stableUrl) {
+        target.url = stableUrl;
+        changed = true;
+      }
+      if (target.previewUrl !== stableUrl) {
+        target.previewUrl = stableUrl;
+        changed = true;
+      }
+      return true;
+    };
+
+    if (updateImageNode(node)) {
+      return;
+    }
+
+    if (node.data && typeof node.data === "object") {
+      if (updateImageNode(node.data)) {
+        return;
+      }
+      if (Array.isArray(node.data)) {
+        visit(node.data);
+      }
+    }
+
+    if (Array.isArray(node.content)) {
+      visit(node.content);
+    }
+  };
+
+  visit(cloned);
+  if (!changed) {
+    return { content, changed: false };
+  }
+
+  return {
+    content: buildPersistableContentOutput(cloned, content),
+    changed: true,
+  };
+}
+
+async function isHistoryImageUrlAccessible(url) {
+  const normalizedUrl = normalizeHistoryImageCandidateUrl(url);
+  if (!normalizedUrl) return false;
+
+  const cached = historyImageUrlAccessCache.get(normalizedUrl);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.ok;
+  }
+
+  const cacheResult = (ok) => {
+    historyImageUrlAccessCache.set(normalizedUrl, {
+      ok,
+      expiresAt: Date.now() + HISTORY_IMAGE_URL_CHECK_CACHE_TTL_MS,
+    });
+    return ok;
+  };
+
+  const requestConfig = {
+    timeout: HISTORY_IMAGE_URL_CHECK_TIMEOUT_MS,
+    maxRedirects: 5,
+    validateStatus: () => true,
+  };
+
+  try {
+    const headResponse = await axios.head(normalizedUrl, requestConfig);
+    if (headResponse.status >= 200 && headResponse.status < 400) {
+      return cacheResult(true);
+    }
+    if (![401, 403, 405].includes(headResponse.status)) {
+      return cacheResult(false);
+    }
+  } catch (_) {
+    // fallback to GET below
+  }
+
+  try {
+    const getResponse = await axios.get(normalizedUrl, {
+      ...requestConfig,
+      responseType: "stream",
+    });
+    const ok = getResponse.status >= 200 && getResponse.status < 400;
+    if (getResponse.data && typeof getResponse.data.destroy === "function") {
+      getResponse.data.destroy();
+    }
+    return cacheResult(ok);
+  } catch (_) {
+    return cacheResult(false);
+  }
 }
 
 // Line Client จะถูกสร้างเมื่อต้องการใช้งานจริง (ไม่สร้างตั้งแต่เริ่มต้น)
@@ -1888,8 +2080,9 @@ async function getChatHistory(userId) {
 
 /**
  * ดึงประวัติแชทที่ถูกทำให้เหมาะสมสำหรับส่งให้ OpenAI
- * - ตัดข้อมูลรูปภาพ (base64) ออกจากข้อความเก่า
- * - เก็บเฉพาะข้อความตัวอักษร และใส่หมายเหตุว่ามีรูปภาพกี่รูป
+ * - เก็บ URL รูปภาพย้อนหลังเฉพาะรูปที่ "ลูกค้า" ส่งและตรวจสอบแล้วว่าเข้าถึงได้จริง
+ * - รูปจากระบบ/แอดมิน/starter/follow-up จะไม่ถูกส่งกลับเข้าโมเดลเป็นภาพย้อนหลัง
+ * - ถ้ารูปลูกค้าเดิมเข้าถึงไม่ได้ ให้เหลือเพียงหมายเหตุว่าเคยมีรูปมาก่อน
  * - จำกัดจำนวนข้อความล่าสุดเพื่อลด token
  */
 async function getAIHistory(userId) {
@@ -1912,104 +2105,170 @@ async function getAIHistory(userId) {
 
   const items = raw.reverse();
 
-  const sanitize = (role, content) => {
-    // คืนค่าเป็น string เสมอ และไม่มี base64 ขนาดใหญ่
-    const isBase64Like = (str) => {
-      if (typeof str !== "string") return false;
-      if (str.length < 1024) return false; // เล็กๆ ปล่อยผ่าน
-      // รูปแบบพบได้บ่อยของ base64 รูปภาพ
-      if (str.startsWith("data:image/")) return true;
-      if (str.includes("\n")) return false; // เนื้อความปกติมักมีช่องว่าง/ขึ้นบรรทัด
-      const base64Chars = /^[A-Za-z0-9+/=]+$/;
-      return base64Chars.test(str.slice(0, Math.min(str.length, 8192)));
+  const isBase64Like = (str) => {
+    if (typeof str !== "string") return false;
+    if (str.length < 1024) return false;
+    if (str.startsWith("data:image/")) return true;
+    if (str.includes("\n")) return false;
+    const base64Chars = /^[A-Za-z0-9+/=]+$/;
+    return base64Chars.test(str.slice(0, Math.min(str.length, 8192)));
+  };
+
+  const truncateLong = (str, maxLen = 4000) => {
+    if (typeof str !== "string") return "";
+    return str.length > maxLen
+      ? str.slice(0, maxLen) + "\n[ตัดเนื้อความยาว]"
+      : str;
+  };
+
+  const collectHistoryContentParts = (content, messageId) => {
+    const parsed = parseStoredChatContent(content);
+    const textParts = [];
+    const imageCandidates = [];
+    let imageIndex = 0;
+
+    const visit = (node) => {
+      if (!node) return;
+      if (Array.isArray(node)) {
+        node.forEach(visit);
+        return;
+      }
+      if (typeof node !== "object") return;
+
+      const collectImageNode = (target) => {
+        if (!target || target.type !== "image") return false;
+        const fallbackUrl = isNonEmptyString(target.base64 || target.content)
+          ? buildChatImageHistoryUrl(messageId, imageIndex)
+          : "";
+        const candidateUrl =
+          normalizeHistoryImageCandidateUrl(
+            target.url || target.previewUrl || fallbackUrl,
+          ) || "";
+        imageCandidates.push({
+          url: candidateUrl,
+          caption:
+            (typeof target.description === "string" && target.description.trim())
+            || (typeof target.caption === "string" && target.caption.trim())
+            || (typeof target.alt === "string" && target.alt.trim())
+            || "",
+        });
+        imageIndex += 1;
+        return true;
+      };
+
+      if (collectImageNode(node)) {
+        return;
+      }
+
+      if (node.type === "text") {
+        if (typeof node.content === "string" && node.content.trim()) {
+          textParts.push(node.content);
+        } else if (typeof node.text === "string" && node.text.trim()) {
+          textParts.push(node.text);
+        }
+      }
+
+      if (node.data && typeof node.data === "object") {
+        if (collectImageNode(node.data)) {
+          return;
+        }
+        if (node.data.type === "text" && typeof node.data.text === "string" && node.data.text.trim()) {
+          textParts.push(node.data.text);
+        }
+        if (Array.isArray(node.data)) {
+          visit(node.data);
+        }
+      }
+
+      if (Array.isArray(node.content)) {
+        visit(node.content);
+      }
     };
 
-    const truncateLong = (str, maxLen = 4000) => {
-      if (typeof str !== "string") return "";
-      return str.length > maxLen
-        ? str.slice(0, maxLen) + "\n[ตัดเนื้อความยาว]"
-        : str;
-    };
-
-    try {
-      // ถ้าเก็บเป็น JSON (เช่น array ของ contentSequence)
-      const parsed =
-        typeof content === "string" ? JSON.parse(content) : content;
-
-      // กรณีเป็น array: รูปแบบ contentSequence
-      if (Array.isArray(parsed)) {
-        let textParts = [];
-        let imgCount = 0;
-
-        for (const item of parsed) {
-          if (!item) continue;
-          // รูปแบบใหม่ { type, content, description }
-          if (item.type === "text" && typeof item.content === "string") {
-            textParts.push(item.content);
-          } else if (item.type === "image") {
-            imgCount++;
-          }
-          // รูปแบบเก่า { data: { type, text|base64 } }
-          else if (item.data) {
-            const d = item.data;
-            if (d.type === "text" && typeof d.text === "string") {
-              textParts.push(d.text);
-            } else if (d.type === "image") {
-              imgCount++;
-            }
-          }
-        }
-
-        let text = textParts.join("\n\n");
-        if (imgCount > 0) {
-          const note = `[มีรูปภาพก่อนหน้า ${imgCount} รูป]`;
-          text = text ? `${text}\n\n${note}` : note;
-        }
-        return truncateLong(text);
-      }
-
-      // กรณีเป็น object เดี่ยว (ไม่ใช่ array)
-      if (parsed && typeof parsed === "object") {
-        // พยายามดึงข้อความถ้ามี
-        if (parsed.type === "text" && typeof parsed.content === "string") {
-          return truncateLong(parsed.content);
-        }
-        if (
-          parsed.data &&
-          parsed.data.type === "text" &&
-          typeof parsed.data.text === "string"
-        ) {
-          return truncateLong(parsed.data.text);
-        }
-        // ถ้ามีรูปภาพแต่ไม่มีข้อความ ให้ใส่หมายเหตุ
-        if (
-          parsed.type === "image" ||
-          (parsed.data && parsed.data.type === "image")
-        ) {
-          return "[มีรูปภาพก่อนหน้า 1 รูป]";
-        }
-        // อย่างอื่นให้ตัดให้สั้นๆ
-        return truncateLong(JSON.stringify(parsed));
-      }
-
-      // ตกมาที่นี่แปลว่า content เป็น string ปกติ
-      if (isBase64Like(content)) {
-        return "[ตัดข้อมูลรูปภาพขนาดใหญ่จากประวัติ]";
-      }
-      return truncateLong(content);
-    } catch (_) {
-      // parse ไม่ได้: ตรวจจับ base64 แล้วตัดทิ้ง
-      if (isBase64Like(content)) {
-        return "[ตัดข้อมูลรูปภาพขนาดใหญ่จากประวัติ]";
-      }
-      return truncateLong(String(content ?? ""));
+    if (Array.isArray(parsed) || (parsed && typeof parsed === "object")) {
+      visit(parsed);
+      return { parsed, textParts, imageCandidates };
     }
+
+    return { parsed, textParts, imageCandidates };
+  };
+
+  const sanitize = async (message) => {
+    const { content, _id: messageId, role } = message || {};
+    const shouldReuseImages = role === "user";
+    const { parsed, textParts, imageCandidates } = collectHistoryContentParts(
+      content,
+      messageId,
+    );
+
+    if (Array.isArray(parsed) || (parsed && typeof parsed === "object")) {
+      const text = truncateLong(textParts.join("\n\n"));
+      const accessibleImages = [];
+      let hadUnavailableImage = false;
+
+      if (shouldReuseImages) {
+        for (const candidate of imageCandidates) {
+          if (accessibleImages.length >= HISTORY_IMAGE_ACCESSIBLE_PER_MESSAGE_LIMIT) {
+            hadUnavailableImage = true;
+            continue;
+          }
+          if (!candidate.url) {
+            hadUnavailableImage = true;
+            continue;
+          }
+          // Validate URL before it is sent back to the model. Broken/private URLs
+          // should degrade to a plain note instead of poisoning the chat context.
+          const isAccessible = await isHistoryImageUrlAccessible(candidate.url);
+          if (!isAccessible) {
+            hadUnavailableImage = true;
+            continue;
+          }
+          accessibleImages.push(candidate);
+        }
+      }
+
+      if (accessibleImages.length === 0) {
+        if (shouldReuseImages && imageCandidates.length > 0) {
+          const note = "[เคยมีรูปมาก่อน]";
+          return text ? `${text}\n\n${note}` : note;
+        }
+        if (text) return text;
+        return "";
+      }
+
+      const multimodalParts = [];
+      if (text) {
+        multimodalParts.push({ type: "text", text });
+      }
+      accessibleImages.forEach((image, index) => {
+        const label = image.caption
+          ? `[รูปก่อนหน้า ${index + 1}] ${image.caption}`
+          : `[รูปก่อนหน้า ${index + 1}]`;
+        multimodalParts.push({ type: "text", text: label });
+        multimodalParts.push({
+          type: "image_url",
+          image_url: { url: image.url, detail: "low" },
+        });
+      });
+      if (hadUnavailableImage) {
+        multimodalParts.push({ type: "text", text: "[เคยมีรูปมาก่อน]" });
+      }
+      return multimodalParts;
+    }
+
+    if (isBase64Like(content)) {
+      return shouldReuseImages ? "[เคยมีรูปมาก่อน]" : "";
+    }
+    if (!shouldReuseImages) {
+      return truncateLong(stripImageTokensFromText(String(content ?? "")));
+    }
+    return truncateLong(String(content ?? ""));
   };
 
   const HUMAN_ADMIN_SOURCES = new Set(["admin_page", "admin_chat"]);
 
-  const sanitized = items.map((ch) => {
-    const rawContent = sanitize(ch.role, ch.content);
+  const sanitized = await Promise.all(items.map(async (ch) => {
+    const rawContent = await sanitize(ch);
     // ถ้า assistant message มาจากแอดมินมนุษย์ (ไม่ใช่ AI) ให้ใส่ label
     // เพื่อป้องกัน AI สับสนว่าเป็นข้อความที่ตัวเองส่ง
     const isHumanAdmin =
@@ -2017,7 +2276,12 @@ async function getAIHistory(userId) {
       ch.source &&
       HUMAN_ADMIN_SOURCES.has(ch.source);
     const content = isHumanAdmin
-      ? `[แอดมินส่ง] ${rawContent}`
+      ? typeof rawContent === "string"
+        ? `[แอดมินส่ง] ${rawContent}`
+        : [
+            { type: "text", text: "[แอดมินส่ง]" },
+            ...(Array.isArray(rawContent) ? rawContent : []),
+          ]
       : rawContent;
     const msg = {
       role: ch.role,
@@ -2027,13 +2291,14 @@ async function getAIHistory(userId) {
     if (ch.tool_call_id) msg.tool_call_id = ch.tool_call_id;
     if (ch.name) msg.name = ch.name;
     return msg;
-  });
+  }));
 
   // ลบข้อความว่างที่ไม่มีประโยชน์ต่อบริบท
   // (แต่คงข้อความ tool_calls และ tool result ไว้แม้ content จะว่าง)
   return sanitized.filter((m) => {
     if (!m) return false;
     if (typeof m.content === "string" && m.content.trim() !== "") return true;
+    if (Array.isArray(m.content) && m.content.length > 0) return true;
     if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) return true;
     if (m.role === "tool" && m.tool_call_id) return true;
     return false;
@@ -2379,8 +2644,7 @@ async function saveChatHistory(
       normalizedOptions.assistantSource.trim()
       ? normalizedOptions.assistantSource.trim()
       : "ai";
-  let userMsgToSave =
-    typeof userMsg === "string" ? userMsg : JSON.stringify(userMsg);
+  let userMsgToSave = typeof userMsg === "string" ? userMsg : userMsg;
 
   // Insert user message and emit to admin chat in realtime
   const userTimestamp = new Date();
@@ -2403,6 +2667,25 @@ async function saveChatHistory(
   const savedUserMessage = await chatRepo.insertMessage(userMessageDoc);
   if (savedUserMessage?._id) {
     userMessageDoc._id = savedUserMessage._id;
+  }
+
+  if (userMessageDoc._id) {
+    const enrichedContent = attachChatImageUrlsToStoredContent(
+      userMsgToSave,
+      userMessageDoc._id,
+    );
+    if (enrichedContent.changed) {
+      userMsgToSave = enrichedContent.content;
+      userMessageDoc.content = userMsgToSave;
+      try {
+        await chatRepo.updateMessageContent(userMessageDoc._id, userMsgToSave);
+      } catch (historyUrlError) {
+        console.error(
+          "[Chat History] ไม่สามารถอัปเดต URL รูปภาพในประวัติได้:",
+          historyUrlError?.message || historyUrlError,
+        );
+      }
+    }
   }
 
   let emittedUserMessage = userMessageDoc;
@@ -2470,13 +2753,15 @@ async function saveChatHistory(
 
   // Insert assistant message (only when we actually have content)
   const assistantText =
-    typeof assistantMsg === "string" ? assistantMsg.trim() : "";
+    typeof assistantMsg === "string"
+      ? stripImageTokensFromText(assistantMsg)
+      : "";
   if (assistantText) {
     const assistantTimestamp = new Date();
     const assistantMessageDoc = {
       senderId: userId,
       role: "assistant",
-      content: assistantMsg,
+      content: assistantText,
       timestamp: assistantTimestamp,
       platform,
       botId,
@@ -4338,48 +4623,39 @@ async function sendFollowUpMessage(task, round, db) {
   }
 
   const timestamp = new Date();
-  const historyParts = items.map((item) => {
-    if (item.type === "text") return { type: "text", text: item.content || "" };
-    return {
-      type: "image",
-      url: item.url,
-      previewUrl: item.previewUrl || item.thumbUrl || item.url,
-      alt: item.alt || "",
-      caption: item.caption || "",
+  const storedContent = items
+    .filter((item) => item?.type === "text")
+    .map((item) => (typeof item.content === "string" ? item.content.trim() : ""))
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  if (storedContent) {
+    const messageDoc = {
+      senderId: task.userId,
+      role: "assistant",
+      content: storedContent,
+      timestamp,
+      platform: task.platform || "line",
+      botId: task.botId || null,
+      source: "follow_up",
     };
-  });
-
-  let storedContent = "";
-  if (historyParts.length === 1 && historyParts[0].type === "text") {
-    storedContent = historyParts[0].text;
-  } else if (historyParts.length > 0) {
-    storedContent = JSON.stringify(historyParts);
-  }
-
-  const messageDoc = {
-    senderId: task.userId,
-    role: "assistant",
-    content: storedContent,
-    timestamp,
-    platform: task.platform || "line",
-    botId: task.botId || null,
-    source: "follow_up",
-  };
-  const savedMessageDoc = await getChatRepository().insertMessage(messageDoc);
-  if (savedMessageDoc?._id) {
-    messageDoc._id = savedMessageDoc._id;
-  }
-
-  try {
-    if (io) {
-      emitAdminEvent("newMessage", {
-        userId: task.userId,
-        message: messageDoc,
-        sender: "assistant",
-        timestamp,
-      });
+    const savedMessageDoc = await getChatRepository().insertMessage(messageDoc);
+    if (savedMessageDoc?._id) {
+      messageDoc._id = savedMessageDoc._id;
     }
-  } catch (_) { }
+
+    try {
+      if (io) {
+        emitAdminEvent("newMessage", {
+          userId: task.userId,
+          message: messageDoc,
+          sender: "assistant",
+          timestamp,
+        });
+      }
+    } catch (_) { }
+  }
 }
 
 async function sendLineFollowUpMessageWithItems(userId, items, botId, db) {
@@ -7780,7 +8056,7 @@ async function resolveConversationStarterForQueue(queueContext = {}) {
 }
 
 function buildConversationStarterHistory(messages = []) {
-  const parts = [];
+  const textParts = [];
   for (const message of messages) {
     if (!message || typeof message !== "object") continue;
     if (message.type === "text") {
@@ -7791,49 +8067,11 @@ function buildConversationStarterHistory(messages = []) {
             ? message.text.trim()
             : "";
       if (!content) continue;
-      parts.push({ type: "text", text: content });
-      continue;
-    }
-    if (message.type === "image") {
-      const url =
-        typeof message.url === "string" ? message.url.trim() : "";
-      if (!url) continue;
-      const previewUrl =
-        typeof message.previewUrl === "string" && message.previewUrl.trim()
-          ? message.previewUrl.trim()
-          : url;
-      parts.push({
-        type: "image",
-        url,
-        previewUrl,
-        alt: typeof message.alt === "string" ? message.alt.trim() : "",
-        caption: typeof message.alt === "string" ? message.alt.trim() : "",
-      });
-      continue;
-    }
-    if (message.type === "video") {
-      const url =
-        typeof message.url === "string" ? message.url.trim() : "";
-      if (!url) continue;
-      const previewUrl =
-        typeof message.previewUrl === "string" && message.previewUrl.trim()
-          ? message.previewUrl.trim()
-          : "";
-      parts.push({
-        type: "video",
-        url,
-        previewUrl,
-        alt: typeof message.alt === "string" ? message.alt.trim() : "",
-        caption: typeof message.alt === "string" ? message.alt.trim() : "",
-      });
+      textParts.push(content);
     }
   }
 
-  if (parts.length === 0) return "";
-  if (parts.length === 1 && parts[0].type === "text") {
-    return parts[0].text;
-  }
-  return JSON.stringify(parts);
+  return textParts.join("\n\n").trim();
 }
 
 async function sendLineConversationStarterSequence(
@@ -12657,9 +12895,75 @@ function normalizeHistoryMessageContent(content) {
     return text || null;
   }
   if (Array.isArray(content) && content.length > 0) {
-    return content;
+    return content
+      .map((part) => {
+        if (!part || typeof part !== "object") return null;
+        if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+          return { type: "text", text: part.text.trim() };
+        }
+        if (
+          part.type === "image_url" &&
+          part.image_url &&
+          typeof part.image_url.url === "string" &&
+          part.image_url.url.trim()
+        ) {
+          return {
+            type: "image_url",
+            image_url: {
+              url: part.image_url.url.trim(),
+              detail: part.image_url.detail || "low",
+            },
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
   }
   return null;
+}
+
+function mapHistoryContentToResponsesContent(content, role = "user") {
+  const normalizedContent = normalizeHistoryMessageContent(content);
+  if (typeof normalizedContent === "string") {
+    return normalizedContent;
+  }
+  if (!Array.isArray(normalizedContent) || normalizedContent.length === 0) {
+    return null;
+  }
+
+  if (role === "assistant") {
+    const assistantText = normalizedContent
+      .map((part) => {
+        if (part.type === "text") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+    return assistantText || null;
+  }
+
+  const mapped = normalizedContent
+    .map((part) => {
+      if (part.type === "text") {
+        return { type: "input_text", text: part.text };
+      }
+      if (
+        part.type === "image_url" &&
+        part.image_url &&
+        typeof part.image_url.url === "string"
+      ) {
+        return {
+          type: "input_image",
+          image_url: part.image_url.url,
+          detail: part.image_url.detail || "low",
+        };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  return mapped.length > 0 ? mapped : null;
 }
 
 function mapHistoryRoleForResponses(role, modelId) {
@@ -12705,7 +13009,10 @@ function mapStoredHistoryToResponsesInput(history, modelId) {
       Array.isArray(msg.tool_calls) &&
       msg.tool_calls.length > 0
     ) {
-      const assistantContent = normalizeHistoryMessageContent(msg.content);
+      const assistantContent = mapHistoryContentToResponsesContent(
+        msg.content,
+        "assistant",
+      );
       if (assistantContent) {
         mapped.push({ role: "assistant", content: assistantContent });
       }
@@ -12731,7 +13038,7 @@ function mapStoredHistoryToResponsesInput(history, modelId) {
     if (!["system", "developer", "user", "assistant"].includes(msg.role)) {
       continue;
     }
-    const content = normalizeHistoryMessageContent(msg.content);
+    const content = mapHistoryContentToResponsesContent(msg.content, msg.role);
     if (!content) continue;
     mapped.push({
       role: mapHistoryRoleForResponses(msg.role, modelId),
