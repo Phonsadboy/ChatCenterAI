@@ -25840,7 +25840,15 @@ ${dataItemsSummary}
 - **update_followup_settings** — เปิด/ปิดระบบ, แก้ prompt วิเคราะห์ออเดอร์
 - **update_followup_round** — แก้ข้อความหรือ delay ของแต่ละ round
 - **manage_followup_images** — เพิ่ม/ลบรูปใน round (ต้อง list_followup_assets ก่อนเพื่อดู assetId)
-- **list_followup_assets** — ดูรูปภาพที่อัปโหลดไว้`;
+- **list_followup_assets** — ดูรูปภาพที่อัปโหลดไว้
+
+# วิเคราะห์ประวัติสนทนา (Conversation Analytics)
+เมื่อผู้ใช้ถามเรื่อง performance ของ instruction, conversion, ลูกค้าซื้อ/ไม่ซื้อ, ขอเคสตัวอย่าง, หรืออยากดูบทสนทนาจริง:
+- เริ่มจาก **get_conversation_stats** ถ้าต้องการภาพรวม, benchmark, หรือเทียบกลุ่มสนทนา
+- ใช้ **search_conversations** เมื่อต้องหาสนทนาตามเงื่อนไข เช่น outcome, จำนวนข้อความ, สินค้า, tag, platform, bot, version, ช่วงเวลา, การ sort
+- ใช้ **get_conversation_detail** ต่อเมื่อมี threadId จากผลค้นหา หรือผู้ใช้ระบุ threadId ชัดเจน
+- เวลาวิเคราะห์ว่า instruction ควรปรับตรงไหน ให้ยกหลักฐานจาก tool results ก่อนสรุป
+- ถ้าไม่มีข้อมูลพอหรือไม่พบผลลัพธ์ ให้บอกตรง ๆ ว่าไม่มีข้อมูลพอ ห้ามเดาสาเหตุเอง`;
 }
 
 
@@ -25938,8 +25946,6 @@ app.get("/api/instruction-conversations/:instructionId", requireAdmin, async (re
     if (botId) filters.botId = botId;
     if (dateFrom) filters.dateFrom = dateFrom;
     if (dateTo) filters.dateTo = dateTo;
-    if (sortBy) filters.sortBy = sortBy;
-
     // Handle search
     if (search && search.trim()) {
       const searchResults = await threadService.searchInThreads(
@@ -25955,7 +25961,7 @@ app.get("/api/instruction-conversations/:instructionId", requireAdmin, async (re
       instructionId,
       parsedVersion,
       filters,
-      { page: Number(page) || 1, limit: Number(limit) || 20 }
+      { page: Number(page) || 1, limit: Number(limit) || 20, sortBy }
     );
 
     res.json(result);
@@ -27089,6 +27095,14 @@ function buildToolSummary(toolName, result) {
       return `📈 เปรียบเทียบ v${result.version1?.version ?? "?"} ↔ v${result.version2?.version ?? "?"}`;
     case 'save_version':
       return result.message || `💾 บันทึกเวอร์ชัน ${result.version || "?"} แล้ว`;
+
+    // Conversation analytics tools
+    case 'get_conversation_stats':
+      return `📊 สนทนา ${result.totalConversations || 0} รายการ, conversion ${result.conversionRate || "0%"}`;
+    case 'search_conversations':
+      return `🔎 พบ ${result.totalFound || 0} สนทนา (แสดง ${result.returnedCount || result.conversations?.length || 0})`;
+    case 'get_conversation_detail':
+      return `💬 โหลด ${result.messages?.length || 0} ข้อความจาก thread ${result.thread?.platform || "unknown"}`;
 
     default:
       return result.success ? '✅ สำเร็จ' : '📦 เสร็จสิ้น';

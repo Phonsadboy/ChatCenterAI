@@ -116,6 +116,192 @@ class InstructionChatService {
         );
     }
 
+    async _resolveConversationInstructionRef(instructionId) {
+        const inst = await this._getInstruction(instructionId);
+        return inst?.instructionId || instructionId;
+    }
+
+    _normalizeConversationStringArray(value) {
+        if (Array.isArray(value)) {
+            return value
+                .map((entry) => String(entry || "").trim())
+                .filter(Boolean);
+        }
+        if (typeof value !== "string") return [];
+        const trimmed = value.trim();
+        if (!trimmed) return [];
+        return trimmed
+            .split(",")
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+    }
+
+    _normalizeConversationOutcomes(value) {
+        const map = {
+            purchased: "purchased",
+            purchase: "purchased",
+            bought: "purchased",
+            bought_successfully: "purchased",
+            ordered: "purchased",
+            converted: "purchased",
+            sale: "purchased",
+            "ซื้อ": "purchased",
+            "สั่งซื้อ": "purchased",
+            not_purchased: "not_purchased",
+            "not purchased": "not_purchased",
+            no_purchase: "not_purchased",
+            not_bought: "not_purchased",
+            lost: "not_purchased",
+            "ไม่ซื้อ": "not_purchased",
+            "ไม่ได้ซื้อ": "not_purchased",
+            "ยังไม่ซื้อ": "not_purchased",
+            pending: "pending",
+            wait: "pending",
+            waiting: "pending",
+            open: "pending",
+            follow_up: "pending",
+            "รอ": "pending",
+            "รอตัดสินใจ": "pending",
+            unknown: "unknown",
+            "ไม่ทราบ": "unknown",
+        };
+
+        return [...new Set(
+            this._normalizeConversationStringArray(value)
+                .map((entry) => map[String(entry || "").trim().toLowerCase()] || "")
+                .filter(Boolean)
+        )];
+    }
+
+    _normalizeConversationNumber(value, { min = null, max = null } = {}) {
+        if (value === null || typeof value === "undefined" || value === "") return null;
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return null;
+        let next = numeric;
+        if (min !== null) next = Math.max(min, next);
+        if (max !== null) next = Math.min(max, next);
+        return next;
+    }
+
+    _normalizeConversationDate(value) {
+        if (typeof value !== "string") return null;
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        const parsed = new Date(trimmed);
+        if (Number.isNaN(parsed.getTime())) return null;
+        return trimmed;
+    }
+
+    _normalizeConversationSort(value) {
+        const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+        if (!raw) return null;
+        const sortMap = {
+            newest: "newest",
+            latest: "newest",
+            recent: "newest",
+            ล่าสุด: "newest",
+            oldest: "oldest",
+            oldest_first: "oldest",
+            เก่าสุด: "oldest",
+            most_messages: "most_messages",
+            mostmessages: "most_messages",
+            message_count: "most_messages",
+            messages_desc: "most_messages",
+            ข้อความมากสุด: "most_messages",
+            highest_order: "highest_order",
+            highestorder: "highest_order",
+            order_value: "highest_order",
+            ยอดสูงสุด: "highest_order",
+        };
+        return sortMap[raw] || null;
+    }
+
+    _buildConversationQueryOptions(args = {}) {
+        const params = args && typeof args === "object" ? args : {};
+        const filters = {};
+        const outcomes = this._normalizeConversationOutcomes(params.outcomes || params.outcome);
+        if (outcomes.length > 0) filters.outcome = outcomes;
+
+        let minMessages = this._normalizeConversationNumber(
+            params.minMessages ?? params.minUserMessages,
+            { min: 0 }
+        );
+        let maxMessages = this._normalizeConversationNumber(
+            params.maxMessages ?? params.maxUserMessages,
+            { min: 0 }
+        );
+        if (minMessages !== null && maxMessages !== null && minMessages > maxMessages) {
+            [minMessages, maxMessages] = [maxMessages, minMessages];
+        }
+        if (minMessages !== null) filters.minUserMessages = minMessages;
+        if (maxMessages !== null) filters.maxUserMessages = maxMessages;
+
+        const products = this._normalizeConversationStringArray(params.products);
+        if (products.length > 0) filters.products = [...new Set(products)];
+
+        const tags = this._normalizeConversationStringArray(params.tags);
+        if (tags.length > 0) filters.tags = [...new Set(tags)];
+
+        if (typeof params.platform === "string" && params.platform.trim() && params.platform !== "all") {
+            filters.platform = params.platform.trim();
+        }
+        if (typeof params.botId === "string" && params.botId.trim()) {
+            filters.botId = params.botId.trim();
+        }
+
+        const dateFrom = this._normalizeConversationDate(params.dateFrom);
+        const dateTo = this._normalizeConversationDate(params.dateTo);
+        if (dateFrom) filters.dateFrom = dateFrom;
+        if (dateTo) filters.dateTo = dateTo;
+
+        const parsedVersion = Number.parseInt(params.version, 10);
+        const version = Number.isInteger(parsedVersion) && parsedVersion > 0
+            ? parsedVersion
+            : null;
+        const limit = this._normalizeConversationNumber(params.limit, { min: 1, max: 20 }) || 10;
+        const sortBy = this._normalizeConversationSort(params.sortBy);
+
+        return { version, filters, limit, sortBy };
+    }
+
+    _buildConversationAppliedFilters({ version = null, filters = {}, sortBy = null, limit = null } = {}) {
+        const applied = {};
+        if (version !== null) applied.version = version;
+        if (Array.isArray(filters.outcome) && filters.outcome.length > 0) {
+            applied.outcomes = filters.outcome;
+        }
+        if (filters.minUserMessages !== undefined) applied.minUserMessages = filters.minUserMessages;
+        if (filters.maxUserMessages !== undefined) applied.maxUserMessages = filters.maxUserMessages;
+        if (Array.isArray(filters.products) && filters.products.length > 0) {
+            applied.products = filters.products;
+        }
+        if (Array.isArray(filters.tags) && filters.tags.length > 0) {
+            applied.tags = filters.tags;
+        }
+        if (filters.platform) applied.platform = filters.platform;
+        if (filters.botId) applied.botId = filters.botId;
+        if (filters.dateFrom) applied.dateFrom = filters.dateFrom;
+        if (filters.dateTo) applied.dateTo = filters.dateTo;
+        if (sortBy) applied.sortBy = sortBy;
+        if (limit !== null) applied.limit = limit;
+        return applied;
+    }
+
+    _threadBelongsToInstruction(thread, instructionRef) {
+        const normalizedInstructionRef = String(instructionRef || "").trim();
+        if (!normalizedInstructionRef || !thread || typeof thread !== "object") return false;
+
+        const instructionRefs = Array.isArray(thread.instructionRefs) ? thread.instructionRefs : [];
+        if (instructionRefs.some((entry) => String(entry?.instructionId || "").trim() === normalizedInstructionRef)) {
+            return true;
+        }
+
+        const instructionMeta = Array.isArray(thread.instructionMeta) ? thread.instructionMeta : [];
+        return instructionMeta.some(
+            (entry) => String(entry?.instructionId || "").trim() === normalizedInstructionRef
+        );
+    }
+
     async _getFollowUpPageSettingsDoc(platform, botId) {
         if (this._followUpPageSettingsRepository) {
             return this._followUpPageSettingsRepository.getExact(platform, botId);
@@ -2129,51 +2315,63 @@ class InstructionChatService {
 
     // ──────────────────────────── CONVERSATION ANALYSIS TOOLS ────────────────────────────
 
-    async get_conversation_stats(instructionId) {
+    async get_conversation_stats(instructionId, args = {}) {
         const threadService = this._createConversationThreadService();
-        // Look up the instructionId identifier for the instruction
-        const inst = await this._getInstruction(instructionId);
-        const instIdForQuery = inst?.instructionId || instructionId;
+        const instIdForQuery = await this._resolveConversationInstructionRef(instructionId);
+        const { version, filters, sortBy } = this._buildConversationQueryOptions(args);
 
-        const analytics = await threadService.getConversationAnalytics(instIdForQuery);
+        const analytics = await threadService.getConversationAnalytics(
+            instIdForQuery,
+            version,
+            filters,
+        );
+        const conversionRateValue = analytics.conversionRate || 0;
         return {
             totalConversations: analytics.totalThreads || 0,
-            conversionRate: (analytics.conversionRate || 0) + "%",
+            totalUserMessages: analytics.totalUserMessages || 0,
+            totalAssistantMessages: analytics.totalAssistantMessages || 0,
+            conversionRate: conversionRateValue + "%",
+            conversionRateValue,
             avgUserMessages: analytics.avgUserMessages || 0,
             avgDurationMinutes: analytics.avgDurationMinutes || 0,
             purchasedCount: analytics.purchasedCount || 0,
             notPurchasedCount: analytics.notPurchasedCount || 0,
             pendingCount: analytics.pendingCount || 0,
+            unknownCount: analytics.unknownCount || 0,
+            threadsWithOrders: analytics.threadsWithOrders || 0,
             totalOrderAmount: analytics.totalOrderAmount || 0,
             topProducts: (analytics.topProducts || []).slice(0, 5),
             platformBreakdown: analytics.platformBreakdown || {},
+            appliedFilters: this._buildConversationAppliedFilters({ version, filters, sortBy }),
         };
     }
 
-    async search_conversations(instructionId, { outcome, minMessages, maxMessages, products, limit = 10 }) {
+    async search_conversations(instructionId, args = {}) {
         const threadService = this._createConversationThreadService();
-        const inst = await this._getInstruction(instructionId);
-        const instIdForQuery = inst?.instructionId || instructionId;
-
-        const filters = {};
-        if (outcome) filters.outcome = Array.isArray(outcome) ? outcome : [outcome];
-        if (minMessages != null) filters.minUserMessages = Number(minMessages);
-        if (maxMessages != null) filters.maxUserMessages = Number(maxMessages);
-        if (products && Array.isArray(products)) filters.products = products;
+        const instIdForQuery = await this._resolveConversationInstructionRef(instructionId);
+        const { version, filters, limit, sortBy } = this._buildConversationQueryOptions(args);
 
         const result = await threadService.getThreadsByInstruction(
-            instIdForQuery, null, filters, { page: 1, limit: Math.min(limit, 20) }
+            instIdForQuery,
+            version,
+            filters,
+            { page: 1, limit, sortBy },
         );
 
         return {
             totalFound: result.pagination?.totalCount || 0,
+            returnedCount: (result.threads || []).length,
+            appliedFilters: this._buildConversationAppliedFilters({ version, filters, sortBy, limit }),
             conversations: (result.threads || []).map(t => ({
                 threadId: t.threadId,
                 senderId: (t.senderId || "").substring(0, 12) + "...",
                 platform: t.platform,
                 botName: t.botName,
                 userMessages: t.stats?.userMessages || 0,
+                assistantMessages: t.stats?.assistantMessages || 0,
+                durationMinutes: t.stats?.durationMinutes || 0,
                 outcome: t.outcome,
+                hasOrder: t.hasOrder || false,
                 orderedProducts: t.orderedProducts || [],
                 totalOrderAmount: t.totalOrderAmount || 0,
                 lastMessageAt: t.stats?.lastMessageAt,
@@ -2186,6 +2384,7 @@ class InstructionChatService {
     async get_conversation_detail(instructionId, { threadId, page = 1, limit = 30 }) {
         if (!threadId) return { error: "ต้องระบุ threadId" };
         const threadService = this._createConversationThreadService();
+        const instIdForQuery = await this._resolveConversationInstructionRef(instructionId);
 
         const result = await threadService.getThreadMessages(threadId, {
             page: Number(page) || 1,
@@ -2193,6 +2392,9 @@ class InstructionChatService {
         });
 
         if (result.error) return result;
+        if (!this._threadBelongsToInstruction(result.thread, instIdForQuery)) {
+            return { error: "thread นี้ไม่ได้อยู่ใน instruction ที่เลือก" };
+        }
 
         return {
             thread: {
@@ -2256,8 +2458,8 @@ class InstructionChatService {
             // ── Page Model Tool ──
             { type: "function", function: { name: "update_page_model", description: "เปลี่ยนโมเดล AI ของเพจ — ระบุ pageKeys (array) เพื่อเปลี่ยนหลายเพจพร้อมกัน เช่น gpt-5.4, gpt-5.4-mini, gpt-5.4-nano", parameters: { type: "object", properties: { pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey ที่ต้องการเปลี่ยนโมเดล" }, model: { type: "string", description: "ชื่อโมเดล เช่น gpt-5.4, gpt-5.4-mini, gpt-5.4-nano" } }, required: ["pageKeys", "model"] } } },
             // ── Conversation Analysis Tools ──
-            { type: "function", function: { name: "get_conversation_stats", description: "ดูสถิติภาพรวมของสนทนาลูกค้าที่ใช้ instruction นี้: conversion rate, จำนวนสนทนา, ยอดขาย, สินค้ายอดนิยม, แพลตฟอร์ม — ใช้เพื่อวิเคราะห์ประสิทธิภาพ", parameters: { type: "object", properties: {} } } },
-            { type: "function", function: { name: "search_conversations", description: "ค้นหาสนทนาลูกค้าตามเงื่อนไข: outcome (purchased/not_purchased/pending), จำนวนข้อความ, สินค้า — ส่งคืนรายการ threads พร้อม threadId สำหรับดูรายละเอียด", parameters: { type: "object", properties: { outcome: { type: "string", description: "กรอง: purchased, not_purchased, pending" }, minMessages: { type: "number", description: "จำนวนข้อความลูกค้าขั้นต่ำ" }, maxMessages: { type: "number", description: "จำนวนข้อความลูกค้าสูงสุด" }, products: { type: "array", items: { type: "string" }, description: "กรองตามสินค้าที่ซื้อ" }, limit: { type: "number", description: "จำนวนผลลัพธ์ (default 10, max 20)" } } } } },
+            { type: "function", function: { name: "get_conversation_stats", description: "ดูสถิติภาพรวมของสนทนาลูกค้าที่ใช้ instruction นี้ — รองรับ filter ตาม version, outcome, จำนวนข้อความ, สินค้า, tag, platform, botId, ช่วงเวลา เพื่อวิเคราะห์ conversion และคุณภาพบทสนทนา", parameters: { type: "object", properties: { version: { type: "number", description: "ดูเฉพาะเวอร์ชันของ instruction (optional)" }, outcomes: { type: "array", items: { type: "string" }, description: "กรอง outcome เช่น purchased, not_purchased, pending" }, minMessages: { type: "number", description: "จำนวนข้อความลูกค้าขั้นต่ำ" }, maxMessages: { type: "number", description: "จำนวนข้อความลูกค้าสูงสุด" }, products: { type: "array", items: { type: "string" }, description: "กรองตามสินค้าที่ซื้อ" }, tags: { type: "array", items: { type: "string" }, description: "กรองตาม tag ของ thread" }, platform: { type: "string", description: "กรอง platform เช่น line หรือ facebook" }, botId: { type: "string", description: "กรอง bot/page เฉพาะตัว" }, dateFrom: { type: "string", description: "วันเริ่มต้น เช่น 2026-04-01 หรือ ISO datetime" }, dateTo: { type: "string", description: "วันสิ้นสุด เช่น 2026-04-30 หรือ ISO datetime" } } } } },
+            { type: "function", function: { name: "search_conversations", description: "ค้นหาสนทนาลูกค้าตามเงื่อนไข — รองรับ outcome, จำนวนข้อความ, สินค้า, tag, platform, botId, version, ช่วงเวลา และการ sort — ส่งคืนรายการ threads พร้อม threadId สำหรับดูรายละเอียด", parameters: { type: "object", properties: { version: { type: "number", description: "ดูเฉพาะเวอร์ชันของ instruction (optional)" }, outcomes: { type: "array", items: { type: "string" }, description: "กรอง outcome เช่น purchased, not_purchased, pending" }, minMessages: { type: "number", description: "จำนวนข้อความลูกค้าขั้นต่ำ" }, maxMessages: { type: "number", description: "จำนวนข้อความลูกค้าสูงสุด" }, products: { type: "array", items: { type: "string" }, description: "กรองตามสินค้าที่ซื้อ" }, tags: { type: "array", items: { type: "string" }, description: "กรองตาม tag ของ thread" }, platform: { type: "string", description: "กรอง platform เช่น line หรือ facebook" }, botId: { type: "string", description: "กรอง bot/page เฉพาะตัว" }, dateFrom: { type: "string", description: "วันเริ่มต้น เช่น 2026-04-01 หรือ ISO datetime" }, dateTo: { type: "string", description: "วันสิ้นสุด เช่น 2026-04-30 หรือ ISO datetime" }, sortBy: { type: "string", description: "เรียงผลลัพธ์: newest, oldest, most_messages, highest_order" }, limit: { type: "number", description: "จำนวนผลลัพธ์ (default 10, max 20)" } } } } },
             { type: "function", function: { name: "get_conversation_detail", description: "ดูข้อความจริงของสนทนาลูกค้า — ใช้ threadId จาก search_conversations — แสดงทั้งข้อความลูกค้าและคำตอบ AI", parameters: { type: "object", properties: { threadId: { type: "string", description: "ID ของ thread จาก search_conversations" }, page: { type: "number" }, limit: { type: "number" } }, required: ["threadId"] } } },
             // ── Version Management Tools ──
             { type: "function", function: { name: "list_versions", description: "ดูรายการเวอร์ชันทั้งหมดของ instruction นี้ — แสดง version number, วันที่บันทึก, หมายเหตุ", parameters: { type: "object", properties: {} } } },
@@ -2333,7 +2535,7 @@ class InstructionChatService {
         // Conversation analysis tools
         const conversationTools = ["get_conversation_stats", "search_conversations", "get_conversation_detail"];
         if (conversationTools.includes(toolName)) {
-            if (toolName === "get_conversation_stats") return this.get_conversation_stats(instructionId);
+            if (toolName === "get_conversation_stats") return this.get_conversation_stats(instructionId, args);
             return this[toolName](instructionId, args);
         }
 

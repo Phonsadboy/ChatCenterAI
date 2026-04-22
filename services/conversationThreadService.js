@@ -322,7 +322,7 @@ class ConversationThreadService {
       instructionId,
       version,
       filters,
-      { page, limit },
+      { page, limit, sortBy: pagination.sortBy },
     );
 
     return {
@@ -497,11 +497,23 @@ class ConversationThreadService {
     };
   }
 
-  async getConversationAnalytics(instructionId, version, dateRange = {}) {
-    const filters = {};
-    if (dateRange.from) filters.dateFrom = dateRange.from;
-    if (dateRange.to) filters.dateTo = dateRange.to;
-    const threads = await this.threadRepository.listAllByInstruction(instructionId, version, filters);
+  async getConversationAnalytics(instructionId, version, filters = {}) {
+    const normalizedFilters =
+      filters && typeof filters === "object" ? { ...filters } : {};
+    if (normalizedFilters.from && !normalizedFilters.dateFrom) {
+      normalizedFilters.dateFrom = normalizedFilters.from;
+    }
+    if (normalizedFilters.to && !normalizedFilters.dateTo) {
+      normalizedFilters.dateTo = normalizedFilters.to;
+    }
+    delete normalizedFilters.from;
+    delete normalizedFilters.to;
+
+    const threads = await this.threadRepository.listAllByInstruction(
+      instructionId,
+      version,
+      normalizedFilters,
+    );
 
     const stats = {
       totalThreads: threads.length,
