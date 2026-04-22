@@ -13,6 +13,7 @@ const axios = require("axios");
 const path = require("path");
 const os = require("os");
 const http = require("http");
+const { spawn } = require("child_process");
 const socketIo = require("socket.io");
 const createNotificationService = require("./services/notificationService");
 const slipOkService = require("./services/slipOkService");
@@ -1191,13 +1192,7 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
       buildBucketKeyCandidates("followup", null, fileName),
     );
     if (directBucketResult?.stream) {
-      const ext = path.extname(fileName).toLowerCase();
-      const contentType =
-        ext === ".png"
-          ? "image/png"
-          : ext === ".webp"
-            ? "image/webp"
-            : "image/jpeg";
+      const contentType = resolveAssetContentType(fileName, "application/octet-stream");
       res.set("Content-Type", contentType);
       res.set("Cache-Control", "public, max-age=604800, immutable");
       directBucketResult.stream.on("error", (err) => {
@@ -1216,13 +1211,7 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
     // Local filesystem fallback (for legacy/manual files)
     const localFollowupPath = path.join(FOLLOWUP_ASSETS_DIR, fileName);
     if (fs.existsSync(localFollowupPath)) {
-      const ext = path.extname(fileName).toLowerCase();
-      const contentType =
-        ext === ".png"
-          ? "image/png"
-          : ext === ".webp"
-            ? "image/webp"
-            : "image/jpeg";
+      const contentType = resolveAssetContentType(fileName, "application/octet-stream");
       res.set("Content-Type", contentType);
       res.set("Cache-Control", "public, max-age=604800, immutable");
       fs.createReadStream(localFollowupPath).pipe(res);
@@ -1348,6 +1337,37 @@ const imageUpload = multer({
   },
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB per image
+  },
+});
+
+const starterVideoUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const originalName = normalizeUploadText(file.originalname || "");
+    if (originalName && originalName !== file.originalname) {
+      file.originalname = originalName;
+    }
+
+    const allowed = [
+      "video/mp4",
+      "video/quicktime",
+      "video/webm",
+      "video/x-m4v",
+    ];
+    if (
+      allowed.includes(file.mimetype) ||
+      originalName.match(/\.(mp4|mov|m4v|webm)$/i)
+    ) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error("กรุณาอัพโหลดเฉพาะไฟล์วิดีโอ (mp4, mov, m4v, webm)"),
+        false,
+      );
+    }
+  },
+  limits: {
+    fileSize: 80 * 1024 * 1024, // 80MB per video before transcoding
   },
 });
 
@@ -11298,6 +11318,7 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
 
 app.post(
   "/api/instructions-v2/starter-assets",
+  requireAdmin,
   imageUpload.array("images", 10),
   async (req, res) => {
     try {
@@ -11458,6 +11479,140 @@ app.post(
       res.status(400).json({
         success: false,
         error: error.message || "อัพโหลดรูปภาพข้อความเริ่มต้นไม่สำเร็จ",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/instructions-v2/starter-videos",
+  requireAdmin,
+  starterVideoUpload.array("videos", 5),
+  async (req, res) => {
+    try {
+      const files =
+        Array.isArray(req.files) && req.files.length
+          ? req.files
+          : req.file
+            ? [req.file]
+            : [];
+
+      if (!files.length) {
+        return res
+          .status(400)
+          .json({ success: false, error: "กรุณาอัพโหลดไฟล์วิดีโอ" });
+      }
+
+      if (!canUsePostgresAssets()) {
+        return sendPostgresRequired(res, "Instruction starter videos");
+      }
+
+      const urlBase = PUBLIC_BASE_URL
+        ? PUBLIC_BASE_URL.replace(/\/$/, "")
+        : req.get("host")
+          ? `https://${req.get("host")}`
+          : "";
+      const assets = [];
+
+      for (const file of files) {
+        const prepared = await buildStarterVideoDerivatives(file);
+        const uniqueId = crypto.randomBytes(8).toString("hex");
+        const timestamp = Date.now();
+        const baseName = `starter_video_${timestamp}_${uniqueId}`;
+        const fileName = `${baseName}.mp4`;
+        const thumbName = `${baseName}_thumb.jpg`;
+        const [mainUpload, thumbUpload] = await Promise.all([
+          uploadBufferToAssetStorage({
+            db: null,
+            storagePrefix: "followup",
+            filename: fileName,
+            buffer: prepared.videoBuffer,
+            contentType: "video/mp4",
+            metadata: {
+              type: "original",
+              mediaType: "video",
+              width: prepared.width || null,
+              height: prepared.height || null,
+              durationSec: prepared.durationSec || null,
+            },
+          }),
+          uploadBufferToAssetStorage({
+            db: null,
+            storagePrefix: "followup",
+            filename: thumbName,
+            buffer: prepared.previewBuffer,
+            contentType: "image/jpeg",
+            metadata: {
+              type: "thumb",
+              mediaType: "video",
+            },
+          }),
+        ]);
+
+        const now = new Date();
+        const assetDoc = {
+          fileName,
+          thumbName,
+          thumbFileName: thumbName,
+          fileId: mainUpload.fileId,
+          thumbFileId: thumbUpload.fileId,
+          storage: mainUpload.storage,
+          storageKey: mainUpload.storageKey || null,
+          thumbStorageKey: thumbUpload.storageKey || null,
+          sha256: crypto
+            .createHash("sha256")
+            .update(prepared.videoBuffer)
+            .digest("hex"),
+          mime: prepared.mime || "video/mp4",
+          size: prepared.videoBuffer.length,
+          width: prepared.width || null,
+          height: prepared.height || null,
+          durationSec: prepared.durationSec || null,
+          url: `${urlBase}/assets/followup/${fileName}`,
+          thumbUrl: `${urlBase}/assets/followup/${thumbName}`,
+          originalName: file.originalname || "",
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        persistFollowUpLocalAssetCopies({
+          fileName,
+          mainBuffer: prepared.videoBuffer,
+          thumbFileName: thumbName,
+          thumbBuffer: prepared.previewBuffer,
+        });
+
+        const saved = await insertPostgresFollowUpAsset("starter-video", assetDoc);
+        const assetId =
+          saved?._id?.toString?.()
+          || saved?.legacyAssetId
+          || saved?.id
+          || null;
+
+        assets.push({
+          id: assetId,
+          assetId,
+          url: assetDoc.url,
+          previewUrl: assetDoc.thumbUrl,
+          thumbUrl: assetDoc.thumbUrl,
+          mime: assetDoc.mime,
+          size: assetDoc.size,
+          width: assetDoc.width,
+          height: assetDoc.height,
+          durationSec: assetDoc.durationSec,
+          fileName: assetDoc.fileName,
+        });
+      }
+
+      res.json({ success: true, assets });
+    } catch (error) {
+      console.error(
+        "[Starter] อัพโหลดวิดีโอข้อความเริ่มต้นไม่สำเร็จ:",
+        error,
+      );
+      res.status(400).json({
+        success: false,
+        error: error.message || "อัพโหลดวิดีโอข้อความเริ่มต้นไม่สำเร็จ",
       });
     }
   },
@@ -15364,6 +15519,190 @@ function buildAssetStorageKey(prefix, filename) {
     : normalizedFileName;
 }
 
+function resolveAssetContentType(fileName, fallback = "application/octet-stream") {
+  const ext = path.extname(String(fileName || "").trim()).toLowerCase();
+  switch (ext) {
+    case ".png":
+      return "image/png";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    case ".mp4":
+    case ".m4v":
+      return "video/mp4";
+    case ".mov":
+      return "video/quicktime";
+    case ".webm":
+      return "video/webm";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    default:
+      return fallback;
+  }
+}
+
+function runSubprocess(command, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      ...options,
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      if (stdout.length < 12000) {
+        stdout += chunk.toString();
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < 12000) {
+        stderr += chunk.toString();
+      }
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      reject(
+        new Error(
+          `${command} exited with code ${code}: ${(stderr || stdout || "unknown error").trim()}`,
+        ),
+      );
+    });
+  });
+}
+
+async function buildStarterVideoDerivatives(file) {
+  if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
+    throw new Error("ไม่พบข้อมูลไฟล์วิดีโอ");
+  }
+
+  const originalName = normalizeUploadText(file.originalname || "").trim();
+  const inputExt = path.extname(originalName || "").toLowerCase() || ".mp4";
+  const tempDir = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "starter-video-"),
+  );
+  const inputPath = path.join(tempDir, `input${inputExt}`);
+  const outputPath = path.join(tempDir, "output.mp4");
+  const previewPath = path.join(tempDir, "preview.jpg");
+
+  try {
+    await fs.promises.writeFile(inputPath, file.buffer);
+
+    await runSubprocess("ffmpeg", [
+      "-y",
+      "-i",
+      inputPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a?",
+      "-vf",
+      "scale=1280:-2:force_original_aspect_ratio=decrease",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "27",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      outputPath,
+    ]);
+
+    let previewCreated = false;
+    const previewSeekPoints = ["00:00:01.000", "00:00:00.000"];
+    for (const seekPoint of previewSeekPoints) {
+      try {
+        await runSubprocess("ffmpeg", [
+          "-y",
+          "-ss",
+          seekPoint,
+          "-i",
+          outputPath,
+          "-frames:v",
+          "1",
+          "-q:v",
+          "2",
+          previewPath,
+        ]);
+        previewCreated = true;
+        break;
+      } catch (error) {
+        if (seekPoint === previewSeekPoints[previewSeekPoints.length - 1]) {
+          throw error;
+        }
+      }
+    }
+
+    if (!previewCreated) {
+      throw new Error("ไม่สามารถสร้างภาพ preview จากวิดีโอได้");
+    }
+
+    const [videoBuffer, previewBuffer] = await Promise.all([
+      fs.promises.readFile(outputPath),
+      fs.promises.readFile(previewPath),
+    ]);
+
+    let width = null;
+    let height = null;
+    let durationSec = null;
+    try {
+      const { stdout } = await runSubprocess("ffprobe", [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration:stream=width,height",
+        "-select_streams",
+        "v:0",
+        "-of",
+        "json",
+        outputPath,
+      ]);
+      const parsed = JSON.parse(stdout || "{}");
+      const stream = Array.isArray(parsed?.streams) ? parsed.streams[0] : null;
+      width = Number.isFinite(Number(stream?.width)) ? Number(stream.width) : null;
+      height = Number.isFinite(Number(stream?.height))
+        ? Number(stream.height)
+        : null;
+      durationSec = Number.isFinite(Number(parsed?.format?.duration))
+        ? Math.round(Number(parsed.format.duration) * 1000) / 1000
+        : null;
+    } catch (error) {
+      console.warn(
+        "[Starter] ไม่สามารถอ่าน metadata วิดีโอหลังแปลงไฟล์ได้:",
+        error?.message || error,
+      );
+    }
+
+    return {
+      videoBuffer,
+      previewBuffer,
+      width,
+      height,
+      durationSec,
+      mime: "video/mp4",
+    };
+  } catch (error) {
+    throw new Error(
+      `ไม่สามารถเตรียมไฟล์วิดีโอได้: ${error?.message || error}`,
+    );
+  } finally {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 function writeLocalFollowUpAssetFile(fileName, buffer) {
   if (!fileName || !Buffer.isBuffer(buffer) || buffer.length === 0) return false;
   const safeFileName = path.basename(String(fileName || "").trim());
@@ -15876,6 +16215,9 @@ function mapPostgresFollowUpAssetRow(row = {}) {
     width: Number.isFinite(Number(metadata.width)) ? Number(metadata.width) : null,
     height: Number.isFinite(Number(metadata.height)) ? Number(metadata.height) : null,
     size: Number.isFinite(Number(metadata.size)) ? Number(metadata.size) : null,
+    durationSec: Number.isFinite(Number(metadata.durationSec))
+      ? Number(metadata.durationSec)
+      : null,
     mime:
       typeof metadata.mime === "string" && metadata.mime.trim()
         ? metadata.mime.trim()
@@ -15953,6 +16295,7 @@ async function insertPostgresFollowUpAsset(scope, assetDoc = {}) {
     size: assetDoc.size || null,
     width: assetDoc.width || null,
     height: assetDoc.height || null,
+    durationSec: assetDoc.durationSec || null,
     url: assetDoc.url || null,
     thumbUrl: assetDoc.thumbUrl || null,
     originalName: normalizedOriginalName,

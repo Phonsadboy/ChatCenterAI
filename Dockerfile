@@ -2,9 +2,9 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-# Build deps for native modules such as `sharp`.
+# Build deps for native modules such as `sharp`, plus ffmpeg for starter video uploads.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ \
+  && apt-get install -y --no-install-recommends python3 make g++ ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 # Copy package files

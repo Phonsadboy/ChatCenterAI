@@ -94,6 +94,7 @@
     const starterAddImageBtn = document.getElementById('starterAddImageBtn');
     const starterAddVideoBtn = document.getElementById('starterAddVideoBtn');
     const starterImageUploadInput = document.getElementById('starterImageUploadInput');
+    const starterVideoUploadInput = document.getElementById('starterVideoUploadInput');
     const saveStarterConfigBtn = document.getElementById('saveStarterConfigBtn');
 
     const editorState = {
@@ -987,6 +988,73 @@
         }
     };
 
+    const uploadStarterVideos = async (files) => {
+        if (!editorState.currentInstructionId) {
+            showToast('กรุณาเลือก Instruction ก่อน', 'warning');
+            return;
+        }
+        const uploadFiles = Array.isArray(files) ? files : Array.from(files || []);
+        if (!uploadFiles.length) return;
+
+        const formData = new FormData();
+        uploadFiles.forEach((file) => formData.append('videos', file));
+
+        if (starterAddVideoBtn) {
+            starterAddVideoBtn.disabled = true;
+            if (!starterAddVideoBtn.dataset.defaultHtml) {
+                starterAddVideoBtn.dataset.defaultHtml = starterAddVideoBtn.innerHTML;
+            }
+            starterAddVideoBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>กำลังอัปโหลด...';
+        }
+
+        try {
+            const response = await fetch('/api/instructions-v2/starter-videos', {
+                method: 'POST',
+                body: formData
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || 'ไม่สามารถอัปโหลดวิดีโอได้');
+            }
+
+            const uploaded = Array.isArray(result.assets) ? result.assets : [];
+            if (!uploaded.length) {
+                throw new Error('ไม่พบวิดีโอที่อัปโหลดสำเร็จ');
+            }
+
+            uploaded.forEach((asset) => {
+                const url = typeof asset.url === 'string' ? asset.url.trim() : '';
+                if (!url) return;
+                starterState.messages.push({
+                    id: generateStarterTempId(),
+                    type: 'video',
+                    url,
+                    previewUrl: (asset.previewUrl || asset.thumbUrl || '').trim(),
+                    alt: '',
+                    fileName: (asset.fileName || '').trim(),
+                    assetId: (asset.assetId || asset.id || '').toString().trim(),
+                    order: starterState.messages.length
+                });
+            });
+
+            renderStarterMessages();
+            showToast(`เพิ่มวิดีโอ ${uploaded.length} รายการแล้ว`, 'success');
+        } catch (error) {
+            console.error('Error uploading starter videos:', error);
+            showToast(error.message || 'อัปโหลดวิดีโอไม่สำเร็จ', 'error');
+        } finally {
+            if (starterAddVideoBtn) {
+                starterAddVideoBtn.disabled = false;
+                if (starterAddVideoBtn.dataset.defaultHtml) {
+                    starterAddVideoBtn.innerHTML = starterAddVideoBtn.dataset.defaultHtml;
+                }
+            }
+            if (starterVideoUploadInput) {
+                starterVideoUploadInput.value = '';
+            }
+        }
+    };
+
     const openStarterModal = async (requestedInstructionId = '', triggerButton = null) => {
         const instructionId = requestedInstructionId || editorState.currentInstructionId || instructionSelect?.value || '';
         if (!instructionId) {
@@ -1144,17 +1212,12 @@
         });
     }
 
-    if (starterAddVideoBtn) {
+    if (starterAddVideoBtn && starterVideoUploadInput) {
         starterAddVideoBtn.addEventListener('click', () => {
-            starterState.messages.push({
-                id: generateStarterTempId(),
-                type: 'video',
-                url: '',
-                previewUrl: '',
-                alt: '',
-                order: starterState.messages.length
-            });
-            renderStarterMessages();
+            starterVideoUploadInput.click();
+        });
+        starterVideoUploadInput.addEventListener('change', (event) => {
+            uploadStarterVideos(event.target.files);
         });
     }
 
@@ -1172,6 +1235,9 @@
         conversationStarterModalRoot.addEventListener('hidden.bs.modal', () => {
             if (starterImageUploadInput) {
                 starterImageUploadInput.value = '';
+            }
+            if (starterVideoUploadInput) {
+                starterVideoUploadInput.value = '';
             }
         });
     }

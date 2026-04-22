@@ -512,6 +512,7 @@
 	                                </div>
                                 <div class="starter-modal-help">
                                     ระบบจะส่งข้อความ/รูปภาพ/วิดีโอตามลำดับที่ตั้งไว้เมื่อเป็นข้อความแรกของลูกค้าในบทสนทนา
+                                    และสามารถอัปโหลดคลิปตรงเข้าระบบได้เลย
                                 </div>
                                 <div class="starter-modal-toolbar">
                                     <button type="button" class="btn btn-outline-primary btn-sm"
@@ -524,10 +525,12 @@
                                     </button>
                                     <button type="button" class="btn btn-outline-warning btn-sm"
                                         id="starterAddVideoBtn">
-                                        <i class="fas fa-video me-1"></i> เพิ่มวิดีโอ
+                                        <i class="fas fa-video me-1"></i> อัปโหลดวิดีโอ
                                     </button>
                                     <input type="file" id="starterImageUploadInput" class="d-none" accept="image/*"
                                         multiple>
+                                    <input type="file" id="starterVideoUploadInput" class="d-none"
+                                        accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm" multiple>
                                 </div>
 	                                <div id="starterMessagesList" class="starter-message-list"></div>
 	                            </div>
