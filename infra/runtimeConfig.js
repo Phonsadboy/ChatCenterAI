@@ -99,7 +99,7 @@ function getRuntimeConfig() {
     queues: {
       realtimeConcurrency: parseInteger(
         process.env.CCAI_WORKER_REALTIME_CONCURRENCY,
-        10,
+        8,
       ),
       batchConcurrency: parseInteger(
         process.env.CCAI_WORKER_BATCH_CONCURRENCY,

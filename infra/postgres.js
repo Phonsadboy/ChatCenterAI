@@ -35,6 +35,24 @@ function isPostgresConfigured() {
   return Boolean(config.features.postgresEnabled && config.postgresConnectionString);
 }
 
+function resolveDefaultPgPoolMax(runtimeMode) {
+  switch (runtimeMode) {
+    case "admin-app":
+    case "legacy":
+      return 6;
+    case "worker-realtime":
+      return 6;
+    case "public-ingest":
+      return 4;
+    case "worker-batch":
+      return 4;
+    case "migration-runner":
+      return 2;
+    default:
+      return 6;
+  }
+}
+
 function getPgPool() {
   if (!pool) {
     const config = getRuntimeConfig();
@@ -49,7 +67,10 @@ function getPgPool() {
     pool = new Pool({
       connectionString: config.postgresConnectionString,
       // Keep defaults conservative for Railway-sized instances; tune up via env if needed.
-      max: Number(process.env.CCAI_PG_POOL_MAX || 8),
+      max: Number(
+        process.env.CCAI_PG_POOL_MAX
+          || resolveDefaultPgPoolMax(config.runtimeMode),
+      ),
       idleTimeoutMillis: Number(process.env.CCAI_PG_IDLE_TIMEOUT_MS || 10000),
       connectionTimeoutMillis: Number(
         process.env.CCAI_PG_CONNECTION_TIMEOUT_MS || 5000,

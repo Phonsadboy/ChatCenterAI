@@ -192,9 +192,22 @@ const ASSET_HTTP_FETCH_RETRY_DELAY_MS = Math.max(
   0,
   Number(process.env.CCAI_ASSET_HTTP_FETCH_RETRY_DELAY_MS || 1500),
 );
+function parseEnvBoolean(value, defaultValue = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return defaultValue;
+}
+
+const HISTORY_IMAGE_URL_CHECK_ENABLED = parseEnvBoolean(
+  process.env.CCAI_HISTORY_IMAGE_URL_CHECK_ENABLED,
+  false,
+);
 const HISTORY_IMAGE_URL_CHECK_TIMEOUT_MS = Math.max(
-  1500,
-  Number(process.env.CCAI_HISTORY_IMAGE_URL_CHECK_TIMEOUT_MS || 5000),
+  500,
+  Number(process.env.CCAI_HISTORY_IMAGE_URL_CHECK_TIMEOUT_MS || 1500),
 );
 const HISTORY_IMAGE_URL_CHECK_CACHE_TTL_MS = Math.max(
   10000,
@@ -202,11 +215,49 @@ const HISTORY_IMAGE_URL_CHECK_CACHE_TTL_MS = Math.max(
 );
 const HISTORY_IMAGE_ACCESSIBLE_PER_MESSAGE_LIMIT = Math.max(
   1,
-  Number(process.env.CCAI_HISTORY_IMAGE_ACCESSIBLE_PER_MESSAGE_LIMIT || 3),
+  Number(process.env.CCAI_HISTORY_IMAGE_ACCESSIBLE_PER_MESSAGE_LIMIT || 1),
+);
+const WEBHOOK_DEDUPE_TTL_SECONDS = Math.max(
+  60,
+  Number(process.env.CCAI_WEBHOOK_DEDUPE_TTL_SECONDS || 24 * 60 * 60),
+);
+const LINE_PROFILE_REFRESH_TTL_MS = Math.max(
+  60000,
+  Number(process.env.CCAI_LINE_PROFILE_REFRESH_TTL_MS || 6 * 60 * 60 * 1000),
+);
+const PROFILE_REFRESH_BACKGROUND_COOLDOWN_MS = Math.max(
+  10000,
+  Number(
+    process.env.CCAI_PROFILE_REFRESH_BACKGROUND_COOLDOWN_MS || 5 * 60 * 1000,
+  ),
+);
+const PROFILE_REFRESH_STATE_TTL_MS = Math.max(
+  PROFILE_REFRESH_BACKGROUND_COOLDOWN_MS,
+  Number(
+    process.env.CCAI_PROFILE_REFRESH_STATE_TTL_MS || 30 * 60 * 1000,
+  ),
 );
 const adminChatUsersCache = new Map();
 const adminChatUsersInflight = new Map();
 const historyImageUrlAccessCache = new Map();
+const lineProfileRefreshState = new Map();
+const facebookProfileRefreshState = new Map();
+
+function cleanupProfileRefreshState(cacheMap) {
+  const now = Date.now();
+  for (const [key, entry] of cacheMap.entries()) {
+    if (!entry || entry.inFlight) continue;
+    const lastStartedAt = Number(entry.lastStartedAt || 0);
+    if (!lastStartedAt || now - lastStartedAt >= PROFILE_REFRESH_STATE_TTL_MS) {
+      cacheMap.delete(key);
+    }
+  }
+}
+
+setInterval(() => {
+  cleanupProfileRefreshState(lineProfileRefreshState);
+  cleanupProfileRefreshState(facebookProfileRefreshState);
+}, Math.min(PROFILE_REFRESH_STATE_TTL_MS, 10 * 60 * 1000)).unref?.();
 
 function sleep(ms) {
   const normalizedMs = Number(ms);
@@ -583,6 +634,10 @@ function attachChatImageUrlsToStoredContent(content, messageId) {
 async function isHistoryImageUrlAccessible(url) {
   const normalizedUrl = normalizeHistoryImageCandidateUrl(url);
   if (!normalizedUrl) return false;
+
+  if (!HISTORY_IMAGE_URL_CHECK_ENABLED) {
+    return true;
+  }
 
   const cached = historyImageUrlAccessCache.get(normalizedUrl);
   if (cached && cached.expiresAt > Date.now()) {
@@ -1866,25 +1921,44 @@ async function recordInboundWebhookEvent(platform, botId, eventType, payload) {
   );
   let accepted = true;
   try {
+    accepted = await claimProcessedEvent(
+      `webhook:${idempotencyKey}`,
+      WEBHOOK_DEDUPE_TTL_SECONDS,
+    );
+  } catch (error) {
+    console.warn(
+      `[WebhookEvent] Failed to claim dedupe key for ${platform}:${eventType}:`,
+      error?.message || error,
+    );
+    accepted = null;
+  }
+
+  if (accepted === false) {
+    return { idempotencyKey, accepted };
+  }
+
+  try {
     const insertResult = await getWebhookEventRepository().recordReceived({
       platform,
       botId,
       eventType,
       payload,
       idempotencyKey,
+      useDatabaseDedupe: accepted === null,
     });
-    accepted = insertResult !== false;
+    if (accepted === null) {
+      accepted = insertResult !== false;
+    }
   } catch (error) {
     console.warn(
       `[WebhookEvent] Failed to record ${platform}:${eventType}:`,
       error?.message || error,
     );
-    try {
-      accepted = await claimProcessedEvent(`webhook-fallback:${idempotencyKey}`);
-    } catch (_) {
+    if (accepted === null) {
       accepted = true;
     }
   }
+
   return { idempotencyKey, accepted };
 }
 
@@ -2383,6 +2457,104 @@ function isUsableLineProfile(profile, userId) {
   return displayName !== buildLineProfileFallbackDisplayName(userId);
 }
 
+function getProfileRefreshStateEntry(stateMap, key) {
+  const existing = stateMap.get(key);
+  if (existing && typeof existing === "object") {
+    return existing;
+  }
+  const next = {
+    inFlight: false,
+    lastStartedAt: 0,
+    lastCompletedAt: 0,
+  };
+  stateMap.set(key, next);
+  return next;
+}
+
+function scheduleBackgroundProfileRefresh(
+  stateMap,
+  key,
+  task,
+  label,
+  cooldownMs = PROFILE_REFRESH_BACKGROUND_COOLDOWN_MS,
+) {
+  if (!key || typeof task !== "function") return false;
+
+  const state = getProfileRefreshStateEntry(stateMap, key);
+  const now = Date.now();
+  if (state.inFlight) {
+    return false;
+  }
+  if (state.lastStartedAt && now - state.lastStartedAt < cooldownMs) {
+    return false;
+  }
+
+  state.inFlight = true;
+  state.lastStartedAt = now;
+
+  setImmediate(() => {
+    Promise.resolve()
+      .then(task)
+      .catch((error) => {
+        console.warn(
+          `[ProfileRefresh] ${label} failed:`,
+          error?.message || error,
+        );
+      })
+      .finally(() => {
+        const currentState = getProfileRefreshStateEntry(stateMap, key);
+        currentState.inFlight = false;
+        currentState.lastCompletedAt = Date.now();
+      });
+  });
+
+  return true;
+}
+
+function scheduleLineUserProfileRefresh(
+  userId,
+  botId = null,
+  options = {},
+) {
+  const normalizedUserId =
+    typeof userId === "string" ? userId.trim() : String(userId || "").trim();
+  if (!normalizedUserId) return false;
+  const normalizedBotId =
+    botId === null || typeof botId === "undefined"
+      ? "default"
+      : typeof botId === "string"
+        ? botId.trim() || "default"
+        : String(botId);
+  const key = `${normalizedUserId}:${normalizedBotId}`;
+
+  return scheduleBackgroundProfileRefresh(
+    lineProfileRefreshState,
+    key,
+    () => saveOrUpdateUserProfile(normalizedUserId, botId, options),
+    `line:${key}`,
+  );
+}
+
+function scheduleFacebookProfileRefresh(
+  psid,
+  accessToken,
+  options = {},
+) {
+  const normalizedPsid =
+    typeof psid === "string" ? psid.trim() : String(psid || "").trim();
+  const normalizedToken =
+    typeof accessToken === "string" ? accessToken.trim() : "";
+  if (!normalizedPsid || !normalizedToken) return false;
+
+  return scheduleBackgroundProfileRefresh(
+    facebookProfileRefreshState,
+    normalizedPsid,
+    () =>
+      ensureFacebookProfileDisplayName(normalizedPsid, normalizedToken, options),
+    `facebook:${normalizedPsid}`,
+  );
+}
+
 async function getLineUserProfile(userId, botId = null) {
   const client = await getLineClientForContext(botId);
   if (!client) {
@@ -2440,16 +2612,46 @@ async function getLineUserProfile(userId, botId = null) {
 }
 
 // ฟังก์ชันสำหรับบันทึกหรืออัปเดตข้อมูลผู้ใช้
-async function saveOrUpdateUserProfile(userId, botId = null) {
+async function saveOrUpdateUserProfile(userId, botId = null, options = {}) {
   try {
+    const forceRefresh = options?.forceRefresh === true;
+    const minRefreshIntervalMs = Number.isFinite(
+      Number(options?.minRefreshIntervalMs),
+    )
+      ? Math.max(0, Number(options.minRefreshIntervalMs))
+      : LINE_PROFILE_REFRESH_TTL_MS;
+    const profileRepo = getProfileRepository();
+    const existingProfile = await profileRepo.getProfile(userId, "line", {
+      projection: {
+        userId: 1,
+        displayName: 1,
+        pictureUrl: 1,
+        statusMessage: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    });
+
+    if (!forceRefresh && isUsableLineProfile(existingProfile, userId)) {
+      const updatedAtMs = existingProfile?.updatedAt
+        ? new Date(existingProfile.updatedAt).getTime()
+        : 0;
+      if (
+        updatedAtMs > 0 &&
+        Date.now() - updatedAtMs < minRefreshIntervalMs
+      ) {
+        return existingProfile;
+      }
+    }
+
     const profile = await getLineUserProfile(userId, botId);
     if (!isUsableLineProfile(profile, userId)) {
-      return null;
+      return existingProfile || null;
     }
 
     const normalizedUserId = String(profile.userId || userId || "").trim();
     if (!normalizedUserId) {
-      return null;
+      return existingProfile || null;
     }
     const now = new Date();
     const updateDoc = {
@@ -2460,10 +2662,10 @@ async function saveOrUpdateUserProfile(userId, botId = null) {
       statusMessage: profile.statusMessage || null,
       profileFetchDisabled: false,
       updatedAt: now,
-      createdAt: now,
+      createdAt: existingProfile?.createdAt || now,
     };
 
-    return await getProfileRepository().upsertProfile(updateDoc, {
+    return await profileRepo.upsertProfile(updateDoc, {
       unsetFields: [
         "profileFetchDisabledReason",
         "profileFetchFailedAt",
@@ -2669,7 +2871,7 @@ async function saveChatHistory(
 
   // บันทึกหรืออัปเดตข้อมูลผู้ใช้ก่อน (เฉพาะ LINE)
   if (platform === "line") {
-    await saveOrUpdateUserProfile(userId, botId);
+    scheduleLineUserProfileRefresh(userId, botId);
   }
 
   const chatRepo = getChatRepository();
@@ -17919,17 +18121,10 @@ app.post("/webhook/facebook/:botId", async (req, res) => {
 
             if (messagingEvent.message) {
               const senderId = messagingEvent.sender.id;
-              try {
-                await ensureFacebookProfileDisplayName(
-                  senderId,
-                  facebookBot.accessToken,
-                );
-              } catch (profileErr) {
-                console.warn(
-                  `[Facebook Bot: ${facebookBot.name}] อัปเดตโปรไฟล์ ${senderId} ไม่สำเร็จ:`,
-                  profileErr?.message || profileErr,
-                );
-              }
+              scheduleFacebookProfileRefresh(
+                senderId,
+                facebookBot.accessToken,
+              );
               const queueOptions = { ...queueOptionsBase };
               const facebookRuntimeInstructionContext =
                 await resolveInstructionMetaForRuntime(

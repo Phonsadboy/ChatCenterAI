@@ -1,5 +1,51 @@
 const { isPostgresConfigured, query, withTransaction } = require("../../infra/postgres");
-const { normalizeJson, normalizePlatform, toLegacyId } = require("./shared");
+const {
+  normalizeJson,
+  normalizePlatform,
+  safeStringify,
+  toLegacyId,
+} = require("./shared");
+
+function parseEnvBoolean(value, defaultValue = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return defaultValue;
+}
+
+const WEBHOOK_EVENT_STORE_RAW_PAYLOAD = parseEnvBoolean(
+  process.env.CCAI_WEBHOOK_EVENT_STORE_RAW_PAYLOAD,
+  false,
+);
+const WEBHOOK_EVENT_PAYLOAD_MAX_BYTES = Math.max(
+  512,
+  Number(process.env.CCAI_WEBHOOK_EVENT_PAYLOAD_MAX_BYTES || 4096),
+);
+
+function summarizeWebhookPayload(payload = {}) {
+  const normalized = normalizeJson(payload, {});
+  if (WEBHOOK_EVENT_STORE_RAW_PAYLOAD) {
+    return normalized;
+  }
+
+  const serialized = safeStringify(normalized);
+  const topLevelKeys =
+    normalized && typeof normalized === "object" && !Array.isArray(normalized)
+      ? Object.keys(normalized).slice(0, 32)
+      : [];
+
+  return {
+    summarized: true,
+    serializedBytes: Buffer.byteLength(serialized || "", "utf8"),
+    topLevelKeys,
+    object:
+      typeof normalized?.object === "string" ? normalized.object : null,
+    entryCount: Array.isArray(normalized?.entry) ? normalized.entry.length : null,
+    preview: serialized.slice(0, WEBHOOK_EVENT_PAYLOAD_MAX_BYTES),
+  };
+}
 
 function createWebhookEventRepository({ runtimeConfig }) {
   function canUsePostgres() {
@@ -25,11 +71,40 @@ function createWebhookEventRepository({ runtimeConfig }) {
     payload = {},
     idempotencyKey,
     receivedAt = new Date(),
+    useDatabaseDedupe = false,
   }) {
     if (!canUsePostgres()) return false;
     if (!idempotencyKey) return false;
 
     const pgBotId = await resolvePgBotId(platform, botId).catch(() => null);
+    const normalizedPlatform = normalizePlatform(platform);
+    const storedPayload = JSON.stringify(summarizeWebhookPayload(payload));
+
+    if (!useDatabaseDedupe) {
+      await query(
+        `
+          INSERT INTO webhook_events (
+            idempotency_key,
+            platform,
+            bot_id,
+            event_type,
+            raw_payload,
+            status,
+            received_at
+          ) VALUES ($1,$2,$3,$4,$5::jsonb,'received',$6)
+        `,
+        [
+          idempotencyKey,
+          normalizedPlatform,
+          pgBotId,
+          eventType,
+          storedPayload,
+          receivedAt,
+        ],
+      );
+      return true;
+    }
+
     return withTransaction(async (client) => {
       const dedupeInsert = await client.query(
         `
@@ -70,10 +145,10 @@ function createWebhookEventRepository({ runtimeConfig }) {
         `,
         [
           idempotencyKey,
-          normalizePlatform(platform),
+          normalizedPlatform,
           pgBotId,
           eventType,
-          JSON.stringify(normalizeJson(payload, {})),
+          storedPayload,
           receivedAt,
         ],
       );

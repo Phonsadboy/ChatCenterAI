@@ -2,7 +2,8 @@ require("dotenv").config();
 
 const { createQueueWorker, getQueue } = require("../infra/queues");
 const { JOB_NAMES, QUEUE_NAMES } = require("../infra/queueNames");
-const { getRuntimeConfig } = require("../infra/runtimeConfig");
+const { getRuntimeConfig, parseBoolean } = require("../infra/runtimeConfig");
+const { runPostgresMaintenance } = require("../services/postgresMaintenanceService");
 const {
   evaluateNotificationSummarySchedules,
   FOLLOW_UP_TASK_INTERVAL_MS,
@@ -10,6 +11,15 @@ const {
   NOTIFICATION_SUMMARY_INTERVAL_MS,
   processDueFollowUpTasks,
 } = require("../index");
+
+const POSTGRES_MAINTENANCE_ENABLED = parseBoolean(
+  process.env.CCAI_POSTGRES_MAINTENANCE_ENABLED,
+  true,
+);
+const POSTGRES_MAINTENANCE_INTERVAL_MS = Math.max(
+  15 * 60 * 1000,
+  Number(process.env.CCAI_POSTGRES_MAINTENANCE_INTERVAL_MS || 60 * 60 * 1000),
+);
 
 async function registerBatchSchedulers() {
   const followUpQueue = getQueue(QUEUE_NAMES.FOLLOWUP);
@@ -43,6 +53,21 @@ async function registerBatchSchedulers() {
     },
   );
 
+  if (POSTGRES_MAINTENANCE_ENABLED) {
+    await statsQueue.upsertJobScheduler(
+      "postgres-maintenance-scheduler",
+      {
+        every: POSTGRES_MAINTENANCE_INTERVAL_MS,
+      },
+      {
+        name: JOB_NAMES.POSTGRES_MAINTENANCE_TICK,
+        data: {},
+        opts: {
+          jobId: JOB_NAMES.POSTGRES_MAINTENANCE_TICK,
+        },
+      },
+    );
+  }
 }
 
 async function startBatchWorkers() {
@@ -74,6 +99,10 @@ async function startBatchWorkers() {
       if (job.name === JOB_NAMES.NOTIFICATION_SUMMARY_TICK) {
         await evaluateNotificationSummarySchedules();
         return { processed: true, job: job.name };
+      }
+      if (job.name === JOB_NAMES.POSTGRES_MAINTENANCE_TICK) {
+        const summary = await runPostgresMaintenance();
+        return { processed: true, job: job.name, summary };
       }
       return { skipped: true, reason: "unknown_job" };
     },

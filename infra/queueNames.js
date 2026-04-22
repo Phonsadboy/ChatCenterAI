@@ -15,6 +15,7 @@ const JOB_NAMES = {
   BROADCAST_SEND: "broadcast-send",
   STATS_ROLLUP: "stats-rollup",
   NOTIFICATION_SUMMARY_TICK: "notification-summary-tick",
+  POSTGRES_MAINTENANCE_TICK: "postgres-maintenance-tick",
   MIGRATION_BATCH: "migration-batch",
 };
 
