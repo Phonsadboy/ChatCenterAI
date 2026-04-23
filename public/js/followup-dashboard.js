@@ -2,51 +2,38 @@
     const state = {
         pages: [],
         currentPage: null,
-        users: [],
-        summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0, dateKey: '' },
-        isLoadingUsers: false,
-        socket: null,
-        config: window.followUpDashboardConfig || {},
         currentContextConfig: null,
-        modalRounds: [],
-        statusFilter: 'all',
-        overview: {
-            summary: { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 },
-            groups: []
-        }
+        config: window.followUpDashboardConfig || {},
+        editorRounds: [],
+        assets: [],
+        activeTab: 'general',
+        isLoading: false
     };
 
     const el = {
-        list: document.getElementById('followupList'),
-        emptyState: document.getElementById('followupEmptyState'),
-        search: document.getElementById('followupSearch'),
-        refresh: document.getElementById('followupRefreshBtn'),
-        editBtn: document.getElementById('followupEditBtn'),
         pageSelector: document.getElementById('followupPageSelector'),
-        pageLabel: document.getElementById('followupPageLabel'),
-        statusPills: document.getElementById('followupStatusPills'),
-        modalRoot: document.getElementById('followupSettingsModal'),
-        modalAutoSend: document.getElementById('followupModalAutoSend'),
-        modalRoundsContainer: document.getElementById('followupModalRoundsContainer'),
-        modalRounds: document.getElementById('followupModalRounds'),
-        modalAddRound: document.getElementById('followupModalAddRound'),
-        modalResetBtn: document.getElementById('followupModalResetBtn'),
-        modalSaveBtn: document.getElementById('followupModalSaveBtn'),
-        modalTitle: document.getElementById('followupModalTitle'),
-        summaryActive: document.getElementById('followupMetricActive'),
-        summaryCompleted: document.getElementById('followupMetricCompleted'),
-        summaryCanceled: document.getElementById('followupMetricCanceled'),
-        summaryFailed: document.getElementById('followupMetricFailed'),
-        countAll: document.getElementById('countAll'),
-        countActive: document.getElementById('countActive'),
-        countCompleted: document.getElementById('countCompleted'),
-        countCanceled: document.getElementById('countCanceled'),
-        countFailed: document.getElementById('countFailed'),
-        schedulePreview: document.getElementById('followupSchedulePreview'),
-        autoStatusBadge: document.getElementById('followupAutoStatusBadge')
+        pageSearch: document.getElementById('followupPageSearch'),
+        emptyMain: document.getElementById('followupEmptyMain'),
+        editor: document.getElementById('followupEditor'),
+        editorPageName: document.getElementById('editorPageName'),
+        editorPlatformBadge: document.getElementById('editorPlatformBadge'),
+        editorAutoBadge: document.getElementById('editorAutoBadge'),
+        saveBtn: document.getElementById('followupSaveBtn'),
+        resetBtn: document.getElementById('followupResetBtn'),
+        tabButtons: document.querySelectorAll('.followup-tab'),
+        tabContents: document.querySelectorAll('.followup-tab-content'),
+        settingAutoSend: document.getElementById('settingAutoSend'),
+        settingShowChat: document.getElementById('settingShowChat'),
+        settingShowDashboard: document.getElementById('settingShowDashboard'),
+        settingAnalysis: document.getElementById('settingAnalysis'),
+        settingModel: document.getElementById('settingModel'),
+        settingPrompt: document.getElementById('settingPrompt'),
+        emergencyStopGroup: document.getElementById('emergencyStopGroup'),
+        roundsContainer: document.getElementById('roundsContainer'),
+        btnAddRound: document.getElementById('btnAddRound'),
+        imageLibraryGrid: document.getElementById('imageLibraryGrid'),
+        btnUploadImage: document.getElementById('btnUploadImage')
     };
-
-    const modalInstance = el.modalRoot ? new bootstrap.Modal(el.modalRoot) : null;
 
     const MODEL_OPTIONS = [
         { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (แนะนำ)' },
@@ -61,25 +48,6 @@
         { value: 'o4-mini', label: 'O4 Mini (reasoning คุ้มสุด)' },
         { value: 'o3', label: 'O3 (reasoning ลึกสุด)' }
     ];
-
-    const getDefaultPromptInstructions = () => {
-        const cfg = state.config || {};
-        return typeof cfg.defaultOrderPromptInstructions === 'string'
-            ? cfg.defaultOrderPromptInstructions
-            : '';
-    };
-
-    const getPromptJsonSuffix = () => {
-        const cfg = state.config || {};
-        return typeof cfg.orderPromptJsonSuffix === 'string'
-            ? cfg.orderPromptJsonSuffix
-            : '';
-    };
-
-    const normalizeId = (value) => {
-        if (value === undefined || value === null) return null;
-        return String(value);
-    };
 
     const escapeHtml = (text) => {
         if (!text) return '';
@@ -116,7 +84,6 @@
         return cloned;
     };
 
-    // Convert legacy { message, images[] } round to items array
     const roundLegacyToItems = (round) => {
         const items = [];
         if (typeof round.message === 'string' && round.message.trim()) {
@@ -195,58 +162,14 @@
         return '';
     };
 
-    const formatDateTime = (value) => {
-        if (!value) return '-';
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return '-';
-        return date.toLocaleString('th-TH', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    };
-
-    const formatRelativeTime = (value) => {
-        if (!value) return '-';
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return '-';
-        const diffMs = Date.now() - date.getTime();
-        if (diffMs < 0) return formatDateTime(value);
-        const diffMins = Math.floor(diffMs / 60000);
-        const diffHours = Math.floor(diffMs / 3600000);
-        const diffDays = Math.floor(diffMs / 86400000);
-        if (diffMins < 1) return 'เมื่อสักครู่';
-        if (diffMins < 60) return `${diffMins} นาทีที่แล้ว`;
-        if (diffHours < 24) return `${diffHours} ชั่วโมงที่แล้ว`;
-        if (diffDays < 7) return `${diffDays} วันที่แล้ว`;
-        return formatDateTime(value);
-    };
-
     const formatDelayMinutes = (minutes) => {
         const value = Number(minutes);
         if (!Number.isFinite(value) || value <= 0) return '-';
         if (value < 60) return `${value} นาที`;
         const hours = Math.floor(value / 60);
         const mins = value % 60;
-        if (mins === 0) {
-            return `${hours} ชม.`;
-        }
+        if (mins === 0) return `${hours} ชม.`;
         return `${hours} ชม. ${mins} นาที`;
-    };
-
-    const defaultSummary = () => ({
-        total: 0,
-        active: 0,
-        completed: 0,
-        canceled: 0,
-        failed: 0
-    });
-
-    const getGroupForPage = (pageId) => {
-        if (!pageId || !state.overview || !Array.isArray(state.overview.groups)) return null;
-        return state.overview.groups.find(group => group.contextKey === pageId) || null;
     };
 
     const isHardStopEnabled = (config) => {
@@ -259,41 +182,195 @@
         return config.autoFollowUpEnabled !== false;
     };
 
-    const getStatusBadge = (status) => {
-        switch (status) {
-            case 'completed':
-                return '<span class="badge bg-success"><i class="fas fa-check-circle me-1"></i>ส่งครบแล้ว</span>';
-            case 'canceled':
-                return '<span class="badge bg-secondary"><i class="fas fa-ban me-1"></i>ยกเลิกแล้ว</span>';
-            case 'failed':
-                return '<span class="badge bg-danger"><i class="fas fa-exclamation-triangle me-1"></i>ส่งไม่สำเร็จ</span>';
-            case 'active':
-                return '<span class="badge bg-warning text-dark"><i class="fas fa-sync me-1"></i>กำลังติดตาม</span>';
-            default:
-                return '<span class="badge bg-info text-dark"><i class="fas fa-clock me-1"></i>รอดำเนินการ</span>';
+    const showAlert = (type, message) => {
+        const container = document.getElementById('alertToastContainer');
+        if (!container) return;
+
+        const iconMap = {
+            success: 'circle-check',
+            danger: 'triangle-exclamation',
+            warning: 'circle-exclamation',
+            info: 'circle-info'
+        };
+        const classMap = {
+            success: 'alert-toast-success',
+            danger: 'alert-toast-danger',
+            warning: 'alert-toast-warning',
+            info: 'alert-toast-info'
+        };
+
+        const normalizedType = classMap[type] ? type : 'info';
+        const toast = document.createElement('div');
+        toast.className = `alert-toast ${classMap[normalizedType]}`;
+        toast.setAttribute('role', 'alert');
+
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'alert-toast-icon';
+        iconSpan.innerHTML = `<i class="fas fa-${iconMap[normalizedType] || iconMap.info}"></i>`;
+
+        const content = document.createElement('div');
+        content.className = 'alert-toast-content';
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'alert-toast-message';
+        messageDiv.textContent = message;
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'alert-toast-close';
+        closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
+        closeBtn.innerHTML = '<i class="fas fa-times"></i>';
+
+        content.appendChild(messageDiv);
+        content.appendChild(closeBtn);
+        toast.appendChild(iconSpan);
+        toast.appendChild(content);
+        container.appendChild(toast);
+
+        requestAnimationFrame(() => toast.classList.add('show'));
+
+        const hideToast = () => {
+            toast.classList.remove('show');
+            toast.classList.add('hide');
+            setTimeout(() => toast.remove(), 220);
+        };
+
+        const timeoutId = setTimeout(hideToast, 5000);
+        closeBtn.addEventListener('click', () => {
+            clearTimeout(timeoutId);
+            hideToast();
+        });
+    };
+
+    const populateModelSelect = () => {
+        if (!el.settingModel) return;
+        el.settingModel.innerHTML = '<option value="">ใช้ค่าเริ่มต้น</option>';
+        MODEL_OPTIONS.forEach(opt => {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            el.settingModel.appendChild(option);
+        });
+    };
+
+    const renderPageSelector = () => {
+        if (!el.pageSelector) return;
+        const keyword = el.pageSearch && el.pageSearch.value ? el.pageSearch.value.trim().toLowerCase() : '';
+        const filtered = state.pages.filter(page => {
+            if (!keyword) return true;
+            const name = String(page.name || '').toLowerCase();
+            const platform = String(page.platform || '').toLowerCase();
+            return name.includes(keyword) || platform.includes(keyword);
+        });
+
+        if (!filtered.length) {
+            el.pageSelector.innerHTML = `
+                <div class="followup-empty-state-small">
+                    <div class="text-muted small">ไม่พบเพจ/บอทที่ตรงกับคำค้น</div>
+                </div>
+            `;
+            return;
+        }
+
+        el.pageSelector.innerHTML = filtered.map(page => {
+            const active = state.currentPage && page.id === state.currentPage.id;
+            const icon = page.platform === 'facebook' ? 'fab fa-facebook' : 'fab fa-line';
+            const cfg = page.settings || {};
+            const autoOn = isAutoFollowUpEffectiveEnabled(cfg);
+            const roundCount = Array.isArray(cfg.rounds) ? cfg.rounds.length : 0;
+            return `
+                <button class="followup-page-item ${active ? 'active' : ''}" data-page-id="${page.id}">
+                    <span class="page-name">
+                        <i class="${icon} page-icon"></i>
+                        <span class="page-name-text">${escapeHtml(page.name)}</span>
+                    </span>
+                    <span class="page-badges">
+                        ${roundCount > 0 ? `<span class="page-badge">${roundCount} รอบ</span>` : ''}
+                        <span class="page-badge ${autoOn ? 'text-success' : ''}">${autoOn ? 'เปิด' : 'ปิด'}</span>
+                    </span>
+                </button>
+            `;
+        }).join('');
+
+        el.pageSelector.querySelectorAll('button[data-page-id]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const pageId = btn.getAttribute('data-page-id');
+                if (!pageId) return;
+                selectPage(pageId);
+            });
+        });
+    };
+
+    const updateEditorHeader = () => {
+        if (!state.currentPage) {
+            el.emptyMain.style.display = 'flex';
+            el.editor.style.display = 'none';
+            return;
+        }
+        el.emptyMain.style.display = 'none';
+        el.editor.style.display = 'flex';
+
+        if (el.editorPageName) el.editorPageName.textContent = state.currentPage.name || '—';
+        if (el.editorPlatformBadge) {
+            const platform = state.currentPage.platform === 'facebook' ? 'Facebook' : 'LINE';
+            const badgeClass = state.currentPage.platform === 'facebook' ? 'bg-primary' : 'bg-success';
+            el.editorPlatformBadge.className = `badge ${badgeClass}`;
+            el.editorPlatformBadge.textContent = platform;
+        }
+
+        const cfg = state.currentContextConfig || state.currentPage.settings || {};
+        const hardStop = isHardStopEnabled(cfg);
+        const autoOn = isAutoFollowUpEffectiveEnabled(cfg);
+
+        if (el.editorAutoBadge) {
+            el.editorAutoBadge.textContent = hardStop ? 'หยุดชั่วคราว' : (autoOn ? 'ส่งอัตโนมัติ: เปิด' : 'ส่งอัตโนมัติ: ปิด');
+            el.editorAutoBadge.classList.toggle('on', autoOn && !hardStop);
+        }
+
+        if (el.resetBtn) {
+            el.resetBtn.disabled = !state.currentPage.hasOverride;
         }
     };
 
-    const setRoundsDisabled = (disabled) => {
-        if (el.modalRoundsContainer) {
-            el.modalRoundsContainer.classList.toggle('opacity-50', disabled);
+    const renderGeneralTab = () => {
+        const cfg = state.currentContextConfig || state.currentPage?.settings || {};
+        if (el.settingAutoSend) {
+            el.settingAutoSend.checked = isAutoFollowUpEffectiveEnabled(cfg);
+            const hardStop = isHardStopEnabled(cfg);
+            if (hardStop) {
+                el.settingAutoSend.checked = false;
+                el.settingAutoSend.disabled = true;
+            } else {
+                el.settingAutoSend.disabled = false;
+            }
         }
-        if (el.modalAddRound) {
-            el.modalAddRound.disabled = !!disabled;
+        if (el.emergencyStopGroup) {
+            const hardStop = isHardStopEnabled(cfg);
+            el.emergencyStopGroup.classList.toggle('d-none', !hardStop);
         }
+        if (el.settingShowChat) el.settingShowChat.checked = cfg.showInChat !== false;
+        if (el.settingShowDashboard) el.settingShowDashboard.checked = cfg.showInDashboard !== false;
+        if (el.settingAnalysis) el.settingAnalysis.checked = cfg.analysisEnabled !== false;
+        if (el.settingModel) el.settingModel.value = cfg.model || '';
+
+        let promptText = '';
+        if (typeof cfg.orderPromptInstructions === 'string' && cfg.orderPromptInstructions.trim()) {
+            promptText = cfg.orderPromptInstructions;
+        } else if (state.config.defaultOrderPromptInstructions) {
+            promptText = state.config.defaultOrderPromptInstructions;
+        }
+        if (el.settingPrompt) el.settingPrompt.value = promptText;
     };
 
     const uploadRoundImages = async (roundIndex, files) => {
         if (!Array.isArray(files) || files.length === 0) return;
-        if (!Array.isArray(state.modalRounds)) return;
-        const round = state.modalRounds[roundIndex];
+        if (!Array.isArray(state.editorRounds)) return;
+        const round = state.editorRounds[roundIndex];
         if (!round) return;
-        if (!Array.isArray(round.items)) {
-            round.items = [];
-        }
+        if (!Array.isArray(round.items)) round.items = [];
 
         round.isUploading = true;
-        renderModalRounds();
+        renderRounds();
 
         try {
             for (const file of files) {
@@ -331,23 +408,26 @@
                     }
                 });
             }
+            await loadAssets();
         } catch (error) {
             console.error('upload follow-up images error', error);
             showAlert('danger', 'เกิดข้อผิดพลาดในการอัพโหลดรูปภาพ');
         } finally {
             delete round.isUploading;
-            renderModalRounds();
+            renderRounds();
         }
     };
 
-    const renderModalRounds = () => {
-        if (!el.modalRounds) return;
-        if (!Array.isArray(state.modalRounds)) {
-            state.modalRounds = [];
-        }
+    const renderRounds = () => {
+        if (!el.roundsContainer) return;
+        if (!Array.isArray(state.editorRounds)) state.editorRounds = [];
 
-        if (state.modalRounds.length === 0) {
-            el.modalRounds.innerHTML = '<div class="text-muted small py-2">ยังไม่มีรอบการติดตาม กดปุ่ม "เพิ่มรอบ" เพื่อเริ่มต้น</div>';
+        if (state.editorRounds.length === 0) {
+            el.roundsContainer.innerHTML = `
+                <div class="app-empty">
+                    <div class="app-empty__desc">ยังไม่มีรอบการติดตาม กดปุ่ม "เพิ่มรอบ" เพื่อเริ่มต้น</div>
+                </div>
+            `;
             return;
         }
 
@@ -360,22 +440,24 @@
             if (item.type === 'text') {
                 const safeContent = escapeHtml(item.content || '');
                 return `
-                    <div class="followup-item-row d-flex gap-2 mb-2 align-items-start" data-round="${roundIndex}" data-item="${itemIndex}">
-                        <div class="followup-item-handle d-flex flex-column gap-1">
-                            <button type="button" class="btn btn-xs btn-outline-secondary followup-item-up px-1 py-0" data-round="${roundIndex}" data-item="${itemIndex}" title="เลื่อนขึ้น" ${moveUpDisabled}>
+                    <div class="followup-item-row" data-round="${roundIndex}" data-item="${itemIndex}">
+                        <div class="followup-item-handle">
+                            <button type="button" class="btn btn-xs btn-outline-secondary followup-item-up" data-round="${roundIndex}" data-item="${itemIndex}" title="เลื่อนขึ้น" ${moveUpDisabled}>
                                 <i class="fas fa-chevron-up" style="font-size:0.65rem"></i>
                             </button>
-                            <button type="button" class="btn btn-xs btn-outline-secondary followup-item-down px-1 py-0" data-round="${roundIndex}" data-item="${itemIndex}" title="เลื่อนลง" ${moveDownDisabled}>
+                            <button type="button" class="btn btn-xs btn-outline-secondary followup-item-down" data-round="${roundIndex}" data-item="${itemIndex}" title="เลื่อนลง" ${moveDownDisabled}>
                                 <i class="fas fa-chevron-down" style="font-size:0.65rem"></i>
                             </button>
                         </div>
-                        <div class="followup-item-icon text-muted" style="padding-top:0.3rem"><i class="fas fa-font"></i></div>
-                        <div class="flex-grow-1">
+                        <div class="followup-item-icon"><i class="fas fa-font"></i></div>
+                        <div class="followup-item-body">
                             <textarea class="form-control form-control-sm followup-item-text" rows="2" placeholder="กรอกข้อความ" data-round="${roundIndex}" data-item="${itemIndex}">${safeContent}</textarea>
                         </div>
-                        <button type="button" class="btn btn-xs btn-outline-danger followup-item-remove" data-round="${roundIndex}" data-item="${itemIndex}" title="ลบรายการนี้">
-                            <i class="fas fa-times" style="font-size:0.65rem"></i>
-                        </button>
+                        <div class="followup-item-actions">
+                            <button type="button" class="btn btn-xs btn-outline-danger followup-item-remove" data-round="${roundIndex}" data-item="${itemIndex}" title="ลบรายการนี้">
+                                <i class="fas fa-times" style="font-size:0.65rem"></i>
+                            </button>
+                        </div>
                     </div>
                 `;
             }
@@ -384,67 +466,65 @@
                 const full = escapeAttr(item.url || '');
                 const caption = escapeHtml(item.caption || item.alt || '');
                 return `
-                    <div class="followup-item-row d-flex gap-2 mb-2 align-items-center" data-round="${roundIndex}" data-item="${itemIndex}">
-                        <div class="followup-item-handle d-flex flex-column gap-1">
-                            <button type="button" class="btn btn-xs btn-outline-secondary followup-item-up px-1 py-0" data-round="${roundIndex}" data-item="${itemIndex}" title="เลื่อนขึ้น" ${moveUpDisabled}>
+                    <div class="followup-item-row align-items-center" data-round="${roundIndex}" data-item="${itemIndex}">
+                        <div class="followup-item-handle">
+                            <button type="button" class="btn btn-xs btn-outline-secondary followup-item-up" data-round="${roundIndex}" data-item="${itemIndex}" title="เลื่อนขึ้น" ${moveUpDisabled}>
                                 <i class="fas fa-chevron-up" style="font-size:0.65rem"></i>
                             </button>
-                            <button type="button" class="btn btn-xs btn-outline-secondary followup-item-down px-1 py-0" data-round="${roundIndex}" data-item="${itemIndex}" title="เลื่อนลง" ${moveDownDisabled}>
+                            <button type="button" class="btn btn-xs btn-outline-secondary followup-item-down" data-round="${roundIndex}" data-item="${itemIndex}" title="เลื่อนลง" ${moveDownDisabled}>
                                 <i class="fas fa-chevron-down" style="font-size:0.65rem"></i>
                             </button>
                         </div>
-                        <div class="followup-item-icon text-muted"><i class="fas fa-image"></i></div>
-                        <a href="${full}" target="_blank" rel="noopener" class="followup-round-image-link">
-                            <img src="${preview}" alt="${caption || 'รูปภาพ'}" class="followup-round-image-thumb">
+                        <div class="followup-item-icon"><i class="fas fa-image"></i></div>
+                        <a href="${full}" target="_blank" rel="noopener" class="flex-shrink-0">
+                            <img src="${preview}" alt="${caption || 'รูปภาพ'}" class="followup-item-thumb">
                         </a>
-                        ${caption ? `<small class="text-muted flex-grow-1">${caption}</small>` : '<span class="flex-grow-1"></span>'}
-                        <button type="button" class="btn btn-xs btn-outline-danger followup-item-remove" data-round="${roundIndex}" data-item="${itemIndex}" title="ลบรูปนี้">
-                            <i class="fas fa-times" style="font-size:0.65rem"></i>
-                        </button>
+                        ${caption ? `<small class="text-muted flex-grow-1" style="font-size:0.8rem">${caption}</small>` : '<span class="flex-grow-1"></span>'}
+                        <div class="followup-item-actions">
+                            <button type="button" class="btn btn-xs btn-outline-danger followup-item-remove" data-round="${roundIndex}" data-item="${itemIndex}" title="ลบรูปนี้">
+                                <i class="fas fa-times" style="font-size:0.65rem"></i>
+                            </button>
+                        </div>
                     </div>
                 `;
             }
             return '';
         };
 
-        el.modalRounds.innerHTML = state.modalRounds.map((round, index) => {
+        el.roundsContainer.innerHTML = state.editorRounds.map((round, index) => {
             if (!round || typeof round !== 'object') {
-                state.modalRounds[index] = { delayMinutes: 10, items: [{ type: 'text', content: '' }] };
+                state.editorRounds[index] = { delayMinutes: 10, items: [{ type: 'text', content: '' }] };
             }
-            if (!Array.isArray(state.modalRounds[index].items)) {
-                state.modalRounds[index].items = roundLegacyToItems(state.modalRounds[index]);
+            if (!Array.isArray(state.editorRounds[index].items)) {
+                state.editorRounds[index].items = roundLegacyToItems(state.editorRounds[index]);
             }
-            const r = state.modalRounds[index];
+            const r = state.editorRounds[index];
             const delayValue = Number(r.delayMinutes);
             const uploading = r.isUploading
                 ? '<div class="text-muted small mt-1"><i class="fas fa-spinner fa-spin me-1"></i>กำลังอัพโหลด...</div>'
                 : '';
-
             const itemsHtml = r.items.length
                 ? r.items.map((item, itemIndex) => renderItem(item, index, itemIndex, r.items.length)).join('')
                 : '<div class="text-muted small mb-2">ยังไม่มีเนื้อหา — กดเพิ่มข้อความหรือรูปภาพด้านล่าง</div>';
 
             return `
-                <div class="followup-round-item border rounded p-3 mb-3 bg-white" data-index="${index}">
-                    <div class="d-flex align-items-center gap-2 mb-2">
-                        <span class="badge bg-secondary">${index + 1}</span>
-                        <div class="input-group input-group-sm" style="max-width:180px">
-                            <span class="input-group-text"><i class="fas fa-clock"></i></span>
-                            <input type="number" class="form-control followup-round-delay" min="1" step="1" value="${Number.isFinite(delayValue) ? delayValue : ''}" placeholder="นาที">
-                            <span class="input-group-text">นาที</span>
+                <div class="followup-round-card" data-index="${index}">
+                    <div class="followup-round-header">
+                        <span class="followup-round-index">${index + 1}</span>
+                        <div class="followup-round-delay-group">
+                            <span class="followup-round-label">หลังจากคุยล่าสุด</span>
+                            <input type="number" class="form-control form-control-sm followup-round-delay" min="1" step="1" value="${Number.isFinite(delayValue) ? delayValue : ''}" placeholder="นาที">
+                            <span class="followup-round-label">นาที</span>
                         </div>
-                        <span class="text-muted small">หลังจากคุยล่าสุด</span>
-                        <div class="ms-auto">
-                            <button type="button" class="btn btn-sm btn-outline-danger followup-round-remove" title="ลบรอบนี้">
-                                <i class="fas fa-trash-alt"></i>
-                            </button>
-                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-danger followup-round-remove followup-round-remove" title="ลบรอบนี้">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
                     </div>
-                    <div class="followup-round-items-list mb-2">
+                    <div class="followup-round-items">
                         ${itemsHtml}
                     </div>
                     ${uploading}
-                    <div class="d-flex gap-2 flex-wrap">
+                    <div class="followup-round-add-actions">
                         <button type="button" class="btn btn-sm btn-outline-secondary followup-round-add-text" data-index="${index}">
                             <i class="fas fa-font me-1"></i>เพิ่มข้อความ
                         </button>
@@ -456,89 +536,89 @@
             `;
         }).join('');
 
-        // --- Delay input ---
-        el.modalRounds.querySelectorAll('.followup-round-delay').forEach(input => {
-            const container = input.closest('.followup-round-item');
-            if (!container) return;
-            const index = Number(container.dataset.index);
+        // Delay input
+        el.roundsContainer.querySelectorAll('.followup-round-delay').forEach(input => {
+            const card = input.closest('.followup-round-card');
+            if (!card) return;
+            const index = Number(card.dataset.index);
             input.addEventListener('input', (event) => {
                 const value = Number(event.target.value);
-                state.modalRounds[index].delayMinutes = Number.isFinite(value) ? value : '';
+                state.editorRounds[index].delayMinutes = Number.isFinite(value) ? value : '';
             });
         });
 
-        // --- Text item change ---
-        el.modalRounds.querySelectorAll('.followup-item-text').forEach(textarea => {
+        // Text item change
+        el.roundsContainer.querySelectorAll('.followup-item-text').forEach(textarea => {
             textarea.addEventListener('input', (event) => {
                 const rIdx = Number(event.target.dataset.round);
                 const iIdx = Number(event.target.dataset.item);
                 if (!Number.isFinite(rIdx) || !Number.isFinite(iIdx)) return;
-                if (state.modalRounds[rIdx]?.items[iIdx]) {
-                    state.modalRounds[rIdx].items[iIdx].content = event.target.value;
+                if (state.editorRounds[rIdx]?.items[iIdx]) {
+                    state.editorRounds[rIdx].items[iIdx].content = event.target.value;
                 }
             });
         });
 
-        // --- Remove round ---
-        el.modalRounds.querySelectorAll('.followup-round-remove').forEach(btn => {
-            const container = btn.closest('.followup-round-item');
-            if (!container) return;
-            const index = Number(container.dataset.index);
+        // Remove round
+        el.roundsContainer.querySelectorAll('.followup-round-remove').forEach(btn => {
+            const card = btn.closest('.followup-round-card');
+            if (!card) return;
+            const index = Number(card.dataset.index);
             btn.addEventListener('click', () => {
-                state.modalRounds.splice(index, 1);
-                renderModalRounds();
+                state.editorRounds.splice(index, 1);
+                renderRounds();
             });
         });
 
-        // --- Remove item ---
-        el.modalRounds.querySelectorAll('.followup-item-remove').forEach(btn => {
+        // Remove item
+        el.roundsContainer.querySelectorAll('.followup-item-remove').forEach(btn => {
             btn.addEventListener('click', () => {
                 const rIdx = Number(btn.dataset.round);
                 const iIdx = Number(btn.dataset.item);
                 if (!Number.isFinite(rIdx) || !Number.isFinite(iIdx)) return;
-                state.modalRounds[rIdx]?.items.splice(iIdx, 1);
-                renderModalRounds();
+                state.editorRounds[rIdx]?.items.splice(iIdx, 1);
+                renderRounds();
             });
         });
 
-        // --- Move item up ---
-        el.modalRounds.querySelectorAll('.followup-item-up').forEach(btn => {
+        // Move item up
+        el.roundsContainer.querySelectorAll('.followup-item-up').forEach(btn => {
             btn.addEventListener('click', () => {
                 const rIdx = Number(btn.dataset.round);
                 const iIdx = Number(btn.dataset.item);
                 if (!Number.isFinite(rIdx) || !Number.isFinite(iIdx) || iIdx === 0) return;
-                const items = state.modalRounds[rIdx]?.items;
+                const items = state.editorRounds[rIdx]?.items;
                 if (!items) return;
                 [items[iIdx - 1], items[iIdx]] = [items[iIdx], items[iIdx - 1]];
-                renderModalRounds();
+                renderRounds();
             });
         });
 
-        // --- Move item down ---
-        el.modalRounds.querySelectorAll('.followup-item-down').forEach(btn => {
+        // Move item down
+        el.roundsContainer.querySelectorAll('.followup-item-down').forEach(btn => {
             btn.addEventListener('click', () => {
                 const rIdx = Number(btn.dataset.round);
                 const iIdx = Number(btn.dataset.item);
-                const items = state.modalRounds[rIdx]?.items;
+                const items = state.editorRounds[rIdx]?.items;
                 if (!items || !Number.isFinite(rIdx) || !Number.isFinite(iIdx) || iIdx >= items.length - 1) return;
                 [items[iIdx], items[iIdx + 1]] = [items[iIdx + 1], items[iIdx]];
-                renderModalRounds();
+                renderRounds();
             });
         });
 
-        // --- Add text item ---
-        el.modalRounds.querySelectorAll('.followup-round-add-text').forEach(btn => {
+        // Add text item
+        el.roundsContainer.querySelectorAll('.followup-round-add-text').forEach(btn => {
             btn.addEventListener('click', () => {
                 const index = Number(btn.getAttribute('data-index'));
                 if (!Number.isFinite(index)) return;
-                if (!Array.isArray(state.modalRounds[index]?.items)) return;
-                state.modalRounds[index].items.push({ type: 'text', content: '' });
-                renderModalRounds();
+                if (!Array.isArray(state.editorRounds[index]?.items)) return;
+                state.editorRounds[index].items.push({ type: 'text', content: '' });
+                renderRounds();
             });
         });
 
-        // --- Add image item ---
-        el.modalRounds.querySelectorAll('.followup-round-add-image').forEach(btn => {
+        // Add image item
+        el.roundsContainer.querySelectorAll('.followup-round-add-image').forEach(btn => {
             btn.addEventListener('click', () => {
                 const index = Number(btn.getAttribute('data-index'));
                 if (!Number.isFinite(index)) return;
@@ -556,12 +636,10 @@
         });
     };
 
-    const addModalRound = (round) => {
-        if (!Array.isArray(state.modalRounds)) {
-            state.modalRounds = [];
-        }
-        const fallbackDelay = state.modalRounds.length > 0
-            ? Number(state.modalRounds[state.modalRounds.length - 1].delayMinutes) || 10
+    const addRound = (round) => {
+        if (!Array.isArray(state.editorRounds)) state.editorRounds = [];
+        const fallbackDelay = state.editorRounds.length > 0
+            ? Number(state.editorRounds[state.editorRounds.length - 1].delayMinutes) || 10
             : 10;
 
         let items;
@@ -577,21 +655,18 @@
         } else {
             items = roundLegacyToItems(round || {});
         }
-        if (!items.length) {
-            items = [{ type: 'text', content: '' }];
-        }
+        if (!items.length) items = [{ type: 'text', content: '' }];
 
-        const nextRound = {
+        state.editorRounds.push({
             delayMinutes: Number(round?.delayMinutes) || fallbackDelay,
             items
-        };
-        state.modalRounds.push(nextRound);
-        renderModalRounds();
+        });
+        renderRounds();
     };
 
     const collectRoundsPayload = () => {
-        if (!Array.isArray(state.modalRounds)) return [];
-        return state.modalRounds
+        if (!Array.isArray(state.editorRounds)) return [];
+        return state.editorRounds
             .map(round => {
                 const delay = Number(round?.delayMinutes);
                 if (!Number.isFinite(delay) || delay < 1) return null;
@@ -599,809 +674,64 @@
                     Array.isArray(round?.items) ? round.items : roundLegacyToItems(round || {})
                 );
                 if (items.length === 0) return null;
-                return {
-                    delayMinutes: Math.round(delay),
-                    items
-                };
+                return { delayMinutes: Math.round(delay), items };
             })
             .filter(Boolean);
     };
 
-    const handleAutoSendToggle = () => {
-        const cfg = state.currentContextConfig || state.currentPage?.settings || null;
-        const hardStopEnabled = isHardStopEnabled(cfg);
-        if (el.modalAutoSend) {
-            if (hardStopEnabled && el.modalAutoSend.checked) {
-                el.modalAutoSend.checked = false;
-            }
-            el.modalAutoSend.disabled = hardStopEnabled;
-        }
-        const enabled = el.modalAutoSend && el.modalAutoSend.checked;
-        setRoundsDisabled(!enabled);
-    };
-
-    const renderSchedulePreview = (config) => {
-        if (!el.schedulePreview) return;
-        if (!config) {
-            el.schedulePreview.innerHTML = '<div class="text-muted small">เลือกหน้าเพจเพื่อดูแผนการส่งข้อความ</div>';
+    const renderAssets = () => {
+        if (!el.imageLibraryGrid) return;
+        if (!state.assets.length) {
+            el.imageLibraryGrid.innerHTML = `
+                <div class="app-empty" style="grid-column: 1 / -1;">
+                    <div class="app-empty__desc">ยังไม่มีรูปภาพในระบบ</div>
+                </div>
+            `;
             return;
         }
-        if (isHardStopEnabled(config)) {
-            el.schedulePreview.innerHTML = '<div class="text-muted small">ระบบติดตามถูกหยุดชั่วคราว (Emergency Stop) กรุณาปิด Emergency Stop ก่อนเปิดส่งอัตโนมัติ</div>';
-            return;
-        }
-        if (!isAutoFollowUpEffectiveEnabled(config)) {
-            el.schedulePreview.innerHTML = '<div class="text-muted small">ระบบจะไม่ส่งข้อความอัตโนมัติสำหรับเพจนี้</div>';
-            return;
-        }
-        const rounds = Array.isArray(config.rounds) ? config.rounds : [];
-        if (!rounds.length) {
-            el.schedulePreview.innerHTML = '<div class="text-muted small">ยังไม่ได้กำหนดข้อความติดตาม</div>';
-            return;
-        }
-        const html = rounds.map((round, index) => {
-            const delay = Number(round.delayMinutes);
-            const label = formatDelayMinutes(delay);
-            const items = Array.isArray(round.items) ? round.items : roundLegacyToItems(round);
-            const texts = items.filter(i => i.type === 'text').map(i => i.content).filter(Boolean);
-            const imageCount = items.filter(i => i.type === 'image').length;
-            const message = texts[0] || '';
-            const messageHtml = message ? `<div class="schedule-message">${escapeHtml(message)}</div>` : '';
-            const mediaHtml = imageCount > 0
-                ? `<div class="schedule-media text-muted small"><i class="fas fa-image me-1"></i>${imageCount} รูป</div>`
-                : '';
-            const emptyPlaceholder = !message && imageCount === 0
-                ? '<div class="schedule-message text-muted">-</div>'
-                : '';
+        el.imageLibraryGrid.innerHTML = state.assets.map(asset => {
+            const preview = escapeAttr(asset.thumbUrl || asset.previewUrl || asset.url || '');
+            const full = escapeAttr(asset.url || '');
+            const name = escapeHtml(asset.fileName || 'รูปภาพ');
             return `
-                <div class="followup-schedule-item">
-                    <div class="schedule-order">${index + 1}</div>
-                    <div class="schedule-detail">
-                        <div class="schedule-time">+${label}</div>
-                        ${messageHtml || emptyPlaceholder}
-                        ${mediaHtml}
+                <div class="followup-image-card" data-asset-id="${escapeAttr(asset.id || asset.assetId || '')}">
+                    <a href="${full}" target="_blank" rel="noopener">
+                        <img src="${preview}" alt="${name}" loading="lazy">
+                    </a>
+                    <div class="image-meta">
+                        <span class="image-name" title="${name}">${name}</span>
+                        <button type="button" class="image-action" data-action="copy-url" data-url="${full}" title="คัดลอก URL">
+                            <i class="fas fa-link"></i>
+                        </button>
                     </div>
                 </div>
             `;
         }).join('');
-        el.schedulePreview.innerHTML = html;
-    };
 
-    const updateConfigDisplay = (config) => {
-        const analysisOn = config && config.analysisEnabled !== false;
-        if (el.analysisLabel) {
-            el.analysisLabel.textContent = analysisOn ? 'วิเคราะห์ด้วย AI (เปิด)' : 'วิเคราะห์ด้วย AI (ปิด)';
-        }
-        if (el.autoStatusBadge) {
-            const hardStopEnabled = isHardStopEnabled(config);
-            const autoOn = isAutoFollowUpEffectiveEnabled(config);
-            el.autoStatusBadge.textContent = hardStopEnabled
-                ? 'หยุดชั่วคราว (Emergency Stop)'
-                : autoOn
-                    ? 'ส่งข้อความอัตโนมัติ (เปิด)'
-                    : 'ส่งข้อความอัตโนมัติ (ปิด)';
-            el.autoStatusBadge.classList.remove('bg-success', 'bg-secondary');
-            el.autoStatusBadge.classList.add(autoOn ? 'bg-success' : 'bg-secondary');
-        }
-        if (el.analysisSubtitle) {
-            if (!config) {
-                el.analysisSubtitle.textContent = 'เลือกหน้าเพจเพื่อดูรายละเอียดการติดตาม';
-            } else if (isHardStopEnabled(config)) {
-                el.analysisSubtitle.textContent = 'ระบบถูกหยุดแบบฉุกเฉิน (Emergency Stop) จึงยังไม่สามารถเปิดส่งอัตโนมัติได้';
-            } else if (!isAutoFollowUpEffectiveEnabled(config)) {
-                el.analysisSubtitle.textContent = 'ระบบจะไม่ส่งข้อความอัตโนมัติจนกว่าจะเปิดใช้งาน';
-            } else {
-                const parts = ['AI จะวิเคราะห์ว่าลูกค้าซื้อแล้วหรือยัง ถ้าซื้อแล้วจะหยุดส่งข้อความติดตามอัตโนมัติ'];
-                if (config.model) {
-                    const modelInfo = MODEL_OPTIONS.find(m => m.value === config.model);
-                    parts.push(`โมเดล: ${modelInfo ? modelInfo.label : config.model}`);
-                }
-                el.analysisSubtitle.textContent = parts.join(' • ');
-            }
-        }
-        renderSchedulePreview(config);
-    };
-
-    const ALERT_ICON_MAP = {
-        success: 'circle-check',
-        danger: 'triangle-exclamation',
-        warning: 'circle-exclamation',
-        info: 'circle-info'
-    };
-
-    const ALERT_CLASS_MAP = {
-        success: 'alert-toast-success',
-        danger: 'alert-toast-danger',
-        warning: 'alert-toast-warning',
-        info: 'alert-toast-info'
-    };
-
-    const ensureAlertToastContainer = () => {
-        let container = document.getElementById('alertToastContainer');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'alertToastContainer';
-            container.className = 'alert-toast-container';
-            container.setAttribute('aria-live', 'polite');
-            container.setAttribute('aria-atomic', 'true');
-            document.body.appendChild(container);
-        }
-        return container;
-    };
-
-    const createAlertToastElement = (type, message) => {
-        const normalizedType = ALERT_CLASS_MAP[type] ? type : 'info';
-        const toast = document.createElement('div');
-        toast.className = `alert-toast ${ALERT_CLASS_MAP[normalizedType]}`;
-        toast.setAttribute('role', 'alert');
-
-        const iconSpan = document.createElement('span');
-        iconSpan.className = 'alert-toast-icon';
-        iconSpan.innerHTML = `<i class="fas fa-${ALERT_ICON_MAP[normalizedType] || ALERT_ICON_MAP.info}"></i>`;
-
-        const content = document.createElement('div');
-        content.className = 'alert-toast-content';
-
-        const messageDiv = document.createElement('div');
-        messageDiv.className = 'alert-toast-message';
-        messageDiv.textContent = message;
-
-        const closeBtn = document.createElement('button');
-        closeBtn.type = 'button';
-        closeBtn.className = 'alert-toast-close';
-        closeBtn.setAttribute('aria-label', 'ปิดการแจ้งเตือน');
-        closeBtn.innerHTML = '<i class="fas fa-times"></i>';
-
-        content.appendChild(messageDiv);
-        content.appendChild(closeBtn);
-
-        toast.appendChild(iconSpan);
-        toast.appendChild(content);
-
-        return { toast, closeBtn };
-    };
-
-    const showAlert = (type, message) => {
-        const container = ensureAlertToastContainer();
-        const { toast, closeBtn } = createAlertToastElement(type, message);
-
-        container.appendChild(toast);
-        requestAnimationFrame(() => toast.classList.add('show'));
-
-        const hideToast = () => {
-            toast.classList.remove('show');
-            toast.classList.add('hide');
-            setTimeout(() => {
-                toast.remove();
-            }, 220);
-        };
-
-        const timeoutId = setTimeout(hideToast, 5000);
-
-        closeBtn.addEventListener('click', () => {
-            clearTimeout(timeoutId);
-            hideToast();
-        });
-    };
-
-    const renderPageSelector = () => {
-        if (!el.pageSelector) return;
-        if (!state.pages.length) {
-            el.pageSelector.innerHTML = '<div class="text-muted small py-2">ยังไม่มีเพจ</div>';
-            return;
-        }
-        const html = state.pages.map(page => {
-            const active = state.currentPage && page.id === state.currentPage.id;
-            const group = getGroupForPage(page.id);
-            const activeCount = group?.stats?.active || 0;
-            const icon = page.platform === 'facebook' ? 'fab fa-facebook' : 'fab fa-line';
-            return `
-                <button class="followup-page-item ${active ? 'active' : ''}" data-page-id="${page.id}">
-                    <span><i class="${icon} page-icon"></i>${escapeHtml(page.name)}</span>
-                    ${activeCount > 0 ? `<span class="page-count">${activeCount}</span>` : ''}
-                </button>
-            `;
-        }).join('');
-        el.pageSelector.innerHTML = html;
-        el.pageSelector.querySelectorAll('button[data-page-id]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const pageId = btn.getAttribute('data-page-id');
-                if (!pageId) return;
-                selectPage(pageId);
-            });
-        });
-    };
-
-    const loadOverview = async (options = {}) => {
-        try {
-            const response = await fetch('/admin/followup/overview');
-            const data = await response.json();
-            if (data.success) {
-                const summaryData = data.summary || {};
-                state.overview = {
-                    summary: {
-                        total: summaryData.total || 0,
-                        active: summaryData.active || 0,
-                        completed: summaryData.completed || 0,
-                        canceled: summaryData.canceled || 0,
-                        failed: summaryData.failed || 0
-                    },
-                    groups: Array.isArray(data.groups) ? data.groups : []
-                };
-                if (state.pages.length) {
-                    renderPageSelector();
-                }
-                updateMetrics();
-            } else if (!options.silent) {
-                showAlert('danger', data.error || 'ไม่สามารถโหลดข้อมูลภาพรวมได้');
-            }
-        } catch (error) {
-            console.error('load follow-up overview error', error);
-            if (!options.silent) {
-                showAlert('danger', 'เกิดข้อผิดพลาดในการโหลดข้อมูลภาพรวม');
-            }
-        }
-    };
-
-    const renderPageGrid = () => {
-        if (!el.pageGrid) return;
-        if (!state.pages.length) {
-            el.pageGrid.innerHTML = `
-                <div class="text-muted small">
-                    ยังไม่มีเพจที่เชื่อมต่อกับระบบ โปรดเพิ่ม LINE Bot หรือ Facebook Page ก่อน
-                </div>
-            `;
-            return;
-        }
-
-        const groupsMap = new Map();
-        if (state.overview && Array.isArray(state.overview.groups)) {
-            state.overview.groups.forEach(group => {
-                groupsMap.set(group.contextKey, group);
-            });
-        }
-
-        const now = Date.now();
-        const rowsHtml = state.pages.map(page => {
-            const group = groupsMap.get(page.id) || null;
-            const stats = group?.stats || defaultSummary();
-            const usersInGroup = Array.isArray(group?.users) ? group.users : [];
-            const dueSoon = usersInGroup.filter(user => {
-                if (user.status !== 'active' || !user.nextScheduledAt) return false;
-                const time = new Date(user.nextScheduledAt).getTime();
-                if (Number.isNaN(time)) return false;
-                const diff = time - now;
-                return diff >= 0 && diff <= 30 * 60000;
-            }).length;
-            const hardStopEnabled = isHardStopEnabled(page.settings || {});
-            const autoEnabled = isAutoFollowUpEffectiveEnabled(page.settings || {});
-            const analysisEnabled = page.settings && page.settings.analysisEnabled !== false;
-            const platformLabel = page.platform === 'facebook' ? 'Facebook' : 'LINE';
-            const subtitle = page.platform === 'facebook'
-                ? `${platformLabel} • เพจที่เชื่อมต่อ`
-                : `${platformLabel} • บอทที่เชื่อมต่อ`;
-            const isActive = state.currentPage && state.currentPage.id === page.id;
-            const showInDashboard = !(page.settings && page.settings.showInDashboard === false);
-            const showInChat = !(page.settings && page.settings.showInChat === false);
-            const rowClasses = ['followup-page-row'];
-            if (isActive) rowClasses.push('is-active');
-            if (!showInDashboard) rowClasses.push('is-muted');
-            const badges = [
-                `<span class="badge ${autoEnabled ? 'bg-success-soft text-success' : 'bg-secondary'}">${autoEnabled ? 'ส่งอัตโนมัติ: เปิด' : 'ส่งอัตโนมัติ: ปิด'}</span>`,
-                `<span class="badge ${analysisEnabled ? 'bg-info' : 'bg-secondary'}">วิเคราะห์ด้วย AI: ${analysisEnabled ? 'เปิด' : 'ปิด'}</span>`,
-                `<span class="badge ${showInDashboard ? 'bg-primary-soft text-primary' : 'bg-warning text-dark'}">${showInDashboard ? 'แสดงในแดชบอร์ด' : 'ซ่อนจากแดชบอร์ด'}</span>`,
-                `<span class="badge ${showInChat ? 'bg-light text-dark' : 'bg-secondary'}">ป้ายหน้าแชท: ${showInChat ? 'เปิด' : 'ปิด'}</span>`
-            ];
-            if (hardStopEnabled) {
-                badges.push('<span class="badge bg-danger-subtle text-danger">Emergency Stop</span>');
-            }
-
-            return `
-                <tr class="${rowClasses.join(' ')}" data-page-id="${page.id}">
-                    <td class="followup-page-info" data-label="เพจ / บอท">
-                        <div class="followup-page-name">
-                            ${escapeHtml(page.name)}
-                            ${isActive ? '<span class="badge bg-success-soft text-success ms-2">กำลังดูอยู่</span>' : ''}
-                        </div>
-                        <div class="followup-page-subtitle text-muted small">${escapeHtml(subtitle)}</div>
-                        <div class="followup-page-flags d-flex flex-wrap gap-2 mt-2">
-                            ${badges.join('')}
-                        </div>
-                        ${dueSoon > 0 ? `<div class="followup-page-meta text-muted small mt-2">รอส่งภายใน 30 นาที: <strong>${dueSoon}</strong> ราย</div>` : ''}
-                    </td>
-                    <td class="followup-page-stats" data-label="สถิติวันนี้">
-                        <div class="followup-page-stat">
-                            <span class="label">กำลังติดตาม</span>
-                            <span class="value">${stats.active || 0}</span>
-                        </div>
-                        <div class="followup-page-stat">
-                            <span class="label">ส่งครบแล้ว</span>
-                            <span class="value text-success">${stats.completed || 0}</span>
-                        </div>
-                        <div class="followup-page-stat">
-                            <span class="label">ยกเลิกแล้ว</span>
-                            <span class="value text-muted">${stats.canceled || 0}</span>
-                        </div>
-                        <div class="followup-page-stat">
-                            <span class="label">ส่งไม่สำเร็จ</span>
-                            <span class="value text-danger">${stats.failed || 0}</span>
-                        </div>
-                    </td>
-                    <td class="followup-page-control text-center" data-label="ส่งอัตโนมัติ">
-                        <div class="form-check form-switch justify-content-center">
-                            <input class="form-check-input followup-auto-toggle" type="checkbox" data-page-id="${page.id}" ${autoEnabled ? 'checked' : ''} ${hardStopEnabled ? 'disabled' : ''} aria-label="สลับการส่งอัตโนมัติสำหรับ ${escapeHtml(page.name)}">
-                        </div>
-                    </td>
-                    <td class="followup-page-actions text-end" data-label="การจัดการ">
-                        <div class="btn-group btn-group-sm" role="group" aria-label="การจัดการเพจ ${escapeHtml(page.name)}">
-                            <button type="button" class="btn btn-outline-primary" data-action="select" data-page-id="${page.id}">
-                                <i class="fas fa-eye me-1"></i>ดูลูกค้า
-                            </button>
-                            <button type="button" class="btn btn-outline-secondary" data-action="edit" data-page-id="${page.id}">
-                                <i class="fas fa-sliders-h me-1"></i>แก้ไข
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-
-        el.pageGrid.innerHTML = `
-            <div class="table-responsive followup-page-table-wrapper">
-                <table class="table table-hover align-middle followup-page-table">
-                    <thead>
-                        <tr>
-                            <th scope="col">เพจ / บอท</th>
-                            <th scope="col" class="followup-page-stats-head">สถิติวันนี้</th>
-                            <th scope="col" class="text-center">ส่งอัตโนมัติ</th>
-                            <th scope="col" class="text-end">การจัดการ</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rowsHtml}
-                    </tbody>
-                </table>
-            </div>
-        `;
-
-        el.pageGrid.querySelectorAll('.followup-auto-toggle').forEach(input => {
-            input.addEventListener('change', async (event) => {
-                const pageId = event.target.getAttribute('data-page-id');
-                if (!pageId) return;
-                const enabled = event.target.checked;
+        el.imageLibraryGrid.querySelectorAll('[data-action="copy-url"]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const url = btn.getAttribute('data-url');
+                if (!url) return;
                 try {
-                    await updatePageAutoSend(pageId, enabled, event.target);
-                } catch (_) { }
-            });
-        });
-
-        el.pageGrid.querySelectorAll('[data-action="select"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const pageId = btn.getAttribute('data-page-id');
-                if (!pageId) return;
-                selectPage(pageId);
-                el.pageLabel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            });
-        });
-
-        el.pageGrid.querySelectorAll('[data-action="edit"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const pageId = btn.getAttribute('data-page-id');
-                if (!pageId) return;
-                if (!state.currentPage || state.currentPage.id !== pageId) {
-                    selectPage(pageId, { skipReload: false });
+                    await navigator.clipboard.writeText(url);
+                    showAlert('success', 'คัดลอก URL แล้ว');
+                } catch (e) {
+                    showAlert('info', url);
                 }
-                setTimeout(() => {
-                    openSettingsModal();
-                }, 150);
-            });
-        });
-
-        el.pageGrid.querySelectorAll('tbody tr[data-page-id]').forEach(row => {
-            row.addEventListener('click', (event) => {
-                const target = event.target;
-                if (target.closest('.followup-auto-toggle') || target.closest('.btn-group') || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.tagName === 'LABEL') {
-                    return;
-                }
-                const pageId = row.getAttribute('data-page-id');
-                if (!pageId) return;
-                selectPage(pageId);
             });
         });
     };
 
-    const savePageSettingsQuick = async (page, settings) => {
-        if (!page) throw new Error('ไม่พบเพจที่ต้องการแก้ไข');
-        const payload = {
-            platform: page.platform,
-            botId: page.botId,
-            settings
-        };
-        const response = await fetch('/admin/followup/page-settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!data.success) {
-            throw new Error(data.error || 'ไม่สามารถบันทึกการตั้งค่าได้');
-        }
-        page.settings = { ...(page.settings || {}), ...settings };
-        page.hasOverride = true;
-        return data;
-    };
-
-    const updatePageAutoSend = async (pageId, enabled, inputEl) => {
-        const page = state.pages.find(p => p.id === pageId);
-        if (!page) {
-            if (inputEl) inputEl.checked = !enabled;
-            showAlert('danger', 'ไม่พบข้อมูลเพจที่เลือก');
-            return;
-        }
-        const hardStopEnabled = isHardStopEnabled(page.settings || state.currentContextConfig || {});
-        if (enabled && hardStopEnabled) {
-            if (inputEl) inputEl.checked = false;
-            showAlert('warning', 'ระบบถูกหยุดแบบฉุกเฉิน (Emergency Stop) กรุณาปิด Emergency Stop ก่อนจึงจะเปิดติดตามอัตโนมัติได้');
-            return;
-        }
-        if (inputEl) inputEl.disabled = true;
+    const loadAssets = async () => {
         try {
-            await savePageSettingsQuick(page, { autoFollowUpEnabled: !!enabled });
-            showAlert('success', enabled
-                ? `เปิดการส่งติดตามอัตโนมัติสำหรับ ${page.name}`
-                : `ปิดการส่งติดตามอัตโนมัติสำหรับ ${page.name}`
-            );
-
-            if (state.currentPage && state.currentPage.id === pageId) {
-                state.currentContextConfig = {
-                    ...(state.currentContextConfig || {}),
-                    autoFollowUpEnabled: !!enabled
-                };
-                updateToolbar();
-                renderSchedulePreview(state.currentContextConfig);
-            }
-
-            renderPageSelector();
-            renderPageGrid();
-            await loadOverview({ silent: true });
-            if (state.currentPage && state.currentPage.id === pageId) {
-                await loadUsers(true);
-            }
-        } catch (error) {
-            console.error('update auto follow error', error);
-            if (inputEl) inputEl.checked = !enabled;
-            showAlert('danger', error.message || 'ไม่สามารถอัปเดตการตั้งค่าได้');
-        } finally {
-            if (inputEl) inputEl.disabled = false;
-        }
-    };
-
-    const updateMetrics = () => {
-        const globalSummary = state.overview?.summary || defaultSummary();
-        const currentGroup = state.currentPage ? getGroupForPage(state.currentPage.id) : null;
-        const currentStats = currentGroup?.stats || state.summary || defaultSummary();
-
-        // Update summary cards
-        if (el.summaryActive) el.summaryActive.textContent = globalSummary.active || 0;
-        if (el.summaryCompleted) el.summaryCompleted.textContent = globalSummary.completed || 0;
-        if (el.summaryCanceled) el.summaryCanceled.textContent = globalSummary.canceled || 0;
-        if (el.summaryFailed) el.summaryFailed.textContent = globalSummary.failed || 0;
-
-        // Update sidebar status counts
-        const total = (currentStats.active || 0) + (currentStats.completed || 0) +
-            (currentStats.canceled || 0) + (currentStats.failed || 0);
-        if (el.countAll) el.countAll.textContent = total;
-        if (el.countActive) el.countActive.textContent = currentStats.active || 0;
-        if (el.countCompleted) el.countCompleted.textContent = currentStats.completed || 0;
-        if (el.countCanceled) el.countCanceled.textContent = currentStats.canceled || 0;
-        if (el.countFailed) el.countFailed.textContent = currentStats.failed || 0;
-    };
-
-    const updateToolbar = () => {
-        if (!state.currentPage) {
-            if (el.pageLabel) el.pageLabel.textContent = 'เลือกเพจเพื่อดูรายการ';
-            if (el.autoStatusBadge) {
-                el.autoStatusBadge.textContent = 'ปิดส่งอัตโนมัติ';
-                el.autoStatusBadge.classList.remove('active');
-            }
-            if (el.editBtn) el.editBtn.disabled = true;
-            if (el.search) {
-                el.search.value = '';
-                el.search.disabled = true;
-            }
-            return;
-        }
-
-        const cfg = state.currentContextConfig || state.currentPage.settings || {};
-
-        if (el.pageLabel) {
-            el.pageLabel.textContent = state.currentPage.name;
-        }
-
-        if (el.autoStatusBadge) {
-            const hardStopEnabled = isHardStopEnabled(cfg);
-            const autoOn = isAutoFollowUpEffectiveEnabled(cfg);
-            el.autoStatusBadge.textContent = hardStopEnabled
-                ? 'หยุดชั่วคราว (Emergency Stop)'
-                : autoOn
-                    ? 'ส่งอัตโนมัติ: เปิด'
-                    : 'ส่งอัตโนมัติ: ปิด';
-            el.autoStatusBadge.classList.toggle('active', autoOn);
-        }
-
-        if (el.editBtn) el.editBtn.disabled = false;
-
-        if (el.search) {
-            el.search.disabled = false;
-        }
-
-        const disabledDashboard = state.currentContextConfig && state.currentContextConfig.showInDashboard === false;
-        if (el.refresh) {
-            el.refresh.disabled = !!disabledDashboard;
-        }
-
-        updateConfigDisplay(state.currentContextConfig || state.currentPage.settings || null);
-    };
-
-    const renderLoadingState = () => {
-        if (!el.list) return;
-        el.list.innerHTML = `
-            <div class="followup-loading">
-                <div class="spinner-border text-primary" role="status"></div>
-                <span class="ms-2">กำลังโหลด...</span>
-            </div>
-        `;
-    };
-
-    const renderDisabledState = () => {
-        if (!el.emptyState) return;
-        state.users = [];
-        state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
-        el.emptyState.classList.remove('d-none');
-        if (!state.currentPage) {
-            el.emptyState.innerHTML = `
-                <i class="fas fa-layer-group fa-2x mb-2 text-muted"></i>
-                <p class="mb-1">ยังไม่มีหน้าเพจที่เปิดใช้งาน</p>
-                <p class="small mb-0">เพิ่มหรือเปิดการแสดงผลเพจจากการตั้งค่าเพื่อเริ่มติดตามลูกค้า</p>
-            `;
-        } else {
-            el.emptyState.innerHTML = `
-                <i class="fas fa-eye-slash fa-2x mb-2 text-muted"></i>
-                <p class="mb-1">แดชบอร์ดสำหรับเพจนี้ถูกปิดไว้</p>
-                <p class="small mb-0">เปิดใช้การแสดงผลในแดชบอร์ดเพื่อดูรายชื่อลูกค้าที่ต้องติดตาม</p>
-            `;
-        }
-        if (el.list) el.list.innerHTML = '';
-    };
-
-    const renderUserTimeline = (user) => {
-        const rounds = Array.isArray(user.rounds) ? user.rounds : [];
-        if (!rounds.length) {
-            return '<div class="text-muted small">ยังไม่ได้ตั้งค่าข้อความติดตามสำหรับเพจนี้</div>';
-        }
-        return `
-            <div class="followup-timeline">
-                ${rounds.map((round, index) => {
-            const status = round?.status || 'pending';
-            let displayStatus = status;
-            let statusLabel = 'รอส่ง';
-            if (status === 'sent') {
-                statusLabel = 'ส่งแล้ว';
-            } else if (status === 'failed') {
-                statusLabel = 'ส่งไม่สำเร็จ';
-            } else if (user.status === 'canceled') {
-                statusLabel = 'ถูกยกเลิก';
-                displayStatus = 'canceled';
-            }
-
-            const scheduledAt = round?.scheduledAt ? formatDateTime(round.scheduledAt) : null;
-            const relative = round?.sentAt
-                ? `ส่งเมื่อ ${formatRelativeTime(round.sentAt)}`
-                : scheduledAt
-                    ? `กำหนดส่ง ${formatRelativeTime(round.scheduledAt)}`
-                    : `หลัง +${formatDelayMinutes(round?.delayMinutes)}`;
-            const absolute = scheduledAt || `+${formatDelayMinutes(round?.delayMinutes)}`;
-            const messageText = typeof round?.message === 'string' ? round.message.trim() : '';
-            const messageHtml = messageText
-                ? `<div class="timeline-message">${escapeHtml(messageText)}</div>`
-                : '';
-            const images = Array.isArray(round?.images) ? round.images : [];
-            const imagesHtml = images.length
-                ? `<div class="timeline-images mt-2">
-                                ${images.map(img => {
-                    const preview = escapeAttr(img.previewUrl || img.thumbUrl || img.url || '');
-                    const full = escapeAttr(img.url || '');
-                    const caption = escapeHtml(img.caption || img.alt || 'รูปภาพจากระบบติดตาม');
-                    return `
-                                        <a href="${full}" target="_blank" rel="noopener" class="timeline-image-link">
-                                            <img src="${preview}" alt="${caption}" class="timeline-image-thumb">
-                                        </a>
-                                    `;
-                }).join('')}
-                            </div>`
-                : '';
-            const emptyContent = !messageText && images.length === 0
-                ? '<div class="timeline-message text-muted">ไม่มีข้อความ</div>'
-                : '';
-
-            return `
-                        <div class="followup-timeline-item ${displayStatus}">
-                            <div class="timeline-dot"></div>
-                            <div class="timeline-body">
-                                <div class="timeline-header d-flex justify-content-between align-items-center">
-                                    <span class="timeline-index">รอบที่ ${index + 1}</span>
-                                    <span class="timeline-status">${statusLabel}</span>
-                                </div>
-                                <div class="timeline-time text-muted">${relative} (${absolute})</div>
-                                ${messageHtml || emptyContent}
-                                ${imagesHtml}
-                            </div>
-                        </div>
-                    `;
-        }).join('')}
-            </div>
-        `;
-    };
-
-    const renderUsers = () => {
-        if (!el.list) return;
-        const cfg = state.currentContextConfig;
-        if (!state.currentPage || (cfg && cfg.showInDashboard === false)) {
-            renderDisabledState();
-            return;
-        }
-        const keyword = el.search && typeof el.search.value === 'string'
-            ? el.search.value.trim().toLowerCase()
-            : '';
-        const statusFilter = state.statusFilter || 'all';
-        const byStatus = state.users.filter(user => {
-            if (statusFilter === 'all') return true;
-            return user.status === statusFilter;
-        });
-        const filtered = byStatus.filter(user => {
-            if (!keyword) return true;
-            const fields = [
-                user.displayName || '',
-                user.userId || '',
-                user.nextMessage || '',
-                user.lastUserMessagePreview || ''
-            ];
-            return fields.some(value => String(value).toLowerCase().includes(keyword));
-        });
-
-        if (!filtered.length) {
-            if (el.list) el.list.innerHTML = '';
-            if (el.emptyState) {
-                el.emptyState.classList.remove('d-none');
-                const emptyTitle = keyword
-                    ? 'ไม่พบข้อมูลที่ตรงกับคำค้น'
-                    : 'ยังไม่มีลูกค้าในสถานะนี้';
-                const emptySubtitle = keyword
-                    ? 'ลองเปลี่ยนคำค้นหา หรือรอลูกค้าพูดคุยเพิ่มเติม'
-                    : 'เมื่อมีลูกค้าที่ตรงเงื่อนไข ระบบจะแสดงรายชื่อที่นี่';
-                el.emptyState.innerHTML = `
-                    <i class="fas fa-search fa-2x mb-2 text-muted"></i>
-                    <p class="mb-1">${emptyTitle}</p>
-                    <p class="small mb-0">${emptySubtitle}</p>
-                `;
-            }
-            return;
-        }
-
-        if (el.emptyState) {
-            el.emptyState.classList.add('d-none');
-        }
-
-        const cards = filtered.map(user => {
-            const initials = escapeHtml((user.displayName || '?').charAt(0).toUpperCase());
-            const platformBadge = user.platform === 'facebook'
-                ? '<span class="badge bg-primary-soft text-primary"><i class="fab fa-facebook me-1"></i>Facebook</span>'
-                : '<span class="badge bg-success-soft text-success"><i class="fab fa-line me-1"></i>LINE</span>';
-            const statusBadge = getStatusBadge(user.status);
-            const nextRoundData = Array.isArray(user.rounds)
-                ? user.rounds.find(round => round && round.status !== 'sent')
-                : null;
-            const nextPreview = formatRoundPreview(nextRoundData);
-            const nextMessageText = nextPreview || user.nextMessage || '-';
-            const nextMessage = escapeHtml(nextMessageText);
-            const nextMediaHtml = nextRoundData && Array.isArray(nextRoundData.images) && nextRoundData.images.length
-                ? `<div class="followup-next-media text-muted small"><i class="fas fa-image me-1"></i>${nextRoundData.images.length} รูป</div>`
-                : '';
-            const nextScheduleRelative = user.nextScheduledAt ? formatRelativeTime(user.nextScheduledAt) : 'ยังไม่มีนัดหมาย';
-            const nextScheduleExact = user.nextScheduledAt ? formatDateTime(user.nextScheduledAt) : '-';
-            const lastCustomerMessage = escapeHtml(user.lastUserMessagePreview || '-');
-            const lastCustomerTime = user.lastUserMessageAt ? formatRelativeTime(user.lastUserMessageAt) : '-';
-            const progressLabel = `${user.sentRounds || 0}/${user.totalRounds || 0}`;
-            const lastFollowUp = user.lastFollowUpAt ? formatRelativeTime(user.lastFollowUpAt) : 'ยังไม่เคยส่ง';
-            const canceledInfo = user.status === 'canceled' && user.canceledReason
-                ? `<div class="followup-section text-muted small">เหตุผลการยกเลิก: ${escapeHtml(user.canceledReason)}</div>`
-                : '';
-            const timeline = renderUserTimeline(user);
-            const canCancel = user.status === 'active';
-            return `
-                <div class="followup-card" data-user-id="${escapeHtml(user.userId)}">
-                    <div class="followup-card-header">
-                        <div class="followup-avatar">${initials}</div>
-                        <div class="followup-card-meta">
-                            <div class="followup-name">${escapeHtml(user.displayName || user.userId)}</div>
-                            <div class="followup-sub">${escapeHtml(user.userId)} • ${platformBadge}</div>
-                        </div>
-                        <div class="followup-status-badge">${statusBadge}</div>
-                    </div>
-                    <div class="followup-card-body">
-                        <div class="followup-section">
-                            <div class="label">ข้อความถัดไป</div>
-                            <div class="value">${nextMessage}</div>
-                            ${nextMediaHtml}
-                            <div class="meta">${nextScheduleExact} (${nextScheduleRelative})</div>
-                        </div>
-                        <div class="followup-section">
-                            <div class="label">ข้อความล่าสุดจากลูกค้า</div>
-                            <div class="value">${lastCustomerMessage}</div>
-                            <div class="meta">${lastCustomerTime}</div>
-                        </div>
-                        <div class="followup-section">
-                            <div class="label">ความคืบหน้า</div>
-                            <div class="value">${progressLabel} รอบ</div>
-                            <div class="meta">ส่งล่าสุด: ${lastFollowUp}</div>
-                        </div>
-                        <div class="followup-section">
-                            <div class="label">ตารางข้อความ</div>
-                            ${timeline}
-                        </div>
-                        ${canceledInfo}
-                    </div>
-                    <div class="followup-card-actions">
-                        <button class="btn btn-sm btn-outline-secondary" data-action="open-chat">
-                            <i class="fas fa-comments me-1"></i>เปิดหน้าแชท
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" data-action="clear-task" ${canCancel ? '' : 'disabled'}>
-                            <i class="fas fa-ban me-1"></i>${canCancel ? 'หยุดติดตามวันนี้' : 'หยุดติดตามแล้ว'}
-                        </button>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        el.list.innerHTML = cards;
-        el.list.querySelectorAll('.followup-card button[data-action="clear-task"]').forEach(btn => {
-            btn.addEventListener('click', async (event) => {
-                if (btn.disabled) return;
-                const card = event.currentTarget.closest('.followup-card');
-                const userId = card ? card.getAttribute('data-user-id') : null;
-                if (!userId) return;
-                if (!confirm('ยืนยันยกเลิกการติดตามสำหรับลูกค้ารายนี้หรือไม่?')) return;
-                await clearUser(userId);
-            });
-        });
-
-        el.list.querySelectorAll('.followup-card button[data-action="open-chat"]').forEach(btn => {
-            btn.addEventListener('click', (event) => {
-                const card = event.currentTarget.closest('.followup-card');
-                const userId = card ? card.getAttribute('data-user-id') : null;
-                if (!userId) return;
-                window.location.href = `/admin/chat?focus=${encodeURIComponent(userId)}`;
-            });
-        });
-    };
-
-    const clearUser = async (userId) => {
-        try {
-            const response = await fetch('/admin/followup/clear', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId })
-            });
+            const response = await fetch('/admin/followup/assets');
             const data = await response.json();
             if (data.success) {
-                showAlert('success', 'ยกเลิกการติดตามเรียบร้อยแล้ว');
-                await loadUsers();
-            } else {
-                showAlert('danger', data.error || 'ไม่สามารถยกเลิกการติดตามได้');
+                state.assets = Array.isArray(data.assets) ? data.assets : [];
+                renderAssets();
             }
         } catch (error) {
-            console.error('clear follow-up error', error);
-            showAlert('danger', 'เกิดข้อผิดพลาดในการยกเลิกการติดตาม');
+            console.error('load assets error', error);
         }
     };
 
@@ -1413,7 +743,6 @@
                 showAlert('danger', data.error || 'ไม่สามารถดึงข้อมูลเพจได้');
                 state.pages = [];
                 renderPageSelector();
-                renderPageGrid();
                 return;
             }
             const previousId = state.currentPage ? state.currentPage.id : null;
@@ -1422,149 +751,35 @@
                 settings: page.settings || {}
             }));
             renderPageSelector();
-            renderPageGrid();
             if (state.pages.length === 0) {
                 state.currentPage = null;
-                updateToolbar();
-                renderUsers();
+                updateEditorHeader();
                 return;
             }
             const fallback = state.pages.find(p => p.id === previousId)
-                || state.pages.find(p => p.settings.showInDashboard !== false)
                 || state.pages[0];
-            selectPage(fallback.id, { skipReload: true });
+            selectPage(fallback.id);
         } catch (error) {
             console.error('load follow-up pages error', error);
             showAlert('danger', 'เกิดข้อผิดพลาดในการดึงข้อมูลเพจ');
-            renderPageGrid();
         }
     };
 
-    const loadUsers = async (showMessage = false) => {
-        if (!state.currentPage) return;
-        if (state.currentContextConfig && state.currentContextConfig.showInDashboard === false) {
-            renderDisabledState();
-            updateMetrics();
-            return;
-        }
-        if (state.isLoadingUsers) return;
-        state.isLoadingUsers = true;
-        renderLoadingState();
-        try {
-            const params = new URLSearchParams();
-            if (state.currentPage.platform) params.set('platform', state.currentPage.platform);
-            if (state.currentPage.botId) params.set('botId', state.currentPage.botId);
-            const response = await fetch(`/admin/followup/users${params.toString() ? `?${params.toString()}` : ''}`);
-            const data = await response.json();
-            if (data.success) {
-                state.users = data.users || [];
-                const summaryData = data.summary || {};
-                state.summary = {
-                    total: typeof summaryData.total === 'number' ? summaryData.total : state.users.length,
-                    active: typeof summaryData.active === 'number' ? summaryData.active : (state.users.length || 0),
-                    completed: typeof summaryData.completed === 'number' ? summaryData.completed : 0,
-                    canceled: typeof summaryData.canceled === 'number' ? summaryData.canceled : 0,
-                    failed: typeof summaryData.failed === 'number' ? summaryData.failed : 0,
-                    dateKey: summaryData.dateKey || ''
-                };
-                if (data.config) {
-                    state.currentContextConfig = data.config;
-                    const pageIndex = state.pages.findIndex(p => p.id === (state.currentPage && state.currentPage.id));
-                    if (pageIndex >= 0) {
-                        state.pages[pageIndex].settings = data.config;
-                    }
-                }
-                const currentGroup = state.currentPage ? getGroupForPage(state.currentPage.id) : null;
-                if (currentGroup) {
-                    currentGroup.users = state.users.slice();
-                    currentGroup.stats = {
-                        total: state.summary.total || 0,
-                        active: state.summary.active || 0,
-                        completed: state.summary.completed || 0,
-                        canceled: state.summary.canceled || 0,
-                        failed: state.summary.failed || 0
-                    };
-                }
-                if (state.overview && Array.isArray(state.overview.groups) && state.overview.groups.length) {
-                    const previousSummary = state.overview.summary || {};
-                    const aggregated = state.overview.groups.reduce((acc, group) => {
-                        const stats = group.stats || {};
-                        acc.total += stats.total || 0;
-                        acc.active += stats.active || 0;
-                        acc.completed += stats.completed || 0;
-                        acc.canceled += stats.canceled || 0;
-                        acc.failed += stats.failed || 0;
-                        return acc;
-                    }, defaultSummary());
-                    state.overview.summary = {
-                        ...aggregated,
-                        dateKey: previousSummary.dateKey || state.summary.dateKey || ''
-                    };
-                }
-                updateToolbar();
-                updateMetrics();
-                renderUsers();
-                renderPageGrid();
-                await loadOverview({ silent: true });
-                if (showMessage) {
-                    showAlert('info', 'อัปเดตรายการล่าสุดแล้ว');
-                }
-            } else if (data.disabled) {
-                state.users = [];
-                state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
-                state.currentContextConfig = data.config || null;
-                renderDisabledState();
-                updateToolbar();
-                updateMetrics();
-                renderPageGrid();
-                await loadOverview({ silent: true });
-                showAlert('warning', data.message || 'เพจนี้ถูกปิดจากแดชบอร์ด');
-            } else {
-                showAlert('danger', data.error || 'ไม่สามารถดึงข้อมูลได้');
-            }
-        } catch (error) {
-            console.error('load follow-up users error', error);
-            showAlert('danger', 'เกิดข้อผิดพลาดในการดึงข้อมูลลูกค้า');
-            renderUsers();
-        } finally {
-            state.isLoadingUsers = false;
-        }
-    };
-
-    const selectPage = (pageId, options = {}) => {
+    const selectPage = (pageId) => {
         const page = state.pages.find(p => p.id === pageId);
         if (!page) return;
         state.currentPage = page;
         state.currentContextConfig = page.settings || null;
-        if (el.search) {
-            el.search.value = '';
-        }
-        if (options.skipReload) {
-            state.users = [];
-            state.summary = { total: 0, active: 0, completed: 0, canceled: 0, failed: 0 };
-        }
+        state.editorRounds = [];
+        state.activeTab = 'general';
+        switchTab('general');
         renderPageSelector();
-        renderPageGrid();
-        updateToolbar();
-        updateMetrics();
-        if (!options.skipReload) {
-            loadUsers();
-        } else {
-            renderUsers();
-        }
-    };
+        updateEditorHeader();
+        renderGeneralTab();
 
-    const openSettingsModal = () => {
-        if (!state.currentPage || !modalInstance) return;
-        const cfg = state.currentContextConfig || state.currentPage.settings || {};
-        if (el.modalTitle) {
-            el.modalTitle.textContent = `ตั้งค่าเพจ: ${state.currentPage.name}`;
-        }
-        if (el.modalAutoSend) {
-            el.modalAutoSend.checked = isAutoFollowUpEffectiveEnabled(cfg);
-        }
-        state.modalRounds = Array.isArray(cfg.rounds)
-            ? cfg.rounds.map(round => {
+        const cfg = state.currentContextConfig || {};
+        if (Array.isArray(cfg.rounds)) {
+            state.editorRounds = cfg.rounds.map(round => {
                 let items;
                 if (Array.isArray(round.items)) {
                     items = round.items.map(item => {
@@ -1582,14 +797,20 @@
                     delayMinutes: Number(round.delayMinutes) || '',
                     items
                 };
-            })
-            : [];
-        renderModalRounds();
-        handleAutoSendToggle();
-        if (el.modalResetBtn) {
-            el.modalResetBtn.disabled = !state.currentPage.hasOverride;
+            });
         }
-        modalInstance.show();
+        renderRounds();
+        loadAssets();
+    };
+
+    const switchTab = (tabName) => {
+        state.activeTab = tabName;
+        el.tabButtons.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tabName);
+        });
+        el.tabContents.forEach(content => {
+            content.classList.toggle('active', content.dataset.tab === tabName);
+        });
     };
 
     const saveSettings = async () => {
@@ -1598,14 +819,22 @@
             platform: state.currentPage.platform,
             botId: state.currentPage.botId,
             settings: {
-                analysisEnabled: true,
-                autoFollowUpEnabled: !!(el.modalAutoSend && el.modalAutoSend.checked),
-                showInChat: true,
-                showInDashboard: true
+                analysisEnabled: el.settingAnalysis ? el.settingAnalysis.checked : true,
+                autoFollowUpEnabled: el.settingAutoSend ? el.settingAutoSend.checked : false,
+                showInChat: el.settingShowChat ? el.settingShowChat.checked : true,
+                showInDashboard: el.settingShowDashboard ? el.settingShowDashboard.checked : true,
+                rounds: collectRoundsPayload()
             }
         };
-        payload.settings.rounds = collectRoundsPayload();
+        if (el.settingModel && el.settingModel.value) {
+            payload.settings.model = el.settingModel.value;
+        }
+        if (el.settingPrompt && typeof el.settingPrompt.value === 'string') {
+            payload.settings.orderPromptInstructions = el.settingPrompt.value.trim();
+        }
+
         try {
+            el.saveBtn.disabled = true;
             const response = await fetch('/admin/followup/page-settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1614,16 +843,15 @@
             const data = await response.json();
             if (data.success) {
                 showAlert('success', 'บันทึกการตั้งค่าเพจเรียบร้อยแล้ว');
-                modalInstance.hide();
                 await loadPages();
-                await loadUsers();
-                await loadOverview({ silent: true });
             } else {
                 showAlert('danger', data.error || 'ไม่สามารถบันทึกการตั้งค่าได้');
             }
         } catch (error) {
             console.error('save follow-up page settings error', error);
             showAlert('danger', 'เกิดข้อผิดพลาดในการบันทึกการตั้งค่า');
+        } finally {
+            el.saveBtn.disabled = false;
         }
     };
 
@@ -1631,6 +859,7 @@
         if (!state.currentPage) return;
         if (!confirm('ต้องการคืนค่าเริ่มต้นสำหรับเพจนี้หรือไม่?')) return;
         try {
+            el.resetBtn.disabled = true;
             const response = await fetch('/admin/followup/page-settings', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
@@ -1642,125 +871,94 @@
             const data = await response.json();
             if (data.success) {
                 showAlert('success', 'คืนค่าเริ่มต้นเรียบร้อยแล้ว');
-                modalInstance.hide();
                 await loadPages();
-                await loadUsers();
             } else {
                 showAlert('danger', data.error || 'ไม่สามารถคืนค่าเริ่มต้นได้');
             }
         } catch (error) {
             console.error('reset follow-up page settings error', error);
             showAlert('danger', 'เกิดข้อผิดพลาดในการคืนค่าเริ่มต้น');
+        } finally {
+            el.resetBtn.disabled = false;
         }
     };
 
-    const initSocket = () => {
-        if (state.socket || !state.config || state.config.showDashboard === false) return;
-        try {
-            state.socket = io();
-            state.socket.on('followUpTagged', (data) => {
-                const dataPlatform = data && data.platform !== undefined ? data.platform : null;
-                const dataBotId = normalizeId(data && data.botId !== undefined ? data.botId : null);
-                if (!state.currentPage) return;
-                const currentBotId = normalizeId(state.currentPage.botId);
-                const platformMatch = dataPlatform === null || dataPlatform === state.currentPage.platform;
-                const botMatch = dataBotId === null || dataBotId === currentBotId;
-                if (platformMatch && botMatch) {
-                    loadUsers();
+    const handleImageUpload = () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.multiple = true;
+        input.addEventListener('change', async (event) => {
+            const files = Array.from(event.target.files || []);
+            if (!files.length) return;
+            try {
+                el.btnUploadImage.disabled = true;
+                for (const file of files) {
+                    const formData = new FormData();
+                    formData.append('images', file);
+                    const response = await fetch('/admin/followup/assets', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    let result;
+                    try {
+                        result = await response.json();
+                    } catch (parseError) {
+                        result = { success: false, error: 'อัพโหลดรูปภาพไม่สำเร็จ' };
+                    }
+                    if (!response.ok || !result.success) {
+                        showAlert('danger', result.error || 'อัพโหลดรูปภาพไม่สำเร็จ');
+                        continue;
+                    }
                 }
-            });
-            state.socket.on('followUpScheduleUpdated', (data) => {
-                const dataPlatform = data && data.platform !== undefined ? data.platform : null;
-                const dataBotId = normalizeId(data && data.botId !== undefined ? data.botId : null);
-                if (!state.currentPage) return;
-                const currentBotId = normalizeId(state.currentPage.botId);
-                const platformMatch = dataPlatform === null || dataPlatform === state.currentPage.platform;
-                const botMatch = dataBotId === null || dataBotId === currentBotId;
-                if (platformMatch && botMatch) {
-                    loadUsers();
-                }
-            });
-        } catch (error) {
-            console.warn('ไม่สามารถเชื่อมต่อ Socket.IO ได้', error);
-        }
-    };
-
-    const setStatusFilter = (status) => {
-        state.statusFilter = status || 'all';
-        if (el.filterButtons && typeof el.filterButtons.forEach === 'function') {
-            el.filterButtons.forEach(btn => {
-                const btnStatus = btn.getAttribute('data-status') || 'all';
-                if (btnStatus === state.statusFilter) {
-                    btn.classList.add('active');
-                } else {
-                    btn.classList.remove('active');
-                }
-            });
-        }
-        renderUsers();
+                showAlert('success', 'อัปโหลดรูปภาพเสร็จสิ้น');
+                await loadAssets();
+            } catch (error) {
+                console.error('upload image error', error);
+                showAlert('danger', 'เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ');
+            } finally {
+                el.btnUploadImage.disabled = false;
+            }
+        });
+        input.click();
     };
 
     const setupEventListeners = () => {
-        if (el.search) {
-            el.search.addEventListener('input', () => {
-                renderUsers();
+        if (el.pageSearch) {
+            el.pageSearch.addEventListener('input', () => {
+                renderPageSelector();
             });
         }
-        if (el.refresh) {
-            el.refresh.addEventListener('click', () => {
-                loadUsers(true);
+
+        el.tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                switchTab(btn.dataset.tab);
+            });
+        });
+
+        if (el.saveBtn) {
+            el.saveBtn.addEventListener('click', saveSettings);
+        }
+
+        if (el.resetBtn) {
+            el.resetBtn.addEventListener('click', resetSettings);
+        }
+
+        if (el.btnAddRound) {
+            el.btnAddRound.addEventListener('click', () => {
+                addRound({ delayMinutes: 10 });
             });
         }
-        if (el.editBtn) {
-            el.editBtn.addEventListener('click', () => {
-                if (state.currentPage) {
-                    openSettingsModal();
-                }
-            });
-        }
-        if (el.modalSaveBtn) {
-            el.modalSaveBtn.addEventListener('click', () => {
-                saveSettings();
-            });
-        }
-        if (el.modalResetBtn) {
-            el.modalResetBtn.addEventListener('click', () => {
-                resetSettings();
-            });
-        }
-        // Status pill filters
-        if (el.statusPills) {
-            el.statusPills.querySelectorAll('.followup-status-pill').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const status = btn.getAttribute('data-status') || 'all';
-                    setStatusFilter(status);
-                    // Update active state
-                    el.statusPills.querySelectorAll('.followup-status-pill').forEach(p => p.classList.remove('active'));
-                    btn.classList.add('active');
-                });
-            });
-        }
-        if (el.modalAutoSend) {
-            el.modalAutoSend.addEventListener('change', () => {
-                handleAutoSendToggle();
-            });
-        }
-        if (el.modalAddRound) {
-            el.modalAddRound.addEventListener('click', () => {
-                addModalRound({ delayMinutes: 10 });
-            });
+
+        if (el.btnUploadImage) {
+            el.btnUploadImage.addEventListener('click', handleImageUpload);
         }
     };
 
     const init = async () => {
+        populateModelSelect();
         setupEventListeners();
-        setStatusFilter(state.statusFilter || 'all');
-        await loadOverview({ silent: true });
         await loadPages();
-        initSocket();
-        if (state.currentPage) {
-            await loadUsers();
-        }
     };
 
     if (document.readyState === 'loading') {

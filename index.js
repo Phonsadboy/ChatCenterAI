@@ -25083,6 +25083,31 @@ app.delete("/admin/followup/page-settings", async (req, res) => {
   }
 });
 
+app.get("/admin/followup/assets", async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection("follow_up_assets");
+    const docs = await coll.find({}).sort({ createdAt: -1 }).limit(200).toArray();
+    const assets = docs.map((doc) => ({
+      id: doc._id?.toString(),
+      assetId: doc._id?.toString(),
+      url: doc.url,
+      previewUrl: doc.thumbUrl || doc.url,
+      thumbUrl: doc.thumbUrl,
+      fileName: doc.fileName || doc.originalName || null,
+      width: doc.width || null,
+      height: doc.height || null,
+      size: doc.size || null,
+      createdAt: doc.createdAt || null,
+    }));
+    res.json({ success: true, assets });
+  } catch (error) {
+    console.error("[FollowUp] ไม่สามารถดึงรายการรูปภาพได้:", error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
 app.post(
   "/admin/followup/assets",
   imageUpload.array("images", 5),
