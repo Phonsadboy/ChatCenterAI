@@ -43,7 +43,7 @@
   padding: 0.35rem 0.6rem;
   border-radius: 10px;
   border: 1px solid var(--border, #E1E5EF);
-  background: #f9fafc;
+  background: var(--bg-body, #F6F7FB);
   color: var(--text-sub, #5C6372);
   font-size: 0.9rem;
 }
@@ -225,7 +225,7 @@
 
 .broadcast-time-badge--remaining {
   background: rgba(223, 169, 75, 0.1);
-  color: #b08930;
+  color: #7a5604;
 }
 
 /* Time Estimate (pre-send) */

@@ -647,7 +647,7 @@
 
 .badge-followup {
     background: var(--chat-warning);
-    color: var(--chat-text-primary);
+    color: #5c3d00;
 }
 
 .badge-purchased {
@@ -804,7 +804,7 @@
 
 .order-count-badge {
     background: var(--chat-warning);
-    color: var(--chat-text-primary);
+    color: #5c3d00;
     padding: 0.25rem 0.625rem;
     border-radius: 12px;
     font-size: 0.8125rem;
@@ -902,7 +902,7 @@
 
 .order-status-badge.pending {
     background: var(--chat-warning);
-    color: var(--chat-text-primary);
+    color: #5c3d00;
 }
 
 .order-status-badge.confirmed {
@@ -1983,8 +1983,8 @@
 }
 
 .mobile-state-chip.is-followup {
-    background: rgba(223, 169, 75, 0.18);
-    color: #7a5604;
+    background: rgba(223, 169, 75, 0.22);
+    color: #5c3d00;
 }
 
 .mobile-state-chip.is-purchased {

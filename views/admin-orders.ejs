@@ -159,19 +159,19 @@
           </button>
           <div class="orders-status-dropdown-menu">
             <div class="orders-status-option" onclick="window.OrdersV2.bulkUpdateStatus('pending')">
-              <span class="status-dot" style="background:#DFA94B;"></span> รอดำเนินการ
+              <span class="status-dot" style="background:var(--color-warning, #DFA94B);"></span> รอดำเนินการ
             </div>
             <div class="orders-status-option" onclick="window.OrdersV2.bulkUpdateStatus('confirmed')">
-              <span class="status-dot" style="background:#4A6FA5;"></span> ยืนยันแล้ว
+              <span class="status-dot" style="background:var(--color-primary, #4A6FA5);"></span> ยืนยันแล้ว
             </div>
             <div class="orders-status-option" onclick="window.OrdersV2.bulkUpdateStatus('shipped')">
-              <span class="status-dot" style="background:#3D7FC1;"></span> จัดส่งแล้ว
+              <span class="status-dot" style="background:var(--color-info, #3D7FC1);"></span> จัดส่งแล้ว
             </div>
             <div class="orders-status-option" onclick="window.OrdersV2.bulkUpdateStatus('completed')">
-              <span class="status-dot" style="background:#2D8F6F;"></span> เสร็จสิ้น
+              <span class="status-dot" style="background:var(--color-success, #2D8F6F);"></span> เสร็จสิ้น
             </div>
             <div class="orders-status-option" onclick="window.OrdersV2.bulkUpdateStatus('cancelled')">
-              <span class="status-dot" style="background:#D2555A;"></span> ยกเลิก
+              <span class="status-dot" style="background:var(--color-danger, #D2555A);"></span> ยกเลิก
             </div>
           </div>
         </div>

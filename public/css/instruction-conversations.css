@@ -604,7 +604,7 @@ body {
 .outcome-badge.not_purchased,
 .outcome-badge.not-purchased {
     background: var(--red-bg);
-    color: var(--red);
+    color: #b91c1c;
 }
 
 .outcome-badge.pending {

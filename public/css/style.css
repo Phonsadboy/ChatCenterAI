@@ -168,7 +168,7 @@ h6 {
 
 /* ========== Navbar - Compact ========== */
 .navbar {
-  background-color: white;
+  background-color: var(--bg-card, #fff);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   padding: 0.4rem 0.75rem;
 }
@@ -742,15 +742,15 @@ h6 {
 .followup-page-pill:hover,
 .followup-page-pill.active {
   background: var(--primary);
-  color: white;
+  color: #fff;
   box-shadow: var(--shadow-md);
 }
 
 .followup-page-pill.active .pill-badge,
 .followup-page-pill.active .pill-status,
 .followup-page-pill.active .pill-dot {
-  color: white;
-  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .followup-page-pill.disabled {
@@ -808,7 +808,7 @@ h6 {
   height: 42px;
   border-radius: 50%;
   background: var(--primary);
-  color: white;
+  color: #fff;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -924,12 +924,12 @@ h6 {
 .btn-secondary {
   background-color: var(--secondary);
   border: none;
-  color: #333;
+  color: var(--text-dark, #2b1d0d);
 }
 
 .btn-secondary:hover {
   background-color: #E9B854;
-  color: #333;
+  color: var(--text-dark, #2b1d0d);
 }
 
 .btn-danger {
@@ -1286,12 +1286,12 @@ body.login-page {
 
 .type-text {
   background-color: rgba(66, 133, 244, 0.15);
-  color: #4285f4;
+  color: #1a5fd1;
 }
 
 .type-table {
   background-color: rgba(161, 66, 244, 0.15);
-  color: #a142f4;
+  color: #7c21c7;
 }
 
 /* ========== Follow-up UI ========== */

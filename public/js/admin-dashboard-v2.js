@@ -80,7 +80,6 @@
     const instructionDirtyAlert = document.getElementById('instructionDirtyAlert');
     const saveInstructionChangesBtn = document.getElementById('saveInstructionChangesBtn');
     const instructionCardsWrapper = document.getElementById('instructionCardsWrapper');
-    const instructionCardsEmptyState = document.getElementById('instructionCardsEmptyState');
     const instructionCards = Array.from(document.querySelectorAll('.instruction-card'));
     const openStarterModalButtons = Array.from(document.querySelectorAll('.open-starter-modal'));
     const instructionStarterQuickStatus = document.getElementById('instructionStarterQuickStatus');
@@ -355,15 +354,8 @@
             item.classList.toggle('active', item.dataset.id === instructionId);
         });
         // Keep legacy cards hidden
-        if (instructionCardsWrapper && instructionCardsEmptyState && instructionCards.length > 0) {
-            if (!instructionId) {
-                instructionCardsWrapper.classList.add('d-none');
-                instructionCardsEmptyState.classList.remove('d-none');
-                instructionCards.forEach(card => card.classList.add('d-none'));
-                return;
-            }
+        if (instructionCardsWrapper && instructionCards.length > 0) {
             instructionCardsWrapper.classList.add('d-none');
-            instructionCardsEmptyState.classList.add('d-none');
             instructionCards.forEach(card => {
                 const matches = card.dataset.id === instructionId;
                 card.classList.toggle('d-none', !matches);
@@ -752,7 +744,7 @@
                                     || sidebarItem.dataset.code
                                     || '';
                                 const codePrefix = code ? `[${code}] ` : '';
-                                nameEl.innerHTML = `<i class="fas fa-book text-primary" style="font-size:0.8rem;"></i> ${escapeHtml(codePrefix + (name || 'ไม่มีชื่อ'))}`;
+                                nameEl.innerHTML = `<i class="fas fa-book text-primary" style="font-size:0.8rem;"></i> <span class="ws-list-name-text">${escapeHtml(codePrefix + (name || 'ไม่มีชื่อ'))}</span>`;
                             }
                             const metaEl = sidebarItem.querySelector('.ws-list-meta');
                             if (metaEl) {

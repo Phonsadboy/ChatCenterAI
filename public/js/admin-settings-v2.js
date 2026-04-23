@@ -1594,21 +1594,18 @@ function getBotReasoningSupport(modelId) {
 function buildReasoningEffortOptions(modelId, selectedValue = '') {
     const support = getBotReasoningSupport(modelId);
     if (!support) {
-        return '<option value="">โมเดลนี้ไม่รองรับ reasoning_effort</option>';
+        return '<option value="" disabled selected>ไม่รองรับ</option>';
     }
 
     const normalizedSelectedValue =
         typeof selectedValue === 'string' ? selectedValue.trim() : '';
     const hasSelectedValue = support.allowed.includes(normalizedSelectedValue);
-    const options = [
-        `<option value="" ${hasSelectedValue ? '' : 'selected'} disabled>เลือก reasoning_effort</option>`
-    ];
+    const defaultEffort = support.allowed.includes('low') ? 'low' : support.allowed[0];
+    const effectiveValue = hasSelectedValue ? normalizedSelectedValue : defaultEffort;
 
-    support.allowed.forEach((effort) => {
-        const selected = hasSelectedValue && normalizedSelectedValue === effort ? 'selected' : '';
-        options.push(
-            `<option value="${effort}" ${selected}>${REASONING_EFFORT_LABELS[effort] || effort}</option>`
-        );
+    const options = support.allowed.map((effort) => {
+        const selected = effort === effectiveValue ? 'selected' : '';
+        return `<option value="${effort}" ${selected}>${REASONING_EFFORT_LABELS[effort] || effort}</option>`;
     });
 
     return options.join('');
@@ -1893,6 +1890,9 @@ function buildInstructionInlineRow(bot, botType) {
     const collectionOptions = buildImageCollectionOptions(selectedCollectionValue, collectionCount);
     const selectedModel = String(bot.aiModel || DEFAULT_BOT_MODEL);
     const modelOptions = buildModelOptions(selectedModel);
+    const currentEffort = typeof bot?.aiConfig?.reasoningEffort === 'string' ? bot.aiConfig.reasoningEffort.trim() : '';
+    const reasoningOptions = buildReasoningEffortOptions(selectedModel, currentEffort);
+    const reasoningDisabled = !getBotReasoningSupport(selectedModel);
 
     return `
         <div class="bot-inline-row compact">
@@ -1924,6 +1924,17 @@ function buildInstructionInlineRow(bot, botType) {
                     data-previous-value="${escapeHtml(selectedModel)}"
                     aria-label="เลือกโมเดล AI สำหรับบอท">
                     ${modelOptions}
+                </select>
+            </div>
+            <div class="inline-control reasoning-control">
+                <span class="inline-label"><i class="fas fa-brain"></i> Reasoning</span>
+                <select class="form-select form-select-sm reasoning-select"
+                    data-bot-type="${botType}"
+                    data-bot-id="${bot._id}"
+                    data-previous-value="${escapeHtml(currentEffort)}"
+                    ${reasoningDisabled ? 'disabled' : ''}
+                    aria-label="เลือกระดับ reasoning effort สำหรับบอท">
+                    ${reasoningOptions}
                 </select>
             </div>
         </div>
@@ -1985,7 +1996,11 @@ function buildModelOptions(selectedValue) {
 
     BOT_MODEL_PRESETS.forEach((modelId) => {
         const selected = normalizedSelectedValue === modelId ? 'selected' : '';
-        options.push(`<option value="${escapeHtml(modelId)}" ${selected}>${escapeHtml(modelId)}</option>`);
+        let label = modelId;
+        if (modelId === 'gpt-5.4-mini' || modelId === 'gpt-4.1-mini') {
+            label += ' แนะนำ';
+        }
+        options.push(`<option value="${escapeHtml(modelId)}" ${selected}>${escapeHtml(label)}</option>`);
     });
 
     return options.join('');
@@ -2040,6 +2055,15 @@ function handleInstructionSelectChange(event) {
         const previousValue = select.dataset.previousValue || '';
         const modelId = select.value;
         saveBotModelSelection(botType, botId, modelId, select, previousValue);
+        return;
+    }
+
+    if (select.classList.contains('reasoning-select')) {
+        const botType = select.dataset.botType;
+        const botId = select.dataset.botId;
+        const previousValue = select.dataset.previousValue || '';
+        const effort = select.value;
+        saveBotReasoningEffortSelection(botType, botId, effort, select, previousValue);
     }
 }
 
@@ -2353,9 +2377,11 @@ async function saveBotModelSelection(botType, botId, modelId, select, previousVa
                 : '';
 
         if (support && currentApiMode === 'responses' && !support.allowed.includes(currentEffort)) {
-            select.value = previousValue;
-            showToast('โมเดล GPT-5/o-series ต้องเลือก reasoning_effort ในหน้าแก้ไขบอทก่อน', 'warning');
-            return;
+            if (!botData.aiConfig || typeof botData.aiConfig !== 'object') {
+                botData.aiConfig = {};
+            }
+            const defaultEffort = support.allowed.includes('low') ? 'low' : support.allowed[0];
+            botData.aiConfig.reasoningEffort = defaultEffort;
         }
 
         botData.aiModel = modelId || DEFAULT_BOT_MODEL;
@@ -2378,6 +2404,50 @@ async function saveBotModelSelection(botType, botId, modelId, select, previousVa
         console.error('Error saving bot model:', error);
         select.value = previousValue;
         showToast('ไม่สามารถบันทึกโมเดลได้', 'danger');
+    } finally {
+        select.disabled = false;
+    }
+}
+
+async function saveBotReasoningEffortSelection(botType, botId, effort, select, previousValue) {
+    const endpoint = getBotApiEndpoint(botType, botId);
+    if (!endpoint) {
+        showToast('ประเภทบอทไม่รองรับการตั้งค่า reasoning effort', 'danger');
+        select.value = previousValue;
+        return;
+    }
+
+    select.disabled = true;
+    try {
+        const getRes = await fetch(endpoint);
+        const botData = await getRes.json().catch(() => ({}));
+        if (!getRes.ok) {
+            throw new Error(botData?.error || 'โหลดข้อมูลบอทไม่สำเร็จ');
+        }
+
+        if (!botData.aiConfig || typeof botData.aiConfig !== 'object') {
+            botData.aiConfig = {};
+        }
+        botData.aiConfig.reasoningEffort = effort;
+        delete botData._id;
+
+        const updateRes = await fetch(endpoint, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(botData)
+        });
+        const updateData = await updateRes.json().catch(() => ({}));
+        if (!updateRes.ok) {
+            throw new Error(updateData?.error || 'บันทึกไม่สำเร็จ');
+        }
+
+        select.dataset.previousValue = effort;
+        showToast('อัปเดต reasoning effort ของบอทแล้ว', 'success');
+        loadBotSettings();
+    } catch (error) {
+        console.error('Error saving bot reasoning effort:', error);
+        select.value = previousValue;
+        showToast('ไม่สามารถบันทึก reasoning effort ได้', 'danger');
     } finally {
         select.disabled = false;
     }

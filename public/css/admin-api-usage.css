@@ -93,11 +93,11 @@
 }
 
 .summary-sub.text-success {
-    color: #10b981 !important;
+    color: var(--color-success, #2D8F6F) !important;
 }
 
 .summary-sub.text-danger {
-    color: #ef4444 !important;
+    color: var(--color-danger, #D2555A) !important;
 }
 
 /* Color variants */
@@ -295,7 +295,7 @@
 }
 
 .table tbody tr.expanded-detail {
-    background: #f8fafc;
+    background: var(--bg-body, #F6F7FB);
 }
 
 .table tbody tr.expanded-detail td {

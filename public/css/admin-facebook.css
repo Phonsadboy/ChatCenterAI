@@ -7,7 +7,7 @@
 }
 
 .fb-card-header {
-  background: #f9fafc;
+  background: var(--bg-body, #F6F7FB);
   border-bottom: 1px solid var(--border, #E1E5EF);
   padding: 0.85rem 1rem;
 }
@@ -19,7 +19,7 @@
 .fb-help {
   border: 1px solid var(--border, #E1E5EF);
   border-radius: 12px;
-  background: #f9fafc;
+  background: var(--bg-body, #F6F7FB);
 }
 
 .fb-post-item {
@@ -56,7 +56,7 @@
   border: 1px dashed var(--border, #E1E5EF);
   border-radius: 12px;
   padding: 1.5rem 1rem;
-  background: #fbfcff;
+  background: var(--bg-body, #F6F7FB);
   text-align: center;
 }
 
@@ -82,5 +82,5 @@
 
 .fb-post-status.inactive {
   background: rgba(139, 146, 163, 0.15);
-  color: var(--text-sub, #5C6372);
+  color: #374151;
 }

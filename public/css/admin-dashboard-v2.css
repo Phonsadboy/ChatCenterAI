@@ -89,6 +89,14 @@
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  min-width: 0;
+}
+
+.ws-list-item .ws-list-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .ws-list-item .ws-list-meta {
@@ -150,18 +158,34 @@
   flex-wrap: wrap;
 }
 
+.ws-header-info {
+  min-width: 0;
+  flex: 1;
+}
+
 .ws-header-info h3 {
   font-weight: 700;
   margin: 0;
   font-size: 1.15rem;
   color: var(--text-main, #1E2430);
   letter-spacing: -0.01em;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .ws-header-meta {
   color: var(--text-sub, #5C6372);
   font-size: 0.88rem;
   margin-top: 0.15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#starterModalInstructionName {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .ws-header-actions {
@@ -198,7 +222,7 @@
 }
 
 .btn-starter i {
-  color: #7a5c1a;
+  color: #2b1d0d;
 }
 
 /* ===== Workspace Toolbar (Metrics + Tabs in one row) ===== */
@@ -477,6 +501,11 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 0.5rem;
+  min-width: 0;
+}
+
+.instruction-header > .flex-grow-1 {
+  min-width: 0;
 }
 
 .instruction-title {
@@ -484,6 +513,9 @@
   font-weight: 700;
   margin: 0;
   color: var(--text-main, #1E2430);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .instruction-desc {

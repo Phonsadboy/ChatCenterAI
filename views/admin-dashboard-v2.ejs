@@ -67,7 +67,7 @@
               <div class="ws-list-item" data-id="<%= instruction._id %>" data-name="<%= (instruction.name || '').toLowerCase() %>" data-code="<%= (instruction.instructionId || '').toLowerCase() %>">
                 <div class="ws-list-name">
                   <i class="fas fa-book text-primary" style="font-size:0.8rem;"></i>
-                  <%= instruction.instructionId ? '[' + instruction.instructionId + '] ' : '' %><%= instruction.name || 'ไม่มีชื่อ' %>
+                  <span class="ws-list-name-text"><%= instruction.instructionId ? '[' + instruction.instructionId + '] ' : '' %><%= instruction.name || 'ไม่มีชื่อ' %></span>
                 </div>
                 <div class="ws-list-meta"><%= instruction.description || 'ไม่มีคำอธิบาย' %></div>
                 <div class="ws-list-badges">
@@ -184,12 +184,6 @@
       </div>
 
       <!-- Keep original cards hidden for JS compatibility -->
-      <div id="instructionCardsEmptyState" class="d-none">
-        <div class="app-empty">
-          <div class="app-empty__icon"><i class="fas fa-book-open"></i></div>
-          <div class="app-empty__title">เลือก Instruction เพื่อดูและแก้ไขรายละเอียด</div>
-        </div>
-      </div>
       <div id="instructionCardsWrapper" class="instruction-grid d-none">
         <% instructions.forEach(instruction => { %>
           <% const starterCfg = instruction.conversationStarter || {}; const starterEnabled = !!starterCfg.enabled; const starterCount = Array.isArray(starterCfg.messages) ? starterCfg.messages.length : 0; %>
