@@ -1600,12 +1600,17 @@ function buildReasoningEffortOptions(modelId, selectedValue = '') {
     const normalizedSelectedValue =
         typeof selectedValue === 'string' ? selectedValue.trim() : '';
     const hasSelectedValue = support.allowed.includes(normalizedSelectedValue);
-    const defaultEffort = support.allowed.includes('low') ? 'low' : support.allowed[0];
-    const effectiveValue = hasSelectedValue ? normalizedSelectedValue : defaultEffort;
 
-    const options = support.allowed.map((effort) => {
-        const selected = effort === effectiveValue ? 'selected' : '';
-        return `<option value="${effort}" ${selected}>${REASONING_EFFORT_LABELS[effort] || effort}</option>`;
+    const options = [];
+    if (!hasSelectedValue) {
+        options.push('<option value="" disabled selected>โปรดเลือก (แนะนำ low)</option>');
+    }
+
+    support.allowed.forEach((effort) => {
+        const selected = hasSelectedValue && normalizedSelectedValue === effort ? 'selected' : '';
+        options.push(
+            `<option value="${effort}" ${selected}>${REASONING_EFFORT_LABELS[effort] || effort}</option>`
+        );
     });
 
     return options.join('');

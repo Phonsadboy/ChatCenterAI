@@ -97,28 +97,30 @@
           <div id="workspaceContent" class="d-none">
             <!-- Header -->
             <div class="ws-header">
-              <div class="ws-header-info">
-                <h3 id="workspaceTitle">-</h3>
-                <div class="ws-header-meta" id="workspaceMeta">-</div>
+              <div class="ws-header-top">
+                <div class="ws-header-info">
+                  <h3 id="workspaceTitle">-</h3>
+                  <div class="ws-header-meta" id="workspaceMeta">-</div>
+                </div>
+                <div class="ws-header-actions">
+                  <button class="btn btn-outline-success btn-sm" id="btnOpenExport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="export"><i class="fas fa-file-export me-1"></i> Export</button>
+                  <button class="btn btn-outline-primary btn-sm" id="btnOpenImport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="import"><i class="fas fa-file-import me-1"></i> Import</button>
+                  <button class="btn btn-starter btn-sm open-starter-modal" id="workspaceStarterBtn"><i class="fas fa-rocket me-1"></i> ตั้งค่า Starter</button>
+                </div>
               </div>
-              <div class="ws-header-actions">
-                <button class="btn btn-outline-success btn-sm" id="btnOpenExport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="export"><i class="fas fa-file-export me-1"></i> Export</button>
-                <button class="btn btn-outline-primary btn-sm" id="btnOpenImport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="import"><i class="fas fa-file-import me-1"></i> Import</button>
-                <button class="btn btn-starter btn-sm open-starter-modal" id="workspaceStarterBtn"><i class="fas fa-rocket me-1"></i> ตั้งค่า Starter</button>
-              </div>
-            </div>
 
-            <!-- Toolbar: Metrics + Tabs -->
-            <div class="ws-toolbar">
-              <div class="ws-mini-metrics" id="workspaceMetrics">
-                <div class="ws-mini-metric"><div class="num" id="metricDataItems">0</div><div class="lbl">ชุดข้อมูล</div></div>
-                <div class="ws-mini-metric"><div class="num" id="metricStarter">0</div><div class="lbl">Starter</div></div>
-                <div class="ws-mini-metric"><div class="num" id="metricChars">0</div><div class="lbl">ตัวอักษร</div></div>
-                <div class="ws-mini-metric"><div class="num" id="metricUpdated">-</div><div class="lbl">อัปเดตล่าสุด</div></div>
-              </div>
-              <div class="ws-tabs">
-                <button class="ws-tab" data-tab="editor"><i class="fas fa-pen-to-square me-1"></i> แก้ไข</button>
-                <button class="ws-tab active" data-tab="dataitems"><i class="fas fa-database me-1"></i> ชุดข้อมูล</button>
+              <!-- Toolbar: Metrics + Tabs -->
+              <div class="ws-toolbar">
+                <div class="ws-mini-metrics" id="workspaceMetrics">
+                  <div class="ws-mini-metric"><div class="num" id="metricDataItems">0</div><div class="lbl">ชุดข้อมูล</div></div>
+                  <div class="ws-mini-metric"><div class="num" id="metricStarter">0</div><div class="lbl">Starter</div></div>
+                  <div class="ws-mini-metric"><div class="num" id="metricChars">0</div><div class="lbl">ตัวอักษร</div></div>
+                  <div class="ws-mini-metric"><div class="num" id="metricUpdated">-</div><div class="lbl">อัปเดตล่าสุด</div></div>
+                </div>
+                <div class="ws-tabs">
+                  <button class="ws-tab" data-tab="editor"><i class="fas fa-pen-to-square me-1"></i> แก้ไข</button>
+                  <button class="ws-tab active" data-tab="dataitems"><i class="fas fa-database me-1"></i> ชุดข้อมูล</button>
+                </div>
               </div>
             </div>
 
