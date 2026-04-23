@@ -2003,7 +2003,7 @@ body.login-page {
 
   /* Chat interface */
   .chat-container {
-    height: calc(100vh - 60px);
+    height: calc(100vh - var(--layout-topbar-height, 56px));
     padding: 10px;
   }
 
