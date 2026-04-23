@@ -19,7 +19,6 @@ class ChatManager {
         this.updateAppHeight = this.updateAppHeight.bind(this);
         const followUpConfig = window.chatCenterFollowUpConfig || {};
         this.followUpOptions = {
-            analysisEnabled: typeof followUpConfig.analysisEnabled === 'boolean' ? followUpConfig.analysisEnabled : true,
             showInChat: typeof followUpConfig.showInChat === 'boolean' ? followUpConfig.showInChat : true
         };
 

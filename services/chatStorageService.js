@@ -871,6 +871,132 @@ function createChatStorageService({
     return result.rows.map((row) => normalizeAppDocumentRow(row));
   }
 
+  async function countDocumentsByPayloadFieldValues(
+    collectionName,
+    fieldName,
+    fieldValues = [],
+  ) {
+    if (!isConfigured()) return [];
+    await ensureReady();
+    if (!/^[a-zA-Z0-9_.-]+$/.test(String(fieldName || ""))) {
+      throw new Error(`Unsupported app document field name: ${fieldName}`);
+    }
+
+    const uniqueValues = Array.from(
+      new Set(
+        (Array.isArray(fieldValues) ? fieldValues : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!uniqueValues.length) return [];
+
+    const result = await postgresRuntime.query(
+      `
+        SELECT
+          payload->>$2 AS field_value,
+          COUNT(*)::integer AS document_count
+        FROM app_documents
+        WHERE collection_name = $1
+          AND payload->>$2 = ANY($3::text[])
+        GROUP BY payload->>$2
+      `,
+      [collectionName, fieldName, uniqueValues],
+    );
+
+    return result.rows.map((row) => ({
+      value: row.field_value,
+      count: Number(row.document_count || 0),
+    }));
+  }
+
+  async function findActiveFollowUpTasksForUsers(userIds = [], options = {}) {
+    if (!isConfigured()) return [];
+    await ensureReady();
+
+    const uniqueUserIds = Array.from(
+      new Set(
+        (Array.isArray(userIds) ? userIds : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!uniqueUserIds.length) return [];
+
+    const rawLimit = Number(options.limit || uniqueUserIds.length);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.max(1, Math.min(rawLimit, Math.max(uniqueUserIds.length, 1000)))
+      : uniqueUserIds.length;
+
+    const result = await postgresRuntime.query(
+      `
+        SELECT DISTINCT ON (payload->>'userId')
+          collection_name,
+          document_id,
+          payload,
+          created_at,
+          updated_at
+        FROM app_documents
+        WHERE collection_name = 'follow_up_tasks'
+          AND payload->>'userId' = ANY($1::text[])
+          AND (payload->>'canceled' IS NULL OR payload->>'canceled' <> 'true')
+          AND (payload->>'completed' IS NULL OR payload->>'completed' <> 'true')
+          AND NULLIF(payload->>'nextScheduledAt', '') IS NOT NULL
+        ORDER BY
+          payload->>'userId',
+          payload->>'nextScheduledAt' ASC,
+          updated_at DESC
+        LIMIT $2
+      `,
+      [uniqueUserIds, limit],
+    );
+
+    return result.rows.map((row) => normalizeAppDocumentRow(row));
+  }
+
+  async function listTopDocumentArrayValues(
+    collectionName,
+    fieldName,
+    options = {},
+  ) {
+    if (!isConfigured()) return [];
+    await ensureReady();
+    if (!/^[a-zA-Z0-9_.-]+$/.test(String(fieldName || ""))) {
+      throw new Error(`Unsupported app document field name: ${fieldName}`);
+    }
+
+    const rawLimit = Number(options.limit || 50);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.max(1, Math.min(rawLimit, 200))
+      : 50;
+
+    const result = await postgresRuntime.query(
+      `
+        SELECT
+          tag_value,
+          COUNT(*)::integer AS value_count
+        FROM app_documents
+        CROSS JOIN LATERAL jsonb_array_elements_text(
+          CASE
+            WHEN jsonb_typeof(payload->$2) = 'array' THEN payload->$2
+            ELSE '[]'::jsonb
+          END
+        ) AS tag(tag_value)
+        WHERE collection_name = $1
+          AND NULLIF(tag_value, '') IS NOT NULL
+        GROUP BY tag_value
+        ORDER BY value_count DESC, tag_value ASC
+        LIMIT $3
+      `,
+      [collectionName, fieldName, limit],
+    );
+
+    return result.rows.map((row) => ({
+      value: row.tag_value,
+      count: Number(row.value_count || 0),
+    }));
+  }
+
   async function deleteDocument(collectionName, documentId) {
     if (!isConfigured()) return;
     await ensureReady();
@@ -1002,16 +1128,19 @@ function createChatStorageService({
 
   return {
     buildChatImageRoute,
+    countDocumentsByPayloadFieldValues,
     deleteAssetObject,
     deleteDocument,
     deleteUserHistory,
     ensureReady,
+    findActiveFollowUpTasksForUsers,
     findDocumentsByPayloadField,
     findAssetObjectByFileName,
     getAttachment,
     getAssetObject,
     getDocument,
     getDocuments,
+    listTopDocumentArrayValues,
     getMessageById,
     isConfigured,
     listConversationUsers,

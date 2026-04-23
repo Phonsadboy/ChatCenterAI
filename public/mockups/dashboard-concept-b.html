@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concept B — Split Workspace</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Mali:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --color-primary: #4A6FA5; --color-primary-light: #6F92C2; --color-primary-dark: #365983;
+      --color-accent: #E6B75C; --color-success: #2D8F6F; --color-warning: #DFA94B; --color-danger: #D2555A; --color-info: #3D7FC1;
+      --bg-body: #F6F7FB; --bg-card: #FFFFFF; --border: #E1E5EF;
+      --text-main: #1E2430; --text-sub: #5C6372; --text-muted: #8B92A3;
+      --radius-lg: 12px; --radius-md: 10px; --shadow-soft: 0 1px 3px rgba(0,0,0,0.06);
+      --layout-topbar-height: 56px; --layout-sidebar-width: 240px;
+      --font-family-base: 'Mali', 'Inter', sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--font-family-base); background: var(--bg-body); color: var(--text-main); font-size: 15px; }
+
+    /* Layout */
+    .app-topbar { position: fixed; top:0; left:0; right:0; height: var(--layout-topbar-height); background: #fff; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 1rem; z-index:1030; }
+    .app-topbar__left, .app-topbar__right { display:flex; align-items:center; gap:0.75rem; }
+    .app-topbar__brand { font-weight:700; color: var(--text-main); text-decoration:none; display:flex; align-items:center; gap:0.5rem; }
+    .app-topbar__brand i { color: var(--color-primary); }
+    .app-topbar__title { font-weight:600; }
+
+    .app-sidebar { position: fixed; top: var(--layout-topbar-height); left:0; bottom:0; width: var(--layout-sidebar-width); background:#fff; border-right:1px solid var(--border); z-index:1020; padding:0.5rem 0.75rem; }
+    .app-sidebar__section-title { font-size:0.65rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); padding:0.75rem 0.75rem 0.35rem; }
+    .app-sidebar__item { display:flex; align-items:center; gap:0.75rem; padding:0.6rem 0.75rem; border-radius:8px; color:var(--text-sub); text-decoration:none; font-size:0.9rem; font-weight:500; margin-bottom:0.15rem; }
+    .app-sidebar__item:hover { background: rgba(74,111,165,0.06); color: var(--color-primary); }
+    .app-sidebar__item.is-active { background: rgba(74,111,165,0.1); color: var(--color-primary); font-weight:600; }
+
+    .app-content { padding-top: calc(var(--layout-topbar-height) + 0.5rem); padding-left: calc(var(--layout-sidebar-width) + 0.75rem); padding-right: 0.75rem; padding-bottom: 1rem; }
+
+    /* Split workspace */
+    .workspace { display: flex; gap: 0.75rem; min-height: calc(100vh - var(--layout-topbar-height) - 1rem); }
+    .workspace-sidebar { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+    .workspace-main { flex: 1; display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+
+    /* Search & filter */
+    .ws-search { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 0.75rem 1rem; box-shadow: var(--shadow-soft); }
+    .ws-search input { border-radius: 10px; border: 1px solid var(--border); }
+
+    /* Instruction list */
+    .ws-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+    .ws-list-item { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.85rem 1rem; cursor: pointer; transition: all .15s ease; position: relative; }
+    .ws-list-item:hover { border-color: rgba(74,111,165,0.3); box-shadow: 0 4px 12px rgba(22,34,56,0.06); }
+    .ws-list-item.active { background: rgba(74,111,165,0.06); border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(74,111,165,0.08); }
+    .ws-list-item .name { font-weight: 700; font-size: 0.95rem; display: flex; align-items: center; gap: 0.4rem; }
+    .ws-list-item .meta { font-size: 0.82rem; color: var(--text-sub); margin-top: 0.2rem; }
+    .ws-list-item .badges { display: flex; gap: 0.3rem; margin-top: 0.4rem; }
+    .badge-soft { font-size: 0.7rem; font-weight: 700; padding: 0.18rem 0.5rem; border-radius: 999px; border: 1px solid var(--border); background: #f1f3f8; color: var(--text-sub); }
+    .badge-soft.on { background: rgba(45,143,111,0.1); border-color: rgba(45,143,111,0.2); color: var(--color-success); }
+
+    /* Workspace header */
+    .ws-header { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1rem 1.25rem; box-shadow: var(--shadow-soft); display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .ws-header h3 { font-weight: 700; margin: 0; font-size: 1.15rem; }
+    .ws-header .sub { color: var(--text-sub); font-size: 0.88rem; }
+    .ws-actions { display: flex; gap: 0.4rem; }
+    .ws-actions .btn { font-weight: 600; border-radius: 10px; }
+
+    /* Tabs */
+    .ws-tabs { display: flex; gap: 0.25rem; background: #f0f2f7; padding: 0.35rem; border-radius: 10px; width: fit-content; }
+    .ws-tab { padding: 0.45rem 1rem; border-radius: 8px; border: none; background: transparent; color: var(--text-sub); font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: all .15s ease; }
+    .ws-tab.active { background: #fff; color: var(--color-primary); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .ws-tab:hover:not(.active) { color: var(--text-main); }
+
+    /* Card panel */
+    .ws-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); padding: 1.25rem; flex: 1; overflow-y: auto; }
+    .ws-panel h5 { font-weight: 700; margin-bottom: 1rem; font-size: 1rem; }
+    .form-label { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.4rem; }
+    .form-control, .form-select { border-radius: 10px; border: 1px solid var(--border); padding: 0.55rem 0.85rem; font-size: 0.9rem; }
+    .form-control:focus, .form-select:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(74,111,165,0.15); }
+    .btn { font-weight: 600; border-radius: 10px; }
+    .btn-primary { background: var(--color-primary); border-color: var(--color-primary); }
+    .btn-primary:hover { background: var(--color-primary-dark); border-color: var(--color-primary-dark); }
+    .btn-success { background: var(--color-success); border-color: var(--color-success); }
+
+    /* Data items in workspace */
+    .data-row { display: flex; justify-content: space-between; align-items: center; padding: 0.65rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: #f9fafc; margin-bottom: 0.45rem; transition: all .15s ease; }
+    .data-row:hover { border-color: rgba(74,111,165,0.25); background: #fff; }
+    .data-row .t { font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem; }
+    .data-row .m { font-size: 0.8rem; color: var(--text-sub); }
+    .type-badge { font-size: 0.68rem; font-weight: 700; padding: 0.12rem 0.4rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.02em; }
+    .type-badge.text { background: rgba(61,127,193,0.12); color: #2f6ca1; }
+    .type-badge.table { background: rgba(45,143,111,0.12); color: #1f7d5c; }
+    .row-actions { display: flex; gap: 0.25rem; }
+    .row-actions .btn { --bs-btn-padding-y: 0.25rem; --bs-btn-padding-x: 0.4rem; --bs-btn-font-size: 0.78rem; border-radius: 8px; }
+    .add-row-btn { width: 100%; padding: 0.65rem; font-size: 0.88rem; border: 1px dashed var(--border); background: #fff; border-radius: 10px; color: var(--text-sub); transition: all .2s ease; }
+    .add-row-btn:hover { background: rgba(74,111,165,0.05); border-color: rgba(74,111,165,0.5); color: var(--color-primary); }
+
+    /* Preview box */
+    .preview-box { background: #f9fafc; border: 1px solid var(--border); border-radius: 10px; padding: 1rem; font-family: monospace; font-size: 0.85rem; max-height: 400px; overflow: auto; white-space: pre-wrap; }
+
+    /* Metrics mini */
+    .mini-metrics { display: flex; gap: 0.5rem; }
+    .mini-metric { background: #f8f9fc; border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; text-align: center; min-width: 90px; }
+    .mini-metric .num { font-weight: 700; color: var(--text-main); font-size: 1.1rem; }
+    .mini-metric .lbl { font-size: 0.72rem; color: var(--text-muted); }
+
+    /* Modals */
+    .modal-content { border-radius: var(--radius-lg); border: 1px solid var(--border); }
+    .modal-header { background: linear-gradient(135deg, #f8f9fc 0%, #f0f2f7 100%); border-bottom: 1px solid var(--border); }
+    .modal-footer { background: #f8f9fc; border-top: 1px solid var(--border); }
+
+    @media (max-width: 991.98px) {
+      .app-sidebar { display: none; }
+      .app-content { padding-left: 0.75rem; }
+      .workspace { flex-direction: column; }
+      .workspace-sidebar { width: 100%; max-height: 40vh; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Topbar -->
+<header class="app-topbar">
+  <div class="app-topbar__left">
+    <a class="app-topbar__brand" href="#"><i class="fas fa-robot"></i><span>จัดการ AI</span></a>
+    <span class="app-topbar__title">แดชบอร์ด</span>
+  </div>
+  <div class="app-topbar__right">
+    <span style="font-size:0.8rem; color:var(--text-sub);"><i class="fas fa-user-shield me-1"></i>ผู้ดูแลระบบ</span>
+    <button class="btn btn-sm btn-light"><i class="fas fa-sign-out-alt"></i></button>
+  </div>
+</header>
+
+<!-- Sidebar -->
+<aside class="app-sidebar">
+  <div style="font-size:0.65rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); padding:0.75rem 0.75rem 0.35rem;">AI & ระบบ</div>
+  <a href="#" class="app-sidebar__item is-active"><i class="fas fa-tachometer-alt"></i><span>แดชบอร์ด</span></a>
+  <a href="#" class="app-sidebar__item"><i class="fas fa-database"></i><span>จัดการข้อมูล</span></a>
+  <a href="#" class="app-sidebar__item"><i class="fas fa-cogs"></i><span>ตั้งค่า</span></a>
+  <div style="font-size:0.65rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); padding:0.75rem 0.75rem 0.35rem;">ลูกค้า</div>
+  <a href="#" class="app-sidebar__item"><i class="fas fa-comments"></i><span>แชท</span></a>
+  <a href="#" class="app-sidebar__item"><i class="fas fa-shopping-basket"></i><span>ออเดอร์</span></a>
+</aside>
+
+<!-- Content -->
+<div class="app-content">
+
+  <div class="workspace">
+    <!-- Left: Instruction List -->
+    <div class="workspace-sidebar">
+      <div class="ws-search">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 style="font-weight:700; margin:0; font-size:1rem;"><i class="fas fa-layer-group text-primary me-2"></i>Instructions</h5>
+          <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#instructionModal"><i class="fas fa-plus"></i></button>
+        </div>
+        <input type="text" class="form-control" placeholder="ค้นหา Instruction...">
+      </div>
+      <div class="ws-list">
+        <div class="ws-list-item active">
+          <div class="name"><i class="fas fa-book text-primary" style="font-size:0.8rem;"></i> [LINE-01] ทั่วไป</div>
+          <div class="meta">ตอบคำถามทั่วไปทาง LINE • อัปเดต 24 เม.ย.</div>
+          <div class="badges">
+            <span class="badge-soft"><i class="fas fa-database me-1"></i>3</span>
+            <span class="badge-soft on"><i class="fas fa-rocket me-1"></i>Starter ON (2)</span>
+          </div>
+        </div>
+        <div class="ws-list-item">
+          <div class="name"><i class="fas fa-book text-primary" style="font-size:0.8rem;"></i> [FB-01] สอบถามราคา</div>
+          <div class="meta">ข้อมูลราคาและโปรโมชั่น • อัปเดต 20 เม.ย.</div>
+          <div class="badges">
+            <span class="badge-soft"><i class="fas fa-database me-1"></i>2</span>
+            <span class="badge-soft"><i class="fas fa-rocket me-1"></i>Starter OFF</span>
+          </div>
+        </div>
+        <div class="ws-list-item">
+          <div class="name"><i class="fas fa-book text-primary" style="font-size:0.8rem;"></i> [WEB-01] คู่มือใช้งาน</div>
+          <div class="meta">คู่มือผลิตภัณฑ์ • อัปเดต 18 เม.ย.</div>
+          <div class="badges">
+            <span class="badge-soft"><i class="fas fa-database me-1"></i>12</span>
+            <span class="badge-soft on"><i class="fas fa-rocket me-1"></i>Starter ON (3)</span>
+          </div>
+        </div>
+        <div class="ws-list-item">
+          <div class="name"><i class="fas fa-book text-primary" style="font-size:0.8rem;"></i> [LINE-02] แจ้งปัญหา</div>
+          <div class="meta">รับเรื่องร้องเรียน • อัปเดต 15 เม.ย.</div>
+          <div class="badges">
+            <span class="badge-soft"><i class="fas fa-database me-1"></i>4</span>
+            <span class="badge-soft"><i class="fas fa-rocket me-1"></i>Starter OFF</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Workspace -->
+    <div class="workspace-main">
+      <div class="ws-header">
+        <div>
+          <h3>[LINE-01] LINE Official — ทั่วไป</h3>
+          <div class="sub">ตอบคำถามทั่วไปของลูกค้า เช่น วิธีสั่งซื้อ การจัดส่ง</div>
+        </div>
+        <div class="ws-actions">
+          <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importExportModal"><i class="fas fa-file-export"></i></button>
+          <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importExportModal"><i class="fas fa-file-import"></i></button>
+          <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#selectDataTypeModal"><i class="fas fa-plus me-1"></i> เพิ่มชุดข้อมูล</button>
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div class="ws-tabs">
+          <button class="ws-tab active"><i class="fas fa-pen-to-square me-1"></i> แก้ไข</button>
+          <button class="ws-tab"><i class="fas fa-database me-1"></i> ชุดข้อมูล</button>
+          <button class="ws-tab"><i class="fas fa-eye me-1"></i> Preview</button>
+        </div>
+        <div class="mini-metrics">
+          <div class="mini-metric"><div class="num">3</div><div class="lbl">ชุดข้อมูล</div></div>
+          <div class="mini-metric"><div class="num">2</div><div class="lbl">Starter</div></div>
+          <div class="mini-metric"><div class="num">1,240</div><div class="lbl">ตัวอักษร</div></div>
+        </div>
+      </div>
+
+      <!-- Editor Panel -->
+      <div class="ws-panel">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">ชื่อ Instruction</label>
+            <input type="text" class="form-control" value="LINE Official - ทั่วไป">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">รหัส</label>
+            <input type="text" class="form-control" value="LINE-01" disabled>
+          </div>
+          <div class="col-12">
+            <label class="form-label">คำอธิบาย</label>
+            <textarea class="form-control" rows="3">ใช้ตอบคำถามทั่วไปของลูกค้าทาง LINE</textarea>
+          </div>
+        </div>
+        <div class="d-flex justify-content-between align-items-center mt-3">
+          <div class="d-flex gap-2">
+            <span class="badge-soft on"><i class="fas fa-rocket me-1"></i>Starter ON (2)</span>
+            <span class="badge-soft"><i class="fas fa-clock me-1"></i>อัปเดต 24 เม.ย. 18:30</span>
+          </div>
+          <div class="d-flex gap-2">
+            <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#starterModal"><i class="fas fa-comments me-1"></i> ตั้งค่า Starter</button>
+            <button class="btn btn-success"><i class="fas fa-save me-1"></i> บันทึกการแก้ไข</button>
+          </div>
+        </div>
+
+        <hr style="border-color:var(--border); margin:1.25rem 0;">
+
+        <h5><i class="fas fa-database text-primary me-2"></i>ชุดข้อมูลภายใน</h5>
+        <div class="data-row">
+          <div>
+            <div class="t"><span class="type-badge text">Text</span> 1. นโยบายการจัดส่ง</div>
+            <div class="m">324 อักขระ • แก้ไข 22 เม.ย.</div>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-outline-secondary"><i class="fas fa-arrow-up"></i></button>
+            <button class="btn btn-outline-secondary"><i class="fas fa-arrow-down"></i></button>
+            <button class="btn btn-outline-primary"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-outline-info"><i class="fas fa-copy"></i></button>
+            <button class="btn btn-outline-danger"><i class="fas fa-trash"></i></button>
+          </div>
+        </div>
+        <div class="data-row">
+          <div>
+            <div class="t"><span class="type-badge table">Table</span> 2. ตารางราคาสินค้า</div>
+            <div class="m">4 คอลัมน์ × 12 แถว • แก้ไข 20 เม.ย.</div>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-outline-secondary"><i class="fas fa-arrow-up"></i></button>
+            <button class="btn btn-outline-secondary"><i class="fas fa-arrow-down"></i></button>
+            <button class="btn btn-outline-primary"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-outline-info"><i class="fas fa-copy"></i></button>
+            <button class="btn btn-outline-danger"><i class="fas fa-trash"></i></button>
+          </div>
+        </div>
+        <div class="data-row">
+          <div>
+            <div class="t"><span class="type-badge text">Text</span> 3. วิธีชำระเงิน</div>
+            <div class="m">180 อักขระ • แก้ไข 18 เม.ย.</div>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-outline-secondary"><i class="fas fa-arrow-up"></i></button>
+            <button class="btn btn-outline-secondary"><i class="fas fa-arrow-down"></i></button>
+            <button class="btn btn-outline-primary"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-outline-info"><i class="fas fa-copy"></i></button>
+            <button class="btn btn-outline-danger"><i class="fas fa-trash"></i></button>
+          </div>
+        </div>
+        <button class="add-row-btn" data-bs-toggle="modal" data-bs-target="#selectDataTypeModal"><i class="fas fa-plus me-1"></i> เพิ่มชุดข้อมูล</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modals -->
+  <div class="modal fade" id="instructionModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title"><i class="fas fa-plus-circle text-primary me-2"></i>สร้าง Instruction</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <div class="mb-3"><label class="form-label">ชื่อ <span class="text-danger">*</span></label><input type="text" class="form-control" placeholder="เช่น LINE Official - ทั่วไป"></div>
+          <div class="mb-3"><label class="form-label">คำอธิบาย</label><textarea class="form-control" rows="3"></textarea></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal">ยกเลิก</button><button class="btn btn-primary">บันทึก</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="selectDataTypeModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title"><i class="fas fa-plus-circle text-primary me-2"></i>เพิ่มชุดข้อมูลใหม่</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <p class="text-muted mb-3">เลือกประเภทข้อมูลที่ต้องการสร้าง:</p>
+          <div class="d-grid gap-2">
+            <button class="btn btn-outline-primary btn-lg"><i class="fas fa-font me-2"></i><span>ข้อความ (Text)</span><small class="d-block text-muted mt-1">สำหรับข้อมูลแบบข้อความยาว</small></button>
+            <button class="btn btn-outline-success btn-lg"><i class="fas fa-table me-2"></i><span>ตาราง (Table)</span><small class="d-block text-muted mt-1">สำหรับข้อมูลแบบตาราง เช่น รายการสินค้า</small></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="starterModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div><h5 class="modal-title"><i class="fas fa-rocket text-primary me-2"></i>ข้อความเริ่มต้นการสนทนา</h5><div class="small text-muted">[LINE-01] ทั่วไป</div></div>
+          <button class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" style="background:#f8f9fc;">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" checked style="width:3em; height:1.5em;"><label class="form-check-label fw-semibold ms-2">เปิดใช้งานข้อความเริ่มต้น</label></div>
+            <span class="badge bg-light text-dark border">2 รายการ</span>
+          </div>
+          <div class="small text-muted mb-3">ระบบจะส่งข้อความ/รูปภาพ/วิดีโอตามลำดับที่ตั้งไว้เมื่อเป็นข้อความแรกของลูกค้า</div>
+          <div class="d-flex gap-2 mb-3">
+            <button class="btn btn-outline-primary btn-sm"><i class="fas fa-comment-alt me-1"></i> เพิ่มข้อความ</button>
+            <button class="btn btn-outline-success btn-sm"><i class="fas fa-image me-1"></i> เพิ่มรูปภาพ</button>
+            <button class="btn btn-outline-warning btn-sm"><i class="fas fa-video me-1"></i> เพิ่มวิดีโอ</button>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.55rem;">
+            <div style="border:1px solid var(--border); border-radius:10px; background:#fff; padding:0.75rem;">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex align-items-center gap-2"><span style="width:24px;height:24px;border-radius:50%;background:rgba(74,111,165,0.12);color:var(--color-primary);display:grid;place-items:center;font-size:0.78rem;font-weight:700;">1</span><span class="badge-soft text" style="font-size:0.72rem;"><i class="fas fa-font me-1"></i>Text</span></div>
+                <div class="d-flex gap-1"><button class="btn btn-sm btn-outline-secondary" style="--bs-btn-padding-y:0.2rem;--bs-btn-padding-x:0.42rem;"><i class="fas fa-arrow-up"></i></button><button class="btn btn-sm btn-outline-secondary" style="--bs-btn-padding-y:0.2rem;--bs-btn-padding-x:0.42rem;"><i class="fas fa-arrow-down"></i></button><button class="btn btn-sm btn-outline-danger" style="--bs-btn-padding-y:0.2rem;--bs-btn-padding-x:0.42rem;"><i class="fas fa-trash"></i></button></div>
+              </div>
+              <textarea class="form-control" rows="2">สวัสดีค่ะ ยินดีต้อนรับสู่ร้านค้าของเรา มีอะไรให้ช่วยเหลือไหมคะ?</textarea>
+            </div>
+            <div style="border:1px solid var(--border); border-radius:10px; background:#fff; padding:0.75rem;">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex align-items-center gap-2"><span style="width:24px;height:24px;border-radius:50%;background:rgba(74,111,165,0.12);color:var(--color-primary);display:grid;place-items:center;font-size:0.78rem;font-weight:700;">2</span><span class="badge-soft" style="font-size:0.72rem; background:rgba(45,143,111,0.1); border-color:rgba(45,143,111,0.2); color:var(--color-success);"><i class="fas fa-image me-1"></i>Image</span></div>
+                <div class="d-flex gap-1"><button class="btn btn-sm btn-outline-secondary" style="--bs-btn-padding-y:0.2rem;--bs-btn-padding-x:0.42rem;"><i class="fas fa-arrow-up"></i></button><button class="btn btn-sm btn-outline-secondary" style="--bs-btn-padding-y:0.2rem;--bs-btn-padding-x:0.42rem;"><i class="fas fa-arrow-down"></i></button><button class="btn btn-sm btn-outline-danger" style="--bs-btn-padding-y:0.2rem;--bs-btn-padding-x:0.42rem;"><i class="fas fa-trash"></i></button></div>
+              </div>
+              <div class="d-flex gap-3 align-items-start">
+                <div style="width:92px;height:92px;background:#f8f9fc;border:1px solid var(--border);border-radius:8px;display:grid;place-items:center;color:var(--text-muted);"><i class="fas fa-image"></i></div>
+                <div class="flex-grow-1"><input type="text" class="form-control form-control-sm mb-2" placeholder="URL รูปภาพ"><input type="text" class="form-control form-control-sm" placeholder="คำอธิบายรูป (optional)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal">ปิด</button><button class="btn btn-primary"><i class="fas fa-save me-1"></i> บันทึกข้อความเริ่มต้น</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="importExportModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title"><i class="fas fa-exchange-alt text-primary me-2"></i>Import / Export</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <ul class="nav nav-pills mb-3" role="tablist">
+            <li class="nav-item" role="presentation"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#ex" type="button">Export</button></li>
+            <li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#im" type="button">Import</button></li>
+          </ul>
+          <div class="tab-content">
+            <div class="tab-pane fade show active" id="ex">
+              <p class="text-muted small">เลือก Instruction ที่ต้องการ Export:</p>
+              <select class="form-select mb-3"><option>ทั้งหมด (8 รายการ)</option></select>
+              <button class="btn btn-primary w-100"><i class="fas fa-file-export me-1"></i> Export เป็น JSON</button>
+            </div>
+            <div class="tab-pane fade" id="im">
+              <p class="text-muted small">เลือกไฟล์ JSON ที่ต้องการ Import:</p>
+              <input type="file" class="form-control mb-3" accept=".json">
+              <button class="btn btn-success w-100"><i class="fas fa-file-import me-1"></i> Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

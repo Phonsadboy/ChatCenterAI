@@ -3,8 +3,8 @@
         pages: [],
         currentPage: null,
         currentContextConfig: null,
-        config: window.followUpDashboardConfig || {},
         editorRounds: [],
+        expandedRoundIndex: null,
         assets: [],
         activeTab: 'general',
         isLoading: false
@@ -25,29 +25,13 @@
         settingAutoSend: document.getElementById('settingAutoSend'),
         settingShowChat: document.getElementById('settingShowChat'),
         settingShowDashboard: document.getElementById('settingShowDashboard'),
-        settingAnalysis: document.getElementById('settingAnalysis'),
-        settingModel: document.getElementById('settingModel'),
-        settingPrompt: document.getElementById('settingPrompt'),
         emergencyStopGroup: document.getElementById('emergencyStopGroup'),
         roundsContainer: document.getElementById('roundsContainer'),
         btnAddRound: document.getElementById('btnAddRound'),
         imageLibraryGrid: document.getElementById('imageLibraryGrid'),
-        btnUploadImage: document.getElementById('btnUploadImage')
+        btnUploadImage: document.getElementById('btnUploadImage'),
+        previewBody: document.getElementById('followupPreviewBody')
     };
-
-    const MODEL_OPTIONS = [
-        { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (แนะนำ)' },
-        { value: 'gpt-5.4', label: 'GPT-5.4 (แม่นสุด)' },
-        { value: 'gpt-5.4-nano', label: 'GPT-5.4 Nano (ประหยัด)' },
-        { value: 'gpt-5-mini', label: 'GPT-5 Mini' },
-        { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
-        { value: 'gpt-5', label: 'GPT-5' },
-        { value: 'gpt-4.1', label: 'GPT-4.1' },
-        { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-        { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
-        { value: 'o4-mini', label: 'O4 Mini (reasoning คุ้มสุด)' },
-        { value: 'o3', label: 'O3 (reasoning ลึกสุด)' }
-    ];
 
     const escapeHtml = (text) => {
         if (!text) return '';
@@ -242,17 +226,6 @@
         });
     };
 
-    const populateModelSelect = () => {
-        if (!el.settingModel) return;
-        el.settingModel.innerHTML = '<option value="">ใช้ค่าเริ่มต้น</option>';
-        MODEL_OPTIONS.forEach(opt => {
-            const option = document.createElement('option');
-            option.value = opt.value;
-            option.textContent = opt.label;
-            el.settingModel.appendChild(option);
-        });
-    };
-
     const renderPageSelector = () => {
         if (!el.pageSelector) return;
         const keyword = el.pageSearch && el.pageSearch.value ? el.pageSearch.value.trim().toLowerCase() : '';
@@ -350,16 +323,80 @@
         }
         if (el.settingShowChat) el.settingShowChat.checked = cfg.showInChat !== false;
         if (el.settingShowDashboard) el.settingShowDashboard.checked = cfg.showInDashboard !== false;
-        if (el.settingAnalysis) el.settingAnalysis.checked = cfg.analysisEnabled !== false;
-        if (el.settingModel) el.settingModel.value = cfg.model || '';
+    };
 
-        let promptText = '';
-        if (typeof cfg.orderPromptInstructions === 'string' && cfg.orderPromptInstructions.trim()) {
-            promptText = cfg.orderPromptInstructions;
-        } else if (state.config.defaultOrderPromptInstructions) {
-            promptText = state.config.defaultOrderPromptInstructions;
+    const sortRoundsByDelay = () => {
+        if (!Array.isArray(state.editorRounds)) return;
+        // Keep track of which round is expanded by using a temp id based on original index
+        // But simplest: just sort by delay; expanded index will refer to new position
+        state.editorRounds.sort((a, b) => {
+            const da = Number(a?.delayMinutes) || 0;
+            const db = Number(b?.delayMinutes) || 0;
+            return da - db;
+        });
+    };
+
+    const getDuplicateDelays = () => {
+        if (!Array.isArray(state.editorRounds)) return new Set();
+        const delays = state.editorRounds.map(r => Number(r?.delayMinutes) || 0);
+        const seen = new Set();
+        const dups = new Set();
+        delays.forEach(d => {
+            if (seen.has(d)) dups.add(d);
+            seen.add(d);
+        });
+        return dups;
+    };
+
+    const renderPreview = () => {
+        if (!el.previewBody) return;
+        if (!Array.isArray(state.editorRounds) || state.editorRounds.length === 0) {
+            el.previewBody.innerHTML = '<div class="followup-preview-empty">เลือกเพจและเพิ่มรอบการติดตามเพื่อดูตัวอย่าง</div>';
+            return;
         }
-        if (el.settingPrompt) el.settingPrompt.value = promptText;
+
+        const sorted = [...state.editorRounds].sort((a, b) => {
+            const da = Number(a?.delayMinutes) || 0;
+            const db = Number(b?.delayMinutes) || 0;
+            return da - db;
+        });
+
+        let html = '';
+        let previousDelay = 0;
+
+        sorted.forEach((round, index) => {
+            const delay = Number(round?.delayMinutes) || 0;
+            const diff = delay - previousDelay;
+            previousDelay = delay;
+
+            if (index > 0) {
+                html += `<div class="followup-chat-divider">+${formatDelayMinutes(diff)}</div>`;
+            } else {
+                html += `<div class="followup-chat-divider">หลังจากข้อความล่าสุดของลูกค้า +${formatDelayMinutes(delay)}</div>`;
+            }
+
+            const items = Array.isArray(round.items) ? round.items : roundLegacyToItems(round);
+            items.forEach(item => {
+                if (item.type === 'text' && item.content) {
+                    html += `
+                        <div class="followup-chat-bubble assistant">
+                            <div class="followup-chat-content">${escapeHtml(item.content)}</div>
+                        </div>
+                    `;
+                } else if (item.type === 'image' && item.url) {
+                    const preview = escapeAttr(item.previewUrl || item.thumbUrl || item.url);
+                    html += `
+                        <div class="followup-chat-bubble assistant">
+                            <div class="followup-chat-content">
+                                <img src="${preview}" alt="รูปภาพ" loading="lazy">
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+        });
+
+        el.previewBody.innerHTML = html;
     };
 
     const uploadRoundImages = async (roundIndex, files) => {
@@ -428,8 +465,11 @@
                     <div class="app-empty__desc">ยังไม่มีรอบการติดตาม กดปุ่ม "เพิ่มรอบ" เพื่อเริ่มต้น</div>
                 </div>
             `;
+            renderPreview();
             return;
         }
+
+        const duplicateDelays = getDuplicateDelays();
 
         const renderItem = (item, roundIndex, itemIndex, itemCount) => {
             const isFirst = itemIndex === 0;
@@ -500,30 +540,30 @@
             }
             const r = state.editorRounds[index];
             const delayValue = Number(r.delayMinutes);
-            const uploading = r.isUploading
-                ? '<div class="text-muted small mt-1"><i class="fas fa-spinner fa-spin me-1"></i>กำลังอัพโหลด...</div>'
-                : '';
-            const itemsHtml = r.items.length
-                ? r.items.map((item, itemIndex) => renderItem(item, index, itemIndex, r.items.length)).join('')
-                : '<div class="text-muted small mb-2">ยังไม่มีเนื้อหา — กดเพิ่มข้อความหรือรูปภาพด้านล่าง</div>';
+            const isExpanded = state.expandedRoundIndex === index;
+            const previewText = formatRoundPreview(r) || 'ยังไม่มีเนื้อหา';
+            const textCount = r.items.filter(i => i.type === 'text').length;
+            const imageCount = r.items.filter(i => i.type === 'image').length;
+            const dupClass = duplicateDelays.has(Number(delayValue) || 0) ? 'is-duplicate' : '';
 
-            return `
-                <div class="followup-round-card" data-index="${index}">
-                    <div class="followup-round-header">
-                        <span class="followup-round-index">${index + 1}</span>
-                        <div class="followup-round-delay-group">
-                            <span class="followup-round-label">หลังจากคุยล่าสุด</span>
-                            <input type="number" class="form-control form-control-sm followup-round-delay" min="1" step="1" value="${Number.isFinite(delayValue) ? delayValue : ''}" placeholder="นาที">
-                            <span class="followup-round-label">นาที</span>
-                        </div>
-                        <button type="button" class="btn btn-sm btn-outline-danger followup-round-remove followup-round-remove" title="ลบรอบนี้">
-                            <i class="fas fa-trash-alt"></i>
-                        </button>
+            const metaBadges = [];
+            if (textCount > 0) metaBadges.push(`<span class="badge bg-light text-dark">ข้อความ ${textCount}</span>`);
+            if (imageCount > 0) metaBadges.push(`<span class="badge bg-light text-dark">รูป ${imageCount}</span>`);
+
+            const detailHtml = isExpanded ? `
+                <div class="followup-round-detail">
+                    <div class="round-detail-delay">
+                        <span class="delay-hint">หลังจากข้อความล่าสุดของลูกค้า</span>
+                        <input type="number" class="form-control form-control-sm followup-round-delay" min="1" step="1" value="${Number.isFinite(delayValue) ? delayValue : ''}" placeholder="นาที">
+                        <span class="delay-hint">นาที</span>
+                        ${duplicateDelays.has(Number(delayValue) || 0) ? '<span class="badge bg-warning text-dark">delay ซ้ำ</span>' : ''}
                     </div>
                     <div class="followup-round-items">
-                        ${itemsHtml}
+                        ${r.items.length
+                            ? r.items.map((item, itemIndex) => renderItem(item, index, itemIndex, r.items.length)).join('')
+                            : '<div class="text-muted small mb-2">ยังไม่มีเนื้อหา — กดเพิ่มข้อความหรือรูปภาพด้านล่าง</div>'}
                     </div>
-                    ${uploading}
+                    ${r.isUploading ? '<div class="text-muted small mt-1"><i class="fas fa-spinner fa-spin me-1"></i>กำลังอัพโหลด...</div>' : ''}
                     <div class="followup-round-add-actions">
                         <button type="button" class="btn btn-sm btn-outline-secondary followup-round-add-text" data-index="${index}">
                             <i class="fas fa-font me-1"></i>เพิ่มข้อความ
@@ -532,18 +572,62 @@
                             <i class="fas fa-image me-1"></i>เพิ่มรูปภาพ
                         </button>
                     </div>
+                    <div class="round-detail-footer">
+                        <button type="button" class="btn btn-sm btn-outline-danger followup-round-remove">
+                            <i class="fas fa-trash-alt me-1"></i>ลบรอบนี้
+                        </button>
+                    </div>
+                </div>
+            ` : '';
+
+            return `
+                <div class="followup-round-compact ${isExpanded ? 'is-expanded' : ''} ${dupClass}" data-index="${index}">
+                    <div class="followup-round-summary">
+                        <span class="round-index">${index + 1}</span>
+                        <span class="round-delay">+${formatDelayMinutes(delayValue)}</span>
+                        <span class="round-delay-label">หลังจากคุยล่าสุด</span>
+                        <span class="round-preview">${escapeHtml(previewText)}</span>
+                        <span class="round-meta">${metaBadges.join('')}</span>
+                        <span class="round-toggle"><i class="fas fa-chevron-down"></i></span>
+                    </div>
+                    ${detailHtml}
                 </div>
             `;
         }).join('');
 
-        // Delay input
+        // Toggle expand
+        el.roundsContainer.querySelectorAll('.followup-round-summary').forEach(summary => {
+            summary.addEventListener('click', (event) => {
+                const target = event.target;
+                if (target.closest('.round-meta') || target.closest('.badge')) return;
+                const card = summary.closest('.followup-round-compact');
+                if (!card) return;
+                const index = Number(card.dataset.index);
+                if (!Number.isFinite(index)) return;
+                if (state.expandedRoundIndex === index) {
+                    state.expandedRoundIndex = null;
+                } else {
+                    state.expandedRoundIndex = index;
+                }
+                renderRounds();
+            });
+        });
+
+        // Delay input change + auto sort
         el.roundsContainer.querySelectorAll('.followup-round-delay').forEach(input => {
-            const card = input.closest('.followup-round-card');
+            const detail = input.closest('.followup-round-detail');
+            if (!detail) return;
+            const card = detail.closest('.followup-round-compact');
             if (!card) return;
             const index = Number(card.dataset.index);
-            input.addEventListener('input', (event) => {
-                const value = Number(event.target.value);
+            input.addEventListener('change', () => {
+                const value = Number(input.value);
                 state.editorRounds[index].delayMinutes = Number.isFinite(value) ? value : '';
+                sortRoundsByDelay();
+                // Try to keep the same round expanded by finding it after sort
+                // Since we don't have a stable id, we just clear expanded to avoid confusion
+                state.expandedRoundIndex = null;
+                renderRounds();
             });
         });
 
@@ -556,16 +640,20 @@
                 if (state.editorRounds[rIdx]?.items[iIdx]) {
                     state.editorRounds[rIdx].items[iIdx].content = event.target.value;
                 }
+                renderPreview();
             });
         });
 
         // Remove round
         el.roundsContainer.querySelectorAll('.followup-round-remove').forEach(btn => {
-            const card = btn.closest('.followup-round-card');
+            const detail = btn.closest('.followup-round-detail');
+            if (!detail) return;
+            const card = detail.closest('.followup-round-compact');
             if (!card) return;
             const index = Number(card.dataset.index);
             btn.addEventListener('click', () => {
                 state.editorRounds.splice(index, 1);
+                if (state.expandedRoundIndex === index) state.expandedRoundIndex = null;
                 renderRounds();
             });
         });
@@ -634,6 +722,8 @@
                 input.click();
             });
         });
+
+        renderPreview();
     };
 
     const addRound = (round) => {
@@ -661,6 +751,8 @@
             delayMinutes: Number(round?.delayMinutes) || fallbackDelay,
             items
         });
+        sortRoundsByDelay();
+        state.expandedRoundIndex = null;
         renderRounds();
     };
 
@@ -771,6 +863,7 @@
         state.currentPage = page;
         state.currentContextConfig = page.settings || null;
         state.editorRounds = [];
+        state.expandedRoundIndex = null;
         state.activeTab = 'general';
         switchTab('general');
         renderPageSelector();
@@ -819,19 +912,12 @@
             platform: state.currentPage.platform,
             botId: state.currentPage.botId,
             settings: {
-                analysisEnabled: el.settingAnalysis ? el.settingAnalysis.checked : true,
                 autoFollowUpEnabled: el.settingAutoSend ? el.settingAutoSend.checked : false,
                 showInChat: el.settingShowChat ? el.settingShowChat.checked : true,
                 showInDashboard: el.settingShowDashboard ? el.settingShowDashboard.checked : true,
                 rounds: collectRoundsPayload()
             }
         };
-        if (el.settingModel && el.settingModel.value) {
-            payload.settings.model = el.settingModel.value;
-        }
-        if (el.settingPrompt && typeof el.settingPrompt.value === 'string') {
-            payload.settings.orderPromptInstructions = el.settingPrompt.value.trim();
-        }
 
         try {
             el.saveBtn.disabled = true;
@@ -956,7 +1042,6 @@
     };
 
     const init = async () => {
-        populateModelSelect();
         setupEventListeners();
         await loadPages();
     };

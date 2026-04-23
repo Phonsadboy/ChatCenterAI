@@ -86,6 +86,18 @@
     const instructionStarterQuickStatus = document.getElementById('instructionStarterQuickStatus');
     const instructionStarterQuickStatusText = document.getElementById('instructionStarterQuickStatusText');
 
+    // Workspace elements
+    const workspaceMain = document.getElementById('workspaceMain');
+    const workspaceEmptyState = document.getElementById('workspaceEmptyState');
+    const workspaceContent = document.getElementById('workspaceContent');
+    const workspaceTitle = document.getElementById('workspaceTitle');
+    const workspaceMeta = document.getElementById('workspaceMeta');
+    const workspaceStarterBtn = document.getElementById('workspaceStarterBtn');
+    const workspaceDataItemsList = document.getElementById('workspaceDataItemsList');
+    const workspaceAddDataItem = document.getElementById('workspaceAddDataItem');
+    const instructionList = document.getElementById('instructionList');
+    const listItems = Array.from(document.querySelectorAll('.ws-list-item'));
+
     const starterModalInstructionName = document.getElementById('starterModalInstructionName');
     const starterEnabledToggle = document.getElementById('starterEnabledToggle');
     const starterMessageCounter = document.getElementById('starterMessageCounter');
@@ -327,22 +339,33 @@
         if (instructionEditorEmptyState) {
             instructionEditorEmptyState.classList.toggle('d-none', visible);
         }
+        // Workspace visibility
+        if (workspaceEmptyState && workspaceContent) {
+            workspaceEmptyState.classList.toggle('d-none', visible);
+            workspaceContent.classList.toggle('d-none', !visible);
+        }
     };
 
     const applyInstructionCardFilter = (instructionId) => {
-        if (!instructionCardsWrapper || !instructionCardsEmptyState || instructionCards.length === 0) return;
-        if (!instructionId) {
-            instructionCardsWrapper.classList.add('d-none');
-            instructionCardsEmptyState.classList.remove('d-none');
-            instructionCards.forEach(card => card.classList.add('d-none'));
-            return;
-        }
-        instructionCardsWrapper.classList.remove('d-none');
-        instructionCardsEmptyState.classList.add('d-none');
-        instructionCards.forEach(card => {
-            const matches = card.dataset.id === instructionId;
-            card.classList.toggle('d-none', !matches);
+        // Update list item active state
+        listItems.forEach(item => {
+            item.classList.toggle('active', item.dataset.id === instructionId);
         });
+        // Keep legacy cards hidden
+        if (instructionCardsWrapper && instructionCardsEmptyState && instructionCards.length > 0) {
+            if (!instructionId) {
+                instructionCardsWrapper.classList.add('d-none');
+                instructionCardsEmptyState.classList.remove('d-none');
+                instructionCards.forEach(card => card.classList.add('d-none'));
+                return;
+            }
+            instructionCardsWrapper.classList.add('d-none');
+            instructionCardsEmptyState.classList.add('d-none');
+            instructionCards.forEach(card => {
+                const matches = card.dataset.id === instructionId;
+                card.classList.toggle('d-none', !matches);
+            });
+        }
     };
 
     const clearEditor = () => {
@@ -364,6 +387,22 @@
         setEditorStatus('ยังไม่ได้เลือก Instruction', false);
         setStarterQuickStatus('', false, 0);
         applyInstructionCardFilter('');
+        // Reset workspace UI
+        if (workspaceTitle) workspaceTitle.textContent = '-';
+        if (workspaceMeta) workspaceMeta.textContent = '-';
+        if (workspaceDataItemsList) workspaceDataItemsList.innerHTML = '';
+        // Reset metrics
+        const metricDataItems = document.getElementById('metricDataItems');
+        const metricStarter = document.getElementById('metricStarter');
+        const metricChars = document.getElementById('metricChars');
+        const metricUpdated = document.getElementById('metricUpdated');
+        if (metricDataItems) metricDataItems.textContent = '0';
+        if (metricStarter) metricStarter.textContent = '0';
+        if (metricChars) metricChars.textContent = '0';
+        if (metricUpdated) metricUpdated.textContent = '-';
+        // Reset tabs to editor
+        document.querySelectorAll('.ws-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'editor'));
+        document.querySelectorAll('.ws-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-editor'));
     };
 
     const hasEditorChanges = () => {
@@ -529,6 +568,110 @@
                     updatedAt: instruction.updatedAt || instruction.createdAt || '',
                     instructionCode
                 });
+
+                // Update Workspace UI
+                if (workspaceTitle) {
+                    const code = instruction.instructionId ? `[${instruction.instructionId}] ` : '';
+                    workspaceTitle.textContent = `${code}${instruction.name || 'ไม่มีชื่อ'}`;
+                }
+                if (workspaceMeta) {
+                    workspaceMeta.textContent = instruction.description || 'ไม่มีคำอธิบาย';
+                }
+                // Update metrics
+                const dataItems = instruction.dataItems || [];
+                const charCount = dataItems.reduce((sum, it) => sum + (it.content || '').length, 0);
+                const metricDataItems = document.getElementById('metricDataItems');
+                const metricStarter = document.getElementById('metricStarter');
+                const metricChars = document.getElementById('metricChars');
+                const metricUpdated = document.getElementById('metricUpdated');
+                if (metricDataItems) metricDataItems.textContent = String(dataItems.length);
+                if (metricStarter) metricStarter.textContent = String(starterConfig.messages.length);
+                if (metricChars) metricChars.textContent = String(charCount);
+                if (metricUpdated) {
+                    const dt = formatDateTimeTh(instruction.updatedAt || instruction.createdAt);
+                    metricUpdated.textContent = dt || '-';
+                }
+                // Update workspace data items list
+                if (workspaceDataItemsList) {
+                    workspaceDataItemsList.innerHTML = '';
+                    if (dataItems.length === 0) {
+                        workspaceDataItemsList.innerHTML = '<div class="text-center text-muted py-3 small">ยังไม่มีชุดข้อมูล</div>';
+                    } else {
+                        dataItems.forEach((item, index) => {
+                            const typeClass = item.type === 'text' ? 'text' : 'table';
+                            const typeLabel = item.type === 'text' ? 'Text' : 'Table';
+                            const metaText = item.type === 'text'
+                                ? `${(item.content || '').length} อักขระ`
+                                : item.data
+                                    ? `${(item.data.columns || []).length} คอลัมน์ × ${(item.data.rows || []).length} แถว`
+                                    : '';
+                            const updatedText = item.updatedAt
+                                ? new Date(item.updatedAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })
+                                : '-';
+                            const row = document.createElement('div');
+                            row.className = 'ws-data-row';
+                            row.innerHTML = `
+                                <div>
+                                    <div class="title"><span class="type-badge type-${typeClass}">${typeLabel}</span> <span style="color:var(--color-primary)">${index + 1}.</span> ${escapeHtml(item.title || 'ไม่มีชื่อ')}</div>
+                                    <div class="meta">${metaText} • แก้ไข: ${updatedText}</div>
+                                </div>
+                                <div class="data-item-actions">
+                                    <button class="btn btn-sm btn-outline-secondary btn-move move-data-item" data-direction="up" data-instruction-id="${instructionId}" data-item-id="${item.itemId}" aria-label="เลื่อนขึ้น"><i class="fas fa-arrow-up"></i></button>
+                                    <button class="btn btn-sm btn-outline-secondary btn-move move-data-item" data-direction="down" data-instruction-id="${instructionId}" data-item-id="${item.itemId}" aria-label="เลื่อนลง"><i class="fas fa-arrow-down"></i></button>
+                                    <button class="btn btn-sm btn-outline-primary edit-data-item" data-instruction-id="${instructionId}" data-item-id="${item.itemId}" data-item-type="${item.type || 'table'}" aria-label="แก้ไขชุดข้อมูล"><i class="fas fa-edit"></i></button>
+                                    <button class="btn btn-sm btn-outline-secondary duplicate-data-item" data-instruction-id="${instructionId}" data-item-id="${item.itemId}" aria-label="คัดลอกชุดข้อมูล"><i class="fas fa-copy"></i></button>
+                                    <button class="btn btn-sm btn-outline-danger delete-data-item" data-instruction-id="${instructionId}" data-item-id="${item.itemId}" aria-label="ลบชุดข้อมูล"><i class="fas fa-times"></i></button>
+                                </div>
+                            `;
+                            workspaceDataItemsList.appendChild(row);
+                        });
+                    }
+                    // Re-attach event listeners for new data item buttons
+                    initDataItemReorderControls();
+                    workspaceDataItemsList.querySelectorAll('.edit-data-item').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            const iid = btn.dataset.instructionId;
+                            const itemId = btn.dataset.itemId;
+                            const itemType = btn.dataset.itemType || 'table';
+                            if (itemType === 'text') {
+                                window.location.href = `/admin/instructions-v2/${iid}/data-items/${itemId}/edit`;
+                            } else {
+                                window.location.href = `/admin/instructions-v3/${iid}/data-items/${itemId}/edit`;
+                            }
+                        });
+                    });
+                    workspaceDataItemsList.querySelectorAll('.delete-data-item').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const iid = btn.dataset.instructionId;
+                            const itemId = btn.dataset.itemId;
+                            if (!confirm('ต้องการลบชุดข้อมูลนี้หรือไม่?')) return;
+                            try {
+                                const res = await fetch(`/api/instructions-v2/${iid}/data-items/${itemId}`, { method: 'DELETE' });
+                                const data = await res.json();
+                                if (data.success) { showToast('ลบข้อมูลแล้ว', 'success'); setTimeout(() => location.reload(), 280); }
+                                else { showToast(data.error || 'เกิดข้อผิดพลาด', 'error'); }
+                            } catch (err) { console.error(err); showToast('เกิดข้อผิดพลาด', 'error'); }
+                        });
+                    });
+                    workspaceDataItemsList.querySelectorAll('.duplicate-data-item').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const iid = btn.dataset.instructionId;
+                            const itemId = btn.dataset.itemId;
+                            try {
+                                const res = await fetch(`/api/instructions-v2/${iid}/data-items/${itemId}/duplicate`, { method: 'POST' });
+                                const data = await res.json();
+                                if (data.success) { showToast('คัดลอกข้อมูลแล้ว', 'success'); setTimeout(() => location.reload(), 280); }
+                                else { showToast(data.error || 'เกิดข้อผิดพลาด', 'error'); }
+                            } catch (err) { console.error(err); showToast('เกิดข้อผิดพลาด', 'error'); }
+                        });
+                    });
+                }
+                if (workspaceAddDataItem) {
+                    workspaceAddDataItem.dataset.instructionId = instructionId;
+                }
+                if (workspaceStarterBtn) {
+                    workspaceStarterBtn.dataset.id = instructionId;
+                }
             } else {
                 showToast(data.error || 'ไม่สามารถโหลดข้อมูล Instruction ได้', 'error');
                 clearEditor();
@@ -1456,27 +1599,16 @@
         window.location.href = `/admin/instructions-v3/${instructionId}/data-items/new`;
     });
 
-    // Search Instructions (filter dropdown options)
+    // Search Instructions (filter list items)
     const searchInput = document.getElementById('searchInstructions');
-    if (searchInput && instructionSelect) {
+    if (searchInput) {
         searchInput.addEventListener('input', (e) => {
             const query = (e.target.value || '').trim().toLowerCase();
-            const selectedValue = instructionSelect.value;
-            Array.from(instructionSelect.options).forEach((opt) => {
-                if (!opt.value) {
-                    opt.hidden = false;
-                    opt.disabled = false;
-                    return;
-                }
-                if (opt.value === selectedValue) {
-                    opt.hidden = false;
-                    opt.disabled = false;
-                    return;
-                }
-                const text = (opt.textContent || '').toLowerCase();
-                const matches = !query || text.includes(query);
-                opt.hidden = !matches;
-                opt.disabled = !matches;
+            listItems.forEach((item) => {
+                const name = (item.dataset.name || '').toLowerCase();
+                const code = (item.dataset.code || '').toLowerCase();
+                const matches = !query || name.includes(query) || code.includes(query);
+                item.style.display = matches ? '' : 'none';
             });
         });
     }
@@ -1748,6 +1880,63 @@
             instructionSelect.value = instructionIdParam;
             instructionSelect.dispatchEvent(new Event('change'));
         }
+    }
+
+    // ===== Workspace Tab Switching =====
+    document.querySelectorAll('.ws-tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+            const target = tab.dataset.tab;
+            document.querySelectorAll('.ws-tab').forEach((t) => t.classList.toggle('active', t === tab));
+            document.querySelectorAll('.ws-panel').forEach((panel) => {
+                panel.classList.toggle('active', panel.id === `tab-${target}`);
+            });
+        });
+    });
+
+    // ===== Workspace List Item Click =====
+    if (instructionList) {
+        instructionList.addEventListener('click', (e) => {
+            const item = e.target.closest('.ws-list-item');
+            if (!item) return;
+            const id = item.dataset.id;
+            if (!id) return;
+            if (instructionSelect) {
+                if (
+                    editorState.isDirty &&
+                    editorState.currentInstructionId &&
+                    editorState.currentInstructionId !== id &&
+                    !confirm('มีการแก้ไขที่ยังไม่บันทึก ต้องการละทิ้งการเปลี่ยนแปลงหรือไม่?')
+                ) {
+                    return;
+                }
+                instructionSelect.value = id;
+                instructionSelect.dispatchEvent(new Event('change'));
+            }
+        });
+    }
+
+    // ===== Workspace Starter Button =====
+    if (workspaceStarterBtn) {
+        workspaceStarterBtn.addEventListener('click', async () => {
+            const targetInstructionId = (workspaceStarterBtn.dataset.id || '').trim();
+            if (!targetInstructionId) {
+                showToast('กรุณาเลือก Instruction ก่อน', 'warning');
+                return;
+            }
+            await openStarterModal(targetInstructionId, workspaceStarterBtn);
+        });
+    }
+
+    // ===== Workspace Add Data Item =====
+    if (workspaceAddDataItem) {
+        workspaceAddDataItem.addEventListener('click', () => {
+            const instructionId = workspaceAddDataItem.dataset.instructionId;
+            if (!instructionId) return;
+            if (newDataItemInstructionIdInput) {
+                newDataItemInstructionIdInput.value = instructionId;
+            }
+            selectDataTypeModal.show();
+        });
     }
 
 })();

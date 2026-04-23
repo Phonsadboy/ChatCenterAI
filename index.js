@@ -143,7 +143,6 @@ const BOT_COLLECTION_BY_PLATFORM = {
 const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
 const DEFAULT_ASSISTANT_MODEL = "gpt-5.4-mini";
-const DEFAULT_ORDER_EXTRACTION_MODEL = "gpt-5.4-nano";
 
 function normalizeProvider(provider) {
   if (typeof provider !== "string") return LLM_PROVIDER_OPENAI;
@@ -1483,6 +1482,10 @@ async function ensurePerformanceIndexes(db) {
     await db.collection("active_user_status").createIndex({ senderId: 1 });
     await db.collection("user_profiles").createIndex({ userId: 1, platform: 1 });
     await db.collection("user_unread_counts").createIndex({ userId: 1 });
+    await db.collection("user_tags").createIndex({ userId: 1 });
+    await db
+      .collection("follow_up_tasks")
+      .createIndex({ userId: 1, canceled: 1, completed: 1, nextScheduledAt: 1 });
     console.log("[DB] Performance indexes ensured");
   } catch (err) {
     console.warn(
@@ -1796,6 +1799,65 @@ async function maybeFindAppDocumentsByPayloadField(
   } catch (error) {
     console.error(
       `[StorageRead] app_document query failed for ${collectionName}.${fieldName}:`,
+      error?.message || error,
+    );
+    return [];
+  }
+}
+
+async function maybeCountAppDocumentsByPayloadFieldValues(
+  collectionName,
+  fieldName,
+  fieldValues = [],
+) {
+  if (!chatStorageService.isConfigured()) return [];
+  try {
+    return await chatStorageService.countDocumentsByPayloadFieldValues(
+      collectionName,
+      fieldName,
+      fieldValues,
+    );
+  } catch (error) {
+    console.error(
+      `[StorageRead] app_document count failed for ${collectionName}.${fieldName}:`,
+      error?.message || error,
+    );
+    return [];
+  }
+}
+
+async function maybeFindActiveFollowUpTasksForUsers(userIds = [], options = {}) {
+  if (!chatStorageService.isConfigured()) return [];
+  try {
+    const rows = await chatStorageService.findActiveFollowUpTasksForUsers(
+      userIds,
+      options,
+    );
+    return rows.map((row) => row.payload).filter(Boolean);
+  } catch (error) {
+    console.error(
+      "[StorageRead] app_document active follow-up task query failed:",
+      error?.message || error,
+    );
+    return [];
+  }
+}
+
+async function maybeListTopAppDocumentArrayValues(
+  collectionName,
+  fieldName,
+  options = {},
+) {
+  if (!chatStorageService.isConfigured()) return [];
+  try {
+    return await chatStorageService.listTopDocumentArrayValues(
+      collectionName,
+      fieldName,
+      options,
+    );
+  } catch (error) {
+    console.error(
+      `[StorageRead] app_document array summary failed for ${collectionName}.${fieldName}:`,
       error?.message || error,
     );
     return [];
@@ -2912,12 +2974,12 @@ async function saveChatHistory(
     }
   }
 
-  // วิเคราะห์การติดตามลูกค้าหลังจากบันทึกข้อความของผู้ใช้
-  const shouldAnalyzeFollowUp =
+  // อัปเดตสถานะ follow-up หลังจากบันทึกข้อความของผู้ใช้
+  const shouldUpdateFollowUpStatus =
     typeof userMsgToSave === "string" ? userMsgToSave.trim().length > 0 : true;
-  if (shouldAnalyzeFollowUp) {
+  if (shouldUpdateFollowUpStatus) {
     maybeAnalyzeFollowUp(userId, platform, botId).catch((error) => {
-      console.error("[FollowUp] Background analyze error:", error.message);
+      console.error("[FollowUp] Background status update error:", error.message);
     });
   }
 
@@ -3256,168 +3318,6 @@ const followUpContextCache = new Map();
 let followUpTaskTimer = null;
 let followUpProcessing = false;
 const FOLLOW_UP_TASK_INTERVAL_MS = 30 * 1000;
-
-const DEFAULT_ORDER_PROMPT_BODY = `วิเคราะห์บทสนทนาเพื่อสกัดข้อมูลออเดอร์ โดยให้ความสำคัญกับการสรุปยอดล่าสุดที่สุดในบทสนทนา (ถ้ามีหลายรอบให้ใช้ข้อมูลจากรอบล่าสุดเท่านั้น)
-
-เกณฑ์การพิจารณา:
-✅ ถือว่ามีออเดอร์ = ลูกค้าสั่งซื้อสินค้าชัดเจน พร้อมระบุรายละเอียด
-❌ ไม่ถือว่ามีออเดอร์ = ถามราคา, ต่อรอง, ลังเล, พิจารณาอยู่, ถามสถานะการจัดส่ง/เลขพัสดุ/ของถึงหรือยัง (เป็นการติดตามออเดอร์เดิม)
-
-ข้อมูลที่ต้องสกัด:
-- items: รายการสินค้า [{product: "ชื่อสินค้า", quantity: จำนวน, price: ราคาต่อชิ้น}]
-- totalAmount: ยอดรวมทั้งหมด (ถ้าไม่ระบุให้คำนวณจาก items)
-- shippingAddress: ที่อยู่จัดส่ง เฉพาะบ้านเลขที่/หมู่/ซอย/ถนน เท่านั้น (ห้ามใส่ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ เพราะมี field แยกต่างหาก) จำเป็นต้องมี ถ้าไม่มีให้สรุปว่าไม่มีออเดอร์
-- phone: เบอร์โทรศัพท์ (ถ้าไม่ระบุให้เป็น null)
-- email: อีเมลลูกค้าหรือ null
-- paymentMethod: วิธีชำระเงิน ("โอนเงิน", "เก็บเงินปลายทาง", หรือ null)
-- shippingCost: ค่าส่ง (ตัวเลข; หากไม่ระบุให้ใช้ 0 และถือว่าส่งฟรี)
-- customerName: ชื่อลูกค้า (ถ้าไม่ระบุให้เป็น null)
-- recipientName: ชื่อผู้รับพัสดุ (ถ้าไม่ระบุให้ใช้ชื่อลูกค้า)
-- addressSubDistrict: ตำบล/แขวง (สกัดจากที่อยู่ ถ้าไม่พบให้เป็น null)
-- addressDistrict: อำเภอ/เขต (สกัดจากที่อยู่ ถ้าไม่พบให้เป็น null)
-- addressProvince: จังหวัด (สกัดจากที่อยู่ ถ้าไม่พบให้เป็น null)
-- addressPostalCode: รหัสไปรษณีย์ (สกัดจากที่อยู่ ถ้าไม่พบให้เป็น null)
-- transferDate: วันที่โอนเงิน (รูปแบบ YYYY-MM-DD หรือ null)
-- transferTime: เวลาที่โอน (รูปแบบ HH:mm หรือ null)
-- paymentReceiver: ผู้รับเงิน (ถ้าไม่พบให้เป็น null)
-- notes: หมายเหตุเพิ่มเติม (ถ้าไม่พบให้เป็น null)
-
-⚠️ สำคัญ: shippingAddress ต้องไม่รวมตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์ - ให้แยกไปใส่ใน addressSubDistrict, addressDistrict, addressProvince, addressPostalCode แทน
-
-รายละเอียดสินค้าที่สามารถระบุได้เพิ่มเติมแต่เว้นว่างได้:
-- shippingName: ชื่อสินค้า (สำหรับขนส่ง)
-- color: สีสินค้า
-- width: ความกว้าง (เซนติเมตร)
-- length: ความยาว (เซนติเมตร)
-- height: ความสูง (เซนติเมตร)
-- weight: น้ำหนัก (กิโลกรัม)
-- หากได้รับข้อมูลที่อยู่หรือชื่อลูกค้าจากออเดอร์ก่อนหน้า ให้ใช้เป็นค่าเริ่มต้นเมื่อไม่มีข้อมูลใหม่`;
-
-const ORDER_PROMPT_JSON_SUFFIX = `ตอบเป็น JSON เท่านั้น: {
-  "hasOrder": true/false,
-  "orderData": {
-    "items": [
-      {
-        "product": "ชื่อสินค้า",
-        "quantity": จำนวน,
-        "price": ราคา,
-        "shippingName": "ชื่อสำหรับขนส่งหรือ null",
-        "color": "สีหรือ null",
-        "width": "ความกว้างหรือ null",
-        "length": "ความยาวหรือ null",
-        "height": "ความสูงหรือ null",
-        "weight": "น้ำหนักหรือ null"
-      }
-    ],
-    "totalAmount": จำนวน,
-    "shippingAddress": "บ้านเลขที่/หมู่/ซอย/ถนน เท่านั้น (ไม่รวมตำบล/อำเภอ/จังหวัด/รหัสไปรษณีย์)",
-    "phone": "เบอร์โทรหรือ null",
-    "email": "อีเมลหรือ null",
-    "paymentMethod": "วิธีชำระหรือ null",
-    "shippingCost": จำนวน,
-    "customerName": "ชื่อลูกค้าหรือ null",
-    "recipientName": "ชื่อผู้รับหรือ null",
-    "addressSubDistrict": "ตำบล/แขวงหรือ null",
-    "addressDistrict": "อำเภอ/เขตหรือ null",
-    "addressProvince": "จังหวัดหรือ null",
-    "addressPostalCode": "รหัสไปรษณีย์หรือ null",
-    "transferDate": "YYYY-MM-DD หรือ null",
-    "transferTime": "HH:mm หรือ null",
-    "paymentReceiver": "ผู้รับเงินหรือ null",
-    "notes": "หมายเหตุหรือ null"
-  },
-  "confidence": 0.0-1.0,
-  "reason": "เหตุผลสั้นๆ (หากไม่มีที่อยู่ให้สรุปว่าไม่มีออเดอร์)"
-}`;
-
-const ORDER_EXTRACTION_RESPONSE_SCHEMA = {
-  name: "order_extraction",
-  strict: true,
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      hasOrder: { type: "boolean" },
-      orderData: {
-        type: ["object", "null"],
-        additionalProperties: false,
-        properties: {
-          items: {
-            type: "array",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                product: { type: "string" },
-                quantity: { type: "number" },
-                price: { type: "number" },
-                shippingName: { type: ["string", "null"] },
-                color: { type: ["string", "null"] },
-                width: { type: ["number", "null"] },
-                length: { type: ["number", "null"] },
-                height: { type: ["number", "null"] },
-                weight: { type: ["number", "null"] },
-              },
-              required: [
-                "product",
-                "quantity",
-                "price",
-                "shippingName",
-                "color",
-                "width",
-                "length",
-                "height",
-                "weight",
-              ],
-            },
-          },
-          totalAmount: { type: ["number", "null"] },
-          shippingAddress: { type: ["string", "null"] },
-          phone: { type: ["string", "null"] },
-          email: { type: ["string", "null"] },
-          paymentMethod: { type: ["string", "null"] },
-          shippingCost: { type: ["number", "null"] },
-          customerName: { type: ["string", "null"] },
-          recipientName: { type: ["string", "null"] },
-          addressSubDistrict: { type: ["string", "null"] },
-          addressDistrict: { type: ["string", "null"] },
-          addressProvince: { type: ["string", "null"] },
-          addressPostalCode: { type: ["string", "null"] },
-          transferDate: { type: ["string", "null"] },
-          transferTime: { type: ["string", "null"] },
-          paymentReceiver: { type: ["string", "null"] },
-          notes: { type: ["string", "null"] },
-        },
-        required: [
-          "items",
-          "totalAmount",
-          "shippingAddress",
-          "phone",
-          "email",
-          "paymentMethod",
-          "shippingCost",
-          "customerName",
-          "recipientName",
-          "addressSubDistrict",
-          "addressDistrict",
-          "addressProvince",
-          "addressPostalCode",
-          "transferDate",
-          "transferTime",
-          "paymentReceiver",
-          "notes",
-        ],
-      },
-      confidence: {
-        type: "number",
-        minimum: 0,
-        maximum: 1,
-      },
-      reason: { type: "string" },
-    },
-    required: ["hasOrder", "orderData", "confidence", "reason"],
-  },
-};
 
 function normalizeFollowUpBotId(botId) {
   if (!botId) return null;
@@ -3766,12 +3666,10 @@ async function getFollowUpBaseConfig() {
   }
 
   const keys = [
-    "enableFollowUpAnalysis",
     "followUpShowInChat",
     "followUpShowInDashboard",
     "followUpAutoEnabled",
     "followUpRounds",
-    "followUpOrderPromptInstructions",
   ];
   let docs = [];
   if (isPostgresAppDocumentReadEnabled()) {
@@ -3788,10 +3686,6 @@ async function getFollowUpBaseConfig() {
   });
 
   const config = {
-    analysisEnabled:
-      typeof map.enableFollowUpAnalysis === "boolean"
-        ? map.enableFollowUpAnalysis
-        : true,
     showInChat:
       typeof map.followUpShowInChat === "boolean"
         ? map.followUpShowInChat
@@ -3805,11 +3699,6 @@ async function getFollowUpBaseConfig() {
         ? map.followUpAutoEnabled
         : false,
     rounds: normalizeFollowUpRounds(map.followUpRounds || []),
-    orderPromptInstructions:
-      typeof map.followUpOrderPromptInstructions === "string" &&
-        map.followUpOrderPromptInstructions.trim().length
-        ? map.followUpOrderPromptInstructions.trim()
-        : DEFAULT_ORDER_PROMPT_BODY,
   };
 
   followUpBaseConfigCache = config;
@@ -3879,33 +3768,8 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
     merged.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
   }
 
-  const promptText =
-    typeof merged.orderPromptInstructions === "string"
-      ? merged.orderPromptInstructions.trim()
-      : "";
-  merged.orderPromptInstructions = promptText || DEFAULT_ORDER_PROMPT_BODY;
-
   followUpContextCache.set(cacheKey, merged);
   return merged;
-}
-
-async function getOrderPromptBody(platform = "line", botId = null) {
-  try {
-    const config = await getFollowUpConfigForContext(platform, botId);
-    if (
-      config &&
-      typeof config.orderPromptInstructions === "string" &&
-      config.orderPromptInstructions.trim()
-    ) {
-      return config.orderPromptInstructions.trim();
-    }
-  } catch (error) {
-    console.warn(
-      `[Order] ไม่สามารถโหลดคำสั่งวิเคราะห์สำหรับ ${platform}:${botId || "default"
-      }: ${error.message}`,
-    );
-  }
-  return DEFAULT_ORDER_PROMPT_BODY;
 }
 
 async function listFollowUpPageSettings() {
@@ -3975,11 +3839,6 @@ async function listFollowUpPageSettings() {
     if (typeof config.autoFollowUpEnabled !== "boolean") {
       config.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
     }
-    const promptText =
-      typeof config.orderPromptInstructions === "string"
-        ? config.orderPromptInstructions.trim()
-        : "";
-    config.orderPromptInstructions = promptText || DEFAULT_ORDER_PROMPT_BODY;
     return config;
   };
 
@@ -5016,7 +4875,7 @@ async function maybeAnalyzeFollowUp(
       forceUpdate = false,
     } = options || {};
 
-    if (!config || (!forceUpdate && !config.analysisEnabled)) {
+    if (!config) {
       return;
     }
 
@@ -5034,7 +4893,7 @@ async function maybeAnalyzeFollowUp(
     if (!hasOrders) {
       // ⚠️ สำคัญ: ถ้า status.hasFollowUp เป็น true อยู่แล้ว (ลูกค้าเคยซื้อ/ถูก mark แล้ว)
       // จะไม่ reset เป็น false เพื่อป้องกัน:
-      // 1. Race condition ระหว่างการวิเคราะห์หลายข้อความพร้อมกัน
+      // 1. Race condition ระหว่างการอัปเดตสถานะหลายข้อความพร้อมกัน
       // 2. การส่ง follow-up ไปหาลูกค้าที่ซื้อแล้วโดยไม่ตั้งใจ
       // 3. กรณี order ถูกลบ แต่ยังไม่ต้องการให้ระบบส่ง follow-up อีก
       if (status?.hasFollowUp === true) {
@@ -5099,11 +4958,11 @@ async function maybeAnalyzeFollowUp(
       }
     } catch (_) { }
   } catch (error) {
-    console.error("[FollowUp] วิเคราะห์ไม่สำเร็จ:", error.message);
+    console.error("[FollowUp] อัปเดตสถานะไม่สำเร็จ:", error.message);
   }
 }
 
-// ============================ Order Analysis Functions ============================
+// ============================ Order Helper Functions ============================
 
 function normalizeShippingCostValue(rawCost) {
   if (typeof rawCost === "number" && Number.isFinite(rawCost) && rawCost >= 0) {
@@ -5279,11 +5138,6 @@ function formatOrderAddressText(addressInfo = {}, options = {}) {
 
   return parts.join(" ").trim();
 }
-
-const ORDER_EXTRACTION_MODES = Object.freeze({
-  REALTIME: "realtime",
-  SCHEDULED: "scheduled",
-});
 
 const ORDER_REQUIRED_FIELDS_DEFAULT = Object.freeze({
   items: true,
@@ -6103,353 +5957,6 @@ async function getExistingProductNames(options = {}) {
   }
 }
 
-async function analyzeOrderFromChat(userId, messages, options = {}) {
-  const {
-    modelOverride = null,
-    previousAddress = null,
-    previousCustomerName = null,
-    platform = "line",
-    botId = null,
-  } = options || {};
-
-  // Get page settings
-  let pageSettings = null;
-  try {
-    pageSettings = await getFollowUpConfigForContext(platform || "line", botId);
-  } catch (e) {
-    console.warn("[Order] ไม่สามารถโหลด page settings:", e.message);
-  }
-
-  // Check if order extraction is enabled for this page
-  if (pageSettings && pageSettings.orderExtractionEnabled === false) {
-    console.log(`[Order] การสกัดออเดอร์ถูกปิดสำหรับ ${platform}/${botId}`);
-    return null;
-  }
-
-  // Get orderModel from page settings if not overridden
-  const orderModel =
-    modelOverride ||
-    pageSettings?.orderModel ||
-    pageSettings?.model ||
-    (await getSettingValue("orderModel", DEFAULT_ORDER_EXTRACTION_MODEL));
-
-  const apiKeyToUse = await getOpenAIApiKeyForBot(botId, platform);
-  if (!apiKeyToUse.apiKey) {
-    console.warn("[Order] ไม่มี OpenAI API Key ข้ามการวิเคราะห์ออเดอร์");
-    return null;
-  }
-
-  const openai = buildLLMClientFromKey(apiKeyToUse);
-  if (!openai) {
-    console.warn("[Order] ไม่สามารถสร้าง client สำหรับ provider ที่เลือกได้");
-    return null;
-  }
-  const resolvedOrderModel = resolveModelForProvider(
-    orderModel,
-    apiKeyToUse.provider,
-  );
-  if (!resolvedOrderModel.ok) {
-    console.warn(`[Order] ${resolvedOrderModel.error}`);
-    return null;
-  }
-
-  // Use page-specific prompt if available, otherwise use default
-  let promptBody;
-  if (pageSettings?.orderPromptInstructions && pageSettings.orderPromptInstructions.trim()) {
-    promptBody = pageSettings.orderPromptInstructions.trim();
-  } else {
-    promptBody = (await getOrderPromptBody(platform, botId)).trim();
-  }
-  const fallbackPrompt = `${promptBody}\n\n${ORDER_PROMPT_JSON_SUFFIX}`;
-
-  // ดึงรายการสินค้าที่เคยสกัดไว้ในระบบ เพื่อให้ AI ใช้ชื่อเดียวกัน
-  const existingProducts = await getExistingProductNames({ platform, botId, limit: 30 });
-
-  // จัดรูปแบบการสนทนาให้อ่านง่าย เรียงจากเก่าไปใหม่
-  const formattedConversation = messages
-    .map((entry, index) => {
-      const speaker = entry.role === "user" ? "ลูกค้า" : "เรา";
-      const seq = index + 1;
-      return `${seq}. ${speaker}: ${entry.content}`;
-    })
-    .join("\n");
-
-  const previousContextLines = [];
-  if (previousCustomerName) {
-    previousContextLines.push(`- ชื่อลูกค้ารอบก่อน: ${previousCustomerName}`);
-  }
-  if (previousAddress) {
-    previousContextLines.push(`- ที่อยู่รอบก่อน: ${previousAddress}`);
-  }
-  const previousContextText = previousContextLines.length
-    ? `ข้อมูลจากออเดอร์ก่อนหน้า:\n${previousContextLines.join("\n")}\nหากลูกค้าไม่ได้ระบุชื่อหรือที่อยู่ใหม่ให้ใช้ข้อมูลก่อนหน้าเป็นค่าเริ่มต้น\n\n`
-    : "";
-
-  // สร้างส่วน Product Matching Hint สำหรับ AI
-  let productMatchingHint = "";
-  if (existingProducts.length > 0) {
-    productMatchingHint = `📦 รายการสินค้าที่มีในระบบ (ให้ใช้ชื่อเหล่านี้ถ้าสินค้าตรงกัน):
-${existingProducts.map((p, i) => `${i + 1}. "${p}"`).join("\n")}
-
-⚠️ สำคัญ: หากสินค้าที่ลูกค้าสั่งตรงกับรายการด้านบน ให้ใช้ชื่อจากรายการด้านบนแทน
-   ตัวอย่าง: ลูกค้าพิมพ์ "เสื้อทีเชิร์ตสีดำ" แต่ในรายการมี "เสื้อยืด - ดำ" → ให้ใช้ "เสื้อยืด - ดำ"
-   หากเป็นสินค้าใหม่ที่ไม่มีในรายการ ให้ตั้งชื่อสินค้าใหม่ตามที่เหมาะสม\n\n`;
-  }
-
-  const userPrompt = `${productMatchingHint}${previousContextText}บทสนทนาทั้งหมด (จากเก่าสุดถึงใหม่สุด):\n\n${formattedConversation}\n\nวิเคราะห์และสกัดข้อมูลออเดอร์:`;
-
-  try {
-    let parsed = null;
-    const isOpenAIProvider =
-      normalizeProvider(apiKeyToUse.provider) === LLM_PROVIDER_OPENAI;
-
-    if (isOpenAIProvider) {
-      const response = await openai.responses.create({
-        model: resolvedOrderModel.model,
-        instructions: promptBody,
-        input: userPrompt,
-        text: {
-          format: {
-            type: "json_schema",
-            ...ORDER_EXTRACTION_RESPONSE_SCHEMA,
-          },
-        },
-      });
-
-      const content = extractInstructionResponseText(response).trim();
-      if (content) {
-        parsed = JSON.parse(content);
-      }
-    } else {
-      const response = await openai.chat.completions.create({
-        model: resolvedOrderModel.model,
-        messages: [
-          buildChatInstructionMessage(resolvedOrderModel.model, fallbackPrompt),
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.1,
-      });
-
-      const content = response.choices?.[0]?.message?.content || "";
-      const trimmed = content.trim();
-
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch (_) {
-        const match = trimmed.match(/\{[\s\S]*\}/);
-        if (match) {
-          parsed = JSON.parse(match[0]);
-        }
-      }
-    }
-
-    if (!parsed || typeof parsed.hasOrder === "undefined") {
-      console.warn("[Order] รูปแบบคำตอบไม่ถูกต้อง");
-      return null;
-    }
-
-    // ตรวจสอบความถูกต้องของข้อมูล
-    if (parsed.hasOrder && parsed.orderData) {
-      const orderData = parsed.orderData || {};
-      const {
-        items,
-        totalAmount,
-        shippingAddress,
-        phone,
-        paymentMethod,
-        shippingCost,
-        customerName,
-      } = orderData;
-
-      // ตรวจสอบ items
-      if (!Array.isArray(items) || items.length === 0) {
-        console.warn("[Order] ไม่มีรายการสินค้า");
-        return {
-          hasOrder: false,
-          orderData: null,
-          confidence: 0,
-          reason: "ไม่มีรายการสินค้า",
-        };
-      }
-
-      // ตรวจสอบข้อมูลในแต่ละ item และทำความสะอาดข้อมูล
-      const sanitizedItems = [];
-      for (const item of items) {
-        const productName =
-          typeof item.product === "string" ? item.product.trim() : "";
-        const quantityNumber = Number(item.quantity);
-        const priceNumber = Number(item.price);
-        const shippingName =
-          sanitizeOptionalString(item.shippingName) ||
-          sanitizeOptionalString(item.shippingProductName) ||
-          sanitizeOptionalString(item.productForShipping) ||
-          null;
-        const color = sanitizeOptionalString(item.color) || null;
-        const width = sanitizeOptionalNumber(
-          item.width ?? item.widthCm ?? item.itemWidth,
-        );
-        const length = sanitizeOptionalNumber(
-          item.length ?? item.lengthCm ?? item.itemLength,
-        );
-        const height = sanitizeOptionalNumber(
-          item.height ?? item.heightCm ?? item.itemHeight,
-        );
-        const weight = sanitizeOptionalNumber(item.weight ?? item.weightKg);
-
-        if (!productName) {
-          console.warn("[Order] ชื่อสินค้าว่าง:", item);
-          return {
-            hasOrder: false,
-            orderData: null,
-            confidence: 0,
-            reason: "ข้อมูลสินค้าไม่ครบถ้วน",
-          };
-        }
-
-        if (!Number.isFinite(quantityNumber) || quantityNumber <= 0) {
-          console.warn("[Order] จำนวนสินค้าไม่ถูกต้อง:", item);
-          return {
-            hasOrder: false,
-            orderData: null,
-            confidence: 0,
-            reason: "ข้อมูลสินค้าไม่ครบถ้วน",
-          };
-        }
-
-        if (!Number.isFinite(priceNumber) || priceNumber < 0) {
-          console.warn("[Order] ราคาสินค้าไม่ถูกต้อง:", item);
-          return {
-            hasOrder: false,
-            orderData: null,
-            confidence: 0,
-            reason: "ข้อมูลสินค้าไม่ครบถ้วน",
-          };
-        }
-
-        const sanitizedItem = {
-          product: productName,
-          quantity: quantityNumber,
-          price: priceNumber,
-        };
-
-        if (shippingName) {
-          sanitizedItem.shippingName = shippingName;
-        }
-        if (color) {
-          sanitizedItem.color = color;
-        }
-        if (width !== null && width !== undefined) {
-          sanitizedItem.width = width;
-        }
-        if (length !== null && length !== undefined) {
-          sanitizedItem.length = length;
-        }
-        if (height !== null && height !== undefined) {
-          sanitizedItem.height = height;
-        }
-        if (weight !== null && weight !== undefined) {
-          sanitizedItem.weight = weight;
-        }
-
-        sanitizedItems.push(sanitizedItem);
-      }
-
-      // ต้องมีที่อยู่จัดส่ง
-      if (
-        !shippingAddress ||
-        typeof shippingAddress !== "string" ||
-        !shippingAddress.trim()
-      ) {
-        console.warn("[Order] ไม่มีที่อยู่จัดส่ง");
-        return {
-          hasOrder: false,
-          orderData: null,
-          confidence: 0,
-          reason: "ไม่มีที่อยู่จัดส่ง",
-        };
-      }
-
-      // คำนวณยอดรวมถ้าไม่ระบุ
-      let calculatedTotal = totalAmount;
-      if (!calculatedTotal || calculatedTotal <= 0) {
-        calculatedTotal = sanitizedItems.reduce(
-          (sum, item) => sum + item.quantity * item.price,
-          0,
-        );
-      }
-
-      const normalizedShippingCost = normalizeShippingCostValue(shippingCost);
-      const normalizedCustomerName = normalizeCustomerName(customerName);
-      const sanitizedEmail =
-        sanitizeOptionalString(orderData.email || orderData.customerEmail) ||
-        null;
-      const sanitizedRecipientName =
-        normalizeCustomerName(
-          orderData.recipientName || orderData.shippingName || customerName,
-        ) || normalizedCustomerName;
-      const addressParts = normalizeOrderAddress({
-        ...(orderData || {}),
-        shippingAddress,
-      });
-      const transferDate =
-        sanitizeOptionalString(
-          orderData.transferDate || orderData.paymentDate,
-        ) || null;
-      const transferTime =
-        sanitizeOptionalString(
-          orderData.transferTime || orderData.paymentTime,
-        ) || null;
-      const paymentReceiver =
-        sanitizeOptionalString(
-          orderData.paymentReceiver || orderData.receivedBy,
-        ) || null;
-      const sanitizedNotes = sanitizeOptionalString(orderData.notes) || null;
-      const shippingAddressText =
-        typeof shippingAddress === "string"
-          ? shippingAddress.trim()
-          : String(shippingAddress || "");
-      const paymentMethodValue =
-        sanitizeOptionalString(paymentMethod) || "เก็บเงินปลายทาง";
-      const sanitizedPhone = sanitizeOptionalString(phone) || null;
-
-      return {
-        hasOrder: true,
-        orderData: {
-          items: sanitizedItems,
-          totalAmount: calculatedTotal,
-          shippingAddress: shippingAddressText,
-          phone: sanitizedPhone,
-          email: sanitizedEmail,
-          paymentMethod: paymentMethodValue,
-          shippingCost: normalizedShippingCost,
-          customerName: normalizedCustomerName,
-          recipientName: sanitizedRecipientName,
-          addressSubDistrict: addressParts.subDistrict,
-          addressDistrict: addressParts.district,
-          addressProvince: addressParts.province,
-          addressPostalCode: addressParts.postalCode,
-          transferDate,
-          transferTime,
-          paymentReceiver,
-          notes: sanitizedNotes,
-        },
-        confidence: parsed.confidence || 0.8,
-        reason: parsed.reason || "พบออเดอร์ในบทสนทนา",
-      };
-    }
-
-    return {
-      hasOrder: false,
-      orderData: null,
-      confidence: parsed.confidence || 0.1,
-      reason: parsed.reason || "ไม่พบออเดอร์ในบทสนทนา",
-    };
-  } catch (error) {
-    console.error("[Order] เกิดข้อผิดพลาดในการเรียก OpenAI:", error.message);
-    return null;
-  }
-}
-
 async function saveOrderToDatabase(
   userId,
   platform,
@@ -7108,7 +6615,6 @@ async function getFollowUpUsers(filter = {}) {
         lastMessage: preview,
         followUpReason: task.cancelReason || "",
         config: {
-          analysisEnabled: config.analysisEnabled !== false,
           showInDashboard: config.showInDashboard !== false,
           autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
           rounds: config.rounds || [],
@@ -13800,13 +13306,10 @@ async function ensureSettings() {
     { key: "systemMode", value: "production" },
     { key: "showTokenUsage", value: false },
     { key: "facebookImageSendMode", value: "upload" },
-    { key: "enableFollowUpAnalysis", value: true },
     { key: "followUpShowInChat", value: true },
     { key: "followUpShowInDashboard", value: true },
     { key: "followUpAutoEnabled", value: false },
-    { key: "orderAnalysisEnabled", value: true },
     { key: "orderCutoffSchedulingEnabled", value: true },
-    { key: "orderExtractionMode", value: ORDER_EXTRACTION_MODES.SCHEDULED },
     {
       key: "orderRequiredFields",
       value: { ...ORDER_REQUIRED_FIELDS_DEFAULT },
@@ -24801,33 +24304,8 @@ app.get("/broadcast/assets/:filename", async (req, res) => {
 });
 
 // Follow-up page (stub)
-app.get("/admin/followup", async (req, res) => {
-  try {
-    const baseConfig = await getFollowUpBaseConfig();
-    res.render("admin-followup", {
-      followUpConfig: {
-        analysisEnabled: baseConfig.analysisEnabled !== false,
-        showDashboard: baseConfig.showInDashboard !== false,
-      },
-      orderPromptDefaults: {
-        instructions:
-          baseConfig.orderPromptInstructions || DEFAULT_ORDER_PROMPT_BODY,
-        jsonSuffix: ORDER_PROMPT_JSON_SUFFIX,
-      },
-    });
-  } catch (error) {
-    console.error("[FollowUp] ไม่สามารถโหลดหน้าติดตามลูกค้าได้:", error);
-    res.render("admin-followup", {
-      followUpConfig: {
-        analysisEnabled: false,
-        showDashboard: false,
-      },
-      orderPromptDefaults: {
-        instructions: DEFAULT_ORDER_PROMPT_BODY,
-        jsonSuffix: ORDER_PROMPT_JSON_SUFFIX,
-      },
-    });
-  }
+app.get("/admin/followup", (req, res) => {
+  res.render("admin-followup");
 });
 
 // Follow-up status page now redirects to unified dashboard
@@ -24978,7 +24456,6 @@ app.post("/admin/followup/page-settings", async (req, res) => {
     const normalizedBotId = normalizeFollowUpBotId(botId);
     const sanitized = {};
     const boolKeys = [
-      "analysisEnabled",
       "showInChat",
       "showInDashboard",
       "autoFollowUpEnabled",
@@ -24999,21 +24476,6 @@ app.post("/admin/followup/page-settings", async (req, res) => {
         sanitized[key] = clamped;
       }
     });
-
-    if (
-      typeof settings?.orderPromptInstructions === "string" &&
-      settings.orderPromptInstructions.trim().length
-    ) {
-      const trimmedPrompt = settings.orderPromptInstructions.trim();
-      sanitized.orderPromptInstructions = trimmedPrompt.slice(0, 4000);
-    }
-
-    if (
-      typeof settings?.model === "string" &&
-      settings.model.trim().length > 0
-    ) {
-      sanitized.model = settings.model.trim();
-    }
 
     if (Array.isArray(settings?.rounds)) {
       sanitized.rounds = normalizeFollowUpRounds(settings.rounds);
@@ -25278,14 +24740,9 @@ app.post(
 // Chat page
 app.get("/admin/chat", async (req, res) => {
   try {
-    const analysisEnabled = await getSettingValue(
-      "enableFollowUpAnalysis",
-      true,
-    );
     const showInChat = await getSettingValue("followUpShowInChat", true);
     res.render("admin-chat", {
       followUpConfig: {
-        analysisEnabled,
         showInChat,
       },
     });
@@ -25293,7 +24750,6 @@ app.get("/admin/chat", async (req, res) => {
     console.error("[FollowUp] ไม่สามารถโหลดหน้าจัดการแชทได้:", error);
     res.render("admin-chat", {
       followUpConfig: {
-        analysisEnabled: false,
         showInChat: false,
       },
     });
@@ -25609,9 +25065,9 @@ ${dataItemsSummary}
 
 # ระบบติดตามลูกค้า (Follow-Up System)
 คุณสามารถจัดการระบบติดตามลูกค้าอัตโนมัติผ่าน tools ที่มี:
-- **get_followup_config** — ดูสถานะปัจจุบัน (เปิด/ปิด, จำนวน rounds, prompt)
+- **get_followup_config** — ดูสถานะปัจจุบัน (เปิด/ปิด, จำนวน rounds)
 - **get_followup_round_detail** — ดูรายละเอียด round (ข้อความ, delay, รูปภาพ)
-- **update_followup_settings** — เปิด/ปิดระบบ, แก้ prompt วิเคราะห์ออเดอร์
+- **update_followup_settings** — เปิด/ปิดระบบติดตาม
 - **update_followup_round** — แก้ข้อความหรือ delay ของแต่ละ round
 - **manage_followup_images** — เพิ่ม/ลบรูปใน round (ต้อง list_followup_assets ก่อนเพื่อดู assetId)
 - **list_followup_assets** — ดูรูปภาพที่อัปโหลดไว้`;
@@ -26227,6 +25683,8 @@ const INSTRUCTION_MAX_TOOL_ITERATIONS = (() => {
   if (!Number.isFinite(raw)) return 30;
   return Math.min(60, Math.max(4, raw));
 })();
+const INSTRUCTION_RESPONSE_MIRROR_COLLECTION = "instruction_chat_response_mirror";
+let instructionResponseMirrorIndexesPromise = null;
 
 function resolveInstructionReasoningEffort(model, thinking) {
   const normalizedModelId =
@@ -26306,6 +25764,7 @@ async function requestInstructionFinalSummaryWithoutTools(openai, options = {}) 
     toolsUsed = [],
     stateful = true,
     conversationInput = [],
+    store = null,
   } = options || {};
 
   const normalizedEffort = effort === "xhigh" ? "high" : (effort === "none" ? "low" : effort);
@@ -26349,10 +25808,14 @@ async function requestInstructionFinalSummaryWithoutTools(openai, options = {}) 
   if (stateful && previousResponseId) {
     payload.previous_response_id = previousResponseId;
   }
+  if (typeof store === "boolean") {
+    payload.store = store;
+  }
 
   const response = await openai.responses.create(payload);
   return {
     responseId: response?.id || null,
+    createdAt: getInstructionResponseCreatedAtDate(response?.created_at),
     usage: mapInstructionResponseUsage(response?.usage),
     content: extractInstructionResponseText(response).trim(),
   };
@@ -26387,6 +25850,7 @@ async function generateInstructionVersionNoteWithModel(openai, options = {}) {
     finalContent = "",
     stateful = true,
     conversationInput = [],
+    store = null,
   } = options || {};
 
   const normalizedEffort = effort === "xhigh" ? "high" : (effort === "none" ? "low" : effort);
@@ -26441,6 +25905,9 @@ async function generateInstructionVersionNoteWithModel(openai, options = {}) {
   if (stateful && previousResponseId) {
     payload.previous_response_id = previousResponseId;
   }
+  if (typeof store === "boolean") {
+    payload.store = store;
+  }
 
   const response = await openai.responses.create(payload);
   const rawNote = extractInstructionResponseText(response);
@@ -26448,6 +25915,7 @@ async function generateInstructionVersionNoteWithModel(openai, options = {}) {
 
   return {
     responseId: response?.id || null,
+    createdAt: getInstructionResponseCreatedAtDate(response?.created_at),
     usage: mapInstructionResponseUsage(response?.usage),
     note,
   };
@@ -26534,6 +26002,229 @@ function mapInstructionResponseUsage(usage) {
   };
 }
 
+function cloneInstructionResponseItems(items) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  try {
+    return JSON.parse(JSON.stringify(items));
+  } catch (error) {
+    console.warn("[InstructionChat] Failed to clone response items:", error?.message || error);
+    return [];
+  }
+}
+
+function getInstructionResponseCreatedAtDate(createdAt) {
+  if (!Number.isFinite(createdAt)) return new Date();
+  return new Date(createdAt * 1000);
+}
+
+function isInstructionPreviousResponseResolutionError(error) {
+  const message = [
+    error?.message,
+    error?.error?.message,
+    error?.response?.error?.message,
+    error?.response?.data?.error?.message,
+  ]
+    .filter((value) => typeof value === "string" && value.trim())
+    .join(" | ")
+    .toLowerCase();
+
+  if (!message) return false;
+  return (
+    message.includes("previous_response") ||
+    message.includes("previous response") ||
+    message.includes("response id") ||
+    message.includes("uncached id cannot be resolved")
+  );
+}
+
+async function ensureInstructionResponseMirrorIndexes(db) {
+  if (!db) return;
+  if (!instructionResponseMirrorIndexesPromise) {
+    instructionResponseMirrorIndexesPromise = Promise.all([
+      db.collection(INSTRUCTION_RESPONSE_MIRROR_COLLECTION).createIndex(
+        { responseId: 1 },
+        { unique: true, name: "instruction_response_id_unique" },
+      ),
+      db.collection(INSTRUCTION_RESPONSE_MIRROR_COLLECTION).createIndex(
+        { sessionId: 1, responseCreatedAt: 1 },
+        { name: "instruction_session_response_created_at" },
+      ),
+      db.collection(INSTRUCTION_RESPONSE_MIRROR_COLLECTION).createIndex(
+        { sessionId: 1, responseKind: 1, syncState: 1 },
+        { name: "instruction_session_response_kind_state" },
+      ),
+    ]).catch((error) => {
+      instructionResponseMirrorIndexesPromise = null;
+      throw error;
+    });
+  }
+
+  return instructionResponseMirrorIndexesPromise;
+}
+
+async function listInstructionResponseInputItems(openai, responseId) {
+  const items = [];
+  if (!openai?.responses?.inputItems?.list || !responseId) return items;
+
+  for await (const item of openai.responses.inputItems.list(responseId, { order: "asc" })) {
+    items.push(item);
+  }
+
+  return cloneInstructionResponseItems(items);
+}
+
+async function mirrorInstructionResponseState(options = {}) {
+  const {
+    db,
+    openai,
+    sessionId,
+    instructionId,
+    responseId,
+    previousResponseId = null,
+    model = "",
+    thinking = "",
+    username = "admin",
+    responseKind = "turn",
+    rootResponseId = null,
+  } = options || {};
+
+  if (!db || !openai || !sessionId || !instructionId || !responseId) return null;
+
+  await ensureInstructionResponseMirrorIndexes(db);
+
+  const response = await openai.responses.retrieve(responseId);
+  const inputItems = await listInstructionResponseInputItems(openai, responseId);
+  const outputItems = cloneInstructionResponseItems(Array.isArray(response?.output) ? response.output : []);
+  const responseCreatedAt = getInstructionResponseCreatedAtDate(response?.created_at);
+  const usage = mapInstructionResponseUsage(response?.usage);
+
+  await db.collection(INSTRUCTION_RESPONSE_MIRROR_COLLECTION).updateOne(
+    { responseId },
+    {
+      $set: {
+        sessionId,
+        instructionId,
+        responseId,
+        previousResponseId: previousResponseId || null,
+        model,
+        thinking,
+        username,
+        responseKind,
+        syncState: "complete",
+        responseCreatedAt,
+        syncedAt: new Date(),
+        usage,
+        outputText: extractInstructionResponseText(response),
+        inputItems,
+        outputItems,
+      },
+      $setOnInsert: {
+        createdAt: new Date(),
+      },
+    },
+    { upsert: true },
+  );
+
+  const stableUpdateFilter = {
+    sessionId,
+    $or: [
+      { "openaiState.lastStableResponseCreatedAt": { $exists: false } },
+      { "openaiState.lastStableResponseCreatedAt": { $lte: responseCreatedAt } },
+    ],
+  };
+  const stableUpdate = {
+    "openaiState.lastStableResponseId": responseId,
+    "openaiState.lastStableResponseCreatedAt": responseCreatedAt,
+    "openaiState.lastMirroredAt": new Date(),
+    "openaiState.lastMirrorError": null,
+    "openaiState.chainHealth": "healthy",
+  };
+
+  if (rootResponseId) {
+    stableUpdate["openaiState.rootResponseId"] = rootResponseId;
+  }
+
+  await db.collection("instruction_chat_sessions").updateOne(
+    stableUpdateFilter,
+    { $set: stableUpdate },
+  );
+
+  return {
+    responseId,
+    responseCreatedAt,
+    inputItems,
+    outputItems,
+  };
+}
+
+function queueInstructionResponseMirror(options = {}) {
+  const {
+    db,
+    sessionId,
+    responseId,
+  } = options || {};
+
+  if (!db || !sessionId || !responseId) return;
+
+  setImmediate(async () => {
+    try {
+      await mirrorInstructionResponseState(options);
+    } catch (error) {
+      const message = error?.message || "mirror_failed";
+      console.warn(`[InstructionChat] Response mirror failed (${responseId}):`, message);
+      try {
+        await db.collection("instruction_chat_sessions").updateOne(
+          { sessionId },
+          {
+            $set: {
+              "openaiState.lastMirrorError": message,
+              "openaiState.chainHealth": "degraded",
+            },
+          },
+        );
+      } catch (sessionError) {
+        console.warn("[InstructionChat] Failed to persist mirror error:", sessionError?.message || sessionError);
+      }
+    }
+  });
+}
+
+async function buildInstructionRecoveryInputFromMirror(options = {}) {
+  const {
+    db,
+    sessionId,
+    stableResponseId,
+    latestUserContent = "",
+  } = options || {};
+
+  if (!db || !sessionId || !stableResponseId) return null;
+
+  const mirrorDoc = await db.collection(INSTRUCTION_RESPONSE_MIRROR_COLLECTION).findOne({
+    sessionId,
+    responseId: stableResponseId,
+    syncState: "complete",
+  });
+
+  if (!mirrorDoc) return null;
+
+  const recoveredInput = [
+    ...cloneInstructionResponseItems(mirrorDoc.inputItems),
+    ...cloneInstructionResponseItems(mirrorDoc.outputItems),
+  ];
+
+  const hasUserContent = Array.isArray(latestUserContent)
+    ? latestUserContent.length > 0
+    : typeof latestUserContent === "string"
+      ? latestUserContent.trim().length > 0
+      : Boolean(latestUserContent);
+
+  if (hasUserContent) {
+    recoveredInput.push({ role: "user", content: latestUserContent });
+  }
+
+  return recoveredInput;
+}
+
 function addInstructionUsage(totalUsage, usage) {
   if (!usage) return;
   totalUsage.prompt_tokens += usage.prompt_tokens || 0;
@@ -26576,6 +26267,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       model = INSTRUCTION_DEFAULT_MODEL,
       thinking = INSTRUCTION_DEFAULT_THINKING,
       history = [],
+      sessionId: clientSessionId,
       images,
     } = req.body;
     const hasIncomingImages = Array.isArray(images) && images.length > 0;
@@ -26625,8 +26317,25 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
     const instruction = await db.collection("instructions_v2").findOne({ _id: new ObjectId(instructionId) });
     if (!instruction) return res.json({ error: "ไม่พบ Instruction" });
 
+    const username = req.session?.user?.username || "admin";
     const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
-    const sessionId = `ses_${Date.now().toString(36)}`;
+    const sessionId =
+      typeof clientSessionId === "string" && clientSessionId.trim()
+        ? clientSessionId.trim()
+        : `ses_${Date.now().toString(36)}`;
+    const existingSession = await db.collection("instruction_chat_sessions").findOne({ sessionId });
+    const existingOpenAIState =
+      existingSession && String(existingSession.instructionId) === String(instructionId)
+        ? (existingSession.openaiState || {})
+        : {};
+    const persistedPreviousResponseId =
+      usePreviousResponseId && typeof existingOpenAIState.lastResponseId === "string"
+        ? existingOpenAIState.lastResponseId
+        : null;
+    const persistedStableResponseId =
+      usePreviousResponseId && typeof existingOpenAIState.lastStableResponseId === "string"
+        ? existingOpenAIState.lastStableResponseId
+        : null;
     const systemPrompt = buildInstructionChatSystemPrompt(instructionId, instruction, dataItemsSummary);
 
     const safeHistory = normalizeInstructionHistoryForResponses(history);
@@ -26637,15 +26346,21 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       lastHistoryMsg.role === "user" &&
       typeof lastHistoryMsg.content === "string" &&
       lastHistoryMsg.content.trim() === String(message).trim();
+    const currentUserInput = buildInstructionUserInputForResponses(message, images);
+    const userHistoryText = buildInstructionUserHistoryText(message, images);
+    const fallbackTurnInput = [...safeHistory];
+    if (!isDuplicatedUserMessage || persistedPreviousResponseId) {
+      fallbackTurnInput.push({ role: "user", content: currentUserInput });
+    }
 
     const tools = mapInstructionToolsForResponses(chatService.getToolDefinitions());
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
-    let nextInput = [...safeHistory];
-    if (!isDuplicatedUserMessage) {
-      nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
-    }
-    const statelessInput = [...nextInput];
+    let nextInput =
+      usePreviousResponseId && persistedPreviousResponseId
+        ? [{ role: "user", content: currentUserInput }]
+        : [...fallbackTurnInput];
+    let statelessInput = [...fallbackTurnInput];
 
     const toolsUsed = [];
     const changes = [];
@@ -26659,24 +26374,75 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       total_tokens: 0,
     };
     let finalContent = "";
-    let previousResponseId = null;
+    let previousResponseId = persistedPreviousResponseId;
+    let conversationHeadResponseId =
+      typeof existingOpenAIState.lastResponseId === "string" ? existingOpenAIState.lastResponseId : null;
+    let conversationHeadResponseCreatedAt =
+      existingOpenAIState.lastResponseCreatedAt instanceof Date
+        ? existingOpenAIState.lastResponseCreatedAt
+        : existingOpenAIState.lastResponseCreatedAt
+          ? new Date(existingOpenAIState.lastResponseCreatedAt)
+          : null;
+    let conversationHeadResponseKind = "turn";
+    let conversationHeadParentResponseId =
+      typeof existingOpenAIState.lastResponseId === "string" ? existingOpenAIState.lastResponseId : null;
+    let recoveredFromChain = false;
 
     for (let i = 0; i < INSTRUCTION_MAX_TOOL_ITERATIONS; i++) {
-      const payload = {
-        model: resolvedInstructionModel.model,
-        instructions: systemPrompt,
-        input: usePreviousResponseId ? nextInput : statelessInput,
-        tools,
-        tool_choice: "auto",
-        reasoning: { effort },
-      };
-      if (usePreviousResponseId && previousResponseId) {
-        payload.previous_response_id = previousResponseId;
+      let response = null;
+      let attemptedRecovery = false;
+      while (!response) {
+        const payload = {
+          model: resolvedInstructionModel.model,
+          instructions: systemPrompt,
+          input: usePreviousResponseId && previousResponseId ? nextInput : statelessInput,
+          tools,
+          tool_choice: "auto",
+          reasoning: { effort },
+        };
+        if (usePreviousResponseId) {
+          payload.store = true;
+        }
+        if (usePreviousResponseId && previousResponseId) {
+          payload.previous_response_id = previousResponseId;
+          conversationHeadParentResponseId = previousResponseId;
+        } else {
+          conversationHeadParentResponseId = null;
+        }
+
+        try {
+          response = await openai.responses.create(payload);
+        } catch (error) {
+          const canRecoverChain =
+            usePreviousResponseId &&
+            previousResponseId &&
+            previousResponseId === persistedPreviousResponseId &&
+            !attemptedRecovery &&
+            isInstructionPreviousResponseResolutionError(error);
+
+          if (!canRecoverChain) throw error;
+
+          attemptedRecovery = true;
+          recoveredFromChain = true;
+          previousResponseId = null;
+          statelessInput =
+            await buildInstructionRecoveryInputFromMirror({
+              db,
+              sessionId,
+              stableResponseId: persistedStableResponseId,
+              latestUserContent: currentUserInput,
+            }) || [...fallbackTurnInput];
+          nextInput = [...statelessInput];
+        }
       }
 
-      const response = await openai.responses.create(payload);
       if (usePreviousResponseId) {
         previousResponseId = response.id;
+      }
+      if (response?.id) {
+        conversationHeadResponseId = response.id;
+        conversationHeadResponseCreatedAt = getInstructionResponseCreatedAtDate(response?.created_at);
+        conversationHeadResponseKind = "turn";
       }
       addInstructionUsage(totalUsage, mapInstructionResponseUsage(response.usage));
 
@@ -26741,9 +26507,14 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
           toolsUsed,
           stateful: usePreviousResponseId,
           conversationInput: statelessInput,
+          store: usePreviousResponseId ? true : null,
         });
         if (usePreviousResponseId && forcedSummary.responseId) {
           previousResponseId = forcedSummary.responseId;
+          conversationHeadParentResponseId = conversationHeadResponseId;
+          conversationHeadResponseId = forcedSummary.responseId;
+          conversationHeadResponseCreatedAt = forcedSummary.createdAt || conversationHeadResponseCreatedAt;
+          conversationHeadResponseKind = "forced_summary";
         }
         addInstructionUsage(totalUsage, forcedSummary.usage);
         if (forcedSummary.content) finalContent = forcedSummary.content;
@@ -26762,17 +26533,15 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       try {
         const noteResult = await generateInstructionVersionNoteWithModel(openai, {
           model: resolvedInstructionModel.model,
-          previousResponseId,
+          previousResponseId: null,
           effort,
           toolsUsed,
           changes,
           finalContent,
-          stateful: usePreviousResponseId,
-          conversationInput: statelessInput,
+          stateful: false,
+          conversationInput: [],
+          store: usePreviousResponseId ? false : null,
         });
-        if (usePreviousResponseId && noteResult?.responseId) {
-          previousResponseId = noteResult.responseId;
-        }
         addInstructionUsage(totalUsage, noteResult?.usage);
         autoNote = sanitizeInstructionVersionNote(noteResult?.note || "");
       } catch (noteError) {
@@ -26816,6 +26585,67 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       }
     }
 
+    const assistantMessages = finalContent
+      ? [{ role: "assistant", content: finalContent }]
+      : [];
+    const fullHistory = isDuplicatedUserMessage && !persistedPreviousResponseId
+      ? [...safeHistory, ...assistantMessages]
+      : [...safeHistory, ...(userHistoryText ? [{ role: "user", content: userHistoryText }] : []), ...assistantMessages];
+
+    const sessionSet = {
+      sessionId,
+      instructionId,
+      instructionName: instruction.name || "",
+      history: fullHistory,
+      model: resolvedInstructionModel.model,
+      thinking,
+      totalTokens: totalUsage.total_tokens,
+      totalChanges: changes.length,
+      username,
+      updatedAt: new Date(),
+    };
+
+    if (usePreviousResponseId && conversationHeadResponseId) {
+      sessionSet.openaiState = {
+        enabled: true,
+        provider: normalizeProvider(apiKeyToUse.provider),
+        chainMode: "previous_response_id",
+        lastResponseId: conversationHeadResponseId,
+        lastResponseCreatedAt: conversationHeadResponseCreatedAt || new Date(),
+        lastStableResponseId: existingOpenAIState.lastStableResponseId || null,
+        lastStableResponseCreatedAt: existingOpenAIState.lastStableResponseCreatedAt || null,
+        rootResponseId: existingOpenAIState.rootResponseId || conversationHeadResponseId,
+        chainHealth: recoveredFromChain ? "rebuilding" : "healthy",
+        lastMirrorError: recoveredFromChain ? null : (existingOpenAIState.lastMirrorError || null),
+        lastMirroredAt: existingOpenAIState.lastMirroredAt || null,
+      };
+    }
+
+    await db.collection("instruction_chat_sessions").updateOne(
+      { sessionId },
+      {
+        $set: sessionSet,
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true },
+    );
+
+    if (usePreviousResponseId && conversationHeadResponseId) {
+      queueInstructionResponseMirror({
+        db,
+        openai,
+        sessionId,
+        instructionId,
+        responseId: conversationHeadResponseId,
+        previousResponseId: conversationHeadParentResponseId,
+        model: resolvedInstructionModel.model,
+        thinking,
+        username,
+        responseKind: conversationHeadResponseKind,
+        rootResponseId: existingOpenAIState.rootResponseId || conversationHeadResponseId,
+      });
+    }
+
     await logOpenAIUsage({
       apiKeyId: apiKeyToUse.keyId || null,
       botId: "instruction-chat",
@@ -26838,6 +26668,7 @@ app.post("/api/instruction-ai", requireAdmin, async (req, res) => {
       versionSnapshot,
       model: resolvedInstructionModel.model,
       thinking,
+      sessionId,
     });
 
   } catch (error) {
@@ -27417,6 +27248,19 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     }
 
     const dataItemsSummary = chatService.buildDataItemsSummary(instruction);
+    const existingSession = await db.collection("instruction_chat_sessions").findOne({ sessionId });
+    const existingOpenAIState =
+      existingSession && String(existingSession.instructionId) === String(instructionId)
+        ? (existingSession.openaiState || {})
+        : {};
+    const persistedPreviousResponseId =
+      usePreviousResponseId && typeof existingOpenAIState.lastResponseId === "string"
+        ? existingOpenAIState.lastResponseId
+        : null;
+    const persistedStableResponseId =
+      usePreviousResponseId && typeof existingOpenAIState.lastStableResponseId === "string"
+        ? existingOpenAIState.lastStableResponseId
+        : null;
 
     // Telemetry: แจ้งว่ามีคนกำลังใช้งาน InstructionAI
     notifyInstructionAIUsage(username, instruction.name, model).catch(() => { });
@@ -27430,16 +27274,21 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       lastHistoryMsg.role === "user" &&
       typeof lastHistoryMsg.content === "string" &&
       lastHistoryMsg.content.trim() === String(message).trim();
+    const currentUserInput = buildInstructionUserInputForResponses(message, images);
     const userHistoryText = buildInstructionUserHistoryText(message, images);
+    const fallbackTurnInput = [...safeHistory];
+    if (!isDuplicatedUserMessage || persistedPreviousResponseId) {
+      fallbackTurnInput.push({ role: "user", content: currentUserInput });
+    }
 
     const tools = mapInstructionToolsForResponses(chatService.getToolDefinitions());
     const effort = resolveInstructionReasoningEffort(model, thinking);
 
-    let nextInput = [...safeHistory];
-    if (!isDuplicatedUserMessage) {
-      nextInput.push({ role: "user", content: buildInstructionUserInputForResponses(message, images) });
-    }
-    const statelessInput = [...nextInput];
+    let nextInput =
+      usePreviousResponseId && persistedPreviousResponseId
+        ? [{ role: "user", content: currentUserInput }]
+        : [...fallbackTurnInput];
+    let statelessInput = [...fallbackTurnInput];
 
     const toolsUsed = [];
     const changes = [];
@@ -27450,29 +27299,74 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       reasoning_tokens: 0,
       total_tokens: 0,
     };
-    let previousResponseId = null;
+    let previousResponseId = persistedPreviousResponseId;
     let finalContent = "";
     const assistantMessages = [];
     let versionSnapshot = null;
     let unsavedWriteChanges = 0;
+    let conversationHeadResponseId =
+      typeof existingOpenAIState.lastResponseId === "string" ? existingOpenAIState.lastResponseId : null;
+    let conversationHeadResponseCreatedAt =
+      existingOpenAIState.lastResponseCreatedAt instanceof Date
+        ? existingOpenAIState.lastResponseCreatedAt
+        : existingOpenAIState.lastResponseCreatedAt
+          ? new Date(existingOpenAIState.lastResponseCreatedAt)
+          : null;
+    let conversationHeadResponseKind = "turn";
+    let conversationHeadParentResponseId =
+      typeof existingOpenAIState.lastResponseId === "string" ? existingOpenAIState.lastResponseId : null;
+    let recoveredFromChain = false;
 
     for (let i = 0; i < INSTRUCTION_MAX_TOOL_ITERATIONS; i++) {
       sendStatus(i === 0 ? "thinking" : "continuing", { iteration: i + 1, tool: null });
 
-      const payload = {
-        model: resolvedInstructionModel.model,
-        instructions: systemPrompt,
-        input: usePreviousResponseId ? nextInput : statelessInput,
-        tools,
-        tool_choice: "auto",
-        reasoning: { effort },
-        stream: true,
-      };
-      if (usePreviousResponseId && previousResponseId) {
-        payload.previous_response_id = previousResponseId;
-      }
+      let stream = null;
+      let attemptedRecovery = false;
+      while (!stream) {
+        const payload = {
+          model: resolvedInstructionModel.model,
+          instructions: systemPrompt,
+          input: usePreviousResponseId && previousResponseId ? nextInput : statelessInput,
+          tools,
+          tool_choice: "auto",
+          reasoning: { effort },
+          stream: true,
+        };
+        if (usePreviousResponseId) {
+          payload.store = true;
+        }
+        if (usePreviousResponseId && previousResponseId) {
+          payload.previous_response_id = previousResponseId;
+          conversationHeadParentResponseId = previousResponseId;
+        } else {
+          conversationHeadParentResponseId = null;
+        }
 
-      const stream = await openai.responses.create(payload);
+        try {
+          stream = await openai.responses.create(payload);
+        } catch (error) {
+          const canRecoverChain =
+            usePreviousResponseId &&
+            previousResponseId &&
+            previousResponseId === persistedPreviousResponseId &&
+            !attemptedRecovery &&
+            isInstructionPreviousResponseResolutionError(error);
+
+          if (!canRecoverChain) throw error;
+
+          attemptedRecovery = true;
+          recoveredFromChain = true;
+          previousResponseId = null;
+          statelessInput =
+            await buildInstructionRecoveryInputFromMirror({
+              db,
+              sessionId,
+              stableResponseId: persistedStableResponseId,
+              latestUserContent: currentUserInput,
+            }) || [...fallbackTurnInput];
+          nextInput = [...statelessInput];
+        }
+      }
       const streamedToolCallsByKey = new Map();
       const streamedToolCallKeyByOutputIndex = new Map();
       const streamedToolCallKeyByItemId = new Map();
@@ -27698,6 +27592,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
       if (streamedResponse) {
         addInstructionUsage(totalUsage, mapInstructionResponseUsage(streamedResponse.usage));
+        if (streamedResponse?.id) {
+          conversationHeadResponseId = streamedResponse.id;
+          conversationHeadResponseCreatedAt = getInstructionResponseCreatedAtDate(streamedResponse?.created_at);
+          conversationHeadResponseKind = "turn";
+        }
       }
 
       const toolCalls = Array.from(streamedToolCallsByKey.values())
@@ -27803,9 +27702,14 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             toolsUsed,
             stateful: usePreviousResponseId,
             conversationInput: statelessInput,
+            store: usePreviousResponseId ? true : null,
           });
           if (usePreviousResponseId && forcedSummary.responseId) {
             previousResponseId = forcedSummary.responseId;
+            conversationHeadParentResponseId = conversationHeadResponseId;
+            conversationHeadResponseId = forcedSummary.responseId;
+            conversationHeadResponseCreatedAt = forcedSummary.createdAt || conversationHeadResponseCreatedAt;
+            conversationHeadResponseKind = "forced_summary";
           }
           addInstructionUsage(totalUsage, forcedSummary.usage);
           if (forcedSummary.content) {
@@ -27832,17 +27736,15 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       try {
         const noteResult = await generateInstructionVersionNoteWithModel(openai, {
           model: resolvedInstructionModel.model,
-          previousResponseId,
+          previousResponseId: null,
           effort,
           toolsUsed,
           changes,
           finalContent,
-          stateful: usePreviousResponseId,
-          conversationInput: statelessInput,
+          stateful: false,
+          conversationInput: [],
+          store: usePreviousResponseId ? false : null,
         });
-        if (usePreviousResponseId && noteResult?.responseId) {
-          previousResponseId = noteResult.responseId;
-        }
         addInstructionUsage(totalUsage, noteResult?.usage);
         autoNote = sanitizeInstructionVersionNote(noteResult?.note || "");
       } catch (noteError) {
@@ -27890,6 +27792,38 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       ? toolsUsed.map(t => `[${t.tool}] ${t.summary || ""}`).join("\n")
       : null;
 
+    const fullHistory = isDuplicatedUserMessage && !persistedPreviousResponseId
+      ? [...safeHistory, ...assistantMessages]
+      : [...safeHistory, ...(userHistoryText ? [{ role: "user", content: userHistoryText }] : []), ...assistantMessages];
+    const sessionSet = {
+      sessionId,
+      instructionId,
+      instructionName: instruction.name || "",
+      history: fullHistory,
+      model: resolvedInstructionModel.model,
+      thinking,
+      totalTokens: totalUsage.total_tokens,
+      totalChanges: changes.length,
+      username,
+      updatedAt: new Date(),
+    };
+
+    if (usePreviousResponseId && conversationHeadResponseId) {
+      sessionSet.openaiState = {
+        enabled: true,
+        provider: normalizeProvider(apiKeyToUse.provider),
+        chainMode: "previous_response_id",
+        lastResponseId: conversationHeadResponseId,
+        lastResponseCreatedAt: conversationHeadResponseCreatedAt || new Date(),
+        lastStableResponseId: existingOpenAIState.lastStableResponseId || null,
+        lastStableResponseCreatedAt: existingOpenAIState.lastStableResponseCreatedAt || null,
+        rootResponseId: existingOpenAIState.rootResponseId || conversationHeadResponseId,
+        chainHealth: recoveredFromChain ? "rebuilding" : "healthy",
+        lastMirrorError: recoveredFromChain ? null : (existingOpenAIState.lastMirrorError || null),
+        lastMirroredAt: existingOpenAIState.lastMirroredAt || null,
+      };
+    }
+
     await logOpenAIUsage({
       apiKeyId: apiKeyToUse.keyId || null,
       botId: "instruction-chat",
@@ -27926,25 +27860,30 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
     // Auto-save session (even if client disconnected)
     try {
-      const fullHistory = isDuplicatedUserMessage
-        ? [...safeHistory, ...assistantMessages]
-        : [...safeHistory, ...(userHistoryText ? [{ role: "user", content: userHistoryText }] : []), ...assistantMessages];
       await db.collection("instruction_chat_sessions").updateOne(
         { sessionId },
         {
-          $set: {
-            sessionId, instructionId, instructionName: instruction.name || "",
-            history: fullHistory,
-            model: resolvedInstructionModel.model,
-            thinking,
-            totalTokens: totalUsage.total_tokens,
-            totalChanges: changes.length,
-            username, updatedAt: new Date(),
-          },
+          $set: sessionSet,
           $setOnInsert: { createdAt: new Date() }
         },
         { upsert: true }
       );
+
+      if (usePreviousResponseId && conversationHeadResponseId) {
+        queueInstructionResponseMirror({
+          db,
+          openai,
+          sessionId,
+          instructionId,
+          responseId: conversationHeadResponseId,
+          previousResponseId: conversationHeadParentResponseId,
+          model: resolvedInstructionModel.model,
+          thinking,
+          username,
+          responseKind: conversationHeadResponseKind,
+          rootResponseId: existingOpenAIState.rootResponseId || conversationHeadResponseId,
+        });
+      }
     } catch (saveErr) {
       console.warn("[InstructionChat] Auto-save session failed:", saveErr.message);
     }
@@ -28098,10 +28037,12 @@ app.delete("/api/instruction-ai/sessions/:sessionId", requireAdmin, async (req, 
     if (instructionId) {
       // Delete ALL sessions for this instruction
       const result = await db.collection("instruction_chat_sessions").deleteMany({ instructionId });
+      await db.collection(INSTRUCTION_RESPONSE_MIRROR_COLLECTION).deleteMany({ instructionId });
       res.json({ success: true, deletedCount: result.deletedCount });
     } else {
       // Delete single session
       await db.collection("instruction_chat_sessions").deleteOne({ sessionId: req.params.sessionId });
+      await db.collection(INSTRUCTION_RESPONSE_MIRROR_COLLECTION).deleteMany({ sessionId: req.params.sessionId });
       res.json({ success: true });
     }
   } catch (error) {
@@ -31758,28 +31699,36 @@ async function searchItemBroad(db, categoryName, keyword, botId, platform) {
 // Get all available tags in the system
 app.get("/admin/chat/available-tags", async (req, res) => {
   try {
+    if (isPostgresAppDocumentReadEnabled()) {
+      const tags = await maybeListTopAppDocumentArrayValues(
+        "user_tags",
+        "tags",
+        { limit: 50 },
+      );
+      return res.json({
+        success: true,
+        tags: tags.map((entry) => ({
+          tag: entry.value,
+          count: entry.count,
+        })),
+      });
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
     const tagsColl = db.collection("user_tags");
 
-    // ดึงแท็กทั้งหมดจากผู้ใช้ทั้งหมด
-    const allUserTags = await tagsColl.find({}).toArray();
-
-    // รวมแท็กทั้งหมดและนับจำนวนการใช้งาน
-    const tagCount = {};
-    allUserTags.forEach((userTag) => {
-      if (userTag.tags && Array.isArray(userTag.tags)) {
-        userTag.tags.forEach((tag) => {
-          tagCount[tag] = (tagCount[tag] || 0) + 1;
-        });
-      }
-    });
-
-    // แปลงเป็น array และเรียงตามความนิยม
-    const availableTags = Object.entries(tagCount)
-      .map(([tag, count]) => ({ tag, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 50); // เอาแค่ 50 tags ที่นิยมสุด
+    const availableTags = await tagsColl
+      .aggregate([
+        { $match: { tags: { $type: "array", $ne: [] } } },
+        { $unwind: "$tags" },
+        { $match: { tags: { $type: "string", $ne: "" } } },
+        { $group: { _id: "$tags", count: { $sum: 1 } } },
+        { $sort: { count: -1, _id: 1 } },
+        { $limit: 50 },
+        { $project: { _id: 0, tag: "$_id", count: 1 } },
+      ])
+      .toArray();
 
     res.json({ success: true, tags: availableTags });
   } catch (err) {
@@ -31897,7 +31846,6 @@ app.get("/api/settings", async (req, res) => {
       hiddenWords: "",
       replacementText: "[ข้อความถูกซ่อน]",
       enableStrictFiltering: true,
-      enableFollowUpAnalysis: true,
       followUpShowInChat: true,
       followUpShowInDashboard: true,
       orderRequiredFields: ORDER_REQUIRED_FIELDS_DEFAULT,
@@ -31924,7 +31872,6 @@ app.post("/api/settings/chat", async (req, res) => {
       maxQueueMessages,
       enableMessageMerging,
       showTokenUsage,
-      enableFollowUpAnalysis,
       followUpShowInChat,
       followUpShowInDashboard,
       audioAttachmentResponse,
@@ -31995,10 +31942,6 @@ app.post("/api/settings/chat", async (req, res) => {
     );
 
     const followUpUpdates = [
-      {
-        key: "enableFollowUpAnalysis",
-        value: parseOptionalBoolean(enableFollowUpAnalysis),
-      },
       { key: "followUpShowInChat", value: parseOptionalBoolean(followUpShowInChat) },
       {
         key: "followUpShowInDashboard",
@@ -32026,7 +31969,6 @@ app.post("/api/settings/chat", async (req, res) => {
       "maxQueueMessages",
       "enableMessageMerging",
       "showTokenUsage",
-      "enableFollowUpAnalysis",
       "followUpShowInChat",
       "followUpShowInDashboard",
       "audioAttachmentResponse",
@@ -36843,6 +36785,144 @@ async function getNormalizedChatHistory(userId, options = {}) {
   }
 }
 
+function normalizeUserIdList(userIds = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(userIds) ? userIds : [])
+        .map((value) =>
+          typeof value === "string" ? value.trim() : value?.toString?.() || "",
+        )
+        .filter(Boolean),
+    ),
+  );
+}
+
+async function buildUnreadCountMap(userIds = [], options = {}) {
+  const ids = normalizeUserIdList(userIds);
+  const map = new Map();
+  if (!ids.length) return map;
+
+  const { readAppDocumentsFromPostgres = false, db = null } = options || {};
+  if (readAppDocumentsFromPostgres) {
+    const docs = await maybeReadAppDocumentPayloads("user_unread_counts", ids);
+    docs.forEach((doc) => {
+      const userId = typeof doc?.userId === "string" ? doc.userId.trim() : "";
+      if (userId) map.set(userId, Number(doc.unreadCount || 0));
+    });
+    return map;
+  }
+
+  if (!db) return map;
+  const docs = await db
+    .collection("user_unread_counts")
+    .find({ userId: { $in: ids } })
+    .project({ userId: 1, unreadCount: 1 })
+    .toArray();
+  docs.forEach((doc) => {
+    if (doc?.userId) map.set(doc.userId, Number(doc.unreadCount || 0));
+  });
+  return map;
+}
+
+async function buildUserAiStatusMap(userIds = [], options = {}) {
+  const ids = normalizeUserIdList(userIds);
+  const map = new Map();
+  if (!ids.length) return map;
+
+  const { readAppDocumentsFromPostgres = false, db = null } = options || {};
+  if (readAppDocumentsFromPostgres) {
+    const docs = await maybeReadAppDocumentPayloads("active_user_status", ids);
+    docs.forEach((doc) => {
+      const userId =
+        typeof doc?.senderId === "string" ? doc.senderId.trim() : "";
+      if (userId) map.set(userId, doc.aiEnabled !== false);
+    });
+    return map;
+  }
+
+  if (!db) return map;
+  const docs = await db
+    .collection("active_user_status")
+    .find({ senderId: { $in: ids } })
+    .project({ senderId: 1, aiEnabled: 1 })
+    .toArray();
+  docs.forEach((doc) => {
+    if (doc?.senderId) map.set(doc.senderId, doc.aiEnabled !== false);
+  });
+  return map;
+}
+
+async function buildOrderCountMap(userIds = [], options = {}) {
+  const ids = normalizeUserIdList(userIds);
+  const map = new Map();
+  if (!ids.length) return map;
+
+  const { readAppDocumentsFromPostgres = false, db = null } = options || {};
+  if (readAppDocumentsFromPostgres) {
+    const counts = await maybeCountAppDocumentsByPayloadFieldValues(
+      "orders",
+      "userId",
+      ids,
+    );
+    counts.forEach((entry) => {
+      if (entry?.value) map.set(entry.value, Number(entry.count || 0));
+    });
+    return map;
+  }
+
+  if (!db) return map;
+  const groups = await db
+    .collection("orders")
+    .aggregate([
+      { $match: { userId: { $in: ids } } },
+      { $group: { _id: "$userId", orderCount: { $sum: 1 } } },
+    ])
+    .toArray();
+  groups.forEach((entry) => {
+    if (entry?._id) map.set(entry._id, Number(entry.orderCount || 0));
+  });
+  return map;
+}
+
+async function listActiveFollowUpTasksForUsers(userIds = [], options = {}) {
+  const ids = normalizeUserIdList(userIds);
+  if (!ids.length) return [];
+
+  const { readAppDocumentsFromPostgres = false, db = null } = options || {};
+  if (readAppDocumentsFromPostgres) {
+    return maybeFindActiveFollowUpTasksForUsers(ids, { limit: ids.length });
+  }
+
+  if (!db) return [];
+  return db
+    .collection("follow_up_tasks")
+    .aggregate([
+      {
+        $match: {
+          userId: { $in: ids },
+          canceled: { $ne: true },
+          completed: { $ne: true },
+          nextScheduledAt: { $exists: true, $ne: null },
+        },
+      },
+      { $sort: { userId: 1, nextScheduledAt: 1, updatedAt: -1 } },
+      { $group: { _id: "$userId", task: { $first: "$$ROOT" } } },
+      { $replaceRoot: { newRoot: "$task" } },
+      {
+        $project: {
+          userId: 1,
+          platform: 1,
+          botId: 1,
+          nextScheduledAt: 1,
+          nextRoundIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+    ])
+    .toArray();
+}
+
 /**
  * ฟังก์ชันสำหรับดึงรายชื่อผู้ใช้พร้อมข้อความล่าสุดที่แปลงแล้ว
  * @returns {Array} รายการผู้ใช้พร้อมข้อมูลที่แปลงแล้ว
@@ -37171,47 +37251,6 @@ async function getNormalizedChatUsers(options = {}) {
     };
 
     const userIds = users.map((user) => user._id).filter(Boolean);
-    const followStatuses =
-      userIds.length > 0
-        ? readAppDocumentsFromPostgres
-          ? await maybeReadAppDocumentPayloads("follow_up_status", userIds)
-          : await followColl.find({ senderId: { $in: userIds } }).toArray()
-        : [];
-    const followMap = {};
-    followStatuses.forEach((status) => {
-      followMap[status.senderId] = status;
-    });
-
-    // ดึงข้อมูลแท็ก
-    const userTags =
-      userIds.length > 0
-        ? readAppDocumentsFromPostgres
-          ? await maybeReadAppDocumentPayloads("user_tags", userIds)
-          : await db
-            .collection("user_tags")
-            .find({ userId: { $in: userIds } })
-            .toArray()
-        : [];
-    const tagsMap = {};
-    userTags.forEach((userTag) => {
-      tagsMap[userTag.userId] = userTag.tags || [];
-    });
-
-    // ดึงข้อมูลสถานะการซื้อ
-    const purchaseStatuses =
-      userIds.length > 0
-        ? readAppDocumentsFromPostgres
-          ? await maybeReadAppDocumentPayloads("user_purchase_status", userIds)
-          : await db
-            .collection("user_purchase_status")
-            .find({ userId: { $in: userIds } })
-            .toArray()
-        : [];
-    const purchaseMap = {};
-    purchaseStatuses.forEach((status) => {
-      purchaseMap[status.userId] = status.hasPurchased;
-    });
-
     const profileDocumentIds = [];
     if (readAppDocumentsFromPostgres) {
       const profileKeySet = new Set();
@@ -37229,14 +37268,29 @@ async function getNormalizedChatUsers(options = {}) {
       });
       profileDocumentIds.push(...profileKeySet);
     }
-    const profileDocs =
-      userIds.length > 0
-        ? readAppDocumentsFromPostgres
-          ? await maybeReadAppDocumentPayloads(
-            "user_profiles",
-            profileDocumentIds,
-          )
-          : await profileColl
+
+    const [
+      followStatuses,
+      userTags,
+      purchaseStatuses,
+      profileDocs,
+    ] = userIds.length > 0
+      ? await Promise.all([
+        readAppDocumentsFromPostgres
+          ? maybeReadAppDocumentPayloads("follow_up_status", userIds)
+          : followColl.find({ senderId: { $in: userIds } }).toArray(),
+        readAppDocumentsFromPostgres
+          ? maybeReadAppDocumentPayloads("user_tags", userIds)
+          : db.collection("user_tags").find({ userId: { $in: userIds } }).toArray(),
+        readAppDocumentsFromPostgres
+          ? maybeReadAppDocumentPayloads("user_purchase_status", userIds)
+          : db
+            .collection("user_purchase_status")
+            .find({ userId: { $in: userIds } })
+            .toArray(),
+        readAppDocumentsFromPostgres
+          ? maybeReadAppDocumentPayloads("user_profiles", profileDocumentIds)
+          : profileColl
             .find({ userId: { $in: userIds } })
             .project({
               userId: 1,
@@ -37245,125 +37299,45 @@ async function getNormalizedChatUsers(options = {}) {
               pictureUrl: 1,
               statusMessage: 1,
             })
-            .toArray()
-        : [];
+            .toArray(),
+      ])
+      : [[], [], [], []];
+
+    const followMap = {};
+    followStatuses.forEach((status) => {
+      followMap[status.senderId] = status;
+    });
+
+    const tagsMap = {};
+    userTags.forEach((userTag) => {
+      tagsMap[userTag.userId] = userTag.tags || [];
+    });
+
+    const purchaseMap = {};
+    purchaseStatuses.forEach((status) => {
+      purchaseMap[status.userId] = status.hasPurchased;
+    });
+
     const profileMap = new Map();
     profileDocs.forEach((doc) => {
       const key = `${doc.userId}:${doc.platform || "line"}`;
       profileMap.set(key, doc);
     });
 
-    if (!readAppDocumentsFromPostgres) {
-      const lineProfileRefreshTargets = [];
-      const seenLineProfileTarget = new Set();
-      users.forEach((user) => {
-        const userId =
-          typeof user._id === "string"
-            ? user._id
-            : user._id?.toString?.() || "";
-        if (!userId) return;
-
-        const platform =
-          typeof user.platform === "string"
-            ? user.platform.toLowerCase()
-            : "line";
-        if (platform !== "line") return;
-
-        const botId = normalizeFollowUpBotId(user.botId);
-        const existingProfile = profileMap.get(`${userId}:line`) || null;
-        if (isUsableLineProfile(existingProfile, userId)) return;
-
-        const targetKey = `${userId}:${botId || "default"}`;
-        if (seenLineProfileTarget.has(targetKey)) return;
-        seenLineProfileTarget.add(targetKey);
-        lineProfileRefreshTargets.push({ userId, botId });
-      });
-
-      const maxLineProfileRefreshPerRequest = 8;
-      for (const target of lineProfileRefreshTargets.slice(
-        0,
-        maxLineProfileRefreshPerRequest,
-      )) {
-        const refreshedProfile = await saveOrUpdateUserProfile(
-          target.userId,
-          target.botId,
-        );
-        if (refreshedProfile) {
-          profileMap.set(`${target.userId}:line`, refreshedProfile);
-        }
-      }
-    }
-
-    // ดึงข้อมูลออเดอร์
-    let userOrders = [];
-    if (userIds.length > 0) {
-      if (readAppDocumentsFromPostgres) {
-        const orderGroups = await Promise.all(
-          userIds.map((userId) =>
-            maybeFindAppDocumentsByPayloadField("orders", "userId", userId, {
-              limit: 1000,
-            }),
-          ),
-        );
-        userOrders = orderGroups.flat();
-      } else {
-        userOrders = await db
-          .collection("orders")
-          .find({ userId: { $in: userIds } })
-          .toArray();
-      }
-    }
-    const ordersMap = {};
-    userOrders.forEach((order) => {
-      if (!ordersMap[order.userId]) {
-        ordersMap[order.userId] = [];
-      }
-      ordersMap[order.userId].push(order);
-    });
-
-    // ดึงงานติดตาม (follow-up tasks) ที่ยัง active
-    let followUpTasks = [];
-    if (userIds.length > 0) {
-      if (readAppDocumentsFromPostgres) {
-        const taskGroups = await Promise.all(
-          userIds.map((userId) =>
-            maybeFindAppDocumentsByPayloadField(
-              "follow_up_tasks",
-              "userId",
-              userId,
-              { limit: 100 },
-            ),
-          ),
-        );
-        followUpTasks = taskGroups.flat().filter((task) => {
-          return (
-            task &&
-            task.canceled !== true &&
-            task.completed !== true &&
-            task.nextScheduledAt
-          );
-        });
-      } else {
-        followUpTasks = await db
-          .collection("follow_up_tasks")
-          .find({
-            userId: { $in: userIds },
-            canceled: { $ne: true },
-            completed: { $ne: true },
-            nextScheduledAt: { $ne: null },
-          })
-          .project({
-            userId: 1,
-            platform: 1,
-            botId: 1,
-            nextScheduledAt: 1,
-            nextRoundIndex: 1,
-            createdAt: 1,
-            updatedAt: 1,
-          })
-          .toArray();
-      }
-    }
+    const [
+      unreadCountMap,
+      aiStatusMap,
+      orderCountMap,
+      followUpTasks,
+    ] = await Promise.all([
+      buildUnreadCountMap(userIds, { readAppDocumentsFromPostgres, db }),
+      buildUserAiStatusMap(userIds, { readAppDocumentsFromPostgres, db }),
+      buildOrderCountMap(userIds, { readAppDocumentsFromPostgres, db }),
+      listActiveFollowUpTasksForUsers(userIds, {
+        readAppDocumentsFromPostgres,
+        db,
+      }),
+    ]);
 
     const followUpTaskMap = new Map();
     const followUpTaskByUserId = new Map();
@@ -37394,6 +37368,13 @@ async function getNormalizedChatUsers(options = {}) {
     });
 
     const contextCache = new Map();
+    const getCachedFollowUpConfig = (platform, botId) => {
+      const contextKey = `${platform || "line"}:${botId || "default"}`;
+      if (!contextCache.has(contextKey)) {
+        contextCache.set(contextKey, getFollowUpConfigForContext(platform, botId));
+      }
+      return contextCache.get(contextKey);
+    };
 
     let filterConfig = null;
     if (applyFilter) {
@@ -37417,17 +37398,11 @@ async function getNormalizedChatUsers(options = {}) {
               : user._id?.toString?.() || "";
           if (!userId) return null;
 
-          const unreadCount = await getUserUnreadCount(userId);
+          const unreadCount = unreadCountMap.get(userId) || 0;
           const platform = user.platform || "line";
           const botId = normalizeFollowUpBotId(user.botId);
           const channelInfo = buildChannelInfo(platform, botId);
-          const contextKey = `${platform}:${botId || "default"}`;
-
-          let config = contextCache.get(contextKey);
-          if (!config) {
-            config = await getFollowUpConfigForContext(platform, botId);
-            contextCache.set(contextKey, config);
-          }
+          const config = await getCachedFollowUpConfig(platform, botId);
 
           // ดึงข้อมูลโปรไฟล์
           const profileKey = `${userId}:${platform}`;
@@ -37463,12 +37438,9 @@ async function getNormalizedChatUsers(options = {}) {
             }
           }
 
-          // ดึงสถานะ AI ต่อผู้ใช้
-          let aiEnabled = true;
-          try {
-            const status = await getUserStatus(userId);
-            aiEnabled = !!status.aiEnabled;
-          } catch (_) { }
+          const aiEnabled = aiStatusMap.has(userId)
+            ? aiStatusMap.get(userId) !== false
+            : true;
 
           const followStatus = followMap[userId];
           const showFollowUp = config.showInChat !== false;
@@ -37501,10 +37473,8 @@ async function getNormalizedChatUsers(options = {}) {
             hasPurchased = hasFollowUp;
           }
 
-          // ดึงข้อมูลออเดอร์
-          const userOrders = ordersMap[userId] || [];
-          const hasOrders = userOrders.length > 0;
-          const orderCount = userOrders.length;
+          const orderCount = orderCountMap.get(userId) || 0;
+          const hasOrders = orderCount > 0;
 
           const profileDisplayName =
             userProfile && typeof userProfile.displayName === "string"
@@ -37539,7 +37509,6 @@ async function getNormalizedChatUsers(options = {}) {
             hasOrders,
             orderCount,
             followUp: {
-              analysisEnabled: config.analysisEnabled !== false,
               showInChat: showFollowUp,
               showInDashboard: config.showInDashboard !== false,
               isFollowUp: showFollowUp && hasActiveFollowUpTask,

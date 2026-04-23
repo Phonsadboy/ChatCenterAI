@@ -27,7 +27,6 @@ class ChatManager {
 
         // Follow-up config
         this.followUpConfig = {
-            analysisEnabled: true,
             showInChat: true
         };
 
@@ -40,6 +39,9 @@ class ChatManager {
             notes: '',
             updatedAt: null,
         };
+        this.userLoadPromise = null;
+        this.userLoadQueued = false;
+        this.userLoadTimer = null;
 
         // URL focus param
         this.pendingFocusUserId = this.getFocusUserIdFromQuery();
@@ -235,7 +237,7 @@ class ChatManager {
             if (data.userId === this.currentUserId) {
                 this.clearChatDisplay();
             }
-            this.loadUsers();
+            this.scheduleLoadUsers();
         });
 
         this.socket.on('userTagsUpdated', (data) => {
@@ -263,7 +265,7 @@ class ChatManager {
                 this.loadOrders();
             }
             // Update user list to show order badge
-            this.loadUsers();
+            this.scheduleLoadUsers();
         });
 
         this.socket.on('orderUpdated', (data) => {
@@ -279,7 +281,7 @@ class ChatManager {
                 this.loadOrders();
             }
             // Update user list
-            this.loadUsers();
+            this.scheduleLoadUsers();
         });
 
         // Typing indicator
@@ -1056,7 +1058,6 @@ class ChatManager {
                 orderCount: user.orderCount || 0,
                 unreadCount: user.unreadCount || 0,
                 followUp: user.followUp ? {
-                    analysisEnabled: user.followUp.analysisEnabled !== false,
                     showInChat: user.followUp.showInChat !== false,
                     isFollowUp: !!user.followUp.isFollowUp,
                     nextScheduledAt: user.followUp.nextScheduledAt || null
@@ -1113,6 +1114,38 @@ class ChatManager {
     // ========================================
 
     async loadUsers() {
+        if (this.userLoadTimer) {
+            clearTimeout(this.userLoadTimer);
+            this.userLoadTimer = null;
+        }
+        if (this.userLoadPromise) {
+            this.userLoadQueued = true;
+            return this.userLoadPromise;
+        }
+
+        this.userLoadPromise = this.fetchUsers();
+        try {
+            return await this.userLoadPromise;
+        } finally {
+            this.userLoadPromise = null;
+            if (this.userLoadQueued) {
+                this.userLoadQueued = false;
+                this.scheduleLoadUsers(250);
+            }
+        }
+    }
+
+    scheduleLoadUsers(delay = 250) {
+        if (this.userLoadTimer) {
+            clearTimeout(this.userLoadTimer);
+        }
+        this.userLoadTimer = setTimeout(() => {
+            this.userLoadTimer = null;
+            this.loadUsers();
+        }, delay);
+    }
+
+    async fetchUsers() {
         try {
             const focusQuery = this.pendingFocusUserId
                 ? `?focus=${encodeURIComponent(this.pendingFocusUserId)}`
@@ -2924,7 +2957,7 @@ class ChatManager {
         }
 
         // Update user list
-        this.loadUsers();
+        this.scheduleLoadUsers();
         this.updateDebugPanel();
     }
 
@@ -3012,7 +3045,7 @@ class ChatManager {
         // Refresh user list every 30 seconds
         setInterval(() => {
             if (!document.hidden) {
-                this.loadUsers();
+                this.scheduleLoadUsers();
             }
         }, 30000);
     }

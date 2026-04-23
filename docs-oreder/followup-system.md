@@ -37,7 +37,7 @@
 - ฟิลด์หลัก:
   - platform ("line" หรือ "facebook")
   - botId (null = ค่าเริ่มต้นของแพลตฟอร์มนั้น)
-  - settings: { analysisEnabled, showInChat, showInDashboard, autoFollowUpEnabled, rounds, orderPromptInstructions, model }
+  - settings: { showInChat, showInDashboard, autoFollowUpEnabled, rounds }
   - updatedAt
 - การ merge config ใช้ลำดับ: baseConfig (settings collection) → platform default (botId:null) → specific botId
 
@@ -49,18 +49,15 @@
 
 ## การตั้งค่า (Settings)
 ### Global settings ใน collection settings
-- enableFollowUpAnalysis (default: true)
 - followUpShowInChat (default: true)
 - followUpShowInDashboard (default: true)
 - followUpAutoEnabled (default: false)
 - followUpRounds (default: 2 รอบที่ 10/20 นาที)
-- followUpOrderPromptInstructions (default prompt สำหรับสกัดออเดอร์)
 - หมายเหตุ: followUpRounds และ followUpAutoEnabled ไม่มีหน้า UI ตรง ต้องปรับผ่าน DB หรือทำ endpoint เพิ่มเอง
 
 ### API ที่ใช้ปรับ global
 - `GET /api/settings` คืนค่ารวมทั้งหมด
 - `POST /api/settings/chat` รองรับ:
-  - enableFollowUpAnalysis
   - followUpShowInChat
   - followUpShowInDashboard
   - (และค่าอื่นของหน้า chat settings)
@@ -72,7 +69,6 @@
   - กำหนดรอบติดตาม (delay + message + images)
   - Reset กลับค่าเริ่มต้น (ลบ override → ใช้ base config)
 - ผ่าน API `POST /admin/followup/page-settings`
-  - สามารถส่ง orderPromptInstructions, model เพิ่มได้ (UI ไม่โชว์)
   - ลบ override ด้วย `DELETE /admin/followup/page-settings`
 
 ### Environment variables ที่เกี่ยวข้อง

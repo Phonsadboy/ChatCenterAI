@@ -1180,14 +1180,13 @@ class InstructionChatService {
     }
 
     async get_followup_config({ pageKeys } = {}) {
-        const keys = ["followUpAutoEnabled", "followUpRounds", "followUpOrderPromptInstructions"];
+        const keys = ["followUpAutoEnabled", "followUpRounds"];
         const map = await this._getSettingsMap(keys);
 
         const globalRounds = Array.isArray(map.followUpRounds) ? map.followUpRounds : [];
         const globalConfig = {
             scope: "global",
             autoFollowUpEnabled: typeof map.followUpAutoEnabled === "boolean" ? map.followUpAutoEnabled : false,
-            orderPromptInstructions: typeof map.followUpOrderPromptInstructions === "string" ? map.followUpOrderPromptInstructions : "",
             totalRounds: globalRounds.length,
             rounds: globalRounds.map((r, i) => {
                 const { message, images } = this._getRoundContent(r);
@@ -1219,7 +1218,6 @@ class InstructionChatService {
                 botId: parsed.botId,
                 hasOverride: !!doc,
                 autoFollowUpEnabled: typeof settings.autoFollowUpEnabled === "boolean" ? settings.autoFollowUpEnabled : globalConfig.autoFollowUpEnabled,
-                orderPromptInstructions: typeof settings.orderPromptInstructions === "string" ? settings.orderPromptInstructions : globalConfig.orderPromptInstructions,
                 totalRounds: effectiveRounds.length,
                 rounds: effectiveRounds.map((r, i) => {
                     const { message, images } = this._getRoundContent(r);
@@ -1343,7 +1341,7 @@ class InstructionChatService {
         return result;
     }
 
-    async update_followup_settings({ autoFollowUpEnabled, orderPromptInstructions, pageKeys }) {
+    async update_followup_settings({ autoFollowUpEnabled, pageKeys }) {
         // If pageKeys provided, write to per-page settings
         if (Array.isArray(pageKeys) && pageKeys.length > 0) {
             const results = [];
@@ -1357,11 +1355,6 @@ class InstructionChatService {
                     setFields["settings.autoFollowUpEnabled"] = autoFollowUpEnabled;
                     updates.push({ field: "autoFollowUpEnabled", value: autoFollowUpEnabled });
                 }
-                if (typeof orderPromptInstructions === "string" && orderPromptInstructions.trim().length > 0) {
-                    const trimmed = orderPromptInstructions.trim().slice(0, 4000);
-                    setFields["settings.orderPromptInstructions"] = trimmed;
-                    updates.push({ field: "orderPromptInstructions", value: trimmed.substring(0, 100) + (trimmed.length > 100 ? "..." : "") });
-                }
 
                 if (!Object.keys(setFields).length) { results.push({ pageKey: pk, error: "ไม่มีการเปลี่ยนแปลง" }); continue; }
 
@@ -1371,9 +1364,6 @@ class InstructionChatService {
                 };
                 if (Object.prototype.hasOwnProperty.call(setFields, "settings.autoFollowUpEnabled")) {
                     nextSettings.autoFollowUpEnabled = setFields["settings.autoFollowUpEnabled"];
-                }
-                if (Object.prototype.hasOwnProperty.call(setFields, "settings.orderPromptInstructions")) {
-                    nextSettings.orderPromptInstructions = setFields["settings.orderPromptInstructions"];
                 }
                 await this._upsertFollowUpPageSettings(
                     parsed.platform,
@@ -1393,13 +1383,8 @@ class InstructionChatService {
             await this._setSettingValue("followUpAutoEnabled", autoFollowUpEnabled);
             updates.push({ field: "autoFollowUpEnabled", value: autoFollowUpEnabled });
         }
-        if (typeof orderPromptInstructions === "string" && orderPromptInstructions.trim().length > 0) {
-            const trimmed = orderPromptInstructions.trim().slice(0, 4000);
-            await this._setSettingValue("followUpOrderPromptInstructions", trimmed);
-            updates.push({ field: "orderPromptInstructions", value: trimmed.substring(0, 100) + (trimmed.length > 100 ? "..." : "") });
-        }
 
-        if (!updates.length) return { error: "ไม่มีการเปลี่ยนแปลง — ระบุ autoFollowUpEnabled หรือ orderPromptInstructions" };
+        if (!updates.length) return { error: "ไม่มีการเปลี่ยนแปลง — ระบุ autoFollowUpEnabled" };
 
         if (this._resetFollowUpConfigCache) this._resetFollowUpConfigCache();
         return { success: true, scope: "global", updated: updates };
@@ -2249,7 +2234,7 @@ class InstructionChatService {
             { type: "function", function: { name: "list_followup_pages", description: "ดูรายการเพจทั้งหมด (LINE + Facebook) พร้อม pageKey, สถานะติดตาม, จำนวน rounds — ใช้เพื่อดู pageKey สำหรับ tools อื่น", parameters: { type: "object", properties: {} } } },
             { type: "function", function: { name: "get_followup_config", description: "ดูการตั้งค่าระบบติดตามลูกค้า — ถ้าระบุ pageKeys จะดึง config เฉพาะเพจ, ถ้าไม่ระบุจะดึง config กลาง", parameters: { type: "object", properties: { pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey (เช่น ['line:abc123', 'facebook:xyz456']) — ถ้าไม่ระบุจะดู config กลาง" } } } } },
             { type: "function", function: { name: "get_followup_round_detail", description: "ดูรายละเอียด round ติดตามลูกค้า: ข้อความ, delay, รูปภาพ — ระบุ pageKey เพื่อดูของเพจเฉพาะ", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" }, pageKey: { type: "string", description: "pageKey ของเพจ เช่น 'line:abc123' (optional, ถ้าไม่ระบุจะดู global)" } }, required: ["roundIndex"] } } },
-            { type: "function", function: { name: "update_followup_settings", description: "แก้ไขการตั้งค่าระบบติดตามลูกค้า — ระบุ pageKeys (array) เพื่อแก้เฉพาะเพจหลายเพจพร้อมกัน, ถ้าไม่ระบุจะแก้ config กลาง", parameters: { type: "object", properties: { autoFollowUpEnabled: { type: "boolean", description: "เปิด/ปิดระบบติดตามอัตโนมัติ" }, orderPromptInstructions: { type: "string", description: "คำสั่ง prompt สำหรับวิเคราะห์ออเดอร์" }, pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey เพื่อแก้เฉพาะเพจ — รองรับหลายเพจพร้อมกัน" } } } } },
+            { type: "function", function: { name: "update_followup_settings", description: "แก้ไขการตั้งค่าระบบติดตามลูกค้า — ระบุ pageKeys (array) เพื่อแก้เฉพาะเพจหลายเพจพร้อมกัน, ถ้าไม่ระบุจะแก้ config กลาง", parameters: { type: "object", properties: { autoFollowUpEnabled: { type: "boolean", description: "เปิด/ปิดระบบติดตามอัตโนมัติ" }, pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey เพื่อแก้เฉพาะเพจ — รองรับหลายเพจพร้อมกัน" } } } } },
             { type: "function", function: { name: "update_followup_round", description: "แก้ไขข้อความหรือ delay ของ round ติดตามลูกค้า — ระบุ pageKeys เพื่อแก้หลายเพจพร้อมกัน, ถ้าไม่ระบุจะแก้ global", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" }, message: { type: "string", description: "ข้อความใหม่" }, delayMinutes: { type: "number", description: "ระยะเวลารอ (นาที)" }, pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey เพื่อแก้เฉพาะเพจ" } }, required: ["roundIndex"] } } },
             { type: "function", function: { name: "manage_followup_images", description: "เพิ่มหรือลบรูปภาพใน round ติดตามลูกค้า — ระบุ pageKeys เพื่อแก้หลายเพจพร้อมกัน", parameters: { type: "object", properties: { roundIndex: { type: "number", description: "ลำดับ round (0-indexed)" }, action: { type: "string", enum: ["add", "remove"] }, assetId: { type: "string", description: "ID ของ asset จาก list_followup_assets" }, imageUrl: { type: "string", description: "URL ของรูปภาพ (ถ้าไม่มี assetId)" }, pageKeys: { type: "array", items: { type: "string" }, description: "รายการ pageKey เพื่อแก้เฉพาะเพจ" } }, required: ["roundIndex", "action"] } } },
             { type: "function", function: { name: "list_followup_assets", description: "ดูรายการรูปภาพที่อัปโหลดไว้สำหรับระบบติดตามลูกค้า — ใช้เพื่อดู assetId ที่จะ reference ใน manage_followup_images", parameters: { type: "object", properties: {} } } },
