@@ -1,195 +1,201 @@
-<% const current=typeof activePage !=='undefined' ? activePage : '' ; const signedInUser=typeof adminUser !=='undefined'
-  && adminUser ? adminUser : null; const roleBadgeLabel=signedInUser ? (signedInUser.role==='superadmin' ? 'แอดมินใหญ่'
-  : 'ผู้ดูแลระบบ' ) : '' ; %>
-  <nav class="navbar navbar-expand-lg navbar-light app-navbar">
-    <div class="container">
-      <div class="d-flex align-items-center">
-        <a class="navbar-brand me-2" href="/admin/dashboard">
-          <i class="fas fa-robot"></i> จัดการ AI
-        </a>
-        <select id="globalFontSelector"
-          class="form-select form-select-sm border-0 bg-transparent text-muted shadow-none py-0 ps-0 pe-4"
-          style="width: auto; font-size: 0.8rem; cursor: pointer; height: auto;">
-          <option value="'Mali', 'Inter', sans-serif">Mali (Default)</option>
-          <option value="'Sarabun', sans-serif">Sarabun</option>
-          <option value="'Krub', sans-serif">Krub</option>
-          <option value="'Mitr', sans-serif">Mitr</option>
-          <option value="'Pridi', serif">Pridi</option>
-          <option value="'Niramit', sans-serif">Niramit</option>
-        </select>
-      </div>
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-        <span class="navbar-toggler-icon"></span>
+<%
+  const current = typeof activePage !== 'undefined' ? activePage : '';
+  const signedInUser = typeof adminUser !== 'undefined' && adminUser ? adminUser : null;
+  const roleBadgeLabel = signedInUser ? (signedInUser.role === 'superadmin' ? 'แอดมินใหญ่' : 'ผู้ดูแลระบบ') : '';
+
+  const pageTitles = {
+    dashboard: 'แดชบอร์ด',
+    categories: 'จัดการข้อมูล',
+    settings: 'ตั้งค่า',
+    settings2: 'ตั้งค่า',
+    'agent-forge': 'ระบบโรงหลอมเอเจนต์',
+    'agent-forge-run': 'รันโรงหลอมเอเจนต์',
+    'instruction-ai': 'InstructionAI',
+    'instruction-chat': 'Instruction Chat',
+    'api-usage': 'สถิติ API',
+    chat: 'แชท',
+    orders: 'ออเดอร์',
+    followup: 'ติดตามลูกค้า',
+    broadcast: 'บรอดแคสต์',
+    'facebook-posts': 'โพสต์ FB / คอมเมนต์',
+    'facebook-comment': 'คอมเมนต์ Facebook',
+    'customer-stats': 'สถิติลูกค้า',
+  };
+  const pageTitle = pageTitles[current] || 'จัดการ AI';
+
+  const navGroups = [
+    {
+      title: 'AI & ระบบ',
+      items: [
+        { page: 'dashboard', label: 'แดชบอร์ด', icon: 'fa-tachometer-alt', href: '/admin/dashboard' },
+        { page: 'categories', label: 'จัดการข้อมูล', icon: 'fa-database', href: '/admin/categories' },
+        { page: 'settings2', label: 'ตั้งค่า', icon: 'fa-cogs', href: '/admin/settings2' },
+        { page: 'agent-forge', label: 'โรงหลอมเอเจนต์', icon: 'fa-industry', href: '/admin/agent-forge' },
+        { page: 'instruction-ai', label: 'InstructionAI', icon: 'fa-wand-magic-sparkles', href: '/admin/instruction-ai' },
+        { page: 'api-usage', label: 'สถิติ API', icon: 'fa-chart-line', href: '/admin/api-usage' },
+      ],
+    },
+    {
+      title: 'ลูกค้า',
+      items: [
+        { page: 'chat', label: 'แชท', icon: 'fa-comments', href: '/admin/chat', badgeId: 'chatNotificationBadge' },
+        { page: 'orders', label: 'ออเดอร์', icon: 'fa-shopping-basket', href: '/admin/orders' },
+        { page: 'followup', label: 'ติดตามลูกค้า', icon: 'fa-user-clock', href: '/admin/followup' },
+        { page: 'broadcast', label: 'บรอดแคสต์', icon: 'fa-bullhorn', href: '/admin/broadcast' },
+        { page: 'facebook-posts', label: 'FB โพสต์/คอมเมนต์', icon: 'fa-comment-dots', href: '/admin/facebook-posts' },
+        { page: 'customer-stats', label: 'สถิติลูกค้า', icon: 'fa-chart-bar', href: '/admin/customer-stats' },
+      ],
+    },
+  ];
+
+  const isActive = (page) => {
+    if (!current || !page) return false;
+    if (page === 'settings2') return current === 'settings' || current === 'settings2';
+    if (page === 'instruction-ai') return current === 'instruction-ai' || current === 'instruction-chat';
+    return current === page;
+  };
+
+  // Mobile bottom nav primary items (max 4 + more)
+  const mobilePrimary = [
+    { page: 'dashboard', label: 'แดชบอร์ด', icon: 'fa-tachometer-alt', href: '/admin/dashboard' },
+    { page: 'chat', label: 'แชท', icon: 'fa-comments', href: '/admin/chat', badgeId: 'chatNotificationBadge' },
+    { page: 'orders', label: 'ออเดอร์', icon: 'fa-shopping-basket', href: '/admin/orders' },
+    { page: 'settings2', label: 'ตั้งค่า', icon: 'fa-cogs', href: '/admin/settings2' },
+  ];
+%>
+
+<!-- Layout CSS/JS -->
+<link href="/css/admin-layout.css" rel="stylesheet">
+<script src="/js/admin-layout.js" defer></script>
+<script>window.__adminActivePage = '<%= current %>';</script>
+
+<!-- ======================== Top Bar ======================== -->
+<header class="app-topbar" id="appTopbar">
+  <div class="app-topbar__left">
+    <!-- Desktop sidebar toggle -->
+    <button class="app-topbar__toggle" data-layout-toggle="desktop" data-desktop-toggle aria-label="พับ/ขยายเมนูด้านข้าง">
+      <i class="fas fa-bars"></i>
+    </button>
+    <!-- Mobile sidebar toggle -->
+    <button class="app-topbar__toggle" data-layout-toggle="mobile" data-mobile-toggle aria-label="เปิดเมนูด้านข้าง">
+      <i class="fas fa-bars"></i>
+    </button>
+    <a class="app-topbar__brand d-none d-sm-flex" href="/admin/dashboard">
+      <i class="fas fa-robot"></i>
+      <span>จัดการ AI</span>
+    </a>
+    <span class="app-topbar__title"><%= pageTitle %></span>
+  </div>
+
+  <div class="app-topbar__spacer"></div>
+
+  <div class="app-topbar__right">
+    <select id="globalFontSelector" class="app-topbar__font d-none d-lg-block">
+      <option value="'Mali', 'Inter', sans-serif">Mali</option>
+      <option value="'Sarabun', sans-serif">Sarabun</option>
+      <option value="'Krub', sans-serif">Krub</option>
+      <option value="'Mitr', sans-serif">Mitr</option>
+      <option value="'Pridi', serif">Pridi</option>
+      <option value="'Niramit', sans-serif">Niramit</option>
+    </select>
+
+    <% if (signedInUser) { %>
+      <span class="app-topbar__role">
+        <i class="fas fa-user-shield"></i>
+        <%= roleBadgeLabel %>
+        <% if (signedInUser.label) { %>
+          <span class="text-muted">&middot; <%= signedInUser.label %></span>
+        <% } %>
+      </span>
+      <button class="app-topbar__logout" id="adminLogoutBtn" title="ออกจากระบบ" aria-label="ออกจากระบบ">
+        <i class="fas fa-sign-out-alt"></i>
       </button>
-      <div class="collapse navbar-collapse" id="navbarNav">
-        <ul class="navbar-nav ms-auto align-items-lg-center">
-          <!-- 1. จัดการ AI/ระบบ (Dropdown) -->
-          <li class="nav-item dropdown">
-            <a class="nav-link dropdown-toggle<%= (current === 'dashboard' || current === 'categories' || current === 'settings' || current === 'settings2' || current === 'agent-forge' || current === 'instruction-ai' || current === 'instruction-chat') ? ' active' : '' %>"
-              href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-              <i class="fas fa-robot"></i> จัดการ AI/ระบบ
-            </a>
-            <ul class="dropdown-menu dropdown-menu-end">
-              <li>
-                <a class="dropdown-item<%= current === 'dashboard' ? ' active' : '' %>" href="/admin/dashboard">
-                  <i class="fas fa-tachometer-alt"></i> แดชบอร์ด
-                </a>
-              </li>
-              <li>
-                <a class="dropdown-item<%= current === 'categories' ? ' active' : '' %>" href="/admin/categories">
-                  <i class="fas fa-database"></i> จัดการข้อมูล
-                </a>
-              </li>
-              <li>
-                <a class="dropdown-item<%= (current === 'settings' || current === 'settings2') ? ' active' : '' %>"
-                  href="/admin/settings2">
-                  <i class="fas fa-cogs"></i> ตั้งค่า
-                </a>
-              </li>
-              <li>
-                <a class="dropdown-item<%= current === 'agent-forge' ? ' active' : '' %>" href="/admin/agent-forge">
-                  <i class="fas fa-industry"></i> ระบบโรงหลอมเอเจนต์
-                </a>
-              </li>
-              <li>
-                <a class="dropdown-item<%= (current === 'instruction-ai' || current === 'instruction-chat') ? ' active' : '' %>"
-                  href="/admin/instruction-ai">
-                  <i class="fas fa-wand-magic-sparkles"></i> InstructionAI
-                </a>
-              </li>
-              <li>
-                <hr class="dropdown-divider">
-              </li>
-              <li>
-                <a class="dropdown-item<%= current === 'api-usage' ? ' active' : '' %>" href="/admin/api-usage">
-                  <i class="fas fa-chart-line"></i> สถิติ API
-                </a>
-              </li>
-            </ul>
-          </li>
+    <% } %>
+  </div>
+</header>
 
-          <!-- 2. แชท (ลิงก์ตรง) -->
-          <li class="nav-item position-relative">
-            <a class="nav-link<%= current === 'chat' ? ' active' : '' %>" href="/admin/chat">
-              <i class="fas fa-comments"></i> แชท
-              <span class="badge bg-danger notification-badge" id="chatNotificationBadge"
-                style="display: none;">0</span>
-            </a>
-          </li>
-
-          <!-- 3. ลูกค้า (Dropdown) -->
-          <li class="nav-item dropdown">
-            <a class="nav-link dropdown-toggle<%= (current === 'orders' || current === 'followup' || current === 'broadcast' || current === 'facebook-posts' || current === 'customer-stats') ? ' active' : '' %>"
-              href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-              <i class="fas fa-store"></i> ลูกค้า
-            </a>
-            <ul class="dropdown-menu dropdown-menu-end">
-              <li>
-                <a class="dropdown-item<%= current === 'orders' ? ' active' : '' %>" href="/admin/orders">
-                  <i class="fas fa-shopping-basket"></i> ออเดอร์
-                </a>
-              </li>
-              <li>
-                <a class="dropdown-item<%= current === 'followup' ? ' active' : '' %>" href="/admin/followup">
-                  <i class="fas fa-user-clock"></i> ติดตามลูกค้า
-                </a>
-              </li>
-              <li>
-                <a class="dropdown-item<%= current === 'broadcast' ? ' active' : '' %>" href="/admin/broadcast">
-                  <i class="fas fa-bullhorn"></i> บรอดแคสต์
-                </a>
-              </li>
-              <li>
-                <hr class="dropdown-divider">
-              </li>
-              <li>
-                <a class="dropdown-item<%= current === 'facebook-posts' ? ' active' : '' %>"
-                  href="/admin/facebook-posts">
-                  <i class="fas fa-comment-dots"></i> โพสต์ FB/คอมเมนต์
-                </a>
-              </li>
-              <li>
-                <hr class="dropdown-divider">
-              </li>
-              <li>
-                <a class="dropdown-item<%= current === 'customer-stats' ? ' active' : '' %>"
-                  href="/admin/customer-stats">
-                  <i class="fas fa-chart-bar"></i> สถิติลูกค้า
-                </a>
-              </li>
-            </ul>
-          </li>
-
-
-          <!-- User Info & Logout -->
-          <% if (signedInUser) { %>
-            <li class="nav-item d-flex align-items-center nav-user-pill">
-              <span class="badge rounded-pill bg-light text-dark">
-                <i class="fas fa-user-shield me-1 text-primary"></i>
-                <%= roleBadgeLabel %>
-                  <% if (signedInUser.label) { %>
-                    <span class="text-muted">&middot; <%= signedInUser.label %></span>
-                    <% } %>
-              </span>
-            </li>
-            <li class="nav-item">
-              <button type="button" class="nav-link btn btn-link logout-link" id="adminLogoutBtn">
-                <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
-              </button>
-            </li>
+<!-- ======================== Sidebar (Desktop) ======================== -->
+<aside class="app-sidebar" id="appSidebar">
+  <div class="app-sidebar__scroll">
+    <% navGroups.forEach((group, gIdx) => { %>
+      <div class="app-sidebar__section-title"><%= group.title %></div>
+      <nav class="app-sidebar__nav" aria-label="<%= group.title %>">
+        <% group.items.forEach((item) => { %>
+          <a
+            href="<%= item.href %>"
+            class="app-sidebar__item <%= isActive(item.page) ? 'is-active' : '' %>"
+            data-page="<%= item.page %>"
+          >
+            <i class="fas <%= item.icon %>"></i>
+            <span class="app-sidebar__text"><%= item.label %></span>
+            <% if (item.badgeId) { %>
+              <span class="app-sidebar__badge" data-chat-badge style="display:none">0</span>
             <% } %>
-        </ul>
+          </a>
+        <% }) %>
+      </nav>
+    <% }) %>
+  </div>
+
+  <div class="app-sidebar__footer">
+    <a class="app-sidebar__back" href="/admin/dashboard">
+      <i class="fas fa-arrow-left"></i>
+      <span>กลับหน้าแดชบอร์ด</span>
+    </a>
+  </div>
+</aside>
+
+<!-- ======================== Mobile Bottom Nav ======================== -->
+<nav class="app-mobile-nav" id="appMobileNav" aria-label="เมนูหลัก">
+  <div class="app-mobile-nav__inner">
+    <% mobilePrimary.forEach((item, idx) => { %>
+      <% if (idx > 0) { %>
+        <div class="app-mobile-nav__divider" aria-hidden="true"></div>
+      <% } %>
+      <a
+        href="<%= item.href %>"
+        class="app-mobile-nav__item <%= isActive(item.page) ? 'is-active' : '' %>"
+        data-page="<%= item.page %>"
+      >
+        <i class="fas <%= item.icon %>"></i>
+        <span class="app-mobile-nav__label"><%= item.label %></span>
+        <% if (item.badgeId) { %>
+          <span class="app-mobile-nav__badge" data-chat-badge style="display:none">0</span>
+        <% } %>
+      </a>
+    <% }) %>
+
+    <div class="app-mobile-nav__divider" aria-hidden="true"></div>
+
+    <button class="app-mobile-nav__item" id="appMobileNavMore" type="button" aria-label="เมนูอื่น ๆ">
+      <i class="fas fa-ellipsis-h"></i>
+      <span class="app-mobile-nav__label">อื่น ๆ</span>
+    </button>
+  </div>
+</nav>
+
+<!-- Mobile More Sheet -->
+<div class="app-mobile-nav__more-sheet" id="appMobileNavMoreSheet" aria-hidden="true">
+  <div class="app-mobile-nav__more-backdrop"></div>
+  <div class="app-mobile-nav__more-panel">
+    <div class="app-mobile-nav__more-handle" aria-hidden="true"></div>
+    <% navGroups.forEach((group) => { %>
+      <div class="app-mobile-nav__more-title"><%= group.title %></div>
+      <div class="app-mobile-nav__more-grid">
+        <% group.items.forEach((item) => { %>
+          <a
+            href="<%= item.href %>"
+            class="app-mobile-nav__more-item <%= isActive(item.page) ? 'is-active' : '' %>"
+            data-page="<%= item.page %>"
+          >
+            <i class="fas <%= item.icon %>"></i>
+            <span><%= item.label %></span>
+          </a>
+        <% }) %>
       </div>
-    </div>
-  </nav>
-  <script>
-    (function () {
-      // Auth Logic
-      window.adminAuth = window.adminAuth || {};
-      window.adminAuth.requirePasscode = <%= isPasscodeRequired ? 'true' : 'false' %>;
-      window.adminAuth.user = <%- JSON.stringify(signedInUser || null).replace(/</g, '\\u003c') %>;
+    <% }) %>
+  </div>
+</div>
 
-      const logoutBtn = document.getElementById('adminLogoutBtn');
-      if (logoutBtn) {
-        logoutBtn.addEventListener('click', async (event) => {
-          event.preventDefault();
-          logoutBtn.disabled = true;
-          try {
-            const response = await fetch('/admin/logout', { method: 'POST' });
-            if (!response.ok) {
-              throw new Error('logout_failed');
-            }
-            window.location.href = '/admin/login';
-          } catch (error) {
-            console.error('[Auth] logout error:', error);
-            if (typeof window.showToast === 'function') {
-              window.showToast('ออกจากระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง', 'error');
-            } else {
-              alert('ออกจากระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
-            }
-            logoutBtn.disabled = false;
-          }
-        });
-      }
-
-      // Global Font Selector Logic
-      document.addEventListener('DOMContentLoaded', function () {
-        const fontSelector = document.getElementById('globalFontSelector');
-        if (fontSelector) {
-          const savedFont = localStorage.getItem('adminFont');
-          if (savedFont) {
-            document.documentElement.style.setProperty('--font-family-base', savedFont);
-            document.documentElement.style.setProperty('--font-family-heading', savedFont);
-            fontSelector.value = savedFont;
-          }
-
-          fontSelector.addEventListener('change', (e) => {
-            const font = e.target.value;
-            document.documentElement.style.setProperty('--font-family-base', font);
-            document.documentElement.style.setProperty('--font-family-heading', font);
-            localStorage.setItem('adminFont', font);
-          });
-        }
-      });
-    })();
-  </script>
+<!-- ======================== Overlay ======================== -->
+<div class="app-sidebar-overlay" id="appSidebarOverlay"></div>
