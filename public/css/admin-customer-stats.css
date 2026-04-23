@@ -8,7 +8,7 @@
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
-    padding: 1.5rem 1.5rem 0;
+    margin-bottom: 1rem;
 }
 
 .stats-summary-card {
@@ -114,7 +114,7 @@
 .stats-layout {
     display: flex;
     gap: 1.25rem;
-    padding: 1.5rem;
+    padding: 0;
     min-height: calc(100vh - 180px);
 }
 
@@ -797,11 +797,6 @@
 @media (max-width: 576px) {
     .stats-summary-grid {
         grid-template-columns: 1fr;
-        padding: 1rem;
-    }
-
-    .stats-layout {
-        padding: 1rem;
     }
 
     .stats-hourly-chart {

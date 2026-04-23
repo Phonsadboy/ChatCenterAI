@@ -8,8 +8,6 @@
     categories: 'จัดการข้อมูล',
     settings: 'ตั้งค่า',
     settings2: 'ตั้งค่า',
-    'agent-forge': 'ระบบโรงหลอมเอเจนต์',
-    'agent-forge-run': 'รันโรงหลอมเอเจนต์',
     'instruction-ai': 'InstructionAI',
     'instruction-chat': 'Instruction Chat',
     'api-usage': 'สถิติ API',
@@ -30,7 +28,6 @@
         { page: 'dashboard', label: 'แดชบอร์ด', icon: 'fa-tachometer-alt', href: '/admin/dashboard' },
         { page: 'categories', label: 'จัดการข้อมูล', icon: 'fa-database', href: '/admin/categories' },
         { page: 'settings2', label: 'ตั้งค่า', icon: 'fa-cogs', href: '/admin/settings2' },
-        { page: 'agent-forge', label: 'โรงหลอมเอเจนต์', icon: 'fa-industry', href: '/admin/agent-forge' },
         { page: 'instruction-ai', label: 'InstructionAI', icon: 'fa-wand-magic-sparkles', href: '/admin/instruction-ai' },
         { page: 'api-usage', label: 'สถิติ API', icon: 'fa-chart-line', href: '/admin/api-usage' },
       ],
@@ -70,7 +67,13 @@
   /* FOUC prevention: add layout class immediately before first paint */
   (function () {
     var b = document.body;
-    if (b) b.classList.add('has-admin-layout');
+    var currentPage = '<%= current %>';
+    if (b) {
+      b.classList.add('has-admin-layout');
+      if (currentPage) {
+        b.classList.add('page-' + currentPage.toLowerCase().replace(/[^a-z0-9-]/g, '-'));
+      }
+    }
   })();
   window.__adminActivePage = '<%= current %>';
   window.adminAuth = window.adminAuth || {};

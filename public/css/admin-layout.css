@@ -3,6 +3,15 @@
   --layout-sidebar-width: 240px;
   --layout-sidebar-collapsed: 64px;
   --layout-mobile-nav-height: 72px;
+  --layout-content-gap-top: 0.5rem;
+  --layout-content-gap-side: 0.875rem;
+  --layout-content-gap-bottom: 1rem;
+  --layout-content-gap-mobile-top: 0.5rem;
+  --layout-content-gap-mobile-side: 0.75rem;
+  --layout-content-gap-mobile-bottom: 1rem;
+  --layout-chat-gap-top: 0.375rem;
+  --layout-chat-gap-side: 0.625rem;
+  --layout-chat-gap-bottom: 0.875rem;
   --layout-sidebar-bg: #ffffff;
   --layout-sidebar-border: var(--border, #e1e5ef);
   --layout-topbar-bg: #ffffff;
@@ -30,23 +39,23 @@ body.has-admin-layout .app-content {
 
 @media (min-width: 992px) {
   body.has-admin-layout .app-content {
-    padding-top: calc(var(--layout-topbar-height) + 1rem) !important;
-    padding-left: calc(var(--layout-sidebar-width) + 1rem) !important;
-    padding-right: 1rem !important;
-    padding-bottom: 1.5rem !important;
+    padding-top: calc(var(--layout-topbar-height) + var(--layout-content-gap-top)) !important;
+    padding-left: calc(var(--layout-sidebar-width) + var(--layout-content-gap-side)) !important;
+    padding-right: var(--layout-content-gap-side) !important;
+    padding-bottom: var(--layout-content-gap-bottom) !important;
   }
 
   body.has-admin-layout.sidebar-collapsed .app-content {
-    padding-left: calc(var(--layout-sidebar-collapsed) + 1rem) !important;
+    padding-left: calc(var(--layout-sidebar-collapsed) + var(--layout-content-gap-side)) !important;
   }
 }
 
 @media (max-width: 991.98px) {
   body.has-admin-layout .app-content {
-    padding-top: calc(var(--layout-topbar-height) + 1rem) !important;
-    padding-left: 1rem !important;
-    padding-right: 1rem !important;
-    padding-bottom: calc(var(--layout-mobile-nav-height) + 1.5rem) !important;
+    padding-top: calc(var(--layout-topbar-height) + var(--layout-content-gap-mobile-top)) !important;
+    padding-left: var(--layout-content-gap-mobile-side) !important;
+    padding-right: var(--layout-content-gap-mobile-side) !important;
+    padding-bottom: calc(var(--layout-mobile-nav-height) + var(--layout-content-gap-mobile-bottom)) !important;
   }
 }
 
@@ -61,13 +70,13 @@ body.has-admin-layout .page-chat .app-content {
 
 @media (min-width: 992px) {
   body.has-admin-layout .page-chat .app-content {
-    padding-top: calc(var(--layout-topbar-height) + 0.75rem) !important;
-    padding-left: calc(var(--layout-sidebar-width) + 0.75rem) !important;
-    padding-right: 0.75rem !important;
-    padding-bottom: 1rem !important;
+    padding-top: calc(var(--layout-topbar-height) + var(--layout-chat-gap-top)) !important;
+    padding-left: calc(var(--layout-sidebar-width) + var(--layout-chat-gap-side)) !important;
+    padding-right: var(--layout-chat-gap-side) !important;
+    padding-bottom: var(--layout-chat-gap-bottom) !important;
   }
   body.has-admin-layout.sidebar-collapsed .page-chat .app-content {
-    padding-left: calc(var(--layout-sidebar-collapsed) + 0.75rem) !important;
+    padding-left: calc(var(--layout-sidebar-collapsed) + var(--layout-chat-gap-side)) !important;
   }
 }
 
@@ -713,10 +722,47 @@ body.has-admin-layout .settings-layout {
   min-height: calc(100vh - var(--layout-topbar-height));
 }
 
+/* ---- Categories pages: these screens do not use .app-content ---- */
+@media (min-width: 992px) {
+  body.has-admin-layout.page-categories .categories-page-wrapper,
+  body.has-admin-layout.page-categories > .container-fluid {
+    box-sizing: border-box;
+    padding-top: calc(var(--layout-topbar-height) + var(--layout-content-gap-top)) !important;
+    padding-left: calc(var(--layout-sidebar-width) + var(--layout-content-gap-side)) !important;
+    padding-right: var(--layout-content-gap-side) !important;
+    padding-bottom: var(--layout-content-gap-bottom) !important;
+  }
+
+  body.has-admin-layout.sidebar-collapsed.page-categories .categories-page-wrapper,
+  body.has-admin-layout.sidebar-collapsed.page-categories > .container-fluid {
+    padding-left: calc(var(--layout-sidebar-collapsed) + var(--layout-content-gap-side)) !important;
+  }
+}
+
+@media (max-width: 991.98px) {
+  body.has-admin-layout.page-categories .categories-page-wrapper,
+  body.has-admin-layout.page-categories > .container-fluid {
+    box-sizing: border-box;
+    padding-top: calc(var(--layout-topbar-height) + var(--layout-content-gap-mobile-top)) !important;
+    padding-left: var(--layout-content-gap-mobile-side) !important;
+    padding-right: var(--layout-content-gap-mobile-side) !important;
+    padding-bottom: calc(var(--layout-mobile-nav-height) + var(--layout-content-gap-mobile-bottom)) !important;
+  }
+}
+
+body.has-admin-layout.page-categories .categories-page-wrapper {
+  max-width: none !important;
+  margin: 0 !important;
+}
+
+body.has-admin-layout.page-categories > .container-fluid {
+  margin-top: 0 !important;
+}
+
 @media (max-width: 991.98px) {
   /* Push page-specific mobile toggles below our topbar so they don't overlap */
   body.has-admin-layout .mobile-menu-toggle {
-    top: calc(var(--layout-topbar-height) + 1rem);
+    top: calc(var(--layout-topbar-height) + 0.5rem);
   }
 }
 

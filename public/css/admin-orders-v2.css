@@ -13,7 +13,7 @@
 .orders-layout {
   display: flex;
   gap: 1.5rem;
-  padding: 1.5rem;
+  padding: 0;
   min-height: calc(100vh - 60px);
 }
 
@@ -38,6 +38,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 0.75rem;
+  margin-bottom: 0.875rem;
 }
 
 .orders-summary-card {
@@ -1191,7 +1192,7 @@
 @media (max-width: 1024px) {
   .orders-layout {
     flex-direction: column;
-    padding: 1rem;
+    padding: 0;
   }
 
   .orders-sidebar {

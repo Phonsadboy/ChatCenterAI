@@ -24,7 +24,6 @@ const { AgentForgeService } = require("./services/agentForgeService");
 const { AgentForgeRunner } = require("./services/agentForgeRunner");
 const { AgentForgeScheduler } = require("./services/agentForgeScheduler");
 const createAgentForgeRouter = require("./routes/agentForge");
-const createAgentForgeAdminRouter = require("./routes/agentForgeAdmin");
 // Middleware & misc packages for UI
 const helmet = require("helmet");
 const cors = require("cors");
@@ -16045,13 +16044,9 @@ app.use(
   }),
 );
 
-app.use(
-  "/admin/agent-forge",
-  createAgentForgeAdminRouter({
-    requireAdmin,
-    agentForgeService,
-  }),
-);
+app.use("/admin/agent-forge", (req, res) => {
+  res.redirect("/admin/dashboard");
+});
 
 // ============================ Admin Passcode Management API ============================
 
