@@ -45,7 +45,7 @@
             data-name="<%= instruction.name || 'ไม่มีชื่อ' %>"
             data-starter-enabled="<%= starterEnabled ? '1' : '0' %>"
             data-starter-count="<%= starterCount %>"
-            data-updated="<%= updatedAt ? new Date(updatedAt).toISOString() : '' %>">
+            data-updated="<%= updatedAt ? (isNaN(new Date(updatedAt).getTime()) ? '' : new Date(updatedAt).toISOString()) : '' %>">
             <%= instruction.instructionId ? '[' + instruction.instructionId + '] ' : '' %><%= instruction.name || 'ไม่มีชื่อ' %>
           </option>
         <% }) %>

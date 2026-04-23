@@ -3656,6 +3656,72 @@ function resetFollowUpConfigCache() {
   followUpContextCache.clear();
 }
 
+async function cleanupOrphanedFollowUpAssets(db) {
+  try {
+    const pageSettingsColl = db.collection("follow_up_page_settings");
+    const assetsColl = db.collection("follow_up_assets");
+
+    const usedAssetIds = new Set();
+    const settingsDocs = await pageSettingsColl
+      .find({}, { projection: { "settings.rounds": 1 } })
+      .toArray();
+
+    for (const doc of settingsDocs) {
+      const rounds = doc.settings?.rounds || [];
+      for (const round of rounds) {
+        const items = round.items || [];
+        for (const item of items) {
+          if (item?.type === "image" && item.assetId) {
+            usedAssetIds.add(String(item.assetId));
+          }
+        }
+      }
+    }
+
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const query = { createdAt: { $lt: cutoff } };
+
+    if (usedAssetIds.size > 0) {
+      const objectIds = [];
+      for (const id of usedAssetIds) {
+        const oid = toObjectId(id);
+        if (oid) objectIds.push(oid);
+      }
+      if (objectIds.length) {
+        query._id = { $nin: objectIds };
+      }
+    }
+
+    const orphanedAssets = await assetsColl.find(query).toArray();
+    if (!orphanedAssets.length) return;
+
+    const bucket = createGridFSBucket(db, { bucketName: "followupAssets" });
+    let deletedCount = 0;
+
+    for (const asset of orphanedAssets) {
+      try {
+        const entries = [];
+        if (asset.fileId) entries.push({ id: asset.fileId });
+        if (asset.thumbFileId) entries.push({ id: asset.thumbFileId });
+        if (entries.length) await deleteGridFsEntries(bucket, entries);
+
+        await maybeDeleteAssetDocument("follow_up_assets", "follow_up_assets", asset);
+        await assetsColl.deleteOne({ _id: asset._id });
+
+        deletedCount++;
+      } catch (err) {
+        console.error(`[FollowUp] ลบ asset ที่ไม่ได้ใช้งาน ${asset._id} ไม่สำเร็จ:`, err?.message || err);
+      }
+    }
+
+    if (deletedCount > 0) {
+      console.log(`[FollowUp] ลบ asset ที่ไม่ได้ใช้งานแล้ว ${deletedCount} รายการ`);
+    }
+  } catch (error) {
+    console.error("[FollowUp] cleanup orphaned assets error:", error?.message || error);
+  }
+}
+
 async function getFollowUpBaseConfig() {
   const now = Date.now();
   if (
@@ -24481,6 +24547,9 @@ app.post("/admin/followup/page-settings", async (req, res) => {
     resetFollowUpConfigCache();
 
     res.json({ success: true });
+
+    // ลบรูปภาพที่ไม่ได้ใช้งานอัตโนมัติ (ไม่บล็อก response)
+    cleanupOrphanedFollowUpAssets(db).catch(() => {});
   } catch (error) {
     console.error("[FollowUp] ไม่สามารถปรับปรุงการตั้งค่าหน้าเพจได้:", error);
     res.json({ success: false, error: error.message });
