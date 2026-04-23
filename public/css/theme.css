@@ -96,6 +96,8 @@
   border-radius: var(--radius-md, 8px);
   border: 1px solid var(--border);
   box-shadow: none;
+  background-color: #fff;
+  color: var(--text-main, #1E2430);
 }
 
 .form-control:focus,
