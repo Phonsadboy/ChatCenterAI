@@ -2241,6 +2241,29 @@ function buildChatHistoryUserQuery(userId, extra = {}) {
   return { $and: [extra, baseMatch] };
 }
 
+function parsePositiveIntegerOption(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function getAiHistoryLookbackDays() {
+  return Math.max(
+    1,
+    parsePositiveIntegerOption(process.env.CCAI_AI_HISTORY_LOOKBACK_DAYS, 21),
+  );
+}
+
+function buildAiHistoryStartDate() {
+  const lookbackDays = getAiHistoryLookbackDays();
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - lookbackDays);
+  return cutoff;
+}
+
 async function getChatHistory(userId) {
   // ตรวจสอบการตั้งค่าการบันทึกประวัติ
   const enableChatHistory = await getSettingValue("enableChatHistory", true);
@@ -2270,7 +2293,7 @@ async function getChatHistory(userId) {
  * - ถ้ารูปลูกค้าเดิมเข้าถึงไม่ได้ ให้เหลือเพียงหมายเหตุว่าเคยมีรูปมาก่อน
  * - จำกัดจำนวนข้อความล่าสุดเพื่อลด token
  */
-async function getAIHistory(userId) {
+async function getAIHistory(userId, options = {}) {
   // หากปิดการบันทึกประวัติ ก็ไม่มีอะไรให้ส่ง
   const enableChatHistory = await getSettingValue("enableChatHistory", true);
   if (!enableChatHistory) return [];
@@ -2282,10 +2305,22 @@ async function getAIHistory(userId) {
       ? Math.min(Math.floor(historyLimitRaw), 100)
       : 20;
 
+  const historyPlatform = normalizeChatPlatform(options?.platform, "");
+  const historyBotId =
+    typeof options?.botId === "string"
+      ? options.botId.trim()
+      : options?.botId
+        ? String(options.botId).trim()
+        : null;
+  const historyStart = buildAiHistoryStartDate();
+
   // ดึงเฉพาะข้อความล่าสุดตามจำนวนที่กำหนด แล้วกลับลำดับเป็นเก่าสุด -> ใหม่สุด
   const raw = await getChatRepository().getHistory(userId, {
     sort: { timestamp: -1 },
     limit: historyLimit,
+    start: historyStart,
+    ...(historyPlatform ? { platform: historyPlatform } : {}),
+    ...(historyPlatform ? { botId: historyBotId } : {}),
   });
 
   const items = raw.reverse();
@@ -6865,8 +6900,12 @@ async function getOrdersForTool(args = {}, context = {}) {
   }
 
   try {
-    const orders = await getUserOrders(userId);
     const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 10) : 5;
+    const orders = await getUserOrders(userId, {
+      platform: context.platform || null,
+      botId: context.botId || null,
+      limit,
+    });
     const recentOrders = orders.slice(0, limit);
 
     // Format orders สำหรับ AI ให้อ่านง่าย
@@ -7246,10 +7285,17 @@ async function getUserOrders(userId, options = {}) {
       platform = null,
       botId = null,
       sort = { extractedAt: -1 },
+      limit = null,
     } = options && typeof options === "object" ? options : {};
     const normalizedPlatform =
       typeof platform === "string" && platform.trim() ? platform.trim() : null;
     const normalizedBotId = normalizeFollowUpBotId(botId);
+    const listOptions = {
+      sort: sort && typeof sort === "object" ? sort : { extractedAt: -1 },
+      ...(Number.isFinite(limit) && limit > 0
+        ? { limit: Math.floor(limit) }
+        : {}),
+    };
 
     if (normalizedPlatform || normalizedBotId) {
       return await getOrderRepository().list(
@@ -7258,13 +7304,11 @@ async function getUserOrders(userId, options = {}) {
           ...(normalizedPlatform ? { platform: normalizedPlatform } : {}),
           ...(normalizedBotId ? { botId: normalizedBotId } : {}),
         },
-        { sort: sort && typeof sort === "object" ? sort : { extractedAt: -1 } },
+        listOptions,
       );
     }
 
-    return await getOrderRepository().findByUser(userId, {
-      sort: { extractedAt: -1 },
-    });
+    return await getOrderRepository().findByUser(userId, listOptions);
   } catch (error) {
     console.error("[Order] ดึงออเดอร์ไม่สำเร็จ:", error.message);
     return [];
@@ -9138,6 +9182,7 @@ async function processFlushedMessages(
   const runtimeInstructionMeta = runtimeInstructionContext.instructionMeta;
   const runtimeQueueContext = {
     ...queueContext,
+    userId,
     selectedInstructions: runtimeInstructionContext.promptSelections,
   };
   const normalizedMergedContent = await materializeQueuedMessagesForProcessing(
@@ -9392,7 +9437,10 @@ async function processFlushedMessages(
     );
   }
 
-  const history = await getAIHistory(userId);
+  const history = await getAIHistory(userId, {
+    platform,
+    botId: botIdForHistory,
+  });
   logHotPathDebug(
     `[LOG] ดึงประวัติ (สำหรับ AI) ของผู้ใช้ ${userId}: ${history.length} ข้อความ`,
   );
@@ -12955,6 +13003,151 @@ function scheduleDailyRefresh() {
   }, 60 * 1000); // ตรวจสอบทุก 1 นาที เพื่อให้ตรงกับเวลาที่กำหนด
 }
 
+function formatAiOrderContextDateTime(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString("sv-SE", {
+    timeZone: "Asia/Bangkok",
+    hour12: false,
+  });
+}
+
+function formatAiOrderContextAmount(value) {
+  const numeric = sanitizeOptionalNumber(value);
+  if (numeric === null) return null;
+  return `฿${numeric.toLocaleString("th-TH", { maximumFractionDigits: 2 })}`;
+}
+
+function buildAiOrderItemsSummary(items = [], limit = 4) {
+  const list = Array.isArray(items) ? items : [];
+  const maxItems = Math.max(1, Math.min(limit, 8));
+  const visibleItems = list.slice(0, maxItems);
+  if (!visibleItems.length) return "";
+
+  const summary = visibleItems
+    .map((item) => {
+      const product = sanitizeOptionalString(item?.product) || "สินค้า";
+      const quantity = sanitizeOptionalNumber(item?.quantity);
+      const priceText = formatAiOrderContextAmount(item?.price);
+      return [
+        product,
+        quantity !== null ? `x${quantity}` : null,
+        priceText,
+      ].filter(Boolean).join(" ");
+    })
+    .join("; ");
+
+  if (list.length > visibleItems.length) {
+    return `${summary}; และอีก ${list.length - visibleItems.length} รายการ`;
+  }
+  return summary;
+}
+
+async function buildAiOrderContext(queueContext = {}) {
+  const userId = sanitizeOptionalString(queueContext?.userId);
+  if (!userId) return "";
+
+  const orderLimit = Math.max(
+    0,
+    Math.min(
+      parsePositiveIntegerOption(process.env.CCAI_AI_ORDER_CONTEXT_LIMIT, 3),
+      5,
+    ),
+  );
+  if (orderLimit <= 0) return "";
+
+  const itemLimit = Math.max(
+    1,
+    Math.min(
+      parsePositiveIntegerOption(process.env.CCAI_AI_ORDER_CONTEXT_ITEM_LIMIT, 4),
+      8,
+    ),
+  );
+
+  try {
+    const orders = await getUserOrders(userId, {
+      platform: normalizeChatPlatform(queueContext?.platform, ""),
+      botId: queueContext?.botId || null,
+      limit: orderLimit,
+    });
+    if (!Array.isArray(orders) || orders.length === 0) {
+      return "";
+    }
+
+    const lines = [
+      "บริบทออเดอร์ล่าสุดของลูกค้า (ใช้เพื่ออ้างอิงข้อมูลซื้อเดิมเท่านั้น ถ้าลูกค้าสั่งใหม่ให้สร้างออเดอร์ใหม่ตามนโยบายเดิม):",
+    ];
+
+    orders.forEach((order, index) => {
+      const orderData = order?.orderData && typeof order.orderData === "object"
+        ? order.orderData
+        : {};
+      const addressInfo = normalizeOrderAddress(orderData);
+      const addressText = [
+        sanitizeOptionalString(addressInfo.fullAddress),
+        sanitizeOptionalString(addressInfo.subDistrict),
+        sanitizeOptionalString(addressInfo.district),
+        sanitizeOptionalString(addressInfo.province),
+        sanitizeOptionalString(addressInfo.postalCode),
+      ].filter(Boolean).join(" ").slice(0, 240);
+      const recipientName =
+        normalizeCustomerName(orderData.recipientName)
+        || normalizeCustomerName(orderData.customerName)
+        || "-";
+      const phone =
+        sanitizeOptionalString(
+          orderData.phone
+          || orderData.customerPhone
+          || orderData.shippingPhone,
+        )
+        || "-";
+      const paymentMethod =
+        sanitizeOptionalString(orderData.paymentMethod || orderData.paymentType)
+        || "-";
+      const status = sanitizeOptionalString(order?.status) || "pending";
+      const createdAt =
+        formatAiOrderContextDateTime(
+          order?.extractedAt || order?.createdAt || order?.updatedAt,
+        )
+        || "-";
+      const itemsSummary = buildAiOrderItemsSummary(orderData.items || [], itemLimit);
+      const totalAmount = formatAiOrderContextAmount(orderData.totalAmount);
+      const shippingCost = formatAiOrderContextAmount(orderData.shippingCost);
+      const totalsText = [totalAmount, shippingCost ? `ค่าส่ง ${shippingCost}` : null]
+        .filter(Boolean)
+        .join(" | ");
+
+      lines.push(`[${index + 1}] วันที่ ${createdAt} | สถานะ ${status}`);
+      lines.push(`ผู้รับ ${recipientName} | โทร ${phone} | ชำระ ${paymentMethod}`);
+      if (addressText) {
+        lines.push(`ที่อยู่ ${addressText}`);
+      }
+      if (itemsSummary) {
+        lines.push(`สินค้า ${itemsSummary}`);
+      }
+      if (totalsText) {
+        lines.push(`ยอดรวม ${totalsText}`);
+      }
+    });
+
+    return lines.join("\n").trim();
+  } catch (error) {
+    console.error("[AI] ไม่สามารถสร้าง order context ได้:", error?.message || error);
+    return "";
+  }
+}
+
+async function appendAiOrderContext(systemPrompt, queueContext = {}) {
+  const basePrompt =
+    typeof systemPrompt === "string" ? systemPrompt.trim() : "";
+  if (!basePrompt) return basePrompt;
+
+  const orderContext = await buildAiOrderContext(queueContext);
+  if (!orderContext) return basePrompt;
+  return `${basePrompt}\n\n${orderContext}`.trim();
+}
+
 async function buildSystemInstructions(history, selectedImageCollections = null) {
   const assetKey = normalizeAssetSelectionCacheKey(selectedImageCollections);
   const cacheKey = `legacy::${assetKey}`;
@@ -13098,14 +13291,21 @@ async function buildSystemInstructionsWithContext(history, queueContext = {}) {
   }
 
   if (!systemPrompt) {
-    return await buildSystemInstructions(history, selectedImageCollections);
+    const fallbackPrompt = await buildSystemInstructions(
+      history,
+      selectedImageCollections,
+    );
+    return await appendAiOrderContext(fallbackPrompt, queueContext);
   }
 
   const now = new Date().toLocaleString("th-TH", {
     timeZone: "Asia/Bangkok",
     hour12: false,
   });
-  return `${systemPrompt}\n\nเวลาปัจจุบัน: ${now}`.trim();
+  return await appendAiOrderContext(
+    `${systemPrompt}\n\nเวลาปัจจุบัน: ${now}`.trim(),
+    queueContext,
+  );
 }
 
 // ฟังก์ชันสำหรับดึงข้อความจากแท็ก <THAI_REPLY>
@@ -20163,8 +20363,22 @@ async function processFacebookMessageWithAI(
     if (assetsText) {
       systemPrompt = `${systemPrompt}\n\n${assetsText}`;
     }
+    systemPrompt = await appendAiOrderContext(
+      `${systemPrompt}\n\nเวลาปัจจุบัน: ${new Date().toLocaleString("th-TH", {
+        timeZone: "Asia/Bangkok",
+        hour12: false,
+      })}`.trim(),
+      {
+        userId,
+        platform: "facebook",
+        botId: facebookBot?._id ? facebookBot._id.toString() : null,
+      },
+    );
 
-    const history = await getAIHistory(userId);
+    const history = await getAIHistory(userId, {
+      platform: "facebook",
+      botId: facebookBot?._id ? facebookBot._id.toString() : null,
+    });
 
     const recoveryStrategies = [
       { key: "original", label: "ข้อมูลเดิมทั้งหมด" },

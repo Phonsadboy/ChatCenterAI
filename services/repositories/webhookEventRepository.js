@@ -15,9 +15,22 @@ function parseEnvBoolean(value, defaultValue = false) {
   return defaultValue;
 }
 
+function parseWebhookAuditMode(value, defaultValue = "all") {
+  if (typeof value !== "string") return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (["all", "fallback_only", "none"].includes(normalized)) {
+    return normalized;
+  }
+  return defaultValue;
+}
+
 const WEBHOOK_EVENT_STORE_RAW_PAYLOAD = parseEnvBoolean(
   process.env.CCAI_WEBHOOK_EVENT_STORE_RAW_PAYLOAD,
   false,
+);
+const WEBHOOK_EVENT_AUDIT_MODE = parseWebhookAuditMode(
+  process.env.CCAI_WEBHOOK_EVENT_AUDIT_MODE,
+  "all",
 );
 const WEBHOOK_EVENT_PAYLOAD_MAX_BYTES = Math.max(
   512,
@@ -79,8 +92,17 @@ function createWebhookEventRepository({ runtimeConfig }) {
     const pgBotId = await resolvePgBotId(platform, botId).catch(() => null);
     const normalizedPlatform = normalizePlatform(platform);
     const storedPayload = JSON.stringify(summarizeWebhookPayload(payload));
+    const shouldWriteAuditRow =
+      WEBHOOK_EVENT_AUDIT_MODE === "all"
+      || (
+        useDatabaseDedupe
+        && WEBHOOK_EVENT_AUDIT_MODE === "fallback_only"
+      );
 
     if (!useDatabaseDedupe) {
+      if (!shouldWriteAuditRow) {
+        return true;
+      }
       await query(
         `
           INSERT INTO webhook_events (
@@ -131,27 +153,29 @@ function createWebhookEventRepository({ runtimeConfig }) {
         return false;
       }
 
-      await client.query(
-        `
-          INSERT INTO webhook_events (
-            idempotency_key,
-            platform,
-            bot_id,
-            event_type,
-            raw_payload,
-            status,
-            received_at
-          ) VALUES ($1,$2,$3,$4,$5::jsonb,'received',$6)
-        `,
-        [
-          idempotencyKey,
-          normalizedPlatform,
-          pgBotId,
-          eventType,
-          storedPayload,
-          receivedAt,
-        ],
-      );
+      if (shouldWriteAuditRow) {
+        await client.query(
+          `
+            INSERT INTO webhook_events (
+              idempotency_key,
+              platform,
+              bot_id,
+              event_type,
+              raw_payload,
+              status,
+              received_at
+            ) VALUES ($1,$2,$3,$4,$5::jsonb,'received',$6)
+          `,
+          [
+            idempotencyKey,
+            normalizedPlatform,
+            pgBotId,
+            eventType,
+            storedPayload,
+            receivedAt,
+          ],
+        );
+      }
       return true;
     });
   }

@@ -65,6 +65,24 @@ function createChatRepository({
     docs: [],
     updatedAt: 0,
   };
+  const historyCacheTtlMs = Math.max(
+    0,
+    Number(process.env.CCAI_CHAT_HISTORY_CACHE_MS || 15000),
+  );
+  const latestContextCacheTtlMs = Math.max(
+    0,
+    Number(process.env.CCAI_CHAT_LATEST_CONTEXT_CACHE_MS || 15000),
+  );
+  const historyCacheMaxEntries = Math.max(
+    100,
+    parsePositiveInteger(process.env.CCAI_CHAT_HISTORY_CACHE_MAX, 2000),
+  );
+  const latestContextCacheMaxEntries = Math.max(
+    100,
+    parsePositiveInteger(process.env.CCAI_CHAT_LATEST_CONTEXT_CACHE_MAX, 4000),
+  );
+  const historyCache = new Map();
+  const latestContextCache = new Map();
   const createGeneratedId = () =>
     `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 
@@ -76,6 +94,106 @@ function createChatRepository({
     if (!canUsePostgres()) {
       throw new Error(`postgres_chat_storage_not_configured:${operation}`);
     }
+  }
+
+  function readTimedCache(cacheStore, key, ttlMs) {
+    if (ttlMs <= 0) return undefined;
+    const entry = cacheStore.get(key);
+    if (!entry) return undefined;
+    if (Date.now() >= entry.expireAt) {
+      cacheStore.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  function pruneTimedCache(cacheStore, maxEntries) {
+    while (cacheStore.size > maxEntries) {
+      const oldestKey = cacheStore.keys().next().value;
+      if (!oldestKey) break;
+      cacheStore.delete(oldestKey);
+    }
+  }
+
+  function writeTimedCache(cacheStore, key, value, ttlMs, maxEntries) {
+    if (ttlMs <= 0) return;
+    cacheStore.delete(key);
+    cacheStore.set(key, {
+      value,
+      expireAt: Date.now() + ttlMs,
+    });
+    pruneTimedCache(cacheStore, maxEntries);
+  }
+
+  function serializeHistoryPageFilters(options = {}) {
+    const pageFilters = Array.isArray(options.pageFilters)
+      ? options.pageFilters
+      : options.platform
+        ? [{ platform: options.platform, botId: options.botId }]
+        : [];
+    const normalizedFilters = normalizeThreadPageFilters(pageFilters);
+    if (normalizedFilters.length === 0) {
+      return "all";
+    }
+    return normalizedFilters
+      .map((entry) => `${entry.platform}:${entry.botId || "default"}`)
+      .join("|");
+  }
+
+  function buildHistoryCacheKey(userId, options = {}) {
+    const normalizedUserId = toLegacyId(userId);
+    if (!normalizedUserId) return null;
+    const sortDirection = normalizeSortDirection(options.sort, 1) >= 0
+      ? "asc"
+      : "desc";
+    const limit =
+      Number.isFinite(options.limit) && options.limit > 0
+        ? Math.floor(options.limit)
+        : "all";
+    const start =
+      options.start instanceof Date
+        ? options.start.toISOString()
+        : options.start
+          ? new Date(options.start).toISOString()
+          : "none";
+    const end =
+      options.end instanceof Date
+        ? options.end.toISOString()
+        : options.end
+          ? new Date(options.end).toISOString()
+          : "none";
+    const before =
+      options.before instanceof Date
+        ? options.before.toISOString()
+        : options.before
+          ? new Date(options.before).toISOString()
+          : "none";
+    return [
+      normalizedUserId,
+      `sort:${sortDirection}`,
+      `limit:${limit}`,
+      `start:${start}`,
+      `end:${end}`,
+      `before:${before}`,
+      `pages:${serializeHistoryPageFilters(options)}`,
+    ].join("::");
+  }
+
+  function invalidateUserScopedCaches(userId) {
+    const normalizedUserId = toLegacyId(userId);
+    if (!normalizedUserId) return;
+    const historyPrefix = `${normalizedUserId}::`;
+    for (const cacheKey of historyCache.keys()) {
+      if (cacheKey.startsWith(historyPrefix)) {
+        historyCache.delete(cacheKey);
+      }
+    }
+    latestContextCache.delete(normalizedUserId);
+  }
+
+  function invalidateMessageReadCaches() {
+    historyCache.clear();
+    latestContextCache.clear();
   }
 
   async function resolveBotRecordId(platform, botId) {
@@ -283,6 +401,7 @@ function createChatRepository({
       ? "ASC"
       : "DESC";
     const params = [normalizedUserId];
+    const conditions = ["c.legacy_contact_id = $1"];
     const pageFilters = normalizeThreadPageFilters(
       Array.isArray(options.pageFilters)
         ? options.pageFilters
@@ -294,6 +413,21 @@ function createChatRepository({
       threadAlias: "t",
       botIdExpression: "b.legacy_bot_id",
     });
+    if (pageFilterSql) {
+      conditions.push(pageFilterSql.replace(/^ AND /, ""));
+    }
+    if (options.start) {
+      params.push(options.start);
+      conditions.push(`m.created_at >= $${params.length}`);
+    }
+    if (options.end) {
+      params.push(options.end);
+      conditions.push(`m.created_at <= $${params.length}`);
+    }
+    if (options.before) {
+      params.push(options.before);
+      conditions.push(`m.created_at < $${params.length}`);
+    }
     let limitSql = "";
     if (Number.isFinite(options.limit) && options.limit > 0) {
       params.push(options.limit);
@@ -320,8 +454,7 @@ function createChatRepository({
         INNER JOIN contacts c ON c.id = m.contact_id
         INNER JOIN threads t ON t.id = m.thread_id
         LEFT JOIN bots b ON b.id = m.bot_id
-        WHERE c.legacy_contact_id = $1
-          ${pageFilterSql}
+        WHERE ${conditions.join("\n          AND ")}
         ORDER BY m.created_at ${sortDirection}, m.id ${sortDirection}
         ${limitSql}
       `,
@@ -785,6 +918,8 @@ function createChatRepository({
       }
     });
 
+    invalidateUserScopedCaches(userId);
+
     return preparedDocs;
   }
 
@@ -818,6 +953,8 @@ function createChatRepository({
       ],
     );
 
+    invalidateMessageReadCaches();
+
     return readPostgresMessageById(normalizedMessageId);
   }
 
@@ -835,6 +972,7 @@ function createChatRepository({
     if (!normalizedUserId) return;
     ensurePostgresAvailable("clearHistory");
     await query("DELETE FROM contacts WHERE legacy_contact_id = $1", [normalizedUserId]);
+    invalidateUserScopedCaches(normalizedUserId);
     userSummariesCache.docs = userSummariesCache.docs.filter(
       (doc) => toLegacyId(doc?._id) !== normalizedUserId,
     );
@@ -902,12 +1040,52 @@ function createChatRepository({
 
   async function getHistory(userId, options = {}) {
     ensurePostgresAvailable("getHistory");
-    return readPostgresHistoryDocs(userId, options);
+    const cacheKey = buildHistoryCacheKey(userId, options);
+    if (cacheKey) {
+      const cachedDocs = readTimedCache(historyCache, cacheKey, historyCacheTtlMs);
+      if (typeof cachedDocs !== "undefined") {
+        return cachedDocs;
+      }
+    }
+
+    const docs = await readPostgresHistoryDocs(userId, options);
+    if (cacheKey) {
+      writeTimedCache(
+        historyCache,
+        cacheKey,
+        docs,
+        historyCacheTtlMs,
+        historyCacheMaxEntries,
+      );
+    }
+    return docs;
   }
 
   async function getLatestContext(userId) {
     ensurePostgresAvailable("getLatestContext");
-    return readPostgresLatestContext(userId);
+    const normalizedUserId = toLegacyId(userId);
+    if (!normalizedUserId) {
+      return null;
+    }
+
+    const cachedValue = readTimedCache(
+      latestContextCache,
+      normalizedUserId,
+      latestContextCacheTtlMs,
+    );
+    if (typeof cachedValue !== "undefined") {
+      return cachedValue;
+    }
+
+    const latestContext = await readPostgresLatestContext(normalizedUserId);
+    writeTimedCache(
+      latestContextCache,
+      normalizedUserId,
+      latestContext,
+      latestContextCacheTtlMs,
+      latestContextCacheMaxEntries,
+    );
+    return latestContext;
   }
 
   function getCachedUserSummaries(options = {}, allowStale = false) {
