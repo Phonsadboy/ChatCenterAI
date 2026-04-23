@@ -422,6 +422,11 @@ body.sidebar-collapsed .app-sidebar__footer {
   display: none;
 }
 
+/* Keep the mobile "more" sheet out of desktop document flow. */
+.app-mobile-nav__more-sheet {
+  display: none;
+}
+
 @media (max-width: 991.98px) {
   .app-mobile-nav {
     display: flex;
