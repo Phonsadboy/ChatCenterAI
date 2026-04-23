@@ -66,8 +66,18 @@
 
 <!-- Layout CSS/JS -->
 <link href="/css/admin-layout.css" rel="stylesheet">
+<script>
+  /* FOUC prevention: add layout class immediately before first paint */
+  (function () {
+    var b = document.body;
+    if (b) b.classList.add('has-admin-layout');
+  })();
+  window.__adminActivePage = '<%= current %>';
+  window.adminAuth = window.adminAuth || {};
+  window.adminAuth.requirePasscode = <%= typeof isPasscodeRequired !== 'undefined' ? (isPasscodeRequired ? 'true' : 'false') : 'false' %>;
+  window.adminAuth.user = <%- JSON.stringify(signedInUser || null).replace(/</g, '\\u003c') %>;
+</script>
 <script src="/js/admin-layout.js" defer></script>
-<script>window.__adminActivePage = '<%= current %>';</script>
 
 <!-- ======================== Top Bar ======================== -->
 <header class="app-topbar" id="appTopbar">
@@ -129,7 +139,7 @@
             <i class="fas <%= item.icon %>"></i>
             <span class="app-sidebar__text"><%= item.label %></span>
             <% if (item.badgeId) { %>
-              <span class="app-sidebar__badge" data-chat-badge style="display:none">0</span>
+              <span class="app-sidebar__badge" id="<%= item.badgeId %>" data-chat-badge style="display:none">0</span>
             <% } %>
           </a>
         <% }) %>

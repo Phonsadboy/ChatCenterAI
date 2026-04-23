@@ -684,3 +684,51 @@ body.sidebar-collapsed .app-sidebar__footer {
     padding: 0 0.75rem;
   }
 }
+
+/* ================================================================
+   Page-specific fixes
+   ================================================================ */
+
+/* ---- Settings page: sidebar must clear fixed topbar ---- */
+body.has-admin-layout .settings-sidebar {
+  top: var(--layout-topbar-height);
+  height: calc(100vh - var(--layout-topbar-height));
+}
+
+body.has-admin-layout .settings-layout {
+  min-height: calc(100vh - var(--layout-topbar-height));
+}
+
+@media (max-width: 991.98px) {
+  /* Push page-specific mobile toggles below our topbar so they don't overlap */
+  body.has-admin-layout .mobile-menu-toggle {
+    top: calc(var(--layout-topbar-height) + 1rem);
+  }
+}
+
+/* ---- Chat page: hide global nav on mobile so chat owns the viewport ---- */
+@media (max-width: 991.98px) {
+  body.has-admin-layout.page-chat .app-topbar,
+  body.has-admin-layout.page-chat .app-mobile-nav {
+    display: none !important;
+  }
+
+  body.has-admin-layout.page-chat .app-content {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  body.has-admin-layout.page-chat .app-sidebar-overlay {
+    display: none !important;
+  }
+}
+
+/* ---- Chat page desktop: preserve chat-redesign.css overflow behaviour ---- */
+@media (min-width: 992px) {
+  body.has-admin-layout.page-chat .app-content {
+    overflow: hidden;
+    min-height: 0;
+  }
+}
