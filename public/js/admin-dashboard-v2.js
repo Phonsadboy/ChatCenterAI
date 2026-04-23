@@ -321,10 +321,13 @@
             });
         }
 
-        const card = document.querySelector(`.instruction-card[data-id="${instructionId}"]`);
-        if (card) {
-            const badge = card.querySelector('[data-starter-badge]');
-            applyStarterBadgeState(badge, enabled, messageCount);
+        const sidebarItem = document.querySelector(`.ws-list-item[data-id="${instructionId}"]`);
+        if (sidebarItem) {
+            const starterBadge = sidebarItem.querySelector('.ws-list-badges .ws-badge:last-child');
+            if (starterBadge) {
+                starterBadge.classList.toggle('is-on', enabled);
+                starterBadge.innerHTML = `<i class="fas fa-rocket me-1"></i>${enabled ? 'ON (' + messageCount + ')' : 'OFF'}`;
+            }
         }
 
         if (editorState.currentInstructionId === instructionId) {
@@ -739,26 +742,21 @@
                             }
                         }, 3000);
                         formatUpdatedAtText(updatedAt);
-                        // Update card title/description
-                        const card = document.querySelector(`.instruction-card[data-id="${editorState.currentInstructionId}"]`);
-                        if (card) {
-                            const titleEl = card.querySelector('.instruction-title');
-                            if (titleEl) {
-                                titleEl.textContent = name || 'ไม่มีชื่อ';
+                        // Update sidebar list item
+                        const sidebarItem = document.querySelector(`.ws-list-item[data-id="${editorState.currentInstructionId}"]`);
+                        if (sidebarItem) {
+                            sidebarItem.dataset.name = (name || '').toLowerCase();
+                            const nameEl = sidebarItem.querySelector('.ws-list-name');
+                            if (nameEl) {
+                                const code = data.instruction?.instructionId
+                                    || sidebarItem.dataset.code
+                                    || '';
+                                const codePrefix = code ? `[${code}] ` : '';
+                                nameEl.innerHTML = `<i class="fas fa-book text-primary" style="font-size:0.8rem;"></i> ${escapeHtml(codePrefix + (name || 'ไม่มีชื่อ'))}`;
                             }
-                            let descEl = card.querySelector('.instruction-desc');
-                            if (description) {
-                                if (!descEl) {
-                                    const header = card.querySelector('.instruction-header .flex-grow-1');
-                                    if (header) {
-                                        descEl = document.createElement('p');
-                                        descEl.className = 'instruction-desc';
-                                        header.appendChild(descEl);
-                                    }
-                                }
-                                if (descEl) descEl.textContent = description;
-                            } else if (descEl) {
-                                descEl.remove();
+                            const metaEl = sidebarItem.querySelector('.ws-list-meta');
+                            if (metaEl) {
+                                metaEl.textContent = description || 'ไม่มีคำอธิบาย';
                             }
                         }
                         // Update select option text
@@ -779,6 +777,17 @@
                                 starterEnabled: parseDatasetBoolean(option.dataset.starterEnabled),
                                 starterCount: parseStarterCount(option.dataset.starterCount)
                             });
+                        }
+                        // Update workspace title
+                        if (workspaceTitle) {
+                            const code = data.instruction?.instructionId
+                                || option?.dataset?.instructionCode
+                                || '';
+                            const codePrefix = code ? `[${code}] ` : '';
+                            workspaceTitle.textContent = `${codePrefix}${name || 'ไม่มีชื่อ'}`;
+                        }
+                        if (workspaceMeta) {
+                            workspaceMeta.textContent = description || 'ไม่มีคำอธิบาย';
                         }
                     } else {
                         showToast(data.error || 'ไม่สามารถบันทึก Instruction ได้', 'error');
