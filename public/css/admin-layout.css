@@ -682,6 +682,19 @@ body.sidebar-collapsed .app-sidebar__footer {
 }
 
 /* ================================================================
+   Defensive: hide old cached navbar & unknown injected elements
+   ================================================================ */
+
+/* Hide old Bootstrap navbar if still cached by browser */
+body.has-admin-layout .navbar,
+body.has-admin-layout .app-navbar,
+body.has-admin-layout .navbar-collapse,
+body.has-admin-layout .navbar-nav,
+body.has-admin-layout .navbar-toggler {
+  display: none !important;
+}
+
+/* ================================================================
    Page-specific fixes
    ================================================================ */
 
