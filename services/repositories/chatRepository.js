@@ -414,7 +414,7 @@ function createChatRepository({
       botIdExpression: "b.legacy_bot_id",
     });
     if (pageFilterSql) {
-      conditions.push(pageFilterSql.replace(/^ AND /, ""));
+      conditions.push(pageFilterSql.replace(/^\s*AND\s+/i, ""));
     }
     if (options.start) {
       params.push(options.start);
