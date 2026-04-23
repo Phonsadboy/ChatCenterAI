@@ -38,13 +38,10 @@ const botKeywordModalState = {
 };
 
 document.addEventListener('DOMContentLoaded', function () {
-    initMobileMenu();
     initNavigation();
     initBotChannelTabs();
     loadAllSettings();
     setupEventListeners();
-    showLegacySettingsNotice();
-    initSidebarScrollHint();
 });
 
 // Provide a global alert helper for modules that expect showAlert
@@ -103,66 +100,9 @@ function initBotChannelTabs() {
     setActiveBotChannel(initialChannel, { persist: false });
 }
 
-// --- Mobile Menu ---
-function initMobileMenu() {
-    const menuToggle = document.getElementById('mobileMenuToggle');
-    const sidebar = document.querySelector('.settings-sidebar');
-    const overlay = document.getElementById('sidebarOverlay');
-    const navItems = document.querySelectorAll('.nav-item-v2');
-
-    if (!menuToggle || !sidebar || !overlay) return;
-
-    // Toggle menu
-    function toggleMenu(show) {
-        if (show) {
-            sidebar.classList.add('active');
-            overlay.classList.add('active');
-            menuToggle.classList.add('active');
-            document.body.style.overflow = 'hidden';
-        } else {
-            sidebar.classList.remove('active');
-            overlay.classList.remove('active');
-            menuToggle.classList.remove('active');
-            document.body.style.overflow = '';
-        }
-    }
-
-    // Toggle button click
-    menuToggle.addEventListener('click', () => {
-        const isActive = sidebar.classList.contains('active');
-        toggleMenu(!isActive);
-    });
-
-    // Overlay click to close
-    overlay.addEventListener('click', () => {
-        toggleMenu(false);
-    });
-
-    // Close menu when nav item is clicked
-    navItems.forEach(item => {
-        item.addEventListener('click', () => {
-            // Close menu on mobile after clicking nav item
-            if (window.innerWidth <= 991) {
-                toggleMenu(false);
-            }
-        });
-    });
-
-    // Close menu on window resize if switching to desktop
-    let resizeTimer;
-    window.addEventListener('resize', () => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
-            if (window.innerWidth > 991) {
-                toggleMenu(false);
-            }
-        }, 250);
-    });
-}
-
 // --- Navigation ---
 function initNavigation() {
-    const navItems = document.querySelectorAll('.nav-item-v2');
+    const navItems = document.querySelectorAll('.settings-topnav-item[data-section]');
     const sections = document.querySelectorAll('.settings-section');
 
     navItems.forEach(item => {
@@ -1881,56 +1821,6 @@ function updateChatSamplingVisibility(prefix) {
         setRangeValue(`${prefix}BotPresencePenalty`, '');
         setRangeValue(`${prefix}BotFrequencyPenalty`, '');
     }
-}
-
-function showLegacySettingsNotice() {
-    const toast = document.getElementById('legacySettingsToast');
-    if (!toast) return;
-
-    ['legacyToastCloseBtn', 'dismissLegacyToast'].forEach(id => {
-        const btn = document.getElementById(id);
-        if (btn) {
-            btn.addEventListener('click', () => hideLegacySettingsNotice());
-        }
-    });
-
-    setTimeout(() => {
-        toast.classList.add('show');
-    }, 300);
-
-    // Auto-dismiss after 10 seconds
-    setTimeout(() => {
-        hideLegacySettingsNotice();
-    }, 10000);
-}
-
-function hideLegacySettingsNotice() {
-    const toast = document.getElementById('legacySettingsToast');
-    if (!toast) return;
-    toast.classList.remove('show');
-}
-
-function initSidebarScrollHint() {
-    const sidebar = document.querySelector('.settings-sidebar');
-    if (!sidebar) return;
-    const navItems = sidebar.querySelectorAll('.nav-item-v2');
-    const indicator = document.createElement('div');
-    indicator.className = 'sidebar-scroll-hint';
-    indicator.innerHTML = '<i class="fas fa-arrows-alt-h me-1"></i>ปัดเพื่อดูเมนู';
-
-    const showHint = () => {
-        if (sidebar.scrollWidth > sidebar.clientWidth) {
-            sidebar.appendChild(indicator);
-            requestAnimationFrame(() => indicator.classList.add('show'));
-        }
-    };
-
-    const hideHint = () => indicator.classList.remove('show');
-
-    sidebar.addEventListener('scroll', hideHint, { passive: true });
-    navItems.forEach(item => item.addEventListener('click', hideHint));
-
-    setTimeout(showHint, 500);
 }
 
 // --- Shared helpers ---

@@ -20,62 +20,36 @@
     <%- include('partials/admin-navbar', { activePage: 'settings2' }) %>
 
         <div class="app-content">
-            <!-- Mobile Menu Toggle Button -->
-            <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle Menu">
-                <i class="fas fa-bars"></i>
-            </button>
-
-            <!-- Sidebar Overlay for Mobile -->
-            <div class="sidebar-overlay" id="sidebarOverlay"></div>
-
             <div class="settings-layout">
-                <!-- Sidebar -->
-                <aside class="settings-sidebar">
-                    <div class="mb-4 px-2">
-                        <h5 class="mb-1 fw-bold">การตั้งค่า</h5>
-                        <p class="text-muted-v2 small mb-0">จัดการ AI และระบบของคุณ</p>
-                    </div>
-
-                    <div class="nav-section-title">AI & ระบบอัตโนมัติ</div>
-                    <nav class="nav flex-column mb-4">
-                        <a href="#bot-settings" class="nav-item-v2 active">
-                            <i class="fas fa-robot"></i> จัดการบอท (Bot)
+                <nav class="settings-topnav">
+                    <div class="settings-topnav-scroll">
+                        <a href="#bot-settings" class="settings-topnav-item active" data-section="bot-settings">
+                            <i class="fas fa-robot"></i><span>จัดการบอท</span>
                         </a>
-                        <a href="#image-collections" class="nav-item-v2">
-                            <i class="fas fa-images"></i> คลังรูปภาพ
+                        <a href="#image-collections" class="settings-topnav-item" data-section="image-collections">
+                            <i class="fas fa-images"></i><span>คลังรูปภาพ</span>
                         </a>
-                        <a href="#chat-settings" class="nav-item-v2">
-                            <i class="fas fa-comments"></i> แชทและคิว
+                        <a href="#chat-settings" class="settings-topnav-item" data-section="chat-settings">
+                            <i class="fas fa-comments"></i><span>แชทและคิว</span>
                         </a>
-                        <a href="#order-notifications" class="nav-item-v2">
-                            <i class="fas fa-bell"></i> แจ้งเตือนออเดอร์
+                        <a href="#order-notifications" class="settings-topnav-item" data-section="order-notifications">
+                            <i class="fas fa-bell"></i><span>แจ้งเตือนออเดอร์</span>
                         </a>
-                        <a href="/admin/categories" class="nav-item-v2">
-                            <i class="fas fa-database"></i> จัดการข้อมูล
+                        <a href="/admin/categories" class="settings-topnav-item">
+                            <i class="fas fa-database"></i><span>จัดการข้อมูล</span>
                         </a>
-                    </nav>
-
-                    <div class="nav-section-title">ระบบ</div>
-                    <nav class="nav flex-column">
-                        <a href="#system-settings" class="nav-item-v2">
-                            <i class="fas fa-server"></i> ตั้งค่าทั่วไป
+                        <a href="#system-settings" class="settings-topnav-item" data-section="system-settings">
+                            <i class="fas fa-server"></i><span>ตั้งค่าทั่วไป</span>
                         </a>
-                        <a href="#security-settings" class="nav-item-v2">
-                            <i class="fas fa-shield-alt"></i> ความปลอดภัย & ตัวกรอง
+                        <a href="#security-settings" class="settings-topnav-item" data-section="security-settings">
+                            <i class="fas fa-shield-alt"></i><span>ความปลอดภัย</span>
                         </a>
-                        <a href="#api-keys-settings" class="nav-item-v2">
-                            <i class="fas fa-key"></i> API Keys
-                        </a>
-                    </nav>
-
-                    <div class="mt-auto px-2 pt-4 border-top">
-                        <a href="/admin/dashboard" class="btn-v2 btn-v2-secondary w-100 justify-content-center">
-                            <i class="fas fa-arrow-left"></i> กลับหน้าแดชบอร์ด
+                        <a href="#api-keys-settings" class="settings-topnav-item" data-section="api-keys-settings">
+                            <i class="fas fa-key"></i><span>API Keys</span>
                         </a>
                     </div>
-                </aside>
+                </nav>
 
-                <!-- Content -->
                 <main class="settings-content">
 
                     <!-- Bot Management Section -->
