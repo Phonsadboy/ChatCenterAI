@@ -107,14 +107,14 @@ After insertion:
 
 - `triggerOrderNotification` sends `new_order` notifications and updates
   `notificationStatus`.
-- `maybeAnalyzeFollowUp` updates follow-up state for the user.
+- `maybeUpdateFollowUpStatus` updates follow-up state for the user.
 - `orderExtracted` Socket.IO event is emitted for admin UI refresh.
 
 หลังการ insert:
 
 - `triggerOrderNotification` ส่งแจ้งเตือน `new_order` และอัปเดต
   `notificationStatus`
-- `maybeAnalyzeFollowUp` อัปเดตสถานะ follow-up ของผู้ใช้
+- `maybeUpdateFollowUpStatus` อัปเดตสถานะ follow-up ของผู้ใช้
 - ยิง Socket.IO event `orderExtracted` เพื่อรีเฟรช UI ฝั่งแอดมิน
 
 ## Related (non-creation) endpoints

@@ -17,10 +17,6 @@ class ChatManager {
         this.closeSidebarForMobile = () => { };
         this.mobileMediaQuery = null;
         this.updateAppHeight = this.updateAppHeight.bind(this);
-        const followUpConfig = window.chatCenterFollowUpConfig || {};
-        this.followUpOptions = {
-            showInChat: typeof followUpConfig.showInChat === 'boolean' ? followUpConfig.showInChat : true
-        };
 
         // ✅ Initialize performance utilities
         this.optimizedFetch = new window.performanceUtils.OptimizedFetch();
@@ -504,9 +500,7 @@ class ChatManager {
             const isActive = user.userId === this.currentUserId;
             const hasUnread = user.unreadCount > 0;
             const displayName = user.displayName || `${user.userId.slice(0, 6)}...`;
-            const showFollowUp = (user.followUp && typeof user.followUp.showInChat === 'boolean')
-                ? user.followUp.showInChat
-                : this.followUpOptions.showInChat;
+            const showFollowUp = true;
 
             // ใช้ข้อมูลที่แปลงแล้วจาก backend
             let lastMsg = '';
@@ -979,9 +973,7 @@ class ChatManager {
         const initials = displayName.charAt(0).toUpperCase();
         const messageCount = Number.isFinite(user.messageCount) ? user.messageCount : 0;
         const updatedLabel = user.followUpUpdatedAt ? this.formatTimestamp(user.followUpUpdatedAt) : '';
-        const showFollowUp = (user.followUp && typeof user.followUp.showInChat === 'boolean')
-            ? user.followUp.showInChat
-            : this.followUpOptions.showInChat;
+        const showFollowUp = true;
         const shouldShowFollowUp = showFollowUp && user.hasFollowUp;
 
         // Purchase status
@@ -1257,7 +1249,7 @@ class ChatManager {
             this.loadUsers();
         }
 
-        if (this.followUpOptions.showInChat && data.hasFollowUp) {
+        if (data.hasFollowUp) {
             this.showToast('ตรวจพบลูกค้ายืนยันการสั่งซื้อ', 'info');
         }
     }

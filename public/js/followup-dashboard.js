@@ -6,7 +6,7 @@
         editorRounds: [],
         expandedRoundIndex: null,
         assets: [],
-        activeTab: 'general',
+        activeTab: 'messages',
         isLoading: false
     };
 
@@ -23,13 +23,9 @@
         tabButtons: document.querySelectorAll('.followup-tab'),
         tabContents: document.querySelectorAll('.followup-tab-content'),
         settingAutoSend: document.getElementById('settingAutoSend'),
-        settingShowChat: document.getElementById('settingShowChat'),
-        settingShowDashboard: document.getElementById('settingShowDashboard'),
         emergencyStopGroup: document.getElementById('emergencyStopGroup'),
         roundsContainer: document.getElementById('roundsContainer'),
         btnAddRound: document.getElementById('btnAddRound'),
-        imageLibraryGrid: document.getElementById('imageLibraryGrid'),
-        btnUploadImage: document.getElementById('btnUploadImage'),
         previewBody: document.getElementById('followupPreviewBody')
     };
 
@@ -305,7 +301,7 @@
         }
     };
 
-    const renderGeneralTab = () => {
+    const renderHeaderControls = () => {
         const cfg = state.currentContextConfig || state.currentPage?.settings || {};
         if (el.settingAutoSend) {
             el.settingAutoSend.checked = isAutoFollowUpEffectiveEnabled(cfg);
@@ -321,8 +317,6 @@
             const hardStop = isHardStopEnabled(cfg);
             el.emergencyStopGroup.classList.toggle('d-none', !hardStop);
         }
-        if (el.settingShowChat) el.settingShowChat.checked = cfg.showInChat !== false;
-        if (el.settingShowDashboard) el.settingShowDashboard.checked = cfg.showInDashboard !== false;
     };
 
     const sortRoundsByDelay = () => {
@@ -445,7 +439,6 @@
                     }
                 });
             }
-            await loadAssets();
         } catch (error) {
             console.error('upload follow-up images error', error);
             showAlert('danger', 'เกิดข้อผิดพลาดในการอัพโหลดรูปภาพ');
@@ -491,7 +484,7 @@
                         </div>
                         <div class="followup-item-icon"><i class="fas fa-font"></i></div>
                         <div class="followup-item-body">
-                            <textarea class="form-control form-control-sm followup-item-text" rows="2" placeholder="กรอกข้อความ" data-round="${roundIndex}" data-item="${itemIndex}">${safeContent}</textarea>
+                            <textarea class="form-control form-control-sm followup-item-text" rows="4" placeholder="กรอกข้อความ" data-round="${roundIndex}" data-item="${itemIndex}">${safeContent}</textarea>
                         </div>
                         <div class="followup-item-actions">
                             <button type="button" class="btn btn-xs btn-outline-danger followup-item-remove" data-round="${roundIndex}" data-item="${itemIndex}" title="ลบรายการนี้">
@@ -553,9 +546,10 @@
             const detailHtml = isExpanded ? `
                 <div class="followup-round-detail">
                     <div class="round-detail-delay">
-                        <span class="delay-hint">หลังจากข้อความล่าสุดของลูกค้า</span>
-                        <input type="number" class="form-control form-control-sm followup-round-delay" min="1" step="1" value="${Number.isFinite(delayValue) ? delayValue : ''}" placeholder="นาที">
-                        <span class="delay-hint">นาที</span>
+                        <span class="delay-label">ส่งหลัง</span>
+                        <input type="number" class="form-control form-control-sm followup-round-delay" min="1" step="1" value="${Number.isFinite(delayValue) ? delayValue : ''}" placeholder="นาที" aria-label="ส่งหลังจากข้อความล่าสุดเป็นจำนวนนาที">
+                        <span class="delay-unit">นาที</span>
+                        <span class="delay-context">หลังข้อความล่าสุด</span>
                         ${duplicateDelays.has(Number(delayValue) || 0) ? '<span class="badge bg-warning text-dark">delay ซ้ำ</span>' : ''}
                     </div>
                     <div class="followup-round-items">
@@ -585,7 +579,7 @@
                     <div class="followup-round-summary">
                         <span class="round-index">${index + 1}</span>
                         <span class="round-delay">+${formatDelayMinutes(delayValue)}</span>
-                        <span class="round-delay-label">หลังจากคุยล่าสุด</span>
+                        <span class="round-delay-label">หลังล่าสุด</span>
                         <span class="round-preview">${escapeHtml(previewText)}</span>
                         <span class="round-meta">${metaBadges.join('')}</span>
                         <span class="round-toggle"><i class="fas fa-chevron-down"></i></span>
@@ -771,62 +765,6 @@
             .filter(Boolean);
     };
 
-    const renderAssets = () => {
-        if (!el.imageLibraryGrid) return;
-        if (!state.assets.length) {
-            el.imageLibraryGrid.innerHTML = `
-                <div class="app-empty" style="grid-column: 1 / -1;">
-                    <div class="app-empty__desc">ยังไม่มีรูปภาพในระบบ</div>
-                </div>
-            `;
-            return;
-        }
-        el.imageLibraryGrid.innerHTML = state.assets.map(asset => {
-            const preview = escapeAttr(asset.thumbUrl || asset.previewUrl || asset.url || '');
-            const full = escapeAttr(asset.url || '');
-            const name = escapeHtml(asset.fileName || 'รูปภาพ');
-            return `
-                <div class="followup-image-card" data-asset-id="${escapeAttr(asset.id || asset.assetId || '')}">
-                    <a href="${full}" target="_blank" rel="noopener">
-                        <img src="${preview}" alt="${name}" loading="lazy">
-                    </a>
-                    <div class="image-meta">
-                        <span class="image-name" title="${name}">${name}</span>
-                        <button type="button" class="image-action" data-action="copy-url" data-url="${full}" title="คัดลอก URL">
-                            <i class="fas fa-link"></i>
-                        </button>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        el.imageLibraryGrid.querySelectorAll('[data-action="copy-url"]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const url = btn.getAttribute('data-url');
-                if (!url) return;
-                try {
-                    await navigator.clipboard.writeText(url);
-                    showAlert('success', 'คัดลอก URL แล้ว');
-                } catch (e) {
-                    showAlert('info', url);
-                }
-            });
-        });
-    };
-
-    const loadAssets = async () => {
-        try {
-            const response = await fetch('/admin/followup/assets');
-            const data = await response.json();
-            if (data.success) {
-                state.assets = Array.isArray(data.assets) ? data.assets : [];
-                renderAssets();
-            }
-        } catch (error) {
-            console.error('load assets error', error);
-        }
-    };
-
     const loadPages = async () => {
         try {
             const response = await fetch('/admin/followup/page-settings');
@@ -864,11 +802,11 @@
         state.currentContextConfig = page.settings || null;
         state.editorRounds = [];
         state.expandedRoundIndex = null;
-        state.activeTab = 'general';
-        switchTab('general');
+        state.activeTab = 'messages';
+        switchTab('messages');
         renderPageSelector();
         updateEditorHeader();
-        renderGeneralTab();
+        renderHeaderControls();
 
         const cfg = state.currentContextConfig || {};
         if (Array.isArray(cfg.rounds)) {
@@ -893,7 +831,6 @@
             });
         }
         renderRounds();
-        loadAssets();
     };
 
     const switchTab = (tabName) => {
@@ -913,8 +850,6 @@
             botId: state.currentPage.botId,
             settings: {
                 autoFollowUpEnabled: el.settingAutoSend ? el.settingAutoSend.checked : false,
-                showInChat: el.settingShowChat ? el.settingShowChat.checked : true,
-                showInDashboard: el.settingShowDashboard ? el.settingShowDashboard.checked : true,
                 rounds: collectRoundsPayload()
             }
         };
@@ -969,46 +904,6 @@
         }
     };
 
-    const handleImageUpload = () => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.multiple = true;
-        input.addEventListener('change', async (event) => {
-            const files = Array.from(event.target.files || []);
-            if (!files.length) return;
-            try {
-                el.btnUploadImage.disabled = true;
-                for (const file of files) {
-                    const formData = new FormData();
-                    formData.append('images', file);
-                    const response = await fetch('/admin/followup/assets', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    let result;
-                    try {
-                        result = await response.json();
-                    } catch (parseError) {
-                        result = { success: false, error: 'อัพโหลดรูปภาพไม่สำเร็จ' };
-                    }
-                    if (!response.ok || !result.success) {
-                        showAlert('danger', result.error || 'อัพโหลดรูปภาพไม่สำเร็จ');
-                        continue;
-                    }
-                }
-                showAlert('success', 'อัปโหลดรูปภาพเสร็จสิ้น');
-                await loadAssets();
-            } catch (error) {
-                console.error('upload image error', error);
-                showAlert('danger', 'เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ');
-            } finally {
-                el.btnUploadImage.disabled = false;
-            }
-        });
-        input.click();
-    };
-
     const setupEventListeners = () => {
         if (el.pageSearch) {
             el.pageSearch.addEventListener('input', () => {
@@ -1034,10 +929,6 @@
             el.btnAddRound.addEventListener('click', () => {
                 addRound({ delayMinutes: 10 });
             });
-        }
-
-        if (el.btnUploadImage) {
-            el.btnUploadImage.addEventListener('click', handleImageUpload);
         }
     };
 

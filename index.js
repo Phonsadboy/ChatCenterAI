@@ -2978,7 +2978,7 @@ async function saveChatHistory(
   const shouldUpdateFollowUpStatus =
     typeof userMsgToSave === "string" ? userMsgToSave.trim().length > 0 : true;
   if (shouldUpdateFollowUpStatus) {
-    maybeAnalyzeFollowUp(userId, platform, botId).catch((error) => {
+    maybeUpdateFollowUpStatus(userId, platform, botId).catch((error) => {
       console.error("[FollowUp] Background status update error:", error.message);
     });
   }
@@ -3666,8 +3666,6 @@ async function getFollowUpBaseConfig() {
   }
 
   const keys = [
-    "followUpShowInChat",
-    "followUpShowInDashboard",
     "followUpAutoEnabled",
     "followUpRounds",
   ];
@@ -3686,14 +3684,8 @@ async function getFollowUpBaseConfig() {
   });
 
   const config = {
-    showInChat:
-      typeof map.followUpShowInChat === "boolean"
-        ? map.followUpShowInChat
-        : true,
-    showInDashboard:
-      typeof map.followUpShowInDashboard === "boolean"
-        ? map.followUpShowInDashboard
-        : true,
+    showInChat: true,
+    showInDashboard: true,
     autoFollowUpEnabled:
       typeof map.followUpAutoEnabled === "boolean"
         ? map.followUpAutoEnabled
@@ -3767,6 +3759,8 @@ async function getFollowUpConfigForContext(platform = "line", botId = null) {
   if (typeof merged.autoFollowUpEnabled !== "boolean") {
     merged.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
   }
+  merged.showInChat = true;
+  merged.showInDashboard = true;
 
   followUpContextCache.set(cacheKey, merged);
   return merged;
@@ -3839,6 +3833,8 @@ async function listFollowUpPageSettings() {
     if (typeof config.autoFollowUpEnabled !== "boolean") {
       config.autoFollowUpEnabled = baseConfig.autoFollowUpEnabled !== false;
     }
+    config.showInChat = true;
+    config.showInDashboard = true;
     return config;
   };
 
@@ -4856,7 +4852,7 @@ async function updateFollowUpStatus(userId, fields) {
   });
 }
 
-async function maybeAnalyzeFollowUp(
+async function maybeUpdateFollowUpStatus(
   userId,
   platform = "line",
   botId = null,
@@ -6185,7 +6181,7 @@ async function createOrderFromTool(args = {}, context = {}) {
 
   triggerOrderNotification(orderId);
 
-  await maybeAnalyzeFollowUp(userId, platform, botId, {
+  await maybeUpdateFollowUpStatus(userId, platform, botId, {
     forceUpdate: true,
   });
 
@@ -6332,7 +6328,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
     }
   } catch (_) { }
 
-  await maybeAnalyzeFollowUp(userId, platform, botId, {
+  await maybeUpdateFollowUpStatus(userId, platform, botId, {
     forceUpdate: true,
   });
 
@@ -6557,10 +6553,6 @@ async function getFollowUpUsers(filter = {}) {
       const configKey = `${contextPlatform}:${contextBotId || "default"}`;
       const config = contextConfigMap.get(configKey) || {};
 
-      if (config.showInDashboard === false) {
-        return null;
-      }
-
       const rawRounds = Array.isArray(task.rounds) ? task.rounds : [];
       const sanitizedRounds = rawRounds.map((r) => ({
         index: r?.index ?? 0,
@@ -6615,7 +6607,7 @@ async function getFollowUpUsers(filter = {}) {
         lastMessage: preview,
         followUpReason: task.cancelReason || "",
         config: {
-          showInDashboard: config.showInDashboard !== false,
+          showInDashboard: true,
           autoFollowUpEnabled: config.autoFollowUpEnabled !== false,
           rounds: config.rounds || [],
         },
@@ -13306,8 +13298,6 @@ async function ensureSettings() {
     { key: "systemMode", value: "production" },
     { key: "showTokenUsage", value: false },
     { key: "facebookImageSendMode", value: "upload" },
-    { key: "followUpShowInChat", value: true },
-    { key: "followUpShowInDashboard", value: true },
     { key: "followUpAutoEnabled", value: false },
     { key: "orderCutoffSchedulingEnabled", value: true },
     {
@@ -21138,7 +21128,7 @@ app.post(
       res.redirect(
         `/admin/dashboard?success=${encodeURIComponent(
           "สร้างชุดข้อมูลเรียบร้อยแล้ว",
-        )}&instructionId=${instructionId}`,
+        )}&instructionId=${instructionId}&tab=dataitems`,
       );
     } catch (err) {
       console.error("Error creating data item:", err);
@@ -21224,7 +21214,7 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
       "dashboard_admin",
     );
 
-    res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
+    res.redirect(`/admin/dashboard?success=${encodeURIComponent("แก้ไขชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}&tab=dataitems`);
   } catch (err) {
     console.error("Error saving data item:", err);
     res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
@@ -21383,7 +21373,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
     );
 
     res.redirect(
-      `/admin/dashboard?success=${encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}`
+      `/admin/dashboard?success=${encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}&tab=dataitems`
     );
   } catch (err) {
     console.error("V3: Error creating data item:", err);
@@ -21453,7 +21443,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
       "dashboard_admin",
     );
 
-    res.redirect(`/admin/dashboard?success=แก้ไขชุดข้อมูลเรียบร้อยแล้ว&instructionId=${instructionId}`);
+    res.redirect(`/admin/dashboard?success=${encodeURIComponent("แก้ไขชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}&tab=dataitems`);
   } catch (err) {
     console.error("V3: Error saving data item:", err);
     res.redirect("/admin/dashboard?error=" + encodeURIComponent(err.message));
@@ -24340,15 +24330,6 @@ app.get("/admin/followup/users", async (req, res) => {
       normalizedBotId,
     );
 
-    if (contextConfig.showInDashboard === false) {
-      return res.json({
-        success: false,
-        disabled: true,
-        message: "หน้าติดตามลูกค้าถูกปิดใช้งานสำหรับเพจนี้",
-        config: contextConfig,
-      });
-    }
-
     const result = await getFollowUpUsers({
       platform: normalizedPlatform || undefined,
       botId: normalizedBotId || undefined,
@@ -24396,14 +24377,6 @@ app.post("/admin/followup/clear", async (req, res) => {
       platform || "line",
       botId,
     );
-    if (contextConfig.showInDashboard === false) {
-      // อนุญาตให้ล้างแท็กแม้ถูกปิดแสดง แต่แจ้งเตือนฝั่ง client
-      console.warn(
-        "[FollowUp] Clearing status on hidden page:",
-        platform,
-        botId,
-      );
-    }
 
     await cancelFollowUpTasksForUser(userId, platform, botId, {
       reason: "manual_clear",
@@ -24456,8 +24429,6 @@ app.post("/admin/followup/page-settings", async (req, res) => {
     const normalizedBotId = normalizeFollowUpBotId(botId);
     const sanitized = {};
     const boolKeys = [
-      "showInChat",
-      "showInDashboard",
       "autoFollowUpEnabled",
     ];
     const numberKeys = {};
@@ -24740,17 +24711,16 @@ app.post(
 // Chat page
 app.get("/admin/chat", async (req, res) => {
   try {
-    const showInChat = await getSettingValue("followUpShowInChat", true);
     res.render("admin-chat", {
       followUpConfig: {
-        showInChat,
+        showInChat: true,
       },
     });
   } catch (error) {
     console.error("[FollowUp] ไม่สามารถโหลดหน้าจัดการแชทได้:", error);
     res.render("admin-chat", {
       followUpConfig: {
-        showInChat: false,
+        showInChat: true,
       },
     });
   }
@@ -29671,7 +29641,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
       }
     } catch (_) { }
 
-    await maybeAnalyzeFollowUp(order.userId, order.platform, order.botId, {
+    await maybeUpdateFollowUpStatus(order.userId, order.platform, order.botId, {
       forceUpdate: true,
     });
 
@@ -31846,13 +31816,13 @@ app.get("/api/settings", async (req, res) => {
       hiddenWords: "",
       replacementText: "[ข้อความถูกซ่อน]",
       enableStrictFiltering: true,
-      followUpShowInChat: true,
-      followUpShowInDashboard: true,
       orderRequiredFields: ORDER_REQUIRED_FIELDS_DEFAULT,
     };
 
     // Merge with existing settings
     const finalSettings = { ...defaultSettings, ...settingsObj };
+    delete finalSettings.followUpShowInChat;
+    delete finalSettings.followUpShowInDashboard;
     finalSettings.orderRequiredFields = normalizeOrderRequiredFields(
       finalSettings.orderRequiredFields,
     );
@@ -31872,8 +31842,6 @@ app.post("/api/settings/chat", async (req, res) => {
       maxQueueMessages,
       enableMessageMerging,
       showTokenUsage,
-      followUpShowInChat,
-      followUpShowInDashboard,
       audioAttachmentResponse,
     } = req.body;
 
@@ -31941,36 +31909,11 @@ app.post("/api/settings/chat", async (req, res) => {
       { upsert: true },
     );
 
-    const followUpUpdates = [
-      { key: "followUpShowInChat", value: parseOptionalBoolean(followUpShowInChat) },
-      {
-        key: "followUpShowInDashboard",
-        value: parseOptionalBoolean(followUpShowInDashboard),
-      },
-    ];
-
-    let followUpConfigTouched = false;
-    for (const update of followUpUpdates) {
-      if (typeof update.value !== "boolean") continue;
-      followUpConfigTouched = true;
-      await coll.updateOne(
-        { key: update.key },
-        { $set: { value: update.value } },
-        { upsert: true },
-      );
-    }
-
-    if (followUpConfigTouched) {
-      resetFollowUpConfigCache();
-    }
-
     invalidateSettingsCacheKeys([
       "chatDelaySeconds",
       "maxQueueMessages",
       "enableMessageMerging",
       "showTokenUsage",
-      "followUpShowInChat",
-      "followUpShowInDashboard",
       "audioAttachmentResponse",
     ]);
     invalidateAllRuntimeCaches();
@@ -35099,7 +35042,7 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
 
     await Promise.all(
       Array.from(followUpTargets.values()).map((target) =>
-        maybeAnalyzeFollowUp(target.userId, target.platform, target.botId, {
+        maybeUpdateFollowUpStatus(target.userId, target.platform, target.botId, {
           forceUpdate: true,
         }),
       ),
@@ -35263,7 +35206,7 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
       }
     } catch (_) { }
 
-    await maybeAnalyzeFollowUp(order.userId, order.platform, order.botId, {
+    await maybeUpdateFollowUpStatus(order.userId, order.platform, order.botId, {
       forceUpdate: true,
     });
 
@@ -37443,7 +37386,7 @@ async function getNormalizedChatUsers(options = {}) {
             : true;
 
           const followStatus = followMap[userId];
-          const showFollowUp = config.showInChat !== false;
+          const showFollowUp = true;
           const followUpTaskKey = `${userId}:${platform}:${botId || "default"}`;
           const activeFollowUpTask =
             followUpTaskMap.get(followUpTaskKey) ||
@@ -37510,7 +37453,7 @@ async function getNormalizedChatUsers(options = {}) {
             orderCount,
             followUp: {
               showInChat: showFollowUp,
-              showInDashboard: config.showInDashboard !== false,
+              showInDashboard: true,
               isFollowUp: showFollowUp && hasActiveFollowUpTask,
               nextScheduledAt: hasActiveFollowUpTask
                 ? activeFollowUpTask.nextScheduledAt || null

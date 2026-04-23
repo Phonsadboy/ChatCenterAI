@@ -68,8 +68,17 @@
   (function () {
     var b = document.body;
     var currentPage = '<%= current %>';
+    var storedSidebarState = null;
+    var isSidebarCollapsed = true;
+    try {
+      storedSidebarState = window.localStorage.getItem('adminSidebarCollapsedV2');
+      isSidebarCollapsed = storedSidebarState === null ? true : storedSidebarState !== 'false';
+    } catch (_) {
+      isSidebarCollapsed = true;
+    }
     if (b) {
       b.classList.add('has-admin-layout');
+      b.classList.toggle('sidebar-collapsed', isSidebarCollapsed);
       if (currentPage) {
         b.classList.add('page-' + currentPage.toLowerCase().replace(/[^a-z0-9-]/g, '-'));
       }
@@ -138,6 +147,8 @@
             href="<%= item.href %>"
             class="app-sidebar__item <%= isActive(item.page) ? 'is-active' : '' %>"
             data-page="<%= item.page %>"
+            data-label="<%= item.label %>"
+            aria-label="<%= item.label %>"
           >
             <i class="fas <%= item.icon %>"></i>
             <span class="app-sidebar__text"><%= item.label %></span>

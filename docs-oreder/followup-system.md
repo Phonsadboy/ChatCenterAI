@@ -37,7 +37,7 @@
 - ฟิลด์หลัก:
   - platform ("line" หรือ "facebook")
   - botId (null = ค่าเริ่มต้นของแพลตฟอร์มนั้น)
-  - settings: { showInChat, showInDashboard, autoFollowUpEnabled, rounds }
+  - settings: { autoFollowUpEnabled, rounds }
   - updatedAt
 - การ merge config ใช้ลำดับ: baseConfig (settings collection) → platform default (botId:null) → specific botId
 
@@ -49,18 +49,13 @@
 
 ## การตั้งค่า (Settings)
 ### Global settings ใน collection settings
-- followUpShowInChat (default: true)
-- followUpShowInDashboard (default: true)
 - followUpAutoEnabled (default: false)
 - followUpRounds (default: 2 รอบที่ 10/20 นาที)
 - หมายเหตุ: followUpRounds และ followUpAutoEnabled ไม่มีหน้า UI ตรง ต้องปรับผ่าน DB หรือทำ endpoint เพิ่มเอง
 
 ### API ที่ใช้ปรับ global
 - `GET /api/settings` คืนค่ารวมทั้งหมด
-- `POST /api/settings/chat` รองรับ:
-  - followUpShowInChat
-  - followUpShowInDashboard
-  - (และค่าอื่นของหน้า chat settings)
+- `POST /api/settings/chat` รองรับค่าอื่นของหน้า chat settings
 - เมื่อแก้ค่า จะ reset cache ของ follow-up config
 
 ### ตั้งค่าต่อเพจ/บอท
@@ -122,7 +117,7 @@
 
 ### 3) การติดแท็กลูกค้าว่าซื้อแล้ว (follow_up_status)
 อัปเดตจาก:
-- maybeAnalyzeFollowUp() หลังบันทึกข้อความ user
+- maybeUpdateFollowUpStatus() หลังบันทึกข้อความ user
 - เมื่อมี order ถูกสร้าง/แก้ไข/ลบ (forceUpdate)
 - เมื่อ schedule พบว่ามี order อยู่แล้ว
 
@@ -199,8 +194,4 @@
 - ถ้ามี manual purchase status ใน `user_purchase_status`:
   - แชทจะแสดงสถานะซื้อตาม manual override
   - แต่การหยุด follow-up อัตโนมัติยังอ้าง follow_up_status (ไม่ใช่ manual)
-- ถ้าปิด showInDashboard สำหรับเพจนั้น:
-  - `/admin/followup/users` จะส่ง disabled=true
-  - UI จะแสดงข้อความว่า “ถูกปิด”
-- ถ้าปิด showInChat:
-  - แชทจะไม่แสดง badge/สถานะติดตาม (แต่ระบบยัง schedule/ส่งตามปกติ)
+- หน้าแชทและแดชบอร์ด follow-up แสดงสถานะ follow-up เสมอเมื่อมีข้อมูล

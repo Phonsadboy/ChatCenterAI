@@ -263,6 +263,10 @@ body.sidebar-collapsed .app-sidebar {
   scrollbar-width: thin;
 }
 
+body.sidebar-collapsed .app-sidebar__scroll {
+  padding: 0.5rem;
+}
+
 .app-sidebar__scroll::-webkit-scrollbar {
   width: 4px;
 }
@@ -314,6 +318,12 @@ body.sidebar-collapsed .app-sidebar__section-title {
   transition: background 0.15s ease, color 0.15s ease;
   position: relative;
   white-space: nowrap;
+}
+
+body.sidebar-collapsed .app-sidebar__item {
+  justify-content: center;
+  gap: 0;
+  padding: 0.6rem 0;
 }
 
 .app-sidebar__item:hover {
@@ -390,11 +400,20 @@ body.sidebar-collapsed .app-sidebar__badge {
 .app-sidebar__footer {
   padding: 0.75rem;
   border-top: 1px solid var(--layout-sidebar-border);
+  max-height: 76px;
+  overflow: hidden;
   opacity: 1;
-  transition: opacity var(--layout-transition);
+  transition:
+    opacity var(--layout-transition),
+    padding var(--layout-transition),
+    max-height var(--layout-transition),
+    border-color var(--layout-transition);
 }
 
 body.sidebar-collapsed .app-sidebar__footer {
+  max-height: 0;
+  padding: 0 0.5rem;
+  border-top-color: transparent;
   opacity: 0;
   pointer-events: none;
 }
@@ -422,7 +441,49 @@ body.sidebar-collapsed .app-sidebar__footer {
   border-color: var(--color-primary-light);
 }
 
-/* Collapsed tooltip fallback (title attr handles most) */
+.app-sidebar-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1045;
+  max-width: 220px;
+  padding: 0.42rem 0.62rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-md, 8px);
+  background: rgba(30, 36, 48, 0.96);
+  box-shadow: 0 10px 28px rgba(30, 36, 48, 0.18);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-4px, -50%);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.app-sidebar-tooltip::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  background: rgba(30, 36, 48, 0.96);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.app-sidebar-tooltip.is-visible {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+@media (max-width: 991.98px) {
+  .app-sidebar-tooltip {
+    display: none;
+  }
+}
 
 /* ================================================================
    Mobile Bottom Navigation

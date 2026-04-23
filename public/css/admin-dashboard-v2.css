@@ -1,9 +1,9 @@
-/* Admin Dashboard V2 - Split Workspace */
+/* Admin Dashboard V2 - Split Workspace (Polished) */
 
 /* ===== Workspace Layout ===== */
 .dashboard-workspace {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.85rem;
   min-height: calc(100vh - var(--layout-topbar-height, 56px) - 2rem);
 }
 
@@ -26,11 +26,17 @@
 
 /* ===== Sidebar Header ===== */
 .ws-sidebar-header {
-  background: var(--bg-card, #fff);
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fc 100%);
   border: 1px solid var(--border, #E1E5EF);
   border-radius: var(--instruction-radius, 12px);
-  padding: 0.85rem 1rem;
+  padding: 1rem 1.15rem;
   box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
+}
+
+.ws-sidebar-header h5 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-main, #1E2430);
 }
 
 /* ===== Sidebar List ===== */
@@ -39,29 +45,41 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.4rem;
   padding-right: 0.25rem;
 }
 
 .ws-list-item {
-  background: var(--bg-card, #fff);
+  background: linear-gradient(135deg, #ffffff 0%, #fafbfd 100%);
   border: 1px solid var(--border, #E1E5EF);
   border-radius: 10px;
-  padding: 0.85rem 1rem;
+  padding: 0.9rem 1.1rem;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
 }
 
 .ws-list-item:hover {
-  border-color: rgba(74, 111, 165, 0.3);
-  box-shadow: 0 4px 12px rgba(22, 34, 56, 0.06);
+  border-color: rgba(74, 111, 165, 0.35);
+  box-shadow: 0 6px 18px rgba(22, 34, 56, 0.08);
+  transform: translateY(-1px);
 }
 
 .ws-list-item.active {
-  background: rgba(74, 111, 165, 0.06);
+  background: linear-gradient(135deg, rgba(74, 111, 165, 0.08) 0%, rgba(74, 111, 165, 0.03) 100%);
   border-color: var(--color-primary, #4A6FA5);
-  box-shadow: 0 0 0 3px rgba(74, 111, 165, 0.08);
+  box-shadow: 0 0 0 3px rgba(74, 111, 165, 0.1), 0 4px 12px rgba(74, 111, 165, 0.1);
+}
+
+.ws-list-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  background: var(--color-primary, #4A6FA5);
+  border-radius: 0 3px 3px 0;
 }
 
 .ws-list-item .ws-list-name {
@@ -76,7 +94,7 @@
 .ws-list-item .ws-list-meta {
   font-size: 0.82rem;
   color: var(--text-sub, #5C6372);
-  margin-top: 0.2rem;
+  margin-top: 0.25rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -84,26 +102,27 @@
 
 .ws-list-item .ws-list-badges {
   display: flex;
-  gap: 0.3rem;
-  margin-top: 0.4rem;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
   flex-wrap: wrap;
 }
 
 .ws-badge {
   font-size: 0.7rem;
   font-weight: 700;
-  padding: 0.18rem 0.5rem;
+  padding: 0.2rem 0.55rem;
   border-radius: 999px;
   border: 1px solid var(--border, #E1E5EF);
   background: #f1f3f8;
   color: var(--text-sub, #5C6372);
   display: inline-flex;
   align-items: center;
+  transition: all 0.15s ease;
 }
 
 .ws-badge.is-on {
-  background: rgba(45, 143, 111, 0.1);
-  border-color: rgba(45, 143, 111, 0.2);
+  background: linear-gradient(135deg, rgba(45, 143, 111, 0.12) 0%, rgba(45, 143, 111, 0.06) 100%);
+  border-color: rgba(45, 143, 111, 0.25);
   color: var(--color-success, #2D8F6F);
 }
 
@@ -111,12 +130,18 @@
   padding-top: 0.25rem;
 }
 
+.ws-sidebar-footer .btn {
+  border-radius: 10px;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(74, 111, 165, 0.15);
+}
+
 /* ===== Workspace Header ===== */
 .ws-header {
-  background: var(--bg-card, #fff);
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fc 100%);
   border: 1px solid var(--border, #E1E5EF);
   border-radius: var(--instruction-radius, 12px);
-  padding: 1rem 1.25rem;
+  padding: 1.1rem 1.35rem;
   box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
   display: flex;
   justify-content: space-between;
@@ -130,36 +155,65 @@
   margin: 0;
   font-size: 1.15rem;
   color: var(--text-main, #1E2430);
+  letter-spacing: -0.01em;
 }
 
 .ws-header-meta {
   color: var(--text-sub, #5C6372);
   font-size: 0.88rem;
+  margin-top: 0.15rem;
 }
 
 .ws-header-actions {
   display: flex;
-  gap: 0.4rem;
+  gap: 0.45rem;
   flex-wrap: wrap;
 }
 
 .ws-header-actions .btn {
   font-weight: 600;
   border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+/* ===== Starter Button (Prominent) ===== */
+.btn-starter {
+  background: linear-gradient(135deg, #E6B75C 0%, #DFA94B 100%);
+  border: none;
+  color: #2b1d0d;
+  box-shadow: 0 2px 8px rgba(223, 169, 75, 0.35);
+  font-weight: 700;
+}
+
+.btn-starter:hover {
+  background: linear-gradient(135deg, #DFA94B 0%, #D49A3A 100%);
+  color: #2b1d0d;
+  box-shadow: 0 4px 14px rgba(223, 169, 75, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-starter:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(223, 169, 75, 0.3);
+}
+
+.btn-starter i {
+  color: #7a5c1a;
 }
 
 /* ===== Workspace Tabs ===== */
 .ws-tabs {
   display: flex;
-  gap: 0.25rem;
-  background: #f0f2f7;
-  padding: 0.35rem;
+  gap: 0.3rem;
+  background: linear-gradient(135deg, #f0f2f7 0%, #e8ebf2 100%);
+  padding: 0.4rem;
   border-radius: 10px;
   width: fit-content;
+  border: 1px solid var(--border, #E1E5EF);
 }
 
 .ws-tab {
-  padding: 0.45rem 1rem;
+  padding: 0.5rem 1.1rem;
   border-radius: 8px;
   border: none;
   background: transparent;
@@ -167,27 +221,31 @@
   font-weight: 600;
   font-size: 0.85rem;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.18s ease;
   font-family: var(--font-family-base, 'Mali', 'Inter', sans-serif);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .ws-tab.active {
   background: #fff;
   color: var(--color-primary, #4A6FA5);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 
 .ws-tab:hover:not(.active) {
   color: var(--text-main, #1E2430);
+  background: rgba(255,255,255,0.5);
 }
 
 /* ===== Workspace Panel ===== */
 .ws-panel {
-  background: var(--bg-card, #fff);
+  background: linear-gradient(135deg, #ffffff 0%, #fafbfd 100%);
   border: 1px solid var(--border, #E1E5EF);
   border-radius: var(--instruction-radius, 12px);
   box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
-  padding: 1.25rem;
+  padding: 1.35rem;
   flex: 1;
   overflow-y: auto;
   min-height: 200px;
@@ -200,29 +258,39 @@
 /* ===== Mini Metrics ===== */
 .ws-mini-metrics {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.6rem;
   flex-wrap: wrap;
 }
 
 .ws-mini-metric {
-  background: #f8f9fc;
+  background: linear-gradient(135deg, #f8f9fc 0%, #f0f2f7 100%);
   border: 1px solid var(--border, #E1E5EF);
-  border-radius: 8px;
-  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  padding: 0.55rem 0.9rem;
   text-align: center;
-  min-width: 90px;
+  min-width: 95px;
+  transition: all 0.15s ease;
+}
+
+.ws-mini-metric:hover {
+  border-color: rgba(74, 111, 165, 0.25);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(22, 34, 56, 0.06);
 }
 
 .ws-mini-metric .num {
   font-weight: 700;
   color: var(--text-main, #1E2430);
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   line-height: 1.2;
 }
 
 .ws-mini-metric .lbl {
   font-size: 0.72rem;
   color: var(--text-muted, #8B92A3);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 /* ===== Workspace Data Row ===== */
@@ -230,17 +298,19 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.65rem 0.85rem;
+  padding: 0.75rem 1rem;
   border: 1px solid var(--border, #E1E5EF);
   border-radius: 10px;
-  background: #f9fafc;
-  margin-bottom: 0.45rem;
+  background: linear-gradient(135deg, #f9fafc 0%, #f5f6fa 100%);
+  margin-bottom: 0.5rem;
   transition: all 0.15s ease;
 }
 
 .ws-data-row:hover {
   border-color: rgba(74, 111, 165, 0.25);
   background: #fff;
+  box-shadow: 0 4px 12px rgba(22, 34, 56, 0.06);
+  transform: translateY(-1px);
 }
 
 .ws-data-row .title {
@@ -259,7 +329,7 @@
 
 /* ===== Workspace Empty State ===== */
 .workspace-empty {
-  background: var(--bg-card, #fff);
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fc 100%);
   border: 1px solid var(--border, #E1E5EF);
   border-radius: var(--instruction-radius, 12px);
   box-shadow: var(--shadow-soft, 0 1px 3px rgba(0,0,0,0.06));
@@ -559,7 +629,7 @@
 /* ===== Empty State ===== */
 .empty-state-card {
   border: 1px dashed var(--border, #E1E5EF);
-  background: #fbfcff;
+  background: linear-gradient(135deg, #fbfcff 0%, #f5f7fb 100%);
   border-radius: 12px;
   padding: 1.75rem;
 }

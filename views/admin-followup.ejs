@@ -56,68 +56,37 @@
               <span class="badge" id="editorPlatformBadge">LINE</span>
               <span class="followup-editor-status" id="editorAutoBadge">ปิดส่งอัตโนมัติ</span>
             </div>
-            <div class="followup-editor-actions">
-              <button class="followup-btn followup-btn-secondary" id="followupResetBtn" disabled>
-                <i class="fas fa-undo"></i> คืนค่าเริ่มต้น
-              </button>
-              <button class="followup-btn followup-btn-primary" id="followupSaveBtn">
-                <i class="fas fa-save"></i> บันทึก
-              </button>
+            <div class="followup-header-controls">
+              <label class="followup-auto-toggle form-switch" for="settingAutoSend">
+                <span class="followup-auto-toggle-label">ส่งอัตโนมัติ</span>
+                <input class="form-check-input" type="checkbox" id="settingAutoSend">
+              </label>
+              <div class="followup-editor-actions">
+                <button class="followup-btn followup-btn-secondary" id="followupResetBtn" disabled>
+                  <i class="fas fa-undo"></i> คืนค่าเริ่มต้น
+                </button>
+                <button class="followup-btn followup-btn-primary" id="followupSaveBtn">
+                  <i class="fas fa-save"></i> บันทึก
+                </button>
+              </div>
             </div>
+          </div>
+
+          <div class="followup-emergency-banner d-none" id="emergencyStopGroup">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>Emergency Stop กำลังทำงาน ต้องปิดก่อนจึงจะเปิดส่งอัตโนมัติได้</span>
           </div>
 
           <div class="followup-editor-tabs">
-            <button class="followup-tab active" data-tab="general">
-              <i class="fas fa-cog me-1"></i> ทั่วไป
-            </button>
-            <button class="followup-tab" data-tab="messages">
+            <button class="followup-tab active" data-tab="messages">
               <i class="fas fa-comment-dots me-1"></i> ข้อความติดตาม
             </button>
-            <button class="followup-tab" data-tab="images">
-              <i class="fas fa-images me-1"></i> คลังรูปภาพ
-            </button>
+
           </div>
 
           <div class="followup-editor-body">
-            <!-- Tab: General -->
-            <div class="followup-tab-content active" data-tab="general">
-              <div class="followup-settings-section">
-                <div class="settings-group">
-                  <div class="settings-label">สถานะระบบ</div>
-                  <div class="form-check form-switch mb-2">
-                    <input class="form-check-input" type="checkbox" id="settingAutoSend" style="width: 2.8em; height: 1.4em;">
-                    <label class="form-check-label fw-semibold ms-2" for="settingAutoSend">เปิดส่งข้อความติดตามอัตโนมัติ</label>
-                  </div>
-                  <div class="settings-hint">เมื่อเปิด ระบบจะส่งข้อความติดตามตามเวลาที่กำหนดโดยอัตโนมัติ</div>
-                </div>
-
-                <div class="settings-group d-none" id="emergencyStopGroup">
-                  <div class="alert alert-danger d-flex align-items-start gap-2 mb-0">
-                    <i class="fas fa-exclamation-triangle mt-1"></i>
-                    <div>
-                      <div class="fw-bold">Emergency Stop กำลังทำงาน</div>
-                      <div class="small">ระบบติดตามถูกหยุดชั่วคราว ต้องปิด Emergency Stop ก่อนจึงจะเปิดส่งอัตโนมัติได้</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="settings-group">
-                  <div class="settings-label">การแสดงผล</div>
-                  <div class="form-check form-switch mb-2">
-                    <input class="form-check-input" type="checkbox" id="settingShowChat" style="width: 2.8em; height: 1.4em;">
-                    <label class="form-check-label fw-semibold ms-2" for="settingShowChat">แสดงป้ายสถานะในหน้าแชท</label>
-                  </div>
-                  <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="settingShowDashboard" style="width: 2.8em; height: 1.4em;">
-                    <label class="form-check-label fw-semibold ms-2" for="settingShowDashboard">แสดงในแดชบอร์ด</label>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-
             <!-- Tab: Messages -->
-            <div class="followup-tab-content" data-tab="messages">
+            <div class="followup-tab-content active" data-tab="messages">
               <div class="followup-messages-layout">
                 <!-- Editor Column -->
                 <div class="followup-messages-editor">
@@ -149,25 +118,7 @@
               </div>
             </div>
 
-            <!-- Tab: Images -->
-            <div class="followup-tab-content" data-tab="images">
-              <div class="followup-settings-section">
-                <div class="d-flex align-items-center justify-content-between mb-3">
-                  <div>
-                    <div class="settings-label mb-1">คลังรูปภาพ</div>
-                    <div class="settings-hint">รูปภาพที่อัปโหลดไว้สำหรับใช้ในข้อความติดตาม</div>
-                  </div>
-                  <button class="followup-btn followup-btn-primary" id="btnUploadImage">
-                    <i class="fas fa-upload"></i> อัปโหลดรูปภาพ
-                  </button>
-                </div>
-                <div class="followup-image-grid" id="imageLibraryGrid">
-                  <div class="app-empty">
-                    <div class="app-empty__desc">ยังไม่มีรูปภาพในระบบ</div>
-                  </div>
-                </div>
-              </div>
-            </div>
+
           </div>
         </div>
       </main>

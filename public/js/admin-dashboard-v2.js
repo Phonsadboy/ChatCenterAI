@@ -1529,7 +1529,7 @@
 
                 if (data.success) {
                     showToast('ลบข้อมูลแล้ว', 'success');
-                    setTimeout(() => location.reload(), 280);
+                    window.location.href = `/admin/dashboard?instructionId=${instructionId}&tab=dataitems`;
                 } else {
                     showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
                 }
@@ -1555,7 +1555,7 @@
 
                 if (data.success) {
                     showToast('คัดลอกข้อมูลแล้ว', 'success');
-                    setTimeout(() => location.reload(), 280);
+                    window.location.href = `/admin/dashboard?instructionId=${instructionId}&tab=dataitems`;
                 } else {
                     showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
                 }
@@ -1869,16 +1869,29 @@
         });
     }
 
+    // ===== Tab Switching Helper =====
+    const switchToTab = (tabName) => {
+        const validTabs = ['editor', 'dataitems', 'preview'];
+        if (!validTabs.includes(tabName)) return;
+        document.querySelectorAll('.ws-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tabName));
+        document.querySelectorAll('.ws-panel').forEach((panel) => {
+            panel.classList.toggle('active', panel.id === `tab-${tabName}`);
+        });
+    };
+
     // Auto-select instruction from URL
     const urlParams = new URLSearchParams(window.location.search);
     const instructionIdParam = urlParams.get('instructionId');
+    const tabParam = urlParams.get('tab');
     if (instructionIdParam && instructionSelect) {
-        // Wait for options to be populated if needed, but usually they are server-rendered.
-        // Check if option exists
         const option = instructionSelect.querySelector(`option[value="${instructionIdParam}"]`);
         if (option) {
             instructionSelect.value = instructionIdParam;
             instructionSelect.dispatchEvent(new Event('change'));
+            if (tabParam) {
+                // Wait a tick for loadInstructionIntoEditor to finish then switch tab
+                setTimeout(() => switchToTab(tabParam), 100);
+            }
         }
     }
 

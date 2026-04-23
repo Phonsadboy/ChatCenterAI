@@ -1058,7 +1058,7 @@ class ChatManager {
                 orderCount: user.orderCount || 0,
                 unreadCount: user.unreadCount || 0,
                 followUp: user.followUp ? {
-                    showInChat: user.followUp.showInChat !== false,
+                    showInChat: true,
                     isFollowUp: !!user.followUp.isFollowUp,
                     nextScheduledAt: user.followUp.nextScheduledAt || null
                 } : null

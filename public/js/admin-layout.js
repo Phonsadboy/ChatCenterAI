@@ -1,23 +1,36 @@
 (function () {
   'use strict';
 
-  const LS_KEY = 'adminSidebarCollapsed';
+  const LS_KEY = 'adminSidebarCollapsedV2';
+
+  function getSidebarCollapsed() {
+    try {
+      const stored = localStorage.getItem(LS_KEY);
+      return stored === null ? true : stored !== 'false';
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function persistSidebarCollapsed(collapsed) {
+    try {
+      localStorage.setItem(LS_KEY, String(collapsed));
+    } catch (_) {
+      // Ignore storage errors; the visible state still updates for this page.
+    }
+  }
 
   function init() {
     document.body.classList.add('has-admin-layout');
 
-    const isCollapsed = localStorage.getItem(LS_KEY) === 'true';
-    if (isCollapsed) {
-      document.body.classList.add('sidebar-collapsed');
-    } else {
-      document.body.classList.remove('sidebar-collapsed');
-    }
+    document.body.classList.toggle('sidebar-collapsed', getSidebarCollapsed());
 
     bindDesktopToggle();
     bindMobileToggle();
     bindOverlay();
     bindLogout();
     bindFontSelector();
+    bindSidebarTooltips();
     bindMobileMoreSheet();
     highlightCurrentPage();
     syncChatBadge();
@@ -28,7 +41,7 @@
     if (!btn) return;
     btn.addEventListener('click', () => {
       const collapsed = document.body.classList.toggle('sidebar-collapsed');
-      localStorage.setItem(LS_KEY, String(collapsed));
+      persistSidebarCollapsed(collapsed);
     });
   }
 
@@ -85,6 +98,46 @@
       document.documentElement.style.setProperty('--font-family-heading', font);
       localStorage.setItem('adminFont', font);
     });
+  }
+
+  function bindSidebarTooltips() {
+    const items = document.querySelectorAll('.app-sidebar__item[data-label]');
+    if (!items.length) return;
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'app-sidebar-tooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    document.body.appendChild(tooltip);
+
+    const hideTooltip = () => {
+      tooltip.classList.remove('is-visible');
+    };
+
+    const showTooltip = (item) => {
+      if (!document.body.classList.contains('sidebar-collapsed') || window.innerWidth < 992) {
+        hideTooltip();
+        return;
+      }
+
+      const label = item.dataset.label || '';
+      if (!label) return;
+
+      const rect = item.getBoundingClientRect();
+      tooltip.textContent = label;
+      tooltip.style.left = `${Math.round(rect.right + 10)}px`;
+      tooltip.style.top = `${Math.round(rect.top + (rect.height / 2))}px`;
+      tooltip.classList.add('is-visible');
+    };
+
+    items.forEach((item) => {
+      item.addEventListener('mouseenter', () => showTooltip(item));
+      item.addEventListener('focus', () => showTooltip(item));
+      item.addEventListener('mouseleave', hideTooltip);
+      item.addEventListener('blur', hideTooltip);
+    });
+
+    window.addEventListener('resize', hideTooltip);
+    window.addEventListener('scroll', hideTooltip, true);
   }
 
   function bindMobileMoreSheet() {

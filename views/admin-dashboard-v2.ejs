@@ -104,15 +104,8 @@
               <div class="ws-header-actions">
                 <button class="btn btn-outline-success btn-sm" id="btnOpenExport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="export"><i class="fas fa-file-export me-1"></i> Export</button>
                 <button class="btn btn-outline-primary btn-sm" id="btnOpenImport" data-bs-toggle="modal" data-bs-target="#importExportModal" data-tab="import"><i class="fas fa-file-import me-1"></i> Import</button>
-                <button class="btn btn-primary btn-sm open-starter-modal" id="workspaceStarterBtn"><i class="fas fa-comments me-1"></i> Starter</button>
+                <button class="btn btn-starter btn-sm open-starter-modal" id="workspaceStarterBtn"><i class="fas fa-rocket me-1"></i> ตั้งค่า Starter</button>
               </div>
-            </div>
-
-            <!-- Tabs -->
-            <div class="ws-tabs">
-              <button class="ws-tab active" data-tab="editor"><i class="fas fa-pen-to-square me-1"></i> แก้ไข</button>
-              <button class="ws-tab" data-tab="dataitems"><i class="fas fa-database me-1"></i> ชุดข้อมูล</button>
-              <button class="ws-tab" data-tab="preview"><i class="fas fa-eye me-1"></i> Preview</button>
             </div>
 
             <!-- Mini metrics -->
@@ -123,8 +116,15 @@
               <div class="ws-mini-metric"><div class="num" id="metricUpdated" style="font-size:0.85rem; padding-top:.1rem;">-</div><div class="lbl">อัปเดตล่าสุด</div></div>
             </div>
 
+            <!-- Tabs -->
+            <div class="ws-tabs">
+              <button class="ws-tab" data-tab="editor"><i class="fas fa-pen-to-square me-1"></i> แก้ไข</button>
+              <button class="ws-tab active" data-tab="dataitems"><i class="fas fa-database me-1"></i> ชุดข้อมูล</button>
+              <button class="ws-tab" data-tab="preview"><i class="fas fa-eye me-1"></i> Preview</button>
+            </div>
+
             <!-- Editor Panel -->
-            <div class="ws-panel active" id="tab-editor">
+            <div class="ws-panel" id="tab-editor">
               <div id="instructionEditorLoading" class="d-none mb-2">
                 <div class="d-flex align-items-center gap-2 text-muted">
                   <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
@@ -165,7 +165,7 @@
             </div>
 
             <!-- Data Items Panel -->
-            <div class="ws-panel" id="tab-dataitems">
+            <div class="ws-panel active" id="tab-dataitems">
               <div id="workspaceDataItemsList"></div>
               <button class="btn btn-add-item w-100 mt-2 add-data-item" id="workspaceAddDataItem"><i class="fas fa-plus me-1"></i> เพิ่มชุดข้อมูล</button>
             </div>
