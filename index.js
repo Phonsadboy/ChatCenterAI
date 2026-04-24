@@ -15853,6 +15853,7 @@ app.use(
     getOpenAIApiKeyForBot,
     buildLLMClientFromKey,
     resolveModelForProvider,
+    invalidateAllRuntimeCaches,
   }),
 );
 

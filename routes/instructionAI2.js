@@ -121,6 +121,48 @@ function sendSse(res, event, data) {
   if (typeof res.flush === "function") res.flush();
 }
 
+const activeAI2Requests = new Map();
+let ai2IndexesPromise = null;
+
+function makeSsePayload(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function cleanupAI2Request(requestId) {
+  setTimeout(() => activeAI2Requests.delete(requestId), 2 * 60 * 1000);
+}
+
+function buildAI2RequestSnapshot(state = {}) {
+  return {
+    success: true,
+    requestId: state.requestId,
+    sessionId: state.sessionId || null,
+    status: state.status || "running",
+    phase: state.phase || "working",
+    iteration: state.iteration || 1,
+    tool: state.tool || null,
+    elapsedSec: Math.floor((Date.now() - (state.createdAt || Date.now())) / 1000),
+    tools: state.tools || [],
+    toolsUsed: state.toolsUsed || [],
+    changes: state.changes || [],
+    usage: state.usage || {},
+    partialContent: state.answerContent || "",
+    commentaryText: state.commentaryText || "",
+    assistantMessages: state.assistantMessages || [],
+    batch: state.batch || null,
+    error: state.error || null,
+  };
+}
+
+function ensureAI2Indexes(db) {
+  if (!ai2IndexesPromise) {
+    ai2IndexesPromise = new InstructionAI2Service(db).ensureIndexes().catch((error) => {
+      console.warn("[InstructionAI2] ensure indexes failed:", error?.message || error);
+    });
+  }
+  return ai2IndexesPromise;
+}
+
 function createInstructionAI2Router(deps = {}) {
   const {
     requireAdmin,
@@ -128,6 +170,7 @@ function createInstructionAI2Router(deps = {}) {
     getOpenAIApiKeyForBot,
     buildLLMClientFromKey,
     resolveModelForProvider,
+    invalidateAllRuntimeCaches,
   } = deps;
 
   if (!requireAdmin || !connectDB || !getOpenAIApiKeyForBot || !buildLLMClientFromKey || !resolveModelForProvider) {
@@ -145,9 +188,11 @@ function createInstructionAI2Router(deps = {}) {
   });
 
   router.get("/api/instruction-ai2/inventory/:instructionId", requireAdmin, async (req, res) => {
+    let runColl = null;
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const inventory = await service.buildInventory(req.params.instructionId);
       res.json({ success: true, inventory });
@@ -182,6 +227,7 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const now = new Date();
       const name = String(req.body?.name || "Retail Instruction").trim() || "Retail Instruction";
       const instructionId = `inst_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
@@ -246,6 +292,7 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const inst = ObjectId.isValid(req.params.instructionId)
         ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(req.params.instructionId) })
         : await db.collection("instructions_v2").findOne({ instructionId: req.params.instructionId });
@@ -271,6 +318,7 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const inst = ObjectId.isValid(req.params.instructionId)
         ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(req.params.instructionId) })
         : await db.collection("instructions_v2").findOne({ instructionId: req.params.instructionId });
@@ -319,19 +367,32 @@ function createInstructionAI2Router(deps = {}) {
   });
 
   router.get("/api/instruction-ai2/stream/state", requireAdmin, (req, res) => {
-    res.status(404).json({
-      success: false,
-      error: "not_found",
-      message: "InstructionAI2 stream state persistence is not active for this request",
-    });
+    const requestId = String(req.query.requestId || "");
+    const state = activeAI2Requests.get(requestId);
+    if (!state) return res.status(404).json({ success: false, error: "not_found" });
+    res.json(buildAI2RequestSnapshot(state));
   });
 
   router.get("/api/instruction-ai2/stream/resume", requireAdmin, (req, res) => {
-    res.status(404).json({
-      success: false,
-      error: "not_found",
-      message: "InstructionAI2 stream resume is not active for this request",
-    });
+    const requestId = String(req.query.requestId || "");
+    const state = activeAI2Requests.get(requestId);
+    if (!state) return res.status(404).json({ success: false, error: "not_found" });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("Content-Encoding", "identity");
+    res.setHeader("X-Instruction-AI2-Request-Id", requestId);
+    if (typeof res.flushHeaders === "function") res.flushHeaders();
+    for (const event of state.events || []) {
+      try { res.write(event.payload); } catch (_) { res.end(); return; }
+    }
+    if (state.status === "complete" || state.status === "error") {
+      res.end();
+      return;
+    }
+    state.listeners.add(res);
+    req.on("close", () => state.listeners.delete(res));
   });
 
   router.post("/api/instruction-ai2/stream", requireAdmin, async (req, res) => {
@@ -345,13 +406,61 @@ function createInstructionAI2Router(deps = {}) {
     res.setHeader("X-Instruction-AI2-Request-Id", requestId);
     if (typeof res.flushHeaders === "function") res.flushHeaders();
 
+    const requestState = {
+      requestId,
+      sessionId: null,
+      status: "running",
+      phase: "starting",
+      iteration: 1,
+      tool: null,
+      createdAt: startedAt,
+      updatedAt: Date.now(),
+      events: [],
+      listeners: new Set([res]),
+      tools: [],
+      toolsUsed: [],
+      changes: [],
+      usage: { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 },
+      answerContent: "",
+      commentaryText: "",
+      assistantMessages: [],
+      batch: null,
+      error: null,
+    };
+    activeAI2Requests.set(requestId, requestState);
+    req.on("close", () => {
+      requestState.listeners.delete(res);
+    });
+
+    const sendEvent = (event, data = {}) => {
+      const payload = makeSsePayload(event, data);
+      requestState.events.push({ event, data, payload, at: Date.now() });
+      requestState.updatedAt = Date.now();
+      for (const listener of Array.from(requestState.listeners)) {
+        try {
+          listener.write(payload);
+          if (typeof listener.flush === "function") listener.flush();
+        } catch (_) {
+          requestState.listeners.delete(listener);
+        }
+      }
+    };
+
+    const updateState = (patch = {}) => {
+      Object.assign(requestState, patch, { updatedAt: Date.now() });
+    };
+
     const heartbeat = setInterval(() => {
-      sendSse(res, "status", { phase: "working", requestId, elapsedSec: Math.floor((Date.now() - startedAt) / 1000), heartbeat: true });
+      sendEvent("status", { phase: requestState.phase || "working", requestId, elapsedSec: Math.floor((Date.now() - startedAt) / 1000), heartbeat: true });
     }, 5000);
 
     const finish = () => {
       clearInterval(heartbeat);
-      try { res.end(); } catch (_) { }
+      for (const listener of Array.from(requestState.listeners)) {
+        try { listener.end(); } catch (_) { }
+      }
+      requestState.listeners.clear();
+      cleanupAI2Request(requestId);
     };
 
     try {
@@ -366,12 +475,14 @@ function createInstructionAI2Router(deps = {}) {
       } = req.body || {};
 
       if (!instructionId || !ObjectId.isValid(instructionId)) {
-        sendSse(res, "error", { error: "ต้องเลือก Instruction ก่อน" });
+        updateState({ status: "error", error: "ต้องเลือก Instruction ก่อน" });
+        sendEvent("error", { error: "ต้องเลือก Instruction ก่อน" });
         finish();
         return;
       }
       if (!String(message || "").trim() && !(Array.isArray(images) && images.length)) {
-        sendSse(res, "error", { error: "ต้องพิมพ์ข้อความหรือแนบรูป" });
+        updateState({ status: "error", error: "ต้องพิมพ์ข้อความหรือแนบรูป" });
+        sendEvent("error", { error: "ต้องพิมพ์ข้อความหรือแนบรูป" });
         finish();
         return;
       }
@@ -379,38 +490,92 @@ function createInstructionAI2Router(deps = {}) {
       const sessionId = typeof clientSessionId === "string" && clientSessionId.trim()
         ? clientSessionId.trim()
         : `ai2_ses_${Date.now().toString(36)}`;
-      sendSse(res, "session", { sessionId, requestId });
+      updateState({ sessionId });
+      sendEvent("session", { sessionId, requestId });
 
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
+      runColl = db.collection("instruction_ai2_runs");
       const username = req.session?.user?.username || "admin";
       const apiKeyToUse = await getOpenAIApiKeyForBot(null, null);
       if (!apiKeyToUse?.apiKey) {
-        sendSse(res, "error", { error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
+        updateState({ status: "error", error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
+        sendEvent("error", { error: "ยังไม่พบ OpenAI API Key ในระบบหรือ Environment" });
         finish();
         return;
       }
       const openai = buildLLMClientFromKey(apiKeyToUse);
       if (!openai?.responses?.create) {
-        sendSse(res, "error", { error: "ไม่สามารถสร้าง Responses API client ได้" });
+        updateState({ status: "error", error: "ไม่สามารถสร้าง Responses API client ได้" });
+        sendEvent("error", { error: "ไม่สามารถสร้าง Responses API client ได้" });
         finish();
         return;
       }
       const resolved = resolveModelForProvider(model, apiKeyToUse.provider);
       if (!resolved.ok) {
-        sendSse(res, "error", { error: resolved.error });
+        updateState({ status: "error", error: resolved.error });
+        sendEvent("error", { error: resolved.error });
         finish();
         return;
       }
 
-      const service = new InstructionAI2Service(db, { user: username });
+      const service = new InstructionAI2Service(db, {
+        user: username,
+        modelValidator: (candidateModel, candidateEffort) => {
+          const resolvedCandidate = resolveModelForProvider(candidateModel, apiKeyToUse.provider);
+          if (!resolvedCandidate.ok) return { ok: false, error: resolvedCandidate.error };
+          return { ok: true, model: resolvedCandidate.model, reasoningEffort: resolveReasoningEffort(candidateEffort || "low") };
+        },
+      });
       const instruction = await service.loadInstruction(instructionId);
       if (!instruction) {
-        sendSse(res, "error", { error: "ไม่พบ Instruction" });
+        updateState({ status: "error", error: "ไม่พบ Instruction" });
+        sendEvent("error", { error: "ไม่พบ Instruction" });
         finish();
         return;
       }
+      await runColl.updateOne(
+        { requestId },
+        {
+          $setOnInsert: { requestId, createdAt: new Date(startedAt) },
+          $set: {
+            sessionId,
+            instructionObjectId: instructionId,
+            instructionId: instruction.instructionId || "",
+            username,
+            message,
+            model: resolved.model,
+            thinking: resolveReasoningEffort(thinking),
+            status: "running",
+            phase: "inventory",
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+      const totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
+      const toolsUsed = [];
+      updateState({ phase: "tool", tool: "get_instruction_inventory", iteration: 0 });
+      const inventoryToolState = {
+        tool: "get_instruction_inventory",
+        callId: `${requestId}_inventory`,
+        args: {},
+        status: "running",
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      requestState.tools.push(inventoryToolState);
+      sendEvent("tool_start", { tool: "get_instruction_inventory", args: {}, callId: inventoryToolState.callId, iteration: 0 });
       const inventory = await service.buildInventory(instructionId);
+      inventoryToolState.status = "done";
+      inventoryToolState.summary = "inventory loaded";
+      inventoryToolState.endedAt = Date.now();
+      inventoryToolState.updatedAt = Date.now();
+      toolsUsed.push({ tool: "get_instruction_inventory", args: {}, resultSummary: "inventory loaded" });
+      updateState({ toolsUsed });
+      sendEvent("tool_end", { tool: "get_instruction_inventory", args: {}, callId: inventoryToolState.callId, result: "inventory loaded", summary: "inventory loaded" });
+
       const systemPrompt = service.buildSystemPrompt(instruction, buildInventorySummary(inventory));
       const tools = service.getToolDefinitions();
       const effort = resolveReasoningEffort(thinking);
@@ -418,15 +583,15 @@ function createInstructionAI2Router(deps = {}) {
       const input = normalizeHistory(history);
       input.push({ role: "user", content: buildUserContent(message, images) });
 
-      const totalUsage = { prompt_tokens: 0, completion_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
-      const toolsUsed = [];
       let finalText = "";
       let iterations = 0;
 
-      sendSse(res, "status", { phase: "thinking", requestId, model: resolved.model, thinking: effort });
+      updateState({ phase: "thinking", tool: null, usage: totalUsage });
+      sendEvent("status", { phase: "thinking", requestId, model: resolved.model, thinking: effort });
 
       for (let i = 0; i < MAX_AI2_TOOL_ITERATIONS; i += 1) {
         iterations = i + 1;
+        updateState({ phase: "thinking", iteration: iterations, tool: null });
         const response = await openai.responses.create({
           model: resolved.model,
           instructions: systemPrompt,
@@ -436,6 +601,7 @@ function createInstructionAI2Router(deps = {}) {
           reasoning: { effort },
         });
         addUsage(totalUsage, response?.usage || {});
+        updateState({ usage: totalUsage });
 
         const iterationText = extractResponseText(response).trim();
         const calls = extractFunctionCalls(response);
@@ -445,7 +611,8 @@ function createInstructionAI2Router(deps = {}) {
         }
 
         if (iterationText) {
-          sendSse(res, "commentary_delta", { text: iterationText, iteration: i + 1 });
+          requestState.commentaryText += iterationText;
+          sendEvent("commentary_delta", { text: iterationText, iteration: i + 1 });
         }
 
         input.push(...calls.map((call) => ({
@@ -457,10 +624,28 @@ function createInstructionAI2Router(deps = {}) {
 
         for (const call of calls) {
           const args = safeJsonParse(call.arguments);
-          sendSse(res, "tool_start", { tool: call.name, args, callId: call.call_id, iteration: i + 1 });
+          const toolState = {
+            tool: call.name,
+            callId: call.call_id,
+            args,
+            argumentsText: call.arguments || "",
+            status: "running",
+            startedAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          requestState.tools.push(toolState);
+          updateState({ phase: "tool", iteration: i + 1, tool: call.name });
+          sendEvent("tool_start", { tool: call.name, args, callId: call.call_id, argumentsText: call.arguments || "", iteration: i + 1 });
           const result = await service.executeTool(instructionId, call.name, args);
-          toolsUsed.push({ tool: call.name, args, resultSummary: result?.error || result?.message || result?.title || "ok" });
-          sendSse(res, "tool_end", { tool: call.name, callId: call.call_id, result: result?.error ? result.error : (result?.message || "ok"), proposed: !!result?.proposed });
+          const resultSummary = result?.error || result?.message || result?.title || "ok";
+          toolsUsed.push({ tool: call.name, args, resultSummary });
+          toolState.status = result?.error ? "error" : "done";
+          toolState.summary = resultSummary;
+          toolState.result = resultSummary;
+          toolState.endedAt = Date.now();
+          toolState.updatedAt = Date.now();
+          updateState({ toolsUsed });
+          sendEvent("tool_end", { tool: call.name, args, callId: call.call_id, result: resultSummary, summary: resultSummary, proposed: !!result?.proposed });
           input.push({
             type: "function_call_output",
             call_id: call.call_id,
@@ -475,26 +660,45 @@ function createInstructionAI2Router(deps = {}) {
       if (!finalText) finalText = "ประมวลผลเสร็จแล้ว";
 
       const batch = await service.finalizeBatch({ instructionId, sessionId, requestId, message });
-      await db.collection("instruction_ai2_runs").insertOne({
-        requestId,
-        sessionId,
-        instructionObjectId: instructionId,
-        instructionId: instruction.instructionId || "",
-        username,
-        message,
-        model: resolved.model,
-        thinking: effort,
-        toolsUsed,
-        batchId: batch?.batchId || null,
-        usage: totalUsage,
-        iterations,
-        finalText,
-        createdAt: new Date(startedAt),
-        completedAt: new Date(),
+      const changes = batch?.changes?.map((change) => ({ changeId: change.changeId, tool: change.operation })) || [];
+      updateState({
+        phase: "final_answer",
+        tool: null,
+        answerContent: finalText,
+        assistantMessages: [{ role: "assistant", content: finalText }],
+        batch,
+        changes,
       });
+      await runColl.updateOne(
+        { requestId },
+        {
+          $set: {
+            sessionId,
+            instructionObjectId: instructionId,
+            instructionId: instruction.instructionId || "",
+            username,
+            message,
+            model: resolved.model,
+            thinking: effort,
+            status: "complete",
+            phase: "done",
+            toolsUsed,
+            toolStates: requestState.tools,
+            batchId: batch?.batchId || null,
+            usage: totalUsage,
+            iterations,
+            finalText,
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          },
+          $setOnInsert: { createdAt: new Date(startedAt) },
+        },
+        { upsert: true },
+      );
 
-      sendSse(res, "answer_delta", { text: finalText });
-      sendSse(res, "done", {
+      sendEvent("answer_delta", { text: finalText });
+      updateState({ status: "complete" });
+      sendEvent("done", {
         success: true,
         requestId,
         sessionId,
@@ -506,7 +710,24 @@ function createInstructionAI2Router(deps = {}) {
       finish();
     } catch (error) {
       console.error("[InstructionAI2] stream error:", error);
-      sendSse(res, "error", { error: error.message || "เกิดข้อผิดพลาด" });
+      if (runColl) {
+        runColl.updateOne(
+          { requestId },
+          {
+            $set: {
+              status: "error",
+              phase: "error",
+              error: error.message || "เกิดข้อผิดพลาด",
+              toolStates: requestState.tools,
+              updatedAt: new Date(),
+            },
+            $setOnInsert: { requestId, createdAt: new Date(startedAt) },
+          },
+          { upsert: true },
+        ).catch(() => {});
+      }
+      updateState({ status: "error", error: error.message || "เกิดข้อผิดพลาด" });
+      sendEvent("error", { error: error.message || "เกิดข้อผิดพลาด" });
       finish();
     }
   });
@@ -515,9 +736,28 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const result = await service.commitBatch(req.params.batchId, req.session?.user?.username || "admin");
+      if (result?.success && typeof invalidateAllRuntimeCaches === "function") {
+        invalidateAllRuntimeCaches();
+      }
       res.json(result);
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get("/api/instruction-ai2/batches/:batchId/preflight", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
+      const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+      const batch = await db.collection("instruction_ai2_batches").findOne({ batchId: req.params.batchId });
+      if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+      const preflight = await service.preflightBatch(batch);
+      res.json({ success: true, preflight });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
@@ -527,6 +767,7 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await service.rejectBatch(req.params.batchId, req.body?.reason || "");
       res.json({ success: true, batch });
@@ -540,6 +781,7 @@ function createInstructionAI2Router(deps = {}) {
       const reason = String(req.body?.reason || "").trim();
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await service.rejectBatch(req.params.batchId, reason);
       res.json({
@@ -560,6 +802,7 @@ function createInstructionAI2Router(deps = {}) {
       if (!sessionId || !instructionId) return res.status(400).json({ success: false, error: "Missing sessionId or instructionId" });
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       await db.collection("instruction_ai2_sessions").updateOne(
         { sessionId },
         {
@@ -589,6 +832,7 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const filter = req.query.instructionId ? { instructionId: String(req.query.instructionId) } : {};
       const sessions = await db.collection("instruction_ai2_sessions")
         .find(filter)
@@ -606,6 +850,7 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const session = await db.collection("instruction_ai2_sessions").findOne({ sessionId: req.params.sessionId }, { projection: { _id: 0 } });
       if (!session) return res.status(404).json({ success: false, error: "ไม่พบ session" });
       res.json({ success: true, session });
@@ -618,6 +863,7 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       if (req.query.instructionId) {
         const result = await db.collection("instruction_ai2_sessions").deleteMany({
           instructionId: String(req.query.instructionId),
@@ -635,6 +881,7 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const filter = {};
       if (req.query.batchId) filter.batchId = String(req.query.batchId);
       const logs = await db.collection("instruction_ai2_audit")
@@ -652,8 +899,21 @@ function createInstructionAI2Router(deps = {}) {
     try {
       const client = await connectDB();
       const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       res.json(await service.getAnalytics(req.params.instructionId));
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get("/api/instruction-ai2/analytics/:instructionId/episodes", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
+      const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+      res.json(await service.getEpisodeAnalytics(req.params.instructionId, { limit: req.query.limit }));
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }

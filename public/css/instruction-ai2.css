@@ -3014,6 +3014,148 @@ button:focus-visible,
     border-radius: 4px;
 }
 
+/* ─── AI2 Inventory Panel ────────────────────────────────────────────── */
+
+.ic-inventory-panel {
+    width: 340px;
+    min-width: 340px;
+    background: var(--ic-surface);
+    border-left: 1px solid var(--ic-border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 40;
+}
+
+.ic-inventory-header {
+    padding: 14px 14px 10px;
+    border-bottom: 1px solid var(--ic-border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.ic-inventory-header h2 {
+    color: var(--ic-text);
+    font-size: 14px;
+    line-height: 1.35;
+    font-weight: 700;
+    margin: 0;
+}
+
+.ic-inventory-close {
+    display: none;
+}
+
+.ic-inventory-search {
+    margin: 12px 12px 4px;
+}
+
+.ic-inventory-body {
+    flex: 1;
+    overflow: auto;
+    padding: 8px 12px 16px;
+}
+
+.ic-inv-section {
+    border: 1px solid var(--ic-border);
+    background: rgba(255, 255, 255, 0.025);
+    border-radius: var(--ic-radius-xs);
+    margin-bottom: 10px;
+    overflow: hidden;
+}
+
+.ic-inv-section-title {
+    padding: 10px 11px;
+    color: var(--ic-accent);
+    font-family: var(--ic-font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--ic-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.ic-inv-list {
+    display: grid;
+    gap: 1px;
+}
+
+.ic-inv-item {
+    padding: 10px 11px;
+    color: var(--ic-text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+    border-top: 1px solid rgba(255, 255, 255, 0.03);
+    transition: all var(--ic-transition);
+}
+
+.ic-inv-item:first-child {
+    border-top: 0;
+}
+
+.ic-inv-item.active,
+.ic-inv-item.proposed {
+    color: var(--ic-text);
+    background: rgba(var(--ic-accent-rgb), 0.08);
+    box-shadow: inset 2px 0 0 var(--ic-accent);
+}
+
+.ic-inv-item.proposed {
+    background: rgba(245, 158, 11, 0.09);
+    box-shadow: inset 2px 0 0 var(--ic-warning);
+}
+
+.ic-inv-name {
+    color: var(--ic-text);
+    font-weight: 700;
+}
+
+.ic-inv-meta {
+    margin-top: 3px;
+    color: var(--ic-text-muted);
+    font-family: var(--ic-font-mono);
+    font-size: 10px;
+}
+
+.ic-inv-preview {
+    margin-top: 6px;
+    color: var(--ic-text-secondary);
+    max-height: 64px;
+    overflow: hidden;
+}
+
+.ic-inv-warning {
+    color: var(--ic-warning);
+}
+
+@media (max-width: 1180px) {
+    .ic-inventory-panel {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: min(380px, 92vw);
+        min-width: 0;
+        transform: translateX(100%);
+        transition: transform var(--ic-transition-slow);
+        z-index: 210;
+    }
+
+    .ic-inventory-panel.open {
+        transform: translateX(0);
+    }
+
+    .ic-inventory-close {
+        display: flex;
+    }
+}
+
 /* ─── AI2 Batch Preview ──────────────────────────────────────────────── */
 
 .ic-ai2-batch-modal {

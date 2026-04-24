@@ -37,6 +37,9 @@
         activeRequestId: null, // for SSE reconnect
         isUserNearBottom: true,
         pendingBatch: null,
+        inventory: null,
+        inventoryFilter: "",
+        activeInventoryRefs: [],
     };
 
     const SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -82,6 +85,12 @@
         fileInput: $("#icFileInput"),
         imagePreview: $("#icImagePreview"),
         welcomeOpenSidebar: $("#icWelcomeOpenSidebar"),
+        toggleInventory: $("#icToggleInventory"),
+        inventoryPanel: $("#icInventoryPanel"),
+        inventoryClose: $("#icInventoryClose"),
+        inventoryTitle: $("#icInventoryTitle"),
+        inventorySearch: $("#icInventorySearch"),
+        inventoryBody: $("#icInventoryBody"),
         batchModal: $("#icBatchModal"),
         batchModalClose: $("#icBatchModalClose"),
         batchSummary: $("#icBatchSummary"),
@@ -1060,6 +1069,7 @@
 
                 case "tool_start":
                     if (data.tool && body) {
+                        setInventoryRefs(refsFromTool(data.tool, data.args || {}), data.tool.startsWith("propose_") ? "proposed" : "active");
                         ensureToolPipeline(body, contentEl);
                         addToolToPipeline(body, data.tool, data.args, {
                             callId: data.callId,
@@ -1072,6 +1082,7 @@
 
                 case "tool_end":
                     if (data.tool) {
+                        setInventoryRefs(refsFromTool(data.tool, data.args || {}), data.proposed ? "proposed" : "active");
                         updateToolInPipeline(aiMsg, data.tool, data.summary || data.result || "✅", data.callId);
                     }
                     break;
@@ -2118,6 +2129,41 @@
         return null;
     }
 
+    async function loadInventory(instructionId = state.selectedId) {
+        if (!instructionId) return null;
+        if (dom.inventoryTitle) dom.inventoryTitle.textContent = "กำลังโหลด inventory...";
+        try {
+            const res = await fetch(`/api/instruction-ai2/inventory/${encodeURIComponent(instructionId)}`, {
+                cache: "no-store",
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || "โหลด inventory ไม่สำเร็จ");
+            }
+            state.inventory = data.inventory;
+            try {
+                const [analyticsRes, episodesRes] = await Promise.all([
+                    fetch(`/api/instruction-ai2/analytics/${encodeURIComponent(instructionId)}`, { cache: "no-store" }),
+                    fetch(`/api/instruction-ai2/analytics/${encodeURIComponent(instructionId)}/episodes?limit=20`, { cache: "no-store" }),
+                ]);
+                const analytics = await analyticsRes.json().catch(() => null);
+                const episodes = await episodesRes.json().catch(() => null);
+                state.inventory.analytics = analytics?.success ? analytics : null;
+                state.inventory.episodes = episodes?.success ? episodes : null;
+            } catch (e) {
+                state.inventory.analytics = null;
+                state.inventory.episodes = null;
+            }
+            renderInventory();
+            return state.inventory;
+        } catch (err) {
+            if (dom.inventoryBody) {
+                dom.inventoryBody.innerHTML = `<div class="ic-sidebar-loading"><span style="color: var(--ic-danger);">${escapeHtml(err.message)}</span></div>`;
+            }
+            return null;
+        }
+    }
+
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     function getLatestAssistantMessage(history = []) {
@@ -2183,11 +2229,13 @@
 
     function renderBatchPreview(batch) {
         const changes = Array.isArray(batch?.changes) ? batch.changes : [];
+        const preflightErrors = Array.isArray(batch?.preflight?.errors) ? batch.preflight.errors : [];
         if (dom.batchSummary) {
             dom.batchSummary.innerHTML = `
                 <div><strong>${changes.length}</strong> รายการรอยืนยัน</div>
                 <div>batch: <code>${escapeHtml(batch.batchId || "")}</code></div>
                 <div class="ic-ai2-batch-note">ยังไม่มีการเขียนข้อมูลจริงจนกว่าจะกด Approve all</div>
+                ${preflightErrors.length ? `<div class="ic-ai2-batch-note">Preflight warning/block: ${escapeHtml(preflightErrors.map((err) => err.error || err.message || "error").join(", "))}</div>` : ""}
             `;
         }
         if (dom.batchList) {
@@ -2196,12 +2244,14 @@
                 const risk = change.risk || "write";
                 const before = summarizeBatchValue(change.before);
                 const after = summarizeBatchValue(change.after);
+                const warnings = Array.isArray(change.warnings) ? change.warnings : [];
                 return `
                     <div class="ic-ai2-batch-item">
                         <div class="ic-ai2-batch-item-head">
                             <span>${index + 1}. ${escapeHtml(title)}</span>
                             <small>${escapeHtml(risk)}</small>
                         </div>
+                        ${warnings.length ? `<div class="ic-ai2-batch-note">${escapeHtml(warnings.map((warning) => warning.message || warning.type).join(" · "))}</div>` : ""}
                         <div class="ic-ai2-batch-diff">
                             <div>
                                 <label>Before</label>
@@ -2235,7 +2285,10 @@
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok || !data.success) {
-                throw new Error(data.error || "commit ไม่สำเร็จ");
+                const detail = Array.isArray(data.errors)
+                    ? data.errors.map((err) => err.message || err.error || "error").join(", ")
+                    : "";
+                throw new Error(data.error || detail || "commit ไม่สำเร็จ");
             }
             closeModal(dom.batchModal);
             state.pendingBatch = null;
@@ -2243,7 +2296,10 @@
             updateStatusBar();
             appendMessage("ai", `บันทึก batch แล้ว: ${escapeHtml(batch.batchId)}`);
             await loadInstructions();
-            if (state.selectedId) loadVersionInfo(state.selectedId);
+            if (state.selectedId) {
+                loadVersionInfo(state.selectedId);
+                loadInventory(state.selectedId);
+            }
         } catch (err) {
             appendMessage("ai", `Commit batch ไม่สำเร็จ: ${err.message}`);
         } finally {
@@ -2276,6 +2332,169 @@
         } catch (err) {
             appendMessage("ai", `Reject batch ไม่สำเร็จ: ${err.message}`);
         }
+    }
+
+    // ─── Inventory Panel ───────────────────────────────────────────────
+
+    function inventoryMatchesFilter(text) {
+        const filter = (state.inventoryFilter || "").trim().toLowerCase();
+        if (!filter) return true;
+        return String(text || "").toLowerCase().includes(filter);
+    }
+
+    function getInventoryItemClass(refs = [], mode = state.activeInventoryMode || "active") {
+        const active = state.activeInventoryRefs || [];
+        const hit = refs.some((ref) => active.includes(ref));
+        return hit ? mode : "";
+    }
+
+    function renderInventorySection(title, items, renderItem) {
+        const html = (items || [])
+            .map(renderItem)
+            .filter(Boolean)
+            .join("");
+        if (!html) return "";
+        return `
+            <section class="ic-inv-section">
+                <div class="ic-inv-section-title"><span>${escapeHtml(title)}</span><span>${items.length}</span></div>
+                <div class="ic-inv-list">${html}</div>
+            </section>`;
+    }
+
+    function renderInventoryItem({ refs = [], mode = "active", name = "", meta = "", preview = "", warning = false }) {
+        const searchText = [name, meta, preview].join(" ");
+        if (!inventoryMatchesFilter(searchText)) return "";
+        const cls = getInventoryItemClass(refs, mode);
+        return `
+            <div class="ic-inv-item ${cls}" data-inv-refs="${escapeHtml(refs.join(" "))}">
+                <div class="ic-inv-name ${warning ? "ic-inv-warning" : ""}">${escapeHtml(name || "Untitled")}</div>
+                ${meta ? `<div class="ic-inv-meta">${escapeHtml(meta)}</div>` : ""}
+                ${preview ? `<div class="ic-inv-preview">${escapeHtml(preview)}</div>` : ""}
+            </div>`;
+    }
+
+    function renderInventory() {
+        const inv = state.inventory;
+        if (!dom.inventoryBody) return;
+        if (!inv) {
+            dom.inventoryBody.innerHTML = `<div class="ic-sidebar-loading"><span>เลือก Instruction เพื่อดู inventory</span></div>`;
+            if (dom.inventoryTitle) dom.inventoryTitle.textContent = "ยังไม่ได้เลือก Instruction";
+            return;
+        }
+        if (dom.inventoryTitle) dom.inventoryTitle.textContent = inv.instruction?.name || state.selectedName || "Inventory";
+        const dataItems = Array.isArray(inv.dataItems) ? inv.dataItems : [];
+        const pages = inv.sections?.pages || {};
+        const images = inv.sections?.images || {};
+        const followup = inv.sections?.followup || {};
+        const model = inv.sections?.model || {};
+        const warnings = Array.isArray(inv.warnings) ? inv.warnings : [];
+        const versions = Array.isArray(inv.versions) ? inv.versions : [];
+        const analytics = inv.analytics || {};
+        const episodes = inv.episodes || {};
+
+        const sections = [
+            renderInventorySection("Knowledge", dataItems, (item) => renderInventoryItem({
+                refs: [`item:${item.itemId}`, `role:${item.semanticRole}`],
+                name: `${item.title} (${item.semanticRole})`,
+                meta: `${item.type}${item.rowCount ? ` · ${item.rowCount} rows` : ""}`,
+                preview: item.type === "text" ? item.preview : (item.columns || []).join(", "),
+            })),
+            renderInventorySection("Pages", pages.available || [], (page) => renderInventoryItem({
+                refs: [`page:${page.pageKey}`],
+                name: `${page.linkedToActiveInstruction ? "ผูกแล้ว" : "ว่าง"} · ${page.name}`,
+                meta: `${page.pageKey}${page.aiModel ? ` · ${page.aiModel}` : ""}`,
+                preview: page.selectedInstructionIds?.length ? `instructions: ${page.selectedInstructionIds.join(", ")}` : "",
+                warning: page.selectedInstructionIds?.length && !page.linkedToActiveInstruction,
+            })),
+            renderInventorySection("Images", images.assets || inv.imageAssets || [], (asset) => renderInventoryItem({
+                refs: [`asset:${asset.assetId}`, `image:${asset.normalizedLabel}`],
+                name: asset.label || asset.assetId,
+                meta: `${asset.duplicateLabel ? "ชื่อซ้ำ · " : ""}${asset.assetId}`,
+                preview: asset.description || asset.url || "",
+                warning: !!asset.duplicateLabel,
+            })),
+            renderInventorySection("Collections", images.collections || inv.imageCollections || [], (collection) => renderInventoryItem({
+                refs: [`collection:${collection.collectionId}`],
+                name: collection.name || collection.collectionId,
+                meta: `${collection.imageCount || 0} images`,
+                preview: collection.description || "",
+            })),
+            renderInventorySection("Starter", [inv.instruction?.starterSummary || inv.sections?.starter].filter(Boolean), (starter) => renderInventoryItem({
+                refs: ["starter"],
+                name: starter.enabled ? "เปิด conversation starter" : "ปิด conversation starter",
+                meta: `${starter.messageCount || 0} messages`,
+                preview: (starter.messages || []).map((msg) => `${msg.type}: ${msg.contentPreview || msg.assetId || msg.imageUrl || ""}`).join(" | "),
+            })),
+            renderInventorySection("Follow-up", followup.configs || [], (config) => renderInventoryItem({
+                refs: [`followup:${config.pageKey || `${config.platform}:${config.botId}`}`],
+                name: config.pageKey || `${config.platform || ""}:${config.botId || ""}`,
+                meta: config.autoFollowUpEnabled ? "enabled" : "disabled",
+                preview: Array.isArray(config.rounds) ? `${config.rounds.length} rounds` : "",
+            })),
+            renderInventorySection("Model", model.linkedPageModels || [], (entry) => renderInventoryItem({
+                refs: [`model:${entry.pageKey}`, `page:${entry.pageKey}`],
+                name: entry.pageKey,
+                meta: entry.model || "no model override",
+                preview: entry.aiConfig?.reasoningEffort ? `reasoning: ${entry.aiConfig.reasoningEffort}` : "",
+            })),
+            renderInventorySection("Versions", versions, (version) => renderInventoryItem({
+                refs: [`version:${version.version}`],
+                name: `v${version.version}`,
+                meta: version.source || "",
+                preview: version.note || version.contentHash || "",
+            })),
+            renderInventorySection("Analytics", [
+                analytics.success ? {
+                    name: "Version usage",
+                    meta: `${analytics.totalUsages || 0} assistant messages`,
+                    preview: Array.isArray(analytics.byVersion)
+                        ? analytics.byVersion.map((row) => `v${row._id || "unknown"}:${row.messages}`).join(" · ")
+                        : "",
+                } : null,
+                episodes.success ? {
+                    name: "Episodes",
+                    meta: `${(episodes.episodes || []).length} recent`,
+                    preview: episodes.legacy?.label || "48h idle boundary",
+                } : null,
+            ].filter(Boolean), (entry) => renderInventoryItem({
+                refs: ["analytics"],
+                name: entry.name,
+                meta: entry.meta,
+                preview: entry.preview,
+            })),
+            renderInventorySection("Warnings", warnings, (warning) => renderInventoryItem({
+                refs: [`warning:${warning.type}`],
+                name: warning.type,
+                meta: warning.count ? `${warning.count}` : "",
+                preview: warning.message || "",
+                warning: true,
+            })),
+        ].filter(Boolean).join("");
+
+        dom.inventoryBody.innerHTML = sections || `<div class="ic-sidebar-loading"><span>ไม่มีข้อมูลตรงกับคำค้น</span></div>`;
+    }
+
+    function setInventoryRefs(refs = [], mode = "active") {
+        state.activeInventoryRefs = refs.filter(Boolean);
+        state.activeInventoryMode = mode;
+        renderInventory();
+    }
+
+    function refsFromTool(tool, args = {}) {
+        const refs = [];
+        if (args.itemId) refs.push(`item:${args.itemId}`);
+        if (args.pageKey) refs.push(`page:${args.pageKey}`);
+        if (Array.isArray(args.pageKeys)) args.pageKeys.forEach((key) => refs.push(`page:${key}`, `followup:${key}`, `model:${key}`));
+        if (args.assetId) refs.push(`asset:${args.assetId}`);
+        if (Array.isArray(args.collectionIds)) args.collectionIds.forEach((id) => refs.push(`collection:${id}`));
+        if (tool === "propose_update_page_image_collections") {
+            if (Array.isArray(args.pageKeys)) args.pageKeys.forEach((key) => refs.push(`page:${key}`));
+            if (Array.isArray(args.collectionIds)) args.collectionIds.forEach((id) => refs.push(`collection:${id}`));
+        }
+        if (tool.includes("conversation_starter") || tool === "get_conversation_starter") refs.push("starter");
+        if (tool.includes("analytics") || tool.includes("episode")) refs.push("analytics");
+        if (tool === "get_instruction_inventory") refs.push("starter");
+        return refs;
     }
 
     // ─── Render Lists ───────────────────────────────────────────────────
@@ -2366,6 +2585,7 @@
 
         renderInstructionList(dom.instructionSearch.value);
         updateStatusBar();
+        loadInventory(id);
 
         // Close mobile sidebar only
         if (window.innerWidth < 769) {
@@ -2542,6 +2762,22 @@
         }
         if (dom.createRetail) {
             dom.createRetail.addEventListener("click", createRetailInstruction);
+        }
+        if (dom.toggleInventory && dom.inventoryPanel) {
+            dom.toggleInventory.addEventListener("click", () => {
+                dom.inventoryPanel.classList.toggle("open");
+            });
+        }
+        if (dom.inventoryClose && dom.inventoryPanel) {
+            dom.inventoryClose.addEventListener("click", () => {
+                dom.inventoryPanel.classList.remove("open");
+            });
+        }
+        if (dom.inventorySearch) {
+            dom.inventorySearch.addEventListener("input", (e) => {
+                state.inventoryFilter = e.target.value || "";
+                renderInventory();
+            });
         }
         if (dom.batchModalClose) {
             dom.batchModalClose.addEventListener("click", () => closeModal(dom.batchModal));
