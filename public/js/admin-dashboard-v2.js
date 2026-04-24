@@ -400,9 +400,9 @@
         if (metricStarter) metricStarter.textContent = '0';
         if (metricChars) metricChars.textContent = '0';
         if (metricUpdated) metricUpdated.textContent = '-';
-        // Reset tabs to editor
-        document.querySelectorAll('.ws-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'editor'));
-        document.querySelectorAll('.ws-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-editor'));
+        // Reset tabs to data items, which is the primary workspace view.
+        document.querySelectorAll('.ws-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'dataitems'));
+        document.querySelectorAll('.ws-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-dataitems'));
     };
 
     const hasEditorChanges = () => {
@@ -1976,6 +1976,7 @@
                 }
                 instructionSelect.value = id;
                 instructionSelect.dispatchEvent(new Event('change'));
+                switchToTab('dataitems');
             }
         });
     }

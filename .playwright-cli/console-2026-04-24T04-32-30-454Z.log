@@ -1,0 +1,16 @@
+[   54968ms] [ERROR] Failed to load instructions: TypeError: Failed to construct 'URL': Invalid URL
+    at window.fetch (eval at evaluate (:302:30), <anonymous>:5:19)
+    at loadInstructions (/Users/mac/pp/ChatCenterAI-6/public/js/instruction-chat.js:104:31)
+    at init (/Users/mac/pp/ChatCenterAI-6/public/js/instruction-chat.js:88:15)
+    at HTMLDocument.<anonymous> (/Users/mac/pp/ChatCenterAI-6/public/js/instruction-chat.js:2960:59)
+    at eval (eval at evaluate (:302:30), <anonymous>:1:16)
+    at UtilityScript.evaluate (<anonymous>:304:16)
+    at UtilityScript.<anonymous> (<anonymous>:1:44) @ /Users/mac/pp/ChatCenterAI-6/public/js/instruction-chat.js:110
+[  108306ms] [ERROR] Failed to load instructions: TypeError: Failed to construct 'URL': Invalid URL
+    at window.fetch (eval at evaluate (:302:30), <anonymous>:5:19)
+    at loadInstructions (/Users/mac/pp/ChatCenterAI-6/public/js/instruction-chat.js:104:31)
+    at init (/Users/mac/pp/ChatCenterAI-6/public/js/instruction-chat.js:88:15)
+    at HTMLDocument.<anonymous> (/Users/mac/pp/ChatCenterAI-6/public/js/instruction-chat.js:2960:59)
+    at eval (eval at evaluate (:302:30), <anonymous>:1:16)
+    at UtilityScript.evaluate (<anonymous>:304:16)
+    at UtilityScript.<anonymous> (<anonymous>:1:44) @ /Users/mac/pp/ChatCenterAI-6/public/js/instruction-chat.js:110

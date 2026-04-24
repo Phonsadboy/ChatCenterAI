@@ -759,6 +759,7 @@
                     setCommentaryTextFromState(snapshot.commentaryText, snapshot.status === "complete");
                 }
             }
+            reorderTranscriptFromState(snapshot);
 
             if (typeof snapshot.partialContent === "string") {
                 const sseIdleMs = receivedSseContent
@@ -856,6 +857,41 @@
             if (statePollTimer || !state.activeRequestId) return;
             pollStateOnce();
             statePollTimer = setInterval(pollStateOnce, STATE_POLL_MS);
+        };
+
+        const getTimelineTime = (value, fallback = 0) => {
+            if (Number.isFinite(value)) return value;
+            const parsed = Date.parse(value);
+            return Number.isFinite(parsed) ? parsed : fallback;
+        };
+
+        const reorderTranscriptFromState = (snapshot) => {
+            if (!snapshot || typeof snapshot !== "object") return;
+            const records = [];
+            if (Array.isArray(snapshot.commentaryTimeline)) {
+                snapshot.commentaryTimeline.forEach((entry, index) => {
+                    if (!entry?.id) return;
+                    records.push({
+                        key: `commentary:${entry.id}`,
+                        at: getTimelineTime(entry.createdAt || entry.updatedAt, index),
+                        index,
+                        kind: 0,
+                    });
+                });
+            }
+            if (Array.isArray(snapshot.tools)) {
+                snapshot.tools.forEach((tool, index) => {
+                    if (!tool?.callId) return;
+                    records.push({
+                        key: `tool:${tool.callId}`,
+                        at: getTimelineTime(tool.startedAt || tool.updatedAt || tool.endedAt, index),
+                        index,
+                        kind: 1,
+                    });
+                });
+            }
+            records.sort((a, b) => (a.at - b.at) || (a.kind - b.kind) || (a.index - b.index));
+            reorderTranscriptItems(aiMsg, contentEl, records.map((entry) => entry.key));
         };
 
         const handleEvent = (eventType, data) => {
@@ -1384,6 +1420,25 @@
         }
     }
 
+    function getTranscriptItemByKey(aiMsg, contentEl, key) {
+        if (!key) return null;
+        const { transcript } = ensureAgentTranscript(aiMsg, contentEl);
+        if (!transcript) return null;
+        return transcript.querySelector(`[data-timeline-key="${CSS.escape(String(key))}"]`);
+    }
+
+    function reorderTranscriptItems(aiMsg, contentEl, orderedKeys = []) {
+        if (!Array.isArray(orderedKeys) || orderedKeys.length === 0) return;
+        const { items } = ensureAgentTranscript(aiMsg, contentEl);
+        if (!items) return;
+        for (const key of orderedKeys) {
+            const item = getTranscriptItemByKey(aiMsg, contentEl, key);
+            if (item) items.appendChild(item);
+        }
+        items.querySelectorAll(".ic-tools-used").forEach((summary) => items.appendChild(summary));
+        refreshAgentTranscript(aiMsg, contentEl);
+    }
+
     function collapseAgentTranscript(aiMsg, contentEl, collapsed = true) {
         const { transcript } = ensureAgentTranscript(aiMsg, contentEl);
         if (!transcript) return;
@@ -1572,6 +1627,7 @@
         block = document.createElement("div");
         block.className = "ic-run-commentary";
         if (commentaryId) block.dataset.commentaryId = String(commentaryId);
+        if (commentaryId) block.dataset.timelineKey = `commentary:${String(commentaryId)}`;
         block.innerHTML = `
             <div class="ic-run-commentary-label">
                 <i class="fas fa-message" aria-hidden="true"></i>
@@ -1594,6 +1650,9 @@
         const currentText = options.append ? (block.dataset.rawText || "") : "";
         const nextText = `${currentText}${safeText}`;
         block.dataset.rawText = nextText;
+        if (options.commentaryId) {
+            block.dataset.timelineKey = `commentary:${String(options.commentaryId)}`;
+        }
         textEl.innerHTML = formatContent(nextText);
         block.classList.toggle("complete", Boolean(options.complete));
 
@@ -1701,20 +1760,13 @@
     }
 
     function ensureAgentToolContainer(aiMsg, contentEl) {
-        const { transcript, items } = ensureAgentTranscript(aiMsg, contentEl);
+        const { items } = ensureAgentTranscript(aiMsg, contentEl);
         if (!items) return null;
-        let toolsEl = transcript.querySelector(".ic-run-tools");
-        if (!toolsEl) {
-            toolsEl = document.createElement("div");
-            toolsEl.className = "ic-run-tools";
-            items.appendChild(toolsEl);
-            refreshAgentTranscript(aiMsg, contentEl);
-        }
-        return toolsEl;
+        return items;
     }
 
-    function findAgentToolCard(toolsEl, toolName, callId = null) {
-        const cards = Array.from(toolsEl?.querySelectorAll(".ic-tool-card") || []);
+    function findAgentToolCard(container, toolName, callId = null) {
+        const cards = Array.from(container?.querySelectorAll(".ic-tool-card") || []);
         if (callId) {
             const byCallId = cards.find((card) => card.dataset.callId === String(callId));
             if (byCallId) return byCallId;
@@ -1729,13 +1781,64 @@
         if (!card) return;
         card.classList.remove("queued", "running", "done", "error");
         card.classList.add(status);
-        const badge = card.querySelector(".ic-tool-card-badge");
-        const subtitle = card.querySelector(".ic-tool-card-subtitle");
-        if (badge) badge.textContent = getToolStatusLabel(status);
-        if (subtitle) {
-            const safeSummary = summary ? ` · ${clipAgentText(summary, 90).replace(/\n/g, " ")}` : "";
-            subtitle.textContent = `${getToolStatusLabel(status)}${safeSummary}`;
+        card.dataset.status = status;
+        if (summary) {
+            card.dataset.resultSummary = summarizeToolPayload(summary, 96);
         }
+        const badge = card.querySelector(".ic-tool-card-badge");
+        if (badge) badge.textContent = getToolStatusLabel(status);
+        refreshToolCardSummary(card);
+    }
+
+    function normalizeToolBriefText(text, maxLength = 110) {
+        const normalized = String(text || "")
+            .replace(/\s+/g, " ")
+            .replace(/[{}"]/g, "")
+            .trim();
+        return clipAgentText(normalized, maxLength);
+    }
+
+    function summarizeToolPayload(payload, maxLength = 110) {
+        if (payload === null || payload === undefined || payload === "") return "";
+        let value = payload;
+        if (typeof payload === "string") {
+            const raw = payload.trim();
+            if (!raw) return "";
+            try {
+                value = JSON.parse(raw);
+            } catch (e) {
+                return normalizeToolBriefText(raw, maxLength);
+            }
+        }
+
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+            const parts = Object.entries(value)
+                .filter(([, entryValue]) => entryValue !== null && entryValue !== undefined && entryValue !== "")
+                .slice(0, 3)
+                .map(([key, entryValue]) => {
+                    const briefValue = typeof entryValue === "object"
+                        ? JSON.stringify(entryValue)
+                        : String(entryValue);
+                    return `${key}: ${normalizeToolBriefText(briefValue, 42)}`;
+                });
+            if (parts.length) return normalizeToolBriefText(parts.join(" · "), maxLength);
+        }
+
+        try {
+            return normalizeToolBriefText(JSON.stringify(value), maxLength);
+        } catch (e) {
+            return normalizeToolBriefText(String(value), maxLength);
+        }
+    }
+
+    function refreshToolCardSummary(card) {
+        const subtitle = card?.querySelector(".ic-tool-card-subtitle");
+        if (!subtitle) return;
+        const status = card.dataset.status || "running";
+        const parts = [getToolStatusLabel(status)];
+        if (card.dataset.argsSummary) parts.push(card.dataset.argsSummary);
+        if (card.dataset.resultSummary) parts.push(card.dataset.resultSummary);
+        subtitle.textContent = parts.filter(Boolean).join(" · ");
     }
 
     function setToolCardArguments(card, payload) {
@@ -1745,6 +1848,8 @@
         if (!section || !pre) return;
         section.hidden = !text;
         pre.textContent = text;
+        card.dataset.argsSummary = text ? summarizeToolPayload(payload, 108) : "";
+        refreshToolCardSummary(card);
     }
 
     function setToolCardResult(card, summary) {
@@ -1754,6 +1859,8 @@
         if (!section || !resultEl) return;
         section.hidden = !text;
         resultEl.textContent = text;
+        card.dataset.resultSummary = text ? summarizeToolPayload(summary, 96) : "";
+        refreshToolCardSummary(card);
     }
 
     function upsertAgentToolCard(aiMsg, contentEl, toolName, options = {}) {
@@ -1765,16 +1872,21 @@
         const status = options.status || "running";
         const type = getToolType(toolName);
         const icon = getToolIcon(type);
-        let card = findAgentToolCard(toolsEl, toolName, callId);
+        const timelineKey = callId ? `tool:${callId}` : "";
+        let card = timelineKey
+            ? getTranscriptItemByKey(aiMsg, contentEl, timelineKey)
+            : findAgentToolCard(toolsEl, toolName, callId);
 
         if (!card) {
+            const toolBodyId = `ic-tool-body-${Math.random().toString(36).slice(2, 9)}`;
             card = document.createElement("div");
-            card.className = "ic-run-card ic-tool-card";
+            card.className = "ic-run-card ic-tool-card collapsed";
             card.dataset.tool = toolName;
             card.dataset.type = type;
             if (callId) card.dataset.callId = callId;
+            if (timelineKey) card.dataset.timelineKey = timelineKey;
             card.innerHTML = `
-                <button class="ic-run-card-header" type="button" aria-expanded="true">
+                <button class="ic-run-card-header" type="button" aria-expanded="false" aria-controls="${toolBodyId}" title="ดูรายละเอียด tool">
                     <span class="ic-run-card-left">
                         <span class="ic-run-card-icon tool"><i class="fas ${icon}"></i></span>
                         <span class="ic-run-card-title-wrap">
@@ -1783,8 +1895,9 @@
                         </span>
                     </span>
                     <span class="ic-tool-card-badge"></span>
+                    <i class="fas fa-chevron-down ic-run-card-chevron"></i>
                 </button>
-                <div class="ic-run-card-body">
+                <div class="ic-run-card-body" id="${toolBodyId}">
                     <div class="ic-tool-card-args" hidden>
                         <div class="ic-tool-card-section-label">arguments</div>
                         <pre class="ic-tool-card-args-text"></pre>
@@ -1795,10 +1908,12 @@
                     </div>
                 </div>`;
             toolsEl.appendChild(card);
+            bindRunCardToggle(card);
             refreshAgentTranscript(aiMsg, contentEl);
         }
 
         if (callId) card.dataset.callId = callId;
+        if (timelineKey) card.dataset.timelineKey = timelineKey;
         card.dataset.tool = toolName;
         card.dataset.type = type;
         const title = card.querySelector(".ic-run-card-title");

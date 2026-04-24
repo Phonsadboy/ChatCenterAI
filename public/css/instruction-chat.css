@@ -1350,6 +1350,10 @@ button:focus-visible,
     background: rgba(239, 68, 68, 0.045);
 }
 
+.ic-tool-card {
+    --ic-tool-row-height: 34px;
+}
+
 .ic-run-card-header {
     width: 100%;
     border: 0;
@@ -1505,6 +1509,47 @@ button:focus-visible,
 
 .ic-run-transcript .ic-run-card:not(.ic-run-transcript) .ic-run-card-header:hover {
     background: transparent;
+}
+
+.ic-run-transcript .ic-tool-card .ic-run-card-header {
+    min-height: var(--ic-tool-row-height);
+    padding: 6px 8px;
+    cursor: pointer;
+}
+
+.ic-run-transcript .ic-tool-card .ic-run-card-header:hover {
+    background: rgba(255, 255, 255, 0.026);
+}
+
+.ic-tool-card .ic-run-card-left {
+    overflow: hidden;
+}
+
+.ic-tool-card .ic-run-card-icon {
+    width: 20px;
+    height: 20px;
+}
+
+.ic-tool-card .ic-run-card-title-wrap {
+    min-width: 0;
+    flex: 1;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.ic-tool-card .ic-run-card-title {
+    max-width: min(38%, 230px);
+    flex: 0 1 auto;
+}
+
+.ic-tool-card .ic-run-card-subtitle {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.ic-tool-card .ic-run-card-body {
+    padding: 8px;
 }
 
 .ic-run-reasoning-text {
