@@ -34107,6 +34107,9 @@ app.get("/api/openai-usage/summary", async (req, res) => {
       ]);
     }
 
+    const client = await connectDB();
+    const db = client.db("chatbot");
+
     // Enrich bot data with names
     const botIds = byBot.map(b => b._id.botId).filter(Boolean);
     const validBotIds = botIds.filter(id => ObjectId.isValid(id));
