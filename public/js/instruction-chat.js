@@ -258,7 +258,8 @@
         let receivedSseContent = false;
         let sseContentBuffer = "";
         let commentaryContent = "";
-        let lastRenderedCommentary = "";
+        let activeCommentaryId = null;
+        let commentarySeq = 0;
         let lastSseContentAt = 0;
         const streamStartedAt = Date.now();
         const STATE_POLL_MS = 450;
@@ -473,19 +474,39 @@
             renderContentNow(true);
         };
 
-        const renderCommentaryText = (complete = false) => {
-            if (!commentaryContent.trim()) return;
-            if (!complete && commentaryContent === lastRenderedCommentary) return;
-            setAgentCommentaryText(aiMsg, contentEl, commentaryContent, { complete });
-            lastRenderedCommentary = commentaryContent;
+        const getNextCommentaryId = () => {
+            commentarySeq += 1;
+            return `local_commentary_${commentarySeq}`;
+        };
+
+        const appendCommentaryBlockText = (deltaText, options = {}) => {
+            const chunk = typeof deltaText === "string" ? deltaText : String(deltaText || "");
+            if (!chunk) return;
+            const commentaryId = options.commentaryId || activeCommentaryId || getNextCommentaryId();
+            activeCommentaryId = commentaryId;
+            commentaryContent += chunk;
+            setAgentCommentaryText(aiMsg, contentEl, chunk, {
+                commentaryId,
+                append: true,
+                iteration: options.iteration,
+                complete: options.complete,
+            });
             scrollToBottom();
         };
 
-        const mergeIncomingCommentaryText = (deltaText) => {
-            const chunk = typeof deltaText === "string" ? deltaText : String(deltaText || "");
+        const startCommentaryBlockText = (text, options = {}) => {
+            const chunk = typeof text === "string" ? text : String(text || "");
             if (!chunk) return;
+            const commentaryId = options.commentaryId || getNextCommentaryId();
+            activeCommentaryId = commentaryId;
             commentaryContent += chunk;
-            renderCommentaryText(false);
+            setAgentCommentaryText(aiMsg, contentEl, chunk, {
+                commentaryId,
+                append: false,
+                iteration: options.iteration,
+                complete: options.complete,
+            });
+            scrollToBottom();
         };
 
         const setCommentaryTextFromState = (text, complete = false) => {
@@ -493,17 +514,36 @@
             if (!nextText.trim()) return;
             if (commentaryContent.length > nextText.length && commentaryContent.startsWith(nextText)) return;
             commentaryContent = nextText;
-            lastRenderedCommentary = "";
-            renderCommentaryText(complete);
+            setAgentCommentaryText(aiMsg, contentEl, nextText, {
+                commentaryId: "state_commentary",
+                append: false,
+                complete,
+            });
+            scrollToBottom();
         };
 
-        const moveAnswerTextToCommentary = (text) => {
+        const syncCommentaryTimelineFromState = (timeline, complete = false) => {
+            if (!Array.isArray(timeline) || timeline.length === 0) return;
+            const text = timeline.map((entry) => entry?.text || "").join("");
+            if (text && commentaryContent.length > text.length && commentaryContent.startsWith(text)) return;
+            commentaryContent = text || commentaryContent;
+            for (const entry of timeline) {
+                if (!entry || !entry.text) continue;
+                setAgentCommentaryText(aiMsg, contentEl, entry.text, {
+                    commentaryId: entry.id || `state_commentary_${entry.iteration || 0}`,
+                    append: false,
+                    iteration: entry.iteration,
+                    complete,
+                });
+            }
+            scrollToBottom();
+        };
+
+        const moveAnswerTextToCommentary = (text, options = {}) => {
             const chunk = typeof text === "string" ? text : String(text || "");
             if (!chunk) return;
             removeAnswerText(chunk);
-            commentaryContent += chunk;
-            lastRenderedCommentary = "";
-            renderCommentaryText(false);
+            startCommentaryBlockText(chunk, options);
         };
 
         const flushStreamText = (frameTs = performance.now()) => {
@@ -599,7 +639,11 @@
             }
 
             if (typeof data.commentaryText === "string" && data.commentaryText.trim()) {
-                setCommentaryTextFromState(data.commentaryText, true);
+                if (Array.isArray(data.commentaryTimeline) && data.commentaryTimeline.length > 0) {
+                    syncCommentaryTimelineFromState(data.commentaryTimeline, true);
+                } else {
+                    setCommentaryTextFromState(data.commentaryText, true);
+                }
             }
 
             const finalAssistantContent = data.assistantMessages
@@ -629,9 +673,12 @@
                 done: true,
             });
             if (commentaryContent.trim()) {
-                completeAgentCommentary(aiMsg, contentEl, Boolean(fullContent.trim()));
+                completeAgentCommentary(aiMsg, contentEl);
             }
             finalizeAgentRun(aiMsg, contentEl);
+            if (fullContent.trim()) {
+                collapseAgentTranscript(aiMsg, contentEl, true);
+            }
             renderTotalElapsedMeta(false);
         };
 
@@ -706,7 +753,11 @@
             }
 
             if (typeof snapshot.commentaryText === "string" && snapshot.commentaryText.trim()) {
-                setCommentaryTextFromState(snapshot.commentaryText, snapshot.status === "complete");
+                if (Array.isArray(snapshot.commentaryTimeline) && snapshot.commentaryTimeline.length > 0) {
+                    syncCommentaryTimelineFromState(snapshot.commentaryTimeline, snapshot.status === "complete");
+                } else {
+                    setCommentaryTextFromState(snapshot.commentaryText, snapshot.status === "complete");
+                }
             }
 
             if (typeof snapshot.partialContent === "string") {
@@ -744,6 +795,7 @@
                     assistantMessages: snapshot.assistantMessages,
                     versionSnapshot: snapshot.versionSnapshot,
                     commentaryText: snapshot.commentaryText,
+                    commentaryTimeline: snapshot.commentaryTimeline,
                 });
                 cancelledByState = true;
                 try { await reader.cancel(); } catch (e) { }
@@ -773,13 +825,16 @@
                 const toolDigest = Array.isArray(payload.tools)
                     ? payload.tools.map((t) => `${t.callId || ""}:${t.status || ""}:${t.summary || ""}:${(t.argumentsText || "").length}`).join("|")
                     : "";
+                const commentaryDigest = Array.isArray(payload.commentaryTimeline)
+                    ? payload.commentaryTimeline.map((entry) => `${entry.id || ""}:${entry.iteration || ""}:${(entry.text || "").length}`).join("|")
+                    : String((payload.commentaryText || "").length);
                 const digest = [
                     payload.status || "",
                     payload.phase || "",
                     String(payload.iteration || ""),
                     payload.tool || "",
                     String((payload.partialContent || "").length),
-                    String((payload.commentaryText || "").length),
+                    commentaryDigest,
                     String((payload.reasoningSummary || "").length),
                     toolDigest,
                     payload.error || "",
@@ -894,19 +949,28 @@
                 case "final_answer_delta":
                 case "content":
                     if (data.text !== undefined) {
+                        if (data.provisional !== true) {
+                            collapseAgentTranscript(aiMsg, contentEl, true);
+                        }
                         mergeIncomingSseText(data.text);
                     }
                     break;
 
                 case "commentary_delta":
                     if (data.text !== undefined) {
-                        mergeIncomingCommentaryText(data.text);
+                        appendCommentaryBlockText(data.text, {
+                            commentaryId: data.commentaryId,
+                            iteration: data.iteration,
+                        });
                     }
                     break;
 
                 case "answer_to_commentary":
                     if (data.text !== undefined) {
-                        moveAnswerTextToCommentary(data.text);
+                        moveAnswerTextToCommentary(data.text, {
+                            commentaryId: data.commentaryId,
+                            iteration: data.iteration,
+                        });
                     }
                     break;
 
@@ -1259,11 +1323,83 @@
         return ensureAgentRun(aiMsg, contentEl).answer || contentEl;
     }
 
-    function ensureAgentRunStatus(aiMsg, contentEl) {
+    function ensureAgentTranscript(aiMsg, contentEl) {
         const { activity } = ensureAgentRun(aiMsg, contentEl);
-        if (!activity) return null;
+        if (!activity) return { transcript: null, body: null, items: null };
 
-        let status = activity.querySelector(".ic-run-status");
+        let transcript = activity.querySelector(".ic-run-transcript");
+        if (!transcript) {
+            transcript = document.createElement("div");
+            transcript.className = "ic-run-card ic-run-transcript";
+            transcript.innerHTML = `
+                <button class="ic-run-card-header ic-run-transcript-header" type="button" aria-expanded="true">
+                    <span class="ic-run-card-left">
+                        <span class="ic-run-card-icon transcript"><i class="fas fa-list-check"></i></span>
+                        <span class="ic-run-card-title-wrap">
+                            <span class="ic-run-card-title">ขั้นตอนการทำงาน</span>
+                            <span class="ic-run-card-subtitle ic-run-transcript-subtitle">กำลังเริ่มต้น</span>
+                        </span>
+                    </span>
+                    <span class="ic-run-card-meta ic-run-transcript-meta">live</span>
+                    <i class="fas fa-chevron-down ic-run-card-chevron"></i>
+                </button>
+                <div class="ic-run-card-body ic-run-transcript-body">
+                    <div class="ic-run-transcript-status"></div>
+                    <div class="ic-run-transcript-items"></div>
+                </div>`;
+            activity.appendChild(transcript);
+            bindRunCardToggle(transcript);
+        }
+
+        return {
+            transcript,
+            body: transcript.querySelector(".ic-run-transcript-body"),
+            items: transcript.querySelector(".ic-run-transcript-items"),
+        };
+    }
+
+    function refreshAgentTranscript(aiMsg, contentEl, options = {}) {
+        const { transcript } = ensureAgentTranscript(aiMsg, contentEl);
+        if (!transcript) return;
+        const commentaryCount = transcript.querySelectorAll(".ic-run-commentary").length;
+        const toolCount = transcript.querySelectorAll(".ic-tool-card").length;
+        const reasoningCount = transcript.querySelectorAll(".ic-run-reasoning").length;
+        const summaryCount = transcript.querySelectorAll(".ic-tools-used").length;
+        const activeCount = commentaryCount + toolCount + reasoningCount + summaryCount;
+        const subtitle = transcript.querySelector(".ic-run-transcript-subtitle");
+        const meta = transcript.querySelector(".ic-run-transcript-meta");
+
+        const parts = [];
+        if (commentaryCount) parts.push(`${commentaryCount} ข้อความระหว่างทาง`);
+        if (toolCount) parts.push(`ใช้ ${toolCount} เครื่องมือ`);
+        if (reasoningCount) parts.push("มี reasoning summary");
+
+        if (subtitle) {
+            subtitle.textContent = parts.join(" · ") || options.label || "กำลังประมวลผล";
+        }
+        if (meta) {
+            meta.textContent = options.complete
+                ? (activeCount ? "พับไว้" : "เสร็จแล้ว")
+                : (options.label || "live");
+        }
+    }
+
+    function collapseAgentTranscript(aiMsg, contentEl, collapsed = true) {
+        const { transcript } = ensureAgentTranscript(aiMsg, contentEl);
+        if (!transcript) return;
+        const hasActivity = Boolean(transcript.querySelector(".ic-run-commentary, .ic-tool-card, .ic-run-reasoning, .ic-tools-used"));
+        if (!hasActivity && collapsed) return;
+        transcript.classList.toggle("complete", Boolean(collapsed));
+        setRunCardCollapsed(transcript, Boolean(collapsed));
+        refreshAgentTranscript(aiMsg, contentEl, { complete: Boolean(collapsed) });
+    }
+
+    function ensureAgentRunStatus(aiMsg, contentEl) {
+        const { transcript } = ensureAgentTranscript(aiMsg, contentEl);
+        const statusHost = transcript?.querySelector(".ic-run-transcript-status");
+        if (!statusHost) return null;
+
+        let status = statusHost.querySelector(".ic-run-status");
         if (status) return status;
 
         status = document.createElement("div");
@@ -1279,7 +1415,7 @@
                 <div class="ic-run-status-detail">เริ่มประมวลผล</div>
             </div>
             <div class="ic-run-status-time">0s</div>`;
-        activity.insertBefore(status, activity.firstChild);
+        statusHost.appendChild(status);
         return status;
     }
 
@@ -1321,6 +1457,10 @@
         if (time && Number.isFinite(options.elapsedSec)) {
             time.textContent = `${Math.max(0, Math.floor(options.elapsedSec))}s`;
         }
+        refreshAgentTranscript(aiMsg, contentEl, {
+            label: options.label || "กำลังประมวลผล",
+            complete: Boolean(options.done || options.error),
+        });
     }
 
     function finalizeAgentRun(aiMsg, contentEl, options = {}) {
@@ -1328,7 +1468,7 @@
         if (!run || !activity) return;
         run.classList.toggle("is-complete", !options.error);
         run.classList.toggle("is-error", Boolean(options.error));
-        const hasActivity = Boolean(activity.querySelector(".ic-run-card, .ic-tool-card, .ic-tools-used"));
+        const hasActivity = Boolean(activity.querySelector(".ic-run-commentary, .ic-tool-card, .ic-run-reasoning, .ic-tools-used"));
         run.classList.toggle("is-minimal", !hasActivity);
         activity.querySelectorAll(".ic-tool-card.running, .ic-tool-card.queued").forEach((card) => {
             card.classList.remove("running", "queued");
@@ -1355,10 +1495,10 @@
     }
 
     function ensureAgentReasoningBlock(aiMsg, contentEl) {
-        const { activity } = ensureAgentRun(aiMsg, contentEl);
-        if (!activity) return null;
+        const { transcript, items } = ensureAgentTranscript(aiMsg, contentEl);
+        if (!items) return null;
 
-        let card = activity.querySelector(".ic-run-reasoning");
+        let card = transcript.querySelector(".ic-run-reasoning");
         if (card) return card;
 
         card = document.createElement("div");
@@ -1373,13 +1513,12 @@
                     </span>
                 </span>
                 <span class="ic-run-card-meta ic-reasoning-meta">กำลังสรุป</span>
-                <i class="fas fa-chevron-down ic-run-card-chevron"></i>
             </button>
             <div class="ic-run-card-body">
                 <div class="ic-run-reasoning-text"></div>
             </div>`;
-        activity.appendChild(card);
-        bindRunCardToggle(card);
+        items.appendChild(card);
+        refreshAgentTranscript(aiMsg, contentEl);
         return card;
     }
 
@@ -1417,128 +1556,63 @@
         if (!card) return;
         card.classList.add("complete");
         updateReasoningMeta(card, Number.isFinite(wordCount) ? wordCount : null);
+        refreshAgentTranscript(aiMsg, contentEl);
     }
 
-    function splitCommentaryParagraph(paragraph, maxLength = 170) {
-        const chunks = [];
-        let remaining = String(paragraph || "").replace(/\s+/g, " ").trim();
-        while (remaining.length > maxLength) {
-            const windowText = remaining.slice(0, maxLength + 1);
-            const boundaryMatches = [...windowText.matchAll(/นะครับ|นะคะ|ครับ|ค่ะ|[.!?。！？]/g)];
-            let cut = -1;
-            if (boundaryMatches.length > 0) {
-                const lastMatch = boundaryMatches[boundaryMatches.length - 1];
-                cut = lastMatch.index + lastMatch[0].length;
-            }
-            if (cut < Math.floor(maxLength * 0.55)) {
-                const lastSpace = windowText.lastIndexOf(" ");
-                cut = lastSpace > Math.floor(maxLength * 0.55) ? lastSpace : maxLength;
-            }
-            chunks.push(remaining.slice(0, cut).trim());
-            remaining = remaining.slice(cut).trim();
+    function ensureAgentCommentaryBlock(aiMsg, contentEl, commentaryId = null) {
+        const { transcript, items } = ensureAgentTranscript(aiMsg, contentEl);
+        if (!items) return null;
+
+        let block = null;
+        if (commentaryId) {
+            block = transcript.querySelector(`.ic-run-commentary[data-commentary-id="${CSS.escape(String(commentaryId))}"]`);
         }
-        if (remaining) chunks.push(remaining);
-        return chunks;
-    }
+        if (block) return block;
 
-    function segmentAgentCommentary(text, maxItems = 10) {
-        const normalized = String(text || "")
-            .replace(/\r/g, "")
-            .replace(/[ \t]+\n/g, "\n")
-            .replace(/\n{3,}/g, "\n\n")
-            .trim();
-        if (!normalized) return [];
-
-        const segments = [];
-        for (const line of normalized.split(/\n+/)) {
-            const cleanLine = line.replace(/^[-*•\d.)\s]+/, "").trim();
-            if (!cleanLine) continue;
-            segments.push(...splitCommentaryParagraph(cleanLine));
-            if (segments.length >= maxItems) break;
-        }
-
-        if (segments.length > maxItems) {
-            return [...segments.slice(0, maxItems - 1), "…"];
-        }
-        return segments.slice(0, maxItems);
-    }
-
-    function ensureAgentCommentaryBlock(aiMsg, contentEl) {
-        const { activity } = ensureAgentRun(aiMsg, contentEl);
-        if (!activity) return null;
-
-        let card = activity.querySelector(".ic-run-commentary");
-        if (card) return card;
-
-        card = document.createElement("div");
-        card.className = "ic-run-card ic-run-commentary";
-        card.innerHTML = `
-            <button class="ic-run-card-header" type="button" aria-expanded="true">
-                <span class="ic-run-card-left">
-                    <span class="ic-run-card-icon commentary"><i class="fas fa-message"></i></span>
-                    <span class="ic-run-card-title-wrap">
-                        <span class="ic-run-card-title">ข้อความระหว่างทำงาน</span>
-                        <span class="ic-run-card-subtitle">commentary · ไม่ใช่คำตอบสุดท้าย</span>
-                    </span>
-                </span>
-                <span class="ic-run-card-meta ic-commentary-meta">กำลังเขียน</span>
-                <i class="fas fa-chevron-down ic-run-card-chevron"></i>
-            </button>
-            <div class="ic-run-card-body">
-                <ul class="ic-run-commentary-list"></ul>
-            </div>`;
-
-        const status = activity.querySelector(".ic-run-status");
-        if (status?.nextSibling) {
-            activity.insertBefore(card, status.nextSibling);
-        } else if (status) {
-            activity.appendChild(card);
-        } else {
-            activity.insertBefore(card, activity.firstChild);
-        }
-        bindRunCardToggle(card);
-        return card;
-    }
-
-    function updateCommentaryMeta(card, count = 0, complete = false) {
-        const meta = card?.querySelector(".ic-commentary-meta");
-        if (!meta) return;
-        if (count > 0) {
-            meta.textContent = complete ? `${count} ช่วง` : `${count} ช่วง · live`;
-        } else {
-            meta.textContent = complete ? "เสร็จแล้ว" : "กำลังเขียน";
-        }
+        block = document.createElement("div");
+        block.className = "ic-run-commentary";
+        if (commentaryId) block.dataset.commentaryId = String(commentaryId);
+        block.innerHTML = `
+            <div class="ic-run-commentary-label">
+                <i class="fas fa-message" aria-hidden="true"></i>
+                <span>ข้อความระหว่างทำงาน</span>
+                <span class="ic-run-commentary-round"></span>
+            </div>
+            <div class="ic-run-commentary-text"></div>`;
+        items.appendChild(block);
+        refreshAgentTranscript(aiMsg, contentEl);
+        return block;
     }
 
     function setAgentCommentaryText(aiMsg, contentEl, text, options = {}) {
         const safeText = typeof text === "string" ? text : String(text || "");
         if (!safeText.trim()) return;
-        const card = ensureAgentCommentaryBlock(aiMsg, contentEl);
-        const list = card?.querySelector(".ic-run-commentary-list");
-        if (!card || !list) return;
+        const block = ensureAgentCommentaryBlock(aiMsg, contentEl, options.commentaryId || null);
+        const textEl = block?.querySelector(".ic-run-commentary-text");
+        if (!block || !textEl) return;
 
-        card.dataset.rawText = safeText;
-        const segments = segmentAgentCommentary(safeText);
-        list.innerHTML = "";
-        for (const segment of segments) {
-            const item = document.createElement("li");
-            item.textContent = segment;
-            list.appendChild(item);
+        const currentText = options.append ? (block.dataset.rawText || "") : "";
+        const nextText = `${currentText}${safeText}`;
+        block.dataset.rawText = nextText;
+        textEl.innerHTML = formatContent(nextText);
+        block.classList.toggle("complete", Boolean(options.complete));
+
+        const round = block.querySelector(".ic-run-commentary-round");
+        if (round) {
+            round.textContent = Number.isFinite(options.iteration) && options.iteration > 1
+                ? `รอบ ${options.iteration}`
+                : "";
         }
-        card.classList.toggle("complete", Boolean(options.complete));
-        updateCommentaryMeta(card, segments.length, Boolean(options.complete));
-        if (options.complete) {
-            setRunCardCollapsed(card, Boolean(options.collapse));
-        }
+        refreshAgentTranscript(aiMsg, contentEl, { complete: Boolean(options.complete) });
     }
 
-    function completeAgentCommentary(aiMsg, contentEl, collapse = true) {
-        const { activity } = ensureAgentRun(aiMsg, contentEl);
-        const card = activity?.querySelector(".ic-run-commentary");
-        if (!card) return;
-        card.classList.add("complete");
-        updateCommentaryMeta(card, card.querySelectorAll(".ic-run-commentary-list li").length, true);
-        setRunCardCollapsed(card, Boolean(collapse));
+    function completeAgentCommentary(aiMsg, contentEl) {
+        const { transcript } = ensureAgentTranscript(aiMsg, contentEl);
+        if (!transcript) return;
+        transcript.querySelectorAll(".ic-run-commentary").forEach((block) => {
+            block.classList.add("complete");
+        });
+        refreshAgentTranscript(aiMsg, contentEl, { complete: true });
     }
 
     // ─── Image Upload Helpers ────────────────────────────────────────────
@@ -1627,13 +1701,14 @@
     }
 
     function ensureAgentToolContainer(aiMsg, contentEl) {
-        const { activity } = ensureAgentRun(aiMsg, contentEl);
-        if (!activity) return null;
-        let toolsEl = activity.querySelector(".ic-run-tools");
+        const { transcript, items } = ensureAgentTranscript(aiMsg, contentEl);
+        if (!items) return null;
+        let toolsEl = transcript.querySelector(".ic-run-tools");
         if (!toolsEl) {
             toolsEl = document.createElement("div");
             toolsEl.className = "ic-run-tools";
-            activity.appendChild(toolsEl);
+            items.appendChild(toolsEl);
+            refreshAgentTranscript(aiMsg, contentEl);
         }
         return toolsEl;
     }
@@ -1708,7 +1783,6 @@
                         </span>
                     </span>
                     <span class="ic-tool-card-badge"></span>
-                    <i class="fas fa-chevron-down ic-run-card-chevron"></i>
                 </button>
                 <div class="ic-run-card-body">
                     <div class="ic-tool-card-args" hidden>
@@ -1721,7 +1795,7 @@
                     </div>
                 </div>`;
             toolsEl.appendChild(card);
-            bindRunCardToggle(card);
+            refreshAgentTranscript(aiMsg, contentEl);
         }
 
         if (callId) card.dataset.callId = callId;
@@ -1740,7 +1814,7 @@
             setToolCardResult(card, options.summary);
         }
 
-        setRunCardCollapsed(card, status === "done" || status === "error");
+        refreshAgentTranscript(aiMsg, contentEl);
         return card;
     }
 
@@ -1814,8 +1888,8 @@
         if (!body || !Array.isArray(tools) || tools.length === 0) return;
         const aiMsg = body.closest(".ic-msg");
         const contentEl = aiMsg?.querySelector(".ic-msg-content");
-        const { activity } = ensureAgentRun(aiMsg, contentEl);
-        const container = activity || body;
+        const { items } = ensureAgentTranscript(aiMsg, contentEl);
+        const container = items || body;
         let summary = container.querySelector(".ic-tools-used:not(.ic-version-snapshot)");
         if (!summary) {
             summary = document.createElement("div");
@@ -1824,6 +1898,7 @@
         }
         const uniqueTools = [...new Set(tools)];
         summary.textContent = `ใช้เครื่องมือ ${uniqueTools.length} รายการ: ${uniqueTools.join(", ")}`;
+        refreshAgentTranscript(aiMsg, contentEl, { complete: true });
     }
 
     function renderVersionSnapshotSummary(body, snapshot) {

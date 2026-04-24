@@ -27287,6 +27287,15 @@ function buildActiveInstructionRequestSnapshot(reqState) {
     reasoningSummary: reqState?.reasoningSummary || "",
     partialContent: reqState?.answerContent || reqState?.streamedContent || "",
     commentaryText: reqState?.commentaryContent || "",
+    commentaryTimeline: Array.isArray(reqState?.commentaryTimeline)
+      ? reqState.commentaryTimeline.map((entry) => ({
+        id: entry.id || null,
+        iteration: typeof entry.iteration === "number" ? entry.iteration : null,
+        text: entry.text || "",
+        createdAt: entry.createdAt || null,
+        updatedAt: entry.updatedAt || null,
+      }))
+      : [],
     usage: reqState?.donePayload?.usage || null,
     changes: reqState?.donePayload?.changes || null,
     toolsUsed: reqState?.donePayload?.toolsUsed || null,
@@ -27357,6 +27366,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       streamedContent: "",
       answerContent: "",
       commentaryContent: "",
+      commentaryTimeline: [],
       reasoningSummary: "",
       donePayload: null,
       error: null,
@@ -27632,6 +27642,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       let activeReasoningText = "";
       let reasoningStreaming = false;
       let sentRespondingStatus = false;
+      let activeCommentaryTimelineEntry = null;
 
       const getToolCallKey = (itemId, outputIndex) => {
         if (itemId && streamedToolCallKeyByItemId.has(itemId)) {
@@ -27692,11 +27703,24 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         requestState.updatedAt = Date.now();
       };
 
-      const appendRequestCommentaryContent = (text) => {
+      const appendRequestCommentaryContent = (text, options = {}) => {
         const chunk = typeof text === "string" ? text : String(text || "");
-        if (!chunk) return;
+        if (!chunk) return null;
         requestState.commentaryContent += chunk;
+        if (options.startNew || !activeCommentaryTimelineEntry) {
+          activeCommentaryTimelineEntry = {
+            id: `commentary_${i + 1}_${requestState.commentaryTimeline.length + 1}`,
+            iteration: i + 1,
+            text: "",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          requestState.commentaryTimeline.push(activeCommentaryTimelineEntry);
+        }
+        activeCommentaryTimelineEntry.text += chunk;
+        activeCommentaryTimelineEntry.updatedAt = Date.now();
         requestState.updatedAt = Date.now();
+        return activeCommentaryTimelineEntry;
       };
 
       const removeRequestAnswerSuffix = (text) => {
@@ -27726,10 +27750,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       const publishCommentaryDelta = (text, extra = {}) => {
         const chunk = typeof text === "string" ? text : String(text || "");
         if (!chunk) return;
-        appendRequestCommentaryContent(chunk);
+        const entry = appendRequestCommentaryContent(chunk);
         sendEvent("commentary_delta", {
           text: chunk,
           iteration: i + 1,
+          commentaryId: entry?.id || null,
           phase: "commentary",
           ...extra,
         });
@@ -27738,10 +27763,11 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       const reclassifyProvisionalAnswerToCommentary = (reason = "tool_call") => {
         if (!iterationProvisionalAnswerText) return;
         removeRequestAnswerSuffix(iterationProvisionalAnswerText);
-        appendRequestCommentaryContent(iterationProvisionalAnswerText);
+        const entry = appendRequestCommentaryContent(iterationProvisionalAnswerText, { startNew: true });
         sendEvent("answer_to_commentary", {
           text: iterationProvisionalAnswerText,
           iteration: i + 1,
+          commentaryId: entry?.id || null,
           phase: "commentary",
           reason,
         });
@@ -28231,6 +28257,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       assistantMessages,
       versionSnapshot,
       commentaryText: requestState.commentaryContent || "",
+      commentaryTimeline: requestState.commentaryTimeline || [],
     };
     requestState.donePayload = donePayload;
     requestState.status = "complete";
