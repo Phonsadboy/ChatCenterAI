@@ -774,6 +774,47 @@ function createChatStorageService({
     return result.rows[0] || null;
   }
 
+  async function listAttachmentsForMessages(messageIds = []) {
+    if (!isConfigured() || !Array.isArray(messageIds) || !messageIds.length) {
+      return new Map();
+    }
+    await ensureReady();
+
+    const ids = [...new Set(
+      messageIds
+        .map((id) => (id && typeof id.toString === "function" ? id.toString() : ""))
+        .map((id) => id.trim())
+        .filter(Boolean),
+    )];
+    if (!ids.length) return new Map();
+
+    const result = await postgresRuntime.query(
+      `
+        SELECT
+          message_id,
+          attachment_index,
+          kind,
+          bucket_key,
+          content_type,
+          source_url,
+          preview_url,
+          size_bytes
+        FROM chat_message_attachments
+        WHERE message_id = ANY($1::text[])
+        ORDER BY message_id ASC, attachment_index ASC
+      `,
+      [ids],
+    );
+
+    const grouped = new Map();
+    for (const row of result.rows) {
+      const key = row.message_id;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(row);
+    }
+    return grouped;
+  }
+
   async function getMessageById(messageId) {
     if (!isConfigured()) return null;
     await ensureReady();
@@ -1281,6 +1322,7 @@ function createChatStorageService({
     getAssetObject,
     getDocument,
     getDocuments,
+    listAttachmentsForMessages,
     listTopDocumentArrayValues,
     getMessageById,
     isConfigured,

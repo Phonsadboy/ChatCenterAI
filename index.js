@@ -2338,8 +2338,142 @@ async function getAIHistory(userId) {
   }
 
   const items = raw.reverse();
+  const messageIds = items
+    .map((ch) => (ch?._id && typeof ch._id.toString === "function" ? ch._id.toString() : ""))
+    .filter(Boolean);
+  const attachmentMap =
+    isPostgresChatReadEnabled() &&
+    chatStorageService.isConfigured() &&
+    typeof chatStorageService.listAttachmentsForMessages === "function"
+      ? await chatStorageService.listAttachmentsForMessages(messageIds)
+      : new Map();
+  const maxHistoryImagesRaw = await getSettingValue("maxHistoryImagesForAI", 2);
+  const maxHistoryImages =
+    typeof maxHistoryImagesRaw === "number" && maxHistoryImagesRaw > 0
+      ? Math.min(Math.floor(maxHistoryImagesRaw), 10)
+      : 2;
 
-  const sanitize = (role, content) => {
+  const countStoredImages = (content) => {
+    try {
+      const parsed = typeof content === "string" ? JSON.parse(content) : content;
+      if (Array.isArray(parsed)) {
+        return parsed.reduce((count, item) => {
+          if (!item || typeof item !== "object") return count;
+          if (item.type === "image") return count + 1;
+          if (item.data?.type === "image") return count + 1;
+          return count;
+        }, 0);
+      }
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed.type === "image" || parsed.data?.type === "image")
+      ) {
+        return 1;
+      }
+    } catch (_) {
+      return 0;
+    }
+    return 0;
+  };
+
+  const historyImageBudget = new Map();
+  let remainingHistoryImages = maxHistoryImages;
+  for (let index = items.length - 1; index >= 0 && remainingHistoryImages > 0; index--) {
+    const ch = items[index];
+    if (ch?.role !== "user") continue;
+    const messageId =
+      ch?._id && typeof ch._id.toString === "function" ? ch._id.toString() : "";
+    if (!messageId) continue;
+    const imageCount = countStoredImages(ch.content);
+    if (imageCount <= 0) continue;
+    const allowed = new Set();
+    for (
+      let imageIndex = imageCount - 1;
+      imageIndex >= 0 && remainingHistoryImages > 0;
+      imageIndex--
+    ) {
+      allowed.add(imageIndex);
+      remainingHistoryImages -= 1;
+    }
+    historyImageBudget.set(messageId, allowed);
+  }
+
+  const toAbsoluteHistoryImageUrl = (url) => {
+    if (typeof url !== "string") return "";
+    const trimmed = url.trim();
+    if (!trimmed) return "";
+    if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("data:image/")) {
+      return trimmed;
+    }
+    if (trimmed.startsWith("/") && PUBLIC_BASE_URL) {
+      return `${PUBLIC_BASE_URL.replace(/\/$/, "")}${trimmed}`;
+    }
+    return "";
+  };
+
+  const popAttachmentImageUrl = async (messageId, localImageIndex) => {
+    const attachments = attachmentMap.get(messageId) || [];
+    const attachment = attachments.find((entry) =>
+      Number(entry.attachment_index) === localImageIndex
+    ) || attachments[localImageIndex];
+    if (!attachment) return "";
+    if (attachment.bucket_key && projectBucket.isConfigured()) {
+      try {
+        await projectBucket.headObject(attachment.bucket_key);
+      } catch (error) {
+        console.warn(
+          "[AI History] Stored image is not readable, falling back to text note:",
+          error?.message || error,
+        );
+        return "";
+      }
+    }
+    const storedUrl = toAbsoluteHistoryImageUrl(
+      attachment.source_url || attachment.preview_url || "",
+    );
+    if (storedUrl) return storedUrl;
+    if (attachment.bucket_key && messageId) {
+      const index = Number.isFinite(Number(attachment.attachment_index))
+        ? Number(attachment.attachment_index)
+        : localImageIndex;
+      return toAbsoluteHistoryImageUrl(`/assets/chat-images/${messageId}/${index}`);
+    }
+    return "";
+  };
+
+  const buildHistoryContent = (text, imageUrls, omittedImageCount) => {
+    const cleanedText = typeof text === "string" ? text.trim() : "";
+    const usableImageUrls = Array.isArray(imageUrls)
+      ? imageUrls.filter(Boolean)
+      : [];
+    if (!usableImageUrls.length) {
+      if (omittedImageCount > 0) {
+        const note = `[มีรูปภาพก่อนหน้า ${omittedImageCount} รูป]`;
+        return cleanedText ? `${cleanedText}\n\n${note}` : note;
+      }
+      return cleanedText;
+    }
+
+    const parts = [];
+    if (cleanedText) parts.push({ type: "text", text: cleanedText });
+    usableImageUrls.forEach((imageUrl, index) => {
+      parts.push({ type: "image", imageUrl, detail: "low" });
+      parts.push({
+        type: "text",
+        text: `[รูปภาพก่อนหน้า ${index + 1}]`,
+      });
+    });
+    if (omittedImageCount > 0) {
+      parts.push({
+        type: "text",
+        text: `[มีรูปภาพก่อนหน้าเพิ่มเติม ${omittedImageCount} รูปที่ไม่สามารถแนบได้]`,
+      });
+    }
+    return parts;
+  };
+
+  const sanitize = async (role, content, messageId) => {
     // คืนค่าเป็น string เสมอ และไม่มี base64 ขนาดใหญ่
     const isBase64Like = (str) => {
       if (typeof str !== "string") return false;
@@ -2367,6 +2501,8 @@ async function getAIHistory(userId) {
       if (Array.isArray(parsed)) {
         let textParts = [];
         let imgCount = 0;
+        let localImageIndex = 0;
+        const imageUrls = [];
 
         for (const item of parsed) {
           if (!item) continue;
@@ -2375,6 +2511,17 @@ async function getAIHistory(userId) {
             textParts.push(item.content);
           } else if (item.type === "image") {
             imgCount++;
+            const imageUrl = toAbsoluteHistoryImageUrl(item.url || item.previewUrl || "");
+            const storedImageUrl =
+              imageUrl || await popAttachmentImageUrl(messageId, localImageIndex);
+            if (
+              role === "user" &&
+              historyImageBudget.get(messageId)?.has(localImageIndex) &&
+              storedImageUrl
+            ) {
+              imageUrls.push(storedImageUrl);
+            }
+            localImageIndex += 1;
           }
           // รูปแบบเก่า { data: { type, text|base64 } }
           else if (item.data) {
@@ -2383,16 +2530,27 @@ async function getAIHistory(userId) {
               textParts.push(d.text);
             } else if (d.type === "image") {
               imgCount++;
+              const imageUrl = toAbsoluteHistoryImageUrl(d.url || d.previewUrl || "");
+              const storedImageUrl =
+                imageUrl || await popAttachmentImageUrl(messageId, localImageIndex);
+              if (
+                role === "user" &&
+                historyImageBudget.get(messageId)?.has(localImageIndex) &&
+                storedImageUrl
+              ) {
+                imageUrls.push(storedImageUrl);
+              }
+              localImageIndex += 1;
             }
           }
         }
 
         let text = textParts.join("\n\n");
-        if (imgCount > 0) {
-          const note = `[มีรูปภาพก่อนหน้า ${imgCount} รูป]`;
-          text = text ? `${text}\n\n${note}` : note;
-        }
-        return truncateLong(text);
+        return buildHistoryContent(
+          truncateLong(text),
+          imageUrls,
+          Math.max(0, imgCount - imageUrls.length),
+        );
       }
 
       // กรณีเป็น object เดี่ยว (ไม่ใช่ array)
@@ -2413,6 +2571,17 @@ async function getAIHistory(userId) {
           parsed.type === "image" ||
           (parsed.data && parsed.data.type === "image")
         ) {
+          const imageNode = parsed.type === "image" ? parsed : parsed.data;
+          const imageUrl = toAbsoluteHistoryImageUrl(
+            imageNode.url || imageNode.previewUrl || "",
+          ) || await popAttachmentImageUrl(messageId, 0);
+          if (
+            role === "user" &&
+            historyImageBudget.get(messageId)?.has(0) &&
+            imageUrl
+          ) {
+            return buildHistoryContent("", [imageUrl], 0);
+          }
           return "[มีรูปภาพก่อนหน้า 1 รูป]";
         }
         // อย่างอื่นให้ตัดให้สั้นๆ
@@ -2433,21 +2602,26 @@ async function getAIHistory(userId) {
     }
   };
 
-  const sanitized = items.map((ch) => {
+  const sanitized = [];
+  for (const ch of items) {
+    const messageId =
+      ch?._id && typeof ch._id.toString === "function" ? ch._id.toString() : "";
     const msg = {
       role: ch.role,
-      content: sanitize(ch.role, ch.content),
+      content: await sanitize(ch.role, ch.content, messageId),
     };
     if (ch.tool_calls) msg.tool_calls = ch.tool_calls;
     if (ch.tool_call_id) msg.tool_call_id = ch.tool_call_id;
     if (ch.name) msg.name = ch.name;
-    return msg;
-  });
+    sanitized.push(msg);
+  }
 
   // ลบข้อความว่างที่ไม่มีประโยชน์ต่อบริบท
-  return sanitized.filter(
-    (m) => m && typeof m.content === "string" && m.content.trim() !== "",
-  );
+  return sanitized.filter((m) => {
+    if (!m) return false;
+    if (typeof m.content === "string") return m.content.trim() !== "";
+    return Array.isArray(m.content) && m.content.length > 0;
+  });
 }
 
 // ฟังก์ชันสำหรับดึงข้อมูลโปรไฟล์จาก LINE API
@@ -12528,15 +12702,91 @@ function shouldUseResponsesRuntime(provider, apiMode, modelId) {
   );
 }
 
-function normalizeHistoryMessageContent(content) {
+function normalizeHistoryMessageContent(content, target = "chat") {
   if (typeof content === "string") {
     const text = content.trim();
     return text || null;
   }
   if (Array.isArray(content) && content.length > 0) {
-    return content;
+    const mapped = [];
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      if (part.type === "text") {
+        const text =
+          typeof part.text === "string"
+            ? part.text.trim()
+            : typeof part.content === "string"
+              ? part.content.trim()
+              : "";
+        if (!text) continue;
+        mapped.push(
+          target === "responses"
+            ? { type: "input_text", text }
+            : { type: "text", text },
+        );
+        continue;
+      }
+      if (part.type === "image") {
+        const imageUrl =
+          typeof part.imageUrl === "string"
+            ? part.imageUrl.trim()
+            : typeof part.image_url === "string"
+              ? part.image_url.trim()
+              : "";
+        if (!imageUrl) continue;
+        if (target === "responses") {
+          mapped.push({
+            type: "input_image",
+            image_url: imageUrl,
+            detail: part.detail || "low",
+          });
+        } else {
+          mapped.push({
+            type: "image_url",
+            image_url: {
+              url: imageUrl,
+              detail: part.detail || "low",
+            },
+          });
+        }
+        continue;
+      }
+      if (part.type === "input_text" || part.type === "input_image") {
+        if (target === "responses") mapped.push(part);
+        continue;
+      }
+      if (part.type === "image_url") {
+        if (target === "chat") {
+          mapped.push(part);
+        } else if (part.image_url?.url) {
+          mapped.push({
+            type: "input_image",
+            image_url: part.image_url.url,
+            detail: part.image_url.detail || "low",
+          });
+        }
+      }
+    }
+    return mapped.length > 0 ? mapped : null;
   }
   return null;
+}
+
+function mapStoredHistoryToChatMessages(history) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  return safeHistory
+    .map((msg) => {
+      if (!msg || typeof msg !== "object") return null;
+      if (!["system", "developer", "user", "assistant", "tool"].includes(msg.role)) {
+        return null;
+      }
+      const content = normalizeHistoryMessageContent(msg.content, "chat");
+      if (!content && msg.role !== "assistant") return null;
+      const mapped = { ...msg, content: content || "" };
+      if (mapped.role === "developer") mapped.role = "system";
+      return mapped;
+    })
+    .filter(Boolean);
 }
 
 function mapHistoryRoleForResponses(role, modelId) {
@@ -12582,7 +12832,10 @@ function mapStoredHistoryToResponsesInput(history, modelId) {
       Array.isArray(msg.tool_calls) &&
       msg.tool_calls.length > 0
     ) {
-      const assistantContent = normalizeHistoryMessageContent(msg.content);
+      const assistantContent = normalizeHistoryMessageContent(
+        msg.content,
+        "responses",
+      );
       if (assistantContent) {
         mapped.push({ role: "assistant", content: assistantContent });
       }
@@ -12608,7 +12861,7 @@ function mapStoredHistoryToResponsesInput(history, modelId) {
     if (!["system", "developer", "user", "assistant"].includes(msg.role)) {
       continue;
     }
-    const content = normalizeHistoryMessageContent(msg.content);
+    const content = normalizeHistoryMessageContent(msg.content, "responses");
     if (!content) continue;
     mapped.push({
       role: mapHistoryRoleForResponses(msg.role, modelId),
@@ -13290,7 +13543,7 @@ async function runCommerceAssistantConversation(options = {}) {
   } else {
     const messages = [
       buildChatInstructionMessage(resolvedModel.model, toolSystemInstructions),
-      ...(Array.isArray(history) ? history : []),
+      ...mapStoredHistoryToChatMessages(history),
       { role: "user", content: chatUserContent },
     ];
     let toolLoopCount = 0;
@@ -13510,6 +13763,7 @@ async function ensureSettings() {
     { key: "textModel", value: DEFAULT_ASSISTANT_MODEL },
     { key: "visionModel", value: DEFAULT_ASSISTANT_MODEL },
     { key: "maxImagesPerMessage", value: 3 },
+    { key: "maxHistoryImagesForAI", value: 2 },
     { key: "defaultInstruction", value: "" },
     { key: "enableChatHistory", value: true },
     { key: "enableAdminNotifications", value: true },
