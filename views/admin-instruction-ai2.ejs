@@ -2,150 +2,321 @@
 <html lang="th">
 
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>InstructionAI2 | ChatCenter AI</title>
-  <meta name="description" content="InstructionAI2 แยกหน้าใหม่พร้อม batch preview และ inventory panel">
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-  <link href="/css/instruction-ai2.css?v=<%= assetVersion %>" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InstructionAI2 | ChatCenter AI</title>
+    <meta name="description" content="InstructionAI2 แยกระบบจากหน้าเดิม โดยใช้ UI เดิมและ batch preview ก่อนบันทึกจริง">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/css/instruction-ai2.css?v=<%= assetVersion %>" rel="stylesheet">
 </head>
 
 <body>
-  <div class="ai2-app" id="ai2App" data-default-model="<%= defaultModel %>" data-default-thinking="<%= defaultThinking %>">
-    <aside class="ai2-sidebar" id="ai2Sidebar">
-      <div class="ai2-brand">
-        <div class="ai2-brand-icon"><i class="fas fa-wand-magic-sparkles"></i></div>
-        <div>
-          <div class="ai2-brand-title">InstructionAI2</div>
-          <div class="ai2-brand-subtitle">Batch-safe editor</div>
-        </div>
-      </div>
-      <div class="ai2-search">
-        <i class="fas fa-search"></i>
-        <input id="ai2InstructionSearch" type="text" placeholder="ค้นหา instruction">
-      </div>
-      <div class="ai2-sidebar-action">
-        <button id="ai2CreateRetail" class="ai2-primary-btn" type="button">
-          <i class="fas fa-plus"></i>
-          <span>สร้าง Retail Template</span>
-        </button>
-      </div>
-      <div class="ai2-instruction-list" id="ai2InstructionList">
-        <div class="ai2-loading">กำลังโหลด...</div>
-      </div>
-      <div class="ai2-sidebar-footer">
-        <a href="/admin/instruction-ai">InstructionAI เดิม</a>
-      </div>
-    </aside>
+    <div class="ic-app" id="icApp">
 
-    <main class="ai2-chat">
-      <header class="ai2-topbar">
-        <button id="ai2ToggleSidebar" class="ai2-icon-btn" type="button" aria-label="เปิดรายการ instruction">
-          <i class="fas fa-bars"></i>
-        </button>
-        <div class="ai2-title">
-          <div id="ai2ActiveName">เลือก Instruction</div>
-          <span id="ai2StatusLine">AI2 จะเสนอทุก write เป็น batch preview ก่อนบันทึก</span>
-        </div>
-        <div class="ai2-topbar-actions">
-          <select id="ai2ModelSelect" class="ai2-select" aria-label="Model">
-            <option value="gpt-5.4-mini" selected>GPT-5.4 Mini</option>
-            <option value="gpt-5.4">GPT-5.4</option>
-            <option value="gpt-5.4-nano">GPT-5.4 Nano</option>
-            <option value="gpt-5.2">GPT-5.2</option>
-            <option value="gpt-5.1">GPT-5.1</option>
-          </select>
-          <select id="ai2ThinkingSelect" class="ai2-select" aria-label="Reasoning">
-            <option value="low" selected>Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="max">Max</option>
-            <option value="off">Off</option>
-          </select>
-          <button id="ai2NewChat" class="ai2-secondary-btn" type="button">
-            <i class="fas fa-pen-to-square"></i>
-            <span>New Chat</span>
-          </button>
-        </div>
-      </header>
+        <!-- Sidebar Overlay (Mobile) -->
+        <div class="ic-sidebar-overlay" id="icSidebarOverlay" aria-hidden="true"></div>
 
-      <section class="ai2-messages" id="ai2Messages">
-        <div class="ai2-empty" id="ai2Empty">
-          <div class="ai2-empty-icon"><i class="fas fa-terminal"></i></div>
-          <h1>InstructionAI2</h1>
-          <p>เลือก instruction แล้วสั่งแก้ผ่านแชท ระบบจะโชว์ preview ทุก write ก่อน commit</p>
-        </div>
-      </section>
+        <!-- Sidebar -->
+        <aside class="ic-sidebar" id="icSidebar" aria-label="รายการ Instruction">
+            <div class="ic-sidebar-top">
+                <div class="ic-sidebar-brand">
+                    <div class="ic-brand-icon"><i class="fas fa-terminal" aria-hidden="true"></i></div>
+                    <span class="ic-brand-text">InstructionAI2</span>
+                </div>
+                <button class="ic-sidebar-close" id="icSidebarClose" type="button" title="ปิดเมนู" aria-label="ปิดรายการ Instruction">
+                    <i class="fas fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
 
-      <section class="ai2-composer">
-        <div id="ai2ImagePreview" class="ai2-image-preview" hidden></div>
-        <div class="ai2-input-row">
-          <button id="ai2Attach" class="ai2-icon-btn" type="button" disabled aria-label="แนบรูป">
-            <i class="fas fa-paperclip"></i>
-          </button>
-          <input id="ai2FileInput" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
-          <textarea id="ai2Input" rows="1" placeholder="พิมพ์คำสั่ง เช่น เพิ่มสินค้าใหม่, แก้ราคา, ผูกเพจ, ตั้ง follow-up..." disabled></textarea>
-          <button id="ai2Send" class="ai2-send-btn" type="button" disabled aria-label="ส่ง">
-            <i class="fas fa-arrow-up"></i>
-          </button>
-        </div>
-        <div class="ai2-input-meta">
-          <span id="ai2RunStatus">ยังไม่ได้เลือก instruction</span>
-          <span>Enter ส่ง · Shift+Enter ขึ้นบรรทัดใหม่</span>
-        </div>
-      </section>
-    </main>
+            <!-- Instruction Selector -->
+            <div class="ic-sidebar-section">
+                <div class="ic-sidebar-section-label">
+                    <i class="fas fa-book-open" aria-hidden="true"></i> Instructions
+                </div>
+                <div class="ic-search">
+                    <i class="fas fa-magnifying-glass" aria-hidden="true"></i>
+                    <input type="text" id="icInstructionSearch" placeholder="ค้นหา..." aria-label="ค้นหา Instruction">
+                </div>
+                <button class="ic-create-retail-btn" id="icCreateRetail" type="button">
+                    <i class="fas fa-plus" aria-hidden="true"></i>
+                    <span>สร้าง Retail Template</span>
+                </button>
+            </div>
 
-    <aside class="ai2-inventory" id="ai2Inventory">
-      <div class="ai2-inventory-header">
-        <div>
-          <h2>Inventory</h2>
-          <p id="ai2InventorySubtitle">ยังไม่ได้เลือก instruction</p>
-        </div>
-        <button id="ai2RefreshInventory" class="ai2-icon-btn" type="button" disabled aria-label="Refresh">
-          <i class="fas fa-rotate"></i>
-        </button>
-      </div>
-      <div class="ai2-inventory-tabs" id="ai2InventoryTabs">
-        <button class="active" data-tab="items">Data</button>
-        <button data-tab="pages">Pages</button>
-        <button data-tab="images">Images</button>
-        <button data-tab="versions">Versions</button>
-      </div>
-      <div class="ai2-inventory-body" id="ai2InventoryBody">
-        <div class="ai2-muted">เลือก instruction เพื่อดูข้อมูล</div>
-      </div>
-    </aside>
-  </div>
+            <div class="ic-sidebar-list" id="icInstructionList">
+                <div class="ic-sidebar-loading">
+                    <div class="ic-spinner"></div>
+                    <span>กำลังโหลด...</span>
+                </div>
+            </div>
 
-  <div class="ai2-modal-backdrop" id="ai2BatchModal" hidden>
-    <div class="ai2-modal" role="dialog" aria-modal="true" aria-labelledby="ai2BatchTitle">
-      <div class="ai2-modal-header">
-        <div>
-          <h3 id="ai2BatchTitle">Batch Preview</h3>
-          <p id="ai2BatchSubtitle">ตรวจทุกการแก้ไขก่อนบันทึกจริง</p>
-        </div>
-        <button id="ai2CloseBatch" class="ai2-icon-btn" type="button" aria-label="ปิด">
-          <i class="fas fa-xmark"></i>
-        </button>
-      </div>
-      <div class="ai2-modal-body">
-        <div id="ai2BatchWarnings" class="ai2-batch-warnings"></div>
-        <div id="ai2BatchChanges" class="ai2-batch-changes"></div>
-        <label class="ai2-reject-reason">
-          เหตุผลถ้าต้องการให้ AI แก้ proposal ใหม่
-          <textarea id="ai2RejectReason" rows="3" placeholder="เช่น ไม่ต้องแก้ follow-up, ขอให้แก้เฉพาะราคา..."></textarea>
-        </label>
-      </div>
-      <div class="ai2-modal-actions">
-        <button id="ai2RejectBatch" class="ai2-secondary-btn" type="button">Reject</button>
-        <button id="ai2ReviseBatch" class="ai2-secondary-btn" type="button">Reject with reason</button>
-        <button id="ai2ApproveBatch" class="ai2-primary-btn" type="button">Approve all</button>
-      </div>
-    </div>
-  </div>
+            <!-- Session History -->
+            <div class="ic-sidebar-section ic-session-section" id="icSessionSection" style="display:none;">
+                <div class="ic-sidebar-section-label">
+                    <i class="fas fa-clock-rotate-left" aria-hidden="true"></i> ประวัติแชท
+                </div>
+                <div class="ic-session-list" id="icSessionList"></div>
+            </div>
 
-  <script src="/js/instruction-ai2.js?v=<%= assetVersion %>"></script>
+            <!-- Sidebar Footer -->
+            <div class="ic-sidebar-footer">
+                <a href="/admin/settings2" class="ic-sidebar-footer-link">
+                    <i class="fas fa-gear" aria-hidden="true"></i> Settings
+                </a>
+            </div>
+        </aside>
+
+        <!-- Chat Area -->
+        <div class="ic-chat" id="icChat">
+
+            <!-- Top Bar -->
+            <div class="ic-topbar">
+                <div class="ic-topbar-left">
+                    <button class="ic-topbar-btn" id="icToggleSidebar" type="button" title="เปิดเมนู" aria-label="เปิดรายการ Instruction" aria-controls="icSidebar" aria-expanded="false">
+                        <i class="fas fa-bars" aria-hidden="true"></i>
+                    </button>
+                    <div class="ic-topbar-title" id="icTopbarTitle">
+                        <span class="ic-topbar-title-text" id="icActiveName">InstructionAI2</span>
+                    </div>
+                </div>
+                <div class="ic-topbar-right">
+                    <!-- Model Selector in topbar -->
+                    <div class="ic-model-selector" id="icModelSelector">
+                        <button class="ic-model-pill" id="icModelBtn" type="button" title="เลือกโมเดล" aria-label="เลือกโมเดล GPT-5.4 Mini" aria-haspopup="dialog" aria-expanded="false" aria-controls="icModelDropdown">
+                            <span class="ic-model-dot" aria-hidden="true"></span>
+                            <span id="icModelLabel">GPT-5.4 Mini</span>
+                            <i class="fas fa-chevron-down ic-model-chevron" aria-hidden="true"></i>
+                        </button>
+                        <div class="ic-model-dropdown" id="icModelDropdown" role="dialog" aria-label="เลือกโมเดลและระดับ Thinking" aria-hidden="true">
+                            <div class="ic-dropdown-header">Model</div>
+                            <div class="ic-model-option" data-model="gpt-5.4" role="button" tabindex="0" aria-pressed="false">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon star"><i class="fas fa-star" aria-hidden="true"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.4</div>
+                                        <div class="ic-model-option-desc">รุ่นใหม่ล่าสุดสำหรับงาน reasoning และแก้ instruction</div>
+                                    </div>
+                                </div>
+                                <span class="ic-badge-recommended">ล่าสุด</span>
+                            </div>
+                            <div class="ic-model-option active" data-model="gpt-5.4-mini" role="button" tabindex="0" aria-pressed="true">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon fast"><i class="fas fa-bolt" aria-hidden="true"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.4 Mini</div>
+                                        <div class="ic-model-option-desc">เร็วขึ้นและคุ้มกว่าสำหรับงาน instruction ส่วนใหญ่</div>
+                                    </div>
+                                </div>
+                                <span class="ic-badge-recommended">แนะนำ</span>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.4-nano" role="button" tabindex="0" aria-pressed="false">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon fast"><i class="fas fa-bolt" aria-hidden="true"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.4 Nano</div>
+                                        <div class="ic-model-option-desc">ประหยัดสุดสำหรับงานที่ต้องการความเร็วสูง</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.2" role="button" tabindex="0" aria-pressed="false">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon star"><i class="fas fa-star" aria-hidden="true"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.2</div>
+                                        <div class="ic-model-option-desc">ดีที่สุด — สมดุลระหว่างความเร็วและความแม่นยำ
+                                        </div>
+                                    </div>
+                                </div>
+                                <span class="ic-badge-recommended">แนะนำ</span>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.2-codex" role="button" tabindex="0" aria-pressed="false">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon codex"><i class="fas fa-code" aria-hidden="true"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.2 Codex</div>
+                                        <div class="ic-model-option-desc">เหมาะกับ structured data</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5.1" role="button" tabindex="0" aria-pressed="false">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon fast"><i class="fas fa-bolt" aria-hidden="true"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5.1</div>
+                                        <div class="ic-model-option-desc">เร็วกว่า ประหยัดกว่า</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ic-model-option" data-model="gpt-5" role="button" tabindex="0" aria-pressed="false">
+                                <div class="ic-model-option-left">
+                                    <div class="ic-model-option-icon router"><i class="fas fa-shuffle" aria-hidden="true"></i></div>
+                                    <div>
+                                        <div class="ic-model-option-name">GPT-5 Router</div>
+                                        <div class="ic-model-option-desc">เลือก sub-model อัตโนมัติ</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="ic-dropdown-divider"></div>
+                            <div class="ic-dropdown-header">Thinking Level</div>
+                            <div class="ic-thinking-bar" id="icThinkingLevels">
+                                <button class="ic-think-btn" type="button" data-level="off">Off</button>
+                                <button class="ic-think-btn active" type="button" data-level="low">Low</button>
+                                <button class="ic-think-btn" type="button" data-level="medium">Med</button>
+                                <button class="ic-think-btn" type="button" data-level="high">High</button>
+                                <button class="ic-think-btn" type="button" data-level="max">Max</button>
+                            </div>
+                            <div class="ic-thinking-note" id="icThinkingNote"></div>
+                        </div>
+                    </div>
+                    <!-- Version Management -->
+                    <div class="ic-version-controls" id="icVersionControls" style="display:none;">
+                        <button class="ic-version-btn" id="icVersionBtn" type="button" title="จัดการเวอร์ชัน" aria-label="จัดการเวอร์ชัน">
+                            <i class="fas fa-code-branch" aria-hidden="true"></i>
+                            <span id="icVersionLabel">—</span>
+                        </button>
+                        <button class="ic-save-version-btn" id="icSaveVersionBtn" type="button" title="บันทึกเวอร์ชันใหม่" aria-label="บันทึกเวอร์ชันใหม่">
+                            <i class="fas fa-floppy-disk" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                    <button class="ic-new-chat-btn" id="icNewChat" type="button" title="เริ่มแชทใหม่" aria-label="เริ่มแชทใหม่">
+                        <i class="fas fa-pen-to-square" aria-hidden="true"></i>
+                        <span>New Chat</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Messages -->
+            <div class="ic-messages" id="icMessages">
+                <!-- Empty / Welcome State -->
+                <div class="ic-welcome" id="icEmpty">
+                    <div class="ic-welcome-glow"></div>
+                    <div class="ic-welcome-icon">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="1.5">
+                            <path
+                                d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </div>
+                    <h2 class="ic-welcome-title">InstructionAI2</h2>
+                    <p class="ic-welcome-desc">เลือก Instruction จากเมนูด้านซ้าย แล้วเริ่มแชทกับ AI เพื่อตรวจสอบ, สอบถาม
+                        หรือแก้ไขข้อมูล</p>
+                    <button class="ic-welcome-open" id="icWelcomeOpenSidebar" type="button">
+                        <i class="fas fa-book-open" aria-hidden="true"></i>
+                        <span>เลือก Instruction</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Suggest Button (shown per instruction when no history) -->
+            <div class="ic-quick-suggest-wrap" id="icQuickSuggestWrap" style="display:none;">
+                <button class="ic-quick-suggest-btn" id="icQuickSuggest" type="button">
+                    <i class="fas fa-wand-magic-sparkles" aria-hidden="true"></i>
+                    <span>ช่วยแนะนำการปรับปรุง instruction นี้หน่อย</span>
+                </button>
+            </div>
+
+            <!-- Input Area (always visible at bottom) -->
+            <div class="ic-input-area" id="icInputArea">
+                <div class="ic-input-container">
+                    <div class="ic-input-wrapper" id="icInputWrapper">
+                        <div class="ic-image-preview" id="icImagePreview" style="display:none;"></div>
+                        <div class="ic-input-row">
+                            <button class="ic-btn-attach" id="icAttach" type="button" title="แนบรูปภาพ" aria-label="แนบรูปภาพ" disabled>
+                                <i class="fas fa-paperclip" aria-hidden="true"></i>
+                            </button>
+                            <input type="file" id="icFileInput" accept="image/jpeg,image/png,image/webp" multiple
+                                style="display:none;">
+                            <textarea id="icInput" placeholder="พิมพ์ข้อความ..." rows="1" aria-label="พิมพ์ข้อความถึง InstructionAI2" disabled></textarea>
+                            <div class="ic-input-actions">
+                                <button class="ic-btn-send" id="icSend" type="button" disabled title="ส่ง (Enter)" aria-label="ส่งข้อความ">
+                                    <i class="fas fa-arrow-up" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ic-input-footer">
+                        <div class="ic-input-info">
+                            <span id="icStatusInfo" style="display:none;">
+                                <span class="ic-dot-live"></span>
+                                <span id="icStatusModel">GPT-5.4 Mini</span> ·
+                                Thinking: <span id="icStatusThinking">Low</span> ·
+                                <span id="icStatusTokens">0</span> tokens ·
+                                <span id="icStatusChanges">0</span> edits
+                            </span>
+                        </div>
+                        <div class="ic-input-hint">
+                            <kbd>Enter</kbd> ส่ง · <kbd>Shift+Enter</kbd> ขึ้นบรรทัดใหม่
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+
+        <!-- AI2 Batch Preview Modal -->
+        <div class="ic-version-modal-overlay" id="icBatchModal" role="dialog" aria-modal="true" aria-labelledby="icBatchModalTitle" aria-hidden="true" style="display:none;">
+            <div class="ic-version-modal ic-ai2-batch-modal">
+                <div class="ic-version-modal-header">
+                    <h3 id="icBatchModalTitle"><i class="fas fa-list-check" aria-hidden="true"></i> Batch preview</h3>
+                    <button class="ic-version-modal-close" id="icBatchModalClose" type="button" aria-label="ปิด batch preview"><i
+                            class="fas fa-xmark" aria-hidden="true"></i></button>
+                </div>
+                <div class="ic-version-modal-body">
+                    <div class="ic-ai2-batch-summary" id="icBatchSummary"></div>
+                    <div class="ic-ai2-batch-list" id="icBatchList"></div>
+                    <label class="ic-version-note-label" for="icBatchRejectReason">เหตุผลถ้าต้องการให้ AI แก้ proposal ใหม่</label>
+                    <textarea id="icBatchRejectReason" class="ic-ai2-reject-reason" rows="3"
+                        placeholder="เช่น แก้ราคาเฉพาะสินค้า A ไม่ต้องแตะ FAQ"></textarea>
+                    <div class="ic-ai2-batch-actions">
+                        <button class="ic-version-save-confirm" id="icBatchApprove" type="button">
+                            <i class="fas fa-check" aria-hidden="true"></i> Approve all
+                        </button>
+                        <button class="ic-ai2-batch-secondary" id="icBatchReject" type="button">
+                            Reject
+                        </button>
+                        <button class="ic-ai2-batch-secondary" id="icBatchRevise" type="button">
+                            Reject with reason
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Version Modal -->
+        <div class="ic-version-modal-overlay" id="icVersionModal" role="dialog" aria-modal="true" aria-labelledby="icVersionModalTitle" aria-hidden="true" style="display:none;">
+            <div class="ic-version-modal">
+                <div class="ic-version-modal-header">
+                    <h3 id="icVersionModalTitle"><i class="fas fa-code-branch" aria-hidden="true"></i> เวอร์ชัน</h3>
+                    <button class="ic-version-modal-close" id="icVersionModalClose" type="button" aria-label="ปิดหน้าต่างเวอร์ชัน"><i
+                            class="fas fa-xmark" aria-hidden="true"></i></button>
+                </div>
+                <div class="ic-version-modal-body" id="icVersionList">
+                    <div class="ic-version-empty">กำลังโหลด...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save Version Modal -->
+        <div class="ic-version-modal-overlay" id="icSaveVersionModal" role="dialog" aria-modal="true" aria-labelledby="icSaveVersionModalTitle" aria-hidden="true" style="display:none;">
+            <div class="ic-version-modal ic-version-modal-sm">
+                <div class="ic-version-modal-header">
+                    <h3 id="icSaveVersionModalTitle"><i class="fas fa-floppy-disk" aria-hidden="true"></i> บันทึกเวอร์ชันใหม่</h3>
+                    <button class="ic-version-modal-close" id="icSaveVersionModalClose" type="button" aria-label="ปิดหน้าต่างบันทึกเวอร์ชัน"><i
+                            class="fas fa-xmark" aria-hidden="true"></i></button>
+                </div>
+                <div class="ic-version-modal-body">
+                    <label class="ic-version-note-label">หมายเหตุ (ไม่บังคับ)</label>
+                    <input type="text" id="icVersionNote" class="ic-version-note-input"
+                        placeholder="เช่น เพิ่มโปรโมชันเดือน ก.พ." maxlength="200">
+                    <button class="ic-version-save-confirm" id="icVersionSaveConfirm" type="button">
+                        <i class="fas fa-check" aria-hidden="true"></i> บันทึกเวอร์ชัน
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <script src="/js/instruction-ai2.js?v=<%= assetVersion %>"></script>
 </body>
 
 </html>

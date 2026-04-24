@@ -1,4 +1,5 @@
 const express = require("express");
+const multer = require("multer");
 const { ObjectId } = require("mongodb");
 const {
   InstructionAI2Service,
@@ -9,6 +10,10 @@ const {
 const DEFAULT_AI2_MODEL = "gpt-5.4-mini";
 const DEFAULT_AI2_THINKING = "low";
 const MAX_AI2_TOOL_ITERATIONS = 16;
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 10 },
+});
 
 const THINKING_MAP = {
   off: "none",
@@ -151,6 +156,28 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
+  router.post("/api/instruction-ai2/upload-image", requireAdmin, imageUpload.single("image"), async (req, res) => {
+    try {
+      if (!req.file?.buffer) {
+        return res.status(400).json({ success: false, error: "ไม่พบไฟล์รูปภาพ" });
+      }
+      const mimeType = req.file.mimetype || "image/jpeg";
+      if (!/^image\/(jpeg|png|webp)$/i.test(mimeType)) {
+        return res.status(400).json({ success: false, error: "รองรับเฉพาะ JPG, PNG, WEBP" });
+      }
+      const imageData = `data:${mimeType};base64,${req.file.buffer.toString("base64")}`;
+      res.json({
+        success: true,
+        imageData,
+        name: req.file.originalname || "image",
+        mimeType,
+        size: req.file.size || req.file.buffer.length,
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   router.post("/api/instruction-ai2/instructions/retail-template", requireAdmin, async (req, res) => {
     try {
       const client = await connectDB();
@@ -213,6 +240,98 @@ function createInstructionAI2Router(deps = {}) {
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
+  });
+
+  router.get("/api/instruction-ai2/versions/:instructionId", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const inst = ObjectId.isValid(req.params.instructionId)
+        ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(req.params.instructionId) })
+        : await db.collection("instructions_v2").findOne({ instructionId: req.params.instructionId });
+      if (!inst) return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      const logicalId = inst.instructionId || inst._id.toString();
+      const versions = await db.collection("instruction_versions")
+        .find({ instructionId: logicalId })
+        .project({ _id: 0, version: 1, note: 1, snapshotAt: 1, source: 1, contentHash: 1 })
+        .sort({ version: -1 })
+        .limit(80)
+        .toArray();
+      res.json({
+        success: true,
+        currentVersion: Number.isInteger(inst.version) ? inst.version : 0,
+        versions,
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.post("/api/instruction-ai2/versions/:instructionId", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const inst = ObjectId.isValid(req.params.instructionId)
+        ? await db.collection("instructions_v2").findOne({ _id: new ObjectId(req.params.instructionId) })
+        : await db.collection("instructions_v2").findOne({ instructionId: req.params.instructionId });
+      if (!inst) return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+      const logicalId = inst.instructionId || inst._id.toString();
+      const latest = await db.collection("instruction_versions")
+        .find({ instructionId: logicalId })
+        .sort({ version: -1 })
+        .limit(1)
+        .next();
+      const nextVersion = latest ? Number(latest.version || 0) + 1 : 1;
+      const snapshotAt = new Date();
+      const snapshot = {
+        instructionId: logicalId,
+        version: nextVersion,
+        name: inst.name || "",
+        description: inst.description || "",
+        dataItems: Array.isArray(inst.dataItems) ? inst.dataItems : [],
+        conversationStarter: inst.conversationStarter || { enabled: false, messages: [] },
+        retailProfile: inst.retailProfile || null,
+        contentHash: computeContentHash({
+          name: inst.name || "",
+          description: inst.description || "",
+          dataItems: inst.dataItems || [],
+          conversationStarter: inst.conversationStarter || null,
+          retailProfile: inst.retailProfile || null,
+        }),
+        source: "instruction_ai2",
+        note: String(req.body?.note || "").slice(0, 500),
+        savedBy: req.session?.user?.username || "admin",
+        snapshotAt,
+      };
+      await db.collection("instruction_versions").updateOne(
+        { instructionId: logicalId, version: nextVersion },
+        { $set: snapshot },
+        { upsert: true },
+      );
+      await db.collection("instructions_v2").updateOne(
+        { _id: inst._id },
+        { $set: { version: nextVersion, updatedAt: snapshotAt } },
+      );
+      res.json({ success: true, version: nextVersion, note: snapshot.note, snapshotAt });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get("/api/instruction-ai2/stream/state", requireAdmin, (req, res) => {
+    res.status(404).json({
+      success: false,
+      error: "not_found",
+      message: "InstructionAI2 stream state persistence is not active for this request",
+    });
+  });
+
+  router.get("/api/instruction-ai2/stream/resume", requireAdmin, (req, res) => {
+    res.status(404).json({
+      success: false,
+      error: "not_found",
+      message: "InstructionAI2 stream resume is not active for this request",
+    });
   });
 
   router.post("/api/instruction-ai2/stream", requireAdmin, async (req, res) => {
@@ -426,7 +545,7 @@ function createInstructionAI2Router(deps = {}) {
       res.json({
         success: true,
         batch,
-        revisionPrompt: reason
+        prompt: reason
           ? `ปรับ batch ใหม่ตามเหตุผลนี้: ${reason}`
           : "ปรับ batch ใหม่อีกครั้ง โดยตรวจ proposal เดิมและทำให้ตรงคำสั่งมากขึ้น",
       });
@@ -490,6 +609,23 @@ function createInstructionAI2Router(deps = {}) {
       const session = await db.collection("instruction_ai2_sessions").findOne({ sessionId: req.params.sessionId }, { projection: { _id: 0 } });
       if (!session) return res.status(404).json({ success: false, error: "ไม่พบ session" });
       res.json({ success: true, session });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.delete("/api/instruction-ai2/sessions/:sessionId", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      if (req.query.instructionId) {
+        const result = await db.collection("instruction_ai2_sessions").deleteMany({
+          instructionId: String(req.query.instructionId),
+        });
+        return res.json({ success: true, deletedCount: result.deletedCount || 0 });
+      }
+      await db.collection("instruction_ai2_sessions").deleteOne({ sessionId: req.params.sessionId });
+      res.json({ success: true });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }

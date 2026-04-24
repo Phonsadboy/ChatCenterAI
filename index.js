@@ -25,6 +25,7 @@ const { AgentForgeRunner } = require("./services/agentForgeRunner");
 const { AgentForgeScheduler } = require("./services/agentForgeScheduler");
 const createAgentForgeRouter = require("./routes/agentForge");
 const createInstructionAI2Router = require("./routes/instructionAI2");
+const { buildRetailTemplateDataItems } = require("./services/instructionAI2Service");
 const {
   recordInstructionAI2MessageUsage,
   attributeOrderToLatestAssistantUsage,
@@ -10519,11 +10520,27 @@ app.post("/api/instructions-v2", async (req, res) => {
     const coll = db.collection("instructions_v2");
 
     const now = new Date();
+    const starterDataItems = buildRetailTemplateDataItems({
+      pageName: name.trim(),
+    });
     const instruction = {
       instructionId: generateInstructionId(),
       name: name.trim(),
       description: (description || "").trim(),
-      dataItems: [],
+      templateType: "retail_sales",
+      dataItems: starterDataItems,
+      dataItemRoles: {
+        role: starterDataItems[0]?.itemId || null,
+        catalog: starterDataItems[1]?.itemId ? [starterDataItems[1].itemId] : [],
+        scenarios: starterDataItems[2]?.itemId ? [starterDataItems[2].itemId] : [],
+      },
+      retailProfile: {
+        defaultPaymentMode: "cod",
+        primaryLanguage: "th",
+        orderRequiredFields: ["items", "quantity", "name", "address", "phone"],
+        cutPolicy: { enabled: true, maxLinesBeforeCut: 3 },
+        imagePolicy: { sendProductImageOnInterest: true, maxImagesPerAnswer: 1 },
+      },
       conversationStarter: {
         enabled: false,
         messages: [],
