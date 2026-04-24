@@ -1206,6 +1206,22 @@ button:focus-visible,
     display: none;
 }
 
+.ic-agent-run.has-answer:not(.is-minimal) .ic-agent-answer {
+    padding-top: 4px;
+}
+
+.ic-agent-run.has-answer:not(.is-minimal) .ic-agent-answer::before {
+    content: "คำตอบสุดท้าย";
+    display: block;
+    margin-bottom: 6px;
+    color: var(--ic-accent);
+    font-family: var(--ic-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
 .ic-run-status {
     display: flex;
     align-items: center;
@@ -1358,6 +1374,11 @@ button:focus-visible,
     background: rgba(168, 85, 247, 0.09);
 }
 
+.ic-run-card-icon.commentary {
+    color: #7dd3fc;
+    background: rgba(56, 189, 248, 0.09);
+}
+
 .ic-tool-card[data-type="search"] .ic-run-card-icon.tool {
     color: var(--ic-tool-search);
     background: rgba(56, 189, 248, 0.09);
@@ -1459,6 +1480,46 @@ button:focus-visible,
     color: var(--ic-text-secondary);
     font-size: 12px;
     line-height: 1.55;
+}
+
+.ic-run-commentary {
+    border-color: rgba(56, 189, 248, 0.14);
+    background: rgba(56, 189, 248, 0.028);
+}
+
+.ic-run-commentary.complete {
+    border-color: rgba(148, 163, 184, 0.13);
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.ic-run-commentary-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.ic-run-commentary-list li {
+    position: relative;
+    padding-left: 16px;
+    color: var(--ic-text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+
+.ic-run-commentary-list li::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 0.72em;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #7dd3fc;
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.09);
 }
 
 .ic-run-tools {

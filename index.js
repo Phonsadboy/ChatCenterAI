@@ -27285,7 +27285,8 @@ function buildActiveInstructionRequestSnapshot(reqState) {
     tool: lastStatus.tool || null,
     tools,
     reasoningSummary: reqState?.reasoningSummary || "",
-    partialContent: reqState?.streamedContent || "",
+    partialContent: reqState?.answerContent || reqState?.streamedContent || "",
+    commentaryText: reqState?.commentaryContent || "",
     usage: reqState?.donePayload?.usage || null,
     changes: reqState?.donePayload?.changes || null,
     toolsUsed: reqState?.donePayload?.toolsUsed || null,
@@ -27354,6 +27355,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       toolTimeline: [],
       toolLookup: new Map(),
       streamedContent: "",
+      answerContent: "",
+      commentaryContent: "",
       reasoningSummary: "",
       donePayload: null,
       error: null,
@@ -27624,6 +27627,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       let streamedResponse = null;
       let streamErrorMessage = null;
       let iterationContent = "";
+      let iterationProvisionalAnswerText = "";
+      let hasIterationToolCall = false;
       let activeReasoningText = "";
       let reasoningStreaming = false;
       let sentRespondingStatus = false;
@@ -27679,6 +27684,92 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         });
       };
 
+      const appendRequestAnswerContent = (text) => {
+        const chunk = typeof text === "string" ? text : String(text || "");
+        if (!chunk) return;
+        requestState.answerContent += chunk;
+        requestState.streamedContent = requestState.answerContent;
+        requestState.updatedAt = Date.now();
+      };
+
+      const appendRequestCommentaryContent = (text) => {
+        const chunk = typeof text === "string" ? text : String(text || "");
+        if (!chunk) return;
+        requestState.commentaryContent += chunk;
+        requestState.updatedAt = Date.now();
+      };
+
+      const removeRequestAnswerSuffix = (text) => {
+        const chunk = typeof text === "string" ? text : String(text || "");
+        if (!chunk || !requestState.answerContent) return;
+        if (requestState.answerContent.endsWith(chunk)) {
+          requestState.answerContent = requestState.answerContent.slice(0, -chunk.length);
+        } else if (chunk.includes(requestState.answerContent)) {
+          requestState.answerContent = "";
+        }
+        requestState.streamedContent = requestState.answerContent;
+        requestState.updatedAt = Date.now();
+      };
+
+      const publishAnswerDelta = (text, extra = {}) => {
+        const chunk = typeof text === "string" ? text : String(text || "");
+        if (!chunk) return;
+        appendRequestAnswerContent(chunk);
+        sendEvent("answer_delta", {
+          text: chunk,
+          iteration: i + 1,
+          phase: "final_answer",
+          ...extra,
+        });
+      };
+
+      const publishCommentaryDelta = (text, extra = {}) => {
+        const chunk = typeof text === "string" ? text : String(text || "");
+        if (!chunk) return;
+        appendRequestCommentaryContent(chunk);
+        sendEvent("commentary_delta", {
+          text: chunk,
+          iteration: i + 1,
+          phase: "commentary",
+          ...extra,
+        });
+      };
+
+      const reclassifyProvisionalAnswerToCommentary = (reason = "tool_call") => {
+        if (!iterationProvisionalAnswerText) return;
+        removeRequestAnswerSuffix(iterationProvisionalAnswerText);
+        appendRequestCommentaryContent(iterationProvisionalAnswerText);
+        sendEvent("answer_to_commentary", {
+          text: iterationProvisionalAnswerText,
+          iteration: i + 1,
+          phase: "commentary",
+          reason,
+        });
+        iterationProvisionalAnswerText = "";
+      };
+
+      const markIterationToolCall = () => {
+        if (hasIterationToolCall) return;
+        hasIterationToolCall = true;
+        reclassifyProvisionalAnswerToCommentary("tool_call");
+      };
+
+      const publishModelTextDelta = (text) => {
+        const chunk = typeof text === "string" ? text : String(text || "");
+        if (!chunk) return;
+        if (!sentRespondingStatus) {
+          sendStatus("responding", { iteration: i + 1, tool: null });
+          sentRespondingStatus = true;
+        }
+        iterationContent += chunk;
+        if (hasIterationToolCall) {
+          publishCommentaryDelta(chunk);
+        } else {
+          iterationProvisionalAnswerText += chunk;
+          publishAnswerDelta(chunk, { provisional: true });
+        }
+      };
+
       const closeReasoningStream = () => {
         if (!reasoningStreaming) return;
         const text = (activeReasoningText || "").trim();
@@ -27698,26 +27789,12 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
           case "response.output_text.delta":
             if (typeof event.delta === "string" && event.delta.length > 0) {
-              if (!sentRespondingStatus) {
-                sendStatus("responding", { iteration: i + 1, tool: null });
-                sentRespondingStatus = true;
-              }
-              iterationContent += event.delta;
-              requestState.streamedContent += event.delta;
-              requestState.updatedAt = Date.now();
-              sendEvent("content", { text: event.delta });
+              publishModelTextDelta(event.delta);
             }
             break;
           case "response.content_part.added":
             if (typeof event.part?.text === "string" && event.part.text.length > 0) {
-              if (!sentRespondingStatus) {
-                sendStatus("responding", { iteration: i + 1, tool: null });
-                sentRespondingStatus = true;
-              }
-              iterationContent += event.part.text;
-              requestState.streamedContent += event.part.text;
-              requestState.updatedAt = Date.now();
-              sendEvent("content", { text: event.part.text });
+              publishModelTextDelta(event.part.text);
             }
             break;
           case "response.content_part.delta":
@@ -27729,20 +27806,14 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
                     ? event.delta.text
                     : "";
               if (partDelta) {
-                if (!sentRespondingStatus) {
-                  sendStatus("responding", { iteration: i + 1, tool: null });
-                  sentRespondingStatus = true;
-                }
-                iterationContent += partDelta;
-                requestState.streamedContent += partDelta;
-                requestState.updatedAt = Date.now();
-                sendEvent("content", { text: partDelta });
+                publishModelTextDelta(partDelta);
               }
             }
             break;
 
           case "response.output_item.added":
             if (event.item?.type === "function_call") {
+              markIterationToolCall();
               const callId = event.item.call_id || event.item.id || null;
               const initialArguments = typeof event.item.arguments === "string" ? event.item.arguments : "";
               sendStatus("tool_plan", { iteration: i + 1, tool: event.item.name || "tool" });
@@ -27767,6 +27838,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
           case "response.function_call_arguments.delta":
             {
+              markIterationToolCall();
               const current = upsertToolCall(event.item_id, event.output_index);
               const updated = upsertToolCall(event.item_id, event.output_index, {
                 arguments: `${current.arguments || ""}${event.delta || ""}`,
@@ -27776,6 +27848,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             break;
           case "response.function_call.delta":
             {
+              markIterationToolCall();
               const current = upsertToolCall(event.item_id, event.output_index, {
                 name: event.name || null,
                 call_id: event.call_id || null,
@@ -27796,6 +27869,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             break;
 
           case "response.function_call_arguments.done":
+            markIterationToolCall();
             publishToolArgumentState(upsertToolCall(event.item_id, event.output_index, {
               arguments: typeof event.arguments === "string" ? event.arguments : "",
             }), "tool_args_done");
@@ -27803,6 +27877,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
 
           case "response.output_item.done":
             if (event.item?.type === "function_call") {
+              markIterationToolCall();
               const doneArguments = typeof event.item.arguments === "string" ? event.item.arguments : "";
               upsertRequestToolState(event.item.name || "tool", "queued", {
                 callId: event.item.call_id || event.item.id || null,
@@ -27964,9 +28039,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       if (!iterationContent && streamedResponse) {
         iterationContent = extractInstructionResponseText(streamedResponse) || "";
         if (iterationContent) {
-          requestState.streamedContent += iterationContent;
-          requestState.updatedAt = Date.now();
-          sendEvent("content", { text: iterationContent });
+          publishAnswerDelta(iterationContent, { provisional: false, replayed: true });
         }
       }
 
@@ -27978,8 +28051,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
     const hasAssistantText = hasInstructionAssistantText(assistantMessages);
     if (!hasAssistantText) {
       assistantMessages.length = 0;
-      const streamedText = typeof requestState.streamedContent === "string"
-        ? requestState.streamedContent.trim()
+      const streamedText = typeof requestState.answerContent === "string"
+        ? requestState.answerContent.trim()
         : "";
 
       if (streamedText) {
@@ -28016,9 +28089,14 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           finalContent = getInstructionFinalTextFallback(toolsUsed);
         }
 
-        requestState.streamedContent += finalContent;
-        requestState.updatedAt = Date.now();
-        sendEvent("content", { text: finalContent });
+        appendRequestAnswerContent(finalContent);
+        sendEvent("answer_delta", {
+          text: finalContent,
+          iteration: INSTRUCTION_MAX_TOOL_ITERATIONS + 1,
+          phase: "final_answer",
+          provisional: false,
+          recovery: true,
+        });
         assistantMessages.push({ role: "assistant", content: finalContent });
       }
     }
@@ -28145,7 +28223,15 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       versionSnapshot: versionSnapshot || null,
     });
 
-    const donePayload = { toolsUsed, changes, usage: totalUsage, toolContext, assistantMessages, versionSnapshot };
+    const donePayload = {
+      toolsUsed,
+      changes,
+      usage: totalUsage,
+      toolContext,
+      assistantMessages,
+      versionSnapshot,
+      commentaryText: requestState.commentaryContent || "",
+    };
     requestState.donePayload = donePayload;
     requestState.status = "complete";
     requestState.updatedAt = Date.now();
