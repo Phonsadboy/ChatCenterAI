@@ -79,6 +79,7 @@
         attach: $("#icAttach"),
         fileInput: $("#icFileInput"),
         imagePreview: $("#icImagePreview"),
+        welcomeOpenSidebar: $("#icWelcomeOpenSidebar"),
     };
 
     // ─── Init ───────────────────────────────────────────────────────────
@@ -92,6 +93,8 @@
         if (window.innerWidth >= 769) {
             state.sidebarOpen = true;
         }
+        syncSidebarA11y();
+        setModelDropdownOpen(false);
     }
 
     // ─── API ────────────────────────────────────────────────────────────
@@ -212,9 +215,11 @@
 
         } catch (err) {
             if (err.name === "AbortError") {
-                contentEl.innerHTML += formatContent("\n\n⏹️ หยุดการตอบ");
+                const answerEl = ensureAgentAnswer(aiMsg, contentEl);
+                answerEl.innerHTML += formatContent("\n\n⏹️ หยุดการตอบ");
             } else {
-                contentEl.innerHTML = formatContent(`❌ เกิดข้อผิดพลาด: ${err.message}`);
+                const answerEl = ensureAgentAnswer(aiMsg, contentEl);
+                answerEl.innerHTML = formatContent(`❌ เกิดข้อผิดพลาด: ${err.message}`);
             }
         } finally {
             state.sending = false;
@@ -288,24 +293,24 @@
 
         const ensureStatusEl = () => {
             if (statusEl) return statusEl;
-            statusEl = document.createElement("div");
-            statusEl.className = "ic-status-text";
-            contentEl.innerHTML = "";
-            contentEl.appendChild(statusEl);
+            statusEl = ensureAgentRunStatus(aiMsg, contentEl);
             return statusEl;
         };
 
         const showStatus = (text) => {
-            if (hasRenderedContent || !text) return;
-            const statusNode = ensureStatusEl();
-            if (statusNode.textContent === text) return;
-            statusNode.textContent = text;
+            if (!text) return;
+            ensureStatusEl();
+            setAgentRunStatus(aiMsg, contentEl, {
+                phase: statusPhase,
+                iteration: statusIteration,
+                tool: statusTool,
+                elapsedSec: getElapsedSeconds(),
+                label: text,
+            });
             scrollToBottom();
         };
 
         const clearStatus = () => {
-            if (!statusEl) return;
-            statusEl.remove();
             statusEl = null;
         };
 
@@ -324,15 +329,14 @@
         };
 
         const buildLiveStatusText = () => {
-            const elapsed = ` (${getElapsedSeconds()}s)`;
             const statusMap = {
-                thinking: `AI กำลังคิด...${elapsed}`,
-                continuing: `ประมวลผลรอบ ${statusIteration || ""}...${elapsed}`,
-                responding: `กำลังเขียนคำตอบ...${elapsed}`,
-                tool_plan: `เตรียมเรียก tool: ${statusTool || "..."}${elapsed}`,
-                tool: `กำลังรัน tool: ${statusTool || "..."}${elapsed}`,
+                thinking: "AI กำลังคิด",
+                continuing: `ประมวลผลรอบ ${statusIteration || ""}`,
+                responding: "กำลังเขียนคำตอบ",
+                tool_plan: `เตรียมเรียกเครื่องมือ${statusTool ? `: ${statusTool}` : ""}`,
+                tool: `กำลังรันเครื่องมือ${statusTool ? `: ${statusTool}` : ""}`,
             };
-            return statusMap[statusPhase] || `กำลังประมวลผล...${elapsed}`;
+            return statusMap[statusPhase] || "กำลังประมวลผล";
         };
 
         const renderLiveStatus = () => {
@@ -378,12 +382,12 @@
 
         const ensureStreamTextEl = () => {
             if (streamTextEl) return streamTextEl;
-            clearStatus();
-            contentEl.innerHTML = "";
+            const answerEl = ensureAgentAnswer(aiMsg, contentEl);
+            answerEl.innerHTML = "";
             streamTextEl = document.createElement("div");
             streamTextEl.className = "ic-streaming-raw";
             streamTextEl.textContent = streamTextVisible;
-            contentEl.appendChild(streamTextEl);
+            answerEl.appendChild(streamTextEl);
             return streamTextEl;
         };
 
@@ -487,8 +491,8 @@
             streamTextVisible = fullContent;
             streamRenderCarry = 0;
             streamLastFrameAt = 0;
-            clearStatus();
-            contentEl.innerHTML = formatContent(fullContent);
+            const answerEl = ensureAgentAnswer(aiMsg, contentEl);
+            answerEl.innerHTML = fullContent ? formatContent(fullContent) : "";
             streamTextEl = null;
             lastRenderedContent = fullContent;
             hasRenderedContent = fullContent.length > 0;
@@ -543,6 +547,13 @@
             updateStatusBar();
             stopStatePolling();
             stopLiveStatusTicker();
+            setAgentRunStatus(aiMsg, contentEl, {
+                phase: "done",
+                elapsedSec: getElapsedSeconds(),
+                label: "เสร็จแล้ว",
+                done: true,
+            });
+            finalizeAgentRun(aiMsg, contentEl);
             renderTotalElapsedMeta(false);
         };
 
@@ -558,6 +569,13 @@
             clearActiveRequestId();
             stopStatePolling();
             stopLiveStatusTicker();
+            setAgentRunStatus(aiMsg, contentEl, {
+                phase: "error",
+                elapsedSec: getElapsedSeconds(),
+                label: "เกิดข้อผิดพลาด",
+                error: true,
+            });
+            finalizeAgentRun(aiMsg, contentEl, { error: true });
             renderTotalElapsedMeta(true);
         };
 
@@ -568,13 +586,19 @@
                 if (!toolState || !toolState.tool) continue;
                 const stateStatus = String(toolState.status || "queued");
                 const baseStatus = stateStatus === "running" ? "running" : (stateStatus === "queued" ? "queued" : "done");
-                addToolToPipeline(body, toolState.tool, toolState.args || null, {
+                const hasStructuredArgs = toolState.args &&
+                    typeof toolState.args === "object" &&
+                    Object.keys(toolState.args).length > 0;
+                addToolToPipeline(body, toolState.tool, hasStructuredArgs ? toolState.args : (toolState.argumentsText || null), {
                     callId: toolState.callId || null,
                     status: baseStatus,
+                    argumentsText: toolState.argumentsText || "",
                 });
                 if (baseStatus === "done") {
                     const summary = toolState.summary || (stateStatus === "error" ? "❌" : "✅");
                     updateToolInPipeline(aiMsg, toolState.tool, summary, toolState.callId || null);
+                } else if (toolState.argumentsText) {
+                    updateToolArgumentsInPipeline(aiMsg, toolState.tool, toolState.argumentsText, toolState.callId || null);
                 }
             }
             scrollToBottom();
@@ -597,6 +621,10 @@
 
             if (Array.isArray(snapshot.tools) && snapshot.tools.length > 0) {
                 syncToolPipelineFromState(snapshot.tools);
+            }
+
+            if (typeof snapshot.reasoningSummary === "string" && snapshot.reasoningSummary.trim()) {
+                setAgentReasoningText(aiMsg, contentEl, snapshot.reasoningSummary);
             }
 
             if (typeof snapshot.partialContent === "string" && snapshot.partialContent.length > 0) {
@@ -653,7 +681,7 @@
                 if (!payload || !payload.success) return;
 
                 const toolDigest = Array.isArray(payload.tools)
-                    ? payload.tools.map((t) => `${t.callId || ""}:${t.status || ""}:${t.summary || ""}`).join("|")
+                    ? payload.tools.map((t) => `${t.callId || ""}:${t.status || ""}:${t.summary || ""}:${(t.argumentsText || "").length}`).join("|")
                     : "";
                 const digest = [
                     payload.status || "",
@@ -661,6 +689,7 @@
                     String(payload.iteration || ""),
                     payload.tool || "",
                     String((payload.partialContent || "").length),
+                    String((payload.reasoningSummary || "").length),
                     toolDigest,
                     payload.error || "",
                 ].join("||");
@@ -695,43 +724,28 @@
 
                 case "thinking":
                     if (data.content && body) {
-                        const thinkBlock = createThinkingBlock(data.content);
-                        body.insertBefore(thinkBlock, contentEl);
+                        setAgentReasoningText(aiMsg, contentEl, data.content);
                         scrollToBottom();
                     }
                     break;
 
                 case "thinking_start":
                     if (body) {
-                        const newBlock = createThinkingBlock("");
-                        body.insertBefore(newBlock, contentEl);
-                        clearStatus();
+                        ensureAgentReasoningBlock(aiMsg, contentEl);
                         scrollToBottom();
                     }
                     break;
 
                 case "thinking_delta":
                     if (data.text && body) {
-                        const allBlocks = body.querySelectorAll(".ic-thinking-block");
-                        let thinkBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
-                        if (!thinkBlock) {
-                            thinkBlock = createThinkingBlock("");
-                            body.insertBefore(thinkBlock, contentEl);
-                        }
-                        const thinkBody = thinkBlock.querySelector(".ic-thinking-body");
-                        if (thinkBody) thinkBody.textContent += data.text;
+                        appendAgentReasoningDelta(aiMsg, contentEl, data.text);
                         scrollToBottom();
                     }
                     break;
 
                 case "thinking_done":
                     if (body) {
-                        const allBlocks = body.querySelectorAll(".ic-thinking-block");
-                        const lastBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
-                        if (lastBlock && data.wordCount !== undefined) {
-                            const meta = lastBlock.querySelector(".ic-thinking-meta");
-                            if (meta) meta.textContent = `(${data.wordCount} words)`;
-                        }
+                        completeAgentReasoning(aiMsg, contentEl, data.wordCount);
                     }
                     break;
 
@@ -750,7 +764,37 @@
                 case "tool_plan":
                     if (data.tool && body) {
                         ensureToolPipeline(body, contentEl);
-                        addToolToPipeline(body, data.tool, null, { callId: data.callId, status: "queued" });
+                        addToolToPipeline(body, data.tool, data.argumentsText || null, {
+                            callId: data.callId || data.itemId,
+                            status: "queued",
+                            argumentsText: data.argumentsText || "",
+                        });
+                        scrollToBottom();
+                    }
+                    break;
+
+                case "tool_args_delta":
+                    if (data.tool && body) {
+                        ensureToolPipeline(body, contentEl);
+                        updateToolArgumentsInPipeline(
+                            aiMsg,
+                            data.tool,
+                            data.argumentsText || data.arguments || data.delta || "",
+                            data.callId || data.itemId || null
+                        );
+                        scrollToBottom();
+                    }
+                    break;
+
+                case "tool_args_done":
+                    if (data.tool && body) {
+                        ensureToolPipeline(body, contentEl);
+                        updateToolArgumentsInPipeline(
+                            aiMsg,
+                            data.tool,
+                            data.argumentsText || data.arguments || "",
+                            data.callId || data.itemId || null
+                        );
                         scrollToBottom();
                     }
                     break;
@@ -764,7 +808,11 @@
                 case "tool_start":
                     if (data.tool && body) {
                         ensureToolPipeline(body, contentEl);
-                        addToolToPipeline(body, data.tool, data.args, { callId: data.callId, status: "running" });
+                        addToolToPipeline(body, data.tool, data.args, {
+                            callId: data.callId,
+                            status: "running",
+                            argumentsText: data.argumentsText || "",
+                        });
                         scrollToBottom();
                     }
                     break;
@@ -958,9 +1006,11 @@
             saveSession();
         } catch (err) {
             if (err.name === "AbortError") {
-                contentEl.innerHTML += formatContent("\n\n⏹️ หยุดการตอบ");
+                const answerEl = ensureAgentAnswer(aiMsg, contentEl);
+                answerEl.innerHTML += formatContent("\n\n⏹️ หยุดการตอบ");
             } else {
-                contentEl.innerHTML = formatContent(`❌ เกิดข้อผิดพลาด: ${err.message}`);
+                const answerEl = ensureAgentAnswer(aiMsg, contentEl);
+                answerEl.innerHTML = formatContent(`❌ เกิดข้อผิดพลาด: ${err.message}`);
             }
         } finally {
             state.sending = false;
@@ -1056,6 +1106,214 @@
         return block;
     }
 
+    function ensureAgentRun(aiMsg, contentEl) {
+        const content = contentEl || aiMsg?.querySelector(".ic-msg-content");
+        if (!content) return { run: null, activity: null, answer: null };
+
+        let run = Array.from(content.children).find((child) => child.classList?.contains("ic-agent-run"));
+        if (!run) {
+            content.innerHTML = "";
+            run = document.createElement("div");
+            run.className = "ic-agent-run";
+            run.setAttribute("role", "group");
+            run.setAttribute("aria-label", "AI response activity");
+
+            const activity = document.createElement("div");
+            activity.className = "ic-agent-activity";
+            activity.setAttribute("aria-live", "polite");
+
+            const answer = document.createElement("div");
+            answer.className = "ic-agent-answer";
+            answer.setAttribute("aria-live", "polite");
+
+            run.appendChild(activity);
+            run.appendChild(answer);
+            content.appendChild(run);
+        }
+
+        let activity = run.querySelector(".ic-agent-activity");
+        if (!activity) {
+            activity = document.createElement("div");
+            activity.className = "ic-agent-activity";
+            activity.setAttribute("aria-live", "polite");
+            run.insertBefore(activity, run.firstChild);
+        }
+
+        let answer = run.querySelector(".ic-agent-answer");
+        if (!answer) {
+            answer = document.createElement("div");
+            answer.className = "ic-agent-answer";
+            answer.setAttribute("aria-live", "polite");
+            run.appendChild(answer);
+        }
+
+        return { run, activity, answer };
+    }
+
+    function ensureAgentAnswer(aiMsg, contentEl) {
+        return ensureAgentRun(aiMsg, contentEl).answer || contentEl;
+    }
+
+    function ensureAgentRunStatus(aiMsg, contentEl) {
+        const { activity } = ensureAgentRun(aiMsg, contentEl);
+        if (!activity) return null;
+
+        let status = activity.querySelector(".ic-run-status");
+        if (status) return status;
+
+        status = document.createElement("div");
+        status.className = "ic-run-status active";
+        status.innerHTML = `
+            <div class="ic-run-status-mark" aria-hidden="true">
+                <span class="ic-run-status-spinner"></span>
+                <i class="fas fa-check ic-run-status-done"></i>
+                <i class="fas fa-triangle-exclamation ic-run-status-error"></i>
+            </div>
+            <div class="ic-run-status-main">
+                <div class="ic-run-status-label">AI กำลังคิด</div>
+                <div class="ic-run-status-detail">เริ่มประมวลผล</div>
+            </div>
+            <div class="ic-run-status-time">0s</div>`;
+        activity.insertBefore(status, activity.firstChild);
+        return status;
+    }
+
+    function getAgentStatusDetail(options = {}) {
+        const parts = [];
+        if (Number.isFinite(options.iteration) && options.iteration > 1) {
+            parts.push(`รอบที่ ${options.iteration}`);
+        }
+        if (options.tool) {
+            parts.push(`เครื่องมือ ${options.tool}`);
+        }
+        if (options.phase === "responding") {
+            parts.push("กำลังส่งข้อความแบบสตรีม");
+        }
+        if (options.phase === "done") {
+            parts.push("คำตอบและ activity พร้อมแล้ว");
+        }
+        if (options.phase === "error") {
+            parts.push("หยุดการประมวลผล");
+        }
+        return parts.join(" · ") || "กำลังประมวลผล";
+    }
+
+    function setAgentRunStatus(aiMsg, contentEl, options = {}) {
+        const status = ensureAgentRunStatus(aiMsg, contentEl);
+        if (!status) return;
+
+        const phase = options.phase || "thinking";
+        status.classList.toggle("active", !options.done && !options.error);
+        status.classList.toggle("done", Boolean(options.done));
+        status.classList.toggle("error", Boolean(options.error));
+        status.dataset.phase = phase;
+
+        const label = status.querySelector(".ic-run-status-label");
+        const detail = status.querySelector(".ic-run-status-detail");
+        const time = status.querySelector(".ic-run-status-time");
+        if (label) label.textContent = options.label || "กำลังประมวลผล";
+        if (detail) detail.textContent = getAgentStatusDetail({ ...options, phase });
+        if (time && Number.isFinite(options.elapsedSec)) {
+            time.textContent = `${Math.max(0, Math.floor(options.elapsedSec))}s`;
+        }
+    }
+
+    function finalizeAgentRun(aiMsg, contentEl, options = {}) {
+        const { run, activity } = ensureAgentRun(aiMsg, contentEl);
+        if (!run || !activity) return;
+        run.classList.toggle("is-complete", !options.error);
+        run.classList.toggle("is-error", Boolean(options.error));
+        const hasActivity = Boolean(activity.querySelector(".ic-run-card, .ic-tool-card, .ic-tools-used"));
+        run.classList.toggle("is-minimal", !hasActivity);
+        activity.querySelectorAll(".ic-tool-card.running, .ic-tool-card.queued").forEach((card) => {
+            card.classList.remove("running", "queued");
+            card.classList.add(options.error ? "error" : "done");
+            updateToolCardChrome(card, options.error ? "error" : "done");
+        });
+    }
+
+    function bindRunCardToggle(card) {
+        const header = card?.querySelector(".ic-run-card-header");
+        const body = card?.querySelector(".ic-run-card-body");
+        if (!header || !body || header.dataset.bound === "true") return;
+        header.dataset.bound = "true";
+        header.addEventListener("click", () => {
+            setRunCardCollapsed(card, !card.classList.contains("collapsed"));
+        });
+    }
+
+    function setRunCardCollapsed(card, collapsed) {
+        if (!card) return;
+        card.classList.toggle("collapsed", Boolean(collapsed));
+        const header = card.querySelector(".ic-run-card-header");
+        if (header) header.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
+
+    function ensureAgentReasoningBlock(aiMsg, contentEl) {
+        const { activity } = ensureAgentRun(aiMsg, contentEl);
+        if (!activity) return null;
+
+        let card = activity.querySelector(".ic-run-reasoning");
+        if (card) return card;
+
+        card = document.createElement("div");
+        card.className = "ic-run-card ic-run-reasoning";
+        card.innerHTML = `
+            <button class="ic-run-card-header" type="button" aria-expanded="true">
+                <span class="ic-run-card-left">
+                    <span class="ic-run-card-icon reasoning"><i class="fas fa-lightbulb"></i></span>
+                    <span class="ic-run-card-title-wrap">
+                        <span class="ic-run-card-title">สรุปแนวคิดของโมเดล</span>
+                        <span class="ic-run-card-subtitle">reasoning summary</span>
+                    </span>
+                </span>
+                <span class="ic-run-card-meta ic-reasoning-meta">กำลังสรุป</span>
+                <i class="fas fa-chevron-down ic-run-card-chevron"></i>
+            </button>
+            <div class="ic-run-card-body">
+                <div class="ic-run-reasoning-text"></div>
+            </div>`;
+        activity.appendChild(card);
+        bindRunCardToggle(card);
+        return card;
+    }
+
+    function updateReasoningMeta(card, wordCountOverride = null) {
+        const textEl = card?.querySelector(".ic-run-reasoning-text");
+        const meta = card?.querySelector(".ic-reasoning-meta");
+        if (!textEl || !meta) return;
+        const wordCount = Number.isFinite(wordCountOverride)
+            ? wordCountOverride
+            : textEl.textContent.split(/\s+/).filter(Boolean).length;
+        meta.textContent = wordCount > 0 ? `${wordCount} คำ` : "กำลังสรุป";
+    }
+
+    function appendAgentReasoningDelta(aiMsg, contentEl, delta) {
+        const card = ensureAgentReasoningBlock(aiMsg, contentEl);
+        const textEl = card?.querySelector(".ic-run-reasoning-text");
+        if (!textEl || !delta) return;
+        textEl.textContent += delta;
+        updateReasoningMeta(card);
+    }
+
+    function setAgentReasoningText(aiMsg, contentEl, text) {
+        const safeText = typeof text === "string" ? text : "";
+        if (!safeText.trim()) return;
+        const card = ensureAgentReasoningBlock(aiMsg, contentEl);
+        const textEl = card?.querySelector(".ic-run-reasoning-text");
+        if (!textEl) return;
+        if (textEl.textContent.length > safeText.length && textEl.textContent.startsWith(safeText)) return;
+        textEl.textContent = safeText;
+        updateReasoningMeta(card);
+    }
+
+    function completeAgentReasoning(aiMsg, contentEl, wordCount) {
+        const card = ensureAgentReasoningBlock(aiMsg, contentEl);
+        if (!card) return;
+        card.classList.add("complete");
+        updateReasoningMeta(card, Number.isFinite(wordCount) ? wordCount : null);
+    }
+
     // ─── Image Upload Helpers ────────────────────────────────────────────
 
     function handleImageSelect(e) {
@@ -1087,7 +1345,7 @@
         dom.imagePreview.innerHTML = state.pendingImages.map((img, i) => `
             <div class="ic-preview-item">
                 <img src="${img.dataUrl}" alt="preview">
-                <button class="ic-preview-remove" data-idx="${i}" title="ลบ">&times;</button>
+                <button class="ic-preview-remove" data-idx="${i}" title="ลบ" aria-label="ลบรูปภาพที่ ${i + 1}">&times;</button>
             </div>
         `).join("");
         // Remove buttons
@@ -1108,6 +1366,176 @@
 
     // ─── Tool Pipeline (collapsed real-time summary) ──────────────────
 
+    function clipAgentText(text, maxLength = 1800) {
+        const safeText = typeof text === "string" ? text : String(text || "");
+        if (safeText.length <= maxLength) return safeText;
+        return `${safeText.slice(0, maxLength)}\n…`;
+    }
+
+    function formatToolPayload(payload) {
+        if (payload === null || payload === undefined || payload === "") return "";
+        if (typeof payload === "string") {
+            const raw = payload.trim();
+            if (!raw) return "";
+            try {
+                return clipAgentText(JSON.stringify(JSON.parse(raw), null, 2));
+            } catch (e) {
+                return clipAgentText(raw);
+            }
+        }
+        try {
+            return clipAgentText(JSON.stringify(payload, null, 2));
+        } catch (e) {
+            return clipAgentText(String(payload));
+        }
+    }
+
+    function getToolStatusLabel(status) {
+        return {
+            queued: "รอเรียก",
+            running: "กำลังรัน",
+            done: "เสร็จแล้ว",
+            error: "ผิดพลาด",
+        }[status] || "กำลังประมวลผล";
+    }
+
+    function ensureAgentToolContainer(aiMsg, contentEl) {
+        const { activity } = ensureAgentRun(aiMsg, contentEl);
+        if (!activity) return null;
+        let toolsEl = activity.querySelector(".ic-run-tools");
+        if (!toolsEl) {
+            toolsEl = document.createElement("div");
+            toolsEl.className = "ic-run-tools";
+            activity.appendChild(toolsEl);
+        }
+        return toolsEl;
+    }
+
+    function findAgentToolCard(toolsEl, toolName, callId = null) {
+        const cards = Array.from(toolsEl?.querySelectorAll(".ic-tool-card") || []);
+        if (callId) {
+            const byCallId = cards.find((card) => card.dataset.callId === String(callId));
+            if (byCallId) return byCallId;
+        }
+        const matching = cards.filter((card) => card.dataset.tool === toolName);
+        return matching.find((card) => card.classList.contains("running") || card.classList.contains("queued")) ||
+            matching[matching.length - 1] ||
+            null;
+    }
+
+    function updateToolCardChrome(card, status = "running", summary = "") {
+        if (!card) return;
+        card.classList.remove("queued", "running", "done", "error");
+        card.classList.add(status);
+        const badge = card.querySelector(".ic-tool-card-badge");
+        const subtitle = card.querySelector(".ic-tool-card-subtitle");
+        if (badge) badge.textContent = getToolStatusLabel(status);
+        if (subtitle) {
+            const safeSummary = summary ? ` · ${clipAgentText(summary, 90).replace(/\n/g, " ")}` : "";
+            subtitle.textContent = `${getToolStatusLabel(status)}${safeSummary}`;
+        }
+    }
+
+    function setToolCardArguments(card, payload) {
+        const text = formatToolPayload(payload);
+        const section = card?.querySelector(".ic-tool-card-args");
+        const pre = card?.querySelector(".ic-tool-card-args-text");
+        if (!section || !pre) return;
+        section.hidden = !text;
+        pre.textContent = text;
+    }
+
+    function setToolCardResult(card, summary) {
+        const text = clipAgentText(summary || "", 1200);
+        const section = card?.querySelector(".ic-tool-card-result");
+        const resultEl = card?.querySelector(".ic-tool-card-result-text");
+        if (!section || !resultEl) return;
+        section.hidden = !text;
+        resultEl.textContent = text;
+    }
+
+    function upsertAgentToolCard(aiMsg, contentEl, toolName, options = {}) {
+        if (!aiMsg || !toolName) return null;
+        const toolsEl = ensureAgentToolContainer(aiMsg, contentEl);
+        if (!toolsEl) return null;
+
+        const callId = options.callId ? String(options.callId) : "";
+        const status = options.status || "running";
+        const type = getToolType(toolName);
+        const icon = getToolIcon(type);
+        let card = findAgentToolCard(toolsEl, toolName, callId);
+
+        if (!card) {
+            card = document.createElement("div");
+            card.className = "ic-run-card ic-tool-card";
+            card.dataset.tool = toolName;
+            card.dataset.type = type;
+            if (callId) card.dataset.callId = callId;
+            card.innerHTML = `
+                <button class="ic-run-card-header" type="button" aria-expanded="true">
+                    <span class="ic-run-card-left">
+                        <span class="ic-run-card-icon tool"><i class="fas ${icon}"></i></span>
+                        <span class="ic-run-card-title-wrap">
+                            <span class="ic-run-card-title"></span>
+                            <span class="ic-run-card-subtitle"></span>
+                        </span>
+                    </span>
+                    <span class="ic-tool-card-badge"></span>
+                    <i class="fas fa-chevron-down ic-run-card-chevron"></i>
+                </button>
+                <div class="ic-run-card-body">
+                    <div class="ic-tool-card-args" hidden>
+                        <div class="ic-tool-card-section-label">arguments</div>
+                        <pre class="ic-tool-card-args-text"></pre>
+                    </div>
+                    <div class="ic-tool-card-result" hidden>
+                        <div class="ic-tool-card-section-label">result</div>
+                        <div class="ic-tool-card-result-text"></div>
+                    </div>
+                </div>`;
+            toolsEl.appendChild(card);
+            bindRunCardToggle(card);
+        }
+
+        if (callId) card.dataset.callId = callId;
+        card.dataset.tool = toolName;
+        card.dataset.type = type;
+        const title = card.querySelector(".ic-run-card-title");
+        if (title) title.textContent = toolName;
+        updateToolCardChrome(card, status, options.summary || "");
+
+        const hasArgs = options.args !== undefined && options.args !== null;
+        const hasArgumentText = typeof options.argumentsText === "string" && options.argumentsText.trim();
+        if (hasArgs || hasArgumentText) {
+            setToolCardArguments(card, hasArgs ? options.args : options.argumentsText);
+        }
+        if (options.summary) {
+            setToolCardResult(card, options.summary);
+        }
+
+        setRunCardCollapsed(card, status === "done" || status === "error");
+        return card;
+    }
+
+    function updateToolArgumentsInPipeline(aiMsg, toolName, argumentsText, callId = null) {
+        const contentEl = aiMsg?.querySelector(".ic-msg-content");
+        const toolsEl = ensureAgentToolContainer(aiMsg, contentEl);
+        const existing = findAgentToolCard(toolsEl, toolName, callId);
+        const status = existing?.classList.contains("running")
+            ? "running"
+            : existing?.classList.contains("done")
+                ? "done"
+                : existing?.classList.contains("error")
+                    ? "error"
+                    : "queued";
+        const card = upsertAgentToolCard(aiMsg, contentEl, toolName, {
+            callId,
+            status,
+            argumentsText,
+        });
+        if (card) setToolCardArguments(card, argumentsText);
+    }
+
     function getToolType(toolName) {
         if (!toolName) return "search";
         if (toolName.includes("search") || toolName.includes("get")) return "search";
@@ -1126,165 +1554,49 @@
     }
 
     function ensureToolPipeline(body, contentEl) {
-        if (body.querySelector(".ic-tool-pipeline")) return;
-        const pipeline = document.createElement("div");
-        pipeline.className = "ic-tool-pipeline collapsed";
-        pipeline.innerHTML = `
-        <div class="ic-pipeline-header" onclick="this.parentElement.classList.toggle('collapsed')">
-            <div class="ic-pipeline-status">
-                <div class="ic-pipeline-spinner"></div>
-                <span class="ic-pipeline-label">Executing tools...</span>
-            </div>
-            <div class="ic-pipeline-meta">
-                <span class="ic-pipeline-count">0 calls</span>
-                <i class="fas fa-chevron-down ic-pipeline-chevron"></i>
-            </div>
-        </div>
-        <div class="ic-pipeline-body"></div>`;
-        body.insertBefore(pipeline, contentEl);
+        const aiMsg = body?.closest(".ic-msg");
+        if (!aiMsg) return;
+        ensureAgentToolContainer(aiMsg, contentEl || aiMsg.querySelector(".ic-msg-content"));
     }
 
     function refreshToolPipelineHeader(pipeline) {
-        if (!pipeline) return;
-        const pipelineBody = pipeline.querySelector(".ic-pipeline-body");
-        if (!pipelineBody) return;
-
-        const entries = Array.from(pipelineBody.querySelectorAll(".ic-pipeline-entry"));
-        const total = entries.length;
-        const running = entries.filter((entry) => entry.classList.contains("running")).length;
-        const queued = entries.filter((entry) => entry.classList.contains("queued")).length;
-        const pending = running + queued;
-
-        const countEl = pipeline.querySelector(".ic-pipeline-count");
-        if (countEl) countEl.textContent = `${total} call${total > 1 ? "s" : ""}`;
-
-        const labelEl = pipeline.querySelector(".ic-pipeline-label");
-        const spinnerEl = pipeline.querySelector(".ic-pipeline-spinner");
-
-        if (pending > 0) {
-            pipeline.classList.add("active");
-            if (spinnerEl) spinnerEl.style.display = "";
-            const next = entries.find((entry) => entry.classList.contains("running")) ||
-                entries.find((entry) => entry.classList.contains("queued"));
-            if (labelEl) {
-                const toolName = next?.dataset?.tool || "tool";
-                labelEl.innerHTML = `<code>${escapeHtml(toolName)}</code>`;
-            }
-            return;
-        }
-
-        pipeline.classList.remove("active");
-        if (spinnerEl) spinnerEl.style.display = "none";
-        if (labelEl) {
-            labelEl.innerHTML = `<span class="ic-pipeline-done-text">Done</span> · ${total} tool${total > 1 ? "s" : ""} executed`;
-        }
+        // Kept as a compatibility no-op for older call sites.
     }
 
     function addToolToPipeline(body, toolName, args, options = {}) {
-        const pipeline = body.querySelector(".ic-tool-pipeline");
-        if (!pipeline) return;
-
-        const pipelineBody = pipeline.querySelector(".ic-pipeline-body");
-        const type = getToolType(toolName);
-        const icon = getToolIcon(type);
-        const color = getToolColor(type);
-        const status = options.status || "running";
-        const callId = options.callId ? String(options.callId) : null;
-
-        const existing = callId
-            ? Array.from(pipelineBody.querySelectorAll(".ic-pipeline-entry")).find((entry) => entry.dataset.callId === callId)
-            : null;
-        if (existing) {
-            existing.classList.remove("queued", "running", "done");
-            existing.classList.add(status);
-            const statusEl = existing.querySelector(".ic-pipeline-entry-status");
-            if (statusEl) statusEl.textContent = status;
-            const right = existing.querySelector(".ic-pipeline-entry-right");
-            if (right) {
-                const spinner = right.querySelector(".ic-pipeline-entry-spinner");
-                if (spinner) spinner.remove();
-                const pending = right.querySelector(".ic-pipeline-entry-pending");
-                if (pending) pending.remove();
-                if (status === "running") {
-                    const spin = document.createElement("div");
-                    spin.className = "ic-pipeline-entry-spinner";
-                    right.appendChild(spin);
-                } else if (status === "queued") {
-                    const waiting = document.createElement("i");
-                    waiting.className = "fas fa-hourglass-half ic-pipeline-entry-pending";
-                    right.appendChild(waiting);
-                }
-            }
-            refreshToolPipelineHeader(pipeline);
-            return;
-        }
-
-        // Add tool entry
-        const entry = document.createElement("div");
-        entry.className = `ic-pipeline-entry ${status}`;
-        entry.dataset.tool = toolName;
-        entry.dataset.type = type;
-        if (callId) entry.dataset.callId = callId;
-        const rightStatusAddon = status === "running"
-            ? '<div class="ic-pipeline-entry-spinner"></div>'
-            : (status === "queued" ? '<i class="fas fa-hourglass-half ic-pipeline-entry-pending"></i>' : "");
-        entry.innerHTML = `
-            <div class="ic-pipeline-entry-left">
-                <i class="fas ${icon} ic-pipeline-entry-icon" style="color:${color}"></i>
-                <span class="ic-pipeline-entry-name" style="color:${color}">${toolName}</span>
-            </div>
-            <div class="ic-pipeline-entry-right">
-                <span class="ic-pipeline-entry-status">${status}</span>
-                ${rightStatusAddon}
-            </div>`;
-        pipelineBody.appendChild(entry);
-        refreshToolPipelineHeader(pipeline);
+        const aiMsg = body?.closest(".ic-msg");
+        const contentEl = aiMsg?.querySelector(".ic-msg-content");
+        upsertAgentToolCard(aiMsg, contentEl, toolName, {
+            args,
+            callId: options.callId,
+            status: options.status || "running",
+            argumentsText: options.argumentsText || "",
+        });
     }
 
     function updateToolInPipeline(aiMsg, toolName, summary, callId = null) {
-        const pipeline = aiMsg.querySelector(".ic-tool-pipeline");
-        if (!pipeline) return;
-
-        const pipelineBody = pipeline.querySelector(".ic-pipeline-body");
-        let entry = null;
-        if (callId) {
-            entry = Array.from(pipelineBody.querySelectorAll(".ic-pipeline-entry"))
-                .find((el) => el.dataset.callId === String(callId));
-        }
-        if (!entry) {
-            const entries = pipelineBody.querySelectorAll(`.ic-pipeline-entry.running[data-tool="${toolName}"], .ic-pipeline-entry.queued[data-tool="${toolName}"]`);
-            entry = entries[entries.length - 1];
-        }
-        if (entry) {
-            entry.classList.remove("queued");
-            entry.classList.remove("running");
-            entry.classList.add("done");
-            const statusEl = entry.querySelector(".ic-pipeline-entry-status");
-            const spinnerEl = entry.querySelector(".ic-pipeline-entry-spinner");
-            const pendingEl = entry.querySelector(".ic-pipeline-entry-pending");
-            if (statusEl) statusEl.textContent = summary;
-            if (spinnerEl) spinnerEl.remove();
-            if (pendingEl) pendingEl.remove();
-            const right = entry.querySelector(".ic-pipeline-entry-right");
-            if (right && !right.querySelector(".ic-pipeline-entry-check")) {
-                const check = document.createElement("i");
-                check.className = "fas fa-check ic-pipeline-entry-check";
-                right.appendChild(check);
-            }
-        }
-        refreshToolPipelineHeader(pipeline);
+        const contentEl = aiMsg?.querySelector(".ic-msg-content");
+        upsertAgentToolCard(aiMsg, contentEl, toolName, {
+            callId,
+            status: String(summary || "").startsWith("❌") ? "error" : "done",
+            summary,
+        });
     }
 
     function renderToolsUsedSummary(body, tools) {
         if (!body || !Array.isArray(tools) || tools.length === 0) return;
-        let summary = body.querySelector(".ic-tools-used");
+        const aiMsg = body.closest(".ic-msg");
+        const contentEl = aiMsg?.querySelector(".ic-msg-content");
+        const { activity } = ensureAgentRun(aiMsg, contentEl);
+        const container = activity || body;
+        let summary = container.querySelector(".ic-tools-used:not(.ic-version-snapshot)");
         if (!summary) {
             summary = document.createElement("div");
             summary.className = "ic-tools-used";
-            body.appendChild(summary);
+            container.appendChild(summary);
         }
         const uniqueTools = [...new Set(tools)];
-        summary.textContent = `Tools used: ${uniqueTools.join(", ")}`;
+        summary.textContent = `ใช้เครื่องมือ ${uniqueTools.length} รายการ: ${uniqueTools.join(", ")}`;
     }
 
     function renderVersionSnapshotSummary(body, snapshot) {
@@ -1374,7 +1686,9 @@
                     state.totalChanges = latestSession.totalChanges || state.totalChanges;
 
                     if (contentEl && serverLastAssistant.content) {
-                        contentEl.innerHTML = formatContent(serverLastAssistant.content);
+                        const aiMsg = contentEl.closest(".ic-msg");
+                        const answerEl = ensureAgentAnswer(aiMsg, contentEl);
+                        answerEl.innerHTML = formatContent(serverLastAssistant.content);
                         scrollToBottom();
                     }
 
@@ -1405,13 +1719,13 @@
         }
 
         dom.instructionList.innerHTML = filtered.map(inst => {
-            const items = inst.dataItems || [];
+            const items = Array.isArray(inst.dataItems) ? inst.dataItems : [];
             const tableCount = items.filter(i => i.type === "table").length;
             const textCount = items.filter(i => i.type === "text").length;
             const active = inst._id === state.selectedId ? "active" : "";
 
             return `
-            <div class="ic-inst-item ${active}" data-id="${inst._id}" data-name="${escapeHtml(inst.name || '')}">
+            <div class="ic-inst-item ${active}" data-id="${inst._id}" data-name="${escapeHtml(inst.name || '')}" role="button" tabindex="0">
                 <div class="ic-inst-name">${escapeHtml(inst.name || "ไม่มีชื่อ")}</div>
                 <div class="ic-inst-meta">
                     ${tableCount ? `<span class="ic-inst-badge">📊 ${tableCount} ตาราง</span>` : ""}
@@ -1480,8 +1794,7 @@
 
         // Close mobile sidebar only
         if (window.innerWidth < 769) {
-            dom.sidebar.classList.remove("open");
-            dom.sidebarOverlay.classList.remove("show");
+            closeSidebar({ restoreFocus: false });
         }
 
         // Focus input
@@ -1493,32 +1806,94 @@
 
     // ─── Sidebar ────────────────────────────────────────────────────────
 
+    function isMobileViewport() {
+        return window.innerWidth < 769;
+    }
+
+    function isSidebarVisible() {
+        return isMobileViewport()
+            ? dom.sidebar.classList.contains("open")
+            : !dom.sidebar.classList.contains("hidden");
+    }
+
+    function getFocusableElements(container) {
+        if (!container) return [];
+        return Array.from(container.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter((el) => {
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && !el.hasAttribute("aria-hidden");
+        });
+    }
+
+    function syncSidebarA11y(options = {}) {
+        const visible = isSidebarVisible();
+        state.sidebarOpen = visible;
+        dom.sidebar.setAttribute("aria-hidden", visible ? "false" : "true");
+        dom.toggleSidebar.setAttribute("aria-expanded", visible ? "true" : "false");
+        dom.toggleSidebar.setAttribute("aria-label", visible ? "ปิดรายการ Instruction" : "เปิดรายการ Instruction");
+        dom.toggleSidebar.title = visible ? "ปิดเมนู" : "เปิดเมนู";
+
+        if ("inert" in dom.sidebar) {
+            dom.sidebar.inert = !visible;
+        }
+
+        if (visible && options.focusSidebar) {
+            const focusTarget = dom.instructionSearch || dom.sidebarClose;
+            setTimeout(() => focusTarget?.focus({ preventScroll: true }), 80);
+        } else if (!visible && options.restoreFocus) {
+            setTimeout(() => dom.toggleSidebar?.focus({ preventScroll: true }), 0);
+        }
+    }
+
     function toggleSidebar() {
         if (window.innerWidth < 769) {
             // Mobile: toggle overlay sidebar
             const isOpen = dom.sidebar.classList.toggle("open");
             dom.sidebarOverlay.classList.toggle("show", isOpen);
+            syncSidebarA11y({ focusSidebar: isOpen, restoreFocus: !isOpen });
         } else {
             // Desktop: toggle width
             dom.sidebar.classList.toggle("hidden");
+            syncSidebarA11y();
         }
     }
 
-    function openSidebar() {
+    function openSidebar(options = {}) {
         if (window.innerWidth < 769) {
             dom.sidebar.classList.add("open");
             dom.sidebarOverlay.classList.add("show");
         } else {
             dom.sidebar.classList.remove("hidden");
         }
+        syncSidebarA11y({ focusSidebar: options.focusSidebar !== false });
     }
 
-    function closeSidebar() {
+    function closeSidebar(options = {}) {
         if (window.innerWidth < 769) {
             dom.sidebar.classList.remove("open");
             dom.sidebarOverlay.classList.remove("show");
         } else {
             dom.sidebar.classList.add("hidden");
+        }
+        syncSidebarA11y({ restoreFocus: options.restoreFocus !== false });
+    }
+
+    function setModelDropdownOpen(isOpen) {
+        if (!dom.modelDropdown || !dom.modelBtn) return;
+        dom.modelDropdown.classList.toggle("show", isOpen);
+        dom.modelDropdown.setAttribute("aria-hidden", isOpen ? "false" : "true");
+        dom.modelBtn.classList.toggle("open", isOpen);
+        dom.modelBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    }
+
+    function syncModelOptionA11y() {
+        $$(".ic-model-option").forEach(opt => {
+            opt.setAttribute("aria-pressed", opt.dataset.model === state.model ? "true" : "false");
+        });
+        if (dom.modelBtn) {
+            const label = MODELS[state.model]?.label || state.model;
+            dom.modelBtn.setAttribute("aria-label", `เลือกโมเดล ${label}`);
         }
     }
 
@@ -1538,14 +1913,16 @@
 
         if (state.sending) {
             // Show stop button
-            dom.send.innerHTML = '<i class="fas fa-stop"></i>';
+            dom.send.innerHTML = '<i class="fas fa-stop" aria-hidden="true"></i>';
             dom.send.disabled = false;
             dom.send.title = "หยุด";
+            dom.send.setAttribute("aria-label", "หยุดการตอบ");
             dom.send.classList.add("ic-btn-stop-active");
         } else {
-            dom.send.innerHTML = '<i class="fas fa-arrow-up"></i>';
+            dom.send.innerHTML = '<i class="fas fa-arrow-up" aria-hidden="true"></i>';
             dom.send.disabled = !(hasText || hasImages) || !hasInstruction;
             dom.send.title = "ส่ง (Enter)";
+            dom.send.setAttribute("aria-label", "ส่งข้อความ");
             dom.send.classList.remove("ic-btn-stop-active");
         }
     }
@@ -1573,6 +1950,7 @@
         }
 
         updateStatusBar();
+        syncModelOptionA11y();
     }
 
     // ─── Event Listeners ────────────────────────────────────────────────
@@ -1584,11 +1962,21 @@
         if (dom.sidebarClose) {
             dom.sidebarClose.addEventListener("click", closeSidebar);
         }
+        if (dom.welcomeOpenSidebar) {
+            dom.welcomeOpenSidebar.addEventListener("click", () => openSidebar({ focusSidebar: true }));
+        }
 
         // Instruction selection
         dom.instructionList.addEventListener("click", (e) => {
             const item = e.target.closest(".ic-inst-item");
             if (item) selectInstruction(item.dataset.id, item.dataset.name);
+        });
+        dom.instructionList.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            const item = e.target.closest(".ic-inst-item");
+            if (!item) return;
+            e.preventDefault();
+            selectInstruction(item.dataset.id, item.dataset.name);
         });
 
         // Search
@@ -1640,28 +2028,35 @@
         // Model dropdown
         dom.modelBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            const isOpen = dom.modelDropdown.classList.toggle("show");
-            dom.modelBtn.classList.toggle("open", isOpen);
+            setModelDropdownOpen(!dom.modelDropdown.classList.contains("show"));
         });
 
         document.addEventListener("click", (e) => {
             if (!dom.modelDropdown.contains(e.target) && !dom.modelBtn.contains(e.target)) {
-                dom.modelDropdown.classList.remove("show");
-                dom.modelBtn.classList.remove("open");
+                setModelDropdownOpen(false);
             }
         });
 
         // Model selection
+        const selectModelOption = (opt) => {
+            state.model = opt.dataset.model;
+            dom.modelLabel.textContent = MODELS[state.model]?.label || state.model;
+            $$(".ic-model-option").forEach(o => o.classList.remove("active"));
+            opt.classList.add("active");
+            updateThinkingUI();
+            setModelDropdownOpen(false);
+            dom.modelBtn.focus();
+        };
+
         $$(".ic-model-option").forEach(opt => {
             opt.addEventListener("click", () => {
-                state.model = opt.dataset.model;
-                dom.modelLabel.textContent = MODELS[state.model]?.label || state.model;
-                $$(".ic-model-option").forEach(o => o.classList.remove("active"));
-                opt.classList.add("active");
-                updateThinkingUI();
-                // Close dropdown
-                dom.modelDropdown.classList.remove("show");
-                dom.modelBtn.classList.remove("open");
+                selectModelOption(opt);
+            });
+            opt.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectModelOption(opt);
+                }
             });
         });
 
@@ -1716,7 +2111,65 @@
                 if (window.innerWidth >= 769) {
                     dom.sidebarOverlay.classList.remove("show");
                 }
+                syncSidebarA11y();
             }, 150);
+        });
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") {
+                if (dom.modelDropdown.classList.contains("show")) {
+                    setModelDropdownOpen(false);
+                    dom.modelBtn.focus();
+                    return;
+                }
+
+                const versionModal = $("#icVersionModal");
+                const saveModal = $("#icSaveVersionModal");
+                if (saveModal && saveModal.style.display !== "none") {
+                    closeModal(saveModal);
+                    return;
+                }
+                if (versionModal && versionModal.style.display !== "none") {
+                    closeModal(versionModal);
+                    return;
+                }
+
+                if (isMobileViewport() && dom.sidebar.classList.contains("open")) {
+                    closeSidebar({ restoreFocus: true });
+                }
+            }
+
+            if (e.key === "Tab") {
+                const openModal = getOpenModal();
+                if (openModal) {
+                    const focusable = getFocusableElements(openModal);
+                    if (!focusable.length) return;
+                    const first = focusable[0];
+                    const last = focusable[focusable.length - 1];
+                    if (e.shiftKey && document.activeElement === first) {
+                        e.preventDefault();
+                        last.focus();
+                    } else if (!e.shiftKey && document.activeElement === last) {
+                        e.preventDefault();
+                        first.focus();
+                    }
+                    return;
+                }
+            }
+
+            if (e.key === "Tab" && isMobileViewport() && dom.sidebar.classList.contains("open")) {
+                const focusable = getFocusableElements(dom.sidebar);
+                if (!focusable.length) return;
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            }
         });
     }
 
@@ -1933,6 +2386,34 @@
 
     // ─── Version Management ─────────────────────────────────────────────
 
+    let lastModalTrigger = null;
+
+    function openModal(modal, trigger = document.activeElement) {
+        if (!modal) return;
+        lastModalTrigger = trigger;
+        modal.style.display = "flex";
+        modal.removeAttribute("aria-hidden");
+        setTimeout(() => {
+            const focusTarget = getFocusableElements(modal)[0];
+            focusTarget?.focus();
+        }, 0);
+    }
+
+    function closeModal(modal) {
+        if (!modal) return;
+        modal.style.display = "none";
+        modal.setAttribute("aria-hidden", "true");
+        if (lastModalTrigger && document.contains(lastModalTrigger)) {
+            lastModalTrigger.focus();
+        }
+        lastModalTrigger = null;
+    }
+
+    function getOpenModal() {
+        const modals = [$("#icSaveVersionModal"), $("#icVersionModal")];
+        return modals.find((modal) => modal && modal.style.display !== "none") || null;
+    }
+
     async function loadVersionInfo(instructionId) {
         const controls = $("#icVersionControls");
         const label = $("#icVersionLabel");
@@ -1955,7 +2436,7 @@
         const listEl = $("#icVersionList");
         if (!modal || !listEl || !state.selectedId) return;
 
-        modal.style.display = "flex";
+        openModal(modal, $("#icVersionBtn"));
         listEl.innerHTML = '<div class="ic-version-empty">กำลังโหลด...</div>';
 
         try {
@@ -1993,8 +2474,11 @@
         const modal = $("#icSaveVersionModal");
         const noteInput = $("#icVersionNote");
         if (!modal) return;
-        modal.style.display = "flex";
-        if (noteInput) { noteInput.value = ""; noteInput.focus(); }
+        openModal(modal, $("#icSaveVersionBtn"));
+        if (noteInput) {
+            noteInput.value = "";
+            setTimeout(() => noteInput.focus(), 0);
+        }
     }
 
     async function confirmSaveVersion() {
@@ -2003,7 +2487,7 @@
         const noteInput = $("#icVersionNote");
         const note = noteInput ? noteInput.value.trim() : "";
 
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังบันทึก...'; }
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> กำลังบันทึก...'; }
 
         try {
             const res = await fetch(`/api/instruction-ai/versions/${state.selectedId}`, {
@@ -2018,7 +2502,7 @@
                 if (label) label.textContent = `v${data.version}`;
                 // Close modal
                 const modal = $("#icSaveVersionModal");
-                if (modal) modal.style.display = "none";
+                if (modal) closeModal(modal);
                 // Show confirmation in chat
                 appendMessage("ai", `✅ บันทึกเวอร์ชัน **v${data.version}** เรียบร้อย${note ? " (" + note + ")" : ""}`);
             } else {
@@ -2027,7 +2511,7 @@
         } catch (err) {
             appendMessage("ai", `❌ เกิดข้อผิดพลาด: ${err.message}`);
         } finally {
-            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> บันทึกเวอร์ชัน'; }
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check" aria-hidden="true"></i> บันทึกเวอร์ชัน'; }
         }
     }
 
@@ -2043,14 +2527,14 @@
 
         if (versionBtn) versionBtn.addEventListener("click", openVersionList);
         if (saveBtn) saveBtn.addEventListener("click", openSaveVersionModal);
-        if (modalClose) modalClose.addEventListener("click", () => { if (versionModal) versionModal.style.display = "none"; });
-        if (saveModalClose) saveModalClose.addEventListener("click", () => { if (saveModal) saveModal.style.display = "none"; });
+        if (modalClose) modalClose.addEventListener("click", () => closeModal(versionModal));
+        if (saveModalClose) saveModalClose.addEventListener("click", () => closeModal(saveModal));
         if (saveConfirm) saveConfirm.addEventListener("click", confirmSaveVersion);
         if (noteInput) noteInput.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmSaveVersion(); });
 
         // Close modals on overlay click
         [versionModal, saveModal].forEach(modal => {
-            if (modal) modal.addEventListener("click", (e) => { if (e.target === modal) modal.style.display = "none"; });
+            if (modal) modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(modal); });
         });
     }
 

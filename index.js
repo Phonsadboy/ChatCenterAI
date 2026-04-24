@@ -10296,7 +10296,7 @@ function generateDataItemId() {
 function normalizeInstructionDataItems(dataItems) {
   if (Array.isArray(dataItems)) {
     return dataItems
-      .map((item, index) => normalizeInstructionDataItem(item, index))
+      .map((item, index) => normalizeInstructionDataItem(item, index, `item_${index + 1}`))
       .filter(Boolean);
   }
 
@@ -10322,12 +10322,12 @@ function normalizeInstructionDataItems(dataItems) {
     return normalizeInstructionDataItems([dataItems]);
   }
 
-  return Object.values(dataItems)
-    .map((item, index) => normalizeInstructionDataItem(item, index))
+  return Object.entries(dataItems)
+    .map(([key, item], index) => normalizeInstructionDataItem(item, index, key || `item_${index + 1}`))
     .filter(Boolean);
 }
 
-function normalizeInstructionDataItem(item, index = 0) {
+function normalizeInstructionDataItem(item, index = 0, fallbackItemId = "") {
   if (!item || typeof item !== "object" || Array.isArray(item)) return null;
   const rawType = String(item.type || item.itemType || "").toLowerCase();
   const type = rawType === "table" || (!rawType && item.data) ? "table" : "text";
@@ -10338,9 +10338,7 @@ function normalizeInstructionDataItem(item, index = 0) {
     order: Number.isFinite(Number(item.order)) ? Number(item.order) : index + 1,
   };
 
-  if (item.itemId || item.id) {
-    normalized.itemId = item.itemId || item.id;
-  }
+  normalized.itemId = item.itemId || item.id || fallbackItemId || `item_${index + 1}`;
 
   if (type === "text") {
     normalized.content =
@@ -11192,26 +11190,25 @@ app.get("/api/instructions-v2/export", async (req, res) => {
     // 2. Data Items Sheet
     const dataItemRows = [];
     instructions.forEach(inst => {
-      if (inst.dataItems && Array.isArray(inst.dataItems)) {
-        inst.dataItems.forEach(item => {
-          let contentData = "";
-          if (item.type === "text") {
-            contentData = item.content || "";
-          } else if (item.type === "table") {
-            contentData = JSON.stringify(item.data || {});
-          }
+      const dataItems = normalizeInstructionDataItems(inst.dataItems);
+      dataItems.forEach(item => {
+        let contentData = "";
+        if (item.type === "text") {
+          contentData = item.content || "";
+        } else if (item.type === "table") {
+          contentData = JSON.stringify(item.data || {});
+        }
 
-          dataItemRows.push({
-            "Instruction ID": inst._id.toString(),
-            "Instruction Name": inst.name,
-            "Item ID": item.itemId,
-            "Item Title": item.title,
-            "Item Type": item.type,
-            "Content/Data": contentData,
-            "Order": item.order || 0
-          });
+        dataItemRows.push({
+          "Instruction ID": inst._id.toString(),
+          "Instruction Name": inst.name,
+          "Item ID": item.itemId,
+          "Item Title": item.title,
+          "Item Type": item.type,
+          "Content/Data": contentData,
+          "Order": item.order || 0
         });
-      }
+      });
     });
 
     const wb = XLSX.utils.book_new();
@@ -14101,8 +14098,10 @@ function buildSystemPromptFromInstructionV2Docs(instructions = []) {
 
   const parts = [];
   for (const instruction of instructions) {
-    if (!instruction || !Array.isArray(instruction.dataItems)) continue;
-    const sortedItems = [...instruction.dataItems].sort(
+    if (!instruction) continue;
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
+    if (dataItems.length === 0) continue;
+    const sortedItems = [...dataItems].sort(
       (a, b) => (a?.order || 0) - (b?.order || 0),
     );
 
@@ -20753,7 +20752,13 @@ app.get("/api/instructions/library", async (req, res) => {
               createdAt: 1,
               updatedAt: 1,
               dataItemCount: {
-                $size: { $ifNull: ["$dataItems", []] },
+                $size: {
+                  $cond: [
+                    { $isArray: "$dataItems" },
+                    "$dataItems",
+                    [],
+                  ],
+                },
               },
             },
           },
@@ -27260,6 +27265,7 @@ function buildActiveInstructionRequestSnapshot(reqState) {
       status: entry.status || "queued",
       iteration: typeof entry.iteration === "number" ? entry.iteration : null,
       args: entry.args && typeof entry.args === "object" ? entry.args : {},
+      argumentsText: typeof entry.argumentsText === "string" ? entry.argumentsText : "",
       summary: entry.summary || "",
       startedAt: entry.startedAt || null,
       endedAt: entry.endedAt || null,
@@ -27278,6 +27284,7 @@ function buildActiveInstructionRequestSnapshot(reqState) {
     iteration: typeof lastStatus.iteration === "number" ? lastStatus.iteration : null,
     tool: lastStatus.tool || null,
     tools,
+    reasoningSummary: reqState?.reasoningSummary || "",
     partialContent: reqState?.streamedContent || "",
     usage: reqState?.donePayload?.usage || null,
     changes: reqState?.donePayload?.changes || null,
@@ -27347,6 +27354,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
       toolTimeline: [],
       toolLookup: new Map(),
       streamedContent: "",
+      reasoningSummary: "",
       donePayload: null,
       error: null,
     };
@@ -27386,6 +27394,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           status: status || "queued",
           iteration: typeof options.iteration === "number" ? options.iteration : currentIteration,
           args: options.args && typeof options.args === "object" ? options.args : {},
+          argumentsText: typeof options.argumentsText === "string" ? options.argumentsText : "",
           summary: options.summary || "",
           startedAt: status === "running" ? Date.now() : null,
           endedAt: status === "done" || status === "error" ? Date.now() : null,
@@ -27398,6 +27407,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         entry.status = status || entry.status;
         if (typeof options.iteration === "number") entry.iteration = options.iteration;
         if (options.args && typeof options.args === "object") entry.args = options.args;
+        if (typeof options.argumentsText === "string") entry.argumentsText = options.argumentsText;
         if (typeof options.summary === "string") entry.summary = options.summary;
         if (status === "running" && !entry.startedAt) entry.startedAt = Date.now();
         if ((status === "done" || status === "error") && !entry.endedAt) entry.endedAt = Date.now();
@@ -27649,6 +27659,26 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
         return next;
       };
 
+      const publishToolArgumentState = (toolCall, eventName = "tool_args_delta", delta = "") => {
+        if (!toolCall) return;
+        const toolName = toolCall.name || "tool";
+        const callId = toolCall.call_id || toolCall.id || null;
+        const argumentsText = typeof toolCall.arguments === "string" ? toolCall.arguments : "";
+        upsertRequestToolState(toolName, "queued", {
+          callId,
+          iteration: i + 1,
+          argumentsText,
+        });
+        sendEvent(eventName, {
+          tool: toolName,
+          callId,
+          itemId: toolCall.id || null,
+          outputIndex: typeof toolCall.output_index === "number" ? toolCall.output_index : null,
+          delta,
+          argumentsText,
+        });
+      };
+
       const closeReasoningStream = () => {
         if (!reasoningStreaming) return;
         const text = (activeReasoningText || "").trim();
@@ -27714,16 +27744,23 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           case "response.output_item.added":
             if (event.item?.type === "function_call") {
               const callId = event.item.call_id || event.item.id || null;
+              const initialArguments = typeof event.item.arguments === "string" ? event.item.arguments : "";
               sendStatus("tool_plan", { iteration: i + 1, tool: event.item.name || "tool" });
               sendEvent("tool_plan", {
                 tool: event.item.name || "tool",
                 callId,
+                itemId: event.item.id || null,
+                argumentsText: initialArguments,
               });
-              upsertRequestToolState(event.item.name || "tool", "queued", { callId, iteration: i + 1 });
+              upsertRequestToolState(event.item.name || "tool", "queued", {
+                callId,
+                iteration: i + 1,
+                argumentsText: initialArguments,
+              });
               upsertToolCall(event.item.id, event.output_index, {
                 name: event.item.name || null,
                 call_id: event.item.call_id || null,
-                arguments: typeof event.item.arguments === "string" ? event.item.arguments : "",
+                arguments: initialArguments,
               });
             }
             break;
@@ -27731,9 +27768,10 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           case "response.function_call_arguments.delta":
             {
               const current = upsertToolCall(event.item_id, event.output_index);
-              upsertToolCall(event.item_id, event.output_index, {
+              const updated = upsertToolCall(event.item_id, event.output_index, {
                 arguments: `${current.arguments || ""}${event.delta || ""}`,
               });
+              publishToolArgumentState(updated, "tool_args_delta", event.delta || "");
             }
             break;
           case "response.function_call.delta":
@@ -27749,30 +27787,33 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
                     ? event.arguments_delta
                     : "";
               if (argDelta) {
-                upsertToolCall(event.item_id, event.output_index, {
+                const updated = upsertToolCall(event.item_id, event.output_index, {
                   arguments: `${current.arguments || ""}${argDelta}`,
                 });
+                publishToolArgumentState(updated, "tool_args_delta", argDelta);
               }
             }
             break;
 
           case "response.function_call_arguments.done":
-            upsertToolCall(event.item_id, event.output_index, {
+            publishToolArgumentState(upsertToolCall(event.item_id, event.output_index, {
               arguments: typeof event.arguments === "string" ? event.arguments : "",
-            });
+            }), "tool_args_done");
             break;
 
           case "response.output_item.done":
             if (event.item?.type === "function_call") {
+              const doneArguments = typeof event.item.arguments === "string" ? event.item.arguments : "";
               upsertRequestToolState(event.item.name || "tool", "queued", {
                 callId: event.item.call_id || event.item.id || null,
                 iteration: i + 1,
+                argumentsText: doneArguments,
               });
-              upsertToolCall(event.item.id, event.output_index, {
+              publishToolArgumentState(upsertToolCall(event.item.id, event.output_index, {
                 name: event.item.name || null,
                 call_id: event.item.call_id || null,
-                arguments: typeof event.item.arguments === "string" ? event.item.arguments : "",
-              });
+                arguments: doneArguments,
+              }), "tool_args_done");
             }
             break;
 
@@ -27783,6 +27824,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             }
             if (event.part?.text) {
               activeReasoningText += event.part.text;
+              requestState.reasoningSummary += event.part.text;
+              requestState.updatedAt = Date.now();
               sendEvent("thinking_delta", { text: event.part.text });
             }
             break;
@@ -27794,6 +27837,8 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             }
             if (event.delta) {
               activeReasoningText += event.delta;
+              requestState.reasoningSummary += event.delta;
+              requestState.updatedAt = Date.now();
               sendEvent("thinking_delta", { text: event.delta });
             }
             break;
@@ -27858,10 +27903,16 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
           try { args = JSON.parse(toolCall.arguments || "{}"); } catch (e) { }
 
           sendStatus("tool", { iteration: i + 1, tool: toolName });
-          sendEvent("tool_start", { tool: toolName, args, callId: toolCall.call_id });
+          sendEvent("tool_start", {
+            tool: toolName,
+            args,
+            callId: toolCall.call_id,
+            argumentsText: toolCall.arguments || "",
+          });
           upsertRequestToolState(toolName, "running", {
             callId: toolCall.call_id,
             args,
+            argumentsText: toolCall.arguments || "",
             iteration: i + 1,
           });
           const result = await chatService.executeTool(toolName, args, instructionId, sessionId);
@@ -27887,6 +27938,7 @@ app.post("/api/instruction-ai/stream", requireAdmin, async (req, res) => {
             callId: toolCall.call_id,
             summary: toolSummary,
             args,
+            argumentsText: toolCall.arguments || "",
             iteration: i + 1,
           });
           sendStatus("continuing", { iteration: i + 1, tool: null });

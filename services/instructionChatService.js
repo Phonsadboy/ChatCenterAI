@@ -55,6 +55,76 @@ class InstructionChatService {
                 : {};
     }
 
+    _normalizeDataItems(dataItems) {
+        if (Array.isArray(dataItems)) {
+            return dataItems
+                .map((item, index) => this._normalizeDataItem(item, index, `item_${index + 1}`))
+                .filter(Boolean);
+        }
+
+        if (typeof dataItems === "string" && dataItems.trim()) {
+            try {
+                return this._normalizeDataItems(JSON.parse(dataItems));
+            } catch {
+                return [];
+            }
+        }
+
+        if (!dataItems || typeof dataItems !== "object") return [];
+
+        if (Array.isArray(dataItems.dataItems)) {
+            return this._normalizeDataItems(dataItems.dataItems);
+        }
+
+        if (Array.isArray(dataItems.items)) {
+            return this._normalizeDataItems(dataItems.items);
+        }
+
+        if (dataItems.itemId || dataItems.type || dataItems.title || dataItems.data) {
+            return this._normalizeDataItems([dataItems]);
+        }
+
+        return Object.entries(dataItems)
+            .map(([key, item], index) => this._normalizeDataItem(item, index, key || `item_${index + 1}`))
+            .filter(Boolean);
+    }
+
+    _normalizeDataItem(item, index = 0, fallbackItemId = "") {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+        const rawType = String(item.type || item.itemType || "").toLowerCase();
+        const type = rawType === "table" || (!rawType && item.data) ? "table" : "text";
+        const normalized = {
+            ...item,
+            type,
+            title: item.title || item.name || "",
+            order: Number.isFinite(Number(item.order)) ? Number(item.order) : index + 1,
+        };
+
+        normalized.itemId = item.itemId || item.id || fallbackItemId || `item_${index + 1}`;
+
+        if (type === "text") {
+            normalized.content =
+                typeof item.content === "string"
+                    ? item.content
+                    : item.content == null
+                        ? ""
+                        : String(item.content);
+        } else {
+            normalized.content = "";
+            normalized.data = item.data || null;
+        }
+
+        return normalized;
+    }
+
+    _normalizeInstructionDocument(instruction) {
+        if (!instruction || typeof instruction !== "object") return instruction;
+        return {
+            ...instruction,
+            dataItems: this._normalizeDataItems(instruction.dataItems),
+        };
+    }
+
     async _getInstruction(instructionId) {
         if (this._cachedId === instructionId && this._cachedInstruction) {
             return this._cachedInstruction;
@@ -62,7 +132,9 @@ class InstructionChatService {
         if (!this._instructionStore || typeof this._instructionStore.load !== "function") {
             throw new Error("Instruction store unavailable");
         }
-        const inst = await this._instructionStore.load(instructionId);
+        const inst = this._normalizeInstructionDocument(
+            await this._instructionStore.load(instructionId)
+        );
         if (inst) {
             this._cachedInstruction = inst;
             this._cachedId = instructionId;
@@ -83,7 +155,7 @@ class InstructionChatService {
                 : "";
         if (!normalizedRef || !instructionDoc || typeof instructionDoc !== "object") return;
         this._cachedId = normalizedRef;
-        this._cachedInstruction = instructionDoc;
+        this._cachedInstruction = this._normalizeInstructionDocument(instructionDoc);
     }
 
     _runOptionalCallback(callback, label) {
@@ -162,6 +234,7 @@ class InstructionChatService {
                     ? instructionDoc._id.trim()
                     : normalizedInstructionId,
             updatedAt,
+            dataItems: this._normalizeDataItems(instructionDoc.dataItems),
         };
 
         if (nextInstruction.conversationStarter !== undefined) {
@@ -276,16 +349,17 @@ class InstructionChatService {
     }
 
     _getDataItem(instruction, itemId) {
-        if (!instruction || !Array.isArray(instruction.dataItems)) return null;
-        return instruction.dataItems.find(i => i.itemId === itemId) || null;
+        const dataItems = this._normalizeDataItems(instruction?.dataItems);
+        return dataItems.find(i => i.itemId === itemId) || null;
     }
 
     /**
      * Build the data items summary for system prompt injection
      */
     buildDataItemsSummary(instruction) {
-        if (!instruction || !Array.isArray(instruction.dataItems)) return "ไม่มีชุดข้อมูล";
-        return instruction.dataItems.map(item => {
+        const dataItems = this._normalizeDataItems(instruction?.dataItems);
+        if (!dataItems.length) return "ไม่มีชุดข้อมูล";
+        return dataItems.map(item => {
             if (item.type === "table" && item.data) {
                 const cols = Array.isArray(item.data.columns) ? item.data.columns : [];
                 const rowCount = Array.isArray(item.data.rows) ? item.data.rows.length : 0;
@@ -416,12 +490,12 @@ class InstructionChatService {
         return {
             name: inst.name,
             description: inst.description || "",
-            totalDataItems: (inst.dataItems || []).length,
+            totalDataItems: inst.dataItems.length,
             conversationStarter: {
                 enabled: starter.enabled,
                 messageCount: starter.messages.length,
             },
-            dataItems: (inst.dataItems || []).map(item => {
+            dataItems: inst.dataItems.map(item => {
                 const base = { itemId: item.itemId, title: item.title || "Untitled", type: item.type };
                 if (item.type === "table" && item.data) {
                     base.rowCount = Array.isArray(item.data.rows) ? item.data.rows.length : 0;
@@ -577,7 +651,7 @@ class InstructionChatService {
     async update_cell(instructionId, { itemId, rowIndex, column, newValue }, sessionId) {
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -605,7 +679,7 @@ class InstructionChatService {
     async update_rows_bulk(instructionId, { itemId, updates }, sessionId) {
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -637,7 +711,7 @@ class InstructionChatService {
     async add_row(instructionId, { itemId, rowData, position = "end", afterRowIndex }, sessionId) {
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -665,7 +739,7 @@ class InstructionChatService {
     async delete_row(instructionId, { itemId, rowIndex }, sessionId) {
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -692,7 +766,7 @@ class InstructionChatService {
     async update_text_content(instructionId, { itemId, mode, content, find, replaceWith }, sessionId) {
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -730,7 +804,7 @@ class InstructionChatService {
     async add_column(instructionId, { itemId, columnName, defaultValue = "", position = "end", afterColumn }, sessionId) {
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -765,7 +839,7 @@ class InstructionChatService {
 
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -800,7 +874,7 @@ class InstructionChatService {
 
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -833,7 +907,7 @@ class InstructionChatService {
             beforeSnapshot.contentLength = (item.content || "").length;
         }
 
-        inst.dataItems = (inst.dataItems || []).filter((entry) => entry?.itemId !== itemId);
+        inst.dataItems = inst.dataItems.filter((entry) => entry?.itemId !== itemId);
         inst.updatedAt = new Date();
         await this._saveInstruction(instructionId, inst);
 
@@ -919,7 +993,7 @@ class InstructionChatService {
 
         const inst = await this._getInstruction(instructionId);
         if (!inst) return { error: "ไม่พบ Instruction" };
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === itemId);
+        const itemIndex = inst.dataItems.findIndex(i => i.itemId === itemId);
         if (itemIndex === -1) return { error: "ไม่พบชุดข้อมูล" };
 
         const item = inst.dataItems[itemIndex];
@@ -999,7 +1073,7 @@ class InstructionChatService {
             updatedAt: new Date(),
         };
 
-        inst.dataItems = Array.isArray(inst.dataItems) ? inst.dataItems : [];
+        inst.dataItems = this._normalizeDataItems(inst.dataItems);
         inst.dataItems.push(newItem);
         inst.updatedAt = new Date();
         await this._saveInstruction(instructionId, inst);
@@ -1040,7 +1114,7 @@ class InstructionChatService {
             updatedAt: new Date(),
         };
 
-        inst.dataItems = Array.isArray(inst.dataItems) ? inst.dataItems : [];
+        inst.dataItems = this._normalizeDataItems(inst.dataItems);
         inst.dataItems.push(newItem);
         inst.updatedAt = new Date();
         await this._saveInstruction(instructionId, inst);
@@ -2025,7 +2099,7 @@ class InstructionChatService {
             version: snapshot?.version,
             note: snapshot?.note || "",
             snapshotAt: snapshot?.snapshotAt || new Date(),
-            dataItemCount: (inst.dataItems || []).length,
+            dataItemCount: inst.dataItems.length,
             starterMessageCount: starterConfig.messages.length,
             message: `✅ บันทึกเวอร์ชัน ${snapshot?.version} เรียบร้อย${snapshot?.note ? " (" + snapshot.note + ")" : ""}`,
         };
@@ -2041,6 +2115,7 @@ class InstructionChatService {
         const snapshot = await this._getInstructionVersion(inst, Number(version));
         if (!snapshot) return { error: `ไม่พบเวอร์ชัน ${version}` };
         const starter = this._normalizeStarterConfig(snapshot.conversationStarter);
+        const dataItems = this._normalizeDataItems(snapshot.dataItems);
 
         return {
             version: snapshot.version,
@@ -2052,7 +2127,7 @@ class InstructionChatService {
                 messageCount: starter.messages.length,
                 messages: starter.messages,
             },
-            dataItems: (snapshot.dataItems || []).map(item => {
+            dataItems: dataItems.map(item => {
                 const base = { itemId: item.itemId, title: item.title, type: item.type };
                 if (item.type === "table" && item.data) {
                     base.columns = item.data.columns || [];

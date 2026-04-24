@@ -448,6 +448,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
     padding: 8px 12px;
     min-height: 48px;
     background: var(--ic-bg-chat);
@@ -460,6 +461,15 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
+}
+
+.ic-topbar-left {
+    flex: 1;
+}
+
+.ic-topbar-right {
+    flex-shrink: 0;
 }
 
 .ic-topbar-btn {
@@ -485,13 +495,27 @@ body {
 
 .ic-topbar-title {
     margin-left: 4px;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .ic-topbar-title-text {
+    display: block;
     font-size: 15px;
     font-weight: 600;
     color: var(--ic-text);
     font-family: var(--ic-font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+button:focus-visible,
+.ic-model-option:focus-visible,
+.ic-sidebar-footer-link:focus-visible,
+.ic-inst-item:focus-visible {
+    outline: 2px solid var(--ic-border-focus);
+    outline-offset: 2px;
 }
 
 /* ─── New Chat Button — Prominent ────────────────────────────────────── */
@@ -861,6 +885,9 @@ body {
     top: calc(100% + 8px);
     right: 0;
     width: 340px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 72px);
+    overflow-y: auto;
     background: var(--ic-surface);
     border: 1px solid var(--ic-border);
     border-radius: var(--ic-radius-md);
@@ -917,6 +944,10 @@ body {
     background: var(--ic-surface-2);
 }
 
+.ic-model-option:focus-visible {
+    background: var(--ic-surface-2);
+}
+
 .ic-model-option.active {
     background: var(--ic-accent-glow);
 }
@@ -925,6 +956,7 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
 }
 
 .ic-model-option-icon {
@@ -968,6 +1000,7 @@ body {
     font-size: 11px;
     color: var(--ic-text-muted);
     margin-top: 1px;
+    overflow-wrap: anywhere;
 }
 
 .ic-badge-recommended {
@@ -1143,6 +1176,336 @@ body {
 .ic-msg-content .ic-streaming-raw {
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+/* Agent run activity: status, reasoning summaries, tools, then final answer */
+.ic-agent-run {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.ic-agent-activity {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 2px;
+    min-width: 0;
+}
+
+.ic-agent-run.is-complete.is-minimal .ic-agent-activity {
+    display: none;
+}
+
+.ic-agent-answer {
+    min-width: 0;
+}
+
+.ic-agent-answer:empty {
+    display: none;
+}
+
+.ic-run-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: var(--ic-radius-sm);
+    background: rgba(255, 255, 255, 0.025);
+    color: var(--ic-text-secondary);
+    font-family: var(--ic-font-mono);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.ic-run-status-mark {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.ic-run-status-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(0, 255, 170, 0.16);
+    border-top-color: var(--ic-accent);
+    animation: ic-spin 0.85s linear infinite;
+}
+
+.ic-run-status-done,
+.ic-run-status-error {
+    display: none;
+    font-size: 12px;
+}
+
+.ic-run-status.done .ic-run-status-spinner,
+.ic-run-status.error .ic-run-status-spinner {
+    display: none;
+}
+
+.ic-run-status.done .ic-run-status-done {
+    display: block;
+    color: var(--ic-success);
+}
+
+.ic-run-status.error .ic-run-status-error {
+    display: block;
+    color: var(--ic-danger);
+}
+
+.ic-run-status-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.ic-run-status-label {
+    color: var(--ic-text);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ic-run-status-detail {
+    color: var(--ic-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ic-run-status-time {
+    color: var(--ic-text-dim);
+    font-size: 10px;
+    flex-shrink: 0;
+}
+
+.ic-run-card {
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: var(--ic-radius-sm);
+    background: rgba(255, 255, 255, 0.025);
+    overflow: hidden;
+    min-width: 0;
+}
+
+.ic-run-card.complete,
+.ic-tool-card.done {
+    border-color: rgba(34, 197, 94, 0.14);
+}
+
+.ic-tool-card.running {
+    border-color: rgba(0, 255, 170, 0.18);
+    background: rgba(0, 255, 170, 0.035);
+}
+
+.ic-tool-card.queued {
+    border-color: rgba(245, 158, 11, 0.15);
+    background: rgba(245, 158, 11, 0.035);
+}
+
+.ic-tool-card.error {
+    border-color: rgba(239, 68, 68, 0.2);
+    background: rgba(239, 68, 68, 0.045);
+}
+
+.ic-run-card-header {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+}
+
+.ic-run-card-header:hover {
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.ic-run-card-left {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    flex: 1;
+}
+
+.ic-run-card-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: var(--ic-radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.045);
+    color: var(--ic-text-secondary);
+}
+
+.ic-run-card-icon.reasoning {
+    color: var(--ic-accent2);
+    background: rgba(168, 85, 247, 0.09);
+}
+
+.ic-tool-card[data-type="search"] .ic-run-card-icon.tool {
+    color: var(--ic-tool-search);
+    background: rgba(56, 189, 248, 0.09);
+}
+
+.ic-tool-card[data-type="edit"] .ic-run-card-icon.tool {
+    color: var(--ic-tool-edit);
+    background: rgba(251, 191, 36, 0.09);
+}
+
+.ic-tool-card[data-type="add"] .ic-run-card-icon.tool {
+    color: var(--ic-tool-add);
+    background: rgba(52, 211, 153, 0.09);
+}
+
+.ic-tool-card[data-type="delete"] .ic-run-card-icon.tool {
+    color: var(--ic-tool-delete);
+    background: rgba(248, 113, 113, 0.09);
+}
+
+.ic-run-card-title-wrap {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.ic-run-card-title {
+    color: var(--ic-text);
+    font-family: var(--ic-font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ic-run-card-subtitle {
+    color: var(--ic-text-muted);
+    font-family: var(--ic-font-mono);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ic-run-card-meta,
+.ic-tool-card-badge {
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: var(--ic-radius-xs);
+    padding: 2px 7px;
+    color: var(--ic-text-muted);
+    background: rgba(255, 255, 255, 0.035);
+    font-family: var(--ic-font-mono);
+    font-size: 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.ic-tool-card.running .ic-tool-card-badge {
+    color: var(--ic-accent);
+    border-color: rgba(0, 255, 170, 0.16);
+}
+
+.ic-tool-card.done .ic-tool-card-badge {
+    color: var(--ic-success);
+    border-color: rgba(34, 197, 94, 0.16);
+}
+
+.ic-tool-card.error .ic-tool-card-badge {
+    color: var(--ic-danger);
+    border-color: rgba(239, 68, 68, 0.18);
+}
+
+.ic-run-card-chevron {
+    color: var(--ic-text-dim);
+    font-size: 10px;
+    transition: transform var(--ic-transition);
+    flex-shrink: 0;
+}
+
+.ic-run-card.collapsed .ic-run-card-chevron {
+    transform: rotate(-90deg);
+}
+
+.ic-run-card-body {
+    border-top: 1px solid rgba(255, 255, 255, 0.055);
+    padding: 9px 10px 10px;
+}
+
+.ic-run-card.collapsed .ic-run-card-body {
+    display: none;
+}
+
+.ic-run-reasoning-text {
+    max-height: 190px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    color: var(--ic-text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.ic-run-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ic-tool-card-args,
+.ic-tool-card-result {
+    min-width: 0;
+}
+
+.ic-tool-card-result {
+    margin-top: 8px;
+}
+
+.ic-tool-card-section-label {
+    margin-bottom: 4px;
+    color: var(--ic-text-dim);
+    font-family: var(--ic-font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.ic-tool-card-args-text {
+    max-height: 180px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    padding: 8px 9px;
+    border-radius: var(--ic-radius-xs);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.24);
+    color: #cbd5e1;
+    font-family: var(--ic-font-mono);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.ic-tool-card-result-text {
+    color: var(--ic-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
 }
 
 .ic-status-text {
@@ -1905,6 +2268,30 @@ body {
     margin-bottom: 24px;
 }
 
+.ic-welcome-open {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-radius: var(--ic-radius-xs);
+    border: 1px solid rgba(0, 255, 170, 0.28);
+    background: rgba(0, 255, 170, 0.08);
+    color: var(--ic-accent);
+    font-size: 13px;
+    font-weight: 700;
+    font-family: var(--ic-font);
+    cursor: pointer;
+    transition: all var(--ic-transition);
+    position: relative;
+    z-index: 1;
+}
+
+.ic-welcome-open:hover {
+    background: rgba(0, 255, 170, 0.14);
+    border-color: rgba(0, 255, 170, 0.45);
+}
+
 /* ─── Quick Suggest Button ───────────────────────────────────────────── */
 
 .ic-quick-suggest-btn {
@@ -2225,6 +2612,8 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
 }
 
 .ic-dot-live {
@@ -2276,6 +2665,7 @@ body {
         bottom: 0;
         z-index: 200;
         transform: translateX(-100%);
+        visibility: hidden;
         width: 300px;
         min-width: 300px;
         box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
@@ -2283,6 +2673,7 @@ body {
 
     .ic-sidebar.open {
         transform: translateX(0);
+        visibility: visible;
     }
 
     .ic-sidebar-close {
@@ -2291,6 +2682,24 @@ body {
 
     .ic-msg {
         padding: 8px 12px;
+    }
+
+    .ic-run-status {
+        align-items: flex-start;
+    }
+
+    .ic-run-status-detail {
+        white-space: normal;
+    }
+
+    .ic-run-card-header {
+        padding: 8px;
+        gap: 7px;
+    }
+
+    .ic-run-card-meta,
+    .ic-tool-card-badge {
+        display: none;
     }
 
     .ic-input-area {
@@ -2311,8 +2720,13 @@ body {
     }
 
     .ic-model-dropdown {
-        width: 290px;
-        right: -60px;
+        position: fixed;
+        top: 52px;
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-width: none;
+        max-height: calc(100dvh - 72px);
     }
 
     .ic-welcome-cards {
@@ -2326,6 +2740,11 @@ body {
 
     .ic-welcome-desc {
         font-size: 13px;
+        margin-bottom: 16px;
+    }
+
+    .ic-welcome-open {
+        display: inline-flex;
     }
 
     .ic-new-chat-btn span {
@@ -2342,6 +2761,9 @@ body {
     .ic-quick-suggest-btn {
         font-size: 13px;
         padding: 10px 18px;
+        max-width: 100%;
+        white-space: normal;
+        text-align: center;
     }
 }
 

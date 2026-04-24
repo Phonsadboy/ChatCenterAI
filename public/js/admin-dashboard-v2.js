@@ -92,6 +92,8 @@
     const workspaceTitle = document.getElementById('workspaceTitle');
     const workspaceMeta = document.getElementById('workspaceMeta');
     const workspaceStarterBtn = document.getElementById('workspaceStarterBtn');
+    const workspaceDuplicateInstructionBtn = document.getElementById('workspaceDuplicateInstructionBtn');
+    const workspaceDeleteInstructionBtn = document.getElementById('workspaceDeleteInstructionBtn');
     const workspaceDataItemsList = document.getElementById('workspaceDataItemsList');
     const workspaceAddDataItem = document.getElementById('workspaceAddDataItem');
     const instructionList = document.getElementById('instructionList');
@@ -386,6 +388,9 @@
         if (workspaceTitle) workspaceTitle.textContent = '-';
         if (workspaceMeta) workspaceMeta.textContent = '-';
         if (workspaceDataItemsList) workspaceDataItemsList.innerHTML = '';
+        if (workspaceStarterBtn) workspaceStarterBtn.dataset.id = '';
+        if (workspaceDuplicateInstructionBtn) workspaceDuplicateInstructionBtn.dataset.id = '';
+        if (workspaceDeleteInstructionBtn) workspaceDeleteInstructionBtn.dataset.id = '';
         // Reset metrics
         const metricDataItems = document.getElementById('metricDataItems');
         const metricStarter = document.getElementById('metricStarter');
@@ -666,6 +671,14 @@
                 }
                 if (workspaceStarterBtn) {
                     workspaceStarterBtn.dataset.id = instructionId;
+                }
+                if (workspaceDuplicateInstructionBtn) {
+                    workspaceDuplicateInstructionBtn.dataset.id = instructionId;
+                    workspaceDuplicateInstructionBtn.dataset.name = instruction.name || 'ไม่มีชื่อ';
+                }
+                if (workspaceDeleteInstructionBtn) {
+                    workspaceDeleteInstructionBtn.dataset.id = instructionId;
+                    workspaceDeleteInstructionBtn.dataset.name = instruction.name || 'ไม่มีชื่อ';
                 }
             } else {
                 showToast(data.error || 'ไม่สามารถโหลดข้อมูล Instruction ได้', 'error');
@@ -1392,86 +1405,124 @@
         });
     });
 
-    // Delete Instruction
-    document.querySelectorAll('.delete-instruction').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const id = btn.dataset.id;
+    const deleteInstruction = async (id, button = null) => {
+        if (!id) {
+            showToast('กรุณาเลือก Instruction ที่ต้องการลบ', 'warning');
+            return;
+        }
 
-            if (!confirm('ต้องการลบ Instruction นี้หรือไม่?')) return;
+        const name = (button?.dataset?.name || workspaceTitle?.textContent || 'Instruction').trim();
+        if (!confirm(`ต้องการลบ "${name}" หรือไม่?`)) return;
 
-            try {
-                const res = await fetch(`/api/instructions-v2/${id}`, {
-                    method: 'DELETE'
-                });
+        const originalHtml = button ? button.innerHTML : '';
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        }
 
-                const data = await res.json();
+        try {
+            const res = await fetch(`/api/instructions-v2/${id}`, {
+                method: 'DELETE'
+            });
 
-                if (data.success) {
-                    showToast('ลบ Instruction แล้ว', 'success');
-                    setTimeout(() => location.reload(), 280);
-                } else {
-                    showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
-                }
-            } catch (err) {
-                console.error('Error deleting instruction:', err);
-                showToast('เกิดข้อผิดพลาด', 'error');
+            const data = await res.json();
+
+            if (data.success) {
+                showToast('ลบ Instruction แล้ว', 'success');
+                setTimeout(() => location.reload(), 280);
+            } else {
+                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
             }
-        });
-    });
+        } catch (err) {
+            console.error('Error deleting instruction:', err);
+            showToast('เกิดข้อผิดพลาด', 'error');
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalHtml;
+            }
+        }
+    };
 
-    // Duplicate Instruction
-    document.querySelectorAll('.duplicate-instruction').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const id = btn.dataset.id;
-            if (!id) return;
+    const duplicateInstruction = async (id, button = null) => {
+        if (!id) {
+            showToast('กรุณาเลือก Instruction ที่ต้องการทำสำเนา', 'warning');
+            return;
+        }
 
-            const existingNames = new Set(
-                Array.from(document.querySelectorAll('.instruction-card .instruction-title'))
-                    .map(el => (el.textContent || '').trim().toLowerCase())
-                    .filter(Boolean)
-            );
+        const existingNames = new Set(
+            Array.from(document.querySelectorAll('.ws-list-name-text, .instruction-card .instruction-title'))
+                .map(el => (el.textContent || '').replace(/^\[[^\]]+\]\s*/, '').trim().toLowerCase())
+                .filter(Boolean)
+        );
 
-            let name = prompt('ชื่อ Instruction ใหม่:');
+        const currentName = (button?.dataset?.name || workspaceTitle?.textContent || '')
+            .replace(/^\[[^\]]+\]\s*/, '')
+            .trim();
+        let name = prompt('ชื่อ Instruction ใหม่:', currentName ? `${currentName} (สำเนา)` : '');
+        if (name === null) return;
+        name = (name || '').trim();
+        if (!name) return;
+
+        while (existingNames.has(name.toLowerCase())) {
+            showToast('ชื่อ Instruction นี้มีอยู่แล้ว กรุณาใช้ชื่ออื่น', 'warning');
+            name = prompt('ชื่อซ้ำ กรุณาใส่ชื่อใหม่:', name);
             if (name === null) return;
             name = (name || '').trim();
             if (!name) return;
+        }
 
-            while (existingNames.has(name.toLowerCase())) {
-                showToast('ชื่อ Instruction นี้มีอยู่แล้ว กรุณาใช้ชื่ออื่น', 'warning');
-                name = prompt('ชื่อซ้ำ กรุณาใส่ชื่อใหม่:', name);
-                if (name === null) return;
-                name = (name || '').trim();
-                if (!name) return;
+        const originalHtml = button ? button.innerHTML : '';
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        }
+
+        try {
+            const res = await fetch(`/api/instructions-v2/${id}/duplicate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+
+            const data = await res.json();
+
+            if (data.success) {
+                showToast('คัดลอก Instruction แล้ว', 'success');
+                setTimeout(() => location.reload(), 280);
+            } else {
+                showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
             }
-
-            const originalHtml = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-            try {
-                const res = await fetch(`/api/instructions-v2/${id}/duplicate`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name })
-                });
-
-                const data = await res.json();
-
-                if (data.success) {
-                    showToast('คัดลอก Instruction แล้ว', 'success');
-                    setTimeout(() => location.reload(), 280);
-                } else {
-                    showToast(data.error || 'เกิดข้อผิดพลาด', 'error');
-                }
-            } catch (err) {
-                console.error('Error duplicating instruction:', err);
-                showToast('เกิดข้อผิดพลาด', 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHtml;
+        } catch (err) {
+            console.error('Error duplicating instruction:', err);
+            showToast('เกิดข้อผิดพลาด', 'error');
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalHtml;
             }
-        });
+        }
+    };
+
+    document.querySelectorAll('.delete-instruction').forEach(btn => {
+        btn.addEventListener('click', () => deleteInstruction(btn.dataset.id, btn));
     });
+
+    document.querySelectorAll('.duplicate-instruction').forEach(btn => {
+        btn.addEventListener('click', () => duplicateInstruction(btn.dataset.id, btn));
+    });
+
+    if (workspaceDeleteInstructionBtn) {
+        workspaceDeleteInstructionBtn.addEventListener('click', () => {
+            deleteInstruction(editorState.currentInstructionId || workspaceDeleteInstructionBtn.dataset.id, workspaceDeleteInstructionBtn);
+        });
+    }
+
+    if (workspaceDuplicateInstructionBtn) {
+        workspaceDuplicateInstructionBtn.addEventListener('click', () => {
+            duplicateInstruction(editorState.currentInstructionId || workspaceDuplicateInstructionBtn.dataset.id, workspaceDuplicateInstructionBtn);
+        });
+    }
 
     // Preview Instruction
     document.querySelectorAll('.preview-instruction').forEach(btn => {
