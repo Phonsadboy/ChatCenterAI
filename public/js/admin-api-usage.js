@@ -25,6 +25,10 @@ const State = {
 };
 
 const THB_RATE = 33;
+const isBrowserReload =
+    performance.getEntriesByType &&
+    performance.getEntriesByType('navigation')[0]?.type === 'reload';
+let firstSummaryRequest = true;
 
 // ==================== Initialization ====================
 document.addEventListener('DOMContentLoaded', function () {
@@ -82,6 +86,10 @@ async function loadDashboardData() {
         showLoadingState();
 
         const params = getDateParams();
+        if (firstSummaryRequest && isBrowserReload) {
+            params.append('fresh', '1');
+        }
+        firstSummaryRequest = false;
         const response = await fetch('/api/openai-usage/summary?' + params);
         const data = await response.json();
 

@@ -42,6 +42,10 @@ const { createPostgresRuntime } = require("./services/postgresRuntime");
 const { createProjectBucket } = require("./services/projectBucket");
 const { createChatStorageService } = require("./services/chatStorageService");
 const {
+  createPostgresNativeReadRepository,
+} = require("./services/postgresNativeReadRepository");
+const { createRedisCacheService } = require("./services/redisCacheService");
+const {
   createGridFSBucket,
   createPostgresMongoCompatClient,
 } = require("./services/postgresMongoCompat");
@@ -76,6 +80,16 @@ const chatStorageService = createChatStorageService({
   postgresRuntime,
   bucketClient: projectBucket,
   hotRetentionDays: runtimeConfig.chatHotRetentionDays,
+  useConversationHeads: runtimeConfig.postgresNativeReadsEnabled,
+  logger: console,
+});
+const postgresNativeReadRepository = createPostgresNativeReadRepository({
+  postgresRuntime,
+});
+const redisCacheService = createRedisCacheService({
+  url: runtimeConfig.redis.url,
+  keyPrefix: runtimeConfig.redis.keyPrefix,
+  defaultTtlSeconds: runtimeConfig.redis.adminCacheTtlSeconds,
   logger: console,
 });
 
@@ -1644,6 +1658,14 @@ function isPostgresAppDocumentReadEnabled() {
   );
 }
 
+function isPostgresNativeReadEnabled() {
+  return (
+    runtimeConfig.postgresNativeReadsEnabled &&
+    postgresNativeReadRepository.isConfigured() &&
+    isPostgresAppDocumentReadEnabled()
+  );
+}
+
 function isShadowAppDocumentReadEnabled() {
   return (
     chatStorageService.isConfigured() &&
@@ -1667,6 +1689,78 @@ function resolveAdminSessionStoreMode() {
   if (MONGO_URI) return "mongo";
   if (postgresRuntime.isConfigured()) return "postgres";
   return "memory";
+}
+
+function isFreshRequest(req) {
+  const freshValue = req?.query?.fresh;
+  if (["1", "true", "yes", "on"].includes(String(freshValue || "").toLowerCase())) {
+    return true;
+  }
+  const cacheControl = String(req?.headers?.["cache-control"] || "").toLowerCase();
+  const pragma = String(req?.headers?.pragma || "").toLowerCase();
+  return cacheControl.includes("no-cache") || pragma.includes("no-cache");
+}
+
+function attachCacheMetadata(payload, metadata = {}) {
+  return {
+    ...(payload || {}),
+    cache: {
+      ...(payload?.cache || {}),
+      hit: !!metadata.hit,
+      fresh: !!metadata.fresh,
+      generatedAt: metadata.generatedAt || new Date().toISOString(),
+      ttlSeconds: Number(metadata.ttlSeconds || 0),
+      backend: metadata.backend || "postgres",
+    },
+  };
+}
+
+function buildAdminCacheHash(query = {}) {
+  const entries = Object.entries(query || {})
+    .filter(([key]) => !["fresh", "_"].includes(key))
+    .sort(([a], [b]) => a.localeCompare(b));
+  return crypto
+    .createHash("sha1")
+    .update(JSON.stringify(entries))
+    .digest("hex");
+}
+
+async function getCachedAdminJson(req, cacheParts, producer, options = {}) {
+  const ttlSeconds = Number.isFinite(options.ttlSeconds)
+    ? options.ttlSeconds
+    : runtimeConfig.redis.adminCacheTtlSeconds;
+  const fresh = isFreshRequest(req);
+  const cacheKey = redisCacheService.buildKey(["admin", ...cacheParts]);
+
+  if (!fresh && ttlSeconds > 0 && redisCacheService.isConfigured()) {
+    const cached = await redisCacheService.getJson(cacheKey);
+    if (cached) {
+      return attachCacheMetadata(cached.payload, {
+        hit: true,
+        fresh: false,
+        generatedAt: cached.generatedAt,
+        ttlSeconds,
+        backend: "redis",
+      });
+    }
+  }
+
+  const payload = await producer();
+  const generatedAt = new Date().toISOString();
+  if (ttlSeconds > 0 && redisCacheService.isConfigured()) {
+    await redisCacheService.setJson(
+      cacheKey,
+      { generatedAt, payload },
+      ttlSeconds,
+    );
+  }
+  return attachCacheMetadata(payload, {
+    hit: false,
+    fresh,
+    generatedAt,
+    ttlSeconds,
+    backend: "postgres",
+  });
 }
 
 async function maybeMirrorChatMessage(messageDoc, context = "chat_history", options = {}) {
@@ -28574,8 +28668,158 @@ app.get("/admin/customer-stats/data", async (req, res) => {
   }
 });
 
+async function buildNativeOrderPagesResponse() {
+  const [lineBots, facebookBots, instagramBots, whatsappBots, orderGroups] =
+    await Promise.all([
+      maybeListAppDocumentPayloads("line_bots", { limit: 1000 }),
+      maybeListAppDocumentPayloads("facebook_bots", { limit: 1000 }),
+      maybeListAppDocumentPayloads("instagram_bots", { limit: 1000 }),
+      maybeListAppDocumentPayloads("whatsapp_bots", { limit: 1000 }),
+      postgresNativeReadRepository.queryOrderPageGroups(),
+    ]);
+
+  const pageMap = new Map();
+  const readDocId = (doc) => doc?._id?.toString?.() || doc?._id || doc?.id || "";
+  const upsertPage = ({
+    platform,
+    botId = null,
+    name = "",
+    orderCount = 0,
+    lastOrderAt = null,
+  }) => {
+    const normalizedPlatform = normalizeOrderPlatform(platform);
+    const normalizedBotId = normalizeOrderBotId(botId);
+    const pageKey = buildOrderPageKey(normalizedPlatform, normalizedBotId);
+    const existing = pageMap.get(pageKey);
+
+    if (existing) {
+      if (name && !existing.name) existing.name = name;
+      if (Number.isFinite(orderCount)) {
+        existing.orderCount = Math.max(existing.orderCount || 0, orderCount);
+      }
+      if (lastOrderAt) {
+        const existingTime = existing.lastOrderAt
+          ? new Date(existing.lastOrderAt).getTime()
+          : 0;
+        const nextTime = new Date(lastOrderAt).getTime();
+        if (nextTime > existingTime) {
+          existing.lastOrderAt = lastOrderAt;
+        }
+      }
+      return;
+    }
+
+    pageMap.set(pageKey, {
+      pageKey,
+      platform: normalizedPlatform,
+      botId: normalizedBotId,
+      name,
+      orderCount: Number.isFinite(orderCount) ? orderCount : 0,
+      lastOrderAt: lastOrderAt || null,
+    });
+  };
+
+  lineBots.forEach((bot) => {
+    const botId = readDocId(bot);
+    if (!botId) return;
+    upsertPage({
+      platform: "line",
+      botId,
+      name:
+        bot.displayName ||
+        bot.name ||
+        bot.botName ||
+        `LINE Bot (${String(botId).slice(-4)})`,
+    });
+  });
+  facebookBots.forEach((bot) => {
+    const botId = readDocId(bot);
+    if (!botId) return;
+    upsertPage({
+      platform: "facebook",
+      botId,
+      name:
+        bot.pageName ||
+        bot.name ||
+        `Facebook Page (${String(botId).slice(-4)})`,
+    });
+  });
+  instagramBots.forEach((bot) => {
+    const botId = readDocId(bot);
+    if (!botId) return;
+    upsertPage({
+      platform: "instagram",
+      botId,
+      name:
+        bot.name ||
+        bot.instagramUsername ||
+        bot.instagramUserId ||
+        bot.igUserId ||
+        `Instagram (${String(botId).slice(-4)})`,
+    });
+  });
+  whatsappBots.forEach((bot) => {
+    const botId = readDocId(bot);
+    if (!botId) return;
+    upsertPage({
+      platform: "whatsapp",
+      botId,
+      name:
+        bot.name ||
+        bot.phoneNumber ||
+        bot.phoneNumberId ||
+        `WhatsApp (${String(botId).slice(-4)})`,
+    });
+  });
+
+  orderGroups.forEach((entry) => {
+    const platform = normalizeOrderPlatform(entry.platform || "line");
+    const botId = normalizeOrderBotId(entry.botId || null);
+    const platformLabel = getPlatformLabel(platform);
+    upsertPage({
+      platform,
+      botId,
+      name: botId
+        ? `${platformLabel} (${String(botId).slice(-4)})`
+        : `${platformLabel} (default)`,
+      orderCount: Number(entry.orderCount) || 0,
+      lastOrderAt: entry.lastOrderAt || null,
+    });
+  });
+
+  const pages = Array.from(pageMap.values()).sort((a, b) => {
+    const orderDiff = (b.orderCount || 0) - (a.orderCount || 0);
+    if (orderDiff !== 0) return orderDiff;
+    return String(a.name || a.pageKey).localeCompare(
+      String(b.name || b.pageKey),
+      "th",
+      { sensitivity: "base" },
+    );
+  });
+
+  return {
+    success: true,
+    pages,
+    settings: {
+      schedulingEnabled: false,
+      defaultCutoffTime: "00:00",
+      extractionMode: "realtime",
+    },
+  };
+}
+
 app.get("/admin/orders/pages", async (req, res) => {
   try {
+    if (isPostgresNativeReadEnabled()) {
+      const cachedResponse = await getCachedAdminJson(
+        req,
+        ["orders-pages"],
+        buildNativeOrderPagesResponse,
+        { ttlSeconds: runtimeConfig.redis.adminCacheTtlSeconds },
+      );
+      return res.json(cachedResponse);
+    }
+
     const client = await connectDB();
     const db = client.db("chatbot");
 
@@ -33000,6 +33244,14 @@ function buildOpenAiUsagePostgresFilter({
 }
 
 async function queryOpenAiUsageSummaryFromPostgres(filters) {
+  if (isPostgresNativeReadEnabled()) {
+    const nativeSummary =
+      await postgresNativeReadRepository.queryOpenAiUsageSummary(filters);
+    if (nativeSummary) {
+      return nativeSummary;
+    }
+  }
+
   const { params, whereSql } = buildOpenAiUsagePostgresFilter(filters);
   const withFiltered = `
     WITH filtered AS (
@@ -33117,10 +33369,12 @@ async function queryOpenAiUsageSummaryFromPostgres(filters) {
 
 app.get("/api/openai-usage/summary", async (req, res) => {
   try {
+    const cacheHash = buildAdminCacheHash(req.query || {});
+    const cachedResponse = await getCachedAdminJson(
+      req,
+      ["openai-usage-summary", cacheHash],
+      async () => {
     const { startDate, endDate, keyId, botId, platform, provider } = req.query;
-
-    const client = await connectDB();
-    const db = client.db("chatbot");
 
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
@@ -33329,7 +33583,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
       unpricedCalls: 0,
     };
 
-    res.json({
+    return {
       success: true,
       summary: {
         totalCalls: summary.totalCalls,
@@ -33371,7 +33625,11 @@ app.get("/api/openai-usage/summary", async (req, res) => {
         ...d,
         pricedCalls: d.pricedCalls || 0,
       })),
-    });
+    };
+      },
+      { ttlSeconds: runtimeConfig.redis.adminCacheTtlSeconds },
+    );
+    res.json(cachedResponse);
   } catch (err) {
     console.error("[OpenAI Usage] Error getting summary:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -33392,9 +33650,6 @@ app.get("/api/openai-usage", async (req, res) => {
       limit = 50,
     } = req.query;
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-
     const { startMoment, endMoment } = parseApiUsageDateRange(
       startDate,
       endDate,
@@ -33409,14 +33664,49 @@ app.get("/api/openai-usage", async (req, res) => {
     if (platform) match.platform = platform;
     if (provider) match.provider = normalizeProvider(provider);
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    if (isPostgresNativeReadEnabled()) {
+      const nativeResult = await postgresNativeReadRepository.queryOpenAiUsageLogs({
+        startMoment,
+        endMoment,
+        keyId,
+        botId,
+        platform,
+        provider,
+        page,
+        limit,
+      });
+      return res.json({
+        success: true,
+        logs: nativeResult.logs.map(l => ({
+          id: l._id.toString(),
+          apiKeyId: l.apiKeyId?.toString(),
+          botId: l.botId,
+          platform: l.platform,
+          provider: normalizeProvider(l.provider),
+          model: l.model,
+          promptTokens: l.promptTokens,
+          completionTokens: l.completionTokens,
+          totalTokens: l.totalTokens,
+          estimatedCostUSD: l.estimatedCost ?? null,
+          functionName: l.functionName,
+          timestamp: l.timestamp,
+        })),
+        pagination: nativeResult.pagination,
+      });
+    }
+
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+    const currentPage = Math.max(parseInt(page, 10) || 1, 1);
+    const skip = (currentPage - 1) * safeLimit;
 
     const [logs, total] = await Promise.all([
       db.collection("openai_usage_logs")
         .find(match)
         .sort({ timestamp: -1 })
         .skip(skip)
-        .limit(parseInt(limit))
+        .limit(safeLimit)
         .toArray(),
       db.collection("openai_usage_logs").countDocuments(match),
     ]);
@@ -33438,10 +33728,10 @@ app.get("/api/openai-usage", async (req, res) => {
         timestamp: l.timestamp,
       })),
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: currentPage,
+        limit: safeLimit,
         total,
-        pages: Math.ceil(total / parseInt(limit)),
+        pages: Math.ceil(total / safeLimit),
       },
     });
   } catch (err) {
@@ -33881,8 +34171,174 @@ app.get("/api/openai-usage/by-key/:keyId", async (req, res) => {
   }
 });
 
+async function buildNativeOrdersDataResponse(queryParams = {}) {
+  const nativeResult = await postgresNativeReadRepository.queryOrders(queryParams);
+  if (!nativeResult) return null;
+
+  const orders = nativeResult.orders || [];
+  const userIds = Array.from(
+    new Set(orders.map((order) => order.userId).filter(Boolean)),
+  );
+  const profileNameMap =
+    await postgresNativeReadRepository.getUserProfileNames(userIds);
+
+  const botIdSets = {
+    line: new Set(),
+    facebook: new Set(),
+    instagram: new Set(),
+    whatsapp: new Set(),
+  };
+  orders.forEach((order) => {
+    const platform = normalizeOrderPlatform(order.platform || "line");
+    const botId = order.botId || null;
+    if (botId && botIdSets[platform]) {
+      botIdSets[platform].add(String(botId));
+    }
+  });
+
+  const [
+    lineBotDocs,
+    facebookBotDocs,
+    instagramBotDocs,
+    whatsappBotDocs,
+  ] = await Promise.all([
+    maybeReadAppDocumentPayloads("line_bots", [...botIdSets.line]),
+    maybeReadAppDocumentPayloads("facebook_bots", [...botIdSets.facebook]),
+    maybeReadAppDocumentPayloads("instagram_bots", [...botIdSets.instagram]),
+    maybeReadAppDocumentPayloads("whatsapp_bots", [...botIdSets.whatsapp]),
+  ]);
+
+  const pageNameMap = new Map();
+  const readDocId = (doc) => doc?._id?.toString?.() || doc?._id || doc?.id || "";
+  lineBotDocs.forEach((bot) => {
+    const id = readDocId(bot);
+    if (!id) return;
+    pageNameMap.set(
+      buildOrderPageKey("line", id),
+      bot.displayName ||
+        bot.name ||
+        bot.botName ||
+        `LINE Bot (${String(id).slice(-4)})`,
+    );
+  });
+  facebookBotDocs.forEach((bot) => {
+    const id = readDocId(bot);
+    if (!id) return;
+    pageNameMap.set(
+      buildOrderPageKey("facebook", id),
+      bot.pageName ||
+        bot.name ||
+        `Facebook Page (${String(id).slice(-4)})`,
+    );
+  });
+  instagramBotDocs.forEach((bot) => {
+    const id = readDocId(bot);
+    if (!id) return;
+    pageNameMap.set(
+      buildOrderPageKey("instagram", id),
+      bot.name ||
+        bot.instagramUsername ||
+        bot.instagramUserId ||
+        bot.igUserId ||
+        `Instagram (${String(id).slice(-4)})`,
+    );
+  });
+  whatsappBotDocs.forEach((bot) => {
+    const id = readDocId(bot);
+    if (!id) return;
+    pageNameMap.set(
+      buildOrderPageKey("whatsapp", id),
+      bot.name ||
+        bot.phoneNumber ||
+        bot.phoneNumberId ||
+        `WhatsApp (${String(id).slice(-4)})`,
+    );
+  });
+
+  const parseNumeric = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+  };
+
+  const formattedOrders = orders.map((order) => {
+    const orderData = order.orderData || {};
+    const customerName = normalizeCustomerName(orderData.customerName);
+    const displayName =
+      customerName ||
+      profileNameMap.get(order.userId) ||
+      order.userId ||
+      "";
+    const addressInfo = normalizeOrderAddress(orderData);
+    const platform = normalizeOrderPlatform(order.platform || "line");
+    const botId = order.botId || null;
+    const pageKey = buildOrderPageKey(platform, botId);
+    const pageName =
+      pageNameMap.get(pageKey) ||
+      (botId ? `${getPlatformLabel(platform)} (${botId})` : null);
+    const recipientName =
+      normalizeCustomerName(orderData.recipientName) ||
+      customerName ||
+      displayName;
+
+    return {
+      id: order.id || order._id || "",
+      userId: order.userId || "",
+      displayName,
+      customerName: customerName || "",
+      recipientName: recipientName || "",
+      platform,
+      botId,
+      pageKey,
+      pageName,
+      status: order.status || "pending",
+      totalAmount: parseNumeric(orderData.totalAmount),
+      shippingCost: parseNumeric(orderData.shippingCost),
+      paymentMethod: orderData.paymentMethod || orderData.paymentType || null,
+      shippingAddress:
+        addressInfo.fullAddress || orderData.shippingAddress || null,
+      addressSubDistrict: addressInfo.subDistrict || "",
+      addressDistrict: addressInfo.district || "",
+      addressProvince: addressInfo.province || "",
+      addressPostalCode: addressInfo.postalCode || "",
+      phone:
+        orderData.phone ||
+        orderData.customerPhone ||
+        orderData.shippingPhone ||
+        null,
+      email: orderData.email || orderData.customerEmail || "",
+      items: Array.isArray(orderData.items) ? orderData.items : [],
+      extractedAt: order.extractedAt || null,
+      notes: order.notes || orderData.notes || "",
+      transferDate: orderData.transferDate || orderData.paymentDate || null,
+      transferTime: orderData.transferTime || orderData.paymentTime || null,
+      paymentReceiver: orderData.paymentReceiver || orderData.receivedBy || "",
+      isManualExtraction: !!order.isManualExtraction,
+      extractedFrom: order.extractedFrom || null,
+    };
+  });
+
+  return {
+    success: true,
+    orders: formattedOrders,
+    pagination: nativeResult.pagination,
+    summary: nativeResult.summary,
+    statusCounts: nativeResult.statusCounts,
+  };
+}
+
 app.get("/admin/orders/data", async (req, res) => {
   try {
+    if (isPostgresNativeReadEnabled()) {
+      const cacheHash = buildAdminCacheHash(req.query || {});
+      const cachedResponse = await getCachedAdminJson(
+        req,
+        ["orders-data", cacheHash],
+        () => buildNativeOrdersDataResponse(req.query || {}),
+        { ttlSeconds: runtimeConfig.redis.adminCacheTtlSeconds },
+      );
+      return res.json(cachedResponse);
+    }
+
     const { query } = buildOrderQuery(req.query || {});
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);

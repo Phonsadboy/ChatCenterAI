@@ -50,7 +50,9 @@ function buildRuntimeConfig(env = process.env) {
 
   const postgresConnectionString = readFirstString(env, [
     "DATABASE_URL",
+    "DATABASE_PUBLIC_URL",
     "POSTGRES_URL",
+    "POSTGRES_PUBLIC_URL",
     "PGDATABASE_URL",
   ]);
 
@@ -64,6 +66,10 @@ function buildRuntimeConfig(env = process.env) {
     appDocumentMode,
     chatStorageMode,
     sessionStoreMode,
+    postgresNativeReadsEnabled: parseBooleanEnv(
+      env.POSTGRES_NATIVE_READS,
+      false,
+    ),
     chatHotRetentionDays: Math.max(
       1,
       parseIntEnv(env.CHAT_HOT_RETENTION_DAYS, 60),
@@ -91,6 +97,15 @@ function buildRuntimeConfig(env = process.env) {
         parseIntEnv(env.POSTGRES_CONNECTION_TIMEOUT_MS, 10000),
       ),
       maxPoolSize: Math.max(1, parseIntEnv(env.POSTGRES_MAX_POOL_SIZE, 10)),
+    },
+    redis: {
+      url: readFirstString(env, ["REDIS_URL", "VALKEY_URL"]),
+      keyPrefix:
+        readFirstString(env, ["REDIS_KEY_PREFIX"]) || "chatcenter-ai",
+      adminCacheTtlSeconds: Math.max(
+        0,
+        parseIntEnv(env.ADMIN_CACHE_TTL_SECONDS, 45),
+      ),
     },
     bucket: {
       bucketName,

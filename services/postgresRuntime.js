@@ -140,6 +140,24 @@ function createPostgresRuntime(config = {}) {
       `);
 
       await query(`
+        CREATE TABLE IF NOT EXISTS chat_conversation_heads (
+          platform text NOT NULL DEFAULT 'line',
+          bot_id text NOT NULL DEFAULT 'default',
+          user_id text NOT NULL,
+          last_message_id text,
+          last_message_at timestamptz,
+          last_message_content text,
+          last_message_preview text,
+          last_role text,
+          message_count integer NOT NULL DEFAULT 0,
+          unread_count integer NOT NULL DEFAULT 0,
+          metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (platform, bot_id, user_id)
+        )
+      `);
+
+      await query(`
         CREATE TABLE IF NOT EXISTS chat_archive_exports (
           archive_month date NOT NULL,
           export_path text NOT NULL,
@@ -160,6 +178,191 @@ function createPostgresRuntime(config = {}) {
           created_at timestamptz NOT NULL DEFAULT now(),
           updated_at timestamptz NOT NULL DEFAULT now(),
           PRIMARY KEY (collection_name, document_id)
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS orders (
+          id text PRIMARY KEY,
+          user_id text,
+          platform text NOT NULL DEFAULT 'line',
+          bot_id text,
+          status text NOT NULL DEFAULT 'pending',
+          total_amount numeric(14, 2),
+          shipping_cost numeric(14, 2),
+          order_data jsonb NOT NULL DEFAULT '{}'::jsonb,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          notes text,
+          is_manual_extraction boolean NOT NULL DEFAULT false,
+          extracted_from text,
+          extracted_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS user_profiles (
+          user_id text NOT NULL,
+          platform text NOT NULL DEFAULT 'line',
+          display_name text,
+          picture_url text,
+          status_message text,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (user_id, platform)
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS user_tags (
+          user_id text PRIMARY KEY,
+          tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS user_purchase_status (
+          user_id text PRIMARY KEY,
+          has_purchased boolean NOT NULL DEFAULT false,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS user_unread_counts (
+          user_id text PRIMARY KEY,
+          unread_count integer NOT NULL DEFAULT 0,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS active_user_status (
+          sender_id text PRIMARY KEY,
+          ai_enabled boolean NOT NULL DEFAULT true,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS follow_up_status (
+          sender_id text PRIMARY KEY,
+          has_follow_up boolean NOT NULL DEFAULT false,
+          follow_up_reason text,
+          last_analyzed_at timestamptz,
+          follow_up_updated_at timestamptz,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS follow_up_tasks (
+          id text PRIMARY KEY,
+          user_id text,
+          platform text NOT NULL DEFAULT 'line',
+          bot_id text,
+          next_scheduled_at timestamptz,
+          next_round_index integer,
+          canceled boolean NOT NULL DEFAULT false,
+          completed boolean NOT NULL DEFAULT false,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS openai_usage_logs (
+          id text PRIMARY KEY,
+          api_key_id text,
+          bot_id text,
+          platform text,
+          provider text,
+          model text,
+          function_name text,
+          prompt_tokens bigint NOT NULL DEFAULT 0,
+          completion_tokens bigint NOT NULL DEFAULT 0,
+          cached_prompt_tokens bigint NOT NULL DEFAULT 0,
+          reasoning_tokens bigint NOT NULL DEFAULT 0,
+          total_tokens bigint NOT NULL DEFAULT 0,
+          estimated_cost numeric(18, 8),
+          usage_at timestamptz NOT NULL,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS instruction_headers (
+          id text PRIMARY KEY,
+          title text,
+          status text,
+          is_active boolean,
+          is_default boolean,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS instruction_data_items (
+          id text PRIMARY KEY,
+          instruction_id text,
+          item_type text,
+          title text,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS order_daily_metrics (
+          metric_date date NOT NULL,
+          platform text NOT NULL DEFAULT 'line',
+          bot_id text NOT NULL DEFAULT 'default',
+          status text NOT NULL DEFAULT 'unknown',
+          order_count bigint NOT NULL DEFAULT 0,
+          total_amount numeric(18, 2) NOT NULL DEFAULT 0,
+          total_shipping numeric(18, 2) NOT NULL DEFAULT 0,
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (metric_date, platform, bot_id, status)
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS order_page_metrics (
+          platform text NOT NULL DEFAULT 'line',
+          bot_id text NOT NULL DEFAULT 'default',
+          first_order_at timestamptz,
+          last_order_at timestamptz,
+          order_count bigint NOT NULL DEFAULT 0,
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (platform, bot_id)
+        )
+      `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS openai_usage_daily (
+          usage_date date NOT NULL,
+          provider text NOT NULL DEFAULT 'openai',
+          model text NOT NULL DEFAULT 'unknown',
+          platform text NOT NULL DEFAULT 'unknown',
+          bot_id text NOT NULL DEFAULT 'default',
+          call_count bigint NOT NULL DEFAULT 0,
+          prompt_tokens bigint NOT NULL DEFAULT 0,
+          completion_tokens bigint NOT NULL DEFAULT 0,
+          total_tokens bigint NOT NULL DEFAULT 0,
+          estimated_cost numeric(18, 8) NOT NULL DEFAULT 0,
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (usage_date, provider, model, platform, bot_id)
         )
       `);
 
@@ -193,6 +396,67 @@ function createPostgresRuntime(config = {}) {
       await query(`
         CREATE INDEX IF NOT EXISTS idx_chat_conversations_last_message_at
           ON chat_conversations (last_message_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_chat_conversation_heads_last_message_at
+          ON chat_conversation_heads (last_message_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_chat_conversation_heads_last_message_at_nulls_last
+          ON chat_conversation_heads (last_message_at DESC NULLS LAST)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_chat_conversation_heads_user_last
+          ON chat_conversation_heads (user_id, last_message_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_orders_extracted_at
+          ON orders (extracted_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_orders_extracted_at_nulls_last
+          ON orders (extracted_at DESC NULLS LAST)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_orders_status_extracted_at
+          ON orders (status, extracted_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_orders_user_extracted_at
+          ON orders (user_id, extracted_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_orders_platform_bot_extracted_at
+          ON orders (platform, bot_id, extracted_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_follow_up_tasks_active_user_next
+          ON follow_up_tasks (user_id, next_scheduled_at ASC, updated_at DESC)
+          WHERE canceled = false AND completed = false
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_openai_usage_logs_usage_at
+          ON openai_usage_logs (usage_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_openai_usage_logs_key_usage_at
+          ON openai_usage_logs (api_key_id, usage_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_openai_usage_logs_bot_usage_at
+          ON openai_usage_logs (platform, bot_id, usage_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_openai_usage_logs_model_usage_at
+          ON openai_usage_logs (provider, model, usage_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_instruction_headers_updated
+          ON instruction_headers (updated_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_instruction_data_items_instruction_updated
+          ON instruction_data_items (instruction_id, updated_at DESC)
       `);
       await query(`
         CREATE INDEX IF NOT EXISTS idx_chat_message_attachments_bucket_key

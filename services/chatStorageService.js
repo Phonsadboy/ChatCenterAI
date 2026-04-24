@@ -5,6 +5,9 @@ const { ObjectId } = require("mongodb");
 const {
   detectImageMimeType,
 } = require("../utils/chatImageUtils");
+const {
+  createPostgresNativeDocumentSync,
+} = require("./postgresNativeDocumentSync");
 
 function safeJsonParse(value) {
   if (typeof value !== "string") return null;
@@ -180,9 +183,14 @@ function createChatStorageService({
   postgresRuntime,
   bucketClient,
   hotRetentionDays = 60,
+  useConversationHeads = false,
   logger = console,
 } = {}) {
   let ensureReadyPromise = null;
+  const nativeDocumentSync = createPostgresNativeDocumentSync({
+    postgresRuntime,
+    logger,
+  });
 
   async function ensureReady() {
     if (!postgresRuntime || !postgresRuntime.isConfigured()) return;
@@ -501,6 +509,66 @@ function createChatStorageService({
         ],
       );
 
+      await client.query(
+        `
+          INSERT INTO chat_conversation_heads (
+            platform,
+            bot_id,
+            user_id,
+            last_message_id,
+            last_message_at,
+            last_message_content,
+            last_message_preview,
+            last_role,
+            message_count,
+            updated_at
+          ) VALUES (
+            $1, COALESCE(NULLIF($2, ''), 'default'), $3, $4, $5, $6, $7, $8, 1, now()
+          )
+          ON CONFLICT (platform, bot_id, user_id) DO UPDATE SET
+            last_message_id = CASE
+              WHEN chat_conversation_heads.last_message_at IS NULL
+                OR EXCLUDED.last_message_at >= chat_conversation_heads.last_message_at
+              THEN EXCLUDED.last_message_id
+              ELSE chat_conversation_heads.last_message_id
+            END,
+            last_message_at = GREATEST(
+              COALESCE(chat_conversation_heads.last_message_at, EXCLUDED.last_message_at),
+              EXCLUDED.last_message_at
+            ),
+            last_message_content = CASE
+              WHEN chat_conversation_heads.last_message_at IS NULL
+                OR EXCLUDED.last_message_at >= chat_conversation_heads.last_message_at
+              THEN EXCLUDED.last_message_content
+              ELSE chat_conversation_heads.last_message_content
+            END,
+            last_message_preview = CASE
+              WHEN chat_conversation_heads.last_message_at IS NULL
+                OR EXCLUDED.last_message_at >= chat_conversation_heads.last_message_at
+              THEN EXCLUDED.last_message_preview
+              ELSE chat_conversation_heads.last_message_preview
+            END,
+            last_role = CASE
+              WHEN chat_conversation_heads.last_message_at IS NULL
+                OR EXCLUDED.last_message_at >= chat_conversation_heads.last_message_at
+              THEN EXCLUDED.last_role
+              ELSE chat_conversation_heads.last_role
+            END,
+            message_count = chat_conversation_heads.message_count + 1,
+            updated_at = now()
+        `,
+        [
+          messageDoc.platform || "line",
+          messageDoc.botId || null,
+          userId,
+          messageId,
+          timestamp.toISOString(),
+          serialized.contentText,
+          previewText,
+          messageDoc.role || "user",
+        ],
+      );
+
       await client.query("COMMIT");
       return {
         attachments: prepared.attachments,
@@ -568,6 +636,69 @@ function createChatStorageService({
     const limit = Number.isFinite(options.limit) ? options.limit : 50;
     const focusUserId =
       typeof options.focusUserId === "string" ? options.focusUserId.trim() : "";
+
+    if (useConversationHeads) {
+      const headsResult = await postgresRuntime.query(
+        `
+          SELECT
+            user_id,
+            last_message_content,
+            last_message_at,
+            message_count,
+            platform,
+            NULLIF(bot_id, 'default') AS bot_id
+          FROM chat_conversation_heads
+          ORDER BY last_message_at DESC NULLS LAST
+          LIMIT $1
+        `,
+        [limit],
+      );
+      const headRows = headsResult.rows.map((row) => ({
+        _id: row.user_id,
+        lastMessage: row.last_message_content || "",
+        lastTimestamp: row.last_message_at,
+        messageCount: Number(row.message_count || 0),
+        platform: row.platform || "line",
+        botId: row.bot_id || null,
+      }));
+
+      if (
+        focusUserId &&
+        !headRows.some((row) => String(row._id || "") === focusUserId)
+      ) {
+        const focusResult = await postgresRuntime.query(
+          `
+            SELECT
+              user_id,
+              last_message_content,
+              last_message_at,
+              message_count,
+              platform,
+              NULLIF(bot_id, 'default') AS bot_id
+            FROM chat_conversation_heads
+            WHERE user_id = $1
+            ORDER BY last_message_at DESC NULLS LAST
+            LIMIT 1
+          `,
+          [focusUserId],
+        );
+        if (focusResult.rows[0]) {
+          headRows.unshift({
+            _id: focusResult.rows[0].user_id,
+            lastMessage: focusResult.rows[0].last_message_content || "",
+            lastTimestamp: focusResult.rows[0].last_message_at,
+            messageCount: Number(focusResult.rows[0].message_count || 0),
+            platform: focusResult.rows[0].platform || "line",
+            botId: focusResult.rows[0].bot_id || null,
+          });
+        }
+      }
+
+      if (headRows.length > 0) {
+        return headRows;
+      }
+    }
+
     const usersResult = await postgresRuntime.query(
       `
         SELECT
@@ -700,6 +831,10 @@ function createChatStorageService({
       `DELETE FROM chat_conversations WHERE user_id = $1`,
       [userId],
     );
+    await postgresRuntime.query(
+      `DELETE FROM chat_conversation_heads WHERE user_id = $1`,
+      [userId],
+    );
   }
 
   async function updateMessagesMetadata(userId, messageIds = [], patch = {}) {
@@ -750,6 +885,11 @@ function createChatStorageService({
           updated_at = now()
       `,
       [collectionName, documentId, JSON.stringify(payload || {})],
+    );
+    await nativeDocumentSync.safelyUpsertDocument(
+      collectionName,
+      documentId,
+      payload || {},
     );
   }
 
@@ -1008,6 +1148,7 @@ function createChatStorageService({
       `,
       [collectionName, documentId],
     );
+    await nativeDocumentSync.safelyDeleteDocument(collectionName, documentId);
   }
 
   async function upsertAssetObject(scope, assetId, payload = {}) {

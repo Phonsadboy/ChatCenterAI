@@ -13,8 +13,10 @@
     "migrate:chat:hot": "node scripts/migrate-chat-hot.js",
     "migrate:chat:archive": "node scripts/export-chat-archive.js",
     "migrate:pg:docs": "node scripts/migrate-app-documents.js",
+    "migrate:pg:native-performance": "node scripts/migrate-postgres-performance-native.js",
     "migrate:assets": "node scripts/migrate-gridfs-assets.js",
-    "verify:pg:cutover": "node scripts/verify-postgres-cutover.js"
+    "verify:pg:cutover": "node scripts/verify-postgres-cutover.js",
+    "verify:pg:native-performance": "node scripts/verify-postgres-performance-native.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.901.0",
@@ -42,6 +44,7 @@
     "openai": "^4.0.0",
     "p-queue": "^8.0.1",
     "pg": "^8.16.3",
+    "redis": "^4.7.1",
     "request": "^2.88.2",
     "sharp": "^0.32.6",
     "socket.io": "^4.7.5",

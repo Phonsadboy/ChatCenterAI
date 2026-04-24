@@ -33,6 +33,11 @@
     loading: false,
     detailOrderId: null
   };
+  const isBrowserReload =
+    performance.getEntriesByType &&
+    performance.getEntriesByType('navigation')[0]?.type === 'reload';
+  let firstPagesRequest = true;
+  let firstOrdersRequest = true;
 
   // ============ Status Config ============
   const STATUS_CONFIG = {
@@ -201,6 +206,10 @@
 
     try {
       const params = buildQueryParams();
+      if (firstOrdersRequest && isBrowserReload) {
+        params.set('fresh', '1');
+      }
+      firstOrdersRequest = false;
       const response = await fetch(`/admin/orders/data?${params.toString()}`);
       const data = await response.json();
 
@@ -225,7 +234,13 @@
 
   async function loadPages() {
     try {
-      const response = await fetch('/admin/orders/pages');
+      const params = new URLSearchParams();
+      if (firstPagesRequest && isBrowserReload) {
+        params.set('fresh', '1');
+      }
+      firstPagesRequest = false;
+      const suffix = params.toString() ? `?${params.toString()}` : '';
+      const response = await fetch(`/admin/orders/pages${suffix}`);
       const data = await response.json();
 
       if (data.success && data.pages) {
