@@ -40,6 +40,8 @@
         inventory: null,
         inventoryFilter: "",
         activeInventoryRefs: [],
+        episodeDetails: {},
+        selectedEpisodeId: "",
     };
 
     const SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -851,6 +853,7 @@
                     changes: snapshot.changes,
                     toolsUsed: snapshot.toolsUsed,
                     assistantMessages: snapshot.assistantMessages,
+                    batch: snapshot.batch,
                     versionSnapshot: snapshot.versionSnapshot,
                     commentaryText: snapshot.commentaryText,
                     commentaryTimeline: snapshot.commentaryTimeline,
@@ -2142,14 +2145,26 @@
             }
             state.inventory = data.inventory;
             try {
-                const [analyticsRes, episodesRes] = await Promise.all([
+                const [analyticsRes, episodesRes, readinessRes, recommendationsRes, evalRes, toolRegistryRes] = await Promise.all([
                     fetch(`/api/instruction-ai2/analytics/${encodeURIComponent(instructionId)}`, { cache: "no-store" }),
                     fetch(`/api/instruction-ai2/analytics/${encodeURIComponent(instructionId)}/episodes?limit=20`, { cache: "no-store" }),
+                    fetch(`/api/instruction-ai2/readiness/${encodeURIComponent(instructionId)}`, { cache: "no-store" }),
+                    fetch(`/api/instruction-ai2/recommendations/${encodeURIComponent(instructionId)}`, { cache: "no-store" }),
+                    fetch(`/api/instruction-ai2/eval/${encodeURIComponent(instructionId)}`, { cache: "no-store" }),
+                    fetch("/api/instruction-ai2/tool-registry", { cache: "no-store" }),
                 ]);
                 const analytics = await analyticsRes.json().catch(() => null);
                 const episodes = await episodesRes.json().catch(() => null);
+                const readiness = await readinessRes.json().catch(() => null);
+                const recommendations = await recommendationsRes.json().catch(() => null);
+                const evalSuite = await evalRes.json().catch(() => null);
+                const toolRegistry = await toolRegistryRes.json().catch(() => null);
                 state.inventory.analytics = analytics?.success ? analytics : null;
                 state.inventory.episodes = episodes?.success ? episodes : null;
+                state.inventory.readiness = readiness?.success ? readiness : state.inventory.readiness;
+                state.inventory.recommendations = recommendations?.success ? recommendations : state.inventory.recommendations;
+                state.inventory.evalSuite = evalSuite?.success ? evalSuite : state.inventory.sections?.eval?.suite || null;
+                state.inventory.toolRegistry = toolRegistry?.success ? toolRegistry : state.inventory.toolRegistry;
             } catch (e) {
                 state.inventory.analytics = null;
                 state.inventory.episodes = null;
@@ -2230,12 +2245,15 @@
     function renderBatchPreview(batch) {
         const changes = Array.isArray(batch?.changes) ? batch.changes : [];
         const preflightErrors = Array.isArray(batch?.preflight?.errors) ? batch.preflight.errors : [];
+        const preflightWarnings = Array.isArray(batch?.preflight?.warnings) ? batch.preflight.warnings : [];
         if (dom.batchSummary) {
             dom.batchSummary.innerHTML = `
                 <div><strong>${changes.length}</strong> รายการรอยืนยัน</div>
                 <div>batch: <code>${escapeHtml(batch.batchId || "")}</code></div>
+                ${batch.confirmation?.tokenFingerprint ? `<div>confirm: <code>${escapeHtml(batch.confirmation.tokenFingerprint)}</code></div>` : ""}
                 <div class="ic-ai2-batch-note">ยังไม่มีการเขียนข้อมูลจริงจนกว่าจะกด Approve all</div>
                 ${preflightErrors.length ? `<div class="ic-ai2-batch-note">Preflight warning/block: ${escapeHtml(preflightErrors.map((err) => err.error || err.message || "error").join(", "))}</div>` : ""}
+                ${preflightWarnings.length ? `<div class="ic-ai2-batch-note">Eval warning: ${escapeHtml(preflightWarnings.map((warning) => warning.message || warning.type || "warning").slice(0, 6).join(" · "))}</div>` : ""}
             `;
         }
         if (dom.batchList) {
@@ -2282,6 +2300,11 @@
         try {
             const res = await fetch(`/api/instruction-ai2/batches/${encodeURIComponent(batch.batchId)}/commit`, {
                 method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    confirmationToken: batch.confirmationToken || "",
+                    commitRequestId: `ui_commit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+                }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok || !data.success) {
@@ -2342,6 +2365,19 @@
         return String(text || "").toLowerCase().includes(filter);
     }
 
+    function formatDateTime(value) {
+        if (!value) return "-";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value);
+        return date.toLocaleString("th-TH", {
+            year: "2-digit",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+        });
+    }
+
     function getInventoryItemClass(refs = [], mode = state.activeInventoryMode || "active") {
         const active = state.activeInventoryRefs || [];
         const hit = refs.some((ref) => active.includes(ref));
@@ -2361,16 +2397,45 @@
             </section>`;
     }
 
-    function renderInventoryItem({ refs = [], mode = "active", name = "", meta = "", preview = "", warning = false }) {
+    function renderInventoryItem({ refs = [], mode = "active", name = "", meta = "", preview = "", warning = false, attrs = {} }) {
         const searchText = [name, meta, preview].join(" ");
         if (!inventoryMatchesFilter(searchText)) return "";
         const cls = getInventoryItemClass(refs, mode);
+        const attrText = Object.entries(attrs || {})
+            .filter(([, value]) => value !== undefined && value !== null && String(value) !== "")
+            .map(([key, value]) => ` data-${key}="${escapeHtml(String(value))}"`)
+            .join("");
         return `
-            <div class="ic-inv-item ${cls}" data-inv-refs="${escapeHtml(refs.join(" "))}">
+            <div class="ic-inv-item ${cls}" data-inv-refs="${escapeHtml(refs.join(" "))}"${attrText}>
                 <div class="ic-inv-name ${warning ? "ic-inv-warning" : ""}">${escapeHtml(name || "Untitled")}</div>
                 ${meta ? `<div class="ic-inv-meta">${escapeHtml(meta)}</div>` : ""}
                 ${preview ? `<div class="ic-inv-preview">${escapeHtml(preview)}</div>` : ""}
             </div>`;
+    }
+
+    function renderStatusName(status) {
+        if (status === "pass") return "ผ่าน";
+        if (status === "fail") return "ต้องแก้";
+        if (status === "warn") return "ควรตรวจ";
+        return status || "-";
+    }
+
+    async function loadEpisodeDetail(episodeId) {
+        if (!state.selectedId || !episodeId) return;
+        state.selectedEpisodeId = episodeId;
+        const cacheKey = String(episodeId);
+        if (state.episodeDetails[cacheKey]?.success) {
+            renderInventory();
+            return;
+        }
+        try {
+            const res = await fetch(`/api/instruction-ai2/analytics/${encodeURIComponent(state.selectedId)}/episodes/${encodeURIComponent(cacheKey)}`, { cache: "no-store" });
+            const data = await res.json().catch(() => ({}));
+            state.episodeDetails[cacheKey] = data;
+        } catch (err) {
+            state.episodeDetails[cacheKey] = { success: false, error: err.message };
+        }
+        renderInventory();
     }
 
     function renderInventory() {
@@ -2383,21 +2448,93 @@
         }
         if (dom.inventoryTitle) dom.inventoryTitle.textContent = inv.instruction?.name || state.selectedName || "Inventory";
         const dataItems = Array.isArray(inv.dataItems) ? inv.dataItems : [];
+        const catalogRows = Array.isArray(inv.sections?.catalogRows) ? inv.sections.catalogRows : [];
+        const scenarioRows = Array.isArray(inv.sections?.scenarioRows) ? inv.sections.scenarioRows : [];
         const pages = inv.sections?.pages || {};
         const images = inv.sections?.images || {};
         const followup = inv.sections?.followup || {};
         const model = inv.sections?.model || {};
+        const evalSection = inv.sections?.eval || {};
+        const runtimeConventions = inv.sections?.runtimeConventions || inv.runtimeConventions || {};
         const warnings = Array.isArray(inv.warnings) ? inv.warnings : [];
         const versions = Array.isArray(inv.versions) ? inv.versions : [];
         const analytics = inv.analytics || {};
         const episodes = inv.episodes || {};
+        const readiness = inv.readiness || inv.sections?.readiness || {};
+        const recommendations = inv.recommendations || inv.sections?.recommendations || {};
+        const evalSuite = inv.evalSuite || evalSection.suite || {};
+        const toolRegistry = inv.toolRegistry || inv.sections?.toolRegistry || {};
+        const selectedEpisodeDetail = state.selectedEpisodeId
+            ? state.episodeDetails[String(state.selectedEpisodeId)]
+            : null;
 
         const sections = [
+            renderInventorySection("Setup Wizard", [
+                readiness.success ? {
+                    refs: ["readiness", "setup"],
+                    name: `Readiness ${readiness.score ?? 0}%`,
+                    meta: `ผ่าน ${readiness.counts?.pass || 0} · ควรตรวจ ${readiness.counts?.warn || 0} · ต้องแก้ ${readiness.counts?.fail || 0}`,
+                    preview: (readiness.nextSteps || []).slice(0, 3).map((step) => step.title).join(" → ") || "พร้อมสำหรับ retail flow เบื้องต้น",
+                    warning: (readiness.counts?.fail || readiness.counts?.warn) > 0,
+                } : null,
+            ].filter(Boolean), (entry) => renderInventoryItem(entry)),
+            renderInventorySection("Readiness", readiness.success ? (readiness.checklist || []) : [], (item) => renderInventoryItem({
+                refs: [`readiness:${item.key}`, "readiness"],
+                name: `${renderStatusName(item.status)} · ${item.title}`,
+                meta: item.key,
+                preview: item.impact || "",
+                warning: item.status !== "pass",
+            })),
+            renderInventorySection("Recommendations", recommendations.success ? (recommendations.recommendations || []) : [], (item) => renderInventoryItem({
+                refs: [`recommendation:${item.type}`, "recommendations"],
+                name: `${item.priority || "medium"} · ${item.title}`,
+                meta: item.type || "",
+                preview: item.impact || item.suggestedPrompt || "",
+                warning: item.priority === "high",
+            })),
             renderInventorySection("Knowledge", dataItems, (item) => renderInventoryItem({
                 refs: [`item:${item.itemId}`, `role:${item.semanticRole}`],
                 name: `${item.title} (${item.semanticRole})`,
                 meta: `${item.type}${item.rowCount ? ` · ${item.rowCount} rows` : ""}`,
                 preview: item.type === "text" ? item.preview : (item.columns || []).join(", "),
+            })),
+            renderInventorySection("Runtime Rules", [
+                runtimeConventions.cut ? {
+                    refs: ["runtime:cut"],
+                    name: runtimeConventions.cut.token || "[cut]",
+                    meta: "bubble splitter",
+                    preview: runtimeConventions.cut.meaning || runtimeConventions.cut.guidance || "",
+                } : null,
+                runtimeConventions.imageToken ? {
+                    refs: ["runtime:image"],
+                    name: runtimeConventions.imageToken.token || "#[IMAGE:<ชื่อรูป>]",
+                    meta: `not ${runtimeConventions.imageToken.notToken || "[IMAGE:<ชื่อรูป>]"}`,
+                    preview: runtimeConventions.imageToken.source || runtimeConventions.imageToken.meaning || "",
+                } : null,
+                runtimeConventions.runtimeInjection ? {
+                    refs: ["runtime:injection"],
+                    name: "Runtime injection",
+                    meta: `${runtimeConventions.currentScope?.activeCollectionIds?.length || 0} active collections`,
+                    preview: runtimeConventions.runtimeInjection.description || "",
+                } : null,
+            ].filter(Boolean), (entry) => renderInventoryItem({
+                refs: entry.refs,
+                name: entry.name,
+                meta: entry.meta,
+                preview: entry.preview,
+            })),
+            renderInventorySection("Products", catalogRows, (row) => renderInventoryItem({
+                refs: [`item:${row.itemId}`, `row:${row.itemId}:${row.rowIndex}`, `product:${row.rowId}`],
+                name: row.name || row.rowId,
+                meta: `${row.itemTitle || ""} · row ${Number(row.rowIndex) + 1}${row.priceText ? ` · ${row.priceText}` : ""}`,
+                preview: row.detail || JSON.stringify(row.data || {}),
+                warning: !row.priceText,
+            })),
+            renderInventorySection("Scenarios", scenarioRows, (row) => renderInventoryItem({
+                refs: [`item:${row.itemId}`, `row:${row.itemId}:${row.rowIndex}`, `scenario:${row.rowId}`],
+                name: row.situation || row.rowId,
+                meta: `${row.itemTitle || ""} · row ${Number(row.rowIndex) + 1}`,
+                preview: row.answer || JSON.stringify(row.data || {}),
             })),
             renderInventorySection("Pages", pages.available || [], (page) => renderInventoryItem({
                 refs: [`page:${page.pageKey}`],
@@ -2462,6 +2599,72 @@
                 meta: entry.meta,
                 preview: entry.preview,
             })),
+            renderInventorySection("Eval Cases", evalSuite.success ? (evalSuite.cases || []) : [], (item) => renderInventoryItem({
+                refs: [`eval:${item.id}`, `eval:${item.category}`],
+                name: `${renderStatusName(item.status)} · ${item.title}`,
+                meta: `${item.category || ""} · ${evalSuite.gate || "warning_only"}`,
+                preview: [...(item.failures || []), ...(item.warnings || [])].join(" · ") || item.expectedBehavior || "",
+                warning: item.status !== "pass",
+            })),
+            renderInventorySection("Recent Episodes", episodes.success ? (episodes.episodes || []) : [], (episode) => {
+                const versions = Array.isArray(episode.messages)
+                    ? Array.from(new Set(episode.messages.map((msg) => msg.instructionVersion || "unknown"))).join(", ")
+                    : "";
+                const orders = Array.isArray(episode.orderIds)
+                    ? episode.orderIds.length
+                    : Array.isArray(episode.messages)
+                        ? episode.messages.reduce((sum, msg) => sum + (Array.isArray(msg.orderIds) ? msg.orderIds.length : 0), 0)
+                        : 0;
+                return renderInventoryItem({
+                    refs: [`episode:${episode.episodeId}`, "analytics"],
+                    name: episode.episodeId || "episode",
+                    meta: `${episode.platform || ""}:${episode.botId || ""} · ${episode.messageCount || 0} msgs${orders ? ` · ${orders} orders` : ""}`,
+                    preview: `versions: ${versions || "unknown"} · last: ${formatDateTime(episode.lastMessageAt || episode.updatedAt)}`,
+                    warning: !versions,
+                    attrs: { "episode-id": episode.episodeId || "" },
+                });
+            }),
+            renderInventorySection("Episode Detail", selectedEpisodeDetail?.success ? (selectedEpisodeDetail.messages || []) : [], (message) => renderInventoryItem({
+                refs: [`episode:${state.selectedEpisodeId}`, `version:${message.instructionVersion || "unknown"}`, `message:${message.messageId || ""}`],
+                name: `${message.role || "assistant"} · v${message.instructionVersion || "unknown"}`,
+                meta: `${formatDateTime(message.createdAt)}${message.model ? ` · ${message.model}` : ""}${message.orderIds?.length ? ` · ${message.orderIds.length} orders` : ""}`,
+                preview: message.content || (message.imageAssetIdsSent?.length ? `sent images: ${message.imageAssetIdsSent.join(", ")}` : ""),
+                warning: !message.instructionVersion,
+            })),
+            renderInventorySection("Episode Detail", selectedEpisodeDetail && !selectedEpisodeDetail.success ? [{
+                refs: [`episode:${state.selectedEpisodeId}`],
+                name: "โหลด episode detail ไม่สำเร็จ",
+                meta: state.selectedEpisodeId,
+                preview: selectedEpisodeDetail.error || "",
+                warning: true,
+            }] : [], (entry) => renderInventoryItem(entry)),
+            renderInventorySection("Legacy", [
+                analytics.legacy ? {
+                    name: "Legacy conversations",
+                    meta: analytics.legacy.included ? "included" : "separate",
+                    preview: analytics.legacy.note || episodes.legacy?.label || "ไม่ migrate ย้อนหลัง และไม่แม่นระดับ version",
+                } : null,
+            ].filter(Boolean), (entry) => renderInventoryItem({
+                refs: ["analytics", "legacy"],
+                name: entry.name,
+                meta: entry.meta,
+                preview: entry.preview,
+                warning: true,
+            })),
+            renderInventorySection("Eval", evalSection.smokeWarnings || [], (warning) => renderInventoryItem({
+                refs: [`eval:${warning.evalCase || warning.type}`],
+                name: warning.evalCase || warning.type || "warning",
+                meta: `${warning.severity || "warning"} · ${evalSection.gate || "warning_only"}`,
+                preview: warning.message || "",
+                warning: true,
+            })),
+            renderInventorySection("Tool Registry", toolRegistry.success ? (toolRegistry.tools || []).slice(0, 80) : [], (tool) => renderInventoryItem({
+                refs: [`tool:${tool.name}`, `risk:${tool.risk}`],
+                name: tool.name,
+                meta: `${tool.kind || ""} · ${tool.risk || ""} · ${tool.requiredPermission || ""}`,
+                preview: tool.confirmationRequired ? "write changes are proposal-only and require modal confirmation" : tool.description || "",
+                warning: tool.risk === "destructive" || tool.risk === "global_runtime",
+            })),
             renderInventorySection("Warnings", warnings, (warning) => renderInventoryItem({
                 refs: [`warning:${warning.type}`],
                 name: warning.type,
@@ -2483,6 +2686,10 @@
     function refsFromTool(tool, args = {}) {
         const refs = [];
         if (args.itemId) refs.push(`item:${args.itemId}`);
+        if (args.itemId && Number.isFinite(Number(args.rowIndex))) refs.push(`row:${args.itemId}:${Number(args.rowIndex)}`);
+        if (args.rowId) {
+            refs.push(`product:${args.rowId}`, `scenario:${args.rowId}`, `row:${args.rowId}`);
+        }
         if (args.pageKey) refs.push(`page:${args.pageKey}`);
         if (Array.isArray(args.pageKeys)) args.pageKeys.forEach((key) => refs.push(`page:${key}`, `followup:${key}`, `model:${key}`));
         if (args.assetId) refs.push(`asset:${args.assetId}`);
@@ -2493,6 +2700,10 @@
         }
         if (tool.includes("conversation_starter") || tool === "get_conversation_starter") refs.push("starter");
         if (tool.includes("analytics") || tool.includes("episode")) refs.push("analytics");
+        if (tool.includes("product")) refs.push("role:catalog");
+        if (tool.includes("scenario")) refs.push("role:scenario");
+        if (tool.includes("audit")) refs.push("analytics");
+        if (tool.includes("runtime_conventions")) refs.push("runtime:cut", "runtime:image", "runtime:injection");
         if (tool === "get_instruction_inventory") refs.push("starter");
         return refs;
     }
@@ -2777,6 +2988,13 @@
             dom.inventorySearch.addEventListener("input", (e) => {
                 state.inventoryFilter = e.target.value || "";
                 renderInventory();
+            });
+        }
+        if (dom.inventoryBody) {
+            dom.inventoryBody.addEventListener("click", (e) => {
+                const episodeItem = e.target.closest(".ic-inv-item[data-episode-id]");
+                if (!episodeItem) return;
+                loadEpisodeDetail(episodeItem.dataset.episodeId);
             });
         }
         if (dom.batchModalClose) {

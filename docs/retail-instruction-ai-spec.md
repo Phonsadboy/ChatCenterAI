@@ -980,6 +980,18 @@ Knowledge cards ที่เสนอ:
 | `conversation_analysis_method` | ผู้ใช้ขอวิเคราะห์แชท |
 | `model_preset_guide` | ผู้ใช้ถามเรื่องโมเดล |
 
+### 11.4 Runtime Convention Knowledge For InstructionAI2
+
+InstructionAI2 editor ต้องรู้ convention ของ runtime จริงเสมอ เพื่อไม่แนะนำผู้ใช้ผิด syntax หรือเขียน prompt ที่ใช้งานไม่ได้จริง:
+
+- `[cut]` คือ marker ที่ runtime ใช้แยกข้อความออกเป็นหลายบับเบิลตอนส่งจริง เหมาะกับข้อความยาวหรือหลายหัวข้อ
+- รูปในคำตอบใช้ token รูปแบบ `#[IMAGE:<ชื่อรูป>]` โดยต้องมี `#` นำหน้า ไม่ใช่ `[IMAGE:<ชื่อรูป>]`
+- เมื่อ runtime เจอ `#[IMAGE:<ชื่อรูป>]` ระบบจะแยกคำตอบเป็นข้อความ/รูป/ข้อความตามตำแหน่ง token
+- รูปมาจาก `instruction_assets` ผ่าน `image_collections` ที่บอทหรือเพจเลือกไว้ใน `selectedImageCollections`
+- product/catalog row ใช้ชื่อรูปแบบ plain label เช่น `โปรเซ็ทคู่` หรือ token เต็ม เช่น `#[IMAGE:โปรเซ็ทคู่]` ได้
+- label รูปต้อง unique หลัง normalize trim/lowercase ถ้าชื่อซ้ำหรือหา asset ไม่เจอ ต้อง warning/block ก่อน commit
+- role prompt ควรเขียนเงื่อนไขว่าเมื่อไหร่ควรใช้ `[cut]` หรือส่งรูป ไม่ควรแต่งชื่อรูปเอง ไม่ควรใส่ URL รูป และไม่ควรลิสต์รูปทั้งหมดที่ runtime inject ให้อยู่แล้ว
+
 ## 12. UI/UX Requirements
 
 ### 12.1 Retail Setup Wizard
@@ -1500,3 +1512,33 @@ Implementation implication:
 - OpenAI Function Calling best practices: clear function descriptions, when/when-not-to-use tools, small initial tool count, enums/structured params
 - OpenAI Prompt Engineering guide: role/workflow guidance, structured tool use, validation/testing, agentic planning/persistence
 - Current project findings from `services/instructionChatService.js`, `index.js`, `public/js/instruction-chat.js`, and conversation/version analysis review
+
+## 21. AI2 Implementation Notes
+
+ส่วนนี้เป็น contract เพิ่มเติมจากการพัฒนา `/admin/instruction-ai2` เพื่อให้ AI editor รู้ข้อมูลที่ต้องรู้ก่อนแก้ instruction ทุกครั้ง
+
+### Runtime syntax ที่ต้องบอก AI2 เสมอ
+
+- `[cut]` คือ marker ที่ runtime ใช้ split ข้อความออกเป็นหลายบับเบิลตอนส่งจริง
+- รูปในคำตอบใช้ token รูปแบบ `#[IMAGE:<ชื่อรูป>]` เท่านั้น ต้องมี `#` นำหน้า
+- `[IMAGE:<ชื่อรูป>]` แบบไม่มี `#` ไม่ใช่ syntax หลักของ runtime
+- รูปมาจาก `instruction_assets` ผ่าน `image_collections` ที่เพจหรือบอทเลือกไว้ใน `selectedImageCollections`
+- product/catalog row ใช้ได้ทั้ง plain label เช่น `โปรเซ็ทคู่` และ token เต็ม เช่น `#[IMAGE:โปรเซ็ทคู่]`
+- label รูปต้อง unique หลัง normalize trim/lowercase ก่อน create/rename/link/commit
+
+### Tool/audit/eval ที่ AI2 ต้องมี
+
+- `get_instruction_inventory` ต้องถูกเรียกก่อนเริ่ม tool loop เพื่อให้ AI เห็น data item roles, runtime conventions, image/page/model/starter/follow-up/version/eval signals
+- `get_tool_registry` แสดง tool metadata: risk, required permission, confirmation policy, idempotency และย้ำว่า write tools เป็น proposal-only
+- `run_regression_eval_suite` เป็น retail eval warning-only อย่างน้อย 15 เคส ครอบคลุมราคา, COD, order fields, `[cut]`, image policy, FAQ/scenario, no-guess และ token รูป
+- `get_readiness_dashboard` แสดง checklist ก่อนใช้งานจริง เช่น semantic mapping, catalog, scenario, page binding, image readiness, model, follow-up และ eval
+- `get_ai2_recommendations` สร้างข้อเสนอจาก readiness, eval, image issues และ analytics attribution
+- `propose_update_semantic_mapping` ใช้แก้ role/catalog/scenario mapping โดยไม่บังคับชื่อชุดข้อมูล
+- `propose_revert_audit_change` ใช้ audit log เพื่อเสนอ batch ย้อนกลับสำหรับ operation ที่ reverse ได้
+- `propose_rebuild_image_asset_usage_registry` ใช้ rebuild `image_asset_usage` จาก instruction, starter, follow-up, collections และ runtime image sends โดยยังต้องผ่าน modal confirm
+
+### UX ที่เพิ่มใน side inventory
+
+- Inventory panel ต้องแสดง Setup Wizard, Readiness, Recommendations, Runtime Rules, Products, Scenarios, Pages, Images, Collections, Starter, Follow-up, Model, Versions, Analytics, Eval Cases, Tool Registry และ Warnings
+- Recent Episodes ต้องกดดูรายละเอียดได้ และ detail ต้อง label version ต่อ message เพื่อไม่เอา context คนละ version ไปนับ metric ผิด
+- Legacy conversations แสดงแยกพร้อมข้อความเตือนว่าไม่แม่นระดับ version และไม่ migrate attribution ย้อนหลัง

@@ -3095,6 +3095,14 @@ button:focus-visible,
     transition: all var(--ic-transition);
 }
 
+.ic-inv-item[data-episode-id] {
+    cursor: pointer;
+}
+
+.ic-inv-item[data-episode-id]:hover {
+    background: rgba(var(--ic-accent-rgb), 0.055);
+}
+
 .ic-inv-item:first-child {
     border-top: 0;
 }

@@ -128,6 +128,21 @@ function makeSsePayload(event, data) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+function sanitizeBatchForPersistence(batch) {
+  if (!batch || typeof batch !== "object") return batch;
+  const clone = { ...batch };
+  delete clone.confirmationToken;
+  delete clone.confirmationExpiresAt;
+  return clone;
+}
+
+function sanitizeEventDataForPersistence(data = {}) {
+  if (!data || typeof data !== "object") return data;
+  const clone = { ...data };
+  if (clone.batch) clone.batch = sanitizeBatchForPersistence(clone.batch);
+  return clone;
+}
+
 function cleanupAI2Request(requestId) {
   setTimeout(() => activeAI2Requests.delete(requestId), 2 * 60 * 1000);
 }
@@ -151,6 +166,29 @@ function buildAI2RequestSnapshot(state = {}) {
     assistantMessages: state.assistantMessages || [],
     batch: state.batch || null,
     error: state.error || null,
+  };
+}
+
+function buildAI2RunSnapshot(run = {}, batch = null) {
+  const createdAt = run.createdAt ? new Date(run.createdAt).getTime() : Date.now();
+  return {
+    success: true,
+    requestId: run.requestId,
+    sessionId: run.sessionId || null,
+    status: run.status || "complete",
+    phase: run.phase || (run.status === "error" ? "error" : "done"),
+    iteration: run.iterations || 1,
+    tool: null,
+    elapsedSec: Math.floor((Date.now() - createdAt) / 1000),
+    tools: run.toolStates || [],
+    toolsUsed: run.toolsUsed || [],
+    changes: Array.isArray(batch?.changes) ? batch.changes.map((change) => ({ changeId: change.changeId, tool: change.operation })) : [],
+    usage: run.usage || {},
+    partialContent: run.finalText || "",
+    commentaryText: run.commentaryText || "",
+    assistantMessages: run.finalText ? [{ role: "assistant", content: run.finalText }] : [],
+    batch,
+    error: run.error || null,
   };
 }
 
@@ -366,17 +404,29 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
-  router.get("/api/instruction-ai2/stream/state", requireAdmin, (req, res) => {
+  router.get("/api/instruction-ai2/stream/state", requireAdmin, async (req, res) => {
     const requestId = String(req.query.requestId || "");
     const state = activeAI2Requests.get(requestId);
-    if (!state) return res.status(404).json({ success: false, error: "not_found" });
-    res.json(buildAI2RequestSnapshot(state));
+    if (state) return res.json(buildAI2RequestSnapshot(state));
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const run = await db.collection("instruction_ai2_runs").findOne({ requestId });
+      if (!run) return res.status(404).json({ success: false, error: "not_found" });
+      let batch = null;
+      if (run.batchId) {
+        const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+        batch = await service.refreshBatchConfirmationToken(run.batchId);
+      }
+      return res.json(buildAI2RunSnapshot(run, batch));
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
   });
 
-  router.get("/api/instruction-ai2/stream/resume", requireAdmin, (req, res) => {
+  router.get("/api/instruction-ai2/stream/resume", requireAdmin, async (req, res) => {
     const requestId = String(req.query.requestId || "");
     const state = activeAI2Requests.get(requestId);
-    if (!state) return res.status(404).json({ success: false, error: "not_found" });
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -384,6 +434,49 @@ function createInstructionAI2Router(deps = {}) {
     res.setHeader("Content-Encoding", "identity");
     res.setHeader("X-Instruction-AI2-Request-Id", requestId);
     if (typeof res.flushHeaders === "function") res.flushHeaders();
+    if (!state) {
+      try {
+        const client = await connectDB();
+        const db = client.db("chatbot");
+        const run = await db.collection("instruction_ai2_runs").findOne({ requestId });
+        if (!run) {
+          res.write(makeSsePayload("error", { error: "not_found" }));
+          res.end();
+          return;
+        }
+        for (const event of Array.isArray(run.events) ? run.events : []) {
+          const payload = event.payload || makeSsePayload(event.event || "status", event.data || {});
+          try { res.write(payload); } catch (_) { res.end(); return; }
+        }
+        if (run.status === "complete" || run.status === "error") {
+          if (run.status === "complete") {
+            let batch = null;
+            if (run.batchId) {
+              const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+              batch = await service.refreshBatchConfirmationToken(run.batchId);
+            }
+            res.write(makeSsePayload("done", {
+              success: true,
+              requestId,
+              sessionId: run.sessionId || null,
+              assistantMessages: run.finalText ? [{ role: "assistant", content: run.finalText }] : [],
+              usage: run.usage || {},
+              toolsUsed: run.toolsUsed || [],
+              batch,
+            }));
+          }
+          res.end();
+          return;
+        }
+        res.write(makeSsePayload("error", { error: "stream_not_active" }));
+        res.end();
+        return;
+      } catch (error) {
+        res.write(makeSsePayload("error", { error: error.message }));
+        res.end();
+        return;
+      }
+    }
     for (const event of state.events || []) {
       try { res.write(event.payload); } catch (_) { res.end(); return; }
     }
@@ -398,6 +491,7 @@ function createInstructionAI2Router(deps = {}) {
   router.post("/api/instruction-ai2/stream", requireAdmin, async (req, res) => {
     const requestId = `ai2_req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const startedAt = Date.now();
+    let runColl = null;
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -432,10 +526,40 @@ function createInstructionAI2Router(deps = {}) {
       requestState.listeners.delete(res);
     });
 
+    const persistEvent = (event, data = {}, payload = "") => {
+      if (!runColl) return;
+      const persistedData = sanitizeEventDataForPersistence(data);
+      const persistedPayload = makeSsePayload(event, persistedData);
+      runColl.updateOne(
+        { requestId },
+        {
+          $push: {
+            events: {
+              $each: [{
+                event,
+                data: persistedData,
+                payload: persistedPayload || payload,
+                at: new Date(),
+              }],
+              $slice: -500,
+            },
+          },
+          $set: {
+            lastEvent: event,
+            lastEventAt: new Date(),
+            updatedAt: new Date(),
+          },
+          $setOnInsert: { requestId, createdAt: new Date(startedAt) },
+        },
+        { upsert: true },
+      ).catch(() => {});
+    };
+
     const sendEvent = (event, data = {}) => {
       const payload = makeSsePayload(event, data);
       requestState.events.push({ event, data, payload, at: Date.now() });
       requestState.updatedAt = Date.now();
+      persistEvent(event, data, payload);
       for (const listener of Array.from(requestState.listeners)) {
         try {
           listener.write(payload);
@@ -549,6 +673,12 @@ function createInstructionAI2Router(deps = {}) {
             thinking: resolveReasoningEffort(thinking),
             status: "running",
             phase: "inventory",
+            events: requestState.events.map((event) => ({
+              event: event.event,
+              data: event.data,
+              payload: event.payload,
+              at: new Date(event.at || Date.now()),
+            })),
             updatedAt: new Date(),
           },
         },
@@ -738,7 +868,10 @@ function createInstructionAI2Router(deps = {}) {
       const db = client.db("chatbot");
       void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
-      const result = await service.commitBatch(req.params.batchId, req.session?.user?.username || "admin");
+      const result = await service.commitBatch(req.params.batchId, req.session?.user?.username || "admin", {
+        confirmationToken: req.body?.confirmationToken || "",
+        commitRequestId: req.body?.commitRequestId || "",
+      });
       if (result?.success && typeof invalidateAllRuntimeCaches === "function") {
         invalidateAllRuntimeCaches();
       }
@@ -895,6 +1028,51 @@ function createInstructionAI2Router(deps = {}) {
     }
   });
 
+  router.get("/api/instruction-ai2/tool-registry", requireAdmin, async (req, res) => {
+    try {
+      const service = new InstructionAI2Service({ collection: () => ({}) }, { user: req.session?.user?.username || "admin" });
+      res.json(service.getToolRegistry());
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get("/api/instruction-ai2/eval/:instructionId", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
+      const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+      res.json(await service.runRegressionEvalSuite(req.params.instructionId));
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get("/api/instruction-ai2/readiness/:instructionId", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
+      const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+      res.json(await service.getReadinessDashboard(req.params.instructionId));
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get("/api/instruction-ai2/recommendations/:instructionId", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
+      const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+      res.json(await service.getRecommendations(req.params.instructionId));
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   router.get("/api/instruction-ai2/analytics/:instructionId", requireAdmin, async (req, res) => {
     try {
       const client = await connectDB();
@@ -914,6 +1092,18 @@ function createInstructionAI2Router(deps = {}) {
       void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       res.json(await service.getEpisodeAnalytics(req.params.instructionId, { limit: req.query.limit }));
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get("/api/instruction-ai2/analytics/:instructionId/episodes/:episodeId", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
+      const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+      res.json(await service.getEpisodeDetail(req.params.instructionId, { episodeId: req.params.episodeId }));
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }

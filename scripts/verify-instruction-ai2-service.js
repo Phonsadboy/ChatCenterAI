@@ -5,6 +5,7 @@ const {
   detectSemanticRoles,
   computeContentHash,
   buildRetailTemplateDataItems,
+  buildRetailEvalSuite,
   extractImageTokensFromInstruction,
 } = require("../services/instructionAI2Service");
 const {
@@ -59,7 +60,57 @@ class FakeCollection {
   async findOne(query = {}) {
     return (await this.find(query).toArray())[0] || null;
   }
-  async countDocuments() { return this.rows.length; }
+  async insertOne(doc = {}) {
+    const inserted = { ...doc, _id: doc._id || `fake_${this.rows.length + 1}` };
+    this.rows.push(inserted);
+    return { insertedId: inserted._id };
+  }
+  async updateOne(query = {}, update = {}, options = {}) {
+    const row = this.rows.find((candidate) => this.matches(candidate, query));
+    if (!row) {
+      if (!options.upsert) return { matchedCount: 0, modifiedCount: 0 };
+      const inserted = {};
+      for (const [key, value] of Object.entries(query || {})) {
+        if (key.includes(".") || key.startsWith("$") || (value && typeof value === "object")) continue;
+        inserted[key] = value;
+      }
+      if (update.$setOnInsert) Object.assign(inserted, update.$setOnInsert);
+      if (update.$set) Object.assign(inserted, update.$set);
+      inserted._id = inserted._id || `fake_${this.rows.length + 1}`;
+      this.rows.push(inserted);
+      return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1, upsertedId: inserted._id };
+    }
+    if (update.$set) Object.assign(row, update.$set);
+    if (update.$setOnInsert) {
+      for (const [key, value] of Object.entries(update.$setOnInsert)) {
+        if (row[key] === undefined) row[key] = value;
+      }
+    }
+    if (update.$inc) {
+      for (const [key, value] of Object.entries(update.$inc)) {
+        row[key] = (Number(row[key]) || 0) + Number(value || 0);
+      }
+    }
+    return { matchedCount: 1, modifiedCount: 1 };
+  }
+  async findOneAndUpdate(query = {}, update = {}) {
+    const row = this.rows.find((candidate) => this.matches(candidate, query));
+    if (!row) return { value: null };
+    await this.updateOne(query, update);
+    return { value: row };
+  }
+  async countDocuments(query = {}) { return this.rows.filter((row) => this.matches(row, query)).length; }
+  async deleteMany(query = {}) {
+    const before = this.rows.length;
+    this.rows = this.rows.filter((row) => !this.matches(row, query));
+    return { deletedCount: before - this.rows.length };
+  }
+  async deleteOne(query = {}) {
+    const index = this.rows.findIndex((row) => this.matches(row, query));
+    if (index < 0) return { deletedCount: 0 };
+    this.rows.splice(index, 1);
+    return { deletedCount: 1 };
+  }
   aggregate() { return new FakeCursor([]); }
   async createIndex() { return "ok"; }
 }
@@ -151,6 +202,9 @@ async function run() {
     image_asset_usage: new FakeCollection([]),
     message_instruction_usage: new FakeCollection([]),
     conversation_episodes: new FakeCollection([]),
+    instruction_ai2_batches: new FakeCollection([]),
+    instruction_ai2_audit: new FakeCollection([]),
+    instruction_ai2_runs: new FakeCollection([]),
   });
   const service = new InstructionAI2Service(fakeDb);
   const inventory = await service.buildInventory("507f1f77bcf86cd799439011");
@@ -158,9 +212,34 @@ async function run() {
   assert.ok(inventory.sections.role.length >= 1);
   assert.ok(inventory.sections.catalog.length >= 1);
   assert.ok(inventory.sections.scenario.length >= 1);
+  assert.ok(inventory.sections.readiness.success);
+  assert.ok(inventory.sections.eval.suite.success);
+  assert.ok(inventory.sections.eval.suite.cases.length >= 15);
+  assert.ok(inventory.sections.toolRegistry.tools.some((tool) => tool.name === "propose_update_semantic_mapping"));
   assert.strictEqual(inventory.sections.starter.enabled, true);
   assert.ok(Array.isArray(inventory.sections.model.catalog));
   assert.ok(service.readTrace.some((entry) => entry.type === "inventory"));
+
+  const evalSuite = buildRetailEvalSuite(fakeDb.collection("instructions_v2").rows[0], template);
+  assert.strictEqual(evalSuite.success, true);
+  assert.ok(evalSuite.summary.total >= 15);
+
+  const readiness = await service.getReadinessDashboard("507f1f77bcf86cd799439011");
+  assert.strictEqual(readiness.success, true);
+  assert.ok(readiness.checklist.some((item) => item.key === "semantic_mapping"));
+
+  const recommendations = await service.getRecommendations("507f1f77bcf86cd799439011");
+  assert.strictEqual(recommendations.success, true);
+  assert.ok(Array.isArray(recommendations.recommendations));
+
+  const semanticProposal = await service.proposal_update_semantic_mapping(
+    "507f1f77bcf86cd799439011",
+    { roleItemId: template[0].itemId, catalogItemIds: [template[1].itemId], scenarioItemIds: [template[2].itemId] },
+  );
+  assert.strictEqual(semanticProposal.operation, "instruction.updateSemanticMapping");
+  assert.strictEqual(semanticProposal.requiredPermission, "instruction_ai2:write");
+  const semanticPreflight = await service.preflightBatch({ changes: [semanticProposal] });
+  assert.strictEqual(semanticPreflight.ok, true);
 
   const pageImageProposal = await service.proposal_update_page_image_collections(
     "507f1f77bcf86cd799439011",
@@ -182,6 +261,50 @@ async function run() {
   const missingImagePreflight = await service.preflightBatch({ changes: [missingImageProposal] });
   assert.strictEqual(missingImagePreflight.ok, false);
   assert.ok(missingImagePreflight.errors.some((error) => error.error === "invalid_image_references"));
+
+  service.proposals = [await service.createProposalBase(
+    "507f1f77bcf86cd799439011",
+    "instruction.updateText",
+    { type: "data_item_text", itemId: template[0].itemId },
+    "old",
+    "new",
+  )];
+  const batch = await service.finalizeBatch({
+    instructionId: "507f1f77bcf86cd799439011",
+    sessionId: "session_1",
+    requestId: "request_1",
+    message: "แก้ role",
+  });
+  assert.ok(batch.confirmationToken);
+  const invalidCommit = await service.commitBatch(batch.batchId, "tester", { confirmationToken: "wrong" });
+  assert.strictEqual(invalidCommit.success, false);
+  assert.strictEqual(invalidCommit.blocked, true);
+
+  await fakeDb.collection("instruction_ai2_audit").insertOne({
+    auditId: "audit_1",
+    batchId: "batch_done",
+    changeId: "chg_done",
+    operation: "instruction.updateText",
+    target: { type: "data_item_text", itemId: template[0].itemId, instructionObjectId: "507f1f77bcf86cd799439011", instructionId: "inst_1" },
+    before: "old role",
+    after: "new role",
+    risk: "safe_write",
+    affectedScope: ["instruction"],
+  });
+  const revertProposal = await service.proposal_revert_audit_change(
+    "507f1f77bcf86cd799439011",
+    { auditId: "audit_1" },
+  );
+  assert.strictEqual(revertProposal.operation, "instruction.updateText");
+  assert.strictEqual(revertProposal.after, "old role");
+
+  const usageProposal = await service.proposal_rebuild_image_asset_usage_registry(
+    "507f1f77bcf86cd799439011",
+    { scope: "instruction" },
+  );
+  assert.strictEqual(usageProposal.operation, "imageUsage.rebuildRegistry");
+  const usageResult = await service.applyImageUsageRebuild(usageProposal);
+  assert.strictEqual(usageResult.rebuilt, true);
 
   assert.deepStrictEqual(service.modelValidator("gpt-5.4-mini", "low").ok, true);
   assert.deepStrictEqual(service.modelValidator("not-real", "low").ok, false);

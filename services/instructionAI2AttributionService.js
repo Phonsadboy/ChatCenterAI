@@ -111,6 +111,7 @@ async function recordInstructionAI2MessageUsage(db, payload = {}) {
     reasoningEffort = null,
     toolCalls = [],
     orderIds = [],
+    imageAssetIdsSent = [],
   } = payload;
 
   if (!db || !assistantMessageDoc || !assistantMessageDoc._id) return null;
@@ -159,7 +160,9 @@ async function recordInstructionAI2MessageUsage(db, payload = {}) {
     reasoningEffort,
     role: "assistant",
     assistantAction: assistantMessageDoc.source || "ai",
-    imageAssetIdsSent: [],
+    imageAssetIdsSent: Array.isArray(imageAssetIdsSent)
+      ? imageAssetIdsSent.map((id) => String(id || "").trim()).filter(Boolean)
+      : [],
     toolCalls: Array.isArray(toolCalls) ? toolCalls : [],
     orderIds: Array.isArray(orderIds) ? orderIds : [],
     outcomeAtMessage: Array.isArray(orderIds) && orderIds.length ? "ordered" : "unknown",
