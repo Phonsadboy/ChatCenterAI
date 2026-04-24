@@ -238,7 +238,7 @@ class InstructionDataService {
                         continue;
                     }
 
-                    let newItems = instruction.dataItems ? [...instruction.dataItems] : [];
+                    let newItems = Array.isArray(instruction.dataItems) ? [...instruction.dataItems] : [];
                     let targetItem = newItems.find(item => item.type === 'table');
 
                     if (!targetItem) {

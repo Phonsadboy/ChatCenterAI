@@ -10293,6 +10293,83 @@ function generateDataItemId() {
   return `item_${crypto.randomBytes(8).toString("hex")}`;
 }
 
+function normalizeInstructionDataItems(dataItems) {
+  if (Array.isArray(dataItems)) {
+    return dataItems
+      .map((item, index) => normalizeInstructionDataItem(item, index))
+      .filter(Boolean);
+  }
+
+  if (typeof dataItems === "string" && dataItems.trim()) {
+    try {
+      return normalizeInstructionDataItems(JSON.parse(dataItems));
+    } catch (err) {
+      return [];
+    }
+  }
+
+  if (!dataItems || typeof dataItems !== "object") return [];
+
+  if (Array.isArray(dataItems.dataItems)) {
+    return normalizeInstructionDataItems(dataItems.dataItems);
+  }
+
+  if (Array.isArray(dataItems.items)) {
+    return normalizeInstructionDataItems(dataItems.items);
+  }
+
+  if (dataItems.itemId || dataItems.type || dataItems.title || dataItems.data) {
+    return normalizeInstructionDataItems([dataItems]);
+  }
+
+  return Object.values(dataItems)
+    .map((item, index) => normalizeInstructionDataItem(item, index))
+    .filter(Boolean);
+}
+
+function normalizeInstructionDataItem(item, index = 0) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const rawType = String(item.type || item.itemType || "").toLowerCase();
+  const type = rawType === "table" || (!rawType && item.data) ? "table" : "text";
+  const normalized = {
+    ...item,
+    type,
+    title: item.title || item.name || "",
+    order: Number.isFinite(Number(item.order)) ? Number(item.order) : index + 1,
+  };
+
+  if (item.itemId || item.id) {
+    normalized.itemId = item.itemId || item.id;
+  }
+
+  if (type === "text") {
+    normalized.content =
+      typeof item.content === "string"
+        ? item.content
+        : item.content == null
+          ? ""
+          : String(item.content);
+  } else {
+    normalized.content = "";
+    normalized.data = item.data || null;
+  }
+
+  return normalized;
+}
+
+function normalizeInstructionV2Document(instruction, fallbackId = "") {
+  if (!instruction || typeof instruction !== "object") return null;
+  const id = instruction._id?.toString?.() || instruction._id || fallbackId || "";
+  return {
+    ...instruction,
+    dataItems: normalizeInstructionDataItems(instruction.dataItems),
+    conversationStarter: normalizeConversationStarterConfig(
+      instruction?.conversationStarter,
+    ),
+    _id: id,
+  };
+}
+
 // Helper: Get all instructions v2
 async function getInstructionsV2() {
   let instructions = [];
@@ -10312,13 +10389,9 @@ async function getInstructionsV2() {
     const cursor = coll.find({}).sort({ createdAt: -1 });
     instructions = await cursor.toArray();
   }
-  return instructions.map((instruction) => ({
-    ...instruction,
-    conversationStarter: normalizeConversationStarterConfig(
-      instruction?.conversationStarter,
-    ),
-    _id: instruction._id?.toString?.() || instruction._id || "",
-  }));
+  return instructions
+    .map((instruction) => normalizeInstructionV2Document(instruction))
+    .filter(Boolean);
 }
 
 async function maybeMirrorInstructionV2Document(db, instructionOrId) {
@@ -10334,10 +10407,17 @@ async function maybeMirrorInstructionV2Document(db, instructionOrId) {
   }
 
   if (!instructionDoc?._id) return;
+  const mirroredInstructionDoc = {
+    ...instructionDoc,
+    dataItems: normalizeInstructionDataItems(instructionDoc.dataItems),
+    conversationStarter: normalizeConversationStarterConfig(
+      instructionDoc.conversationStarter,
+    ),
+  };
   await maybeMirrorAppDocument(
     "instructions_v2",
     serializeDocumentId(instructionDoc._id),
-    normalizeValueForStorageMirror(instructionDoc),
+    normalizeValueForStorageMirror(mirroredInstructionDoc),
   );
 }
 
@@ -10371,13 +10451,7 @@ app.get("/api/instructions-v2/:id", async (req, res) => {
 
     res.json({
       success: true,
-      instruction: {
-        ...instruction,
-        conversationStarter: normalizeConversationStarterConfig(
-          instruction?.conversationStarter,
-        ),
-        _id: instruction._id?.toString?.() || instruction._id || id,
-      },
+      instruction: normalizeInstructionV2Document(instruction, id),
     });
   } catch (err) {
     console.error("Error fetching instruction v2:", err);
@@ -10477,13 +10551,7 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
     await maybeMirrorInstructionV2Document(db, instruction);
     res.json({
       success: true,
-      instruction: {
-        ...instruction,
-        conversationStarter: normalizeConversationStarterConfig(
-          instruction?.conversationStarter,
-        ),
-        _id: instruction._id.toString(),
-      },
+      instruction: normalizeInstructionV2Document(instruction, id),
     });
   } catch (err) {
     console.error("Error updating instruction v2:", err);
@@ -10567,7 +10635,7 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
       instructionId: generateInstructionId(),
       name: finalName,
       description: original.description || "",
-      dataItems: (original.dataItems || []).map(item => ({
+      dataItems: normalizeInstructionDataItems(original.dataItems).map(item => ({
         ...item,
         itemId: generateDataItemId(),
         createdAt: now,
@@ -10795,6 +10863,7 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
 
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
     const now = new Date();
     const newItem = {
       itemId: generateDataItemId(),
@@ -10802,7 +10871,7 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
       type,
       content: type === "text" ? (content || "") : "",
       data: type === "table" ? (data || { columns: [], rows: [] }) : null,
-      order: (instruction.dataItems || []).length + 1,
+      order: dataItems.length + 1,
       createdAt: now,
       updatedAt: now
     };
@@ -10810,8 +10879,10 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
     const result = await coll.updateOne(
       { _id: toObjectId(id) },
       {
-        $push: { dataItems: newItem },
-        $set: { updatedAt: now }
+        $set: {
+          dataItems: [...dataItems, newItem],
+          updatedAt: now
+        }
       }
     );
 
@@ -10854,8 +10925,9 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
     }
 
     // Reorder dataItems based on itemIds array
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
     const reorderedItems = itemIds.map((itemId, index) => {
-      const item = (instruction.dataItems || []).find(i => i.itemId === itemId);
+      const item = dataItems.find(i => i.itemId === itemId);
       if (item) {
         return { ...item, order: index + 1 };
       }
@@ -10901,22 +10973,25 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
 
-    const itemIndex = (instruction.dataItems || []).findIndex(item => item.itemId === itemId);
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
+    const itemIndex = dataItems.findIndex(item => item.itemId === itemId);
     if (itemIndex === -1) {
       return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
     }
 
     const now = new Date();
-    const updateFields = {};
-    if (title !== undefined) updateFields[`dataItems.${itemIndex}.title`] = title.trim();
-    if (content !== undefined) updateFields[`dataItems.${itemIndex}.content`] = content;
-    if (data !== undefined) updateFields[`dataItems.${itemIndex}.data`] = data;
-    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
-    updateFields.updatedAt = now;
+    const updatedItem = {
+      ...dataItems[itemIndex],
+      updatedAt: now,
+    };
+    if (title !== undefined) updatedItem.title = title.trim();
+    if (content !== undefined) updatedItem.content = content;
+    if (data !== undefined) updatedItem.data = data;
+    dataItems[itemIndex] = updatedItem;
 
     await coll.updateOne(
       { _id: toObjectId(id) },
-      { $set: updateFields }
+      { $set: { dataItems, updatedAt: now } }
     );
     await createDashboardSnapshotOrThrow(
       id,
@@ -10925,9 +11000,7 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
       "dashboard_api",
     );
 
-    const updatedInstruction = await coll.findOne({ _id: toObjectId(id) });
-    await maybeMirrorInstructionV2Document(db, updatedInstruction);
-    const updatedItem = updatedInstruction.dataItems[itemIndex];
+    await maybeMirrorInstructionV2Document(db, id);
 
     res.json({ success: true, dataItem: updatedItem });
   } catch (err) {
@@ -10945,11 +11018,24 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
     const db = client.db("chatbot");
     const coll = db.collection("instructions_v2");
 
+    const instruction = await coll.findOne({ _id: toObjectId(id) });
+    if (!instruction) {
+      return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
+    }
+
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
+    const nextDataItems = dataItems.filter((item) => item.itemId !== itemId);
+    if (nextDataItems.length === dataItems.length) {
+      return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
+    }
+
     const result = await coll.updateOne(
       { _id: toObjectId(id) },
       {
-        $pull: { dataItems: { itemId } },
-        $set: { updatedAt: new Date() }
+        $set: {
+          dataItems: nextDataItems,
+          updatedAt: new Date()
+        }
       }
     );
 
@@ -10985,7 +11071,8 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
 
-    const originalItem = (instruction.dataItems || []).find(item => item.itemId === itemId);
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
+    const originalItem = dataItems.find(item => item.itemId === itemId);
     if (!originalItem) {
       return res.status(404).json({ success: false, error: "ไม่พบชุดข้อมูล" });
     }
@@ -10995,7 +11082,7 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
       ...originalItem,
       itemId: generateDataItemId(),
       title: `${originalItem.title} (สำเนา)`,
-      order: (instruction.dataItems || []).length + 1,
+      order: dataItems.length + 1,
       createdAt: now,
       updatedAt: now
     };
@@ -11003,8 +11090,10 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
     await coll.updateOne(
       { _id: toObjectId(id) },
       {
-        $push: { dataItems: duplicateItem },
-        $set: { updatedAt: now }
+        $set: {
+          dataItems: [...dataItems, duplicateItem],
+          updatedAt: now
+        }
       }
     );
     await createDashboardSnapshotOrThrow(
@@ -11038,7 +11127,7 @@ app.get("/api/instructions-v2/:id/preview", async (req, res) => {
 
     // Build system prompt from data items
     let systemPrompt = "";
-    const dataItems = instruction.dataItems || [];
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
 
     for (const item of dataItems) {
       systemPrompt += `\n\n${"=".repeat(60)}\n\n`;
@@ -13976,12 +14065,9 @@ async function resolveInstructionSelectionsV2(
     .find({ instructionId: { $in: instructionIds } })
     .toArray();
 
-  return docs.map((doc) => {
-    if (doc && doc._id && typeof doc._id.toString === "function") {
-      return { ...doc, _id: doc._id.toString() };
-    }
-    return doc;
-  });
+  return docs
+    .map((doc) => normalizeInstructionV2Document(doc))
+    .filter(Boolean);
 }
 
 function buildSystemPromptFromInstructionDocs(instructions = []) {
@@ -14254,8 +14340,7 @@ async function loadLatestInstruction(instructionRef, dbInstance = null) {
 }
 
 function buildInstructionVersionSnapshotDataItems(dataItems = []) {
-  if (!Array.isArray(dataItems)) return [];
-  return dataItems.map((item) => {
+  return normalizeInstructionDataItems(dataItems).map((item) => {
     const copied = {
       itemId: item?.itemId || "",
       title: item?.title || "",
@@ -21168,7 +21253,8 @@ app.get("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async (
     }
 
     // หา data item
-    const dataItem = (instruction.dataItems || []).find(item => item.itemId === itemId);
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
+    const dataItem = dataItems.find(item => item.itemId === itemId);
     if (!dataItem) {
       return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
     }
@@ -21230,9 +21316,7 @@ app.post(
         type = "text";
       }
 
-      const items = Array.isArray(instruction.dataItems)
-        ? instruction.dataItems
-        : [];
+      const items = normalizeInstructionDataItems(instruction.dataItems);
       const now = new Date();
       const newItem = {
         itemId: generateDataItemId(),
@@ -21274,8 +21358,10 @@ app.post(
       await coll.updateOne(
         { _id: new ObjectId(instructionId) },
         {
-          $push: { dataItems: newItem },
-          $set: { updatedAt: now },
+          $set: {
+            dataItems: [...items, newItem],
+            updatedAt: now,
+          },
         },
       );
       await createDashboardSnapshotOrThrow(
@@ -21316,19 +21402,23 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
     }
 
     // หา index ของ data item
-    const itemIndex = (instruction.dataItems || []).findIndex(item => item.itemId === itemId);
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
+    const itemIndex = dataItems.findIndex(item => item.itemId === itemId);
     if (itemIndex === -1) {
       return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
     }
 
     const now = new Date();
-    const updateFields = {};
+    const updatedItem = {
+      ...dataItems[itemIndex],
+      updatedAt: now,
+    };
     const isTable = type === 'table';
     let parsedTableData = null;
 
     // อัปเดต title
     if (title !== undefined) {
-      updateFields[`dataItems.${itemIndex}.title`] = title.trim();
+      updatedItem.title = title.trim();
     }
 
     // อัปเดตตาม type
@@ -21350,22 +21440,21 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
           `/admin/instructions-v2/${instructionId}/data-items/${itemId}/edit?error=${encodeURIComponent("ข้อมูลตารางไม่ถูกต้อง")}`,
         );
       }
-      updateFields[`dataItems.${itemIndex}.data`] = parsedTableData;
-      updateFields[`dataItems.${itemIndex}.content`] = ""; // ล้าง content สำหรับตาราง
+      updatedItem.data = parsedTableData;
+      updatedItem.content = ""; // ล้าง content สำหรับตาราง
     } else {
       // ข้อความ: อัปเดต content field
-      updateFields[`dataItems.${itemIndex}.content`] = content || "";
-      updateFields[`dataItems.${itemIndex}.data`] = null; // ล้าง data สำหรับข้อความ
+      updatedItem.content = content || "";
+      updatedItem.data = null; // ล้าง data สำหรับข้อความ
     }
 
-    updateFields[`dataItems.${itemIndex}.type`] = isTable ? "table" : "text";
-    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
-    updateFields.updatedAt = now;
+    updatedItem.type = isTable ? "table" : "text";
+    dataItems[itemIndex] = updatedItem;
 
     // บันทึกลง database
     await coll.updateOne(
       { _id: new ObjectId(instructionId) },
-      { $set: updateFields }
+      { $set: { dataItems, updatedAt: now } }
     );
     await createDashboardSnapshotOrThrow(
       instructionId,
@@ -21400,7 +21489,8 @@ app.get("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async (
     }
 
     // หา data item
-    const dataItem = (instruction.dataItems || []).find(item => item.itemId === itemId);
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
+    const dataItem = dataItems.find(item => item.itemId === itemId);
     if (!dataItem) {
       return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
     }
@@ -21490,7 +21580,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
       );
     }
 
-    const items = Array.isArray(instruction.dataItems) ? instruction.dataItems : [];
+    const items = normalizeInstructionDataItems(instruction.dataItems);
     const now = new Date();
     const newItem = {
       itemId: generateDataItemId(),
@@ -21521,8 +21611,10 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
     await coll.updateOne(
       { _id: new ObjectId(instructionId) },
       {
-        $push: { dataItems: newItem },
-        $set: { updatedAt: now },
+        $set: {
+          dataItems: [...items, newItem],
+          updatedAt: now,
+        },
       }
     );
     await createDashboardSnapshotOrThrow(
@@ -21558,17 +21650,21 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
     }
 
     // หา index ของ data item
-    const itemIndex = (instruction.dataItems || []).findIndex(item => item.itemId === itemId);
+    const dataItems = normalizeInstructionDataItems(instruction.dataItems);
+    const itemIndex = dataItems.findIndex(item => item.itemId === itemId);
     if (itemIndex === -1) {
       return res.redirect("/admin/dashboard?error=ไม่พบชุดข้อมูล");
     }
 
     const now = new Date();
-    const updateFields = {};
+    const updatedItem = {
+      ...dataItems[itemIndex],
+      updatedAt: now,
+    };
 
     // อัปเดต title
     if (title !== undefined) {
-      updateFields[`dataItems.${itemIndex}.title`] = (title || "").trim();
+      updatedItem.title = (title || "").trim();
     }
 
     // อัปเดต table data
@@ -21576,7 +21672,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
       try {
         const parsedData = JSON.parse(tableData);
         if (parsedData && typeof parsedData === "object") {
-          updateFields[`dataItems.${itemIndex}.data`] = parsedData;
+          updatedItem.data = parsedData;
         }
       } catch (parseErr) {
         console.error("V3: Error parsing table data:", parseErr);
@@ -21586,15 +21682,14 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
       }
     }
 
-    updateFields[`dataItems.${itemIndex}.type`] = "table";
-    updateFields[`dataItems.${itemIndex}.content`] = "";
-    updateFields[`dataItems.${itemIndex}.updatedAt`] = now;
-    updateFields.updatedAt = now;
+    updatedItem.type = "table";
+    updatedItem.content = "";
+    dataItems[itemIndex] = updatedItem;
 
     // บันทึกลง database
     await coll.updateOne(
       { _id: new ObjectId(instructionId) },
-      { $set: updateFields }
+      { $set: { dataItems, updatedAt: now } }
     );
     await createDashboardSnapshotOrThrow(
       instructionId,
@@ -25215,6 +25310,7 @@ function normalizeInstructionAIChatDocument(doc) {
       doc._id && typeof doc._id.toString === "function"
         ? doc._id.toString()
         : doc._id || null,
+    dataItems: normalizeInstructionDataItems(doc.dataItems),
     conversationStarter: normalizeConversationStarterConfig(
       doc.conversationStarter,
     ),
@@ -25260,6 +25356,9 @@ function buildInstructionAIChatStores(db) {
               ? instructionDoc.createdAt
               : new Date()),
           updatedAt: nextUpdatedAt,
+          dataItems: normalizeInstructionDataItems(
+            instructionDoc?.dataItems ?? existing.dataItems,
+          ),
           conversationStarter: normalizeConversationStarterConfig(
             instructionDoc?.conversationStarter ?? existing.conversationStarter,
           ),
@@ -25750,19 +25849,7 @@ app.post("/api/instruction-ai/versions/:instructionId", requireAdmin, async (req
       version: nextVersion,
       name: inst.name || "",
       description: inst.description || "",
-      dataItems: (inst.dataItems || []).map(item => {
-        const copy = { itemId: item.itemId, title: item.title, type: item.type };
-        if (item.type === "table" && item.data) {
-          copy.data = {
-            columns: item.data.columns || [],
-            rows: item.data.rows || [],
-            rowCount: Array.isArray(item.data.rows) ? item.data.rows.length : 0,
-          };
-        } else if (item.type === "text") {
-          copy.content = item.content || "";
-        }
-        return copy;
-      }),
+      dataItems: buildInstructionVersionSnapshotDataItems(inst.dataItems),
       conversationStarter: normalizeConversationStarterConfig(
         inst.conversationStarter,
       ),
@@ -26867,15 +26954,21 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
     } else if (changeLog.tool === "update_text_content" && changeLog.before) {
       const inst = await db.collection("instructions_v2").findOne({ _id: new ObjectId(changeLog.instructionId) });
       if (inst) {
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === changeLog.params.itemId);
+        const dataItems = normalizeInstructionDataItems(inst.dataItems);
+        const itemIndex = dataItems.findIndex(i => i.itemId === changeLog.params.itemId);
         if (itemIndex !== -1) {
+          const now = new Date();
+          dataItems[itemIndex] = {
+            ...dataItems[itemIndex],
+            content: changeLog.before.content,
+            updatedAt: now,
+          };
           const updateResult = await db.collection("instructions_v2").updateOne(
             { _id: new ObjectId(changeLog.instructionId) },
             {
               $set: {
-                [`dataItems.${itemIndex}.content`]: changeLog.before.content,
-                [`dataItems.${itemIndex}.updatedAt`]: new Date(),
-                updatedAt: new Date(),
+                dataItems,
+                updatedAt: now,
               },
             }
           );
@@ -26898,22 +26991,28 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
       // Remove the added column
       const inst = await db.collection("instructions_v2").findOne({ _id: new ObjectId(changeLog.instructionId) });
       if (inst) {
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === changeLog.params.itemId);
+        const dataItems = normalizeInstructionDataItems(inst.dataItems);
+        const itemIndex = dataItems.findIndex(i => i.itemId === changeLog.params.itemId);
         if (itemIndex !== -1) {
-          const item = inst.dataItems[itemIndex];
+          const item = dataItems[itemIndex];
           const cols = item.data?.columns || [];
           const rows = item.data?.rows || [];
           const ci = cols.indexOf(changeLog.params.columnName);
           if (ci !== -1) {
             cols.splice(ci, 1);
             rows.forEach(row => { if (Array.isArray(row)) row.splice(ci, 1); });
+            const now = new Date();
+            dataItems[itemIndex] = {
+              ...item,
+              data: { columns: cols, rows },
+              updatedAt: now,
+            };
             const updateResult = await db.collection("instructions_v2").updateOne(
               { _id: new ObjectId(changeLog.instructionId) },
               {
                 $set: {
-                  [`dataItems.${itemIndex}.data`]: { columns: cols, rows },
-                  [`dataItems.${itemIndex}.updatedAt`]: new Date(),
-                  updatedAt: new Date(),
+                  dataItems,
+                  updatedAt: now,
                 },
               }
             );
@@ -26926,9 +27025,10 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
       const sorted = [...changeLog.before.deletedRows].sort((a, b) => a.rowIndex - b.rowIndex);
       const inst = await db.collection("instructions_v2").findOne({ _id: new ObjectId(changeLog.instructionId) });
       if (inst) {
-        const itemIndex = (inst.dataItems || []).findIndex(i => i.itemId === changeLog.params.itemId);
+        const dataItems = normalizeInstructionDataItems(inst.dataItems);
+        const itemIndex = dataItems.findIndex(i => i.itemId === changeLog.params.itemId);
         if (itemIndex !== -1) {
-          const item = inst.dataItems[itemIndex];
+          const item = dataItems[itemIndex];
           const cols = item.data?.columns || [];
           const rows = item.data?.rows || [];
           for (const deleted of sorted) {
@@ -26936,13 +27036,21 @@ app.post("/api/instruction-ai/undo/:changeId", requireAdmin, async (req, res) =>
             const idx = Math.min(deleted.rowIndex, rows.length);
             rows.splice(idx, 0, rowArr);
           }
+          const now = new Date();
+          dataItems[itemIndex] = {
+            ...item,
+            data: {
+              ...(item.data || {}),
+              rows,
+            },
+            updatedAt: now,
+          };
           const updateResult = await db.collection("instructions_v2").updateOne(
             { _id: new ObjectId(changeLog.instructionId) },
             {
               $set: {
-                [`dataItems.${itemIndex}.data.rows`]: rows,
-                [`dataItems.${itemIndex}.updatedAt`]: new Date(),
-                updatedAt: new Date(),
+                dataItems,
+                updatedAt: now,
               },
             }
           );

@@ -13,7 +13,7 @@
   <%- include('partials/admin-navbar', { activePage: 'dashboard' }) %>
 
   <div class="app-content">
-    <% const instructionCount=instructions.length; const dataItemCount=instructions.reduce((sum, ins)=> sum + ((ins.dataItems || []).length), 0); const textItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).filter(it => it.type === 'text').length), 0); const tableItemCount = instructions.reduce((sum, ins) => sum + ((ins.dataItems || []).filter(it => it.type === 'table').length), 0); const lastUpdated = instructions.reduce((latest, ins) => { const val = ins.updatedAt || ins.createdAt; if (!val) return latest; return !latest || new Date(val) > new Date(latest) ? val : latest; }, null); %>
+    <% const safeInstructions = Array.isArray(instructions) ? instructions : []; const getDataItems = (instruction) => Array.isArray(instruction && instruction.dataItems) ? instruction.dataItems : []; const instructionCount = safeInstructions.length; const dataItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).length, 0); const textItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).filter(it => it.type === 'text').length, 0); const tableItemCount = safeInstructions.reduce((sum, ins) => sum + getDataItems(ins).filter(it => it.type === 'table').length, 0); const lastUpdated = safeInstructions.reduce((latest, ins) => { const val = ins.updatedAt || ins.createdAt; if (!val) return latest; return !latest || new Date(val) > new Date(latest) ? val : latest; }, null); %>
 
     <% if (typeof error !== 'undefined' && error) { %>
       <div class="alert alert-danger alert-dismissible fade show" role="alert">
@@ -22,7 +22,7 @@
       </div>
     <% } %>
 
-    <% if (instructions.length === 0) { %>
+    <% if (safeInstructions.length === 0) { %>
       <div class="empty-state-card">
         <div class="app-empty">
           <div class="app-empty__icon"><i class="fas fa-book-open"></i></div>
@@ -38,7 +38,7 @@
       <!-- Hidden select for JS compatibility -->
       <select id="instructionSelect" class="d-none">
         <option value="">— เลือก Instruction —</option>
-        <% instructions.forEach(instruction => { %>
+        <% safeInstructions.forEach(instruction => { %>
           <% const updatedAt = instruction.updatedAt || instruction.createdAt; const starterCfg = instruction.conversationStarter || {}; const starterEnabled = !!starterCfg.enabled; const starterCount = Array.isArray(starterCfg.messages) ? starterCfg.messages.length : 0; %>
           <option value="<%= instruction._id %>"
             data-instruction-code="<%= instruction.instructionId || '' %>"
@@ -62,7 +62,7 @@
             <input type="text" id="searchInstructions" class="form-control form-control-sm" placeholder="ค้นหา Instruction..." autocomplete="off">
           </div>
           <div class="ws-sidebar-list" id="instructionList">
-            <% instructions.forEach(instruction => { %>
+            <% safeInstructions.forEach(instruction => { %>
               <% const updatedAt = instruction.updatedAt || instruction.createdAt; const starterCfg = instruction.conversationStarter || {}; const starterEnabled = !!starterCfg.enabled; const starterCount = Array.isArray(starterCfg.messages) ? starterCfg.messages.length : 0; %>
               <div class="ws-list-item" data-id="<%= instruction._id %>" data-name="<%= (instruction.name || '').toLowerCase() %>" data-code="<%= (instruction.instructionId || '').toLowerCase() %>">
                 <div class="ws-list-name">
@@ -71,7 +71,7 @@
                 </div>
                 <div class="ws-list-meta"><%= instruction.description || 'ไม่มีคำอธิบาย' %></div>
                 <div class="ws-list-badges">
-                  <span class="ws-badge"><i class="fas fa-database me-1"></i><%= (instruction.dataItems || []).length %></span>
+                  <span class="ws-badge"><i class="fas fa-database me-1"></i><%= getDataItems(instruction).length %></span>
                   <span class="ws-badge <%= starterEnabled ? 'is-on' : '' %>"><i class="fas fa-rocket me-1"></i><%= starterEnabled ? 'ON (' + starterCount + ')' : 'OFF' %></span>
                 </div>
               </div>
@@ -187,7 +187,7 @@
 
       <!-- Keep original cards hidden for JS compatibility -->
       <div id="instructionCardsWrapper" class="instruction-grid d-none">
-        <% instructions.forEach(instruction => { %>
+        <% safeInstructions.forEach(instruction => { %>
           <% const starterCfg = instruction.conversationStarter || {}; const starterEnabled = !!starterCfg.enabled; const starterCount = Array.isArray(starterCfg.messages) ? starterCfg.messages.length : 0; %>
           <div class="instruction-card" data-id="<%= instruction._id %>">
             <div class="instruction-header">
@@ -210,8 +210,9 @@
               </div>
             </div>
             <div class="data-items-container" data-instruction-id="<%= instruction._id %>">
-              <% if (instruction.dataItems && instruction.dataItems.length > 0) { %>
-                <% instruction.dataItems.forEach((item, index) => { %>
+              <% const cardDataItems = getDataItems(instruction); %>
+              <% if (cardDataItems.length > 0) { %>
+                <% cardDataItems.forEach((item, index) => { %>
                   <div class="data-item" data-item-id="<%= item.itemId %>" data-instruction-id="<%= instruction._id %>">
                     <div class="data-item-info">
                       <div class="data-item-title">
@@ -240,7 +241,7 @@
               <button class="btn btn-add-item add-data-item" data-instruction-id="<%= instruction._id %>"><i class="fas fa-plus me-1"></i> เพิ่มชุดข้อมูล</button>
             </div>
             <div class="instruction-footer">
-              <span><i class="fas fa-database me-1"></i><%= (instruction.dataItems || []).length %> ชุดข้อมูล</span>
+              <span><i class="fas fa-database me-1"></i><%= getDataItems(instruction).length %> ชุดข้อมูล</span>
               <span><i class="fas fa-clock me-1"></i>แก้ไข: <%= instruction.updatedAt ? new Date(instruction.updatedAt).toLocaleString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-' %></span>
             </div>
           </div>

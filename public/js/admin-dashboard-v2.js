@@ -573,7 +573,7 @@
                     workspaceMeta.textContent = instruction.description || 'ไม่มีคำอธิบาย';
                 }
                 // Update metrics
-                const dataItems = instruction.dataItems || [];
+                const dataItems = Array.isArray(instruction.dataItems) ? instruction.dataItems : [];
                 const charCount = dataItems.reduce((sum, it) => sum + (it.content || '').length, 0);
                 const metricDataItems = document.getElementById('metricDataItems');
                 const metricStarter = document.getElementById('metricStarter');
