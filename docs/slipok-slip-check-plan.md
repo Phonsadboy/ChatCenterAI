@@ -49,7 +49,7 @@
 - Fail: มักเป็น `HTTP 400/401` → `{ code, message, data? }` (บางกรณีมี `data` แนบรายละเอียดสลิปกลับมา)
 - โค้ดที่เจอบ่อย (คาดการณ์จากเอกสาร): `1006, 1007, 1008, 1010, 1012, 1013, 1014, 1002, 1004`
 
-## Data Model (MongoDB)
+## Data Model (PostgreSQL)
 > ยึด pattern เดิม: เก็บ config ใน `notification_channels.settings` เพื่อให้ “เปิด/ปิดต่อกลุ่ม” ได้ และไม่กระทบโครงสร้างหลัก
 
 ### `notification_channels.settings` (เพิ่มฟิลด์)

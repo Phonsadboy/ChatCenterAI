@@ -13,7 +13,10 @@ AI-powered chat center supporting LINE, Facebook Messenger, and multiple AI mode
 docker run -d \
   --name chatcenter-ai \
   -p 3000:3000 \
-  -e MONGODB_URI=your_mongodb_uri \
+  -e CHAT_STORAGE_MODE=postgres \
+  -e APP_DOCUMENT_MODE=postgres \
+  -e SESSION_STORE_MODE=postgres \
+  -e DATABASE_URL=your_postgres_uri \
   -e OPENAI_API_KEY=your_openai_key \
   xianta456/chatcenter-ai:latest
 ```
@@ -34,7 +37,14 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - MONGODB_URI=${MONGODB_URI}
+      - CHAT_STORAGE_MODE=postgres
+      - APP_DOCUMENT_MODE=postgres
+      - SESSION_STORE_MODE=postgres
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_SSL=${DATABASE_SSL:-false}
+      - POSTGRES_NATIVE_READS=${POSTGRES_NATIVE_READS:-true}
+      - POSTGRES_STATEMENT_TIMEOUT_MS=${POSTGRES_STATEMENT_TIMEOUT_MS:-30000}
+      - POSTGRES_MAX_POOL_SIZE=${POSTGRES_MAX_POOL_SIZE:-20}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
@@ -64,7 +74,7 @@ docker-compose up -d
 
 | Variable | Description |
 |----------|-------------|
-| `MONGODB_URI` | MongoDB connection string |
+| `DATABASE_URL` | PostgreSQL connection string |
 | `SESSION_SECRET` | Secret for session encryption |
 
 ### Optional AI API Keys
@@ -91,7 +101,13 @@ docker-compose up -d
 Create a `.env` file with your configuration:
 
 ```bash
-MONGODB_URI=mongodb://localhost:27017/chatcenter
+CHAT_STORAGE_MODE=postgres
+APP_DOCUMENT_MODE=postgres
+SESSION_STORE_MODE=postgres
+DATABASE_URL=postgresql://postgres:password@host:5432/railway
+POSTGRES_NATIVE_READS=true
+POSTGRES_STATEMENT_TIMEOUT_MS=30000
+POSTGRES_MAX_POOL_SIZE=20
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GOOGLE_API_KEY=AI...
@@ -159,7 +175,7 @@ docker logs chatcenter-ai
 
 ### Database connection issues
 
-Ensure MongoDB URI is correct and accessible from the container.
+Ensure `DATABASE_URL` points to a reachable PostgreSQL database and `DATABASE_SSL` matches the database endpoint requirements.
 
 ### Port already in use
 

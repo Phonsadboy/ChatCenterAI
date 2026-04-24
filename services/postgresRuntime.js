@@ -476,6 +476,11 @@ function createPostgresRuntime(config = {}) {
           ON app_documents (collection_name, (payload->>'userId'), updated_at DESC)
       `);
       await query(`
+        CREATE INDEX IF NOT EXISTS idx_app_documents_user_profiles_user_platform
+          ON app_documents ((payload->>'userId'), (payload->>'platform'), updated_at DESC)
+          WHERE collection_name = 'user_profiles'
+      `);
+      await query(`
         CREATE INDEX IF NOT EXISTS idx_app_documents_collection_sender_id_updated
           ON app_documents (collection_name, (payload->>'senderId'), updated_at DESC)
       `);
@@ -498,6 +503,14 @@ function createPostgresRuntime(config = {}) {
       await query(`
         CREATE INDEX IF NOT EXISTS idx_app_documents_collection_default_updated
           ON app_documents (collection_name, (payload->>'isDefault'), updated_at DESC)
+      `);
+      await query(`
+        CREATE INDEX IF NOT EXISTS idx_app_documents_follow_up_tasks_due
+          ON app_documents ((payload->>'nextScheduledAt') ASC, updated_at DESC)
+          WHERE collection_name = 'follow_up_tasks'
+            AND (payload->>'canceled' IS NULL OR payload->>'canceled' <> 'true')
+            AND (payload->>'completed' IS NULL OR payload->>'completed' <> 'true')
+            AND NULLIF(payload->>'nextScheduledAt', '') IS NOT NULL
       `);
       await query(`
         CREATE INDEX IF NOT EXISTS idx_asset_objects_scope_updated

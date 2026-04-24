@@ -12,7 +12,7 @@
 - มีประวัติการส่ง (success/failed) เพื่อไล่ปัญหา
 
 ## ให้สอดคล้องกับโค้ดปัจจุบัน (จุดอ้างอิง)
-- Entry point: `index.js` (Express/Socket.IO + MongoDB)
+- Entry point: `index.js` (Express/Socket.IO + PostgreSQL)
 - LINE Webhook: `POST /webhook/line/:botId` → loop `events` → `handleLineEvent(event, queueOptions)`
 - บันทึกออเดอร์: `saveOrderToDatabase()` → collection `orders` (ฟิลด์สำคัญ: `platform`, `botId` เป็น string, `orderData.totalAmount`, `extractedAt`)
 - หน้าแอดมิน Settings v2: `GET /admin/settings2` → `views/admin-settings-v2.ejs` + `public/js/admin-settings-v2.js` + `public/css/admin-settings-v2.css`
@@ -35,7 +35,7 @@
 - Retry/backoff อัตโนมัติ
 - ช่องทางอื่น (LINE 1:1, Webhook, ฯลฯ)
 
-## Data Model (MongoDB) — แบบสั้นที่เข้ากับโปรเจ็ก
+## Data Model (PostgreSQL) — แบบสั้นที่เข้ากับโปรเจ็ก
 > โปรเจ็กนี้ใช้ `botId` เป็น **string** ในหลายจุด (เช่น `orders.botId`) จึงยึด pattern เดียวกัน
 
 ### 1) `line_bot_groups`
@@ -170,7 +170,7 @@
 **Logs**
 - `GET /admin/api/notification-logs?channelId=&status=&from=&to=`
 
-### E) MongoDB Indexes
+### E) PostgreSQL Indexes
 - เพิ่ม `ensureNotificationIndexes(db)` แล้วเรียกใน `connectDB()` คู่กับ `ensureCategoryIndexes()`
 
 ## Admin UI (Settings v2)

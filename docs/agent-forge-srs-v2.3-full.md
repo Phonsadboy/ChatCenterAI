@@ -6,7 +6,7 @@
 ## 0) สิ่งที่เคยคุยและ "ตกหล่น" จากฉบับก่อน (รวบเข้าฉบับเต็มแล้ว)
 
 1. ต้องมี `KB parity` กับระบบ `instruction-ai` เดิมแบบครบถ้วน และห้ามข้อมูล fact ตกหล่นก่อน publish
-2. `Instruction selector` ต้องเป็น dropdown ที่แสดง "ชื่อ Instruction" เท่านั้น (ไม่โชว์ Mongo `_id` บน UI)
+2. `Instruction selector` ต้องเป็น dropdown ที่แสดง "ชื่อ Instruction" เท่านั้น (ไม่โชว์ PostgreSQL `_id` บน UI)
 3. `Customer reply model` ต้องเป็น dropdown แบบเลือกชัดเจน (UI บังคับเลือก)
 4. มี 2 workflow ชัดเจน: `ปรับปรุง` และ `สร้างใหม่` พร้อมกฎ auto-transition
 5. โหมด `สร้างใหม่` ใช้ได้เฉพาะตอน `human-only` และรอบแรกทำงานครั้งเดียว จากนั้นสลับเป็น `ปรับปรุง` อัตโนมัติ
@@ -199,7 +199,7 @@
 12. publish + cursor commit + run complete ใน transaction เดียว
 13. release lock
 
-## 15) Data Model (MongoDB)
+## 15) Data Model (PostgreSQL)
 
 1. `agent_profiles`
 2. `agent_runs`
@@ -220,7 +220,7 @@
 
 ## 16) Atomicity / Consistency
 
-ต้องใช้ Mongo transaction ครอบพร้อมกัน:
+ต้องใช้ PostgreSQL transaction ครอบพร้อมกัน:
 1. `publish_instruction_version`
 2. `commit_processing_cursor`
 3. `mark_run_completed`

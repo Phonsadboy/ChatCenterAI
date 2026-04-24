@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
-const { ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 
 const PASSCODE_COLLECTION = "admin_passcodes";
 const DEFAULT_SALT_ROUNDS = Number(

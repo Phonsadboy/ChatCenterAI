@@ -1,9 +1,9 @@
 const assert = require("assert");
-const { MongoClient, ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 const { buildRuntimeConfig } = require("../services/runtimeConfig");
 const { createPostgresRuntime } = require("../services/postgresRuntime");
 const { createChatStorageService } = require("../services/chatStorageService");
-const { createPostgresMongoCompatClient } = require("../services/postgresMongoCompat");
+const { createPostgresDocumentCompatClient } = require("../services/postgresDocumentCompat");
 const {
   InstructionAI2Service,
   buildRetailTemplateDataItems,
@@ -30,20 +30,9 @@ function nowTag() {
 }
 
 async function connectDb() {
-  const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
-  if (mongoUri) {
-    const client = new MongoClient(mongoUri);
-    await client.connect();
-    return {
-      mode: "mongo",
-      db: client.db("chatbot"),
-      close: () => client.close(),
-    };
-  }
-
   const config = buildRuntimeConfig(process.env);
   if (!config.postgres.connectionString) {
-    throw new Error("No MONGO_URI/MONGODB_URI/DATABASE_URL available");
+    throw new Error("DATABASE_URL is required");
   }
   const postgresRuntime = createPostgresRuntime(config.postgres);
   const chatStorageService = createChatStorageService({
@@ -51,7 +40,7 @@ async function connectDb() {
     hotRetentionDays: config.chatHotRetentionDays,
   });
   await chatStorageService.ensureReady();
-  const client = createPostgresMongoCompatClient({
+  const client = createPostgresDocumentCompatClient({
     postgresRuntime,
     chatStorageService,
     projectBucket: null,

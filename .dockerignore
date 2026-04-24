@@ -12,8 +12,5 @@ Thumbs.db
 .railwayignore
 railway.json
 .cursor
-scripts/*
-!scripts/verify-instruction-ai2-service.js
-!scripts/test-instruction-ai2-retail-ai-test.js
 nixpacks.toml
 Procfile

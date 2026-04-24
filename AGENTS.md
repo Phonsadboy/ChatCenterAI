@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Entry point `index.js` runs Express/Socket.IO, wires MongoDB, OpenAI, and LINE/Facebook, and renders admin UI via EJS under `views/`.
+- Entry point `index.js` runs Express/Socket.IO, wires PostgreSQL, OpenAI, and LINE/Facebook, and renders admin UI via EJS under `views/`.
 - Static assets live in `public/` (`css`, `js`, `assets/`); shared colors and variables in `public/css/theme.css`, base components in `public/css/components.css`, page-specific CSS can live alongside.
 - External integrations stay in `services/`; cross-cutting helpers in `utils/`; maintenance scripts (e.g., cleanups) in `scripts/`.
 - Design notes and theme specs sit in `docs/`.
@@ -11,7 +11,7 @@
 - `npm run dev` starts the server with nodemon auto-reload for local work.
 - `npm start` runs the production-style server.
 - `npm run build` placeholder (no build step yet).
-- `node scripts/drop-legacy-facebook-comment.js` only when you intentionally need to purge old FB comment data.
+- `npm run migrate:pg:native-performance` rebuilds Postgres native read tables/rollups after large data changes.
 
 ## Coding Style & Naming Conventions
 - JavaScript: semicolons required, 2-space indentation, prefer `const`/`let`; use `async/await` over promise chains.
@@ -28,6 +28,6 @@
 - Keep secrets in `.env` (see `env.example`); check `index.js` for any new endpoints/config needs before sharing.
 
 ## Security & Configuration Tips
-- Never hardcode keys; load via `.env` for OpenAI, Mongo, LINE/Facebook.
+- Never hardcode keys; load via `.env` for OpenAI, PostgreSQL, LINE/Facebook.
 - Preserve input sanitization, `helmet`, and rate limiting on new routes.
 - If serving assets from a CDN, configure `PUBLIC_BASE_URL` and set SRI/versioning for `public/assets/*`.

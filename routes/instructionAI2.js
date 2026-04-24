@@ -1,6 +1,6 @@
 const express = require("express");
 const multer = require("multer");
-const { ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 const {
   InstructionAI2Service,
   buildRetailTemplateDataItems,

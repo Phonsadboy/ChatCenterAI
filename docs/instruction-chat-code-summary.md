@@ -267,7 +267,7 @@ Audit Log:
 
 ---
 
-## 🗄️ MongoDB Collections (3 ใหม่)
+## 🗄️ PostgreSQL Collections (3 ใหม่)
 
 | Collection | Schema | หน้าที่ |
 |---|---|---|
@@ -309,8 +309,8 @@ Backend (index.js)
   │  ├── openai.chat.completions.create()
   │  ├── SSE: thinking, tool_start
   │  ├── chatService.executeTool() → instructionChatService.js
-  │  │   ├── READ tools → MongoDB query
-  │  │   ├── WRITE tools → MongoDB update + changelog
+  │  │   ├── READ tools → PostgreSQL query
+  │  │   ├── WRITE tools → PostgreSQL update + changelog
   │  │   └── RAG search → instructionRAGService.js
   │  │       ├── Keyword search (always)
   │  │       ├── Embedding search (if ready)
@@ -348,6 +348,6 @@ Frontend
 - [x] System prompt auto-injection
 
 ### Phase 3: Production Ready
-- [x] Session persistence (MongoDB)
+- [x] Session persistence (PostgreSQL)
 - [x] Audit log (username, message, tools, changes, token usage)
 - [x] Bulk operations safety (2-step confirmation token, 60s expiry, max 50 rows)

@@ -30,7 +30,7 @@
 - ข้อความ error จาก SlipOK (`message`)
 - ถ้า SlipOK แนบ `data` กลับมา ระบบจะแสดงข้อมูลที่มีในสลิปเท่าที่มีให้ (เช่น amount/time)
 
-## โครงสร้างข้อมูล (MongoDB)
+## โครงสร้างข้อมูล (PostgreSQL)
 เก็บไว้ใน `notification_channels.settings` (ต่อ “ช่องทางแจ้งเตือน”)
 ```js
 {

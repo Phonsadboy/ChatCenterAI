@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const moment = require("moment-timezone");
-const { ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 
 const DEFAULT_TIMEZONE = "Asia/Bangkok";
 const RUN_LOCK_TTL_MS = 4 * 60 * 60 * 1000;

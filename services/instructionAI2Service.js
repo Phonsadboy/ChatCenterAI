@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 
 const BOT_COLLECTION_BY_PLATFORM = {
   line: "line_bots",

@@ -3,19 +3,10 @@
 const path = require("path");
 require("dotenv").config({ path: path.resolve(process.cwd(), ".env") });
 
-const { MongoClient } = require("mongodb");
 const { buildRuntimeConfig } = require("../../services/runtimeConfig");
 const { createPostgresRuntime } = require("../../services/postgresRuntime");
 const { createProjectBucket } = require("../../services/projectBucket");
 const { createChatStorageService } = require("../../services/chatStorageService");
-
-function getMongoUri(env = process.env) {
-  return (
-    (typeof env.MONGO_URI === "string" && env.MONGO_URI.trim()) ||
-    (typeof env.MONGODB_URI === "string" && env.MONGODB_URI.trim()) ||
-    ""
-  );
-}
 
 function normalizeForJson(value) {
   if (value === null || typeof value === "undefined") return null;
@@ -115,7 +106,6 @@ function monthWindowFromKey(monthKey) {
 
 function createMigrationContext() {
   const runtimeConfig = buildRuntimeConfig(process.env);
-  const mongoUri = getMongoUri(process.env);
   const postgresRuntime = createPostgresRuntime(runtimeConfig.postgres);
   const projectBucket = createProjectBucket(runtimeConfig.bucket);
   const chatStorageService = createChatStorageService({
@@ -125,43 +115,14 @@ function createMigrationContext() {
     logger: console,
   });
 
-  let mongoClient = null;
-
-  async function connectMongo() {
-    if (!mongoUri) {
-      throw new Error("MONGO_URI / MONGODB_URI is not configured");
-    }
-    if (mongoClient) return mongoClient;
-    mongoClient = new MongoClient(mongoUri, {
-      maxPoolSize: 10,
-      minPoolSize: 0,
-      serverSelectionTimeoutMS: 15000,
-      connectTimeoutMS: 15000,
-      socketTimeoutMS: 30000,
-    });
-    await mongoClient.connect();
-    return mongoClient;
-  }
-
-  async function getMongoDb() {
-    return (await connectMongo()).db("chatbot");
-  }
-
   async function close() {
-    if (mongoClient) {
-      await mongoClient.close();
-      mongoClient = null;
-    }
     await postgresRuntime.close();
   }
 
   return {
     chatStorageService,
     close,
-    connectMongo,
     createHotCutoff,
-    getMongoDb,
-    mongoUri,
     monthWindowFromKey,
     normalizeForJson,
     postgresRuntime,

@@ -32,20 +32,20 @@ function readFirstString(env, candidates = []) {
 function buildRuntimeConfig(env = process.env) {
   const chatStorageMode = normalizeEnum(
     env.CHAT_STORAGE_MODE || env.DATA_MODE,
-    ["mongo", "dual", "shadow", "postgres"],
-    "mongo",
+    ["postgres"],
+    "postgres",
   );
 
   const appDocumentMode = normalizeEnum(
     env.APP_DOCUMENT_MODE || env.DATA_MODE,
-    ["mongo", "dual", "shadow", "postgres"],
-    "mongo",
+    ["postgres"],
+    "postgres",
   );
 
   const sessionStoreMode = normalizeEnum(
     env.SESSION_STORE_MODE,
-    ["auto", "mongo", "postgres", "memory"],
-    "mongo",
+    ["auto", "postgres", "memory"],
+    "postgres",
   );
 
   const postgresConnectionString = readFirstString(env, [
@@ -86,7 +86,7 @@ function buildRuntimeConfig(env = process.env) {
         readFirstString(env, ["POSTGRES_APP_NAME"]) || "chatcenter-ai",
       statementTimeoutMs: Math.max(
         0,
-        parseIntEnv(env.POSTGRES_STATEMENT_TIMEOUT_MS, 10000),
+        parseIntEnv(env.POSTGRES_STATEMENT_TIMEOUT_MS, 30000),
       ),
       idleTimeoutMs: Math.max(
         1000,
@@ -96,7 +96,7 @@ function buildRuntimeConfig(env = process.env) {
         1000,
         parseIntEnv(env.POSTGRES_CONNECTION_TIMEOUT_MS, 10000),
       ),
-      maxPoolSize: Math.max(1, parseIntEnv(env.POSTGRES_MAX_POOL_SIZE, 10)),
+      maxPoolSize: Math.max(1, parseIntEnv(env.POSTGRES_MAX_POOL_SIZE, 20)),
     },
     redis: {
       url: readFirstString(env, ["REDIS_URL", "VALKEY_URL"]),

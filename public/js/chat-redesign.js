@@ -2038,14 +2038,27 @@ class ChatManager {
 
             const data = await response.json();
 
+            if (data.success && data.skipEcho) {
+                const history = this.chatHistory[this.currentUserId] || [];
+                const idx = history.indexOf(tempMessage);
+                if (idx >= 0) {
+                    history.splice(idx, 1);
+                    this.renderMessages();
+                }
+                this.loadUsers();
+                this.showToast(data.control ? (data.displayMessage || 'อัปเดตสถานะผู้ใช้แล้ว') : 'ส่งข้อความสำเร็จ', 'success');
+                return;
+            }
+
             if (data.success && data.message) {
                 // Replace last temp message
                 const history = this.chatHistory[this.currentUserId] || [];
                 const idx = history.lastIndexOf(tempMessage);
+                const sentMessage = this.prepareMessageForDisplay(data.message);
                 if (idx >= 0) {
-                    history[idx] = data.message;
+                    history[idx] = sentMessage;
                 } else {
-                    history.push(data.message);
+                    history.push(sentMessage);
                 }
                 this.renderMessages();
                 this.loadUsers();

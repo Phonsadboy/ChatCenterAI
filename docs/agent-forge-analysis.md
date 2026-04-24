@@ -49,7 +49,7 @@
 #### 1.2 "Atomic Version Bump" ไม่มีรายละเอียดเพียงพอ
 
 แผนฯ ระบุ step 6 ว่า "apply แล้ว version bump แบบ atomic" แต่ไม่ได้อธิบาย:
-- ใช้ MongoDB Transactions หรือ `findOneAndUpdate` ด้วย version check?
+- ใช้ PostgreSQL Transactions หรือ `findOneAndUpdate` ด้วย version check?
 - ถ้า 2 runs รันพร้อมกัน (manual + scheduled) และเขียน instruction พร้อมกัน จะ handle อย่างไร?
 - ระบบมี `instruction_chat_changelog` อยู่แล้ว (ดูจาก `instructionChatService.js` บรรทัด 16) — Agent Forge จะ reuse หรือสร้าง collection ใหม่?
 
@@ -107,10 +107,10 @@ app.use('/admin/agent-forge', require('./routes/agentForgeAdmin'));
 
 ---
 
-#### 1.5 MongoDB Collection Design — ปัญหา `agent_run_events` Seq Collision
+#### 1.5 PostgreSQL Collection Design — ปัญหา `agent_run_events` Seq Collision
 
 Collection `agent_run_events` กำหนดว่า append-only ซึ่งดี แต่:
-- `seq` field: แผนฯ ไม่ได้บอกว่า generate seq อย่างไร (MongoDB ObjectId? Atomic counter?)
+- `seq` field: แผนฯ ไม่ได้บอกว่า generate seq อย่างไร (PostgreSQL ObjectId? Atomic counter?)
 - ถ้าใช้ `Date.now()` เป็น seq → อาจ collision เมื่อ events เกิดในมิลลิวินาทีเดียวกัน
 
 **แนะนำ:** ใช้ Atomic Counter ต่อ runId:
@@ -134,7 +134,7 @@ async function nextSeq(runId) {
 แผนฯ ระบุ "commit cursor เฉพาะเมื่อ run สำเร็จ" แต่:
 - ถ้า run publish instruction สำเร็จแล้ว แต่ cursor commit fail → run ต่อไปจะ reprocess ข้อมูลเก่า → instruction อาจถูก publish ซ้ำ
 
-**แนะนำ:** ใช้ MongoDB **Session Transactions** สำหรับ `publish_instruction + cursor_commit` ให้เป็น atomic operation เดียว
+**แนะนำ:** ใช้ PostgreSQL **Session Transactions** สำหรับ `publish_instruction + cursor_commit` ให้เป็น atomic operation เดียว
 
 ---
 
@@ -329,7 +329,7 @@ compactionManifest = {
 **แนะนำสำหรับ Agent Forge Run (Long-lived):**
 
 ```javascript
-// ใช้ MongoDB เป็น event buffer แทน in-memory
+// ใช้ PostgreSQL เป็น event buffer แทน in-memory
 // (agent_run_events collection มีในแผนอยู่แล้ว — ควร enforce ให้ใช้ DB)
 GET /api/agent-forge/runs/:runId/events?afterSeq=450
 → Stream events จาก DB ตั้งแต่ seq 451+
@@ -410,7 +410,7 @@ this._pendingBulkDeletes = this._pendingBulkDeletes || {};
 2. **เขียน Priority Chain spec** ของ `disableAiReply` เป็น 1 หน้า document ก่อนเขียน code
 3. **ออกแบบ Atomic Lock** ใน `agent_profiles` ด้วย `findOneAndUpdate` + `runLockedAt` stale check
 4. **กำหนด Scoring Rubric** ทั้ง 5 dimensions ก่อน implement `agentForgeScorer.js`
-5. **ย้าย SSE event buffer** ไป `agent_run_events` (MongoDB) แทน in-memory `activeRequests` Map
+5. **ย้าย SSE event buffer** ไป `agent_run_events` (PostgreSQL) แทน in-memory `activeRequests` Map
 6. **กำหนด `maxMessages: 20`** ใน `get_customer_conversation` tool contract ตั้งแต่ต้น
 
 ### Recommended File Structure

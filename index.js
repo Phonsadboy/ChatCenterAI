@@ -6,7 +6,7 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const util = require("util");
 const { google } = require("googleapis");
-const { MongoClient, ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 const { OpenAI } = require("openai");
 const line = require("@line/bot-sdk");
 const sharp = require("sharp"); // <--- เพิ่มตรงนี้ ตามต้นฉบับ
@@ -40,7 +40,6 @@ const crypto = require("crypto");
 const XLSX = require("xlsx");
 const multer = require("multer");
 const session = require("express-session");
-const MongoStore = require("connect-mongo");
 const ConnectPgSimple = require("connect-pg-simple");
 const rateLimit = require("express-rate-limit");
 const { buildRuntimeConfig } = require("./services/runtimeConfig");
@@ -52,9 +51,9 @@ const {
 } = require("./services/postgresNativeReadRepository");
 const { createRedisCacheService } = require("./services/redisCacheService");
 const {
-  createGridFSBucket,
-  createPostgresMongoCompatClient,
-} = require("./services/postgresMongoCompat");
+  createAssetBucket,
+  createPostgresDocumentCompatClient,
+} = require("./services/postgresDocumentCompat");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
 const ASSETS_DIR =
   process.env.ASSETS_DIR ||
@@ -75,10 +74,6 @@ const OPENROUTER_HTTP_REFERER =
   process.env.OPENROUTER_HTTP_REFERER ||
   (PUBLIC_BASE_URL ? PUBLIC_BASE_URL : "");
 const OPENROUTER_X_TITLE = process.env.OPENROUTER_X_TITLE || "ChatCenterAI";
-const MONGO_URI =
-  (typeof process.env.MONGO_URI === "string" && process.env.MONGO_URI.trim()) ||
-  (typeof process.env.MONGODB_URI === "string" && process.env.MONGODB_URI.trim()) ||
-  "";
 const runtimeConfig = buildRuntimeConfig(process.env);
 const postgresRuntime = createPostgresRuntime(runtimeConfig.postgres);
 const projectBucket = createProjectBucket(runtimeConfig.bucket);
@@ -109,26 +104,12 @@ function parseNonNegativeIntEnv(rawValue, fallback) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-const MONGO_MAX_POOL_SIZE = parsePositiveIntEnv(process.env.MONGO_MAX_POOL_SIZE, 20);
-const MONGO_MIN_POOL_SIZE = parseNonNegativeIntEnv(process.env.MONGO_MIN_POOL_SIZE, 0);
-const MONGO_SERVER_SELECTION_TIMEOUT_MS = parsePositiveIntEnv(
-  process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS,
+const DB_BOOTSTRAP_RETRY_DELAY_MS = parsePositiveIntEnv(
+  process.env.DB_BOOTSTRAP_RETRY_DELAY_MS,
   5000,
 );
-const MONGO_CONNECT_TIMEOUT_MS = parsePositiveIntEnv(
-  process.env.MONGO_CONNECT_TIMEOUT_MS,
-  10000,
-);
-const MONGO_SOCKET_TIMEOUT_MS = parsePositiveIntEnv(
-  process.env.MONGO_SOCKET_TIMEOUT_MS,
-  30000,
-);
-const MONGO_BOOTSTRAP_RETRY_DELAY_MS = parsePositiveIntEnv(
-  process.env.MONGO_BOOTSTRAP_RETRY_DELAY_MS,
-  5000,
-);
-const MONGO_BOOTSTRAP_MAX_RETRY_DELAY_MS = parsePositiveIntEnv(
-  process.env.MONGO_BOOTSTRAP_MAX_RETRY_DELAY_MS,
+const DB_BOOTSTRAP_MAX_RETRY_DELAY_MS = parsePositiveIntEnv(
+  process.env.DB_BOOTSTRAP_MAX_RETRY_DELAY_MS,
   60000,
 );
 const ADMIN_MASTER_PASSCODE = (process.env.ADMIN_MASTER_PASSCODE || "").trim();
@@ -140,11 +121,11 @@ const ADMIN_SESSION_TTL_SECONDS = Number(
 const SESSION_COOKIE_NAME =
   process.env.ADMIN_SESSION_COOKIE_NAME || "admin_session";
 const GOOGLE_CLIENT_EMAIL =
-  "aitar-888@eminent-wares-446512-j8.iam.gserviceaccount.com";
+  (process.env.GOOGLE_CLIENT_EMAIL || "").trim();
 const GOOGLE_PRIVATE_KEY =
-  "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDGhyeINArKZgaV\nitEcK+o89ilPYeRNTNZgJT7VNHB5hgNLLeAcFLJ7IlCIqTLMoJEnnoDQil6aKaz8\nExVL83uSXRrzk4zQvtt3tIP31+9wOCb9D4ZGWfVP1tD0qdD4WJ1qqg1j1/8879pH\nUeQGEMuCnyVbcQ3GbYQjyYb3wEz/Qv7kMVggF+MIaGGw2NQwM0XcufSFtyxvvX2S\nb8uGc1A8R+Dn/tmcgMODhbtEgcMg6yXI5Y26MPfDjVrEbk0lfCr7IGFJX4ASYeKl\n0jhm0RGb+aya2cb55auLN3VPO5MQ+cOp8gHBf5GiC/YgF1gbRgF5b7LgmENBxSfH\nb3WVQodLAgMBAAECggEACKB14M7LdekXZHyAQrZL0EitbzQknLv33Xyw2B3rvJ7M\nr4HM/nC4eBj7y+ciUc8GZQ+CWc2GzTHTa66+mwAia1qdYbPp3LuhGM4Leq5zn/o+\nA3rJuG6PS4qyUMy89msPXW5fSj/oE535QREiFKYP2dtlia2GI4xoag+x9uZwfMUO\nWKEe7tiUoZQEiGhwtjLq9lyST4kGGmlhNee9OyhDJcw4uCt8Cepr++hMDleWUF6c\nX0nbGmoSS0sZ5Boy8ATMhw/3luaOAlTUEz/nVDvbbWlNL9etwLKiAVw+AQXsPHNW\nNWF7gyEIsEi0qSM3PtA1X7IdReRXHqmfiZs0J3qSQQKBgQD1+Yj37Yuqj8hGi5PY\n+M0ieMdGcbUOmJsM1yUmBMV4bfaTiqm504P6DIYAqfDDWeozcHwcdpG1AfFAihEi\nh6lb0qRk8YaGbzvac8mWhwo/jDA5QB97fjFa6uwtlewZ0Er/U3QmOeVVnVC1y1b0\nrbJD5yjvI3ve+gpwAz0glpIMiwKBgQDOnpD7p7ylG4NQunqmzzdozrzZP0L6EZyE\n141st/Hsp9rtO9/ADuH6WhpirQ516l5LLv7mLPA8S9CF/cSdWF/7WlxBPjM8WRs9\nACFNBJIwUfjzPnvECmtsayzRlKuyCAspnNSkzgtdtvf2xI82Z3BGov9goZfu+D4A\n36b1qXsIQQKBgQCO1CojhO0vyjPKOuxL9hTvqmBUWFyBMD4AU8F/dQ/RYVDn1YG+\npMKi5Li/E+75EHH9EpkO0g7Do3AaQNG4UjwWVJcfAlxSHa8Mp2VsIdfilJ2/8KsX\nQ2yXVYh04/Rn/No/ro7oT4AKmcGu/nbstxuncEgFrH4WOOzspATPsn72BwKBgG5N\nBAT0NKbHm0B7bIKkWGYhB3vKY8zvnejk0WDaidHWge7nabkzuLtXYoKO9AtKxG/K\ndNUX5F+r8XO2V0HQLd0XDezecaejwgC8kwp0iD43ZHkmQBgVn+dPB6wSe94coSjj\nyjj4reSnipQ3tmRKsAtldIN3gI5YA3Gf85dtlHqBAoGAD5ePt7cmu3tDZhA3A8f9\no8mNPvqz/WGs7H2Qgjyfc3jUxEGhVt1Su7J1j+TppfkKtJIDKji6rVA9oIjZtpZT\ngxnU6hcYuiwbLh3wGEFIjP1XeYYILudqfWOEbwnxD1RgMkCqfSHf/niWlfiH6p3F\ndnBsLY/qXdKfS/OXyezAm4M=\n-----END PRIVATE KEY-----\n";
-const GOOGLE_DOC_ID = "1U-2OPVVI_Gz0-uFonrRNrcFopDqmPGUcJ4qJ1RdAqxY";
-const SPREADSHEET_ID = "15nU46XyAh0zLAyD_5DJPfZ2Gog6IOsoedSCCMpnjEJo";
+  (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+const GOOGLE_DOC_ID = (process.env.GOOGLE_DOC_ID || "").trim();
+const SPREADSHEET_ID = (process.env.SPREADSHEET_ID || "").trim();
 const META_GRAPH_API_VERSION =
   process.env.META_GRAPH_API_VERSION || "v22.0";
 const SUPPORTED_CHAT_PLATFORMS = new Set([
@@ -1020,7 +1001,7 @@ app.get("/assets/followup/:fileName", async (req, res, next) => {
 
     if (!doc) return next();
 
-    const bucket = createGridFSBucket(db, { bucketName: "followupAssets" });
+    const bucket = createAssetBucket(db, { bucketName: "followupAssets" });
     const isThumb =
       fileName === doc.thumbName ||
       fileName === doc.thumbFileName ||
@@ -1532,92 +1513,39 @@ async function ensureUsageLogsTTL(db) {
   }
 }
 
-let mongoClient = null;
-let mongoConnectPromise = null;
+let documentStoreClient = null;
+let documentStoreConnectPromise = null;
 
-function shouldUsePostgresMongoCompatDb() {
-  if (!postgresRuntime.isConfigured()) return false;
-  if (!MONGO_URI) return true;
-  return (
-    runtimeConfig.appDocumentMode === "postgres" &&
-    runtimeConfig.chatStorageMode === "postgres"
-  );
+function shouldUsePostgresDocumentCompatDb() {
+  return postgresRuntime.isConfigured();
 }
 
 async function connectDB() {
-  if (mongoClient) {
-    return mongoClient;
+  if (documentStoreClient) {
+    return documentStoreClient;
   }
 
-  if (mongoConnectPromise) {
-    return mongoConnectPromise;
+  if (documentStoreConnectPromise) {
+    return documentStoreConnectPromise;
   }
 
-  if (shouldUsePostgresMongoCompatDb()) {
-    mongoConnectPromise = (async () => {
+  if (shouldUsePostgresDocumentCompatDb()) {
+    documentStoreConnectPromise = (async () => {
       await chatStorageService.ensureReady();
-      mongoClient = createPostgresMongoCompatClient({
+      documentStoreClient = createPostgresDocumentCompatClient({
         postgresRuntime,
         chatStorageService,
         projectBucket,
       });
-      console.log("[DB] Using PostgreSQL Mongo compatibility layer");
-      return mongoClient;
+      console.log("[DB] Using PostgreSQL document compatibility layer");
+      return documentStoreClient;
     })().finally(() => {
-      mongoConnectPromise = null;
+      documentStoreConnectPromise = null;
     });
-    return mongoConnectPromise;
+    return documentStoreConnectPromise;
   }
 
-  if (!MONGO_URI) {
-    throw new Error("MONGO_URI (or MONGODB_URI) is not configured");
-  }
-
-  const client = new MongoClient(MONGO_URI, {
-    maxPoolSize: MONGO_MAX_POOL_SIZE,
-    minPoolSize: MONGO_MIN_POOL_SIZE,
-    serverSelectionTimeoutMS: MONGO_SERVER_SELECTION_TIMEOUT_MS,
-    connectTimeoutMS: MONGO_CONNECT_TIMEOUT_MS,
-    socketTimeoutMS: MONGO_SOCKET_TIMEOUT_MS,
-  });
-
-  mongoConnectPromise = (async () => {
-    try {
-      await client.connect();
-      mongoClient = client;
-
-      try {
-        const db = mongoClient.db("chatbot");
-        await ensurePasscodeIndexes(db);
-        await ensureFacebookCommentIndexes(db);
-        await ensureCategoryIndexes(db);
-        await ensureNotificationIndexes(db);
-        await ensureShortLinkIndexes(db);
-        await ensureChatHistoryIndexes(db);
-        await ensurePerformanceIndexes(db);
-        await ensureUsageLogsTTL(db);
-      } catch (err) {
-        console.warn(
-          "[DB] ไม่สามารถตั้งค่า index ได้:",
-          err?.message || err,
-        );
-      }
-
-      return mongoClient;
-    } catch (err) {
-      mongoClient = null;
-      try {
-        await client.close();
-      } catch (closeErr) {
-        // ignore close failure, original error is the root cause we need to return
-      }
-      throw err;
-    } finally {
-      mongoConnectPromise = null;
-    }
-  })();
-
-  return mongoConnectPromise;
+  throw new Error("DATABASE_URL is required. Legacy document-store fallback has been removed.");
 }
 
 function guardPromiseRejection(promise, logPrefix) {
@@ -1684,15 +1612,12 @@ function resolveAdminSessionStoreMode() {
   if (requestedMode === "memory") return "memory";
   if (requestedMode === "postgres") {
     if (postgresRuntime.isConfigured()) return "postgres";
-    if (MONGO_URI) return "mongo";
     return "memory";
   }
   if (requestedMode === "auto") {
     if (postgresRuntime.isConfigured()) return "postgres";
-    if (MONGO_URI) return "mongo";
     return "memory";
   }
-  if (MONGO_URI) return "mongo";
   if (postgresRuntime.isConfigured()) return "postgres";
   return "memory";
 }
@@ -1964,15 +1889,15 @@ async function maybeListTopAppDocumentArrayValues(
   }
 }
 
-function maybeLogAppDocumentShadowMismatch(scope, mongoPayload, postgresPayload) {
+function maybeLogAppDocumentShadowMismatch(scope, sourcePayload, postgresPayload) {
   try {
-    const mongoSerialized = JSON.stringify(normalizeValueForStorageMirror(mongoPayload));
+    const sourceSerialized = JSON.stringify(normalizeValueForStorageMirror(sourcePayload));
     const postgresSerialized = JSON.stringify(
       normalizeValueForStorageMirror(postgresPayload),
     );
-    if (mongoSerialized !== postgresSerialized) {
+    if (sourceSerialized !== postgresSerialized) {
       logShadowReadMismatch(`app_document:${scope}`, {
-        mongo: mongoPayload,
+        source: sourcePayload,
         postgres: postgresPayload,
       });
     }
@@ -2084,7 +2009,7 @@ async function maybeServeBucketAsset(res, assetObject = null, fallbackMime = "")
     return true;
   } catch (error) {
     console.warn(
-      "[Bucket] serve asset fallback to legacy storage:",
+      "[Bucket] serve asset fallback to local asset storage:",
       error?.message || error,
     );
     return false;
@@ -2128,37 +2053,6 @@ if (resolvedSessionStoreMode === "postgres") {
       err?.message || err,
     );
   }
-} else if (resolvedSessionStoreMode === "mongo" && MONGO_URI) {
-  sessionStore = MongoStore.create({
-    mongoUrl: MONGO_URI,
-    mongoOptions: {
-      maxPoolSize: MONGO_MAX_POOL_SIZE,
-      minPoolSize: MONGO_MIN_POOL_SIZE,
-      serverSelectionTimeoutMS: MONGO_SERVER_SELECTION_TIMEOUT_MS,
-      connectTimeoutMS: MONGO_CONNECT_TIMEOUT_MS,
-      socketTimeoutMS: MONGO_SOCKET_TIMEOUT_MS,
-    },
-    dbName: "chatbot",
-    collectionName: "admin_sessions",
-    stringify: false,
-    ttl: ADMIN_SESSION_TTL_SECONDS,
-  });
-  // connect-mongo keeps internal promises that can reject before any request
-  // touches the store. Guard them so Mongo outages do not crash the process.
-  guardPromiseRejection(
-    sessionStore.clientP,
-    "[SessionStore] MongoDB client connection failed:",
-  );
-  guardPromiseRejection(
-    sessionStore.collectionP,
-    "[SessionStore] MongoDB session collection init failed:",
-  );
-  sessionStore.on("error", (err) => {
-    console.error(
-      "[SessionStore] MongoDB session store error. Admin sessions will not persist until MongoDB is reachable:",
-      err?.message || err,
-    );
-  });
 } else {
   console.warn(
     "[SessionStore] ไม่มี session store backend ที่พร้อมใช้งาน: ใช้ in-memory sessions (ไม่เหมาะกับ production)",
@@ -2670,7 +2564,7 @@ async function saveOrUpdateUserProfile(userId, botId = null) {
       );
     }
 
-    await maybeMirrorMongoDocumentByQuery(db, "user_profiles", {
+    await maybeMirrorAppDocumentByQuery(db, "user_profiles", {
       userId: normalizedUserId,
       platform: "line",
     });
@@ -2842,7 +2736,7 @@ async function ensureFacebookProfileDisplayName(
         },
         { upsert: true },
       );
-      await maybeMirrorMongoDocumentByQuery(db, "user_profiles", {
+      await maybeMirrorAppDocumentByQuery(db, "user_profiles", {
         userId: psid,
         platform: "facebook",
       });
@@ -2875,7 +2769,7 @@ async function ensureFacebookProfileDisplayName(
   );
 
   const updatedProfile = await coll.findOne({ userId: psid, platform: "facebook" });
-  await maybeMirrorMongoDocument("user_profiles", updatedProfile);
+  await maybeMirrorAppDocumentFromCollection("user_profiles", updatedProfile);
   return updatedProfile;
 }
 
@@ -3208,7 +3102,7 @@ async function getUserStatus(userId) {
     if (insertResult?.insertedId) {
       userStatus._id = insertResult.insertedId;
     }
-    await maybeMirrorMongoDocument("active_user_status", userStatus);
+    await maybeMirrorAppDocumentFromCollection("active_user_status", userStatus);
   }
   if (isShadowAppDocumentReadEnabled()) {
     const pgDoc = await maybeReadAppDocumentPayload("active_user_status", userId);
@@ -3230,7 +3124,7 @@ async function setUserStatus(userId, aiEnabled) {
     { $set: { aiEnabled, updatedAt: new Date() } },
     { upsert: true },
   );
-  await maybeMirrorMongoDocumentByQuery(db, "active_user_status", {
+  await maybeMirrorAppDocumentByQuery(db, "active_user_status", {
     senderId: userId,
   });
 }
@@ -3824,7 +3718,7 @@ async function cleanupOrphanedFollowUpAssets(db) {
     const orphanedAssets = await assetsColl.find(query).toArray();
     if (!orphanedAssets.length) return;
 
-    const bucket = createGridFSBucket(db, { bucketName: "followupAssets" });
+    const bucket = createAssetBucket(db, { bucketName: "followupAssets" });
     let deletedCount = 0;
 
     for (const asset of orphanedAssets) {
@@ -3832,7 +3726,7 @@ async function cleanupOrphanedFollowUpAssets(db) {
         const entries = [];
         if (asset.fileId) entries.push({ id: asset.fileId });
         if (asset.thumbFileId) entries.push({ id: asset.thumbFileId });
-        if (entries.length) await deleteGridFsEntries(bucket, entries);
+        if (entries.length) await deleteAssetBucketEntries(bucket, entries);
 
         await maybeDeleteAssetDocument("follow_up_assets", "follow_up_assets", asset);
         await assetsColl.deleteOne({ _id: asset._id });
@@ -4171,7 +4065,7 @@ function emitFollowUpScheduleUpdate(payload) {
 
 async function maybeMirrorFollowUpTaskById(db, taskId) {
   if (!db || !taskId) return null;
-  return maybeMirrorMongoDocumentByQuery(db, "follow_up_tasks", {
+  return maybeMirrorAppDocumentByQuery(db, "follow_up_tasks", {
     _id: taskId,
   });
 }
@@ -4411,7 +4305,7 @@ async function scheduleFollowUpForUser(userId, options = {}) {
     if (insertResult?.insertedId) {
       taskDoc._id = insertResult.insertedId;
     }
-    await maybeMirrorMongoDocument("follow_up_tasks", taskDoc);
+    await maybeMirrorAppDocumentFromCollection("follow_up_tasks", taskDoc);
     emitFollowUpScheduleUpdate({
       userId,
       platform: normalizedPlatform,
@@ -4478,7 +4372,7 @@ async function cancelFollowUpTasksForUser(
     );
 
     if (result.modifiedCount > 0) {
-      await maybeMirrorMongoDocumentByQuery(db, "follow_up_tasks", query, {
+      await maybeMirrorAppDocumentByQuery(db, "follow_up_tasks", query, {
         multiple: true,
       });
       emitFollowUpScheduleUpdate({
@@ -5042,7 +4936,7 @@ async function updateFollowUpStatus(userId, fields) {
     },
   };
   await coll.updateOne({ senderId: userId }, updateDoc, { upsert: true });
-  await maybeMirrorMongoDocumentByQuery(db, "follow_up_status", {
+  await maybeMirrorAppDocumentByQuery(db, "follow_up_status", {
     senderId: userId,
   });
 }
@@ -6195,7 +6089,7 @@ async function saveOrderToDatabase(
     if (result?.insertedId) {
       orderDoc._id = result.insertedId;
     }
-    await maybeMirrorMongoDocument("orders", orderDoc);
+    await maybeMirrorAppDocumentFromCollection("orders", orderDoc);
     console.log(`[Order] บันทึกออเดอร์สำเร็จ: ${result.insertedId}`);
 
     return result.insertedId;
@@ -6530,7 +6424,7 @@ async function updateOrderFromTool(args = {}, context = {}) {
 
   await coll.updateOne({ _id: order._id }, { $set: updateDoc });
   const updatedOrder = await coll.findOne({ _id: order._id });
-  await maybeMirrorMongoDocument("orders", updatedOrder);
+  await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
 
   try {
     if (io) {
@@ -6581,7 +6475,7 @@ async function triggerOrderNotification(orderId) {
       { _id: new ObjectId(orderId) },
       { $set: { notificationStatus: status, notificationSentAt } }
     );
-    await maybeMirrorMongoDocument("orders", {
+    await maybeMirrorAppDocumentFromCollection("orders", {
       ...order,
       notificationStatus: status,
       notificationSentAt,
@@ -6613,7 +6507,7 @@ async function getLatestOrderForUser(userId) {
       );
       if ((order ? 1 : 0) !== (pgOrders[0] ? 1 : 0)) {
         logShadowReadMismatch(`app_document:latest_order/${userId}`, {
-          mongoFound: Boolean(order),
+          sourceFound: Boolean(order),
           postgresFound: Boolean(pgOrders[0]),
         });
       }
@@ -6659,7 +6553,7 @@ async function getUserOrders(userId) {
       );
       if (orders.length !== pgOrders.length) {
         logShadowReadMismatch(`app_document:orders/${userId}`, {
-          mongoCount: orders.length,
+          sourceCount: orders.length,
           postgresCount: pgOrders.length,
         });
       }
@@ -6936,7 +6830,7 @@ async function clearFollowUpStatus(userId) {
     },
     { upsert: true },
   );
-  await maybeMirrorMongoDocumentByQuery(db, "follow_up_status", {
+  await maybeMirrorAppDocumentByQuery(db, "follow_up_status", {
     senderId: userId,
   });
 }
@@ -8919,7 +8813,7 @@ async function captureLineGroupEvent(event, queueOptions = {}) {
   }
 
   const result = await coll.updateOne(filter, update, { upsert: true });
-  await maybeMirrorMongoDocumentByQuery(db, "line_bot_groups", filter);
+  await maybeMirrorAppDocumentByQuery(db, "line_bot_groups", filter);
 
   const shouldEnrich =
     result?.upsertedCount > 0 ||
@@ -9106,7 +9000,7 @@ async function captureTelegramGroupUpdate(update, options = {}) {
   }
 
   await coll.updateOne(filter, updateDoc, { upsert: true });
-  await maybeMirrorMongoDocumentByQuery(db, "telegram_bot_groups", filter);
+  await maybeMirrorAppDocumentByQuery(db, "telegram_bot_groups", filter);
 
   return {
     botId,
@@ -9893,7 +9787,7 @@ async function upsertFacebookPost(db, bot, postId, source = "webhook") {
   );
 
   const updatedPost = await coll.findOne({ botId, postId });
-  await maybeMirrorMongoDocument("facebook_page_posts", updatedPost);
+  await maybeMirrorAppDocumentFromCollection("facebook_page_posts", updatedPost);
   return updatedPost;
 }
 
@@ -10083,7 +9977,7 @@ async function recordCommentEvent(db, eventDoc) {
     { $setOnInsert: eventDoc },
     { upsert: true },
   );
-  await maybeMirrorMongoDocumentByQuery(db, "facebook_comment_events", {
+  await maybeMirrorAppDocumentByQuery(db, "facebook_comment_events", {
     commentId: eventDoc.commentId,
   });
 }
@@ -10165,7 +10059,7 @@ async function handleFacebookComment(
         { _id: postDoc._id },
         { $set: { lastCommentAt: new Date(), updatedAt: new Date() } },
       );
-      await maybeMirrorMongoDocumentByQuery(db, "facebook_page_posts", {
+      await maybeMirrorAppDocumentByQuery(db, "facebook_page_posts", {
         _id: postDoc._id,
       });
     }
@@ -10334,7 +10228,7 @@ async function handleFacebookComment(
 
     try {
       await postsColl.updateOne({ _id: postDoc._id }, updatePayload);
-      await maybeMirrorMongoDocumentByQuery(db, "facebook_page_posts", {
+      await maybeMirrorAppDocumentByQuery(db, "facebook_page_posts", {
         _id: postDoc._id,
       });
     } catch (err) {
@@ -10767,7 +10661,7 @@ app.post(
       const client = await connectDB();
       const db = client.db("chatbot");
       const coll = db.collection("follow_up_assets");
-      const bucket = createGridFSBucket(db, { bucketName: "followupAssets" });
+      const bucket = createAssetBucket(db, { bucketName: "followupAssets" });
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -10819,7 +10713,7 @@ app.post(
         const fileName = `${baseName}.jpg`;
         const thumbName = `${baseName}_thumb.jpg`;
         const [fileId, thumbFileId, bucketKey, thumbBucketKey] = await Promise.all([
-          uploadBufferToGridFS(bucket, fileName, optimized, {
+          uploadBufferToAssetBucket(bucket, fileName, optimized, {
             contentType: "image/jpeg",
             metadata: {
               type: "original",
@@ -10827,7 +10721,7 @@ app.post(
               height: metadata.height || null,
             },
           }),
-          uploadBufferToGridFS(bucket, thumbName, thumb, {
+          uploadBufferToAssetBucket(bucket, thumbName, thumb, {
             contentType: "image/jpeg",
             metadata: { type: "thumb" },
           }),
@@ -10867,7 +10761,7 @@ app.post(
           thumbFileId,
           bucketKey: bucketKey || null,
           thumbBucketKey: thumbBucketKey || null,
-          storage: bucketKey || thumbBucketKey ? "hybrid" : "mongo",
+          storage: bucketKey || thumbBucketKey ? "hybrid" : "asset_bucket",
           sha256,
           mime: "image/jpeg",
           size: optimized.length,
@@ -11653,7 +11547,7 @@ async function migrateInstructionAssetsAddSlug() {
         : generateSlugFromLabel(label);
 
       await coll.updateOne({ _id: asset._id }, { $set: { slug } });
-      await maybeMirrorMongoDocumentByQuery(db, "instruction_assets", {
+      await maybeMirrorAppDocumentByQuery(db, "instruction_assets", {
         _id: asset._id,
       });
     }
@@ -11718,7 +11612,7 @@ async function migrateAssetsToCollections() {
     };
 
     await collectionsColl.insertOne(defaultCollection);
-    await maybeMirrorMongoDocument("image_collections", defaultCollection);
+    await maybeMirrorAppDocumentFromCollection("image_collections", defaultCollection);
     console.log(
       `[Migration] สร้าง default collection สำเร็จ: "${defaultCollection.name}"`,
     );
@@ -11744,7 +11638,7 @@ async function migrateAssetsToCollections() {
             },
           },
         );
-        await maybeMirrorMongoDocumentByQuery(db, "line_bots", {
+        await maybeMirrorAppDocumentByQuery(db, "line_bots", {
           _id: bot._id,
         });
         assignedCount++;
@@ -11766,7 +11660,7 @@ async function migrateAssetsToCollections() {
             },
           },
         );
-        await maybeMirrorMongoDocumentByQuery(db, "facebook_bots", {
+        await maybeMirrorAppDocumentByQuery(db, "facebook_bots", {
           _id: bot._id,
         });
         assignedCount++;
@@ -11812,8 +11706,8 @@ let startupInitializationRetryCount = 0;
 function getStartupRetryDelayMs(attemptNumber) {
   const normalizedAttempt = Math.max(1, attemptNumber);
   const exponentialDelay =
-    MONGO_BOOTSTRAP_RETRY_DELAY_MS * 2 ** (normalizedAttempt - 1);
-  return Math.min(exponentialDelay, MONGO_BOOTSTRAP_MAX_RETRY_DELAY_MS);
+    DB_BOOTSTRAP_RETRY_DELAY_MS * 2 ** (normalizedAttempt - 1);
+  return Math.min(exponentialDelay, DB_BOOTSTRAP_MAX_RETRY_DELAY_MS);
 }
 
 function scheduleStartupInitializationRetry() {
@@ -14777,7 +14671,7 @@ function streamToBuffer(stream) {
   });
 }
 
-async function uploadBufferToGridFS(bucket, filename, buffer, options = {}) {
+async function uploadBufferToAssetBucket(bucket, filename, buffer, options = {}) {
   return new Promise((resolve, reject) => {
     const uploadStream = bucket.openUploadStream(filename, options);
     uploadStream.on("error", reject);
@@ -14786,7 +14680,7 @@ async function uploadBufferToGridFS(bucket, filename, buffer, options = {}) {
   });
 }
 
-async function deleteGridFsEntries(bucket, entries = []) {
+async function deleteAssetBucketEntries(bucket, entries = []) {
   for (const entry of entries) {
     if (!entry) continue;
     if (entry.id) {
@@ -14809,7 +14703,7 @@ async function deleteGridFsEntries(bucket, entries = []) {
           err.message?.includes("FileNotFound");
 
         if (!isFileNotFound) {
-          console.warn("[GridFS] delete by id failed:", err?.message || err);
+          console.warn("[AssetStore] delete by id failed:", err?.message || err);
         }
       }
       continue;
@@ -14829,14 +14723,14 @@ async function deleteGridFsEntries(bucket, entries = []) {
 
             if (!isFileNotFound) {
               console.warn(
-                "[GridFS] delete by filename failed:",
+                "[AssetStore] delete by filename failed:",
                 err?.message || err,
               );
             }
           }
         }
       } catch (err) {
-        console.warn("[GridFS] find for delete failed:", err?.message || err);
+        console.warn("[AssetStore] find for delete failed:", err?.message || err);
       }
     }
   }
@@ -14915,7 +14809,7 @@ function resolveMirrorDocumentId(collectionName, doc = {}) {
   return serializeDocumentId(doc._id);
 }
 
-async function maybeMirrorMongoDocument(collectionName, doc) {
+async function maybeMirrorAppDocumentFromCollection(collectionName, doc) {
   const documentId = resolveMirrorDocumentId(collectionName, doc);
   if (!documentId) return;
   await maybeMirrorAppDocument(
@@ -14925,7 +14819,7 @@ async function maybeMirrorMongoDocument(collectionName, doc) {
   );
 }
 
-async function maybeMirrorMongoDocumentByQuery(
+async function maybeMirrorAppDocumentByQuery(
   db,
   collectionName,
   query,
@@ -14939,19 +14833,19 @@ async function maybeMirrorMongoDocumentByQuery(
   if (options.multiple) {
     const docs = await coll.find(query).toArray();
     for (const doc of docs) {
-      await maybeMirrorMongoDocument(collectionName, doc);
+      await maybeMirrorAppDocumentFromCollection(collectionName, doc);
     }
     return docs;
   }
 
   const doc = await coll.findOne(query);
   if (doc) {
-    await maybeMirrorMongoDocument(collectionName, doc);
+    await maybeMirrorAppDocumentFromCollection(collectionName, doc);
   }
   return doc;
 }
 
-async function maybeDeleteMirroredMongoDocument(collectionName, docOrId) {
+async function maybeDeleteMirroredAppDocument(collectionName, docOrId) {
   const documentId =
     typeof docOrId === "string"
       ? docOrId.trim()
@@ -14960,7 +14854,7 @@ async function maybeDeleteMirroredMongoDocument(collectionName, docOrId) {
   await maybeDeleteAppDocument(collectionName, documentId);
 }
 
-async function maybeMirrorMongoDocumentSelection(
+async function maybeMirrorAppDocumentSelection(
   db,
   collectionName,
   documentId = null,
@@ -14968,7 +14862,7 @@ async function maybeMirrorMongoDocumentSelection(
 ) {
   if (!db || !collectionName) return null;
   if (options.mirrorAll === true) {
-    return maybeMirrorMongoDocumentByQuery(db, collectionName, {}, {
+    return maybeMirrorAppDocumentByQuery(db, collectionName, {}, {
       multiple: true,
     });
   }
@@ -14980,7 +14874,7 @@ async function maybeMirrorMongoDocumentSelection(
   const query = ObjectId.isValid(normalizedId)
     ? { _id: new ObjectId(normalizedId) }
     : { _id: normalizedId };
-  return maybeMirrorMongoDocumentByQuery(db, collectionName, query);
+  return maybeMirrorAppDocumentByQuery(db, collectionName, query);
 }
 
 async function maybeMirrorAssetDocument(scope, collectionName, assetDoc) {
@@ -15440,7 +15334,7 @@ app.get("/health", (req, res) => {
     service: "ChatCenter AI",
     version: "1.0.0",
     database: startupDbReady ? "connected" : "retrying",
-    databaseBackend: shouldUsePostgresMongoCompatDb() ? "postgres" : "mongo",
+    databaseBackend: "postgres",
     startupReady: startupInitializationComplete,
   });
 });
@@ -17871,7 +17765,7 @@ async function readInstructionAssetBuffer(seg) {
     }
 
     if (assetDoc) {
-      const bucket = createGridFSBucket(db, { bucketName: "instructionAssets" });
+      const bucket = createAssetBucket(db, { bucketName: "instructionAssets" });
       const baseName = getInstructionAssetBaseName(assetDoc);
       const mainFileNames = Array.from(
         new Set(
@@ -17950,7 +17844,7 @@ async function readInstructionAssetBuffer(seg) {
     }
   } catch (err) {
     console.warn(
-      "[Assets] read buffer from MongoDB failed, fallback to filesystem/url:",
+      "[Assets] read buffer from object store failed, fallback to filesystem/url:",
       err?.message || err,
     );
   }
@@ -18531,11 +18425,11 @@ app.post("/api/line-bots", async (req, res) => {
     const result = await coll.insertOne(lineBot);
     lineBot._id = result.insertedId;
     if (isDefault) {
-      await maybeMirrorMongoDocumentSelection(db, "line_bots", null, {
+      await maybeMirrorAppDocumentSelection(db, "line_bots", null, {
         mirrorAll: true,
       });
     } else {
-      await maybeMirrorMongoDocument("line_bots", lineBot);
+      await maybeMirrorAppDocumentFromCollection("line_bots", lineBot);
     }
 
     res.status(201).json(lineBot);
@@ -18633,7 +18527,7 @@ app.put("/api/line-bots/:id", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "line_bots", id, {
+    await maybeMirrorAppDocumentSelection(db, "line_bots", id, {
       mirrorAll: Boolean(isDefault),
     });
     lineBotCredentialCache.delete(normalizeRuntimeCacheId(id, ""));
@@ -18658,7 +18552,7 @@ app.delete("/api/line-bots/:id", async (req, res) => {
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
-    await maybeDeleteMirroredMongoDocument("line_bots", id);
+    await maybeDeleteMirroredAppDocument("line_bots", id);
 
     res.json({ message: "ลบ Line Bot เรียบร้อยแล้ว" });
   } catch (err) {
@@ -18692,7 +18586,7 @@ app.patch("/api/line-bots/:id/toggle-status", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
-    await maybeMirrorMongoDocumentSelection(db, "line_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "line_bots", id);
 
     res.json({
       message: `เปลี่ยนสถานะ Line Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
@@ -18729,7 +18623,7 @@ app.patch("/api/line-bots/:id/toggle-notifications", async (req, res) => {
       { _id: new ObjectId(id) },
       { $set: { notificationEnabled: nextValue, updatedAt: new Date() } },
     );
-    await maybeMirrorMongoDocumentSelection(db, "line_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "line_bots", id);
 
     res.json({
       message: `เปลี่ยนสถานะการแจ้งเตือน Line Bot เป็น ${nextValue ? "เปิดใช้งาน" : "ปิดใช้งาน"
@@ -18816,7 +18710,7 @@ app.put("/api/line-bots/:id/instructions", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "line_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "line_bots", id);
     invalidateBotRuntimeCaches("line", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
@@ -18864,7 +18758,7 @@ app.put("/api/line-bots/:id/image-collections", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "line_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "line_bots", id);
     invalidateBotRuntimeCaches("line", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
@@ -18936,7 +18830,7 @@ app.put("/api/line-bots/:id/keywords", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Line Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "line_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "line_bots", id);
     res.json({
       message: "อัปเดต keyword settings เรียบร้อยแล้ว",
       keywordSettings: normalizedSettings,
@@ -18988,7 +18882,7 @@ app.post("/api/facebook-bots/init", async (req, res) => {
     const webhookUrl = `${baseUrl}/webhook/facebook/${id.toString()}`;
 
     await coll.updateOne({ _id: id }, { $set: { webhookUrl } });
-    await maybeMirrorMongoDocumentSelection(db, "facebook_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "facebook_bots", id);
 
     return res.json({ id: id.toString(), webhookUrl, verifyToken });
   } catch (err) {
@@ -19136,11 +19030,11 @@ app.post("/api/facebook-bots", async (req, res) => {
     const result = await coll.insertOne(facebookBot);
     facebookBot._id = result.insertedId;
     if (isDefault) {
-      await maybeMirrorMongoDocumentSelection(db, "facebook_bots", null, {
+      await maybeMirrorAppDocumentSelection(db, "facebook_bots", null, {
         mirrorAll: true,
       });
     } else {
-      await maybeMirrorMongoDocument("facebook_bots", facebookBot);
+      await maybeMirrorAppDocumentFromCollection("facebook_bots", facebookBot);
     }
 
     res.status(201).json(facebookBot);
@@ -19253,7 +19147,7 @@ app.put("/api/facebook-bots/:id", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "facebook_bots", id, {
+    await maybeMirrorAppDocumentSelection(db, "facebook_bots", id, {
       mirrorAll: Boolean(isDefault),
     });
     invalidateBotRuntimeCaches("facebook", id);
@@ -19313,7 +19207,7 @@ app.post("/api/facebook-bots/:id/dataset", async (req, res) => {
       { _id: new ObjectId(id) },
       { $set: { datasetId: datasetResult.datasetId, updatedAt: new Date() } },
     );
-    await maybeMirrorMongoDocumentSelection(db, "facebook_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "facebook_bots", id);
 
     res.json({ success: true, datasetId: datasetResult.datasetId });
   } catch (err) {
@@ -19335,7 +19229,7 @@ app.delete("/api/facebook-bots/:id", async (req, res) => {
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
-    await maybeDeleteMirroredMongoDocument("facebook_bots", id);
+    await maybeDeleteMirroredAppDocument("facebook_bots", id);
 
     res.json({ message: "ลบ Facebook Bot เรียบร้อยแล้ว" });
   } catch (err) {
@@ -19369,7 +19263,7 @@ app.patch("/api/facebook-bots/:id/toggle-status", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
-    await maybeMirrorMongoDocumentSelection(db, "facebook_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "facebook_bots", id);
 
     res.json({
       message: `เปลี่ยนสถานะ Facebook Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
@@ -19455,7 +19349,7 @@ app.put("/api/facebook-bots/:id/instructions", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "facebook_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "facebook_bots", id);
     invalidateBotRuntimeCaches("facebook", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
@@ -19503,7 +19397,7 @@ app.put("/api/facebook-bots/:id/image-collections", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "facebook_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "facebook_bots", id);
     invalidateBotRuntimeCaches("facebook", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
@@ -19712,7 +19606,7 @@ app.patch(
       );
 
       const updated = await coll.findOne(query);
-      await maybeMirrorMongoDocument("facebook_page_posts", updated);
+      await maybeMirrorAppDocumentFromCollection("facebook_page_posts", updated);
       res.json({ success: true, post: updated });
     } catch (err) {
       console.error("Error updating reply profile:", err);
@@ -19803,7 +19697,7 @@ app.put(
         },
         { upsert: true },
       );
-      await maybeMirrorMongoDocumentByQuery(db, "facebook_comment_policies", {
+      await maybeMirrorAppDocumentByQuery(db, "facebook_comment_policies", {
         botId,
         scope: "page_default",
       });
@@ -19874,7 +19768,7 @@ app.put("/api/facebook-bots/:id/keywords", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Facebook Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "facebook_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "facebook_bots", id);
     res.json({
       message: "อัปเดต keyword settings เรียบร้อยแล้ว",
       keywordSettings: normalizedSettings,
@@ -20010,11 +19904,11 @@ app.post("/api/instagram-bots", async (req, res) => {
     const insert = await coll.insertOne(bot);
     bot._id = insert.insertedId;
     if (isDefault) {
-      await maybeMirrorMongoDocumentSelection(db, "instagram_bots", null, {
+      await maybeMirrorAppDocumentSelection(db, "instagram_bots", null, {
         mirrorAll: true,
       });
     } else {
-      await maybeMirrorMongoDocument("instagram_bots", bot);
+      await maybeMirrorAppDocumentFromCollection("instagram_bots", bot);
     }
     res.status(201).json(bot);
   } catch (err) {
@@ -20111,7 +20005,7 @@ app.put("/api/instagram-bots/:id", async (req, res) => {
     }
 
     await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-    await maybeMirrorMongoDocumentSelection(db, "instagram_bots", id, {
+    await maybeMirrorAppDocumentSelection(db, "instagram_bots", id, {
       mirrorAll: Boolean(isDefault),
     });
     invalidateBotRuntimeCaches("instagram", id);
@@ -20136,7 +20030,7 @@ app.delete("/api/instagram-bots/:id", async (req, res) => {
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
-    await maybeDeleteMirroredMongoDocument("instagram_bots", id);
+    await maybeDeleteMirroredAppDocument("instagram_bots", id);
     res.json({ message: "ลบ Instagram Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error deleting instagram bot:", err);
@@ -20163,7 +20057,7 @@ app.patch("/api/instagram-bots/:id/toggle-status", async (req, res) => {
       { _id: new ObjectId(id) },
       { $set: { status: newStatus, updatedAt: new Date() } },
     );
-    await maybeMirrorMongoDocumentSelection(db, "instagram_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "instagram_bots", id);
     res.json({
       message: `เปลี่ยนสถานะ Instagram Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
       status: newStatus,
@@ -20247,7 +20141,7 @@ app.put("/api/instagram-bots/:id/instructions", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
-    await maybeMirrorMongoDocumentSelection(db, "instagram_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "instagram_bots", id);
     invalidateBotRuntimeCaches("instagram", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
@@ -20292,7 +20186,7 @@ app.put("/api/instagram-bots/:id/image-collections", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "instagram_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "instagram_bots", id);
     invalidateBotRuntimeCaches("instagram", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
@@ -20361,7 +20255,7 @@ app.put("/api/instagram-bots/:id/keywords", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ Instagram Bot ที่ระบุ" });
     }
-    await maybeMirrorMongoDocumentSelection(db, "instagram_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "instagram_bots", id);
     res.json({
       message: "อัปเดต keyword settings เรียบร้อยแล้ว",
       keywordSettings: normalizedSettings,
@@ -20495,11 +20389,11 @@ app.post("/api/whatsapp-bots", async (req, res) => {
     const insert = await coll.insertOne(bot);
     bot._id = insert.insertedId;
     if (isDefault) {
-      await maybeMirrorMongoDocumentSelection(db, "whatsapp_bots", null, {
+      await maybeMirrorAppDocumentSelection(db, "whatsapp_bots", null, {
         mirrorAll: true,
       });
     } else {
-      await maybeMirrorMongoDocument("whatsapp_bots", bot);
+      await maybeMirrorAppDocumentFromCollection("whatsapp_bots", bot);
     }
     res.status(201).json(bot);
   } catch (err) {
@@ -20595,7 +20489,7 @@ app.put("/api/whatsapp-bots/:id", async (req, res) => {
     }
 
     await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
-    await maybeMirrorMongoDocumentSelection(db, "whatsapp_bots", id, {
+    await maybeMirrorAppDocumentSelection(db, "whatsapp_bots", id, {
       mirrorAll: Boolean(isDefault),
     });
     invalidateBotRuntimeCaches("whatsapp", id);
@@ -20620,7 +20514,7 @@ app.delete("/api/whatsapp-bots/:id", async (req, res) => {
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
-    await maybeDeleteMirroredMongoDocument("whatsapp_bots", id);
+    await maybeDeleteMirroredAppDocument("whatsapp_bots", id);
     res.json({ message: "ลบ WhatsApp Bot เรียบร้อยแล้ว" });
   } catch (err) {
     console.error("Error deleting whatsapp bot:", err);
@@ -20647,7 +20541,7 @@ app.patch("/api/whatsapp-bots/:id/toggle-status", async (req, res) => {
       { _id: new ObjectId(id) },
       { $set: { status: newStatus, updatedAt: new Date() } },
     );
-    await maybeMirrorMongoDocumentSelection(db, "whatsapp_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "whatsapp_bots", id);
     res.json({
       message: `เปลี่ยนสถานะ WhatsApp Bot เป็น ${newStatus === "active" ? "เปิดใช้งาน" : "ปิดใช้งาน"} เรียบร้อยแล้ว`,
       status: newStatus,
@@ -20733,7 +20627,7 @@ app.put("/api/whatsapp-bots/:id/instructions", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
-    await maybeMirrorMongoDocumentSelection(db, "whatsapp_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "whatsapp_bots", id);
     invalidateBotRuntimeCaches("whatsapp", id);
     res.json({ message: "อัปเดต instruction ที่เลือกใช้เรียบร้อยแล้ว" });
   } catch (err) {
@@ -20778,7 +20672,7 @@ app.put("/api/whatsapp-bots/:id/image-collections", async (req, res) => {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
 
-    await maybeMirrorMongoDocumentSelection(db, "whatsapp_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "whatsapp_bots", id);
     invalidateBotRuntimeCaches("whatsapp", id);
     res.json({
       message: "อัปเดตคลังรูปภาพที่เลือกเรียบร้อยแล้ว",
@@ -20847,7 +20741,7 @@ app.put("/api/whatsapp-bots/:id/keywords", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "ไม่พบ WhatsApp Bot ที่ระบุ" });
     }
-    await maybeMirrorMongoDocumentSelection(db, "whatsapp_bots", id);
+    await maybeMirrorAppDocumentSelection(db, "whatsapp_bots", id);
     res.json({
       message: "อัปเดต keyword settings เรียบร้อยแล้ว",
       keywordSettings: normalizedSettings,
@@ -22105,18 +21999,18 @@ app.post("/admin/instructions/:id/edit", async (req, res) => {
     console.log("[Edit] Updating instruction:", id, "Type:", type);
     console.log("[Edit] Update data keys:", Object.keys(updateData));
 
-    const mongoUpdate = unsetData
+    const documentUpdate = unsetData
       ? { $set: updateData, $unset: unsetData }
       : { $set: updateData };
 
     console.log(
-      "[Edit] MongoDB update operation:",
-      JSON.stringify(mongoUpdate, null, 2),
+      "[Edit] document update operation:",
+      JSON.stringify(documentUpdate, null, 2),
     );
 
     const updateResult = await coll.updateOne(
       { _id: new ObjectId(id) },
-      mongoUpdate,
+      documentUpdate,
     );
     console.log("[Edit] Update result:", updateResult);
 
@@ -22605,7 +22499,7 @@ app.post(
       const client = await connectDB();
       const db = client.db("chatbot");
       const coll = db.collection("instruction_assets");
-      const bucket = createGridFSBucket(db, { bucketName: "instructionAssets" });
+      const bucket = createAssetBucket(db, { bucketName: "instructionAssets" });
 
       const existing = await coll.findOne({ label });
       if (existing && !overwrite) {
@@ -22632,7 +22526,7 @@ app.post(
         : [];
 
       if (existing) {
-        await deleteGridFsEntries(bucket, [
+        await deleteAssetBucketEntries(bucket, [
           { id: existing.fileId },
           { id: existing.thumbFileId },
           { filename: existing.fileName },
@@ -22641,7 +22535,7 @@ app.post(
       }
 
       const [fileId, thumbFileId, bucketKey, thumbBucketKey] = await Promise.all([
-        uploadBufferToGridFS(bucket, fileName, optimized, {
+        uploadBufferToAssetBucket(bucket, fileName, optimized, {
           contentType: "image/jpeg",
           metadata: {
             label,
@@ -22651,7 +22545,7 @@ app.post(
             height: metadata.height || null,
           },
         }),
-        uploadBufferToGridFS(bucket, thumbName, thumb, {
+        uploadBufferToAssetBucket(bucket, thumbName, thumb, {
           contentType: "image/jpeg",
           metadata: { label, slug, type: "thumb" },
         }),
@@ -22700,7 +22594,7 @@ app.post(
         thumbFileId,
         bucketKey: bucketKey || null,
         thumbBucketKey: thumbBucketKey || null,
-        storage: bucketKey || thumbBucketKey ? "hybrid" : "mongo",
+        storage: bucketKey || thumbBucketKey ? "hybrid" : "asset_bucket",
         mime: "image/jpeg",
         size: optimized.length,
         width: metadata.width || null,
@@ -22931,7 +22825,7 @@ app.post("/admin/instructions/assets/check-consistency", async (req, res) => {
 
 async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
   const coll = db.collection(collectionName);
-  const bucket = createGridFSBucket(db, { bucketName });
+  const bucket = createAssetBucket(db, { bucketName });
 
   const assets = await coll.find({}).toArray();
   let fixedCount = 0;
@@ -22970,7 +22864,7 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
     // Check main file
     let mainFileExists = true;
     if (asset.fileId) {
-      const exists = await checkGridFsFileExists(bucket, asset.fileId);
+      const exists = await checkAssetBucketFileExists(bucket, asset.fileId);
       if (!exists) {
         console.log(
           `[Consistency] Missing fileId ${asset.fileId} for ${label}`
@@ -22991,7 +22885,7 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
     let thumbFileExists = true;
     const thumbId = asset.thumbFileId || asset.thumbId;
     if (thumbId) {
-      const exists = await checkGridFsFileExists(bucket, thumbId);
+      const exists = await checkAssetBucketFileExists(bucket, thumbId);
       if (!exists) {
         console.log(`[Consistency] Missing thumbFileId ${thumbId} for ${label}`);
         updates.thumbFileId = null;
@@ -23012,7 +22906,7 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
     if (!mainFileExists && !thumbFileExists) {
       console.log(`[Consistency] Deleting orphaned record: ${label}`);
       await removeInstructionAssetFromCollections(db, asset);
-      await deleteGridFsEntries(bucket, [
+      await deleteAssetBucketEntries(bucket, [
         { id: asset.fileId },
         { id: asset.thumbFileId },
         { filename: asset.fileName },
@@ -23022,7 +22916,7 @@ async function checkAndFixAssetConsistency(db, collectionName, bucketName) {
       deleteLocalInstructionAssetFile(asset.fileName);
       const thumbName = asset.thumbFileName || `${asset.label}_thumb.jpg`;
       deleteLocalInstructionAssetFile(thumbName);
-      deletedItems.push({ label, reason: 'No files in GridFS' });
+      deletedItems.push({ label, reason: 'No files in AssetStore' });
       deletedCount++;
       needsDelete = true;
     }
@@ -23055,7 +22949,7 @@ async function resolveInstructionAssetStream(db, asset, { isThumbRequest }) {
     return { stream: null, mime: null, missingReferences: {} };
   }
 
-  const bucket = createGridFSBucket(db, { bucketName: "instructionAssets" });
+  const bucket = createAssetBucket(db, { bucketName: "instructionAssets" });
   const docHasThumb = Boolean(
     asset.thumbFileId || asset.thumbFileName || asset.thumbUrl,
   );
@@ -23122,7 +23016,7 @@ async function resolveInstructionAssetStream(db, asset, { isThumbRequest }) {
           }
           continue;
         }
-        const exists = await checkGridFsFileExists(bucket, objectId);
+        const exists = await checkAssetBucketFileExists(bucket, objectId);
         if (!exists) {
           if (shouldTrackMissing) {
             missingReferences[refKey].id = true;
@@ -23247,7 +23141,7 @@ function deleteLocalInstructionAssetFile(fileName) {
   }
 }
 
-async function checkGridFsFileExists(bucket, fileId) {
+async function checkAssetBucketFileExists(bucket, fileId) {
   try {
     const objectId = toObjectId(fileId);
     if (!objectId) return false;
@@ -23618,7 +23512,7 @@ async function performInstructionAssetDeletion(db, asset) {
 
   await removeInstructionAssetFromCollections(db, asset);
 
-  const bucket = createGridFSBucket(db, { bucketName: "instructionAssets" });
+  const bucket = createAssetBucket(db, { bucketName: "instructionAssets" });
   const baseName = getInstructionAssetBaseName(asset);
   const mainFileNames = Array.from(
     new Set(
@@ -23640,7 +23534,7 @@ async function performInstructionAssetDeletion(db, asset) {
         .map((name) => name.trim()),
     ),
   );
-  await deleteGridFsEntries(bucket, [
+  await deleteAssetBucketEntries(bucket, [
     { id: asset.fileId },
     { id: asset.thumbFileId },
     ...mainFileNames.map((name) => ({ filename: name })),
@@ -24542,7 +24436,7 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
     if (req.files && req.files.length > 0) {
       const client = await connectDB();
       const db = client.db("chatbot");
-      const bucket = createGridFSBucket(db, { bucketName: "broadcastAssets" });
+      const bucket = createAssetBucket(db, { bucketName: "broadcastAssets" });
       const { Readable } = require("stream");
 
       let fileIndex = 0;
@@ -24556,7 +24450,7 @@ app.post("/admin/broadcast", broadcastUpload, async (req, res) => {
           const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
           const filename = `broadcast-${Date.now()}-${safeName}`;
 
-          // Upload to GridFS
+          // Upload to AssetStore
           await new Promise((resolve, reject) => {
             const uploadStream = bucket.openUploadStream(filename, {
               contentType: file.mimetype,
@@ -24691,7 +24585,7 @@ app.get("/broadcast/assets/:filename", async (req, res) => {
 
     const client = await connectDB();
     const db = client.db("chatbot");
-    const bucket = createGridFSBucket(db, { bucketName: "broadcastAssets" });
+    const bucket = createAssetBucket(db, { bucketName: "broadcastAssets" });
 
     const files = await bucket
       .find({ filename: req.params.filename })
@@ -24978,7 +24872,7 @@ app.post(
       const client = await connectDB();
       const db = client.db("chatbot");
       const coll = db.collection("follow_up_assets");
-      const bucket = createGridFSBucket(db, { bucketName: "followupAssets" });
+      const bucket = createAssetBucket(db, { bucketName: "followupAssets" });
       const urlBase = PUBLIC_BASE_URL
         ? PUBLIC_BASE_URL.replace(/\/$/, "")
         : req.get("host")
@@ -25029,7 +24923,7 @@ app.post(
         const fileName = `${baseName}.jpg`;
         const thumbName = `${baseName}_thumb.jpg`;
         const [fileId, thumbFileId, bucketKey, thumbBucketKey] = await Promise.all([
-          uploadBufferToGridFS(bucket, fileName, optimized, {
+          uploadBufferToAssetBucket(bucket, fileName, optimized, {
             contentType: "image/jpeg",
             metadata: {
               type: "original",
@@ -25037,7 +24931,7 @@ app.post(
               height: metadata.height || null,
             },
           }),
-          uploadBufferToGridFS(bucket, thumbName, thumb, {
+          uploadBufferToAssetBucket(bucket, thumbName, thumb, {
             contentType: "image/jpeg",
             metadata: { type: "thumb" },
           }),
@@ -25077,7 +24971,7 @@ app.post(
           thumbFileId,
           bucketKey: bucketKey || null,
           thumbBucketKey: thumbBucketKey || null,
-          storage: bucketKey || thumbBucketKey ? "hybrid" : "mongo",
+          storage: bucketKey || thumbBucketKey ? "hybrid" : "asset_bucket",
           sha256,
           mime: "image/jpeg",
           size: optimized.length,
@@ -29869,6 +29763,7 @@ app.post("/admin/chat/send", async (req, res) => {
         sender: "assistant",
         timestamp: doc.timestamp,
       });
+      return doc;
     };
 
     // ส่งต่อไปยังแพลตฟอร์มของผู้ใช้ (และหลีกเลี่ยงการบันทึกซ้ำในกรณี Facebook เพื่อกันแสดงซ้ำ)
@@ -29930,9 +29825,8 @@ app.post("/admin/chat/send", async (req, res) => {
             selectedImageCollections: igBot.selectedImageCollections || null,
           },
         );
-        const messageDoc = createAdminMessageDoc();
-        await saveAndEmitAdminMessage(messageDoc);
-        return res.json({ success: true, message: "ส่งข้อความเรียบร้อยแล้ว" });
+        const messageDoc = await saveAndEmitAdminMessage(createAdminMessageDoc());
+        return res.json({ success: true, message: messageDoc });
       } catch (igError) {
         console.log(
           `[Admin Chat] ไม่สามารถส่งไปยัง Instagram ได้: ${igError.message}`,
@@ -29965,9 +29859,8 @@ app.post("/admin/chat/send", async (req, res) => {
         await sendWhatsAppMessage(userId, message, accessToken, phoneNumberId, {
           selectedImageCollections: waBot.selectedImageCollections || null,
         });
-        const messageDoc = createAdminMessageDoc();
-        await saveAndEmitAdminMessage(messageDoc);
-        return res.json({ success: true, message: "ส่งข้อความเรียบร้อยแล้ว" });
+        const messageDoc = await saveAndEmitAdminMessage(createAdminMessageDoc());
+        return res.json({ success: true, message: messageDoc });
       } catch (waError) {
         console.log(
           `[Admin Chat] ไม่สามารถส่งไปยัง WhatsApp ได้: ${waError.message}`,
@@ -29980,8 +29873,7 @@ app.post("/admin/chat/send", async (req, res) => {
     }
 
     // LINE หรือแพลตฟอร์มอื่น: insert และ emit ตามปกติ
-    const messageDoc = createAdminMessageDoc();
-    await saveAndEmitAdminMessage(messageDoc);
+    const messageDoc = await saveAndEmitAdminMessage(createAdminMessageDoc());
 
     try {
       let lineClientForSend = null;
@@ -30029,7 +29921,7 @@ app.post("/admin/chat/send", async (req, res) => {
       // ไม่ return error เพราะข้อความยังบันทึกลง database ได้
     }
 
-    res.json({ success: true, message: "ส่งข้อความเรียบร้อยแล้ว" });
+    res.json({ success: true, message: messageDoc });
   } catch (err) {
     console.error("Error sending admin message:", err);
     res.json({ success: false, error: err.message });
@@ -30123,7 +30015,7 @@ app.post("/admin/chat/tags/:userId", async (req, res) => {
       },
       { upsert: true },
     );
-    await maybeMirrorMongoDocumentByQuery(db, "user_tags", { userId });
+    await maybeMirrorAppDocumentByQuery(db, "user_tags", { userId });
 
     // Emit to socket clients
     io.to("admin").emit("userTagsUpdated", { userId, tags: cleanTags });
@@ -30319,7 +30211,7 @@ app.put("/admin/chat/orders/:orderId", async (req, res) => {
 
     // ดึงข้อมูลออเดอร์ที่อัปเดตแล้ว
     const updatedOrder = await coll.findOne({ _id: new ObjectId(orderId) });
-    await maybeMirrorMongoDocument("orders", updatedOrder);
+    await maybeMirrorAppDocumentFromCollection("orders", updatedOrder);
 
     // Emit socket event
     try {
@@ -30369,7 +30261,7 @@ app.delete("/admin/chat/orders/:orderId", async (req, res) => {
     if (result.deletedCount === 0) {
       return res.json({ success: false, error: "ไม่สามารถลบออเดอร์ได้" });
     }
-    await maybeDeleteMirroredMongoDocument("orders", order);
+    await maybeDeleteMirroredAppDocument("orders", order);
 
     // Emit socket event
     try {
@@ -30583,7 +30475,7 @@ app.post("/admin/api/telegram-notification-bots", requireAdmin, async (req, res)
     const client = await connectDB();
     const db = client.db("chatbot");
     await db.collection("telegram_notification_bots").insertOne(doc);
-    await maybeMirrorMongoDocument("telegram_notification_bots", doc);
+    await maybeMirrorAppDocumentFromCollection("telegram_notification_bots", doc);
 
     res.status(201).json({
       success: true,
@@ -30683,7 +30575,7 @@ app.put("/admin/api/telegram-notification-bots/:id", requireAdmin, async (req, r
 
     await coll.updateOne({ _id: new ObjectId(botId) }, { $set: updateDoc });
     const updated = await coll.findOne({ _id: new ObjectId(botId) });
-    await maybeMirrorMongoDocument("telegram_notification_bots", updated);
+    await maybeMirrorAppDocumentFromCollection("telegram_notification_bots", updated);
 
     res.json({
       success: true,
@@ -30723,7 +30615,7 @@ app.patch(
         { _id: new ObjectId(botId) },
         { $set: { status: nextStatus, isActive: nextValue, updatedAt: new Date() } },
       );
-      await maybeMirrorMongoDocumentSelection(
+      await maybeMirrorAppDocumentSelection(
         db,
         "telegram_notification_bots",
         botId,
@@ -30763,10 +30655,10 @@ app.delete(
 
       await coll.deleteOne({ _id: new ObjectId(botId) });
       await db.collection("telegram_bot_groups").deleteMany({ botId });
-      await maybeDeleteMirroredMongoDocument("telegram_notification_bots", existing);
+      await maybeDeleteMirroredAppDocument("telegram_notification_bots", existing);
       await Promise.all(
         groupDocs.map((doc) =>
-          maybeDeleteMirroredMongoDocument("telegram_bot_groups", doc),
+          maybeDeleteMirroredAppDocument("telegram_bot_groups", doc),
         ),
       );
 
@@ -31211,7 +31103,7 @@ async function evaluateNotificationSummarySchedules() {
               },
             },
           );
-          await maybeMirrorMongoDocument("notification_channels", {
+          await maybeMirrorAppDocumentFromCollection("notification_channels", {
             ...channel,
             lastSummaryAt: dueMoment.toDate(),
             lastSummarySlotKey: slotKey,
@@ -31594,7 +31486,7 @@ app.post("/admin/api/notification-channels", requireAdmin, async (req, res) => {
 
     const result = await db.collection("notification_channels").insertOne(doc);
     doc._id = result.insertedId;
-    await maybeMirrorMongoDocument("notification_channels", doc);
+    await maybeMirrorAppDocumentFromCollection("notification_channels", doc);
 
     res.status(201).json({ success: true, channel: mapNotificationChannelDoc(doc) });
   } catch (err) {
@@ -31764,7 +31656,7 @@ app.put("/admin/api/notification-channels/:id", requireAdmin, async (req, res) =
     const updated = await db
       .collection("notification_channels")
       .findOne({ _id: new ObjectId(channelId) });
-    await maybeMirrorMongoDocument("notification_channels", updated);
+    await maybeMirrorAppDocumentFromCollection("notification_channels", updated);
 
     res.json({ success: true, channel: mapNotificationChannelDoc(updated) });
   } catch (err) {
@@ -31799,7 +31691,7 @@ app.patch(
         { _id: new ObjectId(channelId) },
         { $set: { isActive: nextValue, updatedAt: new Date() } },
       );
-      await maybeMirrorMongoDocumentByQuery(db, "notification_channels", {
+      await maybeMirrorAppDocumentByQuery(db, "notification_channels", {
         _id: new ObjectId(channelId),
       });
 
@@ -31833,7 +31725,7 @@ app.delete(
       if (result.deletedCount === 0) {
         return res.status(404).json({ success: false, error: "ไม่พบช่องทางที่ระบุ" });
       }
-      await maybeDeleteMirroredMongoDocument("notification_channels", existing);
+      await maybeDeleteMirroredAppDocument("notification_channels", existing);
 
       res.json({ success: true });
     } catch (err) {
@@ -32475,7 +32367,7 @@ app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
       },
       { upsert: true },
     );
-    await maybeMirrorMongoDocumentByQuery(db, "user_purchase_status", {
+    await maybeMirrorAppDocumentByQuery(db, "user_purchase_status", {
       userId,
     });
 
@@ -33224,7 +33116,7 @@ async function logOpenAIUsage(data) {
           $set: { lastUsedAt: new Date() }
         }
       );
-      await maybeMirrorMongoDocumentSelection(db, "openai_api_keys", apiKeyId);
+      await maybeMirrorAppDocumentSelection(db, "openai_api_keys", apiKeyId);
     }
   } catch (err) {
     console.error("[OpenAI Usage] Error logging usage:", err);
@@ -33306,11 +33198,11 @@ app.post("/api/openai-keys", async (req, res) => {
     const result = await coll.insertOne(keyDoc);
     keyDoc._id = result.insertedId;
     if (isDefault) {
-      await maybeMirrorMongoDocumentSelection(db, "openai_api_keys", null, {
+      await maybeMirrorAppDocumentSelection(db, "openai_api_keys", null, {
         mirrorAll: true,
       });
     } else {
-      await maybeMirrorMongoDocument("openai_api_keys", keyDoc);
+      await maybeMirrorAppDocumentFromCollection("openai_api_keys", keyDoc);
     }
 
     invalidateAllRuntimeCaches();
@@ -33400,7 +33292,7 @@ app.put("/api/openai-keys/:id", async (req, res) => {
     await coll.updateOne({ _id: new ObjectId(id) }, { $set: updateData });
 
     const updated = await coll.findOne({ _id: new ObjectId(id) });
-    await maybeMirrorMongoDocumentSelection(db, "openai_api_keys", id, {
+    await maybeMirrorAppDocumentSelection(db, "openai_api_keys", id, {
       mirrorAll: Boolean(isDefault),
     });
     invalidateAllRuntimeCaches();
@@ -33443,7 +33335,7 @@ app.delete("/api/openai-keys/:id", async (req, res) => {
     if (result.deletedCount === 0) {
       return res.status(404).json({ success: false, error: "ไม่พบ API Key" });
     }
-    await maybeDeleteMirroredMongoDocument("openai_api_keys", id);
+    await maybeDeleteMirroredAppDocument("openai_api_keys", id);
 
     // Remove references from bots
     await db.collection("line_bots").updateMany(
@@ -33463,25 +33355,25 @@ app.delete("/api/openai-keys/:id", async (req, res) => {
       { $unset: { openaiApiKeyId: "" } }
     );
     await Promise.all([
-      maybeMirrorMongoDocumentByQuery(
+      maybeMirrorAppDocumentByQuery(
         db,
         "line_bots",
         { openaiApiKeyId: { $exists: false } },
         { multiple: true },
       ),
-      maybeMirrorMongoDocumentByQuery(
+      maybeMirrorAppDocumentByQuery(
         db,
         "facebook_bots",
         { openaiApiKeyId: { $exists: false } },
         { multiple: true },
       ),
-      maybeMirrorMongoDocumentByQuery(
+      maybeMirrorAppDocumentByQuery(
         db,
         "instagram_bots",
         { openaiApiKeyId: { $exists: false } },
         { multiple: true },
       ),
-      maybeMirrorMongoDocumentByQuery(
+      maybeMirrorAppDocumentByQuery(
         db,
         "whatsapp_bots",
         { openaiApiKeyId: { $exists: false } },
@@ -33824,7 +33716,7 @@ app.get("/api/openai-usage/summary", async (req, res) => {
     let byKey;
     let daily;
 
-    if (shouldUsePostgresMongoCompatDb()) {
+    if (shouldUsePostgresDocumentCompatDb()) {
       const postgresSummary = await queryOpenAiUsageSummaryFromPostgres({
         startMoment,
         endMoment,
@@ -35795,7 +35687,7 @@ async function fetchFacebookDatasetId({ pageId, accessToken } = {}) {
 
 /**
  * Process Facebook Conversion for an order when status changes to confirmed
- * @param {Object} order - The order document from MongoDB
+ * @param {Object} order - The order document
  * @returns {Promise<Object>} - Result of the conversion event
  */
 async function processFacebookConversion(order) {
@@ -35858,7 +35750,7 @@ async function processFacebookConversion(order) {
         },
       }
     );
-    await maybeMirrorMongoDocument("orders", {
+    await maybeMirrorAppDocumentFromCollection("orders", {
       ...order,
       fbConversionSent: result.success,
       fbConversionResult: result,
@@ -35911,7 +35803,7 @@ app.patch("/admin/orders/bulk/status", async (req, res) => {
       { $set: { status, updatedAt: new Date() } }
     );
     if (result.modifiedCount > 0) {
-      await maybeMirrorMongoDocumentByQuery(
+      await maybeMirrorAppDocumentByQuery(
         db,
         "orders",
         { _id: { $in: validIds.map((id) => new ObjectId(id)) } },
@@ -35970,7 +35862,7 @@ app.delete("/admin/orders/bulk/delete", async (req, res) => {
       _id: { $in: orders.map((order) => order._id) },
     });
     await Promise.all(
-      orders.map((order) => maybeDeleteMirroredMongoDocument("orders", order)),
+      orders.map((order) => maybeDeleteMirroredAppDocument("orders", order)),
     );
 
     const followUpTargets = new Map();
@@ -36074,7 +35966,7 @@ app.patch("/admin/orders/:orderId/status", async (req, res) => {
       }
     }
     const mirroredOrder = await coll.findOne({ _id: new ObjectId(orderId) });
-    await maybeMirrorMongoDocument("orders", mirroredOrder);
+    await maybeMirrorAppDocumentFromCollection("orders", mirroredOrder);
 
     res.json({
       success: true,
@@ -36113,7 +36005,7 @@ app.patch("/admin/orders/:orderId/notes", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ success: false, error: "ไม่พบออเดอร์" });
     }
-    await maybeMirrorMongoDocumentByQuery(db, "orders", {
+    await maybeMirrorAppDocumentByQuery(db, "orders", {
       _id: new ObjectId(orderId),
     });
 
@@ -36147,7 +36039,7 @@ app.delete("/admin/orders/:orderId", async (req, res) => {
     if (result.deletedCount === 0) {
       return res.status(500).json({ success: false, error: "ไม่สามารถลบออเดอร์ได้" });
     }
-    await maybeDeleteMirroredMongoDocument("orders", order);
+    await maybeDeleteMirroredAppDocument("orders", order);
 
     try {
       if (io) {
@@ -36248,7 +36140,7 @@ app.patch("/api/users/:userId/notes", async (req, res) => {
       },
       { upsert: true }
     );
-    await maybeMirrorMongoDocumentByQuery(db, "user_notes", { userId });
+    await maybeMirrorAppDocumentByQuery(db, "user_notes", { userId });
 
     console.log(`[UserNotes] บันทึกโน้ตสำหรับผู้ใช้ ${userId.substring(0, 8)}...`);
     res.json({ success: true, userId, notes: sanitizedNotes });
@@ -36418,7 +36310,7 @@ async function notifyAdminsNewMessage(userId, message) {
       { $inc: { unreadCount: 1 } },
       { upsert: true },
     );
-    await maybeMirrorMongoDocumentByQuery(db, "user_unread_counts", {
+    await maybeMirrorAppDocumentByQuery(db, "user_unread_counts", {
       userId,
     });
   } catch (error) {
@@ -36469,7 +36361,7 @@ async function resetUserUnreadCount(userId) {
       { $set: { unreadCount: 0 } },
       { upsert: true },
     );
-    await maybeMirrorMongoDocumentByQuery(db, "user_unread_counts", {
+    await maybeMirrorAppDocumentByQuery(db, "user_unread_counts", {
       userId,
     });
   } catch (error) {
@@ -37512,27 +37404,27 @@ async function buildChatFeedbackLookup(db, messageIds = []) {
   return feedbackMap;
 }
 
-async function maybeShadowCompareHistory(userId, mongoMessages) {
+async function maybeShadowCompareHistory(userId, sourceMessages) {
   if (!isShadowChatReadEnabled()) return;
   try {
     const pgMessages = await chatStorageService.listMessagesForUser(userId, {
       limit: runtimeConfig.chatHistoryLimit,
       order: "asc",
     });
-    const mongoIds = mongoMessages
+    const sourceIds = sourceMessages
       .map((message) => message?._id?.toString?.() || message?._id || null)
       .filter(Boolean);
     const pgIds = pgMessages
       .map((message) => message?._id?.toString?.() || message?._id || null)
       .filter(Boolean);
     if (
-      mongoIds.length !== pgIds.length ||
-      mongoIds.slice(-5).join(",") !== pgIds.slice(-5).join(",")
+      sourceIds.length !== pgIds.length ||
+      sourceIds.slice(-5).join(",") !== pgIds.slice(-5).join(",")
     ) {
       logShadowReadMismatch(`history:${userId}`, {
-        mongoCount: mongoIds.length,
+        sourceCount: sourceIds.length,
         postgresCount: pgIds.length,
-        mongoTail: mongoIds.slice(-5),
+        sourceTail: sourceIds.slice(-5),
         postgresTail: pgIds.slice(-5),
       });
     }
@@ -37541,28 +37433,28 @@ async function maybeShadowCompareHistory(userId, mongoMessages) {
   }
 }
 
-async function maybeShadowCompareUsers(mongoUsers, options = {}) {
+async function maybeShadowCompareUsers(sourceUsers, options = {}) {
   if (!isShadowChatReadEnabled()) return;
   try {
     const pgUsers = await chatStorageService.listConversationUsers({
       limit: 50,
       focusUserId: options.focusUserId || "",
     });
-    const mongoIds = mongoUsers
+    const sourceIds = sourceUsers
       .map((user) => user?._id?.toString?.() || user?._id || null)
       .filter(Boolean);
     const pgIds = pgUsers
       .map((user) => user?._id?.toString?.() || user?._id || null)
       .filter(Boolean);
     if (
-      mongoIds.length !== pgIds.length ||
-      mongoIds.slice(0, 10).join(",") !== pgIds.slice(0, 10).join(",")
+      sourceIds.length !== pgIds.length ||
+      sourceIds.slice(0, 10).join(",") !== pgIds.slice(0, 10).join(",")
     ) {
       logShadowReadMismatch("users", {
         focusUserId: options.focusUserId || null,
-        mongoCount: mongoIds.length,
+        sourceCount: sourceIds.length,
         postgresCount: pgIds.length,
-        mongoHead: mongoIds.slice(0, 10),
+        sourceHead: sourceIds.slice(0, 10),
         postgresHead: pgIds.slice(0, 10),
       });
     }
@@ -37580,10 +37472,6 @@ async function getNormalizedChatHistory(userId, options = {}) {
   try {
     const { applyFilter = false } = options || {};
     let db = null;
-    if (MONGO_URI) {
-      const client = await connectDB();
-      db = client.db("chatbot");
-    }
 
     let messages = [];
     if (isPostgresChatReadEnabled()) {
@@ -37592,6 +37480,8 @@ async function getNormalizedChatHistory(userId, options = {}) {
         order: "asc",
       });
     } else {
+      const client = await connectDB();
+      db = client.db("chatbot");
       const coll = db.collection("chat_history");
       messages = await coll
         .find(buildChatHistoryUserMatch(userId))

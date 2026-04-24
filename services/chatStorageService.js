@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
-const { ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 const {
   detectImageMimeType,
 } = require("../utils/chatImageUtils");

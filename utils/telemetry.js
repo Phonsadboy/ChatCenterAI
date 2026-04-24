@@ -25,10 +25,10 @@ const STARTUP_DELAY_MS = 30 * 1000;
 let intervalRef = null;
 
 // ── Instance ID ────────────────────────────────────────────────────────
-// สร้าง instance ID จาก MONGO_URI + PUBLIC_BASE_URL (hash ไม่เปิดเผยข้อมูลจริง)
+// สร้าง instance ID จาก DATABASE_URL + PUBLIC_BASE_URL (hash ไม่เปิดเผยข้อมูลจริง)
 function getInstanceId() {
     const seed =
-        (process.env.MONGO_URI || "") + "|" + (process.env.PUBLIC_BASE_URL || "");
+        (process.env.DATABASE_URL || "") + "|" + (process.env.PUBLIC_BASE_URL || "");
     return crypto.createHash("sha256").update(seed).digest("hex").slice(0, 12);
 }
 

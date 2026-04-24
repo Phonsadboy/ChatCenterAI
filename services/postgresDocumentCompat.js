@@ -1,12 +1,50 @@
 "use strict";
 
 const { PassThrough, Writable } = require("stream");
-const { GridFSBucket: MongoGridFSBucket, ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 
 const DEFAULT_SCAN_LIMIT = Math.max(
   1000,
   Number.parseInt(process.env.POSTGRES_COMPAT_SCAN_LIMIT || "50000", 10) || 50000,
 );
+
+const SQL_PUSH_DOWN_FIELDS = new Set([
+  "_id",
+  "agentId",
+  "batchId",
+  "botId",
+  "canceled",
+  "channelId",
+  "completed",
+  "createdAt",
+  "documentId",
+  "groupId",
+  "id",
+  "instructionId",
+  "isActive",
+  "isDefault",
+  "key",
+  "nextScheduledAt",
+  "notificationStatus",
+  "orderId",
+  "pageKey",
+  "platform",
+  "requestId",
+  "runId",
+  "senderBotId",
+  "senderId",
+  "sessionId",
+  "status",
+  "type",
+  "updatedAt",
+  "usageId",
+  "userId",
+]);
+
+function addSqlParam(params, value) {
+  params.push(value);
+  return `$${params.length}`;
+}
 
 function stringifyId(value) {
   if (value === null || typeof value === "undefined") return "";
@@ -81,6 +119,99 @@ function isPlainObject(value) {
 
 function isOperatorObject(value) {
   return isPlainObject(value) && Object.keys(value).some((key) => key.startsWith("$"));
+}
+
+function normalizeSqlValue(value) {
+  if (value instanceof Date) return value.toISOString();
+  if (value === null || typeof value === "undefined") return null;
+  return stringifyId(value);
+}
+
+function isSqlPushDownField(field) {
+  return (
+    typeof field === "string" &&
+    /^[a-zA-Z0-9_.-]+$/.test(field) &&
+    SQL_PUSH_DOWN_FIELDS.has(field)
+  );
+}
+
+function buildPayloadTextExpression(field, params) {
+  if (field === "_id") {
+    return "payload->>'_id'";
+  }
+  if (field === "createdAt") {
+    return "COALESCE(payload->>'createdAt', created_at::text)";
+  }
+  if (field === "updatedAt") {
+    return "COALESCE(payload->>'updatedAt', updated_at::text)";
+  }
+  if (!String(field).includes(".")) {
+    return `payload->>'${String(field).replace(/'/g, "''")}'`;
+  }
+  const pathSql = field
+    .split(".")
+    .map((part) => `'${part.replace(/'/g, "''")}'`)
+    .join(", ");
+  return `payload #>> ARRAY[${pathSql}]::text[]`;
+}
+
+function buildSqlCondition(field, condition, params) {
+  if (!isSqlPushDownField(field)) return null;
+
+  const textExpression = buildPayloadTextExpression(field, params);
+  if (field === "_id" && !isOperatorObject(condition)) {
+    const valueParam = addSqlParam(params, normalizeSqlValue(condition));
+    return `(document_id = ${valueParam} OR ${textExpression} = ${valueParam})`;
+  }
+
+  if (!isOperatorObject(condition)) {
+    if (condition === null || typeof condition === "undefined") {
+      return `${textExpression} IS NULL`;
+    }
+    return `${textExpression} = ${addSqlParam(params, normalizeSqlValue(condition))}`;
+  }
+
+  const clauses = [];
+  for (const [operator, rawValue] of Object.entries(condition)) {
+    if (operator === "$eq") {
+      clauses.push(
+        rawValue === null || typeof rawValue === "undefined"
+          ? `${textExpression} IS NULL`
+          : `${textExpression} = ${addSqlParam(params, normalizeSqlValue(rawValue))}`,
+      );
+    } else if (operator === "$ne") {
+      if (rawValue === null || typeof rawValue === "undefined") {
+        clauses.push(`${textExpression} IS NOT NULL`);
+      } else {
+        clauses.push(
+          `(${textExpression} IS NULL OR ${textExpression} <> ${addSqlParam(params, normalizeSqlValue(rawValue))})`,
+        );
+      }
+    } else if (operator === "$in" && Array.isArray(rawValue)) {
+      const values = rawValue.map((entry) => normalizeSqlValue(entry)).filter((entry) => entry !== null);
+      if (!values.length) return "FALSE";
+      const valueParam = addSqlParam(params, values);
+      if (field === "_id") {
+        clauses.push(`(document_id = ANY(${valueParam}::text[]) OR ${textExpression} = ANY(${valueParam}::text[]))`);
+      } else {
+        clauses.push(`${textExpression} = ANY(${valueParam}::text[])`);
+      }
+    } else if (operator === "$nin" && Array.isArray(rawValue)) {
+      const values = rawValue.map((entry) => normalizeSqlValue(entry)).filter((entry) => entry !== null);
+      if (values.length) {
+        clauses.push(`(${textExpression} IS NULL OR ${textExpression} <> ALL(${addSqlParam(params, values)}::text[]))`);
+      }
+    } else if (["$gt", "$gte", "$lt", "$lte"].includes(operator)) {
+      const sqlOperator = { $gt: ">", $gte: ">=", $lt: "<", $lte: "<=" }[operator];
+      clauses.push(`${textExpression} ${sqlOperator} ${addSqlParam(params, normalizeSqlValue(rawValue))}`);
+    } else if (operator === "$exists") {
+      clauses.push(rawValue ? `${textExpression} IS NOT NULL` : `${textExpression} IS NULL`);
+    } else {
+      return null;
+    }
+  }
+
+  return clauses.length ? `(${clauses.join(" AND ")})` : null;
 }
 
 function getPath(source, path) {
@@ -592,7 +723,11 @@ class CompatCursor {
 
   async _materialize() {
     if (this.cachedDocs) return this.cachedDocs;
-    let docs = await this.loadDocs();
+    let docs = await this.loadDocs({
+      sort: this.sortSpec,
+      limit: this.limitValue,
+      skip: this.skipValue,
+    });
     if (this.sortSpec) docs = sortDocs(docs, this.sortSpec);
     if (this.skipValue) docs = docs.slice(this.skipValue);
     if (this.limitValue) docs = docs.slice(0, this.limitValue);
@@ -630,50 +765,71 @@ class PostgresCollection {
     this.collectionName = collectionName;
   }
 
-  _buildSimpleAppDocumentWhere(query = {}) {
-    if (!query || Object.keys(query).length === 0) return null;
-    const entries = Object.entries(query).filter(([key]) => !key.startsWith("$"));
-    if (entries.length !== 1) return null;
-    const [field, condition] = entries[0];
-    if (field === "_id" && !isOperatorObject(condition)) {
-      return {
-        clause: "AND (document_id = $3 OR payload->>'_id' = $3)",
-        params: [stringifyId(condition)],
-      };
+  _buildAppDocumentWhere(query = {}, params = []) {
+    if (!query || Object.keys(query).length === 0) return "";
+    const clauses = [];
+
+    for (const [key, condition] of Object.entries(query)) {
+      if (key === "$and" && Array.isArray(condition)) {
+        const nestedClauses = [];
+        for (const nested of condition) {
+          const nestedSql = this._buildAppDocumentWhere(nested, params);
+          if (nestedSql === null) return null;
+          if (nestedSql) nestedClauses.push(`(${nestedSql})`);
+        }
+        if (nestedClauses.length) clauses.push(nestedClauses.join(" AND "));
+        continue;
+      }
+
+      if (key.startsWith("$")) return null;
+      const sql = buildSqlCondition(key, condition, params);
+      if (!sql) return null;
+      clauses.push(sql);
     }
-    if (!/^[a-zA-Z0-9_.-]+$/.test(field)) return null;
-    const path = field.split(".");
-    if (!isOperatorObject(condition)) {
-      return {
-        clause: "AND payload #>> $3::text[] = $4",
-        params: [path, String(condition)],
-      };
-    }
-    if (Array.isArray(condition.$in)) {
-      return {
-        clause: "AND payload #>> $3::text[] = ANY($4::text[])",
-        params: [path, condition.$in.map((entry) => stringifyId(entry))],
-      };
-    }
-    return null;
+
+    return clauses.join(" AND ");
   }
 
-  async _loadAppDocuments(query = {}) {
-    const simpleWhere = this._buildSimpleAppDocumentWhere(query);
-    const params = [this.collectionName, this.db.scanLimit];
-    let whereClause = "";
-    if (simpleWhere) {
-      whereClause = ` ${simpleWhere.clause}`;
-      params.push(...simpleWhere.params);
+  _buildAppDocumentOrderBy(sortSpec = null, params = []) {
+    const entries = Object.entries(sortSpec || {});
+    if (!entries.length) return "ORDER BY updated_at DESC";
+
+    const orderParts = [];
+    for (const [field, direction] of entries) {
+      if (!isSqlPushDownField(field)) return "ORDER BY updated_at DESC";
+      const sqlDirection = Number(direction) >= 0 ? "ASC" : "DESC";
+      const expression = buildPayloadTextExpression(field, params);
+      orderParts.push(`${expression} ${sqlDirection} NULLS LAST`);
     }
+    orderParts.push("updated_at DESC");
+    return `ORDER BY ${orderParts.join(", ")}`;
+  }
+
+  async _loadAppDocuments(query = {}, options = {}) {
+    let params = [this.collectionName];
+    const whereParams = [this.collectionName];
+    const pushedWhere = this._buildAppDocumentWhere(query, whereParams);
+    const canPushQuery = pushedWhere !== null;
+    if (canPushQuery) params = whereParams;
+    const whereClause = canPushQuery && pushedWhere ? `AND ${pushedWhere}` : "";
+    const orderBySql = this._buildAppDocumentOrderBy(options.sort, params);
+    const requestedLimit =
+      Number(options.limit) > 0
+        ? Number(options.limit) + Math.max(Number(options.skip) || 0, 0)
+        : this.db.scanLimit;
+    const limit = canPushQuery
+      ? Math.max(1, Math.min(requestedLimit, this.db.scanLimit))
+      : this.db.scanLimit;
+    const limitParam = addSqlParam(params, limit);
+
     const result = await this.db.postgresRuntime.query(
       `
         SELECT document_id, payload, created_at, updated_at
         FROM app_documents
         WHERE collection_name = $1
           ${whereClause}
-        ORDER BY updated_at DESC
-        LIMIT $2
+        ${orderBySql}
+        LIMIT ${limitParam}
       `,
       params,
     );
@@ -730,14 +886,14 @@ class PostgresCollection {
     }));
   }
 
-  async _loadDocs(query = {}) {
+  async _loadDocs(query = {}, options = {}) {
     if (this.collectionName === "chat_history") return this._loadChatHistory();
-    return this._loadAppDocuments(query);
+    return this._loadAppDocuments(query, options);
   }
 
   find(query = {}, options = {}) {
-    return new CompatCursor(async () => {
-      const docs = await this._loadDocs(query);
+    return new CompatCursor(async (cursorOptions = {}) => {
+      const docs = await this._loadDocs(query, cursorOptions);
       return docs.filter((doc) => matchesQuery(doc, query));
     }, options);
   }
@@ -940,7 +1096,7 @@ class PostgresCollection {
 
 class PostgresCompatDb {
   constructor({ postgresRuntime, chatStorageService, projectBucket, scanLimit = DEFAULT_SCAN_LIMIT }) {
-    this.__isPostgresMongoCompat = true;
+    this.__isPostgresDocumentCompat = true;
     this.postgresRuntime = postgresRuntime;
     this.chatStorageService = chatStorageService;
     this.projectBucket = projectBucket;
@@ -963,10 +1119,10 @@ class PostgresCompatDb {
   }
 }
 
-function createPostgresMongoCompatClient(options = {}) {
+function createPostgresDocumentCompatClient(options = {}) {
   const db = new PostgresCompatDb(options);
   return {
-    __isPostgresMongoCompat: true,
+    __isPostgresDocumentCompat: true,
     db() {
       return db;
     },
@@ -982,18 +1138,18 @@ function createPostgresMongoCompatClient(options = {}) {
   };
 }
 
-function mapGridFsScope(bucketName = "") {
+function mapAssetBucketScope(bucketName = "") {
   if (bucketName === "instructionAssets") return "instruction_assets";
   if (bucketName === "followupAssets") return "follow_up_assets";
   if (bucketName === "broadcastAssets") return "broadcast_assets";
-  return bucketName || "gridfs";
+  return bucketName || "asset_objects";
 }
 
-class PostgresGridFsBucket {
+class PostgresAssetBucket {
   constructor(db, options = {}) {
     this.db = db;
     this.bucketName = options.bucketName || "fs";
-    this.scope = mapGridFsScope(this.bucketName);
+    this.scope = mapAssetBucketScope(this.bucketName);
   }
 
   openUploadStream(filename, options = {}) {
@@ -1009,7 +1165,7 @@ class PostgresGridFsBucket {
         (async () => {
           const buffer = Buffer.concat(chunks);
           const objectKey = bucket.db.projectBucket.buildKey(
-            "gridfs",
+            "asset_objects",
             bucket.scope,
             id.toString(),
             filename,
@@ -1097,16 +1253,16 @@ class PostgresGridFsBucket {
   }
 }
 
-function createGridFSBucket(db, options = {}) {
-  if (db?.__isPostgresMongoCompat) {
-    return new PostgresGridFsBucket(db, options);
+function createAssetBucket(db, options = {}) {
+  if (db?.__isPostgresDocumentCompat) {
+    return new PostgresAssetBucket(db, options);
   }
-  return new MongoGridFSBucket(db, options);
+  throw new Error("PostgreSQL document compatibility database is required");
 }
 
 module.exports = {
-  createGridFSBucket,
-  createPostgresMongoCompatClient,
+  createAssetBucket,
+  createPostgresDocumentCompatClient,
   matchesQuery,
   normalizeForJson,
   resolveDocumentId,

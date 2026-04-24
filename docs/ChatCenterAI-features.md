@@ -175,5 +175,5 @@ ChatCenter AI คือระบบจัดการแชทสำหรับ
 
 ---
 
-> **ระบบนี้พัฒนาขึ้นบน Node.js + MongoDB รองรับการ Deploy บน Railway / Docker**
+> **ระบบนี้พัฒนาขึ้นบน Node.js + PostgreSQL รองรับการ Deploy บน Railway / Docker**
 > ติดต่อสอบถามเพิ่มเติมได้ที่ผู้พัฒนาโดยตรง

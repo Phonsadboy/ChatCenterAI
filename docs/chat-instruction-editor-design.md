@@ -94,7 +94,7 @@ Instruction {
 │  └──────────────────────────┬───────────────────────┘   │
 │                             ▼                           │
 │  ┌────────────────────┐  ┌────────────────────────┐    │
-│  │   MongoDB          │  │  RAG Index (In-Memory)  │    │
+│  │   PostgreSQL          │  │  RAG Index (In-Memory)  │    │
 │  │   instructions_v2  │  │  - Chunk + Embedding    │    │
 │  └────────────────────┘  └────────────────────────┘    │
 └─────────────────────────────────────────────────────────┘
@@ -604,7 +604,7 @@ Instruction {
 | Feature | Demo (Phase 1) | Production (Phase 2) |
 |---|---|---|
 | Search | Keyword-based (string match) | Embedding-based (semantic) |
-| Index | In-memory per session | Persistent (Redis/MongoDB) |
+| Index | In-memory per session | Persistent (Redis/PostgreSQL) |
 | Rebuild | ทุกครั้งที่เลือก instruction | Incremental (on change) |
 
 ---
@@ -994,7 +994,7 @@ ID: {{instructionId}}
 - [x] System prompt auto-injection (data items summary)
 
 ### Phase 3: Production Ready
-- [x] Session persistence (MongoDB)
+- [x] Session persistence (PostgreSQL)
 - [x] Audit log (who edited what, when, which tools, token usage)
 - [x] Bulk operations safety (delete_rows_bulk with 2-step confirmation token)
 

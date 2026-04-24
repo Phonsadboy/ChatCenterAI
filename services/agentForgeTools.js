@@ -1,4 +1,4 @@
-const { ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 const { normalizePageKey, normalizePageKeys } = require("./agentForgeService");
 
 function toObjectId(value) {

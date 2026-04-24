@@ -6,34 +6,34 @@
 
 ## Runtime Modes
 
-- `CHAT_STORAGE_MODE=mongo`
-  - อ่าน/เขียน Mongo แบบเดิม
+- `CHAT_STORAGE_MODE=postgres`
+  - อ่าน/เขียน PostgreSQL แบบเดิม
 - `CHAT_STORAGE_MODE=dual`
-  - เขียน Mongo แบบเดิม และ mirror chat ไป PostgreSQL/Bucket
-  - หน้าแชทยังอ่านจาก Mongo
+  - เขียน PostgreSQL แบบเดิม และ mirror chat ไป PostgreSQL/Bucket
+  - หน้าแชทยังอ่านจาก PostgreSQL
 - `CHAT_STORAGE_MODE=shadow`
   - เขียนแบบ `dual`
-  - หน้าแชทยังอ่านจาก Mongo
-  - ฝั่ง server จะ compare Mongo กับ PostgreSQL แล้ว log mismatch
+  - หน้าแชทยังอ่านจาก PostgreSQL
+  - ฝั่ง server จะ compare PostgreSQL กับ PostgreSQL แล้ว log mismatch
 - `CHAT_STORAGE_MODE=postgres`
   - หน้าแชทอ่านจาก PostgreSQL
   - write path ยัง mirror ไป PostgreSQL โดยไม่เปลี่ยน route เดิม
 
 ## Session Store
 
-- `SESSION_STORE_MODE=mongo`
-  - ใช้ `connect-mongo`
+- `SESSION_STORE_MODE=postgres`
+  - ใช้ `connect-pg-simple`
 - `SESSION_STORE_MODE=postgres`
   - ใช้ `connect-pg-simple`
 
 ## App Document Modes
 
-- `APP_DOCUMENT_MODE=mongo`
-  - อ่านข้อมูล non-chat จาก Mongo แบบเดิม
+- `APP_DOCUMENT_MODE=postgres`
+  - อ่านข้อมูล non-chat จาก PostgreSQL แบบเดิม
 - `APP_DOCUMENT_MODE=dual`
-  - ใช้ Mongo เป็น primary และ mirror runtime writes ไป `app_documents`
+  - ใช้ PostgreSQL เป็น primary และ mirror runtime writes ไป `app_documents`
 - `APP_DOCUMENT_MODE=shadow`
-  - อ่าน Mongo แบบเดิม และ log mismatch กับ `app_documents` ใน read path ที่รองรับ
+  - อ่าน PostgreSQL แบบเดิม และ log mismatch กับ `app_documents` ใน read path ที่รองรับ
 - `APP_DOCUMENT_MODE=postgres`
   - read path ที่รองรับจะอ่านจาก `app_documents`
   - ใช้หลังจาก backfill และ shadow-read ผ่านแล้วเท่านั้น
@@ -97,7 +97,7 @@
     - instruction list/latest lookup และ instruction assets
     - chat user metadata: profiles, tags, unread counts, purchase status, follow-up status/tasks, orders
     - user order lookup สำหรับ chat และ AI tool context
-  - write path ของ admin CRUD บางส่วนยังใช้ Mongo เป็น primary ใน phase นี้ จึงต้อง rollout แบบ dual-write + shadow ก่อน final cutover
+  - write path ของ admin CRUD บางส่วนยังใช้ PostgreSQL เป็น primary ใน phase นี้ จึงต้อง rollout แบบ dual-write + shadow ก่อน final cutover
 
 ## Notes
 

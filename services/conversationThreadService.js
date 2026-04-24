@@ -5,7 +5,7 @@
  * enriched with instruction refs, order data, and auto-tags.
  */
 
-const { ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 const crypto = require("crypto");
 
 class ConversationThreadService {

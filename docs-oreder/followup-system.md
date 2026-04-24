@@ -5,7 +5,7 @@
 - การส่งติดตามอิงจากข้อความล่าสุดของลูกค้าและตารางรอบ (rounds) ที่ตั้งไว้ต่อเพจ/บอท
 - ใช้โซนเวลา Asia/Bangkok ในการคำนวณเวลาและ dateKey
 
-## โครงสร้างข้อมูล (MongoDB)
+## โครงสร้างข้อมูล (PostgreSQL)
 ### 1) follow_up_tasks
 - เก็บงานติดตามรายวันของผู้ใช้แต่ละคน
 - ฟิลด์สำคัญ:
@@ -41,10 +41,10 @@
   - updatedAt
 - การ merge config ใช้ลำดับ: baseConfig (settings collection) → platform default (botId:null) → specific botId
 
-### 4) follow_up_assets + GridFS bucket followupAssets
+### 4) follow_up_assets + Railway Bucket/asset_objects bucket followupAssets
 - เก็บรูปภาพที่ใช้ในรอบติดตาม
 - follow_up_assets เก็บ metadata (sha256, width/height, url/thumbUrl, fileId)
-- ไฟล์จริงเก็บใน GridFS bucket `followupAssets`
+- ไฟล์จริงเก็บใน Railway Bucket/asset_objects bucket `followupAssets`
 - เสิร์ฟผ่าน `/assets/followup/:fileName` หรือ static dir `FOLLOWUP_ASSETS_DIR`
 
 ## การตั้งค่า (Settings)
@@ -146,7 +146,7 @@
   - จำกัด 5 รูปต่อครั้ง
   - แปลงเป็น JPG คุณภาพ 88 + สร้าง thumb 512px
   - ใช้ sha256 เพื่อตรวจซ้ำ (duplicate)
-- รูปถูกเก็บใน GridFS และ metadata ใน follow_up_assets
+- รูปถูกเก็บใน Railway Bucket/asset_objects และ metadata ใน follow_up_assets
 - ส่งข้อความ:
   - sanitizeFollowUpImages จะเติม previewUrl และแปลง URL เป็น absolute ถ้า PUBLIC_BASE_URL ตั้งไว้
 - ถ้า PUBLIC_BASE_URL ไม่ตั้ง → ระบบจะ warn และรูปแบบ relative อาจส่งไม่สำเร็จ

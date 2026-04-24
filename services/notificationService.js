@@ -1,7 +1,7 @@
 const line = require("@line/bot-sdk");
 const axios = require("axios");
 const moment = require("moment-timezone");
-const { ObjectId } = require("mongodb");
+const { ObjectId } = require("bson");
 const { extractBase64ImagesFromContent } = require("../utils/chatImageUtils");
 const { buildShortLinkUrl, createShortLink } = require("../utils/shortLinks");
 
