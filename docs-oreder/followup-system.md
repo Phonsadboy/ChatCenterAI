@@ -41,10 +41,10 @@
   - updatedAt
 - การ merge config ใช้ลำดับ: baseConfig (settings collection) → platform default (botId:null) → specific botId
 
-### 4) follow_up_assets + Railway Bucket/asset_objects bucket followupAssets
+### 4) follow_up_assets + Railway Bucket/asset_objects scope followupAssets
 - เก็บรูปภาพที่ใช้ในรอบติดตาม
 - follow_up_assets เก็บ metadata (sha256, width/height, url/thumbUrl, fileId)
-- ไฟล์จริงเก็บใน Railway Bucket/asset_objects bucket `followupAssets`
+- ไฟล์จริงเก็บใน Railway Bucket ผ่าน `asset_objects` scope `followupAssets`
 - เสิร์ฟผ่าน `/assets/followup/:fileName` หรือ static dir `FOLLOWUP_ASSETS_DIR`
 
 ## การตั้งค่า (Settings)
