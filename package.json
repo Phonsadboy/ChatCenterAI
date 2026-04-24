@@ -16,7 +16,8 @@
     "migrate:pg:native-performance": "node scripts/migrate-postgres-performance-native.js",
     "migrate:assets": "node scripts/migrate-gridfs-assets.js",
     "verify:pg:cutover": "node scripts/verify-postgres-cutover.js",
-    "verify:pg:native-performance": "node scripts/verify-postgres-performance-native.js"
+    "verify:pg:native-performance": "node scripts/verify-postgres-performance-native.js",
+    "verify:instruction-ai2": "node scripts/verify-instruction-ai2-service.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.901.0",

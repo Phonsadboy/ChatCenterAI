@@ -1832,13 +1832,13 @@
     }
 
     function refreshToolCardSummary(card) {
-        const subtitle = card?.querySelector(".ic-tool-card-subtitle");
+        const subtitle = card?.querySelector(".ic-run-card-subtitle");
         if (!subtitle) return;
         const status = card.dataset.status || "running";
-        const parts = [getToolStatusLabel(status)];
+        const parts = [];
         if (card.dataset.argsSummary) parts.push(card.dataset.argsSummary);
         if (card.dataset.resultSummary) parts.push(card.dataset.resultSummary);
-        subtitle.textContent = parts.filter(Boolean).join(" · ");
+        subtitle.textContent = parts.filter(Boolean).join(" · ") || getToolStatusLabel(status);
     }
 
     function setToolCardArguments(card, payload) {

@@ -24,6 +24,11 @@ const { AgentForgeService } = require("./services/agentForgeService");
 const { AgentForgeRunner } = require("./services/agentForgeRunner");
 const { AgentForgeScheduler } = require("./services/agentForgeScheduler");
 const createAgentForgeRouter = require("./routes/agentForge");
+const createInstructionAI2Router = require("./routes/instructionAI2");
+const {
+  recordInstructionAI2MessageUsage,
+  attributeOrderToLatestAssistantUsage,
+} = require("./services/instructionAI2AttributionService");
 // Middleware & misc packages for UI
 const helmet = require("helmet");
 const cors = require("cors");
@@ -3053,6 +3058,25 @@ async function saveChatHistory(
       assistantMessageDoc,
       "saveChatHistory:assistant",
     );
+    void recordInstructionAI2MessageUsage(db, {
+      userMessageDoc,
+      assistantMessageDoc,
+      instructionRefs: normalizedInstructionRefs,
+      instructionMeta: normalizedInstructionMeta,
+      model: normalizedOptions.aiModel || normalizedOptions.model || null,
+      reasoningEffort:
+        normalizedOptions.reasoningEffort ||
+        normalizedOptions.reasoning_effort ||
+        normalizedOptions.aiConfig?.reasoningEffort ||
+        null,
+      toolCalls: normalizedOptions.toolCalls || [],
+      orderIds: normalizedOptions.orderIds || [],
+    }).catch((usageErr) => {
+      console.warn(
+        "[InstructionAI2Attribution] record usage failed:",
+        usageErr?.message || usageErr,
+      );
+    });
 
     try {
       if (typeof io !== "undefined" && io) {
@@ -6339,6 +6363,28 @@ async function createOrderFromTool(args = {}, context = {}) {
       ? orderId.toString()
       : String(orderId || "");
 
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    void attributeOrderToLatestAssistantUsage(db, {
+      _id: orderIdString,
+      customerId: userId,
+      platform,
+      botId,
+      createdAt: new Date(),
+    }).catch((attrErr) => {
+      console.warn(
+        "[InstructionAI2Attribution] order attribution failed:",
+        attrErr?.message || attrErr,
+      );
+    });
+  } catch (attrErr) {
+    console.warn(
+      "[InstructionAI2Attribution] order attribution setup failed:",
+      attrErr?.message || attrErr,
+    );
+  }
+
   triggerOrderNotification(orderId);
 
   await maybeUpdateFollowUpStatus(userId, platform, botId, {
@@ -8322,6 +8368,8 @@ async function processFlushedMessages(
   const buildHistoryOptions = (baseOptions = {}) => ({
     ...(baseOptions && typeof baseOptions === "object" ? baseOptions : {}),
     instructionMeta: runtimeInstructionMeta,
+    aiModel: aiModelOverride || queueContext.aiModel || null,
+    aiConfig: queueContext.aiConfig || null,
   });
 
   async function replyWithLineText(messageText) {
@@ -15778,6 +15826,16 @@ app.use(
     agentForgeService,
     agentForgeRunner,
     agentForgeScheduler,
+  }),
+);
+
+app.use(
+  createInstructionAI2Router({
+    requireAdmin,
+    connectDB,
+    getOpenAIApiKeyForBot,
+    buildLLMClientFromKey,
+    resolveModelForProvider,
   }),
 );
 

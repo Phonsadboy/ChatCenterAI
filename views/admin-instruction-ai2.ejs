@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InstructionAI2 | ChatCenter AI</title>
+  <meta name="description" content="InstructionAI2 แยกหน้าใหม่พร้อม batch preview และ inventory panel">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link href="/css/instruction-ai2.css?v=<%= assetVersion %>" rel="stylesheet">
+</head>
+
+<body>
+  <div class="ai2-app" id="ai2App" data-default-model="<%= defaultModel %>" data-default-thinking="<%= defaultThinking %>">
+    <aside class="ai2-sidebar" id="ai2Sidebar">
+      <div class="ai2-brand">
+        <div class="ai2-brand-icon"><i class="fas fa-wand-magic-sparkles"></i></div>
+        <div>
+          <div class="ai2-brand-title">InstructionAI2</div>
+          <div class="ai2-brand-subtitle">Batch-safe editor</div>
+        </div>
+      </div>
+      <div class="ai2-search">
+        <i class="fas fa-search"></i>
+        <input id="ai2InstructionSearch" type="text" placeholder="ค้นหา instruction">
+      </div>
+      <div class="ai2-sidebar-action">
+        <button id="ai2CreateRetail" class="ai2-primary-btn" type="button">
+          <i class="fas fa-plus"></i>
+          <span>สร้าง Retail Template</span>
+        </button>
+      </div>
+      <div class="ai2-instruction-list" id="ai2InstructionList">
+        <div class="ai2-loading">กำลังโหลด...</div>
+      </div>
+      <div class="ai2-sidebar-footer">
+        <a href="/admin/instruction-ai">InstructionAI เดิม</a>
+      </div>
+    </aside>
+
+    <main class="ai2-chat">
+      <header class="ai2-topbar">
+        <button id="ai2ToggleSidebar" class="ai2-icon-btn" type="button" aria-label="เปิดรายการ instruction">
+          <i class="fas fa-bars"></i>
+        </button>
+        <div class="ai2-title">
+          <div id="ai2ActiveName">เลือก Instruction</div>
+          <span id="ai2StatusLine">AI2 จะเสนอทุก write เป็น batch preview ก่อนบันทึก</span>
+        </div>
+        <div class="ai2-topbar-actions">
+          <select id="ai2ModelSelect" class="ai2-select" aria-label="Model">
+            <option value="gpt-5.4-mini" selected>GPT-5.4 Mini</option>
+            <option value="gpt-5.4">GPT-5.4</option>
+            <option value="gpt-5.4-nano">GPT-5.4 Nano</option>
+            <option value="gpt-5.2">GPT-5.2</option>
+            <option value="gpt-5.1">GPT-5.1</option>
+          </select>
+          <select id="ai2ThinkingSelect" class="ai2-select" aria-label="Reasoning">
+            <option value="low" selected>Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="max">Max</option>
+            <option value="off">Off</option>
+          </select>
+          <button id="ai2NewChat" class="ai2-secondary-btn" type="button">
+            <i class="fas fa-pen-to-square"></i>
+            <span>New Chat</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="ai2-messages" id="ai2Messages">
+        <div class="ai2-empty" id="ai2Empty">
+          <div class="ai2-empty-icon"><i class="fas fa-terminal"></i></div>
+          <h1>InstructionAI2</h1>
+          <p>เลือก instruction แล้วสั่งแก้ผ่านแชท ระบบจะโชว์ preview ทุก write ก่อน commit</p>
+        </div>
+      </section>
+
+      <section class="ai2-composer">
+        <div id="ai2ImagePreview" class="ai2-image-preview" hidden></div>
+        <div class="ai2-input-row">
+          <button id="ai2Attach" class="ai2-icon-btn" type="button" disabled aria-label="แนบรูป">
+            <i class="fas fa-paperclip"></i>
+          </button>
+          <input id="ai2FileInput" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+          <textarea id="ai2Input" rows="1" placeholder="พิมพ์คำสั่ง เช่น เพิ่มสินค้าใหม่, แก้ราคา, ผูกเพจ, ตั้ง follow-up..." disabled></textarea>
+          <button id="ai2Send" class="ai2-send-btn" type="button" disabled aria-label="ส่ง">
+            <i class="fas fa-arrow-up"></i>
+          </button>
+        </div>
+        <div class="ai2-input-meta">
+          <span id="ai2RunStatus">ยังไม่ได้เลือก instruction</span>
+          <span>Enter ส่ง · Shift+Enter ขึ้นบรรทัดใหม่</span>
+        </div>
+      </section>
+    </main>
+
+    <aside class="ai2-inventory" id="ai2Inventory">
+      <div class="ai2-inventory-header">
+        <div>
+          <h2>Inventory</h2>
+          <p id="ai2InventorySubtitle">ยังไม่ได้เลือก instruction</p>
+        </div>
+        <button id="ai2RefreshInventory" class="ai2-icon-btn" type="button" disabled aria-label="Refresh">
+          <i class="fas fa-rotate"></i>
+        </button>
+      </div>
+      <div class="ai2-inventory-tabs" id="ai2InventoryTabs">
+        <button class="active" data-tab="items">Data</button>
+        <button data-tab="pages">Pages</button>
+        <button data-tab="images">Images</button>
+        <button data-tab="versions">Versions</button>
+      </div>
+      <div class="ai2-inventory-body" id="ai2InventoryBody">
+        <div class="ai2-muted">เลือก instruction เพื่อดูข้อมูล</div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="ai2-modal-backdrop" id="ai2BatchModal" hidden>
+    <div class="ai2-modal" role="dialog" aria-modal="true" aria-labelledby="ai2BatchTitle">
+      <div class="ai2-modal-header">
+        <div>
+          <h3 id="ai2BatchTitle">Batch Preview</h3>
+          <p id="ai2BatchSubtitle">ตรวจทุกการแก้ไขก่อนบันทึกจริง</p>
+        </div>
+        <button id="ai2CloseBatch" class="ai2-icon-btn" type="button" aria-label="ปิด">
+          <i class="fas fa-xmark"></i>
+        </button>
+      </div>
+      <div class="ai2-modal-body">
+        <div id="ai2BatchWarnings" class="ai2-batch-warnings"></div>
+        <div id="ai2BatchChanges" class="ai2-batch-changes"></div>
+        <label class="ai2-reject-reason">
+          เหตุผลถ้าต้องการให้ AI แก้ proposal ใหม่
+          <textarea id="ai2RejectReason" rows="3" placeholder="เช่น ไม่ต้องแก้ follow-up, ขอให้แก้เฉพาะราคา..."></textarea>
+        </label>
+      </div>
+      <div class="ai2-modal-actions">
+        <button id="ai2RejectBatch" class="ai2-secondary-btn" type="button">Reject</button>
+        <button id="ai2ReviseBatch" class="ai2-secondary-btn" type="button">Reject with reason</button>
+        <button id="ai2ApproveBatch" class="ai2-primary-btn" type="button">Approve all</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/instruction-ai2.js?v=<%= assetVersion %>"></script>
+</body>
+
+</html>
