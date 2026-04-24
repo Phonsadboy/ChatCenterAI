@@ -7,8 +7,8 @@ const {
   computeContentHash,
 } = require("../services/instructionAI2Service");
 
-const DEFAULT_AI2_MODEL = "gpt-5.4-mini";
-const DEFAULT_AI2_THINKING = "low";
+const DEFAULT_AI2_MODEL = "gpt-5.4";
+const DEFAULT_AI2_THINKING = "medium";
 const MAX_AI2_TOOL_ITERATIONS = 16;
 const imageUpload = multer({
   storage: multer.memoryStorage(),
@@ -649,7 +649,7 @@ function createInstructionAI2Router(deps = {}) {
         modelValidator: (candidateModel, candidateEffort) => {
           const resolvedCandidate = resolveModelForProvider(candidateModel, apiKeyToUse.provider);
           if (!resolvedCandidate.ok) return { ok: false, error: resolvedCandidate.error };
-          return { ok: true, model: resolvedCandidate.model, reasoningEffort: resolveReasoningEffort(candidateEffort || "low") };
+          return { ok: true, model: resolvedCandidate.model, reasoningEffort: resolveReasoningEffort(candidateEffort || DEFAULT_AI2_THINKING) };
         },
       });
       const instruction = await service.loadInstruction(instructionId);

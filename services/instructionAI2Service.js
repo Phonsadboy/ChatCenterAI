@@ -296,8 +296,8 @@ function resolveBotName(platform, bot = {}) {
 
 const AI2_MODEL_CATALOG = {
   "gpt-5.4": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
-  "gpt-5.4-mini": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "low" },
-  "gpt-5.4-nano": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "low" },
+  "gpt-5.4-mini": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
+  "gpt-5.4-nano": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
   "gpt-5.2": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
   "gpt-5.2-codex": { efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
   "gpt-5.1": { efforts: ["none", "low", "medium", "high"], defaultEffort: "medium" },
@@ -1104,7 +1104,7 @@ class InstructionAI2Service {
       model,
       efforts: config.efforts,
       defaultEffort: config.defaultEffort,
-      recommended: model === "gpt-5.4-mini",
+      recommended: model === "gpt-5.4",
     }));
     const runtimeConventions = buildRuntimeConventions({
       activeCollectionIds: Array.from(linkedCollectionIds),
@@ -1169,7 +1169,7 @@ class InstructionAI2Service {
           outOfScopeAllowedWithConfirm: true,
         },
         model: {
-          default: { model: "gpt-5.4-mini", reasoningEffort: "low" },
+          default: { model: "gpt-5.4", reasoningEffort: "medium" },
           catalog: modelCatalog,
           linkedPageModels: linkedPages.map((page) => ({
             pageKey: page.pageKey,
@@ -2288,7 +2288,7 @@ class InstructionAI2Service {
       { $set: { status: "rejected", rejectReason: String(reason || ""), updatedAt: new Date() } },
       { returnDocument: "after" },
     );
-    return result.value || null;
+    return result?.value || result || null;
   }
 
   async commitBatch(batchId, username = "admin", options = {}) {

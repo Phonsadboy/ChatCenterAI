@@ -82,14 +82,14 @@
                 <div class="ic-topbar-right">
                     <!-- Model Selector in topbar -->
                     <div class="ic-model-selector" id="icModelSelector">
-                        <button class="ic-model-pill" id="icModelBtn" type="button" title="เลือกโมเดล" aria-label="เลือกโมเดล GPT-5.4 Mini" aria-haspopup="dialog" aria-expanded="false" aria-controls="icModelDropdown">
+                        <button class="ic-model-pill" id="icModelBtn" type="button" title="เลือกโมเดล" aria-label="เลือกโมเดล GPT-5.4" aria-haspopup="dialog" aria-expanded="false" aria-controls="icModelDropdown">
                             <span class="ic-model-dot" aria-hidden="true"></span>
-                            <span id="icModelLabel">GPT-5.4 Mini</span>
+                            <span id="icModelLabel">GPT-5.4</span>
                             <i class="fas fa-chevron-down ic-model-chevron" aria-hidden="true"></i>
                         </button>
                         <div class="ic-model-dropdown" id="icModelDropdown" role="dialog" aria-label="เลือกโมเดลและระดับ Thinking" aria-hidden="true">
                             <div class="ic-dropdown-header">Model</div>
-                            <div class="ic-model-option" data-model="gpt-5.4" role="button" tabindex="0" aria-pressed="false">
+                            <div class="ic-model-option active" data-model="gpt-5.4" role="button" tabindex="0" aria-pressed="true">
                                 <div class="ic-model-option-left">
                                     <div class="ic-model-option-icon star"><i class="fas fa-star" aria-hidden="true"></i></div>
                                     <div>
@@ -99,7 +99,7 @@
                                 </div>
                                 <span class="ic-badge-recommended">ล่าสุด</span>
                             </div>
-                            <div class="ic-model-option active" data-model="gpt-5.4-mini" role="button" tabindex="0" aria-pressed="true">
+                            <div class="ic-model-option" data-model="gpt-5.4-mini" role="button" tabindex="0" aria-pressed="false">
                                 <div class="ic-model-option-left">
                                     <div class="ic-model-option-icon fast"><i class="fas fa-bolt" aria-hidden="true"></i></div>
                                     <div>
@@ -160,8 +160,8 @@
                             <div class="ic-dropdown-header">Thinking Level</div>
                             <div class="ic-thinking-bar" id="icThinkingLevels">
                                 <button class="ic-think-btn" type="button" data-level="off">Off</button>
-                                <button class="ic-think-btn active" type="button" data-level="low">Low</button>
-                                <button class="ic-think-btn" type="button" data-level="medium">Med</button>
+                                <button class="ic-think-btn" type="button" data-level="low">Low</button>
+                                <button class="ic-think-btn active" type="button" data-level="medium">Med</button>
                                 <button class="ic-think-btn" type="button" data-level="high">High</button>
                                 <button class="ic-think-btn" type="button" data-level="max">Max</button>
                             </div>
@@ -243,8 +243,8 @@
                         <div class="ic-input-info">
                             <span id="icStatusInfo" style="display:none;">
                                 <span class="ic-dot-live"></span>
-                                <span id="icStatusModel">GPT-5.4 Mini</span> ·
-                                Thinking: <span id="icStatusThinking">Low</span> ·
+                                <span id="icStatusModel">GPT-5.4</span> ·
+                                Thinking: <span id="icStatusThinking">Medium</span> ·
                                 <span id="icStatusTokens">0</span> tokens ·
                                 <span id="icStatusChanges">0</span> edits
                             </span>
