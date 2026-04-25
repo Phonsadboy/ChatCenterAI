@@ -45,6 +45,7 @@ Skipped because current web service is not active on Railway:
 - The same inventory query found the expected non-migrated exceptions: `thaya` is active on `codex/test`, `review` was already on `codex/postgres-cutover-v1`, and inactive `main` projects `BB`/`Mr.Thong59` stayed skipped. `Jo GAG` also matched the repo on `main`, but the project is marked deleted and its web deployment is stopped/failed.
 - CLI post-check covered all 8 migrated projects: `ไม่มีชื่อไลน์`, `farid`, `Tukta_1267`, `som`, `kc`, `Yingie N Oh`, `Chu`, and `teenoi`.
 - Every migrated project now has web on `codex/postgres-cutover-v1`, `/health` returning HTTP 200 with `databaseBackend=postgres`, no MongoDB service, no web variables matching `MONGO_`/`MONGODB_`, no Mongo volume, and all remaining services `SUCCESS` in `asia-southeast1-eqsg3a`.
+- Post-check latency probe from Bangkok on `2026-04-25` found intermittent `12s` TTFB across multiple Railway domains, including `som`, `Yingie N Oh`, and `teenoi`, while the same KC app was fast from inside Railway. This points to a shared Railway/Fastly Bangkok edge path issue rather than a per-project migration/data problem.
 
 ## Working Rules Learned Before Parallel Runs
 
@@ -129,6 +130,11 @@ Skipped because current web service is not active on Railway:
   - Repeated `read ECONNRESET` happened when initial migration started against Mongo. The failed attempts were before freeze and before Mongo deletion, so reruns were safe.
   - Postgres volumes created in the default region and then moved to Singapore repeatedly hit invalid checkpoint/WAL failures. The script was changed to set Singapore immediately after the service appears, before waiting for initial startup.
   - A running script version selected old deployment region `us-west2` when scaling web back up; manual override set Singapore-only. The script now uses Singapore for web scale-up and clears other regions.
+  - Post-cutover latency incident on `2026-04-25`: public requests from Bangkok to `web-production-7d58e.up.railway.app` intermittently showed `12-15s` TTFB on `/health`, `/admin/*`, and even a 404 probe while the same routes inside the web container were fast (`/health` 2-60ms, dashboard 14-45ms, chat/settings 6-13ms, 404 2-8ms).
+  - Web was scaled down from 2 replicas to 1 replica in `asia-southeast1-eqsg3a` because this app runs in-process schedulers/workers. The `12s` public spike still appeared after scale-down, so the current evidence points to the Railway/Fastly Bangkok edge path, not page render, Postgres, Redis, or replica load balancing.
+  - Public requests made from inside the Railway container back to the Railway domain routed through Singapore/QPG Fastly edges and stayed fast (`9-164ms`), while slow requests from Bangkok consistently reported `x-railway-cdn-edge: fastly/cache-bkk...`. Example slow request IDs captured for Railway support: `D50jRisIT8aSOtZZoB_USg`, `AE_XswoBQdOzJkayAQeqjw`, `0cySMaqGSqW4BKbHAXC71g`, `RqX_QpYpSPiWmg06DcO5xA`, `kmMi8be4TVWGjVSkAQeqjw`.
+  - The stale DB OpenAI key `Claw` was deactivated after repeated `invalid_api_key` errors; the Railway env `OPENAI_API_KEY` passed `/v1/models`. This was unrelated to page TTFB but reduced runtime errors.
+  - Railway CLI project linking is affected by the working directory, not only `HOME`. Use a separate temp working directory and run `railway link --project ... --environment ...` before per-project commands. During the KC latency check one scale command hit the cwd-linked `review` project first; it ended in the intended safe shape (`SUCCESS`, 1 replica in Singapore, health 200).
 
 ### Yingie N Oh
 
