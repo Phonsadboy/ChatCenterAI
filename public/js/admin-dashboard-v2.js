@@ -141,6 +141,45 @@
 
     const escapeAttr = (value) => escapeHtml(value).replace(/\n/g, '&#10;');
 
+    const cloneDashboardInstruction = (instruction) => {
+        if (!instruction || typeof instruction !== 'object') return null;
+        try {
+            return JSON.parse(JSON.stringify(instruction));
+        } catch (_) {
+            return null;
+        }
+    };
+
+    const readInitialInstructions = () => {
+        const source = document.getElementById('instructionsV2InitialData');
+        if (!source || !source.textContent.trim()) return new Map();
+        try {
+            const parsed = JSON.parse(source.textContent);
+            if (!Array.isArray(parsed)) return new Map();
+            return new Map(
+                parsed
+                    .filter((instruction) => instruction && instruction._id)
+                    .map((instruction) => [String(instruction._id), instruction])
+            );
+        } catch (error) {
+            console.warn('Unable to read dashboard instruction cache:', error);
+            return new Map();
+        }
+    };
+
+    const initialInstructionsById = readInitialInstructions();
+
+    const getInitialInstruction = (instructionId) => {
+        const instruction = initialInstructionsById.get(String(instructionId || ''));
+        return cloneDashboardInstruction(instruction);
+    };
+
+    const setInitialInstruction = (instruction) => {
+        const normalized = cloneDashboardInstruction(instruction);
+        if (!normalized || !normalized._id) return;
+        initialInstructionsById.set(String(normalized._id), normalized);
+    };
+
     const generateStarterTempId = () => `starter_tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const normalizeStarterMessage = (message, index = 0) => {
@@ -521,8 +560,14 @@
         const requestId = ++editorRequestToken;
 
         try {
-            const res = await fetch(`/api/instructions-v2/${instructionId}`);
-            const data = await res.json();
+            let data = null;
+            const cachedInstruction = getInitialInstruction(instructionId);
+            if (cachedInstruction) {
+                data = { success: true, instruction: cachedInstruction };
+            } else {
+                const res = await fetch(`/api/instructions-v2/${instructionId}`);
+                data = await res.json();
+            }
 
             if (requestId !== editorRequestToken) {
                 return;
@@ -530,6 +575,7 @@
 
             if (data.success) {
                 const { instruction } = data;
+                setInitialInstruction(instruction);
                 editorState.initialData = {
                     name: instruction.name || '',
                     description: instruction.description || ''
@@ -735,6 +781,9 @@
                     });
                     const data = await res.json();
                     if (data.success) {
+                        if (data.instruction) {
+                            setInitialInstruction(data.instruction);
+                        }
                         const updatedAt = data.instruction?.updatedAt || new Date();
                         editorState.initialData = { name, description };
                         editorState.isDirty = false;

@@ -1156,15 +1156,14 @@ function createChatStorageService({
         SELECT
           tag_value,
           COUNT(*)::integer AS value_count
-        FROM app_documents
-        CROSS JOIN LATERAL jsonb_array_elements_text(
-          CASE
-            WHEN jsonb_typeof(payload->$2) = 'array' THEN payload->$2
-            ELSE '[]'::jsonb
-          END
-        ) AS tag(tag_value)
-        WHERE collection_name = $1
-          AND NULLIF(tag_value, '') IS NOT NULL
+        FROM (
+          SELECT payload
+          FROM app_documents
+          WHERE collection_name = $1
+            AND jsonb_typeof(payload->$2) = 'array'
+        ) AS docs
+        CROSS JOIN LATERAL jsonb_array_elements_text(docs.payload->$2) AS tag(tag_value)
+        WHERE NULLIF(tag_value, '') IS NOT NULL
         GROUP BY tag_value
         ORDER BY value_count DESC, tag_value ASC
         LIMIT $3
@@ -1176,6 +1175,34 @@ function createChatStorageService({
       value: row.tag_value,
       count: Number(row.value_count || 0),
     }));
+  }
+
+  async function sumDocumentNumericField(collectionName, fieldName) {
+    if (!isConfigured()) return 0;
+    await ensureReady();
+    if (!/^[a-zA-Z0-9_.-]+$/.test(String(fieldName || ""))) {
+      throw new Error(`Unsupported app document field name: ${fieldName}`);
+    }
+
+    const result = await postgresRuntime.query(
+      `
+        SELECT COALESCE(
+          SUM(
+            CASE
+              WHEN payload->>$2 ~ '^-?[0-9]+(\\.[0-9]+)?$'
+              THEN (payload->>$2)::numeric
+              ELSE 0
+            END
+          ),
+          0
+        ) AS field_sum
+        FROM app_documents
+        WHERE collection_name = $1
+      `,
+      [collectionName, fieldName],
+    );
+
+    return Number(result.rows[0]?.field_sum || 0);
   }
 
   async function deleteDocument(collectionName, documentId) {
@@ -1331,6 +1358,7 @@ function createChatStorageService({
     listMessagesForUser,
     logMirrorFailure,
     mirrorMessage,
+    sumDocumentNumericField,
     updateMessagesMetadata,
     upsertAssetObject,
     upsertDocument,

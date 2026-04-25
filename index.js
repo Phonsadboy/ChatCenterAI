@@ -1899,6 +1899,96 @@ async function maybeListTopAppDocumentArrayValues(
   }
 }
 
+async function maybeSumAppDocumentNumericField(collectionName, fieldName) {
+  if (!chatStorageService.isConfigured()) return null;
+  try {
+    return await chatStorageService.sumDocumentNumericField(
+      collectionName,
+      fieldName,
+    );
+  } catch (error) {
+    console.error(
+      `[StorageRead] app_document numeric summary failed for ${collectionName}.${fieldName}:`,
+      error?.message || error,
+    );
+    return null;
+  }
+}
+
+const CHAT_ADMIN_AUX_CACHE_TTL_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.CHAT_ADMIN_AUX_CACHE_TTL_MS || "5000", 10) || 5000,
+);
+const CHAT_ADMIN_AUX_CACHE_STALE_MS = Math.max(
+  CHAT_ADMIN_AUX_CACHE_TTL_MS,
+  Number.parseInt(process.env.CHAT_ADMIN_AUX_CACHE_STALE_MS || "300000", 10) || 300000,
+);
+const chatAdminAuxCache = new Map();
+
+function getChatAdminAuxCacheEntry(key) {
+  return chatAdminAuxCache.get(key) || {
+    value: null,
+    expiresAt: 0,
+    staleUntil: 0,
+    refreshPromise: null,
+  };
+}
+
+function setChatAdminAuxCacheEntry(key, value) {
+  const now = Date.now();
+  chatAdminAuxCache.set(key, {
+    value,
+    expiresAt: now + CHAT_ADMIN_AUX_CACHE_TTL_MS,
+    staleUntil: now + CHAT_ADMIN_AUX_CACHE_STALE_MS,
+    refreshPromise: null,
+  });
+  return value;
+}
+
+async function getCachedChatAdminAuxValue(key, loader, fallbackValue) {
+  const now = Date.now();
+  const entry = getChatAdminAuxCacheEntry(key);
+  if (entry.value !== null && entry.expiresAt > now) {
+    return entry.value;
+  }
+
+  const refresh = async () => {
+    try {
+      const value = await loader();
+      return setChatAdminAuxCacheEntry(key, value);
+    } catch (error) {
+      console.error(`[ChatAdminCache] refresh failed for ${key}:`, error?.message || error);
+      return entry.value !== null ? entry.value : fallbackValue;
+    }
+  };
+
+  if (entry.value !== null && entry.staleUntil > now) {
+    if (!entry.refreshPromise) {
+      entry.refreshPromise = refresh().finally(() => {
+        const latest = getChatAdminAuxCacheEntry(key);
+        if (latest.refreshPromise === entry.refreshPromise) {
+          latest.refreshPromise = null;
+          chatAdminAuxCache.set(key, latest);
+        }
+      });
+      chatAdminAuxCache.set(key, entry);
+    }
+    return entry.value;
+  }
+
+  if (!entry.refreshPromise) {
+    entry.refreshPromise = refresh().finally(() => {
+      const latest = getChatAdminAuxCacheEntry(key);
+      if (latest.refreshPromise === entry.refreshPromise) {
+        latest.refreshPromise = null;
+        chatAdminAuxCache.set(key, latest);
+      }
+    });
+    chatAdminAuxCache.set(key, entry);
+  }
+  return entry.refreshPromise;
+}
+
 function maybeLogAppDocumentShadowMismatch(scope, sourcePayload, postgresPayload) {
   try {
     const sourceSerialized = JSON.stringify(normalizeValueForStorageMirror(sourcePayload));
@@ -10352,8 +10442,75 @@ function normalizeInstructionV2Document(instruction, fallbackId = "") {
   };
 }
 
-// Helper: Get all instructions v2
-async function getInstructionsV2() {
+function readInstructionCacheTtlMs(envName, fallbackMs) {
+  const parsed = Number.parseInt(process.env[envName] || "", 10);
+  return Number.isFinite(parsed) ? parsed : fallbackMs;
+}
+
+const INSTRUCTIONS_V2_CACHE_TTL_MS = Math.max(
+  1000,
+  readInstructionCacheTtlMs("INSTRUCTIONS_V2_CACHE_TTL_MS", 30000),
+);
+const INSTRUCTIONS_V2_CACHE_STALE_MS = Math.max(
+  INSTRUCTIONS_V2_CACHE_TTL_MS,
+  readInstructionCacheTtlMs("INSTRUCTIONS_V2_CACHE_STALE_MS", 300000),
+);
+
+const instructionsV2Cache = {
+  data: null,
+  expiresAt: 0,
+  staleUntil: 0,
+  refreshPromise: null,
+  generation: 0,
+};
+
+function hasUsableInstructionsV2Cache({ allowStale = false } = {}) {
+  if (!Array.isArray(instructionsV2Cache.data)) return false;
+  const now = Date.now();
+  return allowStale
+    ? instructionsV2Cache.staleUntil > now
+    : instructionsV2Cache.expiresAt > now;
+}
+
+function setInstructionsV2Cache(instructions = []) {
+  const normalized = instructions
+    .map((instruction) => normalizeInstructionV2Document(instruction))
+    .filter(Boolean);
+  const now = Date.now();
+  instructionsV2Cache.data = normalized;
+  instructionsV2Cache.expiresAt = now + INSTRUCTIONS_V2_CACHE_TTL_MS;
+  instructionsV2Cache.staleUntil = now + INSTRUCTIONS_V2_CACHE_STALE_MS;
+  return normalized;
+}
+
+function invalidateInstructionsV2Cache() {
+  instructionsV2Cache.data = null;
+  instructionsV2Cache.expiresAt = 0;
+  instructionsV2Cache.staleUntil = 0;
+  instructionsV2Cache.refreshPromise = null;
+  instructionsV2Cache.generation += 1;
+}
+
+function findInstructionV2InCache(id, { allowStale = true } = {}) {
+  const normalizedId = String(id || "");
+  if (!normalizedId || !hasUsableInstructionsV2Cache({ allowStale })) return null;
+  return instructionsV2Cache.data.find(
+    (instruction) => String(instruction?._id || "") === normalizedId,
+  ) || null;
+}
+
+function upsertInstructionV2Cache(instruction) {
+  const normalized = normalizeInstructionV2Document(instruction);
+  if (!normalized?._id || !Array.isArray(instructionsV2Cache.data)) return normalized;
+  const next = instructionsV2Cache.data.filter(
+    (item) => String(item?._id || "") !== String(normalized._id),
+  );
+  next.unshift(normalized);
+  setInstructionsV2Cache(next);
+  return normalized;
+}
+
+async function readInstructionsV2FromStore() {
   let instructions = [];
   if (isPostgresAppDocumentReadEnabled()) {
     instructions = await maybeListAppDocumentPayloads("instructions_v2", {
@@ -10371,9 +10528,77 @@ async function getInstructionsV2() {
     const cursor = coll.find({}).sort({ createdAt: -1 });
     instructions = await cursor.toArray();
   }
-  return instructions
-    .map((instruction) => normalizeInstructionV2Document(instruction))
-    .filter(Boolean);
+  return instructions;
+}
+
+// Helper: Get all instructions v2
+async function getInstructionsV2(options = {}) {
+  const forceRefresh = options.forceRefresh === true;
+  if (!forceRefresh && hasUsableInstructionsV2Cache()) {
+    return instructionsV2Cache.data;
+  }
+
+  if (!forceRefresh && hasUsableInstructionsV2Cache({ allowStale: true })) {
+    if (!instructionsV2Cache.refreshPromise) {
+      const cacheGeneration = instructionsV2Cache.generation;
+      instructionsV2Cache.refreshPromise = readInstructionsV2FromStore()
+        .then((instructions) => {
+          if (instructionsV2Cache.generation !== cacheGeneration) {
+            return instructionsV2Cache.data || [];
+          }
+          return setInstructionsV2Cache(instructions);
+        })
+        .catch((err) => {
+          console.warn("[InstructionsV2] background cache refresh failed:", err?.message || err);
+          return instructionsV2Cache.data || [];
+        })
+        .finally(() => {
+          instructionsV2Cache.refreshPromise = null;
+        });
+    }
+    return instructionsV2Cache.data;
+  }
+
+  if (!instructionsV2Cache.refreshPromise) {
+    const cacheGeneration = instructionsV2Cache.generation;
+    instructionsV2Cache.refreshPromise = readInstructionsV2FromStore()
+      .then((instructions) => {
+        if (instructionsV2Cache.generation !== cacheGeneration) {
+          return instructionsV2Cache.data || [];
+        }
+        return setInstructionsV2Cache(instructions);
+      })
+      .finally(() => {
+        instructionsV2Cache.refreshPromise = null;
+      });
+  }
+
+  return instructionsV2Cache.refreshPromise;
+}
+
+async function getInstructionV2ById(id) {
+  const cached = findInstructionV2InCache(id, { allowStale: true });
+  if (cached) {
+    if (!hasUsableInstructionsV2Cache() && !instructionsV2Cache.refreshPromise) {
+      void getInstructionsV2({ forceRefresh: true }).catch((err) => {
+        console.warn("[InstructionsV2] cache refresh failed:", err?.message || err);
+      });
+    }
+    return cached;
+  }
+
+  const instruction = isPostgresAppDocumentReadEnabled()
+    ? await maybeReadAppDocumentPayload("instructions_v2", id)
+    : await (async () => {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      const coll = db.collection("instructions_v2");
+      return coll.findOne({ _id: toObjectId(id) });
+    })();
+
+  return upsertInstructionV2Cache(
+    normalizeInstructionV2Document(instruction, id),
+  );
 }
 
 async function maybeMirrorInstructionV2Document(db, instructionOrId) {
@@ -10418,14 +10643,7 @@ app.get("/api/instructions-v2", async (req, res) => {
 app.get("/api/instructions-v2/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const instruction = isPostgresAppDocumentReadEnabled()
-      ? await maybeReadAppDocumentPayload("instructions_v2", id)
-      : await (async () => {
-        const client = await connectDB();
-        const db = client.db("chatbot");
-        const coll = db.collection("instructions_v2");
-        return coll.findOne({ _id: toObjectId(id) });
-      })();
+    const instruction = await getInstructionV2ById(id);
 
     if (!instruction) {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
@@ -10498,6 +10716,7 @@ app.post("/api/instructions-v2", async (req, res) => {
     instruction.version = snapshotResult.version;
     instruction.updatedAt = snapshotResult.snapshotAt;
     await maybeMirrorInstructionV2Document(db, createdId);
+    invalidateInstructionsV2Cache();
 
     res.json({ success: true, instruction });
   } catch (err) {
@@ -10547,6 +10766,7 @@ app.put("/api/instructions-v2/:id", async (req, res) => {
 
     const instruction = await coll.findOne({ _id: toObjectId(id) });
     await maybeMirrorInstructionV2Document(db, instruction);
+    invalidateInstructionsV2Cache();
     res.json({
       success: true,
       instruction: normalizeInstructionV2Document(instruction, id),
@@ -10581,6 +10801,7 @@ app.delete("/api/instructions-v2/:id", async (req, res) => {
       return res.status(404).json({ success: false, error: "ไม่พบ Instruction" });
     }
     await maybeDeleteAppDocument("instructions_v2", id);
+    invalidateInstructionsV2Cache();
 
     res.json({ success: true });
   } catch (err) {
@@ -10660,6 +10881,7 @@ app.post("/api/instructions-v2/:id/duplicate", async (req, res) => {
     duplicate.version = snapshotResult.version;
     duplicate.updatedAt = snapshotResult.snapshotAt;
     await maybeMirrorInstructionV2Document(db, duplicateId);
+    invalidateInstructionsV2Cache();
 
     res.json({ success: true, instruction: duplicate });
   } catch (err) {
@@ -10894,6 +11116,7 @@ app.post("/api/instructions-v2/:id/data-items", async (req, res) => {
       "dashboard_api",
     );
     await maybeMirrorInstructionV2Document(db, id);
+    invalidateInstructionsV2Cache();
 
     res.json({ success: true, dataItem: newItem });
   } catch (err) {
@@ -10948,6 +11171,7 @@ app.put("/api/instructions-v2/:id/data-items/reorder", async (req, res) => {
       "dashboard_api",
     );
     await maybeMirrorInstructionV2Document(db, id);
+    invalidateInstructionsV2Cache();
 
     res.json({ success: true });
   } catch (err) {
@@ -10999,6 +11223,7 @@ app.put("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
     );
 
     await maybeMirrorInstructionV2Document(db, id);
+    invalidateInstructionsV2Cache();
 
     res.json({ success: true, dataItem: updatedItem });
   } catch (err) {
@@ -11047,6 +11272,7 @@ app.delete("/api/instructions-v2/:id/data-items/:itemId", async (req, res) => {
       "dashboard_api",
     );
     await maybeMirrorInstructionV2Document(db, id);
+    invalidateInstructionsV2Cache();
 
     res.json({ success: true });
   } catch (err) {
@@ -11101,6 +11327,7 @@ app.post("/api/instructions-v2/:id/data-items/:itemId/duplicate", async (req, re
       "dashboard_api",
     );
     await maybeMirrorInstructionV2Document(db, id);
+    invalidateInstructionsV2Cache();
 
     res.json({ success: true, dataItem: duplicateItem });
   } catch (err) {
@@ -11303,6 +11530,8 @@ app.post("/api/instructions-v2/import/execute-sheets", async (req, res) => {
       result.version = snapshotResult.version;
       result.snapshotAt = snapshotResult.snapshotAt;
     }
+
+    invalidateInstructionsV2Cache();
 
     // Clean up
     try { fs.unlinkSync(filePath); } catch (e) { }
@@ -11781,6 +12010,27 @@ async function runStartupRuntime(client) {
     await ensureInstructionIdentifiers();
   } catch (settingsError) {
     console.error(`[ERROR] ensureInstructionIdentifiers ล้มเหลว:`, settingsError);
+  }
+
+  try {
+    const instructions = await getInstructionsV2({ forceRefresh: true });
+    console.log(`[InstructionsV2] Cache warmed (${instructions.length} instructions)`);
+  } catch (cacheError) {
+    console.error(`[ERROR] warm instructions_v2 cache ล้มเหลว:`, cacheError);
+  }
+
+  try {
+    const users = await getCachedChatAdminAuxValue(
+      "chat:users",
+      async () => getNormalizedChatUsers({
+        applyFilter: true,
+        focusUserId: "",
+      }),
+      [],
+    );
+    console.log(`[ChatAdminCache] Users cache warmed (${users.length} users)`);
+  } catch (cacheError) {
+    console.error(`[ERROR] warm chat users cache ล้มเหลว:`, cacheError);
   }
 
   try {
@@ -21220,6 +21470,7 @@ app.post("/api/instructions/library/:date/convert-to-v2", async (req, res) => {
     );
     instructionDoc.version = snapshotResult.version;
     instructionDoc.updatedAt = snapshotResult.snapshotAt;
+    invalidateInstructionsV2Cache();
 
     await libraryColl.updateOne(
       { date },
@@ -21628,6 +21879,7 @@ app.post(
         db,
         "dashboard_admin",
       );
+      invalidateInstructionsV2Cache();
 
       res.redirect(
         `/admin/dashboard?success=${encodeURIComponent(
@@ -21720,6 +21972,7 @@ app.post("/admin/instructions-v2/:instructionId/data-items/:itemId/edit", async 
       db,
       "dashboard_admin",
     );
+    invalidateInstructionsV2Cache();
 
     res.redirect(`/admin/dashboard?success=${encodeURIComponent("แก้ไขชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}&tab=dataitems`);
   } catch (err) {
@@ -21881,6 +22134,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/new", async (req, res
       db,
       "dashboard_admin",
     );
+    invalidateInstructionsV2Cache();
 
     res.redirect(
       `/admin/dashboard?success=${encodeURIComponent("สร้างชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}&tab=dataitems`
@@ -21955,6 +22209,7 @@ app.post("/admin/instructions-v3/:instructionId/data-items/:itemId/edit", async 
       db,
       "dashboard_admin",
     );
+    invalidateInstructionsV2Cache();
 
     res.redirect(`/admin/dashboard?success=${encodeURIComponent("แก้ไขชุดข้อมูลเรียบร้อยแล้ว")}&instructionId=${instructionId}&tab=dataitems`);
   } catch (err) {
@@ -26297,11 +26552,17 @@ app.get("/admin/chat/users", async (req, res) => {
     const focusUserId = Array.isArray(rawFocus)
       ? String(rawFocus[0] || "").trim()
       : String(rawFocus || "").trim();
-    // ใช้ฟังก์ชันตัวกรองข้อมูลใหม่
-    const users = await getNormalizedChatUsers({
-      applyFilter: true,
-      focusUserId,
-    });
+    const cacheKey = focusUserId
+      ? `chat:users:focus:${focusUserId}`
+      : "chat:users";
+    const users = await getCachedChatAdminAuxValue(
+      cacheKey,
+      async () => getNormalizedChatUsers({
+        applyFilter: true,
+        focusUserId,
+      }),
+      [],
+    );
 
     res.json({ success: true, users: users });
   } catch (err) {
@@ -29233,36 +29494,39 @@ async function searchItemBroad(db, categoryName, keyword, botId, platform) {
 // Get all available tags in the system
 app.get("/admin/chat/available-tags", async (req, res) => {
   try {
-    if (isPostgresAppDocumentReadEnabled()) {
-      const tags = await maybeListTopAppDocumentArrayValues(
-        "user_tags",
-        "tags",
-        { limit: 50 },
-      );
-      return res.json({
-        success: true,
-        tags: tags.map((entry) => ({
-          tag: entry.value,
-          count: entry.count,
-        })),
-      });
-    }
+    const availableTags = await getCachedChatAdminAuxValue(
+      "chat:available-tags",
+      async () => {
+        if (isPostgresAppDocumentReadEnabled()) {
+          const tags = await maybeListTopAppDocumentArrayValues(
+            "user_tags",
+            "tags",
+            { limit: 50 },
+          );
+          return tags.map((entry) => ({
+            tag: entry.value,
+            count: entry.count,
+          }));
+        }
 
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const tagsColl = db.collection("user_tags");
+        const client = await connectDB();
+        const db = client.db("chatbot");
+        const tagsColl = db.collection("user_tags");
 
-    const availableTags = await tagsColl
-      .aggregate([
-        { $match: { tags: { $type: "array", $ne: [] } } },
-        { $unwind: "$tags" },
-        { $match: { tags: { $type: "string", $ne: "" } } },
-        { $group: { _id: "$tags", count: { $sum: 1 } } },
-        { $sort: { count: -1, _id: 1 } },
-        { $limit: 50 },
-        { $project: { _id: 0, tag: "$_id", count: 1 } },
-      ])
-      .toArray();
+        return tagsColl
+          .aggregate([
+            { $match: { tags: { $type: "array", $ne: [] } } },
+            { $unwind: "$tags" },
+            { $match: { tags: { $type: "string", $ne: "" } } },
+            { $group: { _id: "$tags", count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+            { $limit: 50 },
+            { $project: { _id: 0, tag: "$_id", count: 1 } },
+          ])
+          .toArray();
+      },
+      [],
+    );
 
     res.json({ success: true, tags: availableTags });
   } catch (err) {
@@ -29316,22 +29580,36 @@ app.post("/admin/chat/purchase-status/:userId", async (req, res) => {
 // Get total unread count for all users
 app.get("/admin/chat/unread-count", async (req, res) => {
   try {
-    const client = await connectDB();
-    const db = client.db("chatbot");
-    const coll = db.collection("user_unread_counts");
+    const totalUnread = await getCachedChatAdminAuxValue(
+      "chat:total-unread",
+      async () => {
+        if (isPostgresAppDocumentReadEnabled()) {
+          const sum = await maybeSumAppDocumentNumericField(
+            "user_unread_counts",
+            "unreadCount",
+          );
+          if (sum !== null) return Math.max(0, Math.round(sum));
+        }
 
-    const result = await coll
-      .aggregate([
-        {
-          $group: {
-            _id: null,
-            totalUnread: { $sum: "$unreadCount" },
-          },
-        },
-      ])
-      .toArray();
+        const client = await connectDB();
+        const db = client.db("chatbot");
+        const coll = db.collection("user_unread_counts");
 
-    const totalUnread = result.length > 0 ? result[0].totalUnread : 0;
+        const result = await coll
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalUnread: { $sum: "$unreadCount" },
+              },
+            },
+          ])
+          .toArray();
+
+        return result.length > 0 ? Number(result[0].totalUnread || 0) : 0;
+      },
+      0,
+    );
 
     res.json({ success: true, totalUnread });
   } catch (err) {
