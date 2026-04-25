@@ -37,6 +37,7 @@
         activeRequestId: null, // for SSE reconnect
         isUserNearBottom: true,
         pendingBatch: null,
+        batchReviewCardIds: [],
         inventory: null,
         inventoryFilter: "",
         activeInventoryRefs: [],
@@ -2231,53 +2232,277 @@
 
     // ─── AI2 Batch Preview ─────────────────────────────────────────────
 
-    function summarizeBatchValue(value) {
+    function summarizeBatchValue(value, maxLength = 600) {
         if (value === null || value === undefined) return "ว่าง";
-        if (typeof value === "string") return value.length > 400 ? `${value.slice(0, 400)}...` : value;
+        if (typeof value === "string") return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
         try {
             const text = JSON.stringify(value, null, 2);
-            return text.length > 600 ? `${text.slice(0, 600)}...` : text;
+            return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
         } catch (e) {
             return String(value);
         }
+    }
+
+    function getBatchRiskMeta(risk = "") {
+        const normalized = String(risk || "safe_write").toLowerCase();
+        if (normalized.includes("destructive")) return { label: "ลบ/ย้อนกลับยาก", className: "danger" };
+        if (normalized.includes("global") || normalized.includes("runtime")) return { label: "กระทบ Runtime", className: "warning" };
+        if (normalized.includes("risky")) return { label: "ควรตรวจ", className: "warning" };
+        return { label: "ปลอดภัย", className: "safe" };
+    }
+
+    function getBatchTargetLabel(change = {}) {
+        const target = change.target || {};
+        const parts = [];
+        if (target.type) parts.push(target.type);
+        if (target.itemId) parts.push(`item ${target.itemId}`);
+        if (Number.isFinite(Number(target.rowIndex))) parts.push(`row ${Number(target.rowIndex) + 1}`);
+        if (target.column) parts.push(`column ${target.column}`);
+        if (Array.isArray(target.pageKeys) && target.pageKeys.length) parts.push(`${target.pageKeys.length} pages`);
+        if (target.pageKey) parts.push(target.pageKey);
+        if (target.assetId) parts.push(`asset ${target.assetId}`);
+        if (target.collectionId) parts.push(`collection ${target.collectionId}`);
+        if (target.scope) parts.push(target.scope);
+        return parts.join(" / ") || change.operation || "instruction";
+    }
+
+    function renderBatchScope(scope = []) {
+        const items = Array.isArray(scope) ? scope.filter(Boolean) : [];
+        if (!items.length) return "";
+        return `
+            <div class="ic-ai2-batch-scope">
+                ${items.slice(0, 6).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+            </div>`;
+    }
+
+    function renderBatchMessages(messages = [], tone = "warning") {
+        const items = Array.isArray(messages) ? messages : [];
+        if (!items.length) return "";
+        return `
+            <div class="ic-ai2-batch-alert ${tone}">
+                ${items.map((item) => escapeHtml(item.message || item.error || item.type || "warning")).join("<br>")}
+            </div>`;
+    }
+
+    function renderBatchValue(value, tone) {
+        if (value === null || value === undefined || value === "") {
+            return `<div class="ic-ai2-batch-empty">ไม่มีข้อมูล</div>`;
+        }
+
+        if (typeof value === "object") {
+            if (Array.isArray(value)) {
+                if (!value.length) return `<div class="ic-ai2-batch-empty">[]</div>`;
+                const simple = value.every((entry) => entry === null || ["string", "number", "boolean"].includes(typeof entry));
+                if (simple && value.length <= 12) {
+                    return `<div class="ic-ai2-batch-tags">${value.map((entry) => `<span>${escapeHtml(String(entry))}</span>`).join("")}</div>`;
+                }
+                return `<pre>${escapeHtml(summarizeBatchValue(value, 900))}</pre>`;
+            }
+
+            const entries = Object.entries(value).filter(([, entryValue]) => entryValue !== undefined);
+            const shallow = entries.every(([, entryValue]) => entryValue === null || ["string", "number", "boolean"].includes(typeof entryValue));
+            if (shallow && entries.length <= 12) {
+                return `
+                    <dl class="ic-ai2-batch-kv">
+                        ${entries.map(([key, entryValue]) => `
+                            <div>
+                                <dt>${escapeHtml(key)}</dt>
+                                <dd>${escapeHtml(String(entryValue ?? "ว่าง"))}</dd>
+                            </div>`).join("")}
+                    </dl>`;
+            }
+            return `<pre>${escapeHtml(summarizeBatchValue(value, 900))}</pre>`;
+        }
+
+        const text = String(value);
+        const changedClass = tone === "after" ? "after" : "before";
+        return `<pre class="${changedClass}">${escapeHtml(text.length > 900 ? `${text.slice(0, 900)}...` : text)}</pre>`;
+    }
+
+    function summarizeBatchRequest(batch = {}) {
+        const request = String(batch.userMessage || "").trim();
+        return request || "คำสั่งล่าสุดในแชทนี้";
+    }
+
+    function getChangeHumanReason(change = {}, batch = {}) {
+        const explicit = change.reason || change.rationale || change.why;
+        if (explicit) return String(explicit);
+        const operation = String(change.operation || "");
+        const request = summarizeBatchRequest(batch);
+
+        if (operation === "instruction.updateSemanticMapping") {
+            return "เพื่อให้ AI รู้ว่าชุดข้อมูลไหนคือ role, catalog และ scenario โดยไม่ต้องยึดชื่อชุดข้อมูลแบบตายตัว";
+        }
+        if (operation === "catalog.setImageToken") {
+            return "เพื่อให้สินค้าอ้างรูปด้วย label/token ที่ runtime resolve ได้จริง และลดโอกาสส่งรูปผิด";
+        }
+        if (operation === "instruction.updateCell") {
+            return `เพื่อปรับค่าหนึ่งจุดในตารางให้ตรงกับคำขอ: "${request}"`;
+        }
+        if (operation === "instruction.addRow") {
+            return `เพื่อเพิ่มแถวข้อมูลใหม่ตามคำขอ: "${request}"`;
+        }
+        if (operation === "instruction.deleteRow") {
+            return "เพื่อเอาแถวที่ AI เห็นว่าไม่ควรใช้ออกจากชุดข้อมูล แต่ต้องตรวจก่อนเพราะเป็นการลบ";
+        }
+        if (operation === "instruction.updateText") {
+            return "เพื่อปรับกติกา/ข้อความ knowledge ให้บอทตอบตามเงื่อนไขที่ขอได้ชัดขึ้น";
+        }
+        if (operation === "instruction.createTableItem" || operation === "instruction.createTextItem") {
+            return "เพื่อเพิ่มแหล่งความรู้ใหม่ให้ instruction แทนการยัดทุกอย่างไว้ในข้อความเดียว";
+        }
+        if (operation === "instruction.deleteDataItem") {
+            return "เพื่อถอดชุดข้อมูลทั้งชุดออกจาก instruction ต้องตรวจละเอียดเพราะกระทบ knowledge ที่บอทใช้ตอบ";
+        }
+        if (operation.includes("Starter")) {
+            return "เพื่อปรับข้อความเริ่มต้นบทสนทนาให้ตรงกับ flow ที่ต้องการก่อนลูกค้าพิมพ์";
+        }
+        if (operation === "page.bindInstruction") {
+            return "เพื่อให้เพจ/บอทที่เลือกใช้ instruction นี้ตอนตอบลูกค้าจริง";
+        }
+        if (operation === "page.updateModel") {
+            return "เพื่อให้เพจใช้ model/reasoning ตามค่าที่เลือกใน runtime จริง";
+        }
+        if (operation === "page.updateImageCollections") {
+            return "เพื่อกำหนดคลังรูปที่บอทมองเห็นและใช้ส่งรูปตอนตอบลูกค้า";
+        }
+        if (operation.startsWith("followup.")) {
+            return "เพื่อปรับข้อความติดตามลูกค้าหลังเงียบตาม scope ของเพจที่ระบุ";
+        }
+        if (operation.startsWith("asset.") || operation.startsWith("imageCollection.")) {
+            return "เพื่อจัดการรูป/คลังรูปที่ instruction และ runtime ใช้อ้างอิง";
+        }
+        if (operation === "imageUsage.rebuildRegistry") {
+            return "เพื่อสร้าง registry การใช้งานรูปใหม่จาก instruction, starter, follow-up, collection และ runtime response";
+        }
+        return `AI เสนอรายการนี้จากคำขอ "${request}" และข้อมูลจริงที่อ่านจาก instruction ล่าสุด`;
+    }
+
+    function getChangeImpact(change = {}) {
+        const operation = String(change.operation || "");
+        const scope = Array.isArray(change.affectedScope) ? change.affectedScope : [];
+        if (operation.startsWith("page.") || scope.some((item) => /page|runtime|model/i.test(item))) {
+            return "มีผลกับการตอบจริงของเพจ/บอทหลัง Approve";
+        }
+        if (operation.startsWith("followup.")) {
+            return "มีผลกับข้อความติดตามลูกค้าของเพจที่เลือก";
+        }
+        if (operation.startsWith("asset.") || operation.startsWith("imageCollection.") || operation === "catalog.setImageToken") {
+            return "มีผลกับรูปที่บอทเลือกส่งหรือ token รูปในสินค้า";
+        }
+        if (operation.includes("delete") || operation.includes("remove") || operation.includes("unlink")) {
+            return "เป็นการลบ/ถอดข้อมูล ควรตรวจ before/after ก่อนอนุมัติ";
+        }
+        if (operation.startsWith("instruction.")) {
+            return "มีผลกับ knowledge ที่บอทใช้ตอบลูกค้าจาก instruction นี้";
+        }
+        return "จะถูกบันทึกหลังผ่าน preflight และกด Approve เท่านั้น";
+    }
+
+    function getChangeEvidence(change = {}) {
+        const items = [];
+        if (change.sourceTool) items.push(`tool ${change.sourceTool}`);
+        if (change.operation) items.push(change.operation);
+        if (change.target?.type) items.push(change.target.type);
+        if (Array.isArray(change.warnings) && change.warnings.length) items.push(`${change.warnings.length} warning`);
+        if (Array.isArray(change.affectedScope) && change.affectedScope.length) items.push(change.affectedScope.join(", "));
+        return items.filter(Boolean);
+    }
+
+    function renderBatchDecisionContext(batch, changes) {
+        const request = summarizeBatchRequest(batch);
+        const readTrace = Array.isArray(batch?.readTrace) ? batch.readTrace : [];
+        const toolNames = Array.from(new Set(changes.map((change) => change.sourceTool).filter(Boolean)));
+        return `
+            <div class="ic-ai2-batch-context">
+                <div>
+                    <label>คำขอที่ทำให้เกิด batch</label>
+                    <p>${escapeHtml(request)}</p>
+                </div>
+                <div>
+                    <label>AI ใช้อะไรตัดสินใจ</label>
+                    <p>${escapeHtml([
+                        readTrace.length ? `อ่านข้อมูลจริง ${readTrace.length} จุด` : "อ่าน inventory ล่าสุด",
+                        toolNames.length ? `เสนอผ่าน ${toolNames.slice(0, 4).join(", ")}${toolNames.length > 4 ? ` +${toolNames.length - 4}` : ""}` : "",
+                    ].filter(Boolean).join(" · "))}</p>
+                </div>
+            </div>`;
     }
 
     function renderBatchPreview(batch) {
         const changes = Array.isArray(batch?.changes) ? batch.changes : [];
         const preflightErrors = Array.isArray(batch?.preflight?.errors) ? batch.preflight.errors : [];
         const preflightWarnings = Array.isArray(batch?.preflight?.warnings) ? batch.preflight.warnings : [];
+        const riskCounts = changes.reduce((acc, change) => {
+            const meta = getBatchRiskMeta(change.risk);
+            acc[meta.className] = (acc[meta.className] || 0) + 1;
+            return acc;
+        }, {});
+        const affectedScopes = Array.from(new Set(changes.flatMap((change) => Array.isArray(change.affectedScope) ? change.affectedScope : []))).filter(Boolean);
         if (dom.batchSummary) {
             dom.batchSummary.innerHTML = `
-                <div><strong>${changes.length}</strong> รายการรอยืนยัน</div>
-                <div>batch: <code>${escapeHtml(batch.batchId || "")}</code></div>
-                ${batch.confirmation?.tokenFingerprint ? `<div>confirm: <code>${escapeHtml(batch.confirmation.tokenFingerprint)}</code></div>` : ""}
-                <div class="ic-ai2-batch-note">ยังไม่มีการเขียนข้อมูลจริงจนกว่าจะกด Approve all</div>
-                ${preflightErrors.length ? `<div class="ic-ai2-batch-note">Preflight warning/block: ${escapeHtml(preflightErrors.map((err) => err.error || err.message || "error").join(", "))}</div>` : ""}
-                ${preflightWarnings.length ? `<div class="ic-ai2-batch-note">Eval warning: ${escapeHtml(preflightWarnings.map((warning) => warning.message || warning.type || "warning").slice(0, 6).join(" · "))}</div>` : ""}
+                <div class="ic-ai2-batch-summary-top">
+                    <div>
+                        <span>รอยืนยัน</span>
+                        <strong>${changes.length}</strong>
+                    </div>
+                    <div>
+                        <span>ควรตรวจ</span>
+                        <strong>${(riskCounts.warning || 0) + (riskCounts.danger || 0)}</strong>
+                    </div>
+                    <div>
+                        <span>ขอบเขต</span>
+                        <strong>${affectedScopes.length || 1}</strong>
+                    </div>
+                </div>
+                <div class="ic-ai2-batch-meta">
+                    <span>Batch <code>${escapeHtml(batch.batchId || "")}</code></span>
+                    ${batch.confirmation?.tokenFingerprint ? `<span>Confirm <code>${escapeHtml(batch.confirmation.tokenFingerprint)}</code></span>` : ""}
+                </div>
+                <div class="ic-ai2-batch-safe-note">
+                    <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                    ยังไม่เขียนข้อมูลจริงจนกว่าจะกด Approve all
+                </div>
+                ${renderBatchDecisionContext(batch, changes)}
+                ${renderBatchScope(affectedScopes)}
+                ${renderBatchMessages(preflightErrors, "danger")}
+                ${renderBatchMessages(preflightWarnings.slice(0, 6), "warning")}
             `;
         }
         if (dom.batchList) {
             dom.batchList.innerHTML = changes.map((change, index) => {
                 const title = change.title || change.operation || `Change ${index + 1}`;
-                const risk = change.risk || "write";
-                const before = summarizeBatchValue(change.before);
-                const after = summarizeBatchValue(change.after);
+                const riskMeta = getBatchRiskMeta(change.risk);
+                const targetLabel = getBatchTargetLabel(change);
                 const warnings = Array.isArray(change.warnings) ? change.warnings : [];
                 return `
-                    <div class="ic-ai2-batch-item">
+                    <div class="ic-ai2-batch-item ${riskMeta.className}">
                         <div class="ic-ai2-batch-item-head">
-                            <span>${index + 1}. ${escapeHtml(title)}</span>
-                            <small>${escapeHtml(risk)}</small>
+                            <div class="ic-ai2-batch-index">${String(index + 1).padStart(2, "0")}</div>
+                            <div class="ic-ai2-batch-heading">
+                                <span>${escapeHtml(title)}</span>
+                                <small>${escapeHtml(targetLabel)}</small>
+                            </div>
+                            <span class="ic-ai2-batch-risk ${riskMeta.className}">${escapeHtml(riskMeta.label)}</span>
                         </div>
-                        ${warnings.length ? `<div class="ic-ai2-batch-note">${escapeHtml(warnings.map((warning) => warning.message || warning.type).join(" · "))}</div>` : ""}
+                        <div class="ic-ai2-batch-operation">
+                            <code>${escapeHtml(change.operation || "")}</code>
+                            ${renderBatchScope(change.affectedScope)}
+                        </div>
+                        <div class="ic-ai2-batch-reason">
+                            <label>ทำไมถึงเสนอ</label>
+                            <p>${escapeHtml(getChangeHumanReason(change, batch))}</p>
+                            <small>${escapeHtml(getChangeImpact(change))}</small>
+                        </div>
+                        ${renderBatchMessages(warnings, "warning")}
                         <div class="ic-ai2-batch-diff">
                             <div>
-                                <label>Before</label>
-                                <pre>${escapeHtml(before)}</pre>
+                                <label>ตอนนี้</label>
+                                ${renderBatchValue(change.before, "before")}
                             </div>
                             <div>
-                                <label>After</label>
-                                <pre>${escapeHtml(after)}</pre>
+                                <label>หลัง Approve</label>
+                                ${renderBatchValue(change.after, "after")}
                             </div>
                         </div>
                     </div>`;
@@ -2286,11 +2511,145 @@
         if (dom.batchRejectReason) dom.batchRejectReason.value = "";
     }
 
+    function renderBatchReviewCard(batch) {
+        const changes = Array.isArray(batch?.changes) ? batch.changes : [];
+        const preflightErrors = Array.isArray(batch?.preflight?.errors) ? batch.preflight.errors : [];
+        const preflightWarnings = Array.isArray(batch?.preflight?.warnings) ? batch.preflight.warnings : [];
+        const riskCounts = changes.reduce((acc, change) => {
+            const meta = getBatchRiskMeta(change.risk);
+            acc[meta.className] = (acc[meta.className] || 0) + 1;
+            return acc;
+        }, {});
+        const affectedScopes = Array.from(new Set(changes.flatMap((change) => Array.isArray(change.affectedScope) ? change.affectedScope : []))).filter(Boolean);
+        const previewChanges = changes.slice(0, 4);
+        const statusTone = preflightErrors.length ? "danger" : ((riskCounts.warning || 0) + (riskCounts.danger || 0) ? "warning" : "safe");
+
+        return `
+            <div class="ic-batch-review-card ${statusTone}" data-batch-review-id="${escapeHtml(batch.batchId || "")}">
+                <div class="ic-batch-review-head">
+                    <div>
+                        <span class="ic-batch-review-eyebrow">Batch รอตรวจ</span>
+                        <h4>AI เตรียมข้อเสนอ ${changes.length} รายการ แต่ยังไม่บันทึกจริง</h4>
+                    </div>
+                    <span class="ic-batch-review-state">ต้องกด Review ก่อน</span>
+                </div>
+
+                <div class="ic-batch-review-request">
+                    <label>ทำไมมี batch นี้</label>
+                    <p>${escapeHtml(summarizeBatchRequest(batch))}</p>
+                </div>
+
+                <div class="ic-batch-review-metrics">
+                    <div><span>รายการ</span><strong>${changes.length}</strong></div>
+                    <div><span>ควรตรวจ</span><strong>${(riskCounts.warning || 0) + (riskCounts.danger || 0)}</strong></div>
+                    <div><span>Block</span><strong>${preflightErrors.length}</strong></div>
+                    <div><span>Scope</span><strong>${affectedScopes.length || 1}</strong></div>
+                </div>
+
+                ${renderBatchMessages(preflightErrors, "danger")}
+                ${renderBatchMessages(preflightWarnings.slice(0, 4), "warning")}
+
+                <div class="ic-batch-review-changes">
+                    ${previewChanges.map((change, index) => {
+                        const riskMeta = getBatchRiskMeta(change.risk);
+                        const evidence = getChangeEvidence(change);
+                        return `
+                            <div class="ic-batch-review-change ${riskMeta.className}">
+                                <div class="ic-batch-review-change-top">
+                                    <span>${String(index + 1).padStart(2, "0")}</span>
+                                    <strong>${escapeHtml(change.title || change.operation || `Change ${index + 1}`)}</strong>
+                                    <em>${escapeHtml(riskMeta.label)}</em>
+                                </div>
+                                <p>${escapeHtml(getChangeHumanReason(change, batch))}</p>
+                                <small>${escapeHtml(evidence.join(" · ") || getChangeImpact(change))}</small>
+                            </div>`;
+                    }).join("")}
+                    ${changes.length > previewChanges.length ? `<div class="ic-batch-review-more">ยังมีอีก ${changes.length - previewChanges.length} รายการในหน้ารายละเอียด</div>` : ""}
+                </div>
+
+                <div class="ic-batch-review-actions">
+                    <button class="ic-batch-review-primary" type="button" data-batch-action="open">
+                        <i class="fas fa-magnifying-glass" aria-hidden="true"></i>
+                        ตรวจรายละเอียดและอนุมัติ
+                    </button>
+                    <button class="ic-batch-review-secondary" type="button" data-batch-action="reject">
+                        Reject
+                    </button>
+                    <button class="ic-batch-review-secondary" type="button" data-batch-action="revise">
+                        ให้ AI ปรับใหม่
+                    </button>
+                </div>
+                <div class="ic-batch-review-result" hidden></div>
+            </div>`;
+    }
+
+    function appendBatchReviewCard(batch) {
+        if (!batch?.batchId || !dom.messages) return;
+        const existing = Array.from(document.querySelectorAll(".ic-batch-review-card"))
+            .find((card) => card.dataset.batchReviewId === batch.batchId);
+        if (existing) return;
+
+        const div = document.createElement("div");
+        div.className = "ic-msg ic-msg--ai ic-msg--batch-review";
+        div.innerHTML = `
+            <div class="ic-msg-row">
+                <div class="ic-msg-avatar ic-msg-avatar-ai">
+                    <i class="fas fa-clipboard-check" aria-hidden="true"></i>
+                </div>
+                <div class="ic-msg-body">
+                    <div class="ic-msg-role">Batch Review</div>
+                    <div class="ic-msg-content">${renderBatchReviewCard(batch)}</div>
+                </div>
+            </div>`;
+
+        div.querySelector('[data-batch-action="open"]')?.addEventListener("click", (event) => {
+            openBatchReviewModal(batch, event.currentTarget);
+        });
+        div.querySelector('[data-batch-action="reject"]')?.addEventListener("click", () => {
+            state.pendingBatch = batch;
+            rejectPendingBatch(false);
+        });
+        div.querySelector('[data-batch-action="revise"]')?.addEventListener("click", (event) => {
+            openBatchReviewModal(batch, event.currentTarget);
+            if (dom.batchRejectReason) {
+                dom.batchRejectReason.placeholder = "บอกเหตุผลให้ AI ปรับ proposal ใหม่ เช่น ยังไม่ต้องแก้ FAQ หรือแก้เฉพาะสินค้า A";
+                setTimeout(() => dom.batchRejectReason.focus(), 60);
+            }
+        });
+
+        dom.messages.appendChild(div);
+        state.batchReviewCardIds.push(batch.batchId);
+        scrollToBottom(true);
+    }
+
+    function updateBatchReviewCardStatus(batchId, tone, message) {
+        const card = Array.from(document.querySelectorAll(".ic-batch-review-card"))
+            .find((entry) => entry.dataset.batchReviewId === batchId);
+        if (!card) return;
+        card.classList.remove("safe", "warning", "danger", "committed", "rejected");
+        card.classList.add(tone);
+        const stateEl = card.querySelector(".ic-batch-review-state");
+        if (stateEl) stateEl.textContent = tone === "committed" ? "บันทึกแล้ว" : tone === "rejected" ? "ปฏิเสธแล้ว" : "อัปเดตแล้ว";
+        const resultEl = card.querySelector(".ic-batch-review-result");
+        if (resultEl) {
+            resultEl.hidden = false;
+            resultEl.textContent = message || "";
+        }
+        card.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    }
+
+    function openBatchReviewModal(batch, trigger) {
+        if (!batch?.batchId || !dom.batchModal) return;
+        state.pendingBatch = batch;
+        renderBatchPreview(batch);
+        openModal(dom.batchModal, trigger);
+    }
+
     function handleBatchReady(batch) {
         if (!batch || !batch.batchId) return;
         state.pendingBatch = batch;
         renderBatchPreview(batch);
-        if (dom.batchModal) openModal(dom.batchModal);
+        appendBatchReviewCard(batch);
     }
 
     async function approvePendingBatch() {
@@ -2317,6 +2676,7 @@
             state.pendingBatch = null;
             state.totalChanges += Array.isArray(batch.changes) ? batch.changes.length : 0;
             updateStatusBar();
+            updateBatchReviewCardStatus(batch.batchId, "committed", `บันทึก batch แล้ว: ${batch.batchId}`);
             appendMessage("ai", `บันทึก batch แล้ว: ${escapeHtml(batch.batchId)}`);
             await loadInstructions();
             if (state.selectedId) {
@@ -2347,6 +2707,7 @@
             }
             closeModal(dom.batchModal);
             state.pendingBatch = null;
+            updateBatchReviewCardStatus(batch.batchId, "rejected", revise ? "ปฏิเสธแล้ว และส่งเหตุผลให้ AI ปรับ proposal ใหม่" : "ปฏิเสธแล้ว ไม่มีการบันทึกข้อมูล");
             appendMessage("ai", revise ? "ปฏิเสธ batch แล้ว และส่งเหตุผลให้ AI เตรียมแก้ proposal ใหม่" : "ปฏิเสธ batch แล้ว ไม่มีการบันทึกข้อมูล");
             if (revise) {
                 const revisePrompt = data.prompt || `ปรับ proposal ใหม่จากเหตุผลนี้: ${reason || "ผู้ใช้ปฏิเสธ batch เดิม"}`;
@@ -2385,14 +2746,14 @@
     }
 
     function renderInventorySection(title, items, renderItem) {
-        const html = (items || [])
+        const renderedItems = (items || [])
             .map(renderItem)
-            .filter(Boolean)
-            .join("");
+            .filter(Boolean);
+        const html = renderedItems.join("");
         if (!html) return "";
         return `
             <section class="ic-inv-section">
-                <div class="ic-inv-section-title"><span>${escapeHtml(title)}</span><span>${items.length}</span></div>
+                <div class="ic-inv-section-title"><span>${escapeHtml(title)}</span><span>${renderedItems.length}</span></div>
                 <div class="ic-inv-list">${html}</div>
             </section>`;
     }
@@ -2420,6 +2781,264 @@
         return status || "-";
     }
 
+    function getKnowledgeTone({ warning = false, fail = 0, warn = 0, pass = 0 } = {}) {
+        if (fail > 0) return "fail";
+        if (warning || warn > 0) return "warn";
+        if (pass > 0) return "pass";
+        return "neutral";
+    }
+
+    function renderKnowledgeMetric(label, value, tone = "neutral") {
+        return `
+            <div class="ic-km-metric ${tone}">
+                <span>${escapeHtml(label)}</span>
+                <strong>${escapeHtml(String(value))}</strong>
+            </div>`;
+    }
+
+    function renderKnowledgeNode({ icon = "fa-circle", title = "", value = "", meta = "", preview = "", refs = [], tone = "neutral", attrs = {} }) {
+        const searchText = [title, value, meta, preview].join(" ");
+        if (!inventoryMatchesFilter(searchText)) return "";
+        const activeClass = getInventoryItemClass(refs, tone === "warn" || tone === "fail" ? "proposed" : "active");
+        const attrText = Object.entries(attrs || {})
+            .filter(([, attrValue]) => attrValue !== undefined && attrValue !== null && String(attrValue) !== "")
+            .map(([key, attrValue]) => ` data-${key}="${escapeHtml(String(attrValue))}"`)
+            .join("");
+        return `
+            <div class="ic-km-node ${tone} ${activeClass}" data-inv-refs="${escapeHtml(refs.join(" "))}"${attrText}>
+                <div class="ic-km-node-icon"><i class="fas ${escapeHtml(icon)}" aria-hidden="true"></i></div>
+                <div class="ic-km-node-body">
+                    <div class="ic-km-node-top">
+                        <span>${escapeHtml(title || "Untitled")}</span>
+                        ${value !== "" ? `<strong>${escapeHtml(String(value))}</strong>` : ""}
+                    </div>
+                    ${meta ? `<div class="ic-km-node-meta">${escapeHtml(meta)}</div>` : ""}
+                    ${preview ? `<div class="ic-km-node-preview">${escapeHtml(preview)}</div>` : ""}
+                </div>
+            </div>`;
+    }
+
+    function renderKnowledgeGroup(title, subtitle, nodes = []) {
+        const html = nodes.filter(Boolean).join("");
+        if (!html) return "";
+        return `
+            <section class="ic-km-group">
+                <div class="ic-km-group-head">
+                    <span>${escapeHtml(title)}</span>
+                    ${subtitle ? `<small>${escapeHtml(subtitle)}</small>` : ""}
+                </div>
+                <div class="ic-km-nodes">${html}</div>
+            </section>`;
+    }
+
+    function renderKnowledgeMap({
+        inv,
+        dataItems,
+        catalogRows,
+        scenarioRows,
+        pages,
+        images,
+        followup,
+        model,
+        readiness,
+        recommendations,
+        evalSuite,
+        analytics,
+        episodes,
+        versions,
+        warnings,
+        runtimeConventions,
+    }) {
+        const roleItems = dataItems.filter((item) => item.semanticRole === "role");
+        const catalogItems = dataItems.filter((item) => item.semanticRole === "catalog");
+        const scenarioItems = dataItems.filter((item) => item.semanticRole === "scenario");
+        const otherItems = dataItems.filter((item) => item.semanticRole === "other");
+        const linkedPages = Array.isArray(pages.linked)
+            ? pages.linked
+            : (pages.available || []).filter((page) => page.linkedToActiveInstruction);
+        const activeCollectionIds = Array.isArray(images.activeCollectionIds) ? images.activeCollectionIds : [];
+        const activeAssetIds = Array.isArray(images.activeAssetIds) ? images.activeAssetIds : [];
+        const imageIssues = images.issues || inv.imageIssues || {};
+        const readinessCounts = readiness.counts || {};
+        const readinessTone = getKnowledgeTone({
+            fail: readinessCounts.fail || 0,
+            warn: readinessCounts.warn || 0,
+            pass: readinessCounts.pass || 0,
+        });
+        const evalCases = Array.isArray(evalSuite.cases) ? evalSuite.cases : [];
+        const failedEvalCount = evalCases.filter((item) => item.status === "fail").length;
+        const warnedEvalCount = evalCases.filter((item) => item.status === "warn").length;
+        const highRecommendations = Array.isArray(recommendations.recommendations)
+            ? recommendations.recommendations.filter((item) => item.priority === "high").length
+            : 0;
+
+        const metrics = [
+            renderKnowledgeMetric("Readiness", readiness.success ? `${readiness.score ?? 0}%` : "-", readinessTone),
+            renderKnowledgeMetric("Knowledge", dataItems.length, dataItems.length ? "pass" : "warn"),
+            renderKnowledgeMetric("Pages", linkedPages.length, linkedPages.length ? "pass" : "warn"),
+            renderKnowledgeMetric("Warnings", warnings.length, warnings.length ? "warn" : "pass"),
+        ].join("");
+
+        const groups = [
+            renderKnowledgeGroup("Knowledge Core", "สิ่งที่ AI ใช้ตอบลูกค้า", [
+                renderKnowledgeNode({
+                    icon: "fa-scroll",
+                    title: "Role Prompt",
+                    value: roleItems.length || "ขาด",
+                    meta: roleItems.map((item) => item.title).join(", ") || "ยังไม่มีชุด role",
+                    preview: roleItems[0]?.preview || "กำหนดบุคลิก น้ำเสียง และกติกาตอบลูกค้า",
+                    refs: ["role:role", ...roleItems.map((item) => `item:${item.itemId}`)],
+                    tone: roleItems.length ? "pass" : "warn",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-box-open",
+                    title: "Catalog",
+                    value: catalogRows.length,
+                    meta: `${catalogItems.length} data items`,
+                    preview: catalogRows.slice(0, 3).map((row) => row.name || row.rowId).join(" · ") || "สินค้า/แพ็กเกจที่ map ได้",
+                    refs: ["role:catalog", ...catalogItems.map((item) => `item:${item.itemId}`)],
+                    tone: catalogRows.length ? "pass" : "warn",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-comments",
+                    title: "Scenario / FAQ",
+                    value: scenarioRows.length,
+                    meta: `${scenarioItems.length} data items`,
+                    preview: scenarioRows.slice(0, 2).map((row) => row.situation || row.rowId).join(" · ") || "คำถาม/สถานการณ์ที่ AI ควรรู้",
+                    refs: ["role:scenario", ...scenarioItems.map((item) => `item:${item.itemId}`)],
+                    tone: scenarioRows.length ? "pass" : "warn",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-layer-group",
+                    title: "Other Knowledge",
+                    value: otherItems.length,
+                    meta: otherItems.map((item) => item.title).slice(0, 3).join(", "),
+                    preview: "ข้อมูลเสริมที่ยังไม่ได้ map เป็น role/catalog/scenario",
+                    refs: ["role:other", ...otherItems.map((item) => `item:${item.itemId}`)],
+                    tone: otherItems.length ? "neutral" : "pass",
+                }),
+            ]),
+            renderKnowledgeGroup("Runtime Links", "สิ่งที่มีผลตอนบอทตอบจริง", [
+                renderKnowledgeNode({
+                    icon: "fa-link",
+                    title: "Linked Pages",
+                    value: linkedPages.length,
+                    meta: linkedPages.slice(0, 2).map((page) => page.name || page.pageKey).join(", "),
+                    preview: linkedPages.length ? "Instruction นี้ถูกใช้อยู่กับเพจ/บอทเหล่านี้" : "ยังไม่ผูกกับ page/bot",
+                    refs: linkedPages.map((page) => `page:${page.pageKey}`),
+                    tone: linkedPages.length ? "pass" : "warn",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-image",
+                    title: "Images",
+                    value: activeAssetIds.length || (images.assets || inv.imageAssets || []).length,
+                    meta: `${activeCollectionIds.length} active collections`,
+                    preview: imageIssues.missing?.length ? `${imageIssues.missing.length} token หา asset ไม่เจอ` : "รูปและ token ที่ runtime ใช้ได้",
+                    refs: ["runtime:image", ...activeCollectionIds.map((id) => `collection:${id}`)],
+                    tone: imageIssues.missing?.length || imageIssues.duplicates?.length ? "warn" : "pass",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-play",
+                    title: "Starter",
+                    value: inv.instruction?.starterSummary?.enabled ? "On" : "Off",
+                    meta: `${inv.instruction?.starterSummary?.messageCount || 0} messages`,
+                    preview: "ข้อความเปิดบทสนทนาก่อนลูกค้าพิมพ์",
+                    refs: ["starter"],
+                    tone: inv.instruction?.starterSummary?.enabled ? "pass" : "neutral",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-clock-rotate-left",
+                    title: "Follow-up",
+                    value: (followup.configs || []).length,
+                    meta: `${(followup.linkedPageKeys || []).length} linked scopes`,
+                    preview: "ข้อความติดตามหลังลูกค้าหยุดคุย",
+                    refs: ["followup", ...(followup.configs || []).map((config) => `followup:${config.pageKey || `${config.platform}:${config.botId}`}`)],
+                    tone: (followup.configs || []).length ? "pass" : "neutral",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-microchip",
+                    title: "Models",
+                    value: (model.linkedPageModels || []).length,
+                    meta: (model.linkedPageModels || []).slice(0, 2).map((entry) => entry.model || "default").join(", "),
+                    preview: "โมเดล/Reasoning ที่ผูกกับแต่ละเพจ",
+                    refs: ["model", ...(model.linkedPageModels || []).map((entry) => `model:${entry.pageKey}`)],
+                    tone: "neutral",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-code",
+                    title: "Runtime Rules",
+                    value: "[cut]",
+                    meta: runtimeConventions.imageToken?.token || "#[IMAGE:<ชื่อรูป>]",
+                    preview: runtimeConventions.runtimeInjection?.description || "กติกา format ที่ระบบ inject ตอนตอบจริง",
+                    refs: ["runtime:cut", "runtime:image", "runtime:injection"],
+                    tone: "pass",
+                }),
+            ]),
+            renderKnowledgeGroup("Quality Signals", "หลักฐานก่อนปล่อยใช้จริง", [
+                renderKnowledgeNode({
+                    icon: "fa-list-check",
+                    title: "Readiness",
+                    value: readiness.success ? `${readiness.score ?? 0}%` : "-",
+                    meta: `ผ่าน ${readinessCounts.pass || 0} · ควรตรวจ ${readinessCounts.warn || 0} · ต้องแก้ ${readinessCounts.fail || 0}`,
+                    preview: (readiness.nextSteps || []).slice(0, 2).map((step) => step.title).join(" · ") || "Checklist ก่อนใช้งานจริง",
+                    refs: ["readiness", "setup"],
+                    tone: readinessTone,
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-flask",
+                    title: "Eval Cases",
+                    value: evalCases.length,
+                    meta: `${failedEvalCount} fail · ${warnedEvalCount} warn`,
+                    preview: evalSuite.gate || "warning_only",
+                    refs: ["eval"],
+                    tone: getKnowledgeTone({ fail: failedEvalCount, warn: warnedEvalCount, pass: evalCases.length }),
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-chart-line",
+                    title: "Analytics",
+                    value: analytics.success ? (analytics.totalUsages || 0) : "-",
+                    meta: episodes.success ? `${(episodes.episodes || []).length} recent episodes` : "",
+                    preview: "usage ต่อ version และบทสนทนาจริง",
+                    refs: ["analytics"],
+                    tone: analytics.success ? "pass" : "neutral",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-lightbulb",
+                    title: "Recommendations",
+                    value: recommendations.success ? (recommendations.recommendations || []).length : 0,
+                    meta: `${highRecommendations} high priority`,
+                    preview: (recommendations.recommendations || [])[0]?.title || "ข้อเสนอจาก readiness/eval/analytics",
+                    refs: ["recommendations"],
+                    tone: highRecommendations ? "warn" : "neutral",
+                }),
+                renderKnowledgeNode({
+                    icon: "fa-code-branch",
+                    title: "Versions",
+                    value: versions.length,
+                    meta: versions[0]?.note || versions[0]?.source || "",
+                    preview: versions[0] ? `ล่าสุด v${versions[0].version}` : "ยังไม่มี snapshot version",
+                    refs: versions.map((version) => `version:${version.version}`),
+                    tone: versions.length ? "pass" : "neutral",
+                }),
+            ]),
+        ].filter(Boolean).join("");
+
+        if (!groups && (state.inventoryFilter || "").trim()) return "";
+
+        return `
+            <section class="ic-km-shell">
+                <div class="ic-km-header">
+                    <div>
+                        <span class="ic-km-eyebrow">Knowledge Map</span>
+                        <h3>${escapeHtml(inv.instruction?.name || state.selectedName || "Instruction")}</h3>
+                    </div>
+                    <div class="ic-km-version">v${escapeHtml(String(inv.instruction?.version || 1))}</div>
+                </div>
+                <div class="ic-km-metrics">${metrics}</div>
+                <div class="ic-km-flow">${groups}</div>
+            </section>`;
+    }
+
     async function loadEpisodeDetail(episodeId) {
         if (!state.selectedId || !episodeId) return;
         state.selectedEpisodeId = episodeId;
@@ -2442,7 +3061,7 @@
         const inv = state.inventory;
         if (!dom.inventoryBody) return;
         if (!inv) {
-            dom.inventoryBody.innerHTML = `<div class="ic-sidebar-loading"><span>เลือก Instruction เพื่อดู inventory</span></div>`;
+            dom.inventoryBody.innerHTML = `<div class="ic-sidebar-loading"><span>เลือก Instruction เพื่อดู Knowledge Map</span></div>`;
             if (dom.inventoryTitle) dom.inventoryTitle.textContent = "ยังไม่ได้เลือก Instruction";
             return;
         }
@@ -2469,7 +3088,25 @@
             : null;
 
         const sections = [
-            renderInventorySection("Setup Wizard", [
+            renderKnowledgeMap({
+                inv,
+                dataItems,
+                catalogRows,
+                scenarioRows,
+                pages,
+                images,
+                followup,
+                model,
+                readiness,
+                recommendations,
+                evalSuite,
+                analytics,
+                episodes,
+                versions,
+                warnings,
+                runtimeConventions,
+            }),
+            renderInventorySection("Readiness Summary", [
                 readiness.success ? {
                     refs: ["readiness", "setup"],
                     name: `Readiness ${readiness.score ?? 0}%`,
@@ -2492,7 +3129,7 @@
                 preview: item.impact || item.suggestedPrompt || "",
                 warning: item.priority === "high",
             })),
-            renderInventorySection("Knowledge", dataItems, (item) => renderInventoryItem({
+            renderInventorySection("Data Items", dataItems, (item) => renderInventoryItem({
                 refs: [`item:${item.itemId}`, `role:${item.semanticRole}`],
                 name: `${item.title} (${item.semanticRole})`,
                 meta: `${item.type}${item.rowCount ? ` · ${item.rowCount} rows` : ""}`,
@@ -2748,6 +3385,8 @@
         state.history = [];
         state.totalTokens = 0;
         state.totalChanges = 0;
+        state.pendingBatch = null;
+        state.batchReviewCardIds = [];
         state.isUserNearBottom = true;
 
         // Update UI
@@ -3128,6 +3767,8 @@
             state.history = [];
             state.totalTokens = 0;
             state.totalChanges = 0;
+            state.pendingBatch = null;
+            state.batchReviewCardIds = [];
             state.activeRequestId = null;
             try { sessionStorage.removeItem("ic2_activeRequestId"); } catch (e) { }
             dom.messages.innerHTML = "";
