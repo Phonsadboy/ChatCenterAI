@@ -4058,6 +4058,27 @@ button:focus-visible,
     flex-wrap: wrap;
 }
 
+.ic-ai2-batch-action-status {
+    margin-top: 10px;
+    padding: 9px 12px;
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    border-radius: var(--ic-radius-xs);
+    background: rgba(56, 189, 248, 0.08);
+    color: var(--ic-text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.ic-ai2-batch-action-status.warning {
+    border-color: rgba(245, 158, 11, 0.28);
+    background: rgba(245, 158, 11, 0.09);
+}
+
+.ic-ai2-batch-action-status.danger {
+    border-color: rgba(239, 68, 68, 0.28);
+    background: rgba(239, 68, 68, 0.09);
+}
+
 .ic-ai2-batch-secondary {
     border: 1px solid var(--ic-border);
     background: var(--ic-surface-2);

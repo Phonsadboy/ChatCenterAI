@@ -43,9 +43,16 @@
         activeInventoryRefs: [],
         episodeDetails: {},
         selectedEpisodeId: "",
+        batchActionInFlight: null,
     };
 
     const SCROLL_BOTTOM_THRESHOLD_PX = 48;
+    const BATCH_COMMIT_TIMEOUT_MS = 45 * 1000;
+    const BATCH_REJECT_TIMEOUT_MS = 15 * 1000;
+    const BATCH_STATUS_TIMEOUT_MS = 8 * 1000;
+    const BATCH_STATUS_POLL_MS = 1200;
+    const BATCH_STATUS_POLL_ATTEMPTS = 8;
+    const handledCommittedBatchIds = new Set();
     let scrollToBottomRafId = null;
 
     // ─── DOM ────────────────────────────────────────────────────────────
@@ -120,6 +127,34 @@
     }
 
     // ─── API ────────────────────────────────────────────────────────────
+
+    function makeTimeoutError(message) {
+        const error = new Error(message);
+        error.name = "BatchActionTimeoutError";
+        error.isTimeout = true;
+        return error;
+    }
+
+    function delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15000, timeoutMessage = "คำสั่งใช้เวลานานเกินไป") {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(url, { ...options, signal: controller.signal });
+            const data = await res.json().catch(() => ({}));
+            return { res, data };
+        } catch (err) {
+            if (err.name === "AbortError") {
+                throw makeTimeoutError(timeoutMessage);
+            }
+            throw err;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
 
     async function loadInstructions() {
         try {
@@ -1153,7 +1188,9 @@
 
         const headerSessionId = response.headers.get("X-Instruction-Session-Id");
         if (headerSessionId) state.sessionId = headerSessionId;
-        const headerRequestId = response.headers.get("X-Instruction-Request-Id");
+        const headerRequestId =
+            response.headers.get("X-Instruction-AI2-Request-Id") ||
+            response.headers.get("X-Instruction-Request-Id");
         if (headerRequestId) setActiveRequestId(headerRequestId);
         startLiveStatusTicker();
         startStatePolling();
@@ -2509,6 +2546,128 @@
             }).join("") || `<div class="ic-version-empty">ไม่มี change ใน batch นี้</div>`;
         }
         if (dom.batchRejectReason) dom.batchRejectReason.value = "";
+        setBatchActionMessage("");
+    }
+
+    function findBatchReviewCard(batchId) {
+        return Array.from(document.querySelectorAll(".ic-batch-review-card"))
+            .find((entry) => entry.dataset.batchReviewId === batchId);
+    }
+
+    function setBatchActionMessage(message = "", tone = "info") {
+        if (!dom.batchModal) return;
+        let el = dom.batchModal.querySelector(".ic-ai2-batch-action-status");
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "ic-ai2-batch-action-status";
+            const actions = dom.batchModal.querySelector(".ic-ai2-batch-actions");
+            actions?.insertAdjacentElement("afterend", el);
+        }
+        el.className = `ic-ai2-batch-action-status ${tone || "info"}`;
+        el.textContent = message || "";
+        el.hidden = !message;
+    }
+
+    function getBatchActionButtons() {
+        return [dom.batchApprove, dom.batchReject, dom.batchRevise].filter(Boolean);
+    }
+
+    function setBatchActionBusy(action, busy, message = "") {
+        state.batchActionInFlight = busy ? action : null;
+        getBatchActionButtons().forEach((button) => {
+            button.disabled = busy;
+            button.classList.toggle("loading", busy);
+        });
+        if (dom.batchModalClose) dom.batchModalClose.disabled = busy;
+        if (busy || message) setBatchActionMessage(message, busy ? "info" : "");
+    }
+
+    function setBatchReviewCardBusy(batchId, busy, message = "") {
+        const card = findBatchReviewCard(batchId);
+        if (!card) return;
+        card.querySelectorAll("button").forEach((button) => { button.disabled = busy; });
+        const stateEl = card.querySelector(".ic-batch-review-state");
+        if (stateEl && busy) stateEl.textContent = "กำลังทำงาน";
+        if (stateEl && !busy && !card.classList.contains("committed") && !card.classList.contains("rejected")) {
+            stateEl.textContent = "ต้องกด Review ก่อน";
+        }
+        const resultEl = card.querySelector(".ic-batch-review-result");
+        if (resultEl && message) {
+            resultEl.hidden = false;
+            resultEl.textContent = message;
+        }
+    }
+
+    function getBatchStatusLabel(status) {
+        const normalized = String(status || "");
+        if (normalized === "committed") return "บันทึกแล้ว";
+        if (normalized === "rejected") return "ปฏิเสธแล้ว";
+        if (normalized === "committing") return "กำลังบันทึกอยู่";
+        if (normalized === "blocked") return "ถูกบล็อก";
+        if (normalized === "partial_error") return "บันทึกบางส่วนไม่สำเร็จ";
+        if (normalized === "proposed") return "รอการตัดสินใจ";
+        return normalized || "ไม่ทราบสถานะ";
+    }
+
+    function isTerminalBatchStatus(status) {
+        return ["committed", "rejected", "blocked", "partial_error"].includes(String(status || ""));
+    }
+
+    async function loadBatchStatus(batchId) {
+        const { res, data } = await fetchJsonWithTimeout(
+            `/api/instruction-ai2/batches/${encodeURIComponent(batchId)}/status`,
+            { method: "GET", cache: "no-store" },
+            BATCH_STATUS_TIMEOUT_MS,
+            "เช็คสถานะ batch ใช้เวลานานเกินไป"
+        );
+        if (!res.ok || !data.success) throw new Error(data.error || "เช็คสถานะ batch ไม่สำเร็จ");
+        return data.batch || { batchId, status: data.status || "unknown" };
+    }
+
+    async function pollBatchStatus(batchId, attempts = BATCH_STATUS_POLL_ATTEMPTS) {
+        let latest = null;
+        for (let i = 0; i < attempts; i += 1) {
+            if (i > 0) await delay(BATCH_STATUS_POLL_MS);
+            latest = await loadBatchStatus(batchId);
+            if (isTerminalBatchStatus(latest.status)) return latest;
+        }
+        return latest;
+    }
+
+    async function completeBatchCommit(batch, result = {}) {
+        closeModal(dom.batchModal);
+        setBatchActionMessage("");
+        state.pendingBatch = null;
+        if (!handledCommittedBatchIds.has(batch.batchId)) {
+            handledCommittedBatchIds.add(batch.batchId);
+            const appliedCount = Array.isArray(result.applied)
+                ? result.applied.length
+                : (Array.isArray(batch.changes) ? batch.changes.length : 0);
+            state.totalChanges += appliedCount;
+        }
+        updateStatusBar();
+        updateBatchReviewCardStatus(batch.batchId, "committed", `บันทึก batch แล้ว: ${batch.batchId}`);
+        appendMessage("ai", `บันทึก batch แล้ว: ${batch.batchId}`);
+        await loadInstructions();
+        if (state.selectedId) {
+            loadVersionInfo(state.selectedId);
+            loadInventory(state.selectedId);
+        }
+    }
+
+    function completeBatchReject(batch, revise, data = {}, reason = "") {
+        closeModal(dom.batchModal);
+        setBatchActionMessage("");
+        state.pendingBatch = null;
+        updateBatchReviewCardStatus(batch.batchId, "rejected", revise ? "ปฏิเสธแล้ว และส่งเหตุผลให้ AI ปรับ proposal ใหม่" : "ปฏิเสธแล้ว ไม่มีการบันทึกข้อมูล");
+        appendMessage("ai", revise ? "ปฏิเสธ batch แล้ว และส่งเหตุผลให้ AI เตรียมแก้ proposal ใหม่" : "ปฏิเสธ batch แล้ว ไม่มีการบันทึกข้อมูล");
+        if (!revise) return;
+        const revisePrompt = data.prompt || `ปรับ proposal ใหม่จากเหตุผลนี้: ${reason || "ผู้ใช้ปฏิเสธ batch เดิม"}`;
+        if (state.sending) {
+            appendMessage("ai", "ยังไม่ได้ส่งคำขอให้ AI ปรับใหม่ เพราะมีคำตอบอื่นกำลังทำงานอยู่");
+            return;
+        }
+        sendMessage(revisePrompt);
     }
 
     function renderBatchReviewCard(batch) {
@@ -2623,8 +2782,7 @@
     }
 
     function updateBatchReviewCardStatus(batchId, tone, message) {
-        const card = Array.from(document.querySelectorAll(".ic-batch-review-card"))
-            .find((entry) => entry.dataset.batchReviewId === batchId);
+        const card = findBatchReviewCard(batchId);
         if (!card) return;
         card.classList.remove("safe", "warning", "danger", "committed", "rejected");
         card.classList.add(tone);
@@ -2655,66 +2813,127 @@
     async function approvePendingBatch() {
         const batch = state.pendingBatch;
         if (!batch?.batchId || !dom.batchApprove) return;
-        dom.batchApprove.disabled = true;
+        if (state.batchActionInFlight) return;
+        const commitRequestId = batch._commitRequestId || `ui_commit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        batch._commitRequestId = commitRequestId;
+        setBatchActionBusy("commit", true, "กำลังบันทึก batch...");
+        setBatchReviewCardBusy(batch.batchId, true, "กำลังบันทึก batch...");
         try {
-            const res = await fetch(`/api/instruction-ai2/batches/${encodeURIComponent(batch.batchId)}/commit`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    confirmationToken: batch.confirmationToken || "",
-                    commitRequestId: `ui_commit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-                }),
-            });
-            const data = await res.json().catch(() => ({}));
+            const { res, data } = await fetchJsonWithTimeout(
+                `/api/instruction-ai2/batches/${encodeURIComponent(batch.batchId)}/commit`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        confirmationToken: batch.confirmationToken || "",
+                        commitRequestId,
+                    }),
+                },
+                BATCH_COMMIT_TIMEOUT_MS,
+                "Approve batch ใช้เวลานานเกินไป"
+            );
+            if (data.pending) {
+                setBatchActionMessage(data.message || "batch กำลังบันทึกอยู่ กำลังเช็คสถานะ...", "warning");
+                const latest = await pollBatchStatus(batch.batchId);
+                if (latest?.status === "committed") {
+                    await completeBatchCommit(batch, { batch: latest, alreadyCommitted: true });
+                    return;
+                }
+                const label = getBatchStatusLabel(latest?.status || data.status);
+                appendMessage("ai", `Batch ยังอยู่สถานะ ${label}. ยังไม่ส่งคำสั่ง AI เพิ่มและไม่ต้องกด Approve ซ้ำ`);
+                setBatchReviewCardBusy(batch.batchId, false, `สถานะล่าสุด: ${label}`);
+                setBatchActionMessage(`สถานะล่าสุด: ${label}`, "warning");
+                return;
+            }
             if (!res.ok || !data.success) {
                 const detail = Array.isArray(data.errors)
                     ? data.errors.map((err) => err.message || err.error || "error").join(", ")
                     : "";
                 throw new Error(data.error || detail || "commit ไม่สำเร็จ");
             }
-            closeModal(dom.batchModal);
-            state.pendingBatch = null;
-            state.totalChanges += Array.isArray(batch.changes) ? batch.changes.length : 0;
-            updateStatusBar();
-            updateBatchReviewCardStatus(batch.batchId, "committed", `บันทึก batch แล้ว: ${batch.batchId}`);
-            appendMessage("ai", `บันทึก batch แล้ว: ${escapeHtml(batch.batchId)}`);
-            await loadInstructions();
-            if (state.selectedId) {
-                loadVersionInfo(state.selectedId);
-                loadInventory(state.selectedId);
-            }
+            await completeBatchCommit(batch, data);
         } catch (err) {
+            if (err.isTimeout) {
+                setBatchActionMessage("Approve ใช้เวลานาน กำลังเช็คสถานะ batch...", "warning");
+                try {
+                    const latest = await pollBatchStatus(batch.batchId);
+                    if (latest?.status === "committed") {
+                        await completeBatchCommit(batch, { batch: latest, alreadyCommitted: true });
+                        return;
+                    }
+                    const label = getBatchStatusLabel(latest?.status);
+                    appendMessage("ai", `Approve ยังยืนยันผลไม่ได้ สถานะล่าสุด: ${label}. ยังไม่ส่งคำสั่ง AI เพิ่ม`);
+                    setBatchReviewCardBusy(batch.batchId, false, `สถานะล่าสุด: ${label}`);
+                    setBatchActionMessage(`สถานะล่าสุด: ${label}`, "warning");
+                    return;
+                } catch (statusErr) {
+                    appendMessage("ai", `Approve ใช้เวลานานและเช็คสถานะไม่สำเร็จ: ${statusErr.message}. ยังไม่ส่งคำสั่ง AI เพิ่ม`);
+                    setBatchReviewCardBusy(batch.batchId, false, "เช็คสถานะไม่สำเร็จ ลองเปิด batch นี้อีกครั้ง");
+                    setBatchActionMessage("เช็คสถานะไม่สำเร็จ ลองเปิด batch นี้อีกครั้ง", "warning");
+                    return;
+                }
+            }
             appendMessage("ai", `Commit batch ไม่สำเร็จ: ${err.message}`);
+            setBatchReviewCardBusy(batch.batchId, false, err.message);
+            setBatchActionMessage(err.message, "danger");
         } finally {
-            dom.batchApprove.disabled = false;
+            setBatchActionBusy(null, false);
         }
     }
 
     async function rejectPendingBatch(revise = false) {
         const batch = state.pendingBatch;
         if (!batch?.batchId) return;
+        if (state.batchActionInFlight) return;
         const reason = dom.batchRejectReason ? dom.batchRejectReason.value.trim() : "";
         const endpoint = revise ? "revise" : "reject";
+        setBatchActionBusy(endpoint, true, revise ? "กำลังปฏิเสธและเตรียมส่งให้ AI ปรับใหม่..." : "กำลังปฏิเสธ batch...");
+        setBatchReviewCardBusy(batch.batchId, true, "กำลังปฏิเสธ batch...");
         try {
-            const res = await fetch(`/api/instruction-ai2/batches/${encodeURIComponent(batch.batchId)}/${endpoint}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ reason }),
-            });
-            const data = await res.json().catch(() => ({}));
+            const { res, data } = await fetchJsonWithTimeout(
+                `/api/instruction-ai2/batches/${encodeURIComponent(batch.batchId)}/${endpoint}`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ reason }),
+                },
+                BATCH_REJECT_TIMEOUT_MS,
+                "Reject batch ใช้เวลานานเกินไป"
+            );
             if (!res.ok || !data.success) {
                 throw new Error(data.error || "reject ไม่สำเร็จ");
             }
-            closeModal(dom.batchModal);
-            state.pendingBatch = null;
-            updateBatchReviewCardStatus(batch.batchId, "rejected", revise ? "ปฏิเสธแล้ว และส่งเหตุผลให้ AI ปรับ proposal ใหม่" : "ปฏิเสธแล้ว ไม่มีการบันทึกข้อมูล");
-            appendMessage("ai", revise ? "ปฏิเสธ batch แล้ว และส่งเหตุผลให้ AI เตรียมแก้ proposal ใหม่" : "ปฏิเสธ batch แล้ว ไม่มีการบันทึกข้อมูล");
-            if (revise) {
-                const revisePrompt = data.prompt || `ปรับ proposal ใหม่จากเหตุผลนี้: ${reason || "ผู้ใช้ปฏิเสธ batch เดิม"}`;
-                sendMessage(revisePrompt);
-            }
+            completeBatchReject(batch, revise, data, reason);
         } catch (err) {
+            if (err.isTimeout) {
+                setBatchActionMessage("Reject ใช้เวลานาน กำลังเช็คสถานะ batch...", "warning");
+                try {
+                    const latest = await pollBatchStatus(batch.batchId);
+                    if (latest?.status === "rejected") {
+                        completeBatchReject(batch, revise, { batch: latest }, reason);
+                        return;
+                    }
+                    if (latest?.status === "committed") {
+                        await completeBatchCommit(batch, { batch: latest, alreadyCommitted: true });
+                        return;
+                    }
+                    const label = getBatchStatusLabel(latest?.status);
+                    appendMessage("ai", `Reject ยังยืนยันผลไม่ได้ สถานะล่าสุด: ${label}. ยังไม่ส่งคำสั่ง AI เพิ่ม`);
+                    setBatchReviewCardBusy(batch.batchId, false, `สถานะล่าสุด: ${label}`);
+                    setBatchActionMessage(`สถานะล่าสุด: ${label}`, "warning");
+                    return;
+                } catch (statusErr) {
+                    appendMessage("ai", `Reject ใช้เวลานานและเช็คสถานะไม่สำเร็จ: ${statusErr.message}. ยังไม่ส่งคำสั่ง AI เพิ่ม`);
+                    setBatchReviewCardBusy(batch.batchId, false, "เช็คสถานะไม่สำเร็จ ลองเปิด batch นี้อีกครั้ง");
+                    setBatchActionMessage("เช็คสถานะไม่สำเร็จ ลองเปิด batch นี้อีกครั้ง", "warning");
+                    return;
+                }
+            }
             appendMessage("ai", `Reject batch ไม่สำเร็จ: ${err.message}`);
+            setBatchReviewCardBusy(batch.batchId, false, err.message);
+            setBatchActionMessage(err.message, "danger");
+        } finally {
+            setBatchActionBusy(null, false);
         }
     }
 

@@ -162,6 +162,7 @@ function buildAI2RequestSnapshot(state = {}) {
     changes: state.changes || [],
     usage: state.usage || {},
     partialContent: state.answerContent || "",
+    reasoningSummary: state.reasoningSummary || "",
     commentaryText: state.commentaryText || "",
     assistantMessages: state.assistantMessages || [],
     batch: state.batch || null,
@@ -185,6 +186,7 @@ function buildAI2RunSnapshot(run = {}, batch = null) {
     changes: Array.isArray(batch?.changes) ? batch.changes.map((change) => ({ changeId: change.changeId, tool: change.operation })) : [],
     usage: run.usage || {},
     partialContent: run.finalText || "",
+    reasoningSummary: run.reasoningSummary || "",
     commentaryText: run.commentaryText || "",
     assistantMessages: run.finalText ? [{ role: "assistant", content: run.finalText }] : [],
     batch,
@@ -734,30 +736,299 @@ function createInstructionAI2Router(deps = {}) {
       updateState({ phase: "thinking", tool: null, usage: totalUsage });
       sendEvent("status", { phase: "thinking", requestId, model: resolved.model, thinking: effort });
 
-      for (let i = 0; i < MAX_AI2_TOOL_ITERATIONS; i += 1) {
-        iterations = i + 1;
-        updateState({ phase: "thinking", iteration: iterations, tool: null });
-        const response = await openai.responses.create({
+      const removeTrailingAnswerContent = (text) => {
+        const chunk = typeof text === "string" ? text : String(text || "");
+        if (!chunk || !requestState.answerContent) return;
+        if (requestState.answerContent.endsWith(chunk)) {
+          requestState.answerContent = requestState.answerContent.slice(0, -chunk.length);
+        }
+      };
+
+      const streamResponseIteration = async (iteration) => {
+        const pendingCalls = new Map();
+        let response = null;
+        let iterationText = "";
+        let streamedText = "";
+        let reasoningStarted = false;
+        let reasoningSummary = "";
+
+        const getCallKey = (event = {}, item = {}) => {
+          if (Number.isInteger(event.output_index)) return `output:${event.output_index}`;
+          if (Number.isInteger(item.output_index)) return `output:${item.output_index}`;
+          const itemId = event.item_id || item.id || item.item_id;
+          if (itemId) return `item:${itemId}`;
+          const callId = event.call_id || item.call_id;
+          if (callId) return `call:${callId}`;
+          return null;
+        };
+
+        const ensurePendingCall = (event = {}, item = {}) => {
+          const key = getCallKey(event, item) || `unknown:${pendingCalls.size}`;
+          let call = pendingCalls.get(key);
+          if (!call) {
+            call = {
+              outputIndex: Number.isInteger(event.output_index) ? event.output_index : null,
+              itemId: event.item_id || item.id || "",
+              call_id: item.call_id || "",
+              name: item.name || "",
+              arguments: typeof item.arguments === "string" ? item.arguments : "",
+              toolState: null,
+            };
+            pendingCalls.set(key, call);
+          }
+          if (Number.isInteger(event.output_index)) call.outputIndex = event.output_index;
+          if (event.item_id || item.id) call.itemId = event.item_id || item.id;
+          if (item.call_id) call.call_id = item.call_id;
+          if (item.name) call.name = item.name;
+          if (typeof item.arguments === "string") call.arguments = item.arguments;
+          return call;
+        };
+
+        const upsertPlannedTool = (call, status = "queued") => {
+          if (!call?.name) return null;
+          const callId = call.call_id || call.itemId || `${requestId}_tool_${iteration}_${pendingCalls.size}`;
+          let toolState = call.toolState || requestState.tools.find((tool) => tool.callId === callId);
+          if (!toolState) {
+            toolState = {
+              tool: call.name,
+              callId,
+              args: safeJsonParse(call.arguments),
+              argumentsText: call.arguments || "",
+              status,
+              startedAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+            requestState.tools.push(toolState);
+          } else {
+            toolState.tool = call.name;
+            toolState.args = safeJsonParse(call.arguments);
+            toolState.argumentsText = call.arguments || toolState.argumentsText || "";
+            toolState.status = status;
+            toolState.updatedAt = Date.now();
+          }
+          call.toolState = toolState;
+          return toolState;
+        };
+
+        const stream = await openai.responses.create({
           model: resolved.model,
           instructions: systemPrompt,
           input,
           tools,
           tool_choice: "auto",
           reasoning: { effort },
+          stream: true,
         });
-        addUsage(totalUsage, response?.usage || {});
+
+        for await (const event of stream) {
+          switch (event?.type) {
+            case "response.created":
+            case "response.in_progress":
+              updateState({ phase: "thinking", iteration, tool: null });
+              sendEvent("status", { phase: "thinking", requestId, iteration, model: resolved.model, thinking: effort });
+              break;
+
+            case "response.output_text.delta": {
+              const delta = typeof event.delta === "string" ? event.delta : "";
+              if (!delta) break;
+              iterationText += delta;
+              streamedText += delta;
+              requestState.answerContent += delta;
+              updateState({ phase: "responding", iteration, tool: null, answerContent: requestState.answerContent });
+              sendEvent("answer_delta", { text: delta, provisional: true, iteration });
+              break;
+            }
+
+            case "response.output_text.done":
+              if (!iterationText && typeof event.text === "string") {
+                iterationText = event.text;
+              }
+              break;
+
+            case "response.reasoning_summary_part.added":
+            case "response.reasoning_summary_text.delta": {
+              const delta = typeof event.delta === "string"
+                ? event.delta
+                : (typeof event.part?.text === "string" ? event.part.text : "");
+              if (!delta) break;
+              if (!reasoningStarted) {
+                reasoningStarted = true;
+                sendEvent("thinking_start", { iteration });
+              }
+              reasoningSummary += delta;
+              updateState({ phase: "thinking", iteration, reasoningSummary });
+              sendEvent("thinking_delta", { text: delta, iteration });
+              break;
+            }
+
+            case "response.reasoning_summary_text.done":
+            case "response.reasoning_summary_part.done":
+            case "response.reasoning_summary.done": {
+              const text = typeof event.text === "string"
+                ? event.text
+                : (typeof event.part?.text === "string" ? event.part.text : reasoningSummary);
+              if (text) reasoningSummary = text;
+              if (reasoningStarted) {
+                updateState({ reasoningSummary });
+                sendEvent("thinking_done", { wordCount: reasoningSummary.split(/\s+/).filter(Boolean).length, iteration });
+              }
+              break;
+            }
+
+            case "response.output_item.added": {
+              if (event.item?.type !== "function_call") break;
+              const call = ensurePendingCall(event, event.item);
+              const toolState = upsertPlannedTool(call, "queued");
+              updateState({ phase: "tool_plan", iteration, tool: call.name || null });
+              sendEvent("tool_plan", {
+                tool: call.name,
+                callId: toolState?.callId || call.call_id || call.itemId,
+                itemId: call.itemId,
+                argumentsText: call.arguments || "",
+                iteration,
+              });
+              break;
+            }
+
+            case "response.function_call_arguments.delta": {
+              const call = ensurePendingCall(event);
+              const delta = typeof event.delta === "string" ? event.delta : "";
+              call.arguments += delta;
+              const toolState = upsertPlannedTool(call, "queued");
+              if (toolState) {
+                toolState.argumentsText = call.arguments || "";
+                toolState.args = safeJsonParse(call.arguments);
+                toolState.updatedAt = Date.now();
+              }
+              if (call.name) {
+                updateState({ phase: "tool_plan", iteration, tool: call.name });
+                sendEvent("tool_args_delta", {
+                  tool: call.name,
+                  callId: toolState?.callId || call.call_id || call.itemId,
+                  itemId: call.itemId,
+                  delta,
+                  argumentsText: call.arguments || "",
+                  iteration,
+                });
+              }
+              break;
+            }
+
+            case "response.function_call_arguments.done": {
+              const call = ensurePendingCall(event);
+              if (typeof event.arguments === "string") call.arguments = event.arguments;
+              const toolState = upsertPlannedTool(call, "queued");
+              if (toolState) {
+                toolState.argumentsText = call.arguments || "";
+                toolState.args = safeJsonParse(call.arguments);
+                toolState.updatedAt = Date.now();
+              }
+              if (call.name) {
+                sendEvent("tool_args_done", {
+                  tool: call.name,
+                  callId: toolState?.callId || call.call_id || call.itemId,
+                  itemId: call.itemId,
+                  argumentsText: call.arguments || "",
+                  iteration,
+                });
+              }
+              break;
+            }
+
+            case "response.output_item.done": {
+              if (event.item?.type !== "function_call") break;
+              const call = ensurePendingCall(event, event.item);
+              const toolState = upsertPlannedTool(call, "queued");
+              if (toolState) {
+                toolState.argumentsText = call.arguments || "";
+                toolState.args = safeJsonParse(call.arguments);
+                toolState.updatedAt = Date.now();
+              }
+              sendEvent("tool_args_done", {
+                tool: call.name,
+                callId: toolState?.callId || call.call_id || call.itemId,
+                itemId: call.itemId,
+                argumentsText: call.arguments || "",
+                iteration,
+              });
+              break;
+            }
+
+            case "response.completed":
+              response = event.response;
+              addUsage(totalUsage, response?.usage || {});
+              updateState({ usage: totalUsage });
+              break;
+
+            case "response.failed":
+            case "response.incomplete": {
+              response = event.response || response;
+              const message = response?.error?.message || response?.incomplete_details?.reason || "OpenAI response did not complete";
+              throw new Error(message);
+            }
+
+            case "error":
+              throw new Error(event.message || event.error?.message || "OpenAI stream error");
+
+            default:
+              break;
+          }
+        }
+
+        if (!response) {
+          throw new Error("OpenAI stream ended without a completed response");
+        }
+
+        const responseText = extractResponseText(response).trim();
+        const callsFromResponse = extractFunctionCalls(response);
+        const callsFromStream = Array.from(pendingCalls.values())
+          .filter((call) => call.name && (call.call_id || call.itemId))
+          .map((call) => ({
+            type: "function_call",
+            call_id: call.call_id || call.itemId,
+            name: call.name,
+            arguments: call.arguments || "{}",
+            toolState: call.toolState || null,
+          }));
+        const calls = callsFromResponse.length ? callsFromResponse.map((call) => {
+          const streamedCall = callsFromStream.find((item) => item.call_id === call.call_id);
+          return streamedCall ? { ...call, toolState: streamedCall.toolState } : call;
+        }) : callsFromStream;
+
+        return {
+          response,
+          iterationText: responseText || iterationText.trim(),
+          streamedText,
+          calls,
+        };
+      };
+
+      for (let i = 0; i < MAX_AI2_TOOL_ITERATIONS; i += 1) {
+        iterations = i + 1;
+        updateState({ phase: "thinking", iteration: iterations, tool: null });
+        const streamResult = await streamResponseIteration(iterations);
         updateState({ usage: totalUsage });
 
-        const iterationText = extractResponseText(response).trim();
-        const calls = extractFunctionCalls(response);
+        const iterationText = streamResult.iterationText;
+        const calls = streamResult.calls;
         if (!calls.length) {
           finalText = iterationText || finalText || "ประมวลผลเสร็จแล้ว";
+          if (finalText && !streamResult.streamedText) {
+            requestState.answerContent += finalText;
+            sendEvent("answer_delta", { text: finalText, iteration: i + 1 });
+          }
           break;
         }
 
         if (iterationText) {
+          const textToReclassify = streamResult.streamedText || iterationText;
+          removeTrailingAnswerContent(textToReclassify);
           requestState.commentaryText += iterationText;
-          sendEvent("commentary_delta", { text: iterationText, iteration: i + 1 });
+          if (streamResult.streamedText) {
+            sendEvent("answer_to_commentary", { text: textToReclassify, iteration: i + 1 });
+          } else {
+            sendEvent("commentary_delta", { text: iterationText, iteration: i + 1 });
+          }
         }
 
         input.push(...calls.map((call) => ({
@@ -769,16 +1040,25 @@ function createInstructionAI2Router(deps = {}) {
 
         for (const call of calls) {
           const args = safeJsonParse(call.arguments);
-          const toolState = {
-            tool: call.name,
-            callId: call.call_id,
-            args,
-            argumentsText: call.arguments || "",
-            status: "running",
-            startedAt: Date.now(),
-            updatedAt: Date.now(),
-          };
-          requestState.tools.push(toolState);
+          let toolState = call.toolState || requestState.tools.find((tool) => tool.callId === call.call_id);
+          if (!toolState) {
+            toolState = {
+              tool: call.name,
+              callId: call.call_id,
+              args,
+              argumentsText: call.arguments || "",
+              status: "running",
+              startedAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+            requestState.tools.push(toolState);
+          } else {
+            toolState.tool = call.name;
+            toolState.args = args;
+            toolState.argumentsText = call.arguments || toolState.argumentsText || "";
+            toolState.status = "running";
+            toolState.updatedAt = Date.now();
+          }
           updateState({ phase: "tool", iteration: i + 1, tool: call.name });
           sendEvent("tool_start", { tool: call.name, args, callId: call.call_id, argumentsText: call.arguments || "", iteration: i + 1 });
           const result = await service.executeTool(instructionId, call.name, args);
@@ -801,6 +1081,10 @@ function createInstructionAI2Router(deps = {}) {
 
       if (!finalText && service.proposals.length) {
         finalText = "ผมเตรียม batch preview ให้ตรวจแล้ว ยังไม่ได้บันทึกจริงจนกว่าจะกด Approve all";
+        if (!requestState.answerContent) {
+          requestState.answerContent = finalText;
+          sendEvent("answer_delta", { text: finalText });
+        }
       }
       if (!finalText) finalText = "ประมวลผลเสร็จแล้ว";
 
@@ -833,6 +1117,8 @@ function createInstructionAI2Router(deps = {}) {
             usage: totalUsage,
             iterations,
             finalText,
+            commentaryText: requestState.commentaryText || "",
+            reasoningSummary: requestState.reasoningSummary || "",
             completedAt: new Date(),
             updatedAt: new Date(),
           },
@@ -841,7 +1127,6 @@ function createInstructionAI2Router(deps = {}) {
         { upsert: true },
       );
 
-      sendEvent("answer_delta", { text: finalText });
       updateState({ status: "complete" });
       sendEvent("done", {
         success: true,
@@ -890,7 +1175,25 @@ function createInstructionAI2Router(deps = {}) {
       if (result?.success && typeof invalidateAllRuntimeCaches === "function") {
         invalidateAllRuntimeCaches();
       }
-      res.json(result);
+      res.status(result?.pending ? 202 : 200).json(result);
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get("/api/instruction-ai2/batches/:batchId/status", requireAdmin, async (req, res) => {
+    try {
+      const client = await connectDB();
+      const db = client.db("chatbot");
+      void ensureAI2Indexes(db);
+      const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
+      const batch = await db.collection("instruction_ai2_batches").findOne({ batchId: req.params.batchId });
+      if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+      res.json({
+        success: true,
+        batch: service.presentBatchForClient(batch),
+        status: batch.status || "unknown",
+      });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
@@ -912,35 +1215,51 @@ function createInstructionAI2Router(deps = {}) {
   });
 
   router.post("/api/instruction-ai2/batches/:batchId/reject", requireAdmin, async (req, res) => {
+    let db = null;
     try {
       const client = await connectDB();
-      const db = client.db("chatbot");
+      db = client.db("chatbot");
       void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await service.rejectBatch(req.params.batchId, req.body?.reason || "");
-      res.json({ success: true, batch });
+      if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
+      res.json({ success: true, batch: service.presentBatchForClient(batch) });
     } catch (error) {
-      res.status(500).json({ success: false, error: error.message });
+      const service = db ? new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" }) : null;
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+        status: error.batch?.status || undefined,
+        batch: service && error.batch ? service.presentBatchForClient(error.batch) : undefined,
+      });
     }
   });
 
   router.post("/api/instruction-ai2/batches/:batchId/revise", requireAdmin, async (req, res) => {
+    let db = null;
     try {
       const reason = String(req.body?.reason || "").trim();
       const client = await connectDB();
-      const db = client.db("chatbot");
+      db = client.db("chatbot");
       void ensureAI2Indexes(db);
       const service = new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" });
       const batch = await service.rejectBatch(req.params.batchId, reason);
+      if (!batch) return res.status(404).json({ success: false, error: "ไม่พบ batch" });
       res.json({
         success: true,
-        batch,
+        batch: service.presentBatchForClient(batch),
         prompt: reason
           ? `ปรับ batch ใหม่ตามเหตุผลนี้: ${reason}`
           : "ปรับ batch ใหม่อีกครั้ง โดยตรวจ proposal เดิมและทำให้ตรงคำสั่งมากขึ้น",
       });
     } catch (error) {
-      res.status(500).json({ success: false, error: error.message });
+      const service = db ? new InstructionAI2Service(db, { user: req.session?.user?.username || "admin" }) : null;
+      res.status(error.statusCode || 500).json({
+        success: false,
+        error: error.message,
+        status: error.batch?.status || undefined,
+        batch: service && error.batch ? service.presentBatchForClient(error.batch) : undefined,
+      });
     }
   });
 

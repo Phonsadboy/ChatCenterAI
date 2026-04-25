@@ -2249,8 +2249,12 @@ class InstructionAI2Service {
   }
 
   presentBatchForClient(batch, confirmationToken = "", confirmationExpiresAt = null) {
+    if (!batch) return null;
+    const safeBatch = { ...batch };
+    delete safeBatch.confirmationToken;
+    delete safeBatch.confirmationExpiresAt;
     return {
-      ...batch,
+      ...safeBatch,
       _id: undefined,
       ...(confirmationToken ? { confirmationToken } : {}),
       ...(confirmationExpiresAt ? { confirmationExpiresAt } : {}),
@@ -2288,7 +2292,18 @@ class InstructionAI2Service {
       { $set: { status: "rejected", rejectReason: String(reason || ""), updatedAt: new Date() } },
       { returnDocument: "after" },
     );
-    return result?.value || result || null;
+    const updated = result?.value || result || null;
+    if (updated) return updated;
+
+    const latest = await this.batchColl().findOne({ batchId });
+    if (!latest) return null;
+    if (latest.status === "rejected") return latest;
+
+    const error = new Error(`batch status ไม่ถูกต้อง: ${latest.status}`);
+    error.code = "batch_status_conflict";
+    error.statusCode = 409;
+    error.batch = latest;
+    throw error;
   }
 
   async commitBatch(batchId, username = "admin", options = {}) {
@@ -2298,12 +2313,33 @@ class InstructionAI2Service {
       return {
         success: true,
         batchId,
+        status: "committed",
         alreadyCommitted: true,
         applied: batch.applied || [],
         versionSnapshot: batch.versionSnapshot || null,
       };
     }
-    if (batch.status !== "proposed") throw new Error(`batch status ไม่ถูกต้อง: ${batch.status}`);
+    if (batch.status === "committing") {
+      const commitRequestId = normalizeText(options.commitRequestId);
+      return {
+        success: false,
+        pending: true,
+        batchId,
+        status: "committing",
+        sameRequest: !!commitRequestId && commitRequestId === batch.commitRequestId,
+        commitStartedAt: batch.commitStartedAt || null,
+        message: "batch นี้กำลังบันทึกอยู่ รอผลลัพธ์จาก status ได้โดยไม่ต้องกดซ้ำ",
+      };
+    }
+    if (batch.status !== "proposed") {
+      return {
+        success: false,
+        blocked: true,
+        batchId,
+        status: batch.status,
+        errors: [{ error: "batch_status_conflict", message: `batch status ไม่ถูกต้อง: ${batch.status}` }],
+      };
+    }
 
     const confirmation = batch.confirmation || {};
     if (confirmation.required !== false) {
@@ -2356,6 +2392,7 @@ class InstructionAI2Service {
         return {
           success: true,
           batchId,
+          status: "committed",
           alreadyCommitted: true,
           applied: latest.applied || [],
           versionSnapshot: latest.versionSnapshot || null,
@@ -2420,7 +2457,7 @@ class InstructionAI2Service {
         { batchId },
         { $set: { status: "committed", applied, versionSnapshot, committedBy: username, committedAt: new Date(), commitRequestId, updatedAt: new Date() } },
       );
-      return { success: true, batchId, applied, versionSnapshot };
+      return { success: true, batchId, status: "committed", applied, versionSnapshot };
     } catch (error) {
       await this.auditColl().insertOne({
         auditId: generateId("audit"),
