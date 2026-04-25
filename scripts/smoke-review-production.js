@@ -200,8 +200,8 @@ async function main() {
     ["/admin/api/notification-logs", "notification logs"],
     ["/admin/api/categories", "admin categories api"],
     ["/admin/customer-stats/data", "customer stats data"],
-    ["/api/instruction-ai/sessions", "instruction ai sessions"],
-    ["/api/instruction-ai/audit", "instruction ai audit"],
+    ["/api/instruction-ai2/sessions", "instruction ai2 sessions"],
+    ["/api/instruction-ai2/audit", "instruction ai2 audit"],
   ];
 
   const apiData = new Map();
@@ -263,8 +263,8 @@ async function main() {
       `/api/instruction-conversations/${encodedInstructionId}/filters`,
     );
     await tester.request(
-      "instruction ai versions",
-      `/api/instruction-ai/versions/${encodedInstructionId}`,
+      "instruction ai2 versions",
+      `/api/instruction-ai2/versions/${encodedInstructionId}`,
     );
     await tester.request(
       "instruction data item new form",

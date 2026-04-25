@@ -209,6 +209,7 @@ function createInstructionAI2Router(deps = {}) {
     buildLLMClientFromKey,
     resolveModelForProvider,
     invalidateAllRuntimeCaches,
+    notifyPageVisit,
   } = deps;
 
   if (!requireAdmin || !connectDB || !getOpenAIApiKeyForBot || !buildLLMClientFromKey || !resolveModelForProvider) {
@@ -217,13 +218,27 @@ function createInstructionAI2Router(deps = {}) {
 
   const router = express.Router();
 
-  router.get("/admin/instruction-ai2", requireAdmin, async (req, res) => {
-    res.render("admin-instruction-ai2", {
-      assetVersion: Date.now().toString(36),
-      defaultModel: DEFAULT_AI2_MODEL,
-      defaultThinking: DEFAULT_AI2_THINKING,
-    });
-  });
+  const renderInstructionAI2Page = async (req, res) => {
+    try {
+      const username = req.session?.user?.username || req.session?.user?.label || "admin";
+      if (typeof notifyPageVisit === "function") {
+        const visitPromise = notifyPageVisit(username);
+        if (visitPromise && typeof visitPromise.catch === "function") {
+          visitPromise.catch(() => { });
+        }
+      }
+      res.render("admin-instruction-ai2", {
+        assetVersion: Date.now().toString(36),
+        defaultModel: DEFAULT_AI2_MODEL,
+        defaultThinking: DEFAULT_AI2_THINKING,
+      });
+    } catch (error) {
+      console.error("[InstructionAI2] Error loading page:", error);
+      res.status(500).send("Error loading InstructionAI2");
+    }
+  };
+
+  router.get(["/admin/instruction-ai", "/admin/instruction-ai2"], requireAdmin, renderInstructionAI2Page);
 
   router.get("/api/instruction-ai2/inventory/:instructionId", requireAdmin, async (req, res) => {
     let runColl = null;

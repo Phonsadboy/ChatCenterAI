@@ -8,7 +8,8 @@
     categories: 'จัดการข้อมูล',
     settings: 'ตั้งค่า',
     settings2: 'ตั้งค่า',
-    'instruction-ai': 'InstructionAI',
+    'instruction-ai': 'InstructionAI2',
+    'instruction-ai2': 'InstructionAI2',
     'instruction-chat': 'Instruction Chat',
     'api-usage': 'สถิติ API',
     chat: 'แชท',
@@ -27,7 +28,7 @@
       items: [
         { page: 'dashboard', label: 'แดชบอร์ด', icon: 'fa-tachometer-alt', href: '/admin/dashboard' },
         { page: 'settings2', label: 'ตั้งค่า', icon: 'fa-cogs', href: '/admin/settings2' },
-        { page: 'instruction-ai', label: 'InstructionAI', icon: 'fa-wand-magic-sparkles', href: '/admin/instruction-ai' },
+        { page: 'instruction-ai', label: 'InstructionAI2', icon: 'fa-wand-magic-sparkles', href: '/admin/instruction-ai' },
         { page: 'api-usage', label: 'สถิติ API', icon: 'fa-chart-line', href: '/admin/api-usage' },
       ],
     },
@@ -53,7 +54,7 @@
   const isActive = (page) => {
     if (!current || !page) return false;
     if (page === 'settings2') return current === 'settings' || current === 'settings2';
-    if (page === 'instruction-ai') return current === 'instruction-ai' || current === 'instruction-chat';
+    if (page === 'instruction-ai') return current === 'instruction-ai' || current === 'instruction-ai2' || current === 'instruction-chat';
     return current === page;
   };
 
