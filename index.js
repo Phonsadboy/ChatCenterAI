@@ -102,6 +102,14 @@ function parseNonNegativeIntEnv(rawValue, fallback) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function parseBooleanEnv(rawValue, fallback = false) {
+  if (typeof rawValue !== "string") return fallback;
+  const normalized = rawValue.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 const DB_BOOTSTRAP_RETRY_DELAY_MS = parsePositiveIntEnv(
   process.env.DB_BOOTSTRAP_RETRY_DELAY_MS,
   5000,
@@ -136,6 +144,16 @@ const BOT_COLLECTION_BY_PLATFORM = {
 const LLM_PROVIDER_OPENAI = "openai";
 const LLM_PROVIDER_OPENROUTER = "openrouter";
 const DEFAULT_ASSISTANT_MODEL = "gpt-5.4-mini";
+const OPENAI_RESPONSE_STATE_COLLECTION = "openai_response_states";
+const OPENAI_RESPONSE_STATE_TTL_DAYS = Math.min(
+  parsePositiveIntEnv(process.env.OPENAI_RESPONSE_STATE_TTL_DAYS, 30),
+  30,
+);
+const OPENAI_RESPONSE_STATE_TTL_MS =
+  OPENAI_RESPONSE_STATE_TTL_DAYS * 24 * 60 * 60 * 1000;
+const OPENAI_RESPONSES_STATE_ENABLED =
+  parseBooleanEnv(process.env.OPENAI_RESPONSES_STATE_ENABLED, true) &&
+  !parseBooleanEnv(process.env.OPENAI_ZERO_DATA_RETENTION, false);
 
 function normalizeProvider(provider) {
   if (typeof provider !== "string") return LLM_PROVIDER_OPENAI;
@@ -12666,6 +12684,165 @@ function mapChatToolsToResponses(tools) {
     .filter(Boolean);
 }
 
+function normalizeResponsesStatePart(value, fallback) {
+  const normalized =
+    typeof value === "string" && value.trim() ? value.trim() : fallback;
+  return String(normalized || fallback);
+}
+
+function buildOpenAIResponseStateKey({ userId, platform, botId } = {}) {
+  const normalizedUserId =
+    typeof userId === "string" && userId.trim() ? userId.trim() : "";
+  if (!normalizedUserId) return "";
+  return [
+    normalizedUserId,
+    normalizeResponsesStatePart(platform, "line").toLowerCase(),
+    normalizeResponsesStatePart(botId, "default"),
+  ].join("::");
+}
+
+function getOpenAIResponseStateExpiresAt(updatedAt = new Date()) {
+  const baseDate = updatedAt instanceof Date ? updatedAt : new Date(updatedAt);
+  const baseMs = Number.isFinite(baseDate.getTime()) ? baseDate.getTime() : Date.now();
+  return new Date(baseMs + OPENAI_RESPONSE_STATE_TTL_MS);
+}
+
+function isOpenAIResponseStateFresh(doc = {}) {
+  if (!doc || typeof doc !== "object") return false;
+  if (typeof doc.responseId !== "string" || !doc.responseId.trim()) return false;
+  const expiresAt = doc.expiresAt
+    ? new Date(doc.expiresAt)
+    : getOpenAIResponseStateExpiresAt(doc.updatedAt || doc.createdAt || new Date(0));
+  return Number.isFinite(expiresAt.getTime()) && expiresAt.getTime() > Date.now();
+}
+
+function canUseOpenAIResponsesServerState() {
+  return OPENAI_RESPONSES_STATE_ENABLED;
+}
+
+function formatResponseIdForLog(responseId) {
+  if (typeof responseId !== "string" || responseId.length < 8) return "unknown";
+  return `...${responseId.slice(-8)}`;
+}
+
+function isResponsesStateUnavailableError(error) {
+  const fields = [
+    error?.message,
+    error?.code,
+    error?.type,
+    error?.error?.message,
+    error?.error?.code,
+    error?.error?.type,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return (
+    fields.includes("previous_response_id") ||
+    fields.includes("previous response") ||
+    fields.includes("response_not_found") ||
+    fields.includes("not found")
+  );
+}
+
+async function loadOpenAIResponseState(context = {}) {
+  if (!canUseOpenAIResponsesServerState()) return null;
+
+  const stateKey = buildOpenAIResponseStateKey(context);
+  if (!stateKey) return null;
+
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection(OPENAI_RESPONSE_STATE_COLLECTION);
+    const doc = await coll.findOne({ _id: stateKey });
+
+    if (!doc) return null;
+
+    const sameProvider =
+      !doc.provider ||
+      normalizeProvider(doc.provider) === normalizeProvider(context.provider);
+    const sameModel =
+      !doc.model ||
+      !context.model ||
+      String(doc.model).trim() === String(context.model).trim();
+
+    if (!isOpenAIResponseStateFresh(doc) || !sameProvider || !sameModel) {
+      await coll.deleteOne({ _id: stateKey });
+      return null;
+    }
+
+    return {
+      stateKey,
+      responseId: doc.responseId.trim(),
+      updatedAt: doc.updatedAt || null,
+      expiresAt: doc.expiresAt || null,
+    };
+  } catch (error) {
+    console.warn("[OpenAI Responses State] load failed:", error?.message || error);
+    return null;
+  }
+}
+
+async function saveOpenAIResponseState(context = {}, responseId = "") {
+  if (!canUseOpenAIResponsesServerState()) return false;
+  const normalizedResponseId =
+    typeof responseId === "string" && responseId.trim() ? responseId.trim() : "";
+  if (!normalizedResponseId) return false;
+
+  const stateKey = buildOpenAIResponseStateKey(context);
+  if (!stateKey) return false;
+
+  try {
+    const now = new Date();
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection(OPENAI_RESPONSE_STATE_COLLECTION);
+    await coll.updateOne(
+      { _id: stateKey },
+      {
+        $set: {
+          userId: context.userId,
+          platform: normalizeResponsesStatePart(context.platform, "line").toLowerCase(),
+          botId: normalizeResponsesStatePart(context.botId, "default"),
+          provider: normalizeProvider(context.provider),
+          model: context.model || null,
+          responseId: normalizedResponseId,
+          updatedAt: now,
+          expiresAt: getOpenAIResponseStateExpiresAt(now),
+        },
+        $setOnInsert: {
+          createdAt: now,
+        },
+      },
+      { upsert: true },
+    );
+    return true;
+  } catch (error) {
+    console.warn("[OpenAI Responses State] save failed:", error?.message || error);
+    return false;
+  }
+}
+
+async function clearOpenAIResponseState(context = {}, reason = "") {
+  const stateKey = buildOpenAIResponseStateKey(context);
+  if (!stateKey) return false;
+
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const coll = db.collection(OPENAI_RESPONSE_STATE_COLLECTION);
+    await coll.deleteOne({ _id: stateKey });
+    if (reason) {
+      console.warn(`[OpenAI Responses State] cleared (${reason})`);
+    }
+    return true;
+  } catch (error) {
+    console.warn("[OpenAI Responses State] clear failed:", error?.message || error);
+    return false;
+  }
+}
+
 function getCommerceToolDefinitions() {
   return [
     {
@@ -13131,17 +13308,48 @@ async function runCommerceAssistantConversation(options = {}) {
       ...mapStoredHistoryToResponsesInput(history, resolvedModel.model),
       { role: "user", content: responsesUserContent },
     ];
-    let nextInput = [...statelessInput];
-    let previousResponseId = null;
+    const responseStateContext = {
+      userId,
+      platform,
+      botId,
+      provider: apiKeyToUse.provider,
+      model: resolvedModel.model,
+    };
+    const storedResponseState = await loadOpenAIResponseState(responseStateContext);
+    const currentUserInput = [{ role: "user", content: responsesUserContent }];
+    let canUseServerState = canUseOpenAIResponsesServerState();
+    let shouldPersistResponseState = canUseServerState;
+    let usingStoredStateForNextRequest = Boolean(storedResponseState?.responseId);
+    let retriedStoredState = false;
+    let nextInput = usingStoredStateForNextRequest
+      ? currentUserInput
+      : [...statelessInput];
+    let manualContextInput = [...statelessInput];
+    let pendingManualRetryInput = null;
+    let previousResponseId = storedResponseState?.responseId || null;
+    let latestResponseId = null;
     let toolLoopCount = 0;
 
+    if (usingStoredStateForNextRequest) {
+      console.log(
+        `[LOG] ${logLabel}: ใช้ previous_response_id ${formatResponseIdForLog(previousResponseId)}`,
+      );
+    } else if (!canUseServerState) {
+      console.log(
+        `[LOG] ${logLabel}: Responses server state ถูกปิด ใช้ DB history แบบ stateless`,
+      );
+    }
+
     while (toolLoopCount < COMMERCE_MAX_TOOL_LOOPS) {
+      const payloadPreviousResponseId =
+        canUseServerState && previousResponseId ? previousResponseId : null;
       const payload = {
         model: resolvedModel.model,
         instructions: toolSystemInstructions,
-        input: previousResponseId ? nextInput : statelessInput,
+        input: nextInput,
         tools: mappedTools,
         tool_choice: "auto",
+        store: canUseServerState,
       };
       const reasoning = resolveResponsesReasoningConfig(
         resolvedModel.model,
@@ -13150,12 +13358,62 @@ async function runCommerceAssistantConversation(options = {}) {
       if (reasoning) {
         payload.reasoning = reasoning;
       }
-      if (previousResponseId) {
-        payload.previous_response_id = previousResponseId;
+      if (payloadPreviousResponseId) {
+        payload.previous_response_id = payloadPreviousResponseId;
       }
 
-      const response = await openai.responses.create(payload);
-      previousResponseId = response?.id || previousResponseId;
+      let response = null;
+      try {
+        response = await openai.responses.create(payload);
+      } catch (error) {
+        if (
+          payloadPreviousResponseId &&
+          isResponsesStateUnavailableError(error)
+        ) {
+          if (usingStoredStateForNextRequest && !retriedStoredState) {
+            console.warn(
+              `[${logLabel}] previous_response_id ใช้ไม่ได้ จะ fallback เป็น DB history:`,
+              error?.message || error,
+            );
+            await clearOpenAIResponseState(
+              responseStateContext,
+              "previous_response_id_unavailable",
+            );
+            retriedStoredState = true;
+            usingStoredStateForNextRequest = false;
+            previousResponseId = null;
+            latestResponseId = null;
+            nextInput = [...statelessInput];
+            manualContextInput = [...statelessInput];
+            pendingManualRetryInput = null;
+            continue;
+          }
+
+          if (pendingManualRetryInput) {
+            console.warn(
+              `[${logLabel}] Responses server state ใช้ต่อไม่ได้ จะ fallback เป็น manual context:`,
+              error?.message || error,
+            );
+            canUseServerState = false;
+            shouldPersistResponseState = false;
+            previousResponseId = null;
+            nextInput = pendingManualRetryInput;
+            manualContextInput = pendingManualRetryInput;
+            pendingManualRetryInput = null;
+            continue;
+          }
+        }
+
+        throw error;
+      }
+
+      usingStoredStateForNextRequest = false;
+      if (response?.id) {
+        latestResponseId = response.id;
+        if (canUseServerState) {
+          previousResponseId = response.id;
+        }
+      }
       addUsage(totalUsage, mapResponsesUsage(response?.usage));
 
       const toolCalls = extractResponsesFunctionCalls(response);
@@ -13214,7 +13472,22 @@ async function runCommerceAssistantConversation(options = {}) {
         isFirstToolCall = false;
       }
 
-      nextInput = toolOutputs;
+      const responseOutput = Array.isArray(response?.output) ? response.output : [];
+      const manualNextInput = [
+        ...manualContextInput,
+        ...responseOutput,
+        ...toolOutputs,
+      ];
+
+      if (canUseServerState && response?.id) {
+        nextInput = toolOutputs;
+        pendingManualRetryInput = manualNextInput;
+        manualContextInput = manualNextInput;
+      } else {
+        nextInput = manualNextInput;
+        manualContextInput = manualNextInput;
+        pendingManualRetryInput = null;
+      }
       toolLoopCount += 1;
     }
 
@@ -13222,6 +13495,10 @@ async function runCommerceAssistantConversation(options = {}) {
       console.warn(`[${logLabel}] Tool loop limit reached`);
       finalReplyText =
         "ขออภัย ระบบไม่สามารถประมวลผลคำขอได้ในขณะนี้ (Tool loop limit)";
+    }
+
+    if (finalReplyText && latestResponseId && shouldPersistResponseState) {
+      await saveOpenAIResponseState(responseStateContext, latestResponseId);
     }
   } else {
     const messages = [
