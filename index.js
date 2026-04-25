@@ -5,7 +5,6 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const util = require("util");
-const { google } = require("googleapis");
 const { ObjectId } = require("bson");
 const { OpenAI } = require("openai");
 const line = require("@line/bot-sdk");
@@ -120,12 +119,6 @@ const ADMIN_SESSION_TTL_SECONDS = Number(
 );
 const SESSION_COOKIE_NAME =
   process.env.ADMIN_SESSION_COOKIE_NAME || "admin_session";
-const GOOGLE_CLIENT_EMAIL =
-  (process.env.GOOGLE_CLIENT_EMAIL || "").trim();
-const GOOGLE_PRIVATE_KEY =
-  (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-const GOOGLE_DOC_ID = (process.env.GOOGLE_DOC_ID || "").trim();
-const SPREADSHEET_ID = (process.env.SPREADSHEET_ID || "").trim();
 const META_GRAPH_API_VERSION =
   process.env.META_GRAPH_API_VERSION || "v22.0";
 const SUPPORTED_CHAT_PLATFORMS = new Set([
@@ -7009,126 +7002,6 @@ async function clearFollowUpStatus(userId) {
   });
 }
 
-// ตัวแปรเก็บ instructions จาก Google Doc
-let googleDocInstructions = "";
-async function fetchGoogleDocInstructions() {
-  try {
-    const auth = new google.auth.JWT({
-      email: GOOGLE_CLIENT_EMAIL,
-      key: GOOGLE_PRIVATE_KEY,
-      scopes: ["https://www.googleapis.com/auth/documents.readonly"],
-    });
-    const docs = google.docs({ version: "v1", auth });
-    const res = await docs.documents.get({ documentId: GOOGLE_DOC_ID });
-    const docBody = res.data.body?.content || [];
-    let fullText = "";
-    docBody.forEach((block) => {
-      if (block.paragraph?.elements) {
-        block.paragraph.elements.forEach((elem) => {
-          if (elem.textRun?.content) {
-            fullText += elem.textRun.content;
-          }
-        });
-      }
-    });
-    googleDocInstructions = fullText.trim();
-  } catch {
-    googleDocInstructions = "Error fetching system instructions.";
-  }
-}
-
-async function getSheetsApi() {
-  const sheetsAuth = new google.auth.JWT({
-    email: GOOGLE_CLIENT_EMAIL,
-    key: GOOGLE_PRIVATE_KEY,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  return google.sheets({ version: "v4", auth: sheetsAuth });
-}
-
-async function fetchSheetData(spreadsheetId, range) {
-  try {
-    const sheetsApi = await getSheetsApi();
-    const response = await sheetsApi.spreadsheets.values.get({
-      spreadsheetId,
-      range,
-    });
-    const rows = response.data.values;
-    if (!rows || rows.length === 0) return [];
-    return rows;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * ข้ามแถวที่ทุก cell ว่าง
- */
-function parseSheetRowsToObjects(rows) {
-  if (!rows || rows.length < 2) {
-    return [];
-  }
-  const headers = rows[0];
-  const dataRows = rows.slice(1);
-  return dataRows.reduce((acc, row) => {
-    const hasContent = row.some((cell) => cell && cell.trim() !== "");
-    if (!hasContent) {
-      return acc;
-    }
-    let obj = {};
-    headers.forEach((headerName, colIndex) => {
-      obj[headerName] = row[colIndex] || "";
-    });
-    acc.push(obj);
-    return acc;
-  }, []);
-}
-
-function transformSheetRowsToJSON(rows) {
-  return parseSheetRowsToObjects(rows);
-}
-
-// ตรงนี้จะเก็บข้อมูล 4 แท็บหลังดึงจาก Google Sheets
-let sheetJSON = {
-  qnaSteps: [],
-  companyDetails: [],
-  products: [],
-  services: [],
-};
-
-// รวม 4 แท็บ ถ้าจะเรียกหลายครั้ง
-async function fetchAllSheetsData(spreadsheetId) {
-  const [
-    rowsQnASteps, // "ลักษณะ/ขั้นตอน การถามตอบ"
-    rowsMainFlow, // "Main flow"
-    rowsProductFlow, // "Product flow"
-    rowsServiceFlow, // "Service flow"
-    rowsCompany, // "Company details"
-    rowsProducts, // "Products"
-    rowsServices, // "Services"
-  ] = await Promise.all([
-    fetchSheetData(spreadsheetId, "ลักษณะ/ขั้นตอน การถามตอบ!A1:D1000"),
-    fetchSheetData(spreadsheetId, "Main flow!A1:D1000"),
-    fetchSheetData(spreadsheetId, "Product flow!A1:D1000"),
-    fetchSheetData(spreadsheetId, "Service flow!A1:D1000"),
-    fetchSheetData(spreadsheetId, "Company details!A1:D30"),
-    fetchSheetData(spreadsheetId, "Products!A1:Q40"),
-    fetchSheetData(spreadsheetId, "Services!A1:O40"),
-  ]);
-
-  return {
-    // รวมข้อมูลจาก "ลักษณะ/ขั้นตอน การถามตอบ" + main/product/service flow
-    qnaSteps: transformSheetRowsToJSON(rowsQnASteps).concat(
-      transformSheetRowsToJSON(rowsMainFlow),
-      transformSheetRowsToJSON(rowsProductFlow),
-      transformSheetRowsToJSON(rowsServiceFlow),
-    ),
-    companyDetails: transformSheetRowsToJSON(rowsCompany),
-    products: transformSheetRowsToJSON(rowsProducts),
-    services: transformSheetRowsToJSON(rowsServices),
-  };
-}
-
 // === ฟังก์ชันโมเดลเล็ก: วิเคราะห์ Flow และข้อมูลที่ขาด (ฟังก์ชันใหม่ไม่มีการประกาศ openai ซ้ำซ้อน)
 // (ลบฟังก์ชัน analyzeFlowGPT4oMini)
 // ... existing code ...
@@ -9799,42 +9672,6 @@ async function handleLineEvent(event, queueOptions = {}) {
   console.log(`[LOG] จบการประมวลผล event: ${uniqueId}`);
 }
 
-// ------------------------
-// 15-min refresh schedule
-// ------------------------
-let lastUpdatedQuarter = "";
-function schedule15MinRefresh() {
-  setInterval(async () => {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-
-    const quarter = Math.floor(currentMinute / 15);
-    const currentQuarterLabel = `${currentHour}-${quarter}`;
-
-    if (
-      currentMinute % 15 === 0 &&
-      lastUpdatedQuarter !== currentQuarterLabel
-    ) {
-      console.log(
-        "[DEBUG] It's a new 15-minute interval => refreshing sheet data & doc instructions...",
-      );
-
-      try {
-        await fetchGoogleDocInstructions();
-        sheetJSON = await fetchAllSheetsData(SPREADSHEET_ID);
-
-        lastUpdatedQuarter = currentQuarterLabel;
-        console.log(
-          `[DEBUG] sheetJSON & googleDocInstructions updated at ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,
-        );
-      } catch (err) {
-        console.error("15-minute sheet update error:", err);
-      }
-    }
-  }, 60 * 1000);
-}
-
 // ============================ Facebook Comment Reply System (v2) ============================
 
 const FACEBOOK_POST_FIELDS =
@@ -11922,36 +11759,6 @@ async function runStartupRuntime(client) {
     console.error(`[ERROR] Migration ล้มเหลว:`, migrationError);
   }
 
-  // โหลด instructions จาก Google Doc (ไม่บล็อกการเริ่มระบบ)
-  try {
-    console.log(`[LOG] กำลังดึงข้อมูล instructions จาก Google Doc...`);
-    await fetchGoogleDocInstructions();
-    console.log(
-      `[LOG] ดึงข้อมูล instructions สำเร็จ (${googleDocInstructions.length} อักขระ)`,
-    );
-  } catch (docError) {
-    console.error(`[ERROR] ดึงข้อมูล instructions จาก Google Doc ไม่สำเร็จ:`, docError);
-  }
-
-  // ดึงข้อมูลทุกแท็บจาก Google Sheets (ไม่บล็อกระบบติดตาม/งานพื้นหลัง)
-  try {
-    console.log(`[LOG] เริ่มดึงข้อมูลทุกแท็บจาก Google Sheets...`);
-    sheetJSON = await fetchAllSheetsDataNew(SPREADSHEET_ID);
-    console.log(
-      `[LOG] ดึงข้อมูลจาก Google Sheets เสร็จสิ้น ได้ข้อมูลจาก ${Object.keys(sheetJSON).length} แท็บ`,
-    );
-  } catch (sheetError) {
-    console.error(`[ERROR] ดึงข้อมูลจาก Google Sheets ไม่สำเร็จ:`, sheetError);
-  }
-
-  // ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติ (ไม่บล็อกระบบหลัก)
-  try {
-    console.log(`[LOG] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติ...`);
-    scheduleDailyRefresh();
-  } catch (refreshError) {
-    console.error(`[ERROR] ตั้งค่าการรีเฟรชข้อมูลอัตโนมัติไม่สำเร็จ:`, refreshError);
-  }
-
   // ทำให้แน่ใจว่ามีการตั้งค่าเริ่มต้นใน collection settings
   try {
     await ensureInstructionIdentifiers();
@@ -12220,129 +12027,6 @@ async function saveUserFlowHistory(userId, flowAnalysis) {
 // ... existing code ...
 // (ลบฟังก์ชัน analyzeImageWithAnotherModel)
 // ... existing code ...
-
-// เพิ่มฟังก์ชันใหม่สำหรับดึงข้อมูลทุกแท็บจาก Google Sheets
-async function fetchAllSheetsDataNew(spreadsheetId) {
-  console.log(
-    `[LOG] เริ่มดึงข้อมูลจากทุกแท็บใน spreadsheet ${spreadsheetId}...`,
-  );
-  try {
-    const sheetsApi = await getSheetsApi();
-    console.log(`[LOG] เชื่อมต่อ Google Sheets API สำเร็จ`);
-
-    // ดึงข้อมูลทุกแท็บจาก spreadsheet
-    const response = await sheetsApi.spreadsheets.get({
-      spreadsheetId,
-      includeGridData: false,
-    });
-    console.log(`[LOG] ดึงข้อมูล metadata ของ spreadsheet สำเร็จ`);
-
-    // ดึงรายชื่อแท็บทั้งหมด
-    const allSheets = response.data.sheets.map(
-      (sheet) => sheet.properties.title,
-    );
-    console.log(
-      `[LOG] พบแท็บทั้งหมด ${allSheets.length} แท็บ: ${allSheets.join(", ")}`,
-    );
-
-    // ดึงข้อมูลจากทุกแท็บ
-    const allData = {};
-
-    // ดึงข้อมูลจากทุกแท็บพร้อมกัน
-    console.log(`[LOG] เริ่มดึงข้อมูลจากทุกแท็บพร้อมกัน...`);
-    const dataPromises = allSheets.map(async (sheetTitle) => {
-      try {
-        console.log(`[LOG] กำลังดึงข้อมูลจากแท็บ "${sheetTitle}"...`);
-        const rows = await fetchSheetData(
-          spreadsheetId,
-          `${sheetTitle}!A1:Z1000`,
-        );
-        allData[sheetTitle] = transformSheetRowsToJSON(rows);
-        console.log(
-          `[LOG] ดึงข้อมูลจากแท็บ "${sheetTitle}" สำเร็จ: ${allData[sheetTitle].length} แถว`,
-        );
-        return { sheetTitle, success: true };
-      } catch (error) {
-        console.error(
-          `[ERROR] ไม่สามารถดึงข้อมูลจากแท็บ "${sheetTitle}" ได้:`,
-          error,
-        );
-        allData[sheetTitle] = [];
-        return { sheetTitle, success: false, error };
-      }
-    });
-
-    // รอให้ดึงข้อมูลทุกแท็บเสร็จ
-    const results = await Promise.all(dataPromises);
-    const successCount = results.filter((r) => r.success).length;
-    const failCount = results.filter((r) => !r.success).length;
-
-    console.log(
-      `[LOG] ดึงข้อมูลสำเร็จ ${successCount} แท็บ, ล้มเหลว ${failCount} แท็บ`,
-    );
-    return allData;
-  } catch (error) {
-    console.error(`[ERROR] เกิดข้อผิดพลาดในการดึงข้อมูลทุกแท็บ:`, error);
-    return {};
-  }
-}
-
-// เปลี่ยนฟังก์ชันรีเฟรชข้อมูลจาก 15 นาทีเป็น 1 วัน
-function scheduleDailyRefresh() {
-  console.log(
-    `[LOG] เริ่มต้นระบบรีเฟรชข้อมูลประจำวัน (ตั้งเวลาจะรีเฟรชเวลา 00:05 น.)...`,
-  );
-  let lastRefreshDate = "";
-
-  setInterval(async () => {
-    const now = new Date();
-    const thaiTime = new Date(
-      now.toLocaleString("en-US", { timeZone: "Asia/Bangkok" }),
-    );
-    const currentDate = thaiTime.toISOString().split("T")[0]; // YYYY-MM-DD
-
-    // แสดง log เฉพาะเมื่อเวลาอยู่ในช่วงที่ต้องการรีเฟรช
-    if (
-      thaiTime.getHours() === 0 &&
-      thaiTime.getMinutes() >= 4 &&
-      thaiTime.getMinutes() <= 6
-    ) {
-      console.log(
-        `[LOG] ตรวจสอบเวลารีเฟรชข้อมูลประจำวัน: ${thaiTime.toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,
-      );
-    }
-
-    // รีเฟรชที่เวลา 00:05 น. และยังไม่เคยรีเฟรชในวันนี้
-    if (
-      thaiTime.getHours() === 0 &&
-      thaiTime.getMinutes() === 5 &&
-      lastRefreshDate !== currentDate
-    ) {
-      console.log(
-        `[LOG] เริ่มรีเฟรชข้อมูลประจำวันที่ ${currentDate} เวลา ${thaiTime.toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok" })}...`,
-      );
-
-      try {
-        console.log(`[LOG] กำลังดึงข้อมูล instructions จาก Google Doc...`);
-        await fetchGoogleDocInstructions();
-        console.log(
-          `[LOG] ดึงข้อมูล instructions สำเร็จ (${googleDocInstructions.length} อักขระ)`,
-        );
-
-        console.log(`[LOG] กำลังดึงข้อมูลจากทุกแท็บใน Google Sheets...`);
-        // ใช้ฟังก์ชันใหม่ดึงข้อมูลทุกแท็บ
-        sheetJSON = await fetchAllSheetsDataNew(SPREADSHEET_ID);
-
-        console.log(
-          `[LOG] รีเฟรชข้อมูลเสร็จสมบูรณ์ ได้ข้อมูลจาก ${Object.keys(sheetJSON).length} แท็บ`,
-        );
-        lastRefreshDate = currentDate;
-      } catch (err) {
-        console.error(`[ERROR] เกิดข้อผิดพลาดในการรีเฟรชข้อมูลประจำวัน:`, err);
-      }
-    }
-  }, 60 * 1000); // ตรวจสอบทุก 1 นาที เพื่อให้ตรงกับเวลาที่กำหนด
-}
 
 async function buildSystemInstructions(history, selectedImageCollections = null) {
   const assetKey = normalizeAssetSelectionCacheKey(selectedImageCollections);
