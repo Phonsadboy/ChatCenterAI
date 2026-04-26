@@ -190,6 +190,14 @@ body.page-chat2 .app-content {
   cursor: pointer;
 }
 
+summary.cc2-filter-toggle {
+  list-style: none;
+}
+
+summary.cc2-filter-toggle::-webkit-details-marker {
+  display: none;
+}
+
 .cc2-filter-toggle-main {
   display: flex;
   align-items: center;
@@ -229,6 +237,10 @@ body.page-chat2 .app-content {
 }
 
 .cc2-filter-panel:not(.is-collapsed) .cc2-filter-chevron {
+  transform: rotate(180deg);
+}
+
+.cc2-filter-panel[open] .cc2-filter-chevron {
   transform: rotate(180deg);
 }
 

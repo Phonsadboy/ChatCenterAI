@@ -241,6 +241,20 @@ class Chat2Manager {
       : { platform: "", botId: "" };
   }
 
+  currentConversationPayload() {
+    const context = this.currentConversationContext();
+    return {
+      ...(context.platform ? { platform: context.platform } : {}),
+      ...(context.botId ? { botId: context.botId } : {}),
+    };
+  }
+
+  currentConversationQuery() {
+    const params = new URLSearchParams(this.currentConversationPayload());
+    const query = params.toString();
+    return query ? `?${query}` : "";
+  }
+
   currentAdminLabels() {
     return [
       this.adminUser?.label,
@@ -413,7 +427,19 @@ class Chat2Manager {
     });
 
     this.$("chat2ReloadUsers")?.addEventListener("click", () => this.loadUsers());
-    this.$("chat2FilterToggle")?.addEventListener("click", () => this.toggleFiltersCollapsed());
+    const filterPanel = this.$("chat2FilterPanel");
+    const filterToggle = this.$("chat2FilterToggle");
+    if (filterPanel?.tagName === "DETAILS") {
+      filterPanel.addEventListener("toggle", () => {
+        const nextCollapsed = !filterPanel.open;
+        if (this.filtersCollapsed !== nextCollapsed) {
+          this.filtersCollapsed = nextCollapsed;
+        }
+        this.updateFilterPanel();
+      });
+    } else {
+      filterToggle?.addEventListener("click", () => this.toggleFiltersCollapsed());
+    }
     this.$("chat2ToggleTagFilters")?.addEventListener("click", () => this.toggleTagFiltersExpanded());
     this.$("chat2InboxFilter")?.addEventListener("change", (event) => this.handleInboxFilterChange(event));
     this.$("chat2Search")?.addEventListener("input", (event) => {
@@ -547,9 +573,13 @@ class Chat2Manager {
     const panel = this.$("chat2FilterPanel");
     const toggle = this.$("chat2FilterToggle");
     const body = this.$("chat2FilterBody");
+    const panelIsDetails = panel?.tagName === "DETAILS";
+    if (panelIsDetails && panel.open === this.filtersCollapsed) {
+      panel.open = !this.filtersCollapsed;
+    }
     if (panel) panel.classList.toggle("is-collapsed", this.filtersCollapsed);
     if (toggle) toggle.setAttribute("aria-expanded", this.filtersCollapsed ? "false" : "true");
-    if (body) body.hidden = this.filtersCollapsed;
+    if (body) body.hidden = panelIsDetails ? false : this.filtersCollapsed;
   }
 
   toggleTagFiltersExpanded(force = null) {
@@ -1204,13 +1234,16 @@ class Chat2Manager {
     if (!tag || !this.currentUserId) return;
     const user = this.currentUser();
     const tags = Array.from(new Set([...(user?.tags || []), tag]));
+    const context = this.currentConversationPayload();
     try {
       const data = await this.fetchJson(`/admin/chat/tags/${encodeURIComponent(this.currentUserId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags }),
+        body: JSON.stringify({ tags, ...context }),
       });
       this.patchUser(this.currentUserId, { tags: data.tags || tags });
+      this.renderTags();
+      this.renderOverview();
       const input = this.$("chat2NewTag");
       if (input) input.value = "";
       await this.loadAvailableTags();
@@ -1225,13 +1258,16 @@ class Chat2Manager {
     if (!tag || !this.currentUserId) return;
     const user = this.currentUser();
     const tags = (user?.tags || []).filter((entry) => entry !== tag);
+    const context = this.currentConversationPayload();
     try {
       const data = await this.fetchJson(`/admin/chat/tags/${encodeURIComponent(this.currentUserId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags }),
+        body: JSON.stringify({ tags, ...context }),
       });
       this.patchUser(this.currentUserId, { tags: data.tags || tags });
+      this.renderTags();
+      this.renderOverview();
       await this.loadAvailableTags();
       this.toast("ลบแท็กแล้ว", "success");
     } catch (error) {
@@ -1618,11 +1654,12 @@ class Chat2Manager {
   async saveNotes() {
     if (!this.can("chat:notes")) return;
     if (!this.currentUserId) return;
+    const context = this.currentConversationPayload();
     try {
       const data = await this.fetchJson(`/api/users/${encodeURIComponent(this.currentUserId)}/notes`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: this.$("chat2Notes")?.value || "" }),
+        body: JSON.stringify({ notes: this.$("chat2Notes")?.value || "", ...context }),
       });
       this.context.notes = data.notes || "";
       this.context.notesUpdatedAt = new Date().toISOString();
@@ -1804,6 +1841,7 @@ class Chat2Manager {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: this.currentUserId,
+          ...this.currentConversationPayload(),
           ownerId,
           ownerLabel,
           queueStatus: this.$("chat2QueueStatus")?.value || "open",
@@ -1987,7 +2025,7 @@ class Chat2Manager {
       await this.fetchJson("/admin/chat/user-status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: this.currentUserId, aiEnabled: next }),
+        body: JSON.stringify({ userId: this.currentUserId, aiEnabled: next, ...this.currentConversationPayload() }),
       });
       this.patchUser(this.currentUserId, { aiEnabled: next });
       this.renderOverview();
@@ -2006,7 +2044,7 @@ class Chat2Manager {
       await this.fetchJson(`/admin/chat/purchase-status/${encodeURIComponent(this.currentUserId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hasPurchased: next }),
+        body: JSON.stringify({ hasPurchased: next, ...this.currentConversationPayload() }),
       });
       this.patchUser(this.currentUserId, { hasPurchased: next });
       this.renderOverview();
@@ -2037,7 +2075,7 @@ class Chat2Manager {
     if (!this.can("chat:clear")) return;
     if (!this.currentUserId || !confirm("ต้องการล้างประวัติแชทนี้หรือไม่?")) return;
     try {
-      await this.fetchJson(`/admin/chat/clear/${encodeURIComponent(this.currentUserId)}`, { method: "DELETE" });
+      await this.fetchJson(`/admin/chat/clear/${encodeURIComponent(this.currentUserId)}${this.currentConversationQuery()}`, { method: "DELETE" });
       this.history[this.currentUserId] = [];
       this.renderMessages();
       this.toast("ล้างแชทแล้ว", "success");
@@ -2048,7 +2086,11 @@ class Chat2Manager {
 
   async markRead(userId) {
     try {
-      await fetch(`/admin/chat/mark-read/${encodeURIComponent(userId)}`, { method: "POST" });
+      await fetch(`/admin/chat/mark-read/${encodeURIComponent(userId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(this.currentConversationPayload()),
+      });
     } catch (_) { }
   }
 
