@@ -178,6 +178,83 @@
     padding: 0.75rem;
 }
 
+.chat-tag-create-form {
+    margin-bottom: 0.75rem;
+}
+
+.chat-tag-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.chat-tag-input-row .form-control-v2 {
+    min-width: 0;
+}
+
+.chat-tag-list {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.chat-tag-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border, #E1E5EF);
+    border-radius: var(--radius-md, 8px);
+    background: #fff;
+}
+
+.chat-tag-main {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.chat-tag-pill {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    min-height: 26px;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid rgba(74, 111, 165, 0.24);
+    background: rgba(74, 111, 165, 0.08);
+    color: var(--text-main, #1E2430);
+    font-size: 0.8rem;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-tag-count {
+    color: var(--text-sub, #5C6372);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .chat-tag-input-row {
+        grid-template-columns: 1fr;
+    }
+
+    .chat-tag-row,
+    .chat-tag-main {
+        align-items: flex-start;
+    }
+
+    .chat-tag-main {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+}
+
 /* Form Elements - Compact */
 .form-group-v2 {
     margin-bottom: 0.6rem;

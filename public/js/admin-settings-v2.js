@@ -6,6 +6,7 @@
 const INSTRUCTION_SOURCE = { V2: 'v2', LEGACY: 'legacy' };
 let instructionLibraries = [];
 let imageCollections = [];
+let chatSystemTags = [];
 const BOT_CHANNELS = ['line', 'facebook', 'instagram', 'whatsapp'];
 const BOT_LABELS = {
     line: 'LINE',
@@ -68,6 +69,8 @@ function initSettingsPermissionVisibility() {
         section.dataset.permissionHidden = adminCan(permission) ? 'false' : 'true';
         if (!adminCan(permission)) section.classList.add('d-none');
     });
+    const chatTagCard = document.getElementById('chatTagSettingsCard');
+    if (chatTagCard) chatTagCard.hidden = !adminCan('chat:tags');
     const firstVisibleNav = navItems.find((item) => !item.hidden);
     const activeNav = navItems.find((item) => item.classList.contains('active') && !item.hidden);
     const targetNav = activeNav || firstVisibleNav;
@@ -181,6 +184,9 @@ function initNavigation() {
                 if (window.imageCollectionsManager?.refreshAll) {
                     window.imageCollectionsManager.refreshAll();
                 }
+            } else if (targetId === 'chat-settings') {
+                loadChatSettings();
+                if (adminCan('chat:tags')) loadChatSystemTags();
             } else if (targetId === 'order-notifications') {
                 window.notificationChannels?.refresh?.();
             } else if (targetId === 'data-forms') {
@@ -206,7 +212,10 @@ async function loadAllSettings() {
 
         const loadTasks = [];
         if (adminCan('settings:bot') || adminCan('bots:manage')) loadTasks.push(loadBotSettings());
-        if (adminCan('settings:chat')) loadTasks.push(loadChatSettings());
+        if (adminCan('settings:chat')) {
+            loadTasks.push(loadChatSettings());
+            if (adminCan('chat:tags')) loadTasks.push(loadChatSystemTags());
+        }
         if (adminCan('settings:general')) loadTasks.push(loadSystemSettings());
         if (adminCan('settings:security-filter')) {
             loadTasks.push(loadSecuritySettings());
@@ -1276,6 +1285,115 @@ async function saveChatSettings(e) {
     }
 }
 
+// --- Chat Tag Settings ---
+function renderChatSystemTags(tags = chatSystemTags) {
+    const list = document.getElementById('chatSystemTagsList');
+    if (!list) return;
+
+    if (!adminCan('chat:tags')) {
+        list.innerHTML = '<div class="text-center p-3 text-muted-v2">ไม่มีสิทธิ์จัดการแท็ก</div>';
+        return;
+    }
+
+    if (!Array.isArray(tags) || tags.length === 0) {
+        list.innerHTML = '<div class="text-center p-3 text-muted-v2">ยังไม่มีแท็กในระบบ</div>';
+        return;
+    }
+
+    list.innerHTML = tags.map((entry) => {
+        const tag = entry.tag || '';
+        const count = Number(entry.count || 0);
+        return `
+            <div class="chat-tag-row">
+                <div class="chat-tag-main">
+                    <span class="chat-tag-pill">${escapeHtml(tag)}</span>
+                    <span class="chat-tag-count">${count} ลูกค้า</span>
+                </div>
+                <button type="button" class="btn-ghost-sm text-danger" data-delete-system-tag="${escapeHtml(tag)}" title="ลบแท็ก">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+
+async function loadChatSystemTags() {
+    const list = document.getElementById('chatSystemTagsList');
+    if (!list || !adminCan('chat:tags')) return;
+    list.innerHTML = '<div class="text-center p-3 text-muted-v2">กำลังโหลดแท็ก...</div>';
+    try {
+        const response = await fetch('/admin/chat/system-tags');
+        const data = await response.json();
+        if (!response.ok || data.success === false) {
+            throw new Error(data.error || 'โหลดแท็กไม่สำเร็จ');
+        }
+        chatSystemTags = Array.isArray(data.tags) ? data.tags : [];
+        renderChatSystemTags();
+    } catch (error) {
+        console.error('Error loading chat tags:', error);
+        list.innerHTML = '<div class="text-danger p-3">โหลดแท็กไม่สำเร็จ</div>';
+    }
+}
+
+async function createChatSystemTag(event) {
+    event.preventDefault();
+    const input = document.getElementById('chatTagNameInput');
+    const btn = document.getElementById('chatTagCreateBtn');
+    const tag = (input?.value || '').replace(/\s+/g, ' ').trim();
+    if (!tag) {
+        showToast('กรุณาระบุชื่อแท็ก', 'warning');
+        return;
+    }
+
+    setLoading(btn, true);
+    try {
+        const response = await fetch('/admin/chat/system-tags', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag, source: 'settings' })
+        });
+        const data = await response.json();
+        if (!response.ok || data.success === false) {
+            throw new Error(data.error || 'เพิ่มแท็กไม่สำเร็จ');
+        }
+        chatSystemTags = Array.isArray(data.tags) ? data.tags : [];
+        if (input) input.value = '';
+        renderChatSystemTags();
+        showToast('เพิ่มแท็กเข้าระบบแล้ว', 'success');
+    } catch (error) {
+        console.error('Error creating chat tag:', error);
+        showToast(error.message || 'เพิ่มแท็กไม่สำเร็จ', 'danger');
+    } finally {
+        setLoading(btn, false);
+    }
+}
+
+async function deleteChatSystemTag(tag) {
+    const normalizedTag = (tag || '').trim();
+    if (!normalizedTag) return;
+    if (!confirm(`ลบแท็ก "${normalizedTag}" ออกจากระบบและลูกค้าทั้งหมดหรือไม่?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/admin/chat/system-tags', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag: normalizedTag })
+        });
+        const data = await response.json();
+        if (!response.ok || data.success === false) {
+            throw new Error(data.error || 'ลบแท็กไม่สำเร็จ');
+        }
+        chatSystemTags = Array.isArray(data.tags) ? data.tags : [];
+        renderChatSystemTags();
+        showToast('ลบแท็กแล้ว', 'success');
+    } catch (error) {
+        console.error('Error deleting chat tag:', error);
+        showToast(error.message || 'ลบแท็กไม่สำเร็จ', 'danger');
+    }
+}
+
 // --- System Settings ---
 async function loadSystemSettings() {
     try {
@@ -1508,7 +1626,10 @@ function setupEventListeners() {
                 ])
                     .then(() => loadBotSettings());
             }
-            if (adminCan('settings:chat')) loadChatSettings();
+            if (adminCan('settings:chat')) {
+                loadChatSettings();
+                if (adminCan('chat:tags')) loadChatSystemTags();
+            }
             if (adminCan('settings:general')) loadSystemSettings();
             if (adminCan('settings:security-filter')) {
                 loadSecuritySettings();
@@ -1522,6 +1643,21 @@ function setupEventListeners() {
 
     const chatForm = document.getElementById('chatSettingsForm');
     if (chatForm) chatForm.addEventListener('submit', saveChatSettings);
+
+    const chatTagForm = document.getElementById('chatTagCreateForm');
+    if (chatTagForm) chatTagForm.addEventListener('submit', createChatSystemTag);
+
+    const chatTagsRefreshBtn = document.getElementById('chatTagsRefreshBtn');
+    if (chatTagsRefreshBtn) chatTagsRefreshBtn.addEventListener('click', loadChatSystemTags);
+
+    const chatSystemTagsList = document.getElementById('chatSystemTagsList');
+    if (chatSystemTagsList) {
+        chatSystemTagsList.addEventListener('click', (event) => {
+            const btn = event.target.closest('[data-delete-system-tag]');
+            if (!btn || !chatSystemTagsList.contains(btn)) return;
+            deleteChatSystemTag(btn.dataset.deleteSystemTag || '');
+        });
+    }
 
     const systemForm = document.getElementById('systemSettingsForm');
     if (systemForm) systemForm.addEventListener('submit', saveSystemSettings);

@@ -492,11 +492,11 @@ class Chat2Manager {
     this.$("chat2OpenEmoji")?.addEventListener("click", (event) => this.toggleEmoji(event.currentTarget));
     this.$("chat2Messages")?.addEventListener("click", (event) => this.handleMessageClick(event));
 
-    this.$("chat2AddTag")?.addEventListener("click", () => this.addTag(this.$("chat2NewTag")?.value || ""));
+    this.$("chat2AddTag")?.addEventListener("click", () => this.createSystemTag(this.$("chat2NewTag")?.value || ""));
     this.$("chat2NewTag")?.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        this.addTag(event.target.value || "");
+        this.createSystemTag(event.target.value || "");
       }
     });
     this.$("chat2CurrentTags")?.addEventListener("click", (event) => {
@@ -685,6 +685,10 @@ class Chat2Manager {
         this.renderTags();
         this.renderOverview();
       }
+    });
+    this.socket.on("chatTagsUpdated", () => {
+      this.loadAvailableTags();
+      this.loadUsers();
     });
     this.socket.on("userPurchaseStatusUpdated", (data) => {
       this.patchUser(data?.userId, { hasPurchased: !!data?.hasPurchased });
@@ -1225,6 +1229,25 @@ class Chat2Manager {
           </button>
         `).join("")
         : `<span class="cc2-muted">ไม่มีแท็กในระบบ</span>`;
+    }
+  }
+
+  async createSystemTag(rawTag) {
+    if (!this.can("chat:tags")) return;
+    const tag = String(rawTag || "").replace(/\s+/g, " ").trim();
+    if (!tag) return;
+    try {
+      await this.fetchJson("/admin/chat/system-tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag, source: "chat" }),
+      });
+      const input = this.$("chat2NewTag");
+      if (input) input.value = "";
+      await this.loadAvailableTags();
+      this.toast("เพิ่มแท็กเข้าระบบแล้ว", "success");
+    } catch (error) {
+      this.toast(error.message || "เพิ่มแท็กเข้าระบบไม่สำเร็จ", "error");
     }
   }
 

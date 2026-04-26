@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "deploy:prod": "bash scripts/deploy-production.sh",
     "build": "echo 'No build step required'",
     "migrate:pg:schema": "node scripts/ensure-postgres-chat-schema.js",
     "migrate:pg:native-performance": "node scripts/migrate-postgres-performance-native.js",

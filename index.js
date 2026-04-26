@@ -1704,6 +1704,7 @@ async function ensurePerformanceIndexes(db) {
     await db.collection("user_profiles").createIndex({ userId: 1, platform: 1 });
     await db.collection("user_unread_counts").createIndex({ userId: 1 });
     await db.collection("user_tags").createIndex({ userId: 1 });
+    await db.collection("chat_tags").createIndex({ tagKey: 1 });
     await db
       .collection("follow_up_tasks")
       .createIndex({ userId: 1, canceled: 1, completed: 1, nextScheduledAt: 1 });
@@ -30865,6 +30866,343 @@ app.post(
 
 // ========== Tag Management APIs ==========
 
+const CHAT_TAG_MAX_LENGTH = 50;
+
+function sanitizeChatTag(rawTag) {
+  const tag = String(rawTag ?? "").replace(/\s+/g, " ").trim();
+  if (!tag) {
+    throw new Error("กรุณาระบุชื่อแท็ก");
+  }
+  if (tag.length > CHAT_TAG_MAX_LENGTH) {
+    throw new Error(`ชื่อแท็กต้องไม่เกิน ${CHAT_TAG_MAX_LENGTH} ตัวอักษร`);
+  }
+  return tag;
+}
+
+function normalizeChatTagKey(rawTag) {
+  return String(rawTag ?? "").replace(/\s+/g, " ").trim().toLocaleLowerCase("th-TH");
+}
+
+function invalidateChatTagCaches() {
+  chatAdminAuxCache.delete("chat:available-tags");
+}
+
+function normalizeChatTagDoc(doc = {}) {
+  const tag = String(doc.tag || doc.name || doc.label || "").replace(/\s+/g, " ").trim();
+  const key = normalizeChatTagKey(doc.tagKey || tag || doc._id);
+  if (!tag || !key) return null;
+  return {
+    id: key,
+    tag,
+    tagKey: key,
+    source: doc.source || "manual",
+    createdAt: doc.createdAt || null,
+    updatedAt: doc.updatedAt || null,
+  };
+}
+
+async function listChatTagUsageCounts(db) {
+  if (isPostgresAppDocumentReadEnabled()) {
+    const tags = await maybeListTopAppDocumentArrayValues(
+      "user_tags",
+      "tags",
+      { limit: 200 },
+    );
+    return tags.map((entry) => ({
+      tag: entry.value,
+      count: Number(entry.count || 0),
+    }));
+  }
+
+  return db.collection("user_tags")
+    .aggregate([
+      { $match: { tags: { $type: "array", $ne: [] } } },
+      { $unwind: "$tags" },
+      { $match: { tags: { $type: "string", $ne: "" } } },
+      { $group: { _id: "$tags", count: { $sum: 1 } } },
+      { $sort: { count: -1, _id: 1 } },
+      { $limit: 500 },
+      { $project: { _id: 0, tag: "$_id", count: 1 } },
+    ])
+    .toArray();
+}
+
+async function listChatSystemTagDocs(db) {
+  if (isPostgresAppDocumentReadEnabled()) {
+    return maybeListAppDocumentPayloads("chat_tags", { limit: 1000, order: "asc" });
+  }
+
+  return db.collection("chat_tags")
+    .find({})
+    .sort({ tagKey: 1, tag: 1 })
+    .limit(1000)
+    .toArray();
+}
+
+function mergeChatSystemTags(systemDocs = [], usageCounts = [], options = {}) {
+  const includeUsageTags = options.includeUsageTags !== false;
+  const limit = Number.isFinite(options.limit) ? options.limit : 1000;
+  const usageByKey = new Map();
+
+  usageCounts.forEach((entry) => {
+    const tag = String(entry.tag || entry.value || "").replace(/\s+/g, " ").trim();
+    const key = normalizeChatTagKey(tag);
+    if (!tag || !key) return;
+    const existing = usageByKey.get(key) || { count: 0, variants: new Set(), tag };
+    existing.count += Number(entry.count || 0);
+    existing.variants.add(tag);
+    usageByKey.set(key, existing);
+  });
+
+  const tagsByKey = new Map();
+  systemDocs.forEach((doc) => {
+    const mapped = normalizeChatTagDoc(doc);
+    if (!mapped) return;
+    const usage = usageByKey.get(mapped.tagKey);
+    tagsByKey.set(mapped.tagKey, {
+      ...mapped,
+      count: usage?.count || 0,
+      isSystem: true,
+    });
+  });
+
+  if (includeUsageTags) {
+    usageByKey.forEach((usage, key) => {
+      if (tagsByKey.has(key)) return;
+      tagsByKey.set(key, {
+        id: key,
+        tag: usage.tag,
+        tagKey: key,
+        count: usage.count,
+        isSystem: false,
+        source: "usage",
+        createdAt: null,
+        updatedAt: null,
+      });
+    });
+  }
+
+  return Array.from(tagsByKey.values())
+    .sort((a, b) => {
+      if (Number(b.count || 0) !== Number(a.count || 0)) {
+        return Number(b.count || 0) - Number(a.count || 0);
+      }
+      return String(a.tag).localeCompare(String(b.tag), "th");
+    })
+    .slice(0, limit);
+}
+
+async function listChatSystemTags(db, options = {}) {
+  const [systemDocs, usageCounts] = await Promise.all([
+    listChatSystemTagDocs(db),
+    listChatTagUsageCounts(db),
+  ]);
+  return mergeChatSystemTags(systemDocs, usageCounts, options);
+}
+
+async function upsertChatSystemTag(db, rawTag, source = "manual") {
+  const tag = sanitizeChatTag(rawTag);
+  const tagKey = normalizeChatTagKey(tag);
+  const now = new Date();
+  const coll = db.collection("chat_tags");
+  const existing = await coll.findOne({ $or: [{ _id: tagKey }, { tagKey }, { tag }] });
+
+  await coll.updateOne(
+    existing ? { _id: existing._id } : { _id: tagKey },
+    {
+      $set: {
+        tag,
+        tagKey,
+        source,
+        isSystem: true,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        createdAt: now,
+      },
+    },
+    { upsert: true },
+  );
+
+  const saved = await coll.findOne(existing ? { _id: existing._id } : { _id: tagKey });
+  await maybeMirrorAppDocumentFromCollection("chat_tags", saved || {
+    _id: tagKey,
+    tag,
+    tagKey,
+    source,
+    isSystem: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  invalidateChatTagCaches();
+  return normalizeChatTagDoc(saved || { _id: tagKey, tag, tagKey, source, createdAt: now, updatedAt: now });
+}
+
+async function removeChatTagVariantsFromPostgresUserTags(tagVariants = []) {
+  if (!postgresRuntime.isConfigured()) return [];
+  const variants = Array.from(
+    new Set(
+      tagVariants
+        .map((tag) => String(tag || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!variants.length) return [];
+
+  const result = await postgresRuntime.query(
+    `
+      SELECT document_id, payload
+      FROM app_documents
+      WHERE collection_name = 'user_tags'
+        AND jsonb_typeof(payload->'tags') = 'array'
+        AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(payload->'tags') AS tag_value(value)
+          WHERE tag_value.value = ANY($1::text[])
+        )
+    `,
+    [variants],
+  );
+
+  const variantSet = new Set(variants);
+  const updatedUsers = [];
+  for (const row of result.rows || []) {
+    const payload = row.payload || {};
+    const tags = Array.isArray(payload.tags) ? payload.tags : [];
+    const nextTags = tags.filter((tag) => !variantSet.has(String(tag || "").trim()));
+    if (nextTags.length === tags.length) continue;
+    const nextPayload = {
+      ...payload,
+      userId: payload.userId || row.document_id,
+      tags: nextTags,
+      updatedAt: new Date().toISOString(),
+    };
+    await maybeMirrorAppDocument("user_tags", row.document_id, nextPayload);
+    updatedUsers.push({
+      userId: nextPayload.userId,
+      tags: nextTags,
+    });
+  }
+  return updatedUsers;
+}
+
+async function deleteChatSystemTag(db, rawTag) {
+  const tag = sanitizeChatTag(rawTag);
+  const tagKey = normalizeChatTagKey(tag);
+  const usageCounts = await listChatTagUsageCounts(db);
+  const variants = Array.from(
+    new Set([
+      tag,
+      ...usageCounts
+        .map((entry) => String(entry.tag || entry.value || "").replace(/\s+/g, " ").trim())
+        .filter((entryTag) => normalizeChatTagKey(entryTag) === tagKey),
+    ].filter(Boolean)),
+  );
+  const coll = db.collection("chat_tags");
+  const existing = await coll.findOne({ $or: [{ _id: tagKey }, { tagKey }, { tag }] });
+  await coll.deleteOne({ _id: tagKey });
+  await maybeDeleteAppDocument("chat_tags", tagKey);
+  if (existing?._id && String(existing._id) !== tagKey) {
+    await coll.deleteOne({ _id: existing._id });
+    await maybeDeleteAppDocument("chat_tags", String(existing._id));
+  }
+
+  const tagsColl = db.collection("user_tags");
+  const affectedBefore = variants.length
+    ? await tagsColl.find(
+      { tags: { $in: variants } },
+      { projection: { userId: 1 } },
+    ).toArray()
+    : [];
+  const affectedUserIds = Array.from(
+    new Set(affectedBefore.map((doc) => doc.userId).filter(Boolean)),
+  );
+
+  if (variants.length) {
+    await tagsColl.updateMany(
+      { tags: { $in: variants } },
+      {
+        $pull: { tags: { $in: variants } },
+        $set: { updatedAt: new Date() },
+      },
+    );
+  }
+
+  const updatedUsers = [];
+  if (affectedUserIds.length) {
+    const updatedDocs = await maybeMirrorAppDocumentByQuery(
+      db,
+      "user_tags",
+      { userId: { $in: affectedUserIds } },
+      { multiple: true },
+    );
+    updatedDocs.forEach((doc) => {
+      updatedUsers.push({
+        userId: doc.userId,
+        tags: Array.isArray(doc.tags) ? doc.tags : [],
+      });
+    });
+  }
+
+  const postgresUpdatedUsers = await removeChatTagVariantsFromPostgresUserTags(variants);
+  postgresUpdatedUsers.forEach((entry) => {
+    if (!updatedUsers.some((user) => user.userId === entry.userId)) {
+      updatedUsers.push(entry);
+    }
+  });
+
+  invalidateChatTagCaches();
+  return {
+    tag: existing?.tag || tag,
+    tagKey,
+    variants,
+    affectedUsers: updatedUsers,
+  };
+}
+
+app.get("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const tags = await listChatSystemTags(db, { limit: 1000, includeUsageTags: true });
+    res.json({ success: true, tags });
+  } catch (err) {
+    console.error("Error getting system tags:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const tag = await upsertChatSystemTag(db, req.body?.tag, req.body?.source || "manual");
+    const tags = await listChatSystemTags(db, { limit: 1000, includeUsageTags: true });
+    emitAdminRealtime("chatTagsUpdated", { action: "created", tag: tag.tag, tags });
+    res.json({ success: true, tag, tags });
+  } catch (err) {
+    console.error("Error creating system tag:", err);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.delete("/admin/chat/system-tags", requirePermission("chat:tags"), async (req, res) => {
+  try {
+    const client = await connectDB();
+    const db = client.db("chatbot");
+    const result = await deleteChatSystemTag(db, req.body?.tag);
+    const tags = await listChatSystemTags(db, { limit: 1000, includeUsageTags: true });
+    result.affectedUsers.forEach((entry) => {
+      emitAdminRealtime("userTagsUpdated", { userId: entry.userId, tags: entry.tags });
+    });
+    emitAdminRealtime("chatTagsUpdated", { action: "deleted", tag: result.tag, tags });
+    res.json({ success: true, ...result, tags });
+  } catch (err) {
+    console.error("Error deleting system tag:", err);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 // Get tags for a specific user
 app.get("/admin/chat/tags/:userId", requirePermission("chat:tags"), async (req, res) => {
   try {
@@ -33654,33 +33992,9 @@ app.get("/admin/chat/available-tags", requirePermission("chat:tags"), async (req
     const availableTags = await getCachedChatAdminAuxValue(
       "chat:available-tags",
       async () => {
-        if (isPostgresAppDocumentReadEnabled()) {
-          const tags = await maybeListTopAppDocumentArrayValues(
-            "user_tags",
-            "tags",
-            { limit: 50 },
-          );
-          return tags.map((entry) => ({
-            tag: entry.value,
-            count: entry.count,
-          }));
-        }
-
         const client = await connectDB();
         const db = client.db("chatbot");
-        const tagsColl = db.collection("user_tags");
-
-        return tagsColl
-          .aggregate([
-            { $match: { tags: { $type: "array", $ne: [] } } },
-            { $unwind: "$tags" },
-            { $match: { tags: { $type: "string", $ne: "" } } },
-            { $group: { _id: "$tags", count: { $sum: 1 } } },
-            { $sort: { count: -1, _id: 1 } },
-            { $limit: 50 },
-            { $project: { _id: 0, tag: "$_id", count: 1 } },
-          ])
-          .toArray();
+        return listChatSystemTags(db, { limit: 50, includeUsageTags: true });
       },
       [],
     );
